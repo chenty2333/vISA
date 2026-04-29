@@ -17,13 +17,14 @@ mod supervisor;
 mod user_mode;
 
 #[cfg(target_os = "none")]
-use bootloader_api::config::{BootloaderConfig, Mapping};
-#[cfg(target_os = "none")]
-use bootloader_api::{BootInfo, entry_point};
-#[cfg(target_os = "none")]
 use core::alloc::Layout;
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
+
+#[cfg(target_os = "none")]
+use bootloader_api::config::{BootloaderConfig, Mapping};
+#[cfg(target_os = "none")]
+use bootloader_api::{BootInfo, entry_point};
 #[cfg(target_os = "none")]
 use linked_list_allocator::LockedHeap;
 #[cfg(target_os = "none")]
@@ -85,9 +86,7 @@ fn main() {}
 #[cfg(target_os = "none")]
 fn init_heap() {
     unsafe {
-        ALLOCATOR
-            .lock()
-            .init(core::ptr::addr_of_mut!(HEAP_SPACE) as *mut u8, HEAP_SIZE);
+        ALLOCATOR.lock().init(core::ptr::addr_of_mut!(HEAP_SPACE) as *mut u8, HEAP_SIZE);
     }
 }
 
@@ -110,16 +109,8 @@ fn panic(info: &PanicInfo<'_>) -> ! {
 #[cfg(target_os = "none")]
 #[alloc_error_handler]
 fn alloc_error(layout: Layout) -> ! {
-    crate::kerror!(
-        "alloc error: size={} align={}",
-        layout.size(),
-        layout.align()
-    );
-    serial_println!(
-        "alloc error: size={} align={}",
-        layout.size(),
-        layout.align()
-    );
+    crate::kerror!("alloc error: size={} align={}", layout.size(), layout.align());
+    serial_println!("alloc error: size={} align={}", layout.size(), layout.align());
     qemu::exit_failed();
     hlt_loop()
 }

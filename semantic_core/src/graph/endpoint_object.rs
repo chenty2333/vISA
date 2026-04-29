@@ -17,11 +17,7 @@ impl SemanticGraph {
         if endpoint == 0 {
             return Err("endpoint object id=0 is invalid");
         }
-        if self
-            .endpoint_objects
-            .iter()
-            .any(|record| record.id == endpoint)
-        {
+        if self.endpoint_objects.iter().any(|record| record.id == endpoint) {
             return Err("endpoint object already exists");
         }
         let Some(socket_record) = self.socket_objects.iter().find(|record| {
@@ -44,10 +40,7 @@ impl SemanticGraph {
         }) else {
             return Err("endpoint object owner store generation is missing");
         };
-        if matches!(
-            store.state,
-            StoreState::Dead | StoreState::Faulted | StoreState::Cleaning
-        ) {
+        if matches!(store.state, StoreState::Dead | StoreState::Faulted | StoreState::Cleaning) {
             return Err("endpoint object owner store is not live");
         }
         if local_addr != ENDPOINT_OBJECT_UNSPECIFIED_IPV4
@@ -203,17 +196,9 @@ impl SemanticGraph {
                 || record.remote_port != ENDPOINT_OBJECT_UNSPECIFIED_PORT
                 || record.state != EndpointObjectState::Allocated
             {
-                return Err(SemanticInvariantError::EndpointObjectInvalid {
-                    endpoint: record.id,
-                });
+                return Err(SemanticInvariantError::EndpointObjectInvalid { endpoint: record.id });
             }
-            if self
-                .endpoint_objects
-                .iter()
-                .filter(|other| other.id == record.id)
-                .count()
-                > 1
-            {
+            if self.endpoint_objects.iter().filter(|other| other.id == record.id).count() > 1 {
                 return Err(SemanticInvariantError::EndpointObjectDuplicate {
                     endpoint: record.id,
                 });
@@ -278,10 +263,7 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         socket_generation: Generation,
     ) {
-        if let Some(record) = self
-            .endpoint_objects
-            .iter_mut()
-            .find(|record| record.id == endpoint)
+        if let Some(record) = self.endpoint_objects.iter_mut().find(|record| record.id == endpoint)
         {
             record.socket_generation = socket_generation;
         }
@@ -293,11 +275,8 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         socket_generation: Generation,
     ) {
-        if let Some(mut duplicate) = self
-            .endpoint_objects
-            .iter()
-            .find(|record| record.id == endpoint)
-            .cloned()
+        if let Some(mut duplicate) =
+            self.endpoint_objects.iter().find(|record| record.id == endpoint).cloned()
         {
             duplicate.socket_generation = socket_generation;
             self.endpoint_objects.push(duplicate);

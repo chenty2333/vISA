@@ -7,13 +7,14 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use service_core::driver::{DriverVirtioNetState, REQUEST_CAPACITY, RESPONSE_CAPACITY};
-use service_core::net_contract::{
-    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
-    VIRTIO_NET0_TX_QUEUE_DEPTH,
-};
-
 pub use service_core::driver::{DriverNetEventKind, DriverNetEventKind as EventKind};
+use service_core::{
+    driver::{DriverVirtioNetState, REQUEST_CAPACITY, RESPONSE_CAPACITY},
+    net_contract::{
+        NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+        VIRTIO_NET0_TX_QUEUE_DEPTH,
+    },
+};
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];

@@ -114,10 +114,7 @@ mod tests {
     fn virtio_net_skeleton_rejects_invalid_queue_and_feature_negotiation() {
         let mut config = VirtioNetBackendConfig::net0();
         config.queue_size = 0;
-        assert_eq!(
-            validate_config(config),
-            Err("virtio net backend queue size is zero")
-        );
+        assert_eq!(validate_config(config), Err("virtio net backend queue size is zero"));
 
         config = VirtioNetBackendConfig::net0();
         config.tx_queue_index = config.rx_queue_index;

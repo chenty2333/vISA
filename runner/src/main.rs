@@ -1,10 +1,12 @@
-use std::env;
-use std::error::Error;
-use std::fs;
-use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::PathBuf,
+    process::{Child, Command, ExitStatus},
+    thread,
+    time::{Duration, Instant},
+};
 
 const QEMU_SUCCESS_EXIT_STATUS: i32 = 33;
 const DEMO_SUCCESS_MARKER: &str = "vmos: demo completed";
@@ -79,10 +81,7 @@ fn interpret_status(
 }
 
 fn pick_ovmf_code() -> Result<PathBuf, Box<dyn Error>> {
-    for candidate in [
-        "/usr/share/edk2/ovmf/OVMF_CODE.fd",
-        "/usr/share/OVMF/OVMF_CODE.fd",
-    ] {
+    for candidate in ["/usr/share/edk2/ovmf/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_CODE.fd"] {
         let path = PathBuf::from(candidate);
         if path.exists() {
             return Ok(path);
@@ -93,10 +92,7 @@ fn pick_ovmf_code() -> Result<PathBuf, Box<dyn Error>> {
 }
 
 fn pick_ovmf_vars() -> Result<PathBuf, Box<dyn Error>> {
-    for candidate in [
-        "/usr/share/edk2/ovmf/OVMF_VARS.fd",
-        "/usr/share/OVMF/OVMF_VARS.fd",
-    ] {
+    for candidate in ["/usr/share/edk2/ovmf/OVMF_VARS.fd", "/usr/share/OVMF/OVMF_VARS.fd"] {
         let path = PathBuf::from(candidate);
         if path.exists() {
             return Ok(path);
@@ -135,10 +131,7 @@ fn wait_for_demo(
             return Ok(());
         }
 
-        if DEMO_FAILURE_MARKERS
-            .iter()
-            .any(|marker| serial.contains(marker))
-        {
+        if DEMO_FAILURE_MARKERS.iter().any(|marker| serial.contains(marker)) {
             let _ = child.kill();
             let _ = child.wait();
             let debug = read_log(debug_log);
@@ -151,7 +144,7 @@ fn wait_for_demo(
             let serial = read_log(serial_log);
             let debug = read_log(debug_log);
             return Err(
-                format!("qemu timed out\nserial log:\n{serial}\ndebug log:\n{debug}").into(),
+                format!("qemu timed out\nserial log:\n{serial}\ndebug log:\n{debug}").into()
             );
         }
 
@@ -255,9 +248,6 @@ impl RunConfig {
             }
         }
 
-        Self {
-            verbose,
-            extra_args,
-        }
+        Self { verbose, extra_args }
     }
 }

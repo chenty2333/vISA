@@ -22,12 +22,7 @@ pub struct CodePublishProfileV1 {
 
 impl CodePublishProfileV1 {
     pub const fn single_hart_aot_rx_pages() -> Self {
-        Self {
-            supported: true,
-            wx: true,
-            icache_sync: true,
-            remote_icache_sync: false,
-        }
+        Self { supported: true, wx: true, icache_sync: true, remote_icache_sync: false }
     }
 }
 
@@ -35,11 +30,7 @@ impl CodePublishProfileV1 {
 pub enum DmwProfileV1 {
     None,
     Logical,
-    RealMmuWindow {
-        slot_count: u16,
-        slot_size: u64,
-        per_core: bool,
-    },
+    RealMmuWindow { slot_count: u16, slot_size: u64, per_core: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

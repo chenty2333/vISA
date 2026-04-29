@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::target_executor::RecordMode;
 
@@ -71,11 +73,7 @@ pub struct PermSet {
 
 impl PermSet {
     pub const fn new(read: bool, write: bool, execute: bool) -> Self {
-        Self {
-            read,
-            write,
-            execute,
-        }
+        Self { read, write, execute }
     }
 
     pub fn summary(self) -> String {
@@ -413,12 +411,7 @@ impl BoundaryValidationViolation {
         object: &str,
         detail: &str,
     ) -> Self {
-        Self {
-            validator,
-            kind,
-            object: object.to_string(),
-            detail: detail.to_string(),
-        }
+        Self { validator, kind, object: object.to_string(), detail: detail.to_string() }
     }
 
     pub fn summary(&self) -> String {
@@ -443,10 +436,7 @@ impl BoundaryValidationReport {
         validator: BoundaryValidatorKind,
         violations: Vec<BoundaryValidationViolation>,
     ) -> Self {
-        Self {
-            validator,
-            violations,
-        }
+        Self { validator, violations }
     }
 
     pub fn is_ok(&self) -> bool {
@@ -712,11 +702,7 @@ impl PackageReplayValidator {
                     mode.as_str(),
                     "hostcall mode is forbidden during replay",
                 ));
-            } else if !state
-                .supported_record_modes
-                .iter()
-                .any(|supported| supported == mode)
-            {
+            } else if !state.supported_record_modes.iter().any(|supported| supported == mode) {
                 violations.push(BoundaryValidationViolation::new(
                     validator,
                     BoundaryValidationErrorKind::UnsupportedRecordMode,
@@ -753,22 +739,13 @@ mod tests {
     use super::*;
 
     fn policy(class: MemoryClass) -> MemoryClassPolicy {
-        *memory_class_policies()
-            .iter()
-            .find(|policy| policy.class == class)
-            .unwrap()
+        *memory_class_policies().iter().find(|policy| policy.class == class).unwrap()
     }
 
     #[test]
     fn memory_class_policy_table_enforces_v1_invariants() {
-        assert_eq!(
-            policy(MemoryClass::DmwWindowMemory).class,
-            MemoryClass::DmwWindowMemory
-        );
-        assert_eq!(
-            policy(MemoryClass::DmwWindowMemory).owner_kind,
-            OwnerKind::Substrate
-        );
+        assert_eq!(policy(MemoryClass::DmwWindowMemory).class, MemoryClass::DmwWindowMemory);
+        assert_eq!(policy(MemoryClass::DmwWindowMemory).owner_kind, OwnerKind::Substrate);
         assert_ne!(
             policy(MemoryClass::DmwWindowMemory).class,
             policy(MemoryClass::StoreLinearMemory).class
@@ -778,19 +755,10 @@ mod tests {
             CleanupPolicy::DropWithStore
         );
         assert!(policy(MemoryClass::GuestMemory).can_alias_guest_memory);
-        assert_eq!(
-            policy(MemoryClass::CodeMemory).migratable,
-            MigrationPolicy::Rebuilt
-        );
+        assert_eq!(policy(MemoryClass::CodeMemory).migratable, MigrationPolicy::Rebuilt);
         assert!(policy(MemoryClass::CodeMemory).can_be_executable);
-        assert_eq!(
-            policy(MemoryClass::ActivationStack).migratable,
-            MigrationPolicy::NeverMigrated
-        );
-        assert_eq!(
-            policy(MemoryClass::DmaMemory).migratable,
-            MigrationPolicy::QuiesceRequired
-        );
+        assert_eq!(policy(MemoryClass::ActivationStack).migratable, MigrationPolicy::NeverMigrated);
+        assert_eq!(policy(MemoryClass::DmaMemory).migratable, MigrationPolicy::QuiesceRequired);
         assert_eq!(
             policy(MemoryClass::MmioWindowMemory).migratable,
             MigrationPolicy::NeverMigrated
@@ -842,12 +810,7 @@ mod tests {
             BoundaryValidationErrorKind::ActiveFramebufferMapping,
             BoundaryValidationErrorKind::DirtyFramebufferRegion,
         ] {
-            assert!(
-                report
-                    .violations
-                    .iter()
-                    .any(|violation| violation.kind == kind)
-            );
+            assert!(report.violations.iter().any(|violation| violation.kind == kind));
         }
         assert!(SnapshotBarrierValidator::validate(&Default::default()).is_ok());
     }
@@ -886,12 +849,7 @@ mod tests {
             BoundaryValidationErrorKind::RecordModeMismatch,
             BoundaryValidationErrorKind::UnsupportedRecordMode,
         ] {
-            assert!(
-                report
-                    .violations
-                    .iter()
-                    .any(|violation| violation.kind == kind)
-            );
+            assert!(report.violations.iter().any(|violation| violation.kind == kind));
         }
         let mut clean_modes = Vec::new();
         clean_modes.push(RecordMode::Deterministic);

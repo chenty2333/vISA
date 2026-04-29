@@ -136,11 +136,7 @@ impl SemanticGraph {
         budget_nanos: u64,
         note: &str,
     ) -> bool {
-        if self
-            .simd_context_switch_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.simd_context_switch_benchmarks.iter().any(|record| record.id == benchmark) {
             return false;
         }
         if self
@@ -164,9 +160,8 @@ impl SemanticGraph {
         {
             return false;
         }
-        self.next_simd_context_switch_benchmark_id = self
-            .next_simd_context_switch_benchmark_id
-            .max(benchmark + 1);
+        self.next_simd_context_switch_benchmark_id =
+            self.next_simd_context_switch_benchmark_id.max(benchmark + 1);
         let event = self.event_log.push(
             "simd-runtime",
             EventKind::SimdContextSwitchBenchmarkRecorded {
@@ -187,27 +182,26 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.simd_context_switch_benchmarks
-            .push(SimdContextSwitchBenchmarkRecord {
-                id: benchmark,
-                preemption,
-                activation_resume,
-                saved_vector_state,
-                restored_vector_state,
-                target_feature_set,
-                simd_abi: simd_abi.to_string(),
-                vector_register_count,
-                vector_register_bits,
-                sample_count,
-                scalar_context_switch_nanos,
-                vector_context_switch_nanos,
-                overhead_nanos,
-                budget_nanos,
-                generation: 1,
-                state: SimdContextSwitchBenchmarkState::Recorded,
-                recorded_at_event: event,
-                note: note.to_string(),
-            });
+        self.simd_context_switch_benchmarks.push(SimdContextSwitchBenchmarkRecord {
+            id: benchmark,
+            preemption,
+            activation_resume,
+            saved_vector_state,
+            restored_vector_state,
+            target_feature_set,
+            simd_abi: simd_abi.to_string(),
+            vector_register_count,
+            vector_register_bits,
+            sample_count,
+            scalar_context_switch_nanos,
+            vector_context_switch_nanos,
+            overhead_nanos,
+            budget_nanos,
+            generation: 1,
+            state: SimdContextSwitchBenchmarkState::Recorded,
+            recorded_at_event: event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -288,12 +282,10 @@ impl SemanticGraph {
                             && *generation == benchmark.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::SimdContextSwitchBenchmarkMissingEvent {
-                        benchmark: benchmark.id,
-                        event: benchmark.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::SimdContextSwitchBenchmarkMissingEvent {
+                    benchmark: benchmark.id,
+                    event: benchmark.recorded_at_event,
+                });
             }
         }
         Ok(())
@@ -305,10 +297,8 @@ impl SemanticGraph {
         benchmark: SimdContextSwitchBenchmarkId,
         overhead_nanos: u64,
     ) {
-        if let Some(record) = self
-            .simd_context_switch_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.simd_context_switch_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.overhead_nanos = overhead_nanos;
         }

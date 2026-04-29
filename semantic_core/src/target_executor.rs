@@ -1,12 +1,15 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
-use super::*;
 use target_abi::{
     OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, PcRangeEntryV1, PcRangeRuntimeEntryV1,
     TrapAttributionV1, TrapKindV1, TrapMapEntryV1, classify_trap_pc,
 };
+
+use super::*;
 
 pub const TARGET_ARTIFACT_GENERATION_V1: Generation = 1;
 
@@ -288,11 +291,7 @@ pub struct ContractObjectRef {
 
 impl ContractObjectRef {
     pub const fn new(kind: ContractObjectKind, id: u64, generation: Generation) -> Self {
-        Self {
-            kind,
-            id,
-            generation,
-        }
+        Self { kind, id, generation }
     }
 
     pub fn summary(self) -> String {
@@ -317,13 +316,7 @@ impl TombstoneRecord {
         died_at: EventId,
         reason: &str,
     ) -> Self {
-        Self {
-            kind,
-            id,
-            generation,
-            died_at,
-            reason: reason.to_string(),
-        }
+        Self { kind, id, generation, died_at, reason: reason.to_string() }
     }
 
     pub const fn object_ref(&self) -> ContractObjectRef {
@@ -374,11 +367,7 @@ impl TargetMemoryPlan {
         max_table_elements: u32,
         max_hostcalls_per_activation: u32,
     ) -> Self {
-        Self {
-            max_memory_pages,
-            max_table_elements,
-            max_hostcalls_per_activation,
-        }
+        Self { max_memory_pages, max_table_elements, max_hostcalls_per_activation }
     }
 }
 
@@ -408,11 +397,7 @@ pub struct TargetAddressRange {
 
 impl TargetAddressRange {
     pub const fn new(start: u64, len: u64, permission: CodeRangePermission) -> Self {
-        Self {
-            start,
-            len,
-            permission,
-        }
+        Self { start, len, permission }
     }
 
     pub const fn end(self) -> u64 {
@@ -429,11 +414,7 @@ pub struct TargetAddressMapEntry {
 
 impl TargetAddressMapEntry {
     pub fn new(symbol: &str, offset: u64, len: u64) -> Self {
-        Self {
-            symbol: symbol.to_string(),
-            offset,
-            len,
-        }
+        Self { symbol: symbol.to_string(), offset, len }
     }
 }
 
@@ -446,11 +427,7 @@ pub struct TargetTrapMetadata {
 
 impl TargetTrapMetadata {
     pub fn new(class: TargetTrapClass, symbol: &str, offset: u64) -> Self {
-        Self {
-            class,
-            symbol: symbol.to_string(),
-            offset,
-        }
+        Self { class, symbol: symbol.to_string(), offset }
     }
 }
 
@@ -731,10 +708,7 @@ impl TargetCapabilitySpec {
     pub fn new(object: &str, operations: &[&str], lifetime: &str) -> Self {
         Self {
             object: object.to_string(),
-            operations: operations
-                .iter()
-                .map(|operation| (*operation).to_string())
-                .collect(),
+            operations: operations.iter().map(|operation| (*operation).to_string()).collect(),
             lifetime: lifetime.to_string(),
             class: CapabilityClass::from_object(object),
         }
@@ -993,17 +967,11 @@ pub struct ArtifactRegistry {
 
 impl ArtifactRegistry {
     pub const fn new() -> Self {
-        Self {
-            expected: Vec::new(),
-            verified: Vec::new(),
-        }
+        Self { expected: Vec::new(), verified: Vec::new() }
     }
 
     pub fn with_expected(expected: Vec<ExpectedTargetArtifact>) -> Self {
-        Self {
-            expected,
-            verified: Vec::new(),
-        }
+        Self { expected, verified: Vec::new() }
     }
 
     pub fn verify(
@@ -1028,11 +996,7 @@ impl ArtifactRegistry {
         if image.abi_fingerprint.is_empty() {
             return Err(ArtifactRegistryError::EmptyAbiFingerprint);
         }
-        if self
-            .verified
-            .iter()
-            .any(|verified| verified.artifact_id == image.id)
-        {
+        if self.verified.iter().any(|verified| verified.artifact_id == image.id) {
             return Err(ArtifactRegistryError::DuplicateArtifact);
         }
         if !self.expected.is_empty() {
@@ -1425,21 +1389,13 @@ impl CodePublisher {
 
     pub fn fault(&mut self, id: CodeObjectId) -> Result<(), CodePublisherError> {
         let object = self.object_mut(id)?;
-        if matches!(
-            object.state,
-            CodeObjectState::Retired | CodeObjectState::Unpublished
-        ) {
+        if matches!(object.state, CodeObjectState::Retired | CodeObjectState::Unpublished) {
             return Err(CodePublisherError::InvalidTransition);
         }
         object.state = CodeObjectState::Faulted;
         object.generation += 1;
         let generation = object.generation;
-        self.record_tombstone(
-            ContractObjectKind::CodeObject,
-            id,
-            generation,
-            "code-faulted",
-        );
+        self.record_tombstone(ContractObjectKind::CodeObject, id, generation, "code-faulted");
         Ok(())
     }
 
@@ -1451,12 +1407,7 @@ impl CodePublisher {
         object.state = CodeObjectState::Retired;
         object.generation += 1;
         let generation = object.generation;
-        self.record_tombstone(
-            ContractObjectKind::CodeObject,
-            id,
-            generation,
-            "code-retired",
-        );
+        self.record_tombstone(ContractObjectKind::CodeObject, id, generation, "code-retired");
         Ok(())
     }
 
@@ -1516,8 +1467,7 @@ impl CodePublisher {
     ) {
         let event = self.next_tombstone_event;
         self.next_tombstone_event += 1;
-        self.tombstones
-            .push(TombstoneRecord::new(kind, id, generation, event, reason));
+        self.tombstones.push(TombstoneRecord::new(kind, id, generation, event, reason));
     }
 
     pub fn record_current_tombstone(
@@ -1525,10 +1475,7 @@ impl CodePublisher {
         id: CodeObjectId,
         reason: &str,
     ) -> Result<(), CodePublisherError> {
-        let generation = self
-            .object(id)
-            .ok_or(CodePublisherError::CodeObjectMissing)?
-            .generation;
+        let generation = self.object(id).ok_or(CodePublisherError::CodeObjectMissing)?.generation;
         self.record_tombstone(ContractObjectKind::CodeObject, id, generation, reason);
         Ok(())
     }
@@ -1643,21 +1590,15 @@ impl TargetStoreManager {
 
     pub fn drop_store(&mut self, store: StoreId) -> Result<(), TargetStoreManagerError> {
         self.set_state(store, StoreState::Dead)?;
-        let generation = self
-            .record(store)
-            .ok_or(TargetStoreManagerError::StoreMissing)?
-            .store
-            .generation;
+        let generation =
+            self.record(store).ok_or(TargetStoreManagerError::StoreMissing)?.store.generation;
         self.record_tombstone(ContractObjectKind::Store, store, generation, "store-dead");
         Ok(())
     }
 
     pub fn rebind_store(&mut self, store: StoreId) -> Result<(), TargetStoreManagerError> {
         let record = self.record_mut(store)?;
-        if !matches!(
-            record.store.state,
-            StoreState::Restarting | StoreState::Dead
-        ) {
+        if !matches!(record.store.state, StoreState::Restarting | StoreState::Dead) {
             return Err(TargetStoreManagerError::InvalidTransition);
         }
         record.store.state = StoreState::Rebinding;
@@ -1704,11 +1645,8 @@ impl TargetStoreManager {
         store: StoreId,
         reason: &str,
     ) -> Result<(), TargetStoreManagerError> {
-        let generation = self
-            .record(store)
-            .ok_or(TargetStoreManagerError::StoreMissing)?
-            .store
-            .generation;
+        let generation =
+            self.record(store).ok_or(TargetStoreManagerError::StoreMissing)?.store.generation;
         self.record_tombstone(ContractObjectKind::Store, store, generation, reason);
         Ok(())
     }
@@ -1722,8 +1660,7 @@ impl TargetStoreManager {
     ) {
         let event = self.next_tombstone_event;
         self.next_tombstone_event += 1;
-        self.tombstones
-            .push(TombstoneRecord::new(kind, id, generation, event, reason));
+        self.tombstones.push(TombstoneRecord::new(kind, id, generation, event, reason));
     }
 }
 
@@ -1870,18 +1807,11 @@ pub struct ActivationRecord {
 
 impl ActivationRecord {
     pub fn summary(&self) -> String {
-        let exit = self
-            .exit_event
-            .map(|event| event.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        let wait = self
-            .blocked_wait
-            .map(|wait| wait.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        let trap = self
-            .trap
-            .map(|trap| trap.to_string())
-            .unwrap_or_else(|| "none".to_string());
+        let exit =
+            self.exit_event.map(|event| event.to_string()).unwrap_or_else(|| "none".to_string());
+        let wait =
+            self.blocked_wait.map(|wait| wait.to_string()).unwrap_or_else(|| "none".to_string());
+        let trap = self.trap.map(|trap| trap.to_string()).unwrap_or_else(|| "none".to_string());
         let return_tag = self.return_tag.map(|tag| tag.as_str()).unwrap_or("none");
         format!(
             "activation id={} store={} store_generation={} code={} code_generation={} artifact={} entry={} state={} generation={} start={} exit={} dmw_leases={} wait={} trap={} return={}",
@@ -1912,10 +1842,7 @@ pub struct WireObjectRef {
 }
 
 impl WireObjectRef {
-    pub const NULL: Self = Self {
-        id: 0,
-        generation: 0,
-    };
+    pub const NULL: Self = Self { id: 0, generation: 0 };
 
     pub const fn new(id: u64, generation: u64) -> Self {
         Self { id, generation }
@@ -2224,10 +2151,7 @@ pub struct TargetTrapRecord {
 
 impl TargetTrapRecord {
     pub fn summary(&self) -> String {
-        let store = self
-            .store
-            .map(|store| store.to_string())
-            .unwrap_or_else(|| "none".to_string());
+        let store = self.store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
         let activation = self
             .activation
             .map(|activation| activation.to_string())
@@ -2240,10 +2164,8 @@ impl TargetTrapRecord {
             .activation_generation
             .map(|generation| generation.to_string())
             .unwrap_or_else(|| "none".to_string());
-        let code = self
-            .code_object
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "none".to_string());
+        let code =
+            self.code_object.map(|code| code.to_string()).unwrap_or_else(|| "none".to_string());
         let artifact = self
             .artifact
             .map(|artifact| artifact.to_string())
@@ -2256,10 +2178,8 @@ impl TargetTrapRecord {
             .artifact_generation
             .map(|generation| generation.to_string())
             .unwrap_or_else(|| "none".to_string());
-        let offset = self
-            .offset
-            .map(|offset| format!("{offset:#x}"))
-            .unwrap_or_else(|| "none".to_string());
+        let offset =
+            self.offset.map(|offset| format!("{offset:#x}")).unwrap_or_else(|| "none".to_string());
         let hostcall = self.hostcall.as_deref().unwrap_or("none");
         format!(
             "trap id={} generation={} class={} store={} store_generation={} activation={} activation_generation={} code={} code_generation={} artifact={} artifact_generation={} offset={} attribution={} hostcall={} policy={} effect={} detail={}",
@@ -2504,14 +2424,9 @@ impl HostcallFrame {
             args: self.args,
             ret0: self.ret0,
             ret1: self.ret1,
-            trap_out: self
-                .trap_out
-                .map_or(TrapRefV1(WireObjectRef::NULL), |trap| {
-                    TrapRefV1(WireObjectRef::new(
-                        trap,
-                        self.trap_generation_out.unwrap_or(1),
-                    ))
-                }),
+            trap_out: self.trap_out.map_or(TrapRefV1(WireObjectRef::NULL), |trap| {
+                TrapRefV1(WireObjectRef::new(trap, self.trap_generation_out.unwrap_or(1)))
+            }),
             wait_token_out: self.wait_token_out.map_or(
                 WaitTokenRefV1(WireObjectRef::NULL),
                 |wait| {
@@ -2523,15 +2438,10 @@ impl HostcallFrame {
             ),
             ..ExecutorHostcallFrameV1::default()
         };
-        frame.cap_arg_count = self
-            .cap_args
-            .len()
-            .min(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY) as u16;
-        for (slot, arg) in self
-            .cap_args
-            .iter()
-            .take(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY)
-            .enumerate()
+        frame.cap_arg_count =
+            self.cap_args.len().min(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY) as u16;
+        for (slot, arg) in
+            self.cap_args.iter().take(ExecutorHostcallFrameV1::CAP_ARG_CAPACITY).enumerate()
         {
             frame.cap_args[slot] = ExecutorCapabilityHandleV1 {
                 owner_store: StoreRefV1(WireObjectRef::new(
@@ -2668,11 +2578,7 @@ pub struct MigrationObjectRecord {
 
 impl MigrationObjectRecord {
     pub fn new(object: &str, class: MigrationObjectClass, reason: &str) -> Self {
-        Self {
-            object: object.to_string(),
-            class,
-            reason: reason.to_string(),
-        }
+        Self { object: object.to_string(), class, reason: reason.to_string() }
     }
 
     pub fn summary(&self) -> String {
@@ -2834,10 +2740,8 @@ impl CleanupStepRecord {
     }
 
     pub fn summary(&self) -> String {
-        let target = self
-            .target
-            .map(ContractObjectRef::summary)
-            .unwrap_or_else(|| "none".to_string());
+        let target =
+            self.target.map(ContractObjectRef::summary).unwrap_or_else(|| "none".to_string());
         let observed = self
             .observed_generation
             .map(|generation| generation.to_string())
@@ -2939,13 +2843,7 @@ impl CleanupEffectRecord {
         status: CleanupEffectStatus,
         event_seq: EventId,
     ) -> Self {
-        Self {
-            kind,
-            target,
-            expected_generation,
-            status,
-            event_seq,
-        }
+        Self { kind, target, expected_generation, status, event_seq }
     }
 
     pub fn summary(&self) -> String {
@@ -3007,9 +2905,7 @@ impl FaultCleanupTransaction {
                 .unwrap_or_else(|| "none".to_string()),
             self.generation,
             self.started_at,
-            self.finished_at
-                .map(|event| event.to_string())
-                .unwrap_or_else(|| "none".to_string()),
+            self.finished_at.map(|event| event.to_string()).unwrap_or_else(|| "none".to_string()),
             self.state.as_str(),
             self.reason,
             self.released_dmw_leases,
@@ -3019,16 +2915,8 @@ impl FaultCleanupTransaction {
             self.unbound_code_object,
             self.state_digest,
             self.effect.summary(),
-            self.steps
-                .iter()
-                .map(CleanupStepRecord::summary)
-                .collect::<Vec<_>>()
-                .join("|"),
-            self.effects
-                .iter()
-                .map(CleanupEffectRecord::summary)
-                .collect::<Vec<_>>()
-                .join("|")
+            self.steps.iter().map(CleanupStepRecord::summary).collect::<Vec<_>>().join("|"),
+            self.effects.iter().map(CleanupEffectRecord::summary).collect::<Vec<_>>().join("|")
         )
     }
 }
@@ -3387,10 +3275,8 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::HostcallAbiMismatch);
         }
-        let Some(spec) = code
-            .hostcalls
-            .iter()
-            .find(|spec| spec.number == wire_frame.hostcall_number)
+        let Some(spec) =
+            code.hostcalls.iter().find(|spec| spec.number == wire_frame.hostcall_number)
         else {
             let placeholder = HostcallSpec::new(
                 wire_frame.hostcall_number,
@@ -3473,10 +3359,7 @@ impl TargetExecutor {
                     return Err(TargetExecutorError::CapabilityDenied);
                 }
             };
-        let required_right = authority
-            .required_right
-            .as_deref()
-            .unwrap_or(&frame.operation);
+        let required_right = authority.required_right.as_deref().unwrap_or(&frame.operation);
         let authority_object = AuthorityObjectRef::from_label(authority.class, &frame.object);
         if authority.requires_capability {
             if let Some(reason) = cap_arg_decode_error.or_else(|| {
@@ -3615,15 +3498,7 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::DmwLeaseActive);
         }
-        self.record_trace(
-            &frame,
-            spec,
-            true,
-            "complete",
-            HostcallReturnTag::Ok,
-            None,
-            None,
-        );
+        self.record_trace(&frame, spec, true, "complete", HostcallReturnTag::Ok, None, None);
         let transition_event = self.next_event("activation-hostcall-complete");
         let old_generation = self.activations[activation_index].generation;
         self.retire_activation_generation(
@@ -3657,9 +3532,8 @@ impl TargetExecutor {
             active: true,
         });
         self.activations[activation_index].active_dmw_leases += 1;
-        self.event_log.push(format!(
-            "DmwLeaseAcquired activation={activation} lease={id} handle={handle}"
-        ));
+        self.event_log
+            .push(format!("DmwLeaseAcquired activation={activation} lease={id} handle={handle}"));
         Ok(id)
     }
 
@@ -3674,12 +3548,9 @@ impl TargetExecutor {
         let activation_index = self.activation_index(activation)?;
         self.dmw_leases[lease_index].active = false;
         self.dmw_leases[lease_index].generation += 1;
-        self.activations[activation_index].active_dmw_leases = self.activations[activation_index]
-            .active_dmw_leases
-            .saturating_sub(1);
-        self.event_log.push(format!(
-            "DmwLeaseReleased activation={activation} lease={lease}"
-        ));
+        self.activations[activation_index].active_dmw_leases =
+            self.activations[activation_index].active_dmw_leases.saturating_sub(1);
+        self.event_log.push(format!("DmwLeaseReleased activation={activation} lease={lease}"));
         Ok(())
     }
 
@@ -3878,16 +3749,14 @@ impl TargetExecutor {
                 .find(|record| record.id == activation)
                 .map(|record| record.generation)
         });
-        let store_generation = code
-            .and_then(|code| code.bound_store_generation)
-            .or_else(|| {
-                activation.and_then(|activation| {
-                    self.activations
-                        .iter()
-                        .find(|record| record.id == activation)
-                        .map(|record| record.store_generation)
-                })
-            });
+        let store_generation = code.and_then(|code| code.bound_store_generation).or_else(|| {
+            activation.and_then(|activation| {
+                self.activations
+                    .iter()
+                    .find(|record| record.id == activation)
+                    .map(|record| record.store_generation)
+            })
+        });
         self.traps.push(TargetTrapRecord {
             id,
             generation: 1,
@@ -4061,10 +3930,8 @@ impl TargetExecutor {
         mut code: Option<&mut CodeObject>,
         capabilities: &mut CapabilityLedger,
     ) -> Result<CleanupTransactionId, TargetExecutorError> {
-        let Some(cleanup_index) = self
-            .cleanup_transactions
-            .iter()
-            .position(|cleanup| cleanup.id == cleanup_id)
+        let Some(cleanup_index) =
+            self.cleanup_transactions.iter().position(|cleanup| cleanup.id == cleanup_id)
         else {
             return Err(TargetExecutorError::CleanupTransactionMissing);
         };
@@ -4123,10 +3990,7 @@ impl TargetExecutor {
         let mut cancelled_waits = 0;
         let mut final_activation_generation = None;
         if let Some(activation) = activation {
-            if let Some(index) = self
-                .activations
-                .iter()
-                .position(|record| record.id == activation)
+            if let Some(index) = self.activations.iter().position(|record| record.id == activation)
             {
                 let exit_event = self.next_event("activation-cleanup-dropped");
                 let old_generation = self.activations[index].generation;
@@ -4141,11 +4005,7 @@ impl TargetExecutor {
                     record.state = ActivationState::Dropped;
                     record.return_tag = Some(HostcallReturnTag::KillStore);
                     record.exit_event = Some(exit_event);
-                    let cancelled = if record.blocked_wait.take().is_some() {
-                        1
-                    } else {
-                        0
-                    };
+                    let cancelled = if record.blocked_wait.take().is_some() { 1 } else { 0 };
                     record.active_dmw_leases = 0;
                     record.generation += 1;
                     (record.generation, cancelled)
@@ -4186,10 +4046,7 @@ impl TargetExecutor {
         store.generation += 1;
         let store_ref = store.object_ref();
         if let Some(activation) = activation {
-            if let Some(record) = self
-                .activations
-                .iter_mut()
-                .find(|record| record.id == activation)
+            if let Some(record) = self.activations.iter_mut().find(|record| record.id == activation)
             {
                 record.store_generation = store.generation;
                 if let Some(code_generation) = code_generation {
@@ -4236,11 +4093,9 @@ impl TargetExecutor {
         let revoked_count = revoked.len();
         let effects = Self::cleanup_effects_for_completed_transaction(
             store_ref,
-            activation
-                .zip(final_activation_generation)
-                .map(|(id, generation)| {
-                    ContractObjectRef::new(ContractObjectKind::Activation, id, generation)
-                }),
+            activation.zip(final_activation_generation).map(|(id, generation)| {
+                ContractObjectRef::new(ContractObjectKind::Activation, id, generation)
+            }),
             code_ref,
             &revoked_refs,
             released,
@@ -4698,11 +4553,8 @@ impl TargetExecutor {
     fn capability_rights_mask(record: &CapabilityRecord, rights: &[String]) -> Option<u64> {
         let mut mask = 0u64;
         for right in rights {
-            let index = record
-                .operations
-                .as_slice()
-                .iter()
-                .position(|operation| operation == right)?;
+            let index =
+                record.operations.as_slice().iter().position(|operation| operation == right)?;
             if index >= u64::BITS as usize {
                 return None;
             }
@@ -4728,11 +4580,7 @@ impl TargetExecutor {
             }
         }
         let known_mask = Self::capability_rights_mask(record, &rights)?;
-        if known_mask == rights_mask {
-            Some(rights)
-        } else {
-            None
-        }
+        if known_mask == rights_mask { Some(rights) } else { None }
     }
 
     fn record_trace(
@@ -4923,14 +4771,10 @@ impl TargetExecutor {
             }
         }
         if released != 0 {
-            if let Some(index) = self
-                .activations
-                .iter()
-                .position(|record| record.id == activation)
+            if let Some(index) = self.activations.iter().position(|record| record.id == activation)
             {
-                self.activations[index].active_dmw_leases = self.activations[index]
-                    .active_dmw_leases
-                    .saturating_sub(released);
+                self.activations[index].active_dmw_leases =
+                    self.activations[index].active_dmw_leases.saturating_sub(released);
             }
             self.event_log.push(format!(
                 "DmwLeaseQuarantined activation={activation} released={released} reason={reason}"
@@ -4949,8 +4793,7 @@ impl TargetExecutor {
     fn next_event(&mut self, label: &str) -> EventId {
         let id = self.next_event_id;
         self.next_event_id += 1;
-        self.event_log
-            .push(format!("TargetExecutorEvent id={id} label={label}"));
+        self.event_log.push(format!("TargetExecutorEvent id={id} label={label}"));
         id
     }
 }
@@ -4979,19 +4822,13 @@ mod tests {
             TargetMemoryPlan::new(16, 32, 64),
         );
         image.exports.push("vmos_service_entry".to_string());
-        image
-            .address_map
-            .push(TargetAddressMapEntry::new("_start", 0, 64));
+        image.address_map.push(TargetAddressMapEntry::new("_start", 0, 64));
         image.trap_metadata.push(TargetTrapMetadata::new(
             TargetTrapClass::CodeObjectTrap,
             "_start",
             0,
         ));
-        image.capabilities.push(TargetCapabilitySpec::new(
-            "mmio.virtio-net",
-            &["map"],
-            "store",
-        ));
+        image.capabilities.push(TargetCapabilitySpec::new("mmio.virtio-net", &["map"], "store"));
         image.hostcalls.push(HostcallSpec::new(
             1,
             "hostcall.mmio.map",
@@ -5123,12 +4960,8 @@ mod tests {
         image
     }
 
-    fn running_store_and_code() -> (
-        VerifiedArtifact,
-        ManagedStoreRecord,
-        CodeObject,
-        CapabilityLedger,
-    ) {
+    fn running_store_and_code()
+    -> (VerifiedArtifact, ManagedStoreRecord, CodeObject, CapabilityLedger) {
         let mut registry = ArtifactRegistry::new();
         let verified = registry.verify(image()).unwrap();
         let mut stores = TargetStoreManager::new();
@@ -5205,10 +5038,7 @@ mod tests {
 
         let code = publisher.object(code_id).unwrap().clone();
         assert!(code.simd_requirement.uses_simd);
-        assert_eq!(
-            code.simd_requirement.status,
-            CodeObjectSimdRequirementStatus::Declared
-        );
+        assert_eq!(code.simd_requirement.status, CodeObjectSimdRequirementStatus::Declared);
         assert_eq!(code.generation, 2);
         let snapshot = ContractGraphSnapshot {
             artifacts: Vec::from([verified]),
@@ -5267,12 +5097,7 @@ mod tests {
         operation: &str,
     ) -> CapabilityHandleArg {
         let cap = capabilities.check(subject, object, operation).unwrap();
-        let index = cap
-            .operations
-            .as_slice()
-            .iter()
-            .position(|right| right == operation)
-            .unwrap();
+        let index = cap.operations.as_slice().iter().position(|right| right == operation).unwrap();
         CapabilityHandleArg::from_record(cap, 1u64 << index, &[operation])
     }
 
@@ -5285,14 +5110,8 @@ mod tests {
 
         let mut publisher = CodePublisher::new();
         let code_id = publisher.allocate(&verified).unwrap();
-        assert_eq!(
-            publisher.object(code_id).unwrap().state,
-            CodeObjectState::AllocatedRw
-        );
-        assert_eq!(
-            publisher.publish_rx(code_id),
-            Err(CodePublisherError::InvalidTransition)
-        );
+        assert_eq!(publisher.object(code_id).unwrap().state, CodeObjectState::AllocatedRw);
+        assert_eq!(publisher.publish_rx(code_id), Err(CodePublisherError::InvalidTransition));
         publisher.fill(code_id).unwrap();
         publisher.seal(code_id).unwrap();
         publisher.publish_rx(code_id).unwrap();
@@ -5307,14 +5126,8 @@ mod tests {
         stores.set_running(store_id).unwrap();
         let store_record = stores.record(store_id).unwrap().store.clone();
         publisher.bind_to_store(code_id, &store_record).unwrap();
-        assert_eq!(
-            publisher.object(code_id).unwrap().state,
-            CodeObjectState::BoundToStore
-        );
-        assert_eq!(
-            stores.record(store_id).unwrap().store.state,
-            StoreState::Running
-        );
+        assert_eq!(publisher.object(code_id).unwrap().state, CodeObjectState::BoundToStore);
+        assert_eq!(stores.record(store_id).unwrap().store.state, StoreState::Running);
     }
 
     #[test]
@@ -5333,10 +5146,7 @@ mod tests {
         let mut registry = ArtifactRegistry::with_expected(expected_list);
         let mut bad = image();
         bad.code_hash = "hash-2".to_string();
-        assert_eq!(
-            registry.verify(bad),
-            Err(ArtifactRegistryError::CodeHashMismatch)
-        );
+        assert_eq!(registry.verify(bad), Err(ArtifactRegistryError::CodeHashMismatch));
 
         let expected = ExpectedTargetArtifact::new(
             "driver_virtio_net",
@@ -5352,10 +5162,7 @@ mod tests {
         let mut registry = ArtifactRegistry::with_expected(expected_list);
         let mut bad = image();
         bad.artifact_hash = "artifact-hash-2".to_string();
-        assert_eq!(
-            registry.verify(bad),
-            Err(ArtifactRegistryError::ArtifactHashMismatch)
-        );
+        assert_eq!(registry.verify(bad), Err(ArtifactRegistryError::ArtifactHashMismatch));
 
         let mut expected_list = Vec::new();
         expected_list.push(ExpectedTargetArtifact::new(
@@ -5430,10 +5237,7 @@ mod tests {
         bad.signature_scheme = "prototype-self-signed-sha256".to_string();
         bad.signature_status = "profile-bound-unverified".to_string();
         bad.signer = "vmos-aotc-dev".to_string();
-        assert_eq!(
-            registry.verify(bad),
-            Err(ArtifactRegistryError::HashStatusMismatch)
-        );
+        assert_eq!(registry.verify(bad), Err(ArtifactRegistryError::HashStatusMismatch));
     }
 
     #[test]
@@ -5442,18 +5246,12 @@ mod tests {
             ExecutorHostcallFrameV1::FRAME_SIZE as usize,
             core::mem::size_of::<ExecutorHostcallFrameV1>()
         );
-        assert_eq!(
-            ExecutorHostcallFrameV1::default().magic,
-            ExecutorHostcallFrameV1::MAGIC
-        );
+        assert_eq!(ExecutorHostcallFrameV1::default().magic, ExecutorHostcallFrameV1::MAGIC);
         assert_eq!(
             ExecutorHostcallFrameV1::default().record_mode,
             RecordMode::Deterministic.as_u16()
         );
-        assert_eq!(
-            ExecutorHostcallFrameV1::default().ret_tag,
-            HostcallReturnTag::Ok.as_u16()
-        );
+        assert_eq!(ExecutorHostcallFrameV1::default().ret_tag, HostcallReturnTag::Ok.as_u16());
         assert_eq!(WireObjectRef::NULL, WireObjectRef::new(0, 0));
     }
 
@@ -5462,19 +5260,10 @@ mod tests {
         let (_artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut cap_args = Vec::new();
-        cap_args.push(cap_arg_for(
-            &capabilities,
-            "driver_virtio_net",
-            "mmio.virtio-net",
-            "map",
-        ));
+        cap_args.push(cap_arg_for(&capabilities, "driver_virtio_net", "mmio.virtio-net", "map"));
         executor
             .invoke_hostcall(
                 &code,
@@ -5537,18 +5326,8 @@ mod tests {
             );
         }
         assert_eq!(executor.traps().len(), 14);
-        assert!(
-            executor
-                .traps()
-                .iter()
-                .all(|trap| trap.class == TargetTrapClass::CapabilityTrap)
-        );
-        assert!(
-            executor
-                .event_log()
-                .iter()
-                .any(|event| event.contains("CapabilityDenied"))
-        );
+        assert!(executor.traps().iter().all(|trap| trap.class == TargetTrapClass::CapabilityTrap));
+        assert!(executor.event_log().iter().any(|event| event.contains("CapabilityDenied")));
     }
 
     #[test]
@@ -5558,11 +5337,7 @@ mod tests {
         other_code.id = code.id + 100;
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         assert_eq!(
             executor.invoke_hostcall(
@@ -5589,11 +5364,7 @@ mod tests {
         let (_artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut frame = HostcallFrame::new_bound(
             activation,
@@ -5605,26 +5376,15 @@ mod tests {
             1,
         );
         let mut cap_args = Vec::new();
-        cap_args.push(cap_arg_for(
-            &capabilities,
-            "driver_virtio_net",
-            "mmio.virtio-net",
-            "map",
-        ));
+        cap_args.push(cap_arg_for(&capabilities, "driver_virtio_net", "mmio.virtio-net", "map"));
         frame = frame.with_cap_args(cap_args);
         frame.subject = "other_store".to_string();
-        executor
-            .invoke_hostcall(&code, frame.to_wire_frame(), &capabilities)
-            .unwrap();
+        executor.invoke_hostcall(&code, frame.to_wire_frame(), &capabilities).unwrap();
         assert_eq!(executor.hostcall_trace()[0].subject, code.package);
         assert!(executor.hostcall_trace()[0].allowed);
 
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let frame = HostcallFrame::new_bound(
             activation,
@@ -5641,26 +5401,12 @@ mod tests {
             executor.invoke_hostcall(&code, wire_frame, &capabilities),
             Err(TargetExecutorError::HostcallAbiMismatch)
         );
-        assert!(
-            executor
-                .hostcall_trace()
-                .iter()
-                .any(|trace| trace.result == "bad-hostcall-abi")
-        );
-        assert!(
-            executor
-                .traps()
-                .iter()
-                .any(|trap| trap.class == TargetTrapClass::HostcallTrap
-                    && trap.fault_policy == "bad-hostcall-abi")
-        );
+        assert!(executor.hostcall_trace().iter().any(|trace| trace.result == "bad-hostcall-abi"));
+        assert!(executor.traps().iter().any(|trap| trap.class == TargetTrapClass::HostcallTrap
+            && trap.fault_policy == "bad-hostcall-abi"));
 
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let frame = HostcallFrame::new_bound(
             activation,
@@ -5678,28 +5424,19 @@ mod tests {
             Err(TargetExecutorError::HostcallAbiMismatch)
         );
         assert!(
-            executor
-                .hostcall_trace()
-                .iter()
-                .any(|trace| trace.result == "bad-frame-size"
-                    && trace.ret_tag == HostcallReturnTag::BadAbi)
+            executor.hostcall_trace().iter().any(|trace| trace.result == "bad-frame-size"
+                && trace.ret_tag == HostcallReturnTag::BadAbi)
         );
     }
 
     #[test]
     fn cap_args_are_checked_against_ledger_generation_and_rights() {
         let (_artifact, store, code, capabilities) = running_store_and_code();
-        let cap = capabilities
-            .check("driver_virtio_net", "mmio.virtio-net", "map")
-            .unwrap()
-            .clone();
+        let cap =
+            capabilities.check("driver_virtio_net", "mmio.virtio-net", "map").unwrap().clone();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut cap_args = Vec::new();
         cap_args.push(CapabilityHandleArg::from_record(&cap, 1, &["map"]));
@@ -5722,11 +5459,7 @@ mod tests {
             .unwrap();
 
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut stale_cap_args = Vec::new();
         let mut stale_arg = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
@@ -5750,19 +5483,10 @@ mod tests {
             ),
             Err(TargetExecutorError::CapabilityDenied)
         );
-        assert!(
-            executor
-                .hostcall_trace()
-                .iter()
-                .any(|trace| trace.result == "cap-arg-generation")
-        );
+        assert!(executor.hostcall_trace().iter().any(|trace| trace.result == "cap-arg-generation"));
 
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut bad_mask_cap_args = Vec::new();
         bad_mask_cap_args.push(CapabilityHandleArg::from_record(&cap, 0, &["map"]));
@@ -5785,18 +5509,11 @@ mod tests {
             Err(TargetExecutorError::CapabilityDenied)
         );
         assert!(
-            executor
-                .hostcall_trace()
-                .iter()
-                .any(|trace| trace.result == "cap-arg-rights-mask")
+            executor.hostcall_trace().iter().any(|trace| trace.result == "cap-arg-rights-mask")
         );
 
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut forged_global_id_args = Vec::new();
         let mut forged_global_id = CapabilityHandleArg::from_record(&cap, 1, &["map"]);
@@ -5833,10 +5550,8 @@ mod tests {
     #[test]
     fn hostcall_gate_closure_records_positive_and_negative_trace_reasons() {
         let (_artifact, store, code, capabilities) = running_store_and_code();
-        let cap = capabilities
-            .check("driver_virtio_net", "mmio.virtio-net", "map")
-            .unwrap()
-            .clone();
+        let cap =
+            capabilities.check("driver_virtio_net", "mmio.virtio-net", "map").unwrap().clone();
         let mut executor = TargetExecutor::new();
 
         let activation = executor
@@ -5858,11 +5573,7 @@ mod tests {
                     "map",
                     cap.generation,
                 )
-                .with_cap_args(Vec::from([CapabilityHandleArg::from_record(
-                    &cap,
-                    1,
-                    &["map"],
-                )]))
+                .with_cap_args(Vec::from([CapabilityHandleArg::from_record(&cap, 1, &["map"])]))
                 .to_wire_frame(),
                 &capabilities,
             )
@@ -5976,17 +5687,11 @@ mod tests {
         };
         assert_eq!(trace("complete").gate_status, "exit");
         assert_eq!(trace("complete").denial_reason, None);
-        for result in [
-            "bad-frame-size",
-            "bad-hostcall-abi",
-            "cap-arg-generation",
-            "unsupported-call",
-        ] {
+        for result in
+            ["bad-frame-size", "bad-hostcall-abi", "cap-arg-generation", "unsupported-call"]
+        {
             let trace = trace(result);
-            assert_eq!(
-                trace.subject_source,
-                HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE
-            );
+            assert_eq!(trace.subject_source, HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE);
             assert_eq!(trace.denial_reason.as_deref(), Some(result));
             assert!(trace.trap_out.is_some());
         }
@@ -6033,11 +5738,7 @@ mod tests {
         let (artifact, store, code, _capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation_id = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let activation = executor
             .activations()
@@ -6494,19 +6195,10 @@ mod tests {
         let (artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         let mut cap_args = Vec::new();
-        cap_args.push(cap_arg_for(
-            &capabilities,
-            "driver_virtio_net",
-            "mmio.virtio-net",
-            "map",
-        ));
+        cap_args.push(cap_arg_for(&capabilities, "driver_virtio_net", "mmio.virtio-net", "map"));
         executor
             .invoke_hostcall(
                 &code,
@@ -7157,13 +6849,8 @@ mod tests {
         let activation = executor
             .start_activation(&store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
-        executor
-            .acquire_dmw_lease(activation, "dmw.cleanup.lease")
-            .unwrap();
-        assert_eq!(
-            executor.snapshot_barrier(),
-            Err(TargetExecutorError::DmwLeaseActive)
-        );
+        executor.acquire_dmw_lease(activation, "dmw.cleanup.lease").unwrap();
+        assert_eq!(executor.snapshot_barrier(), Err(TargetExecutorError::DmwLeaseActive));
 
         let cleanup_id = executor
             .run_fault_cleanup(
@@ -7182,29 +6869,13 @@ mod tests {
         assert_eq!(cleanup.revoked_capabilities.len(), 1);
         assert_eq!(cleanup.dropped_resources, 1);
         assert!(cleanup.unbound_code_object);
-        assert!(
-            cleanup
-                .steps
-                .iter()
-                .all(|step| step.state == CleanupStepState::Done)
-        );
-        assert!(
-            executor
-                .dmw_leases()
-                .iter()
-                .all(|lease| !lease.active && lease.generation == 2)
-        );
-        let activation_record = executor
-            .activations()
-            .iter()
-            .find(|record| record.id == activation)
-            .unwrap();
+        assert!(cleanup.steps.iter().all(|step| step.state == CleanupStepState::Done));
+        assert!(executor.dmw_leases().iter().all(|lease| !lease.active && lease.generation == 2));
+        let activation_record =
+            executor.activations().iter().find(|record| record.id == activation).unwrap();
         assert_eq!(activation_record.state, ActivationState::Dropped);
         assert_eq!(activation_record.active_dmw_leases, 0);
-        assert_eq!(
-            activation_record.return_tag,
-            Some(HostcallReturnTag::KillStore)
-        );
+        assert_eq!(activation_record.return_tag, Some(HostcallReturnTag::KillStore));
         assert_eq!(store.state, StoreState::Dead);
         assert_eq!(code.state, CodeObjectState::Retired);
         assert_eq!(code.bound_store, None);
@@ -7218,25 +6889,16 @@ mod tests {
                     && tombstone.generation == store.generation)
         );
         assert!(
-            cleanup
-                .effects
-                .iter()
-                .any(|effect| effect.kind == CleanupEffectKind::MarkStoreDead
-                    && effect.status == CleanupEffectStatus::Applied
-                    && effect.target == store.object_ref())
+            cleanup.effects.iter().any(|effect| effect.kind == CleanupEffectKind::MarkStoreDead
+                && effect.status == CleanupEffectStatus::Applied
+                && effect.target == store.object_ref())
         );
         let digest_after_once = executor.cleanup_state_digest(&store, Some(&code), &capabilities);
         assert_eq!(executor.snapshot_barrier(), Ok(()));
         let completed_cleanup = &executor.cleanup_transactions()[0];
         assert_eq!(completed_cleanup.state_digest, digest_after_once);
-        assert_eq!(
-            completed_cleanup.result_store_generation,
-            Some(store.generation)
-        );
-        assert_eq!(
-            completed_cleanup.activation_generation,
-            Some(activation_record.generation)
-        );
+        assert_eq!(completed_cleanup.result_store_generation, Some(store.generation));
+        assert_eq!(completed_cleanup.activation_generation, Some(activation_record.generation));
         assert_eq!(completed_cleanup.code_generation, Some(code.generation));
 
         let cleanup_id_again = executor
@@ -7254,16 +6916,8 @@ mod tests {
             executor.cleanup_state_digest(&store, Some(&code), &capabilities),
             digest_after_once
         );
-        assert_eq!(
-            executor.cleanup_transactions()[0].state_digest,
-            digest_after_once
-        );
-        assert_eq!(
-            executor.cleanup_transactions()[0]
-                .revoked_capabilities
-                .len(),
-            1
-        );
+        assert_eq!(executor.cleanup_transactions()[0].state_digest, digest_after_once);
+        assert_eq!(executor.cleanup_transactions()[0].revoked_capabilities.len(), 1);
     }
 
     #[test]
@@ -7319,10 +6973,7 @@ mod tests {
             Some(&code),
             "stale-cleanup-test",
         );
-        assert_eq!(
-            executor.snapshot_barrier(),
-            Err(TargetExecutorError::PendingCleanupActive)
-        );
+        assert_eq!(executor.snapshot_barrier(), Err(TargetExecutorError::PendingCleanupActive));
 
         store.generation += 1;
         store.state = StoreState::Running;
@@ -7344,14 +6995,12 @@ mod tests {
             digest_before
         );
         let cleanup = &executor.cleanup_transactions()[0];
-        assert_eq!(
-            cleanup.state,
-            CleanupTransactionState::SkippedStaleGeneration
-        );
+        assert_eq!(cleanup.state, CleanupTransactionState::SkippedStaleGeneration);
         assert_eq!(cleanup.state_digest, digest_before);
-        assert!(cleanup.steps.iter().all(|step| step.state
-            == CleanupStepState::SkippedStaleGeneration
-            && step.observed_generation == Some(store.generation)));
+        assert!(
+            cleanup.steps.iter().all(|step| step.state == CleanupStepState::SkippedStaleGeneration
+                && step.observed_generation == Some(store.generation))
+        );
         assert!(cleanup.effects.iter().any(|effect| {
             effect.status == CleanupEffectStatus::SkippedStaleGeneration
                 && effect.target
@@ -7399,11 +7048,8 @@ mod tests {
             .find(|cleanup| cleanup.id == cleanup_id)
             .unwrap();
         assert_eq!(cleanup.cancelled_waits, 1);
-        let activation_record = executor
-            .activations()
-            .iter()
-            .find(|record| record.id == activation)
-            .unwrap();
+        let activation_record =
+            executor.activations().iter().find(|record| record.id == activation).unwrap();
         assert_eq!(activation_record.state, ActivationState::Dropped);
         assert_eq!(activation_record.blocked_wait, None);
 
@@ -7415,10 +7061,7 @@ mod tests {
             Some(&code),
             "pending-cleanup-test",
         );
-        assert_eq!(
-            executor.snapshot_barrier(),
-            Err(TargetExecutorError::PendingCleanupActive)
-        );
+        assert_eq!(executor.snapshot_barrier(), Err(TargetExecutorError::PendingCleanupActive));
     }
 
     #[test]
@@ -7426,19 +7069,10 @@ mod tests {
         let (_artifact, store, code, capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
-        let lease = executor
-            .acquire_dmw_lease(activation, "dmw.handle.1")
-            .unwrap();
-        assert_eq!(
-            executor.snapshot_barrier(),
-            Err(TargetExecutorError::DmwLeaseActive)
-        );
+        let lease = executor.acquire_dmw_lease(activation, "dmw.handle.1").unwrap();
+        assert_eq!(executor.snapshot_barrier(), Err(TargetExecutorError::DmwLeaseActive));
         assert_eq!(
             executor.invoke_hostcall(
                 &code,
@@ -7467,11 +7101,7 @@ mod tests {
         let (_artifact, store, code, _capabilities) = running_store_and_code();
         let mut executor = TargetExecutor::new();
         let activation = executor
-            .start_activation(
-                &store.store,
-                &code,
-                ActivationEntry::Symbol("_start".to_string()),
-            )
+            .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
             .unwrap();
         for class in [
             TargetTrapClass::GuestTrap,
@@ -7492,30 +7122,13 @@ mod tests {
             );
         }
         assert_eq!(executor.traps().len(), 7);
-        assert!(
-            executor
-                .traps()
-                .iter()
-                .any(|trap| trap.class == TargetTrapClass::CodeObjectTrap
-                    && trap.code_object == Some(code.id)
-                    && trap.artifact == Some(code.artifact_id))
-        );
+        assert!(executor.traps().iter().any(|trap| trap.class == TargetTrapClass::CodeObjectTrap
+            && trap.code_object == Some(code.id)
+            && trap.artifact == Some(code.artifact_id)));
         let migration = executor.classify_migration_objects(core::slice::from_ref(&code));
-        assert!(
-            migration
-                .iter()
-                .any(|record| record.class == MigrationObjectClass::Migrated)
-        );
-        assert!(
-            migration
-                .iter()
-                .any(|record| record.class == MigrationObjectClass::Rebuilt)
-        );
-        assert!(
-            migration
-                .iter()
-                .any(|record| record.class == MigrationObjectClass::NeverMigrated)
-        );
+        assert!(migration.iter().any(|record| record.class == MigrationObjectClass::Migrated));
+        assert!(migration.iter().any(|record| record.class == MigrationObjectClass::Rebuilt));
+        assert!(migration.iter().any(|record| record.class == MigrationObjectClass::NeverMigrated));
     }
 
     #[test]
@@ -7543,11 +7156,7 @@ mod tests {
         let trap_id = executor
             .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
             .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == trap_id)
-            .unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == trap_id).unwrap();
 
         assert_eq!(trap.store, Some(store.store.id));
         assert_eq!(trap.store_generation, Some(store.store.generation));
@@ -7556,17 +7165,11 @@ mod tests {
         assert_eq!(trap.code_object, Some(code.id));
         assert_eq!(trap.code_generation, Some(code.generation));
         assert_eq!(trap.artifact, Some(code.artifact_id));
-        assert_eq!(
-            trap.artifact_generation,
-            Some(TARGET_ARTIFACT_GENERATION_V1)
-        );
+        assert_eq!(trap.artifact_generation, Some(TARGET_ARTIFACT_GENERATION_V1));
         assert_eq!(trap.offset, Some(offset));
         assert_eq!(trap.trap_kind.as_deref(), Some("wasm-unreachable"));
         assert_eq!(trap.attribution_status, "trap-map-attributed");
-        assert_eq!(
-            trap.classification_status.as_deref(),
-            Some("wasm-unreachable")
-        );
+        assert_eq!(trap.classification_status.as_deref(), Some("wasm-unreachable"));
     }
 
     #[test]
@@ -7595,12 +7198,7 @@ mod tests {
             .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
             .unwrap();
         assert_eq!(
-            executor
-                .traps()
-                .iter()
-                .find(|trap| trap.id == success)
-                .unwrap()
-                .attribution_status,
+            executor.traps().iter().find(|trap| trap.id == success).unwrap().attribution_status,
             "trap-map-attributed"
         );
 
@@ -7614,11 +7212,7 @@ mod tests {
         let unknown_pc = executor
             .trap_exit_by_pc(activation, &code, code.text.end() + 0x1000, &trap_map)
             .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == unknown_pc)
-            .unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == unknown_pc).unwrap();
         assert_eq!(trap.attribution_status, "trap-map-unknown-pc");
         assert_eq!(trap.trap_kind.as_deref(), Some("unknown-code-fault"));
         assert_eq!(trap.code_object, None);
@@ -7630,14 +7224,9 @@ mod tests {
                 ActivationEntry::Symbol("trap_missing_entry".to_string()),
             )
             .unwrap();
-        let missing_entry = executor
-            .trap_exit_by_pc(activation, &code, code.text.start + offset, &[])
-            .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == missing_entry)
-            .unwrap();
+        let missing_entry =
+            executor.trap_exit_by_pc(activation, &code, code.text.start + offset, &[]).unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == missing_entry).unwrap();
         assert_eq!(trap.attribution_status, "trap-map-missing-entry");
         assert_eq!(trap.trap_kind.as_deref(), Some("unknown-code-trap"));
         assert_eq!(trap.code_object, Some(code.id));
@@ -7652,23 +7241,11 @@ mod tests {
         let mut retired_code = code.clone();
         retired_code.state = CodeObjectState::Retired;
         let stale = executor
-            .trap_exit_by_pc(
-                activation,
-                &retired_code,
-                retired_code.text.start + offset,
-                &trap_map,
-            )
+            .trap_exit_by_pc(activation, &retired_code, retired_code.text.start + offset, &trap_map)
             .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == stale)
-            .unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == stale).unwrap();
         assert_eq!(trap.attribution_status, "trap-map-stale-code");
-        assert_eq!(
-            trap.trap_kind.as_deref(),
-            Some("stale-code-execution-fault")
-        );
+        assert_eq!(trap.trap_kind.as_deref(), Some("stale-code-execution-fault"));
     }
 
     #[test]
@@ -7705,22 +7282,12 @@ mod tests {
         let trap_id = executor
             .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
             .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == trap_id)
-            .unwrap();
-        let simd = trap
-            .simd_attribution
-            .as_ref()
-            .expect("SIMD trap attribution");
+        let trap = executor.traps().iter().find(|trap| trap.id == trap_id).unwrap();
+        let simd = trap.simd_attribution.as_ref().expect("SIMD trap attribution");
 
         assert_eq!(trap.class, TargetTrapClass::CodeObjectTrap);
         assert_eq!(trap.trap_kind.as_deref(), Some("simd-unsupported"));
-        assert_eq!(
-            simd.classification,
-            SimdTrapClassification::UnsupportedTargetProfile
-        );
+        assert_eq!(simd.classification, SimdTrapClassification::UnsupportedTargetProfile);
         assert_eq!(simd.required_abi, "riscv-v");
         assert_eq!(simd.target_feature_set, Some(feature_set.object_ref()));
 
@@ -7757,9 +7324,7 @@ mod tests {
             0x84,
             14,
         )];
-        executor
-            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
-            .unwrap();
+        executor.trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map).unwrap();
 
         let snapshot = ContractGraphSnapshot {
             artifacts: Vec::from([artifact]),
@@ -7813,11 +7378,7 @@ mod tests {
         let trap_id = executor
             .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
             .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == trap_id)
-            .unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == trap_id).unwrap();
         let injection = SimdFaultInjectionRecord {
             id: 22_010,
             activation: ContractObjectRef::new(
@@ -7887,14 +7448,9 @@ mod tests {
             0x88,
             15,
         )];
-        let trap_id = executor
-            .trap_exit_by_pc(activation, &code, code.text.start + 0x48, &trap_map)
-            .unwrap();
-        let trap = executor
-            .traps()
-            .iter()
-            .find(|trap| trap.id == trap_id)
-            .unwrap();
+        let trap_id =
+            executor.trap_exit_by_pc(activation, &code, code.text.start + 0x48, &trap_map).unwrap();
+        let trap = executor.traps().iter().find(|trap| trap.id == trap_id).unwrap();
         let injection = SimdFaultInjectionRecord {
             id: 22_010,
             activation: ContractObjectRef::new(
@@ -8468,9 +8024,7 @@ mod tests {
             0x20,
             7,
         )];
-        executor
-            .trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map)
-            .unwrap();
+        executor.trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map).unwrap();
         let fault_generation = store.store.generation;
 
         let cleanup_id = executor
@@ -8507,11 +8061,7 @@ mod tests {
         wrong_code.id += 1;
         let offset = target_abi::RV64_ENTRY_TRAP_EBREAK_OFFSET;
         let trap_map = [TrapMapEntryV1::new(
-            ObjectRefRaw::new(
-                OBJECT_KIND_CODE_OBJECT_V1,
-                wrong_code.id,
-                wrong_code.generation,
-            ),
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, wrong_code.id, wrong_code.generation),
             offset,
             offset + 4,
             TrapKindV1::WasmUnreachable,

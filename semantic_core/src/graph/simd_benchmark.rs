@@ -83,11 +83,7 @@ impl SemanticGraph {
         context_overhead_nanos: u64,
         note: &str,
     ) -> bool {
-        if self
-            .simd_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.simd_benchmarks.iter().any(|record| record.id == benchmark) {
             return false;
         }
         if self
@@ -231,10 +227,7 @@ impl SemanticGraph {
         benchmark: SimdBenchmarkId,
         speedup_milli: u64,
     ) {
-        if let Some(record) = self
-            .simd_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) = self.simd_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.speedup_milli = speedup_milli;
         }

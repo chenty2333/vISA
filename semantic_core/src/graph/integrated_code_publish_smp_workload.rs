@@ -97,10 +97,7 @@ impl SemanticGraph {
             || barrier.code_publish_executed
             || barrier.code_publish_epoch_after != barrier.code_publish_epoch_before + 1
             || barrier.participants.len() < 2
-            || barrier
-                .participants
-                .iter()
-                .any(|participant| !participant.semantic_icache_sync)
+            || barrier.participants.iter().any(|participant| !participant.semantic_icache_sync)
             || rendezvous.state != StopTheWorldRendezvousState::Completed
             || !rendezvous.stop_new_activations
             || rendezvous.participants.len() < 2
@@ -181,9 +178,8 @@ impl SemanticGraph {
         let stress_recorded_at_event = stress.recorded_at_event;
         let generation = 1;
 
-        self.next_integrated_code_publish_smp_workload_id = self
-            .next_integrated_code_publish_smp_workload_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_code_publish_smp_workload_id =
+            self.next_integrated_code_publish_smp_workload_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedCodePublishSmpWorkloadRecorded {
@@ -205,37 +201,36 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_code_publish_smp_workloads
-            .push(IntegratedCodePublishSmpWorkloadRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                smp_stress_run,
-                smp_stress_run_generation,
-                smp_code_publish_barrier,
-                smp_code_publish_barrier_generation,
-                publish_rendezvous,
-                publish_rendezvous_generation,
-                publish_safe_point,
-                publish_safe_point_generation,
-                hart_count,
-                workload_iterations,
-                observed_safe_point_count,
-                observed_rendezvous_count,
-                observed_code_publish_barrier_count,
-                code_publish_epoch_before,
-                code_publish_epoch_after,
-                remote_icache_sync_required,
-                code_publish_executed,
-                participant_count,
-                stress_event_log_cursor,
-                barrier_event,
-                stress_recorded_at_event,
-                invariant_checks,
-                generation,
-                state: IntegratedCodePublishSmpWorkloadState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_code_publish_smp_workloads.push(IntegratedCodePublishSmpWorkloadRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            smp_stress_run,
+            smp_stress_run_generation,
+            smp_code_publish_barrier,
+            smp_code_publish_barrier_generation,
+            publish_rendezvous,
+            publish_rendezvous_generation,
+            publish_safe_point,
+            publish_safe_point_generation,
+            hart_count,
+            workload_iterations,
+            observed_safe_point_count,
+            observed_rendezvous_count,
+            observed_code_publish_barrier_count,
+            code_publish_epoch_before,
+            code_publish_epoch_after,
+            remote_icache_sync_required,
+            code_publish_executed,
+            participant_count,
+            stress_event_log_cursor,
+            barrier_event,
+            stress_recorded_at_event,
+            invariant_checks,
+            generation,
+            state: IntegratedCodePublishSmpWorkloadState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -275,11 +270,9 @@ impl SemanticGraph {
                 || record.invariant_checks == 0
                 || record.recorded_at_event == 0
             {
-                return Err(
-                    SemanticInvariantError::IntegratedCodePublishSmpWorkloadInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedCodePublishSmpWorkloadInvalid {
+                    integrated: record.id,
+                });
             }
             for (label, id, generation, refs) in [
                 (
@@ -344,11 +337,9 @@ impl SemanticGraph {
                 )
                 .is_err()
             {
-                return Err(
-                    SemanticInvariantError::IntegratedCodePublishSmpWorkloadInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedCodePublishSmpWorkloadInvalid {
+                    integrated: record.id,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -395,11 +386,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedCodePublishSmpWorkloadMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedCodePublishSmpWorkloadMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

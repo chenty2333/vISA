@@ -24,11 +24,7 @@ struct Waiter {
 }
 
 impl Waiter {
-    const EMPTY: Self = Self {
-        key: 0,
-        wait_id: 0,
-        active: false,
-    };
+    const EMPTY: Self = Self { key: 0, wait_id: 0, active: false };
 }
 
 #[unsafe(no_mangle)]
@@ -58,11 +54,7 @@ pub extern "C" fn register_wait(key: u64, wait_id: u64) -> i32 {
         for index in 0..MAX_WAITERS {
             let slot = base.add(index);
             if !(*slot).active {
-                *slot = Waiter {
-                    key,
-                    wait_id,
-                    active: true,
-                };
+                *slot = Waiter { key, wait_id, active: true };
                 return 0;
             }
         }

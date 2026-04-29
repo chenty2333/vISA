@@ -7,12 +7,14 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use service_core::net::{NetCoreState, QUEUE_CAPACITY};
-use service_core::net_contract::{
-    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
-    VIRTIO_NET0_TX_QUEUE_DEPTH,
+use service_core::{
+    net::{NetCoreState, QUEUE_CAPACITY},
+    net_contract::{
+        NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+        VIRTIO_NET0_TX_QUEUE_DEPTH,
+    },
+    packet::PACKET_FRAME_CAPACITY,
 };
-use service_core::packet::PACKET_FRAME_CAPACITY;
 use vmos_abi::ERR_EIO;
 
 const REQUEST_CAPACITY: usize = 2048;
@@ -115,9 +117,7 @@ pub extern "C" fn recv_socket(socket_id: u32, count: u32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn deliver_packet_frame(len: u32) -> i64 {
-    let len = (len as usize)
-        .min(REQUEST_CAPACITY)
-        .min(PACKET_FRAME_CAPACITY);
+    let len = (len as usize).min(REQUEST_CAPACITY).min(PACKET_FRAME_CAPACITY);
     let bytes = unsafe { core::slice::from_raw_parts(addr_of_mut!(REQUEST) as *const u8, len) };
     match unsafe { state().deliver_packet_frame(bytes) } {
         Ok(Some(ready_key)) => ready_key as i64,

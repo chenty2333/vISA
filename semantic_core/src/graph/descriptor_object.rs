@@ -13,11 +13,7 @@ impl SemanticGraph {
         if descriptor == 0 {
             return Err("descriptor object id=0 is invalid");
         }
-        if self
-            .descriptor_objects
-            .iter()
-            .any(|record| record.id == descriptor)
-        {
+        if self.descriptor_objects.iter().any(|record| record.id == descriptor) {
             return Err("descriptor object already exists");
         }
         if length == 0 {
@@ -183,10 +179,8 @@ impl SemanticGraph {
         descriptor: DescriptorObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .descriptor_objects
-            .iter_mut()
-            .find(|record| record.id == descriptor)
+        if let Some(record) =
+            self.descriptor_objects.iter_mut().find(|record| record.id == descriptor)
         {
             record.queue_generation = generation;
         }

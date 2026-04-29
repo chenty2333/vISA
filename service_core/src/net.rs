@@ -1,8 +1,12 @@
-use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
-use crate::packet::{
-    DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP, PacketFrameMeta, decode_frame, encode_frame,
-};
 use vmos_abi::{EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
+
+use crate::{
+    net_contract::{canonical_socket_protocol, validate_linux_socket_contract},
+    packet::{
+        DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP, PacketFrameMeta, decode_frame,
+        encode_frame,
+    },
+};
 
 pub const MAX_SOCKETS: usize = 16;
 pub const QUEUE_CAPACITY: usize = 512;
@@ -175,11 +179,7 @@ impl NetCoreState {
 
     pub fn queued_rx_bytes(&self) -> u32 {
         self.sockets.iter().fold(0u32, |acc, socket| {
-            if socket.active {
-                acc.saturating_add(socket.rx_len as u32)
-            } else {
-                acc
-            }
+            if socket.active { acc.saturating_add(socket.rx_len as u32) } else { acc }
         })
     }
 
@@ -214,9 +214,7 @@ mod tests {
     fn packet_frame_routes_to_matching_socket_endpoint() {
         let mut state = NetCoreState::new();
         let socket = state.create_socket(2, 1, 0).unwrap();
-        state
-            .send_socket(socket, b"GET / HTTP/1.0\r\n\r\n")
-            .unwrap();
+        state.send_socket(socket, b"GET / HTTP/1.0\r\n\r\n").unwrap();
 
         let mut tx_frame = [0u8; PACKET_FRAME_CAPACITY];
         let tx_frame_len = state.take_tx_frame(socket, &mut tx_frame).unwrap();
@@ -234,9 +232,7 @@ mod tests {
 
         assert_eq!(ready_key, Some(READY_KEY_BASE | socket as u64));
         let mut out = [0u8; 64];
-        let len = state
-            .recv_socket(socket, out.len() as u32, &mut out)
-            .unwrap();
+        let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
         assert_eq!(&out[..len as usize], payload);
     }
 

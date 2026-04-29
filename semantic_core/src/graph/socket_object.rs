@@ -39,10 +39,7 @@ impl SemanticGraph {
         else {
             return Err("socket object owner store generation is missing");
         };
-        if matches!(
-            store.state,
-            StoreState::Dead | StoreState::Faulted | StoreState::Cleaning
-        ) {
+        if matches!(store.state, StoreState::Dead | StoreState::Faulted | StoreState::Cleaning) {
             return Err("socket object owner store is not live");
         }
         if canonical_socket_protocol(domain, socket_type, protocol).is_none() {
@@ -168,13 +165,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::SocketObjectInvalid { socket: record.id });
             }
-            if self
-                .socket_objects
-                .iter()
-                .filter(|other| other.id == record.id)
-                .count()
-                > 1
-            {
+            if self.socket_objects.iter().filter(|other| other.id == record.id).count() > 1 {
                 return Err(SemanticInvariantError::SocketObjectDuplicate { socket: record.id });
             }
             if !self.event_log.events.iter().any(|event| {
@@ -220,11 +211,7 @@ impl SemanticGraph {
         socket: SocketObjectId,
         adapter_generation: Generation,
     ) {
-        if let Some(record) = self
-            .socket_objects
-            .iter_mut()
-            .find(|record| record.id == socket)
-        {
+        if let Some(record) = self.socket_objects.iter_mut().find(|record| record.id == socket) {
             record.adapter_generation = adapter_generation;
         }
     }
@@ -240,11 +227,7 @@ fn canonical_socket_protocol(
         && (protocol == SOCKET_OBJECT_PROTOCOL_UNSPECIFIED
             || protocol == SOCKET_OBJECT_PROTOCOL_TCP as u32)
     {
-        Some((
-            SOCKET_OBJECT_PROTOCOL_TCP,
-            SOCKET_OBJECT_FAMILY_INET,
-            SOCKET_OBJECT_TRANSPORT_TCP,
-        ))
+        Some((SOCKET_OBJECT_PROTOCOL_TCP, SOCKET_OBJECT_FAMILY_INET, SOCKET_OBJECT_TRANSPORT_TCP))
     } else {
         None
     }

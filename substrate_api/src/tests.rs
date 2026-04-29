@@ -1,8 +1,6 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use crate::conformance;
-use crate::*;
+use crate::{conformance, *};
 
 struct BufferConsole {
     bytes: Vec<u8>,
@@ -69,12 +67,7 @@ fn authority_requirements_parse_manifest_tokens() {
     .unwrap();
 
     assert!(requirements.is_satisfied_by(SubstrateCapabilitySet::host_validation()));
-    assert_eq!(
-        AuthorityRequirementSet::from_tokens(["raw-mmio"])
-            .unwrap_err()
-            .token,
-        "raw-mmio"
-    );
+    assert_eq!(AuthorityRequirementSet::from_tokens(["raw-mmio"]).unwrap_err().token, "raw-mmio");
 }
 
 #[test]
@@ -89,10 +82,7 @@ fn missing_optional_and_forbidden_authorities_are_reported() {
             snapshot: SnapshotRequirement::DeterministicReplay,
             ..AuthorityRequirementSet::default()
         },
-        forbidden: AuthorityRequirementSet {
-            mmio: true,
-            ..AuthorityRequirementSet::default()
-        },
+        forbidden: AuthorityRequirementSet { mmio: true, ..AuthorityRequirementSet::default() },
     };
     let mut capabilities = SubstrateCapabilitySet::semantic_harness();
     capabilities.mmio = true;
@@ -106,16 +96,9 @@ fn missing_optional_and_forbidden_authorities_are_reported() {
     );
     assert_eq!(
         report.degraded_optional,
-        vec![AuthorityMismatch::new(
-            "snapshot",
-            "deterministic-replay",
-            "none"
-        )]
+        vec![AuthorityMismatch::new("snapshot", "deterministic-replay", "none")]
     );
-    assert_eq!(
-        report.forbidden_present,
-        vec![AuthorityPresent::new("mmio", "true")]
-    );
+    assert_eq!(report.forbidden_present, vec![AuthorityPresent::new("mmio", "true")]);
 }
 
 #[test]
@@ -147,11 +130,7 @@ fn console_conformance_requires_full_write() {
 #[test]
 fn profile_report_lists_all_missing_required_authorities() {
     let report = SubstrateCapabilitySet::empty().check_profile(SubstrateProfile::GuestFrontend);
-    let missing: Vec<&str> = report
-        .missing_required
-        .iter()
-        .map(|item| item.authority)
-        .collect();
+    let missing: Vec<&str> = report.missing_required.iter().map(|item| item.authority).collect();
 
     assert!(!report.ok);
     assert_eq!(

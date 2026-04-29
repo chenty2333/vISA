@@ -24,11 +24,7 @@ impl SemanticGraph {
         if backpressure == 0 {
             return Err("network backpressure id=0 is invalid");
         }
-        if self
-            .network_backpressures
-            .iter()
-            .any(|record| record.id == backpressure)
-        {
+        if self.network_backpressures.iter().any(|record| record.id == backpressure) {
             return Err("network backpressure already exists");
         }
         if sequence == 0 {
@@ -320,12 +316,10 @@ impl SemanticGraph {
                         && packet_device.generation == record.packet_device_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::NetworkBackpressureMissingPacketDevice {
-                        backpressure: record.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkBackpressureMissingPacketDevice {
+                    backpressure: record.id,
+                    packet_device: record.packet_device,
+                });
             };
             let Some(packet_queue_record) = self.packet_queue_objects.iter().find(|queue| {
                 queue.id == record.packet_queue
@@ -406,12 +400,10 @@ impl SemanticGraph {
                     store.id == endpoint_record.owner_store
                         && store.generation == endpoint_record.owner_store_generation
                 }) else {
-                    return Err(
-                        SemanticInvariantError::NetworkBackpressureMissingOwnerStore {
-                            backpressure: record.id,
-                            store: endpoint_record.owner_store,
-                        },
-                    );
+                    return Err(SemanticInvariantError::NetworkBackpressureMissingOwnerStore {
+                        backpressure: record.id,
+                        store: endpoint_record.owner_store,
+                    });
                 };
                 if store.state == StoreState::Dead {
                     return Err(SemanticInvariantError::NetworkBackpressureInvalid {
@@ -459,13 +451,11 @@ impl SemanticGraph {
                     && other.state == NetworkBackpressureState::Recorded
                     && record.state == NetworkBackpressureState::Recorded
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkBackpressureDuplicateSequence {
-                        backpressure: duplicate.id,
-                        packet_queue: record.packet_queue,
-                        sequence: record.sequence,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkBackpressureDuplicateSequence {
+                    backpressure: duplicate.id,
+                    packet_queue: record.packet_queue,
+                    sequence: record.sequence,
+                });
             }
 
             if !self.event_log.events.iter().any(|event| {
@@ -534,10 +524,8 @@ impl SemanticGraph {
         backpressure: NetworkBackpressureId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_backpressures
-            .iter_mut()
-            .find(|record| record.id == backpressure)
+        if let Some(record) =
+            self.network_backpressures.iter_mut().find(|record| record.id == backpressure)
         {
             record.packet_queue_generation = generation;
         }

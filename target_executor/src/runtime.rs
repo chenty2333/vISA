@@ -1,6 +1,4 @@
-use std::error::Error;
-use std::fs;
-use std::path::PathBuf;
+use std::{error::Error, fs, path::PathBuf};
 
 use contract_core::{
     CODE_PAYLOAD_FORMAT_CWASM, TARGET_ARTIFACT_FORMAT_V1, ValidatedArtifactEntry,
@@ -47,24 +45,15 @@ impl RuntimeOnlyExecutor {
             return Err(format!("{} target artifact hash mismatch", entry.package).into());
         }
         let image = TargetArtifactImage::parse(&target_artifact).map_err(|error| {
-            format!(
-                "{} target artifact validation failed: {error:?}",
-                entry.package
-            )
+            format!("{} target artifact validation failed: {error:?}", entry.package)
         })?;
         let module_bytes = image
             .section_payload(SectionKindV1::CodeObject)
             .map_err(|error| {
-                format!(
-                    "{} code payload extraction failed: {error:?}",
-                    entry.package
-                )
+                format!("{} code payload extraction failed: {error:?}", entry.package)
             })?
             .ok_or_else(|| {
-                format!(
-                    "{} target artifact missing CodeObject section",
-                    entry.package
-                )
+                format!("{} target artifact missing CodeObject section", entry.package)
             })?;
         if sha256_hex(module_bytes) != entry.cwasm_sha256 {
             return Err(format!("{} CodeObject cwasm payload hash mismatch", entry.package).into());
@@ -103,10 +92,7 @@ impl RuntimeOnlyExecutor {
         let payload = image
             .section_payload(SectionKindV1::ProfileRequirements)
             .map_err(|error| {
-                format!(
-                    "{} profile requirements extraction failed: {error:?}",
-                    entry.package
-                )
+                format!("{} profile requirements extraction failed: {error:?}", entry.package)
             })?
             .ok_or_else(|| format!("{} missing ProfileRequirements section", entry.package))?;
         validate_profile_requirements_payload(&entry.package, &self.artifact_profile, payload)
@@ -130,10 +116,7 @@ pub struct HostValidationSmokeTrace {
 }
 
 fn validate_exports(entry: &ValidatedArtifactEntry, module: &Module) -> Result<(), Box<dyn Error>> {
-    let export_names = module
-        .exports()
-        .map(|export| export.name().to_owned())
-        .collect::<Vec<_>>();
+    let export_names = module.exports().map(|export| export.name().to_owned()).collect::<Vec<_>>();
     for expected in &entry.expected_exports {
         if !export_names.iter().any(|name| name == expected) {
             return Err(format!("{} missing export `{expected}`", entry.package).into());
@@ -194,10 +177,7 @@ fn smoke_instance(
             });
         }
     }
-    if matches!(
-        entry.package.as_str(),
-        "driver_virtio_net" | "net_core" | "linux_socket_service"
-    ) {
+    if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core" | "linux_socket_service") {
         check_u32_export_eq(
             instance,
             store,
@@ -299,59 +279,22 @@ fn validate_profile_requirements_payload(
         .map_err(|error| format!("{package} invalid ProfileRequirements JSON: {error}"))?;
     let host_arch = std::env::consts::ARCH;
     let target_arch = std::env::consts::ARCH;
-    check_profile_string(
-        &profile,
-        package,
-        "schema",
-        "vmos-target-profile-requirements-v1",
-    )?;
+    check_profile_string(&profile, package, "schema", "vmos-target-profile-requirements-v1")?;
     check_profile_string(&profile, package, "artifact_profile", artifact_profile)?;
     check_profile_string(&profile, package, "host_arch", host_arch)?;
     check_profile_string(&profile, package, "target_arch", target_arch)?;
-    check_profile_string(
-        &profile,
-        package,
-        "compiler_engine",
-        SUPERVISOR_COMPILER_ENGINE,
-    )?;
+    check_profile_string(&profile, package, "compiler_engine", SUPERVISOR_COMPILER_ENGINE)?;
     check_profile_string(&profile, package, "engine_version", WASMTIME_CRATE_VERSION)?;
-    check_profile_string(
-        &profile,
-        package,
-        "compilation_strategy",
-        WASMTIME_COMPILATION_STRATEGY,
-    )?;
-    check_profile_string(
-        &profile,
-        package,
-        "execution_mode",
-        SUPERVISOR_EXECUTION_MODE,
-    )?;
-    check_profile_string(
-        &profile,
-        package,
-        "target_artifact_format",
-        TARGET_ARTIFACT_FORMAT_V1,
-    )?;
-    check_profile_string(
-        &profile,
-        package,
-        "code_payload_format",
-        CODE_PAYLOAD_FORMAT_CWASM,
-    )?;
-    check_profile_string(
-        &profile,
-        package,
-        "wasm_feature_profile",
-        WASM_FEATURE_PROFILE,
-    )?;
+    check_profile_string(&profile, package, "compilation_strategy", WASMTIME_COMPILATION_STRATEGY)?;
+    check_profile_string(&profile, package, "execution_mode", SUPERVISOR_EXECUTION_MODE)?;
+    check_profile_string(&profile, package, "target_artifact_format", TARGET_ARTIFACT_FORMAT_V1)?;
+    check_profile_string(&profile, package, "code_payload_format", CODE_PAYLOAD_FORMAT_CWASM)?;
+    check_profile_string(&profile, package, "wasm_feature_profile", WASM_FEATURE_PROFILE)?;
     check_profile_bool(&profile, package, "memory64", false)?;
     check_profile_bool(&profile, package, "multi_memory", false)?;
     check_profile_bool(&profile, package, "component_model", false)?;
-    let simd_required = profile
-        .get("simd_required")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| {
+    let simd_required =
+        profile.get("simd_required").and_then(serde_json::Value::as_bool).ok_or_else(|| {
             format!("{package} ProfileRequirements missing bool field `simd_required`")
         })?;
     let simd_abi = profile
@@ -438,12 +381,9 @@ fn check_profile_u64(
     package: &str,
     field: &str,
 ) -> Result<u64, Box<dyn Error>> {
-    profile
-        .get(field)
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| {
-            format!("{package} ProfileRequirements missing integer field `{field}`").into()
-        })
+    profile.get(field).and_then(serde_json::Value::as_u64).ok_or_else(|| {
+        format!("{package} ProfileRequirements missing integer field `{field}`").into()
+    })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -454,13 +394,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use artifact_manifest::{InterfaceRequirementManifest, ResourceLimitsManifest};
     use target_abi::artifact::{
         ArtifactKindCodeV1, CodeFormatCodeV1, TARGET_ARTIFACT_HEADER_LEN, TARGET_ARTIFACT_MAGIC,
         TARGET_ARTIFACT_SCHEMA_MAJOR, TARGET_SECTION_HEADER_LEN, TargetAbiCodeV1, TargetArchCodeV1,
         TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
     };
+
+    use super::*;
 
     #[test]
     fn profile_requirements_accept_current_host_config() {
@@ -525,10 +466,7 @@ mod tests {
     }
 
     fn temp_test_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "vmos-target-executor-{name}-{}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("vmos-target-executor-{name}-{}", std::process::id()))
     }
 
     fn test_entry(path: &str, code_payload: &[u8], image: &[u8]) -> ValidatedArtifactEntry {
@@ -615,22 +553,13 @@ mod tests {
 
     fn target_artifact_with_profile(code_payload: &[u8], profile_payload: &[u8]) -> Vec<u8> {
         let sections = [
-            (
-                SectionKindV1::Manifest,
-                br#"{"package":"test_service"}"#.as_slice(),
-            ),
+            (SectionKindV1::Manifest, br#"{"package":"test_service"}"#.as_slice()),
             (SectionKindV1::CodeObject, code_payload),
-            (
-                SectionKindV1::HostcallImportTable,
-                br#"{"imports":[]}"#.as_slice(),
-            ),
+            (SectionKindV1::HostcallImportTable, br#"{"imports":[]}"#.as_slice()),
             (SectionKindV1::TrapMap, br#"{"entries":[]}"#.as_slice()),
             (SectionKindV1::PcRangeTable, br#"{"entries":[]}"#.as_slice()),
             (SectionKindV1::ProfileRequirements, profile_payload),
-            (
-                SectionKindV1::Signature,
-                br#"{"scheme":"unsigned-research"}"#.as_slice(),
-            ),
+            (SectionKindV1::Signature, br#"{"scheme":"unsigned-research"}"#.as_slice()),
         ];
         let section_table_len = sections.len() * TARGET_SECTION_HEADER_LEN;
         let payload_base = TARGET_ARTIFACT_HEADER_LEN + section_table_len;
@@ -669,13 +598,9 @@ mod tests {
             image_hash: [0; 32],
             flags: 0,
         };
-        header
-            .write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN])
-            .expect("write header");
+        header.write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN]).expect("write header");
         header.image_hash = canonical_zero_field_image_hash(&image).expect("image hash");
-        header
-            .write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN])
-            .expect("write header hash");
+        header.write_to(&mut image[..TARGET_ARTIFACT_HEADER_LEN]).expect("write header hash");
         TargetArtifactImage::parse(&image).expect("valid target artifact image");
         image
     }

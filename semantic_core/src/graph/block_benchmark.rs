@@ -35,11 +35,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("block benchmark id cannot advance generation cursor");
         }
-        if self
-            .block_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.block_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("block benchmark already exists");
         }
         if scenario.is_empty() {
@@ -286,9 +282,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_benchmark_id = self
-            .next_block_benchmark_id
-            .max(benchmark.saturating_add(1));
+        self.next_block_benchmark_id =
+            self.next_block_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockBenchmarkRecorded {
@@ -364,18 +359,14 @@ impl SemanticGraph {
     }
 
     pub fn derive_block_iops(sample_requests: u32, measured_nanos: u64) -> Option<u64> {
-        u64::from(sample_requests)
-            .checked_mul(1_000_000_000)?
-            .checked_div(measured_nanos)
+        u64::from(sample_requests).checked_mul(1_000_000_000)?.checked_div(measured_nanos)
     }
 
     pub fn derive_block_throughput_bytes_per_sec(
         sample_bytes: u64,
         measured_nanos: u64,
     ) -> Option<u64> {
-        sample_bytes
-            .checked_mul(1_000_000_000)?
-            .checked_div(measured_nanos)
+        sample_bytes.checked_mul(1_000_000_000)?.checked_div(measured_nanos)
     }
 
     pub fn check_block_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
@@ -386,9 +377,8 @@ impl SemanticGraph {
                 benchmark.sample_bytes,
                 benchmark.measured_nanos,
             );
-            let accounted_requests = benchmark
-                .read_completed_requests
-                .checked_add(benchmark.write_completed_requests);
+            let accounted_requests =
+                benchmark.read_completed_requests.checked_add(benchmark.write_completed_requests);
             if benchmark.id == 0
                 || benchmark.generation == 0
                 || benchmark.scenario.is_empty()
@@ -663,10 +653,7 @@ impl SemanticGraph {
         benchmark: BlockBenchmarkId,
         iops: u64,
     ) {
-        if let Some(record) = self
-            .block_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) = self.block_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.iops = iops;
         }

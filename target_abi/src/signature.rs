@@ -64,9 +64,7 @@ impl SignatureRecordV1 {
             SignatureSchemeV1::DevEd25519
                 if self.public_key_len == 32 && self.signature_len == 64 =>
             {
-                Some(DevKeyRecordV1 {
-                    public_key: self.public_key,
-                })
+                Some(DevKeyRecordV1 { public_key: self.public_key })
             }
             _ => None,
         }

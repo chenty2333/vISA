@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use semantic_core::{
     ArtifactVerificationState, CodePublishState, EntrypointState, FaultDomainId, HostcallLinkState,
@@ -8,10 +10,12 @@ use semantic_core::{
     StoreRebindReport, StoreState, TrapClass, TrapSurfaceState,
 };
 
-use super::artifacts::{ArtifactLoadPlan, ArtifactManifestBinding, StoreLoadBlueprint};
-use super::engine::{
-    ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout, ExecutorRuntimeState,
-    ExecutorStorePlan, ExecutorTransitionReport,
+use super::{
+    artifacts::{ArtifactLoadPlan, ArtifactManifestBinding, StoreLoadBlueprint},
+    engine::{
+        ExecutorInstanceHandle, ExecutorLoadPlan, ExecutorMemoryLayout, ExecutorRuntimeState,
+        ExecutorStorePlan, ExecutorTransitionReport,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,18 +271,12 @@ impl StoreManager {
         trap: TrapClass,
         detail: &str,
     ) -> Result<StoreMicroReboot, &'static str> {
-        let store = self
-            .store_id(package)
-            .ok_or("store was not registered in store manager")?;
+        let store = self.store_id(package).ok_or("store was not registered in store manager")?;
         let fault_domain = semantic.fault_domain_id(package);
         self.record_trap(semantic, store, trap, detail)?;
         self.set_state(semantic, store, StoreState::Draining)?;
         self.set_state(semantic, store, StoreState::Restarting)?;
-        Ok(StoreMicroReboot {
-            store,
-            fault_domain,
-            trap,
-        })
+        Ok(StoreMicroReboot { store, fault_domain, trap })
     }
 
     pub(crate) fn drop_instance(
@@ -287,16 +285,12 @@ impl StoreManager {
         store: StoreId,
     ) -> Result<StoreDropReport, &'static str> {
         self.record_index(store)?;
-        let report = semantic
-            .drop_store_instance(store)
-            .ok_or("store to drop was not present")?;
+        let report = semantic.drop_store_instance(store).ok_or("store to drop was not present")?;
         self.sync_record(store, semantic)?;
         let transition = {
             let record = self.record_mut(store)?;
-            let transition = record
-                .executor_runtime
-                .mark_dropped()
-                .map_err(|error| error.message())?;
+            let transition =
+                record.executor_runtime.mark_dropped().map_err(|error| error.message())?;
             record.executor_instance.generation += 1;
             record.last_closed_resources = report.closed_resources;
             record.last_revoked_authorities = report.revoked_authorities;
@@ -339,16 +333,13 @@ impl StoreManager {
         store: StoreId,
     ) -> Result<StoreRebindReport, &'static str> {
         self.record_index(store)?;
-        let report = semantic
-            .rebind_store_instance(store)
-            .ok_or("store to rebind was not present")?;
+        let report =
+            semantic.rebind_store_instance(store).ok_or("store to rebind was not present")?;
         self.sync_record(store, semantic)?;
         let transition = {
             let record = self.record_mut(store)?;
-            let transition = record
-                .executor_runtime
-                .mark_rebound()
-                .map_err(|error| error.message())?;
+            let transition =
+                record.executor_runtime.mark_rebound().map_err(|error| error.message())?;
             record.executor_instance.generation += 1;
             record.last_rebound_resource = Some(report.resource);
             transition
@@ -385,9 +376,8 @@ impl StoreManager {
             return Err(error);
         }
         let transition = {
-            let record = self
-                .record_mut(store)
-                .map_err(|_| StoreExecutorActivationError::StoreMissing)?;
+            let record =
+                self.record_mut(store).map_err(|_| StoreExecutorActivationError::StoreMissing)?;
             match record.executor_runtime.publish_code() {
                 Ok(transition) => transition,
                 Err(error) => {
@@ -420,9 +410,8 @@ impl StoreManager {
         store: StoreId,
     ) -> Result<(), StoreExecutorActivationError> {
         let transition = {
-            let record = self
-                .record_mut(store)
-                .map_err(|_| StoreExecutorActivationError::StoreMissing)?;
+            let record =
+                self.record_mut(store).map_err(|_| StoreExecutorActivationError::StoreMissing)?;
             match record.executor_runtime.link_hostcalls() {
                 Ok(transition) => transition,
                 Err(error) => {
@@ -455,9 +444,8 @@ impl StoreManager {
         store: StoreId,
     ) -> Result<(), StoreExecutorActivationError> {
         let transition = {
-            let record = self
-                .record_mut(store)
-                .map_err(|_| StoreExecutorActivationError::StoreMissing)?;
+            let record =
+                self.record_mut(store).map_err(|_| StoreExecutorActivationError::StoreMissing)?;
             let mut transition = match record.executor_runtime.mark_runnable() {
                 Ok(transition) => transition,
                 Err(error) => {
@@ -501,20 +489,14 @@ impl StoreManager {
             let record = self.record_mut(store)?;
             record.last_trap = Some(trap);
             record.state = StoreRuntimeState::Draining;
-            record
-                .executor_runtime
-                .begin_draining()
-                .map_err(|error| error.message())?
+            record.executor_runtime.begin_draining().map_err(|error| error.message())?
         };
         record_executor_transition(semantic, store, transition);
         Ok(())
     }
 
     pub(crate) fn store_id(&self, package: &str) -> Option<StoreId> {
-        self.records
-            .iter()
-            .find(|record| record.package == package)
-            .map(|record| record.store)
+        self.records.iter().find(|record| record.package == package).map(|record| record.store)
     }
 
     fn verify_publish_artifact(
@@ -522,9 +504,7 @@ impl StoreManager {
         semantic: &SemanticGraph,
         store: StoreId,
     ) -> Result<(), StoreExecutorActivationError> {
-        let record = self
-            .record(store)
-            .map_err(|_| StoreExecutorActivationError::StoreMissing)?;
+        let record = self.record(store).map_err(|_| StoreExecutorActivationError::StoreMissing)?;
         let Some(artifact) = semantic.artifact_verification_for_package(record.package) else {
             return Err(StoreExecutorActivationError::MissingArtifactVerification);
         };
@@ -625,14 +605,8 @@ impl StoreManager {
     }
 
     pub(crate) fn lifecycle_line(&self, semantic: &SemanticGraph, package: &str) -> Option<String> {
-        let record = self
-            .records
-            .iter()
-            .find(|record| record.package == package)?;
-        let semantic_store = semantic
-            .stores()
-            .iter()
-            .find(|item| item.id == record.store)?;
+        let record = self.records.iter().find(|record| record.package == package)?;
+        let semantic_store = semantic.stores().iter().find(|item| item.id == record.store)?;
         let last_dropped = record
             .last_dropped_resource
             .map(|resource| resource.to_string())
@@ -642,12 +616,8 @@ impl StoreManager {
             .map(|resource| resource.to_string())
             .unwrap_or_else(|| "none".to_string());
         let executor_blocked = record.executor_runtime.blocked_by.unwrap_or("none");
-        let activation_blocked = record
-            .activation
-            .blocked_by
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or("none");
+        let activation_blocked =
+            record.activation.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
         Some(format!(
             "store {} state={} runtime={} executor={} executor_blocked={} activation=code:{} memory:{} hostcalls:{} traps:{} entry:{} blocked:{} activation_generation={} executor_instance={}@{} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} last_closed={} revoked_authorities={} dropped={} rebound={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} trap_surface={} traps={}/{}/{} deps={} exports={} last_trap={}",
             record.package,
@@ -689,19 +659,13 @@ impl StoreManager {
             record.manifest_binding.signer,
             record.manifest_binding.resource_limits.max_memory_pages,
             record.manifest_binding.resource_limits.max_table_elements,
-            record
-                .manifest_binding
-                .resource_limits
-                .max_hostcalls_per_activation,
+            record.manifest_binding.resource_limits.max_hostcalls_per_activation,
             record.executor_memory.max_memory_pages,
             record.executor_memory.max_table_elements,
             record.executor_memory.dmw_layout,
             record.executor_memory.publish_policy,
             record.executor_runtime.hostcall_table.state.as_str(),
-            record
-                .executor_runtime
-                .hostcall_table
-                .max_hostcalls_per_activation,
+            record.executor_runtime.hostcall_table.max_hostcalls_per_activation,
             record.executor_runtime.hostcall_table.expected_export_count,
             record.executor_runtime.trap_surface.state.as_str(),
             record.executor_runtime.trap_surface.guest_trap,
@@ -709,10 +673,7 @@ impl StoreManager {
             record.executor_runtime.trap_surface.substrate_fault,
             record.dependency_count,
             record.expected_export_count,
-            record
-                .last_trap
-                .map(|trap| trap.fault_class().as_str())
-                .unwrap_or("none")
+            record.last_trap.map(|trap| trap.fault_class().as_str()).unwrap_or("none")
         ))
     }
 
@@ -738,16 +699,21 @@ fn record_executor_transition(
 
 #[cfg(test)]
 mod tests {
-    use super::super::artifacts::StoreResourceLimits;
-    use super::super::engine::{
-        ExecutorHostcallTable, ExecutorStoreState, ExecutorTableState, ExecutorTrapSurface,
-        ExecutorTrapSurfaceState,
-    };
-    use super::*;
     use semantic_core::{
         ArtifactVerificationState, GenerationCheckError, StoreActivationHandle, StoreState,
     };
     use supervisor_catalog::RUNTIME_ONLY_EXECUTOR_ABI;
+
+    use super::{
+        super::{
+            artifacts::StoreResourceLimits,
+            engine::{
+                ExecutorHostcallTable, ExecutorStoreState, ExecutorTableState, ExecutorTrapSurface,
+                ExecutorTrapSurfaceState,
+            },
+        },
+        *,
+    };
 
     fn test_binding(binding: &'static str) -> ArtifactManifestBinding {
         ArtifactManifestBinding {
@@ -809,11 +775,8 @@ mod tests {
             Some("code-publish-not-linked"),
         );
         let activation = semantic.store_activations()[0].clone();
-        let semantic_store = semantic
-            .stores()
-            .iter()
-            .find(|record| record.id == store)
-            .expect("semantic store");
+        let semantic_store =
+            semantic.stores().iter().find(|record| record.id == store).expect("semantic store");
         let manager = StoreManager {
             records: vec![StoreRuntimeRecord {
                 package: "vfs_service",
@@ -828,10 +791,7 @@ mod tests {
                 resource_arena: "store-arena:vfs_service".to_string(),
                 cleanup_policy: "drop-instance-close-store-owned-resources",
                 rebind_policy: "manifest-binding-rebind",
-                executor_instance: ExecutorInstanceHandle {
-                    id: 1,
-                    generation: 1,
-                },
+                executor_instance: ExecutorInstanceHandle { id: 1, generation: 1 },
                 executor_runtime: test_runtime(state),
                 executor_memory: ExecutorMemoryLayout {
                     dmw_layout: "logical-activation-leases-v0",
@@ -910,9 +870,7 @@ mod tests {
         let (mut manager, mut semantic, store) =
             test_manager("binding-a", ExecutorStoreState::ArtifactVerified);
         record_artifact(&mut semantic, "binding-a");
-        let stale = semantic
-            .store_activation_handle(store)
-            .expect("activation handle");
+        let stale = semantic.store_activation_handle(store).expect("activation handle");
 
         assert_eq!(
             manager.try_publish_code(&mut semantic, store),
@@ -938,10 +896,7 @@ mod tests {
         assert_eq!(activation.entrypoint_state, EntrypointState::Runnable);
         assert_eq!(
             semantic.validate_store_activation_handle(stale),
-            Err(GenerationCheckError::GenerationMismatch {
-                expected: 1,
-                actual: Some(4)
-            })
+            Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(4) })
         );
     }
 
@@ -949,13 +904,9 @@ mod tests {
     fn drop_and_rebind_bump_activation_generation() {
         let (mut manager, mut semantic, store) =
             test_manager("binding-a", ExecutorStoreState::Draining);
-        let stale = semantic
-            .store_activation_handle(store)
-            .expect("activation handle");
+        let stale = semantic.store_activation_handle(store).expect("activation handle");
 
-        manager
-            .drop_instance(&mut semantic, store)
-            .expect("drop instance");
+        manager.drop_instance(&mut semantic, store).expect("drop instance");
         let dropped = semantic
             .store_activations()
             .iter()
@@ -964,15 +915,10 @@ mod tests {
         assert_eq!(dropped.code_publish_state, CodePublishState::Dropped);
         assert_eq!(
             semantic.validate_store_activation_handle(stale),
-            Err(GenerationCheckError::GenerationMismatch {
-                expected: 1,
-                actual: Some(2)
-            })
+            Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
         );
 
-        manager
-            .rebind_instance(&mut semantic, store)
-            .expect("rebind instance");
+        manager.rebind_instance(&mut semantic, store).expect("rebind instance");
         let rebound = semantic
             .store_activations()
             .iter()
@@ -984,10 +930,7 @@ mod tests {
 
         assert_eq!(
             semantic.validate_store_activation_handle(StoreActivationHandle::new(store, 2)),
-            Err(GenerationCheckError::GenerationMismatch {
-                expected: 2,
-                actual: Some(3)
-            })
+            Err(GenerationCheckError::GenerationMismatch { expected: 2, actual: Some(3) })
         );
     }
 }

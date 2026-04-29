@@ -1,5 +1,4 @@
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use super::*;
 
@@ -25,11 +24,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp code publish barrier reason is empty");
         }
-        if self
-            .smp_code_publish_barriers
-            .iter()
-            .any(|record| record.id == barrier)
-        {
+        if self.smp_code_publish_barriers.iter().any(|record| record.id == barrier) {
             return Err("smp code publish barrier already exists");
         }
         if code_publish_epoch_after != code_publish_epoch_before + 1 {
@@ -139,23 +134,22 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_code_publish_barriers
-            .push(SmpCodePublishBarrierRecord {
-                id: barrier,
-                rendezvous,
-                rendezvous_generation,
-                rendezvous_epoch: rendezvous_record.epoch,
-                code_publish_epoch_before,
-                code_publish_epoch_after,
-                participants: participants.clone(),
-                remote_icache_sync_required,
-                code_publish_executed,
-                generation: 1,
-                state: SmpCodePublishBarrierState::Validated,
-                validated_at_event: event,
-                reason: reason.to_string(),
-                note: note.to_string(),
-            });
+        self.smp_code_publish_barriers.push(SmpCodePublishBarrierRecord {
+            id: barrier,
+            rendezvous,
+            rendezvous_generation,
+            rendezvous_epoch: rendezvous_record.epoch,
+            code_publish_epoch_before,
+            code_publish_epoch_after,
+            participants: participants.clone(),
+            remote_icache_sync_required,
+            code_publish_executed,
+            generation: 1,
+            state: SmpCodePublishBarrierState::Validated,
+            validated_at_event: event,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
         for participant in participants {
             let _ = self.push_hart_event_attribution(
                 participant.hart,
@@ -184,10 +178,8 @@ impl SemanticGraph {
         barrier: SmpCodePublishBarrierId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .smp_code_publish_barriers
-            .iter_mut()
-            .find(|record| record.id == barrier)
+        if let Some(record) =
+            self.smp_code_publish_barriers.iter_mut().find(|record| record.id == barrier)
         {
             record.validated_at_event = event;
         }
@@ -216,12 +208,10 @@ impl SemanticGraph {
                 record.id == barrier.rendezvous
                     && record.generation == barrier.rendezvous_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::SmpCodePublishBarrierRendezvousMissing {
-                        barrier: barrier.id,
-                        rendezvous: barrier.rendezvous,
-                    },
-                );
+                return Err(SemanticInvariantError::SmpCodePublishBarrierRendezvousMissing {
+                    barrier: barrier.id,
+                    rendezvous: barrier.rendezvous,
+                });
             };
             if rendezvous.state != StopTheWorldRendezvousState::Completed
                 || !rendezvous.stop_new_activations
@@ -269,23 +259,19 @@ impl SemanticGraph {
                     || !participant.semantic_icache_sync
                     || !seen.insert(participant.hart)
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
                 let Some(rendezvous_participant) = rendezvous.participants.iter().find(|record| {
                     record.hart == participant.hart
                         && record.hart_generation == participant.hart_generation
                 }) else {
-                    return Err(
-                        SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 };
                 if rendezvous_participant.hardware_hart != participant.hardware_hart
                     || !matches!(
@@ -293,35 +279,27 @@ impl SemanticGraph {
                         HartState::Idle | HartState::Parked
                     )
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
-                let Some(current_hart) = self
-                    .harts
-                    .iter()
-                    .find(|record| record.id == participant.hart)
+                let Some(current_hart) =
+                    self.harts.iter().find(|record| record.id == participant.hart)
                 else {
-                    return Err(
-                        SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 };
                 if current_hart.generation < participant.hart_generation
                     || (current_hart.generation == participant.hart_generation
                         && !Self::hart_is_code_publish_barrier_quiesced(current_hart))
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCodePublishBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
                 if !self.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == barrier.validated_at_event

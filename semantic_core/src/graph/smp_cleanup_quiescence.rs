@@ -1,5 +1,4 @@
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use super::*;
 
@@ -32,11 +31,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp cleanup quiescence reason is empty");
         }
-        if self
-            .smp_cleanup_quiescence
-            .iter()
-            .any(|record| record.id == quiescence)
-        {
+        if self.smp_cleanup_quiescence.iter().any(|record| record.id == quiescence) {
             return Err("smp cleanup quiescence already exists");
         }
         let Some(cleanup_record) = self
@@ -102,10 +97,7 @@ impl SemanticGraph {
             return Err("smp cleanup quiescence found live capability for dead store");
         }
         if store_record.generation == result_store_generation
-            && self
-                .resources
-                .iter()
-                .any(|record| record.owner_store == Some(store) && record.live)
+            && self.resources.iter().any(|record| record.owner_store == Some(store) && record.live)
         {
             return Err("smp cleanup quiescence found live resource for dead store");
         }
@@ -234,30 +226,29 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.smp_cleanup_quiescence
-            .push(SmpCleanupQuiescenceRecord {
-                id: quiescence,
-                cleanup,
-                cleanup_generation,
-                store,
-                target_store_generation,
-                result_store_generation,
-                activation: cleanup_record.activation,
-                activation_generation_after: cleanup_record.activation_generation_after,
-                rendezvous,
-                rendezvous_generation,
-                rendezvous_epoch: rendezvous_record.epoch,
-                participants: participants.clone(),
-                no_running_activation: true,
-                no_pending_wait: true,
-                no_live_capability: true,
-                no_live_resource: true,
-                generation: 1,
-                state: SmpCleanupQuiescenceState::Validated,
-                validated_at_event: event,
-                reason: reason.to_string(),
-                note: note.to_string(),
-            });
+        self.smp_cleanup_quiescence.push(SmpCleanupQuiescenceRecord {
+            id: quiescence,
+            cleanup,
+            cleanup_generation,
+            store,
+            target_store_generation,
+            result_store_generation,
+            activation: cleanup_record.activation,
+            activation_generation_after: cleanup_record.activation_generation_after,
+            rendezvous,
+            rendezvous_generation,
+            rendezvous_epoch: rendezvous_record.epoch,
+            participants: participants.clone(),
+            no_running_activation: true,
+            no_pending_wait: true,
+            no_live_capability: true,
+            no_live_resource: true,
+            generation: 1,
+            state: SmpCleanupQuiescenceState::Validated,
+            validated_at_event: event,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
         for participant in participants {
             let _ = self.push_hart_event_attribution(
                 participant.hart,
@@ -286,10 +277,8 @@ impl SemanticGraph {
         quiescence: SmpCleanupQuiescenceId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .smp_cleanup_quiescence
-            .iter_mut()
-            .find(|record| record.id == quiescence)
+        if let Some(record) =
+            self.smp_cleanup_quiescence.iter_mut().find(|record| record.id == quiescence)
         {
             record.validated_at_event = event;
         }
@@ -343,12 +332,10 @@ impl SemanticGraph {
                 record.id == quiescence.rendezvous
                     && record.generation == quiescence.rendezvous_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::SmpCleanupQuiescenceRendezvousMissing {
-                        quiescence: quiescence.id,
-                        rendezvous: quiescence.rendezvous,
-                    },
-                );
+                return Err(SemanticInvariantError::SmpCleanupQuiescenceRendezvousMissing {
+                    quiescence: quiescence.id,
+                    rendezvous: quiescence.rendezvous,
+                });
             };
             if rendezvous.state != StopTheWorldRendezvousState::Completed
                 || !rendezvous.stop_new_activations
@@ -361,10 +348,7 @@ impl SemanticGraph {
                     quiescence: quiescence.id,
                 });
             }
-            let Some(store) = self
-                .stores
-                .iter()
-                .find(|record| record.id == quiescence.store)
+            let Some(store) = self.stores.iter().find(|record| record.id == quiescence.store)
             else {
                 return Err(SemanticInvariantError::SmpCleanupQuiescenceStoreLeak {
                     quiescence: quiescence.id,
@@ -465,56 +449,44 @@ impl SemanticGraph {
                     || participant.current_store_generation.is_some()
                     || !seen.insert(participant.hart)
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
-                            quiescence: quiescence.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
+                        quiescence: quiescence.id,
+                        hart: participant.hart,
+                    });
                 }
                 let Some(rendezvous_participant) = rendezvous.participants.iter().find(|record| {
                     record.hart == participant.hart
                         && record.hart_generation == participant.hart_generation
                 }) else {
-                    return Err(
-                        SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
-                            quiescence: quiescence.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
+                        quiescence: quiescence.id,
+                        hart: participant.hart,
+                    });
                 };
                 if rendezvous_participant.hardware_hart != participant.hardware_hart
                     || rendezvous_participant.hart_state != participant.hart_state
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
-                            quiescence: quiescence.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
+                        quiescence: quiescence.id,
+                        hart: participant.hart,
+                    });
                 }
-                let Some(current_hart) = self
-                    .harts
-                    .iter()
-                    .find(|record| record.id == participant.hart)
+                let Some(current_hart) =
+                    self.harts.iter().find(|record| record.id == participant.hart)
                 else {
-                    return Err(
-                        SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
-                            quiescence: quiescence.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
+                        quiescence: quiescence.id,
+                        hart: participant.hart,
+                    });
                 };
                 if current_hart.generation < participant.hart_generation
                     || (current_hart.generation == participant.hart_generation
                         && !Self::hart_is_cleanup_quiesced(current_hart))
                 {
-                    return Err(
-                        SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
-                            quiescence: quiescence.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpCleanupQuiescenceParticipantMismatch {
+                        quiescence: quiescence.id,
+                        hart: participant.hart,
+                    });
                 }
                 if !self.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == quiescence.validated_at_event

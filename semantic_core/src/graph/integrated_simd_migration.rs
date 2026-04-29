@@ -13,11 +13,7 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated SIMD migration id=0 is invalid");
         }
-        if self
-            .integrated_simd_migrations
-            .iter()
-            .any(|record| record.id == integrated)
-        {
+        if self.integrated_simd_migrations.iter().any(|record| record.id == integrated) {
             return Err("integrated SIMD migration evidence already exists");
         }
         if scenario.is_empty() {
@@ -33,11 +29,9 @@ impl SemanticGraph {
         }) else {
             return Err("integrated SIMD migration missing activation migration evidence");
         };
-        let (Some(source_vector_ref), Some(migrated_vector_ref), Some(context)) = (
-            migration.source_vector_state,
-            migration.migrated_vector_state,
-            migration.context,
-        ) else {
+        let (Some(source_vector_ref), Some(migrated_vector_ref), Some(context)) =
+            (migration.source_vector_state, migration.migrated_vector_state, migration.context)
+        else {
             return Err("integrated SIMD migration requires vector migration refs");
         };
         let Some(context_generation_after) = migration.context_generation_after else {
@@ -197,9 +191,8 @@ impl SemanticGraph {
         let target_queue = migration.target_queue;
         let target_queue_generation = migration.target_queue_generation;
         let generation = 1;
-        self.next_integrated_simd_migration_id = self
-            .next_integrated_simd_migration_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_simd_migration_id =
+            self.next_integrated_simd_migration_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSimdMigrationRecorded {
@@ -223,38 +216,37 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_simd_migrations
-            .push(IntegratedSimdMigrationRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                activation_migration,
-                activation_migration_generation,
-                target_feature_set,
-                target_feature_set_generation,
-                source_vector_state,
-                migrated_vector_state,
-                activation,
-                activation_generation_before,
-                activation_generation_after,
-                context,
-                context_generation_after,
-                source_hart,
-                source_hart_generation,
-                target_hart,
-                target_hart_generation,
-                source_queue,
-                source_queue_generation,
-                target_queue,
-                target_queue_generation,
-                simd_abi,
-                vector_register_count,
-                vector_register_bits,
-                invariant_checks,
-                generation,
-                state: IntegratedSimdMigrationState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_simd_migrations.push(IntegratedSimdMigrationRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            activation_migration,
+            activation_migration_generation,
+            target_feature_set,
+            target_feature_set_generation,
+            source_vector_state,
+            migrated_vector_state,
+            activation,
+            activation_generation_before,
+            activation_generation_after,
+            context,
+            context_generation_after,
+            source_hart,
+            source_hart_generation,
+            target_hart,
+            target_hart_generation,
+            source_queue,
+            source_queue_generation,
+            target_queue,
+            target_queue_generation,
+            simd_abi,
+            vector_register_count,
+            vector_register_bits,
+            invariant_checks,
+            generation,
+            state: IntegratedSimdMigrationState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -353,11 +345,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedSimdMigrationMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSimdMigrationMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

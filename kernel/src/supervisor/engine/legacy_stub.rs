@@ -1,10 +1,11 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
+use super::{
+    adapter::RuntimeOnlyExecutor,
+    contract::{ArtifactFormat, SupervisorArtifact},
+};
 use crate::supervisor::types::ServiceCallError;
-
-use super::adapter::RuntimeOnlyExecutor;
-use super::contract::{ArtifactFormat, SupervisorArtifact};
 
 pub(crate) type SupervisorEngine = RuntimeOnlyExecutor;
 pub(crate) type ModuleInstance = ArtifactInstance;
@@ -24,10 +25,7 @@ pub(crate) struct ArtifactFn<Params, Results> {
 
 impl<Params, Results> ArtifactFn<Params, Results> {
     const fn new(export: &'static str) -> Self {
-        Self {
-            export,
-            _marker: PhantomData,
-        }
+        Self { export, _marker: PhantomData }
     }
 
     pub(crate) const fn export(&self) -> &'static str {
@@ -65,10 +63,7 @@ impl ArtifactInstance {
             );
             instantiate_msg
         })?;
-        Ok(Self {
-            package: artifact.package,
-            format: artifact.format,
-        })
+        Ok(Self { package: artifact.package, format: artifact.format })
     }
 
     pub(crate) fn bind<Params, Results>(
@@ -179,13 +174,7 @@ impl BufferedArtifactInstance {
             "missing service response_capacity export",
             "failed to fetch service response_capacity",
         )?;
-        Ok(Self {
-            module,
-            request_ptr,
-            request_capacity,
-            response_ptr,
-            response_capacity,
-        })
+        Ok(Self { module, request_ptr, request_capacity, response_ptr, response_capacity })
     }
 
     pub(crate) fn bind<Params, Results>(
@@ -229,11 +218,7 @@ impl BufferedArtifactInstance {
         if len > self.response_capacity {
             return Err("service response exceeded capacity");
         }
-        self.module.read_memory(
-            self.response_ptr,
-            len,
-            "failed to read service response buffer",
-        )
+        self.module.read_memory(self.response_ptr, len, "failed to read service response buffer")
     }
 }
 
@@ -243,16 +228,10 @@ pub(crate) fn expect_ok(rc: i32) -> Result<(), ServiceCallError> {
     } else if rc < 0 {
         Err(ServiceCallError::Errno(-rc))
     } else {
-        Err(ServiceCallError::Invalid(
-            "service returned an unexpected positive status",
-        ))
+        Err(ServiceCallError::Invalid("service returned an unexpected positive status"))
     }
 }
 
 pub(crate) fn expect_len(rc: i32) -> Result<u32, ServiceCallError> {
-    if rc < 0 {
-        Err(ServiceCallError::Errno(-rc))
-    } else {
-        Ok(rc as u32)
-    }
+    if rc < 0 { Err(ServiceCallError::Errno(-rc)) } else { Ok(rc as u32) }
 }

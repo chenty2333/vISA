@@ -29,11 +29,7 @@ impl SemanticGraph {
         if file_object == 0 {
             return Err("file object id=0 is invalid");
         }
-        if self
-            .file_objects
-            .iter()
-            .any(|record| record.id == file_object)
-        {
+        if self.file_objects.iter().any(|record| record.id == file_object) {
             return Err("file object already exists");
         }
         if buffer_cache_object_generation == 0
@@ -221,9 +217,7 @@ impl SemanticGraph {
                     .checked_add(record.byte_len)
                     .is_none_or(|end| end > record.file_size)
             {
-                return Err(SemanticInvariantError::FileObjectInvalid {
-                    file_object: record.id,
-                });
+                return Err(SemanticInvariantError::FileObjectInvalid { file_object: record.id });
             }
             if let Some(duplicate) = self.file_objects.iter().find(|other| {
                 other.id != record.id
@@ -300,11 +294,7 @@ impl SemanticGraph {
         file_object: FileObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .file_objects
-            .iter_mut()
-            .find(|record| record.id == file_object)
-        {
+        if let Some(record) = self.file_objects.iter_mut().find(|record| record.id == file_object) {
             record.page.generation = generation;
         }
     }

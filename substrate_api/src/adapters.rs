@@ -54,10 +54,6 @@ impl EventQueueAuthority for SimpleEventQueue {
     }
 
     fn pop_event(&mut self) -> Option<SubstrateEvent> {
-        if self.events.is_empty() {
-            None
-        } else {
-            Some(self.events.remove(0))
-        }
+        if self.events.is_empty() { None } else { Some(self.events.remove(0)) }
     }
 }

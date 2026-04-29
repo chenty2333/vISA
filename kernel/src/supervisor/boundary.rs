@@ -1,7 +1,9 @@
 use semantic_core::{BoundaryKind, BoundaryStatus, SemanticGraph};
 
-use super::artifacts::ArtifactLoadPlan;
-use super::engine::{ExecutorLoadPlan, ExecutorTableState};
+use super::{
+    artifacts::ArtifactLoadPlan,
+    engine::{ExecutorLoadPlan, ExecutorTableState},
+};
 
 pub(super) fn publish_boot_boundaries(
     graph: &mut SemanticGraph,

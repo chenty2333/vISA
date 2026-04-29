@@ -1,12 +1,17 @@
 use alloc::vec::Vec;
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn};
-use super::super::types::ServiceCallError;
-use service_core::net_contract::{
-    NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
-    VIRTIO_NET0_TX_QUEUE_DEPTH,
+use service_core::{
+    net_contract::{
+        NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
+        VIRTIO_NET0_TX_QUEUE_DEPTH,
+    },
+    packet::decode_frame,
 };
-use service_core::packet::decode_frame;
+
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn},
+    types::ServiceCallError,
+};
 
 const DRIVER_VIRTIO_NET_WASM: &[u8] = include_bytes!(env!("VMOS_DRIVER_VIRTIO_NET_WASM"));
 
@@ -42,23 +47,14 @@ impl DriverVirtioNetService {
             DRIVER_VIRTIO_NET_WASM,
             "failed to instantiate driver_virtio_net",
         )?;
-        let reset_sequence = io.bind(
-            "reset_sequence",
-            "missing driver_virtio_net reset_sequence export",
-        )?;
-        let submit_tx_frame = io.bind(
-            "submit_tx_frame",
-            "missing driver_virtio_net submit_tx_frame export",
-        )?;
-        let poll_device = io.bind(
-            "poll_device",
-            "missing driver_virtio_net poll_device export",
-        )?;
+        let reset_sequence =
+            io.bind("reset_sequence", "missing driver_virtio_net reset_sequence export")?;
+        let submit_tx_frame =
+            io.bind("submit_tx_frame", "missing driver_virtio_net submit_tx_frame export")?;
+        let poll_device = io.bind("poll_device", "missing driver_virtio_net poll_device export")?;
         let event_len = io.bind("event_len", "missing driver_virtio_net event_len export")?;
-        let dequeue_rx_frame = io.bind(
-            "dequeue_rx_frame",
-            "missing driver_virtio_net dequeue_rx_frame export",
-        )?;
+        let dequeue_rx_frame =
+            io.bind("dequeue_rx_frame", "missing driver_virtio_net dequeue_rx_frame export")?;
         let network_contract_version: WasmFn<(), u32> = io.bind(
             "network_contract_version",
             "missing driver_virtio_net network_contract_version export",
@@ -74,14 +70,8 @@ impl DriverVirtioNetService {
             "missing driver_virtio_net packet_tx_queue_depth export",
         )?;
 
-        let mut service = Self {
-            io,
-            reset_sequence,
-            submit_tx_frame,
-            poll_device,
-            event_len,
-            dequeue_rx_frame,
-        };
+        let mut service =
+            Self { io, reset_sequence, submit_tx_frame, poll_device, event_len, dequeue_rx_frame };
         validate_network_contract(
             &mut service.io,
             &network_contract_version,
@@ -104,23 +94,12 @@ impl DriverVirtioNetService {
         now_ticks: u64,
         frame: &[u8],
     ) -> Result<u32, ServiceCallError> {
-        let len = self
-            .io
-            .write_request(frame)
-            .map_err(ServiceCallError::Invalid)?;
+        let len = self.io.write_request(frame).map_err(ServiceCallError::Invalid)?;
         let submitted = self
             .io
-            .call(
-                &self.submit_tx_frame,
-                (now_ticks, len),
-                "driver_virtio_net trapped",
-            )
+            .call(&self.submit_tx_frame, (now_ticks, len), "driver_virtio_net trapped")
             .map_err(ServiceCallError::Trap)?;
-        if submitted < 0 {
-            Err(ServiceCallError::Errno(-submitted))
-        } else {
-            Ok(submitted as u32)
-        }
+        if submitted < 0 { Err(ServiceCallError::Errno(-submitted)) } else { Ok(submitted as u32) }
     }
 
     pub(crate) fn poll_device(
@@ -156,10 +135,8 @@ impl DriverVirtioNetService {
             if frame_len < 0 {
                 return Err(ServiceCallError::Errno(-frame_len));
             }
-            let frame = self
-                .io
-                .read_response(frame_len as u32)
-                .map_err(ServiceCallError::Invalid)?;
+            let frame =
+                self.io.read_response(frame_len as u32).map_err(ServiceCallError::Invalid)?;
             let payload_len = decode_frame(&frame)
                 .map(|(meta, _)| meta.payload_len)
                 .map_err(|_| ServiceCallError::Invalid("driver returned an invalid frame"))?;
@@ -167,11 +144,7 @@ impl DriverVirtioNetService {
         } else {
             (Vec::new(), len)
         };
-        Ok(DriverNetEvent {
-            kind,
-            len: payload_len,
-            frame,
-        })
+        Ok(DriverNetEvent { kind, len: payload_len, frame })
     }
 }
 

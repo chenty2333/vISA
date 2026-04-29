@@ -1,7 +1,9 @@
 use alloc::vec::Vec;
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
-use super::super::types::ServiceCallError;
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::ServiceCallError,
+};
 
 const FUTEX_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_FUTEX_SERVICE_WASM"));
 
@@ -23,12 +25,7 @@ impl FutexService {
         let wake = io.bind("wake", "missing futex wake export")?;
         let cancel_wait = io.bind("cancel_wait", "missing futex cancel_wait export")?;
 
-        Ok(Self {
-            io,
-            register_wait,
-            wake,
-            cancel_wait,
-        })
+        Ok(Self { io, register_wait, wake, cancel_wait })
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
@@ -45,10 +42,7 @@ impl FutexService {
                 .call(&self.wake, (key, max_count), "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        let bytes = self
-            .io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)?;
+        let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
 
         if bytes.len() % 8 != 0 {
             return Err(ServiceCallError::Invalid(

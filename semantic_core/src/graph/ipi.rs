@@ -119,11 +119,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IpiEventInvalid { ipi: ipi.id });
             }
-            let Some(source) = self
-                .harts
-                .iter()
-                .find(|record| record.id == ipi.source_hart)
-            else {
+            let Some(source) = self.harts.iter().find(|record| record.id == ipi.source_hart) else {
                 return Err(SemanticInvariantError::IpiEventMissingHart {
                     ipi: ipi.id,
                     hart: ipi.source_hart,
@@ -137,11 +133,7 @@ impl SemanticGraph {
                     hart: ipi.source_hart,
                 });
             }
-            let Some(target) = self
-                .harts
-                .iter()
-                .find(|record| record.id == ipi.target_hart)
-            else {
+            let Some(target) = self.harts.iter().find(|record| record.id == ipi.target_hart) else {
                 return Err(SemanticInvariantError::IpiEventMissingHart {
                     ipi: ipi.id,
                     hart: ipi.target_hart,
@@ -189,12 +181,10 @@ impl SemanticGraph {
                     && attribution.hart_generation == ipi.target_hart_generation
                     && attribution.event_kind == "IpiEventTargetRecorded"
             }) {
-                return Err(
-                    SemanticInvariantError::IpiEventMissingHartEventAttribution {
-                        ipi: ipi.id,
-                        event: ipi.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::IpiEventMissingHartEventAttribution {
+                    ipi: ipi.id,
+                    event: ipi.recorded_at_event,
+                });
             }
         }
         Ok(())

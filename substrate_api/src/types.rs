@@ -1,5 +1,4 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::fmt;
 
 pub type Generation = u64;
@@ -56,21 +55,9 @@ pub struct WindowPerms {
 }
 
 impl WindowPerms {
-    pub const READ: Self = Self {
-        read: true,
-        write: false,
-        execute: false,
-    };
-    pub const READ_WRITE: Self = Self {
-        read: true,
-        write: true,
-        execute: false,
-    };
-    pub const READ_EXECUTE: Self = Self {
-        read: true,
-        write: false,
-        execute: true,
-    };
+    pub const READ: Self = Self { read: true, write: false, execute: false };
+    pub const READ_WRITE: Self = Self { read: true, write: true, execute: false };
+    pub const READ_EXECUTE: Self = Self { read: true, write: false, execute: true };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,11 +69,7 @@ pub struct DmaAllocRequest {
 
 impl DmaAllocRequest {
     pub const fn new(device: u64, bytes: usize, alignment: usize) -> Self {
-        Self {
-            device,
-            bytes,
-            alignment,
-        }
+        Self { device, bytes, alignment }
     }
 }
 
@@ -99,11 +82,7 @@ pub struct SubstrateRequester {
 
 impl SubstrateRequester {
     pub fn new(subject: impl Into<String>) -> Self {
-        Self {
-            subject: subject.into(),
-            artifact: None,
-            store: None,
-        }
+        Self { subject: subject.into(), artifact: None, store: None }
     }
 
     pub fn with_artifact(mut self, artifact: ArtifactImageRef) -> Self {
@@ -138,45 +117,23 @@ impl SubstrateEvent {
         operation: &'static str,
         requester: Option<SubstrateRequester>,
     ) -> Self {
-        Self::Unsupported {
-            authority,
-            operation,
-            requester,
-        }
+        Self::Unsupported { authority, operation, requester }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SubstrateError {
-    Unsupported {
-        authority: &'static str,
-        operation: &'static str,
-    },
-    Denied {
-        capability: Option<CapabilityHandle>,
-    },
-    GenerationMismatch {
-        expected: Generation,
-        actual: Option<Generation>,
-    },
-    InvalidObject {
-        object: &'static str,
-    },
-    HardwareFault {
-        authority: &'static str,
-        detail: &'static str,
-    },
-    ContractViolation {
-        detail: &'static str,
-    },
+    Unsupported { authority: &'static str, operation: &'static str },
+    Denied { capability: Option<CapabilityHandle> },
+    GenerationMismatch { expected: Generation, actual: Option<Generation> },
+    InvalidObject { object: &'static str },
+    HardwareFault { authority: &'static str, detail: &'static str },
+    ContractViolation { detail: &'static str },
 }
 
 impl SubstrateError {
     pub const fn unsupported(authority: &'static str, operation: &'static str) -> Self {
-        Self::Unsupported {
-            authority,
-            operation,
-        }
+        Self::Unsupported { authority, operation }
     }
 
     pub const fn denied(capability: Option<CapabilityHandle>) -> Self {
@@ -187,10 +144,9 @@ impl SubstrateError {
 impl fmt::Display for SubstrateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported {
-                authority,
-                operation,
-            } => write!(f, "{authority}::{operation} is unsupported"),
+            Self::Unsupported { authority, operation } => {
+                write!(f, "{authority}::{operation} is unsupported")
+            }
             Self::Denied { capability } => match capability {
                 Some(capability) => write!(
                     f,

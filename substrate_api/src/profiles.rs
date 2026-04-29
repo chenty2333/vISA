@@ -1,5 +1,4 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DmwSupport {
@@ -398,18 +397,8 @@ impl AuthorityRequirementSet {
         let mut out = Vec::new();
         push_bool_missing(&mut out, "console", self.console, capabilities.console);
         push_bool_missing(&mut out, "timer", self.timer, capabilities.timer);
-        push_bool_missing(
-            &mut out,
-            "event-queue",
-            self.event_queue,
-            capabilities.event_queue,
-        );
-        push_bool_missing(
-            &mut out,
-            "guest-memory",
-            self.guest_memory,
-            capabilities.guest_memory,
-        );
+        push_bool_missing(&mut out, "event-queue", self.event_queue, capabilities.event_queue);
+        push_bool_missing(&mut out, "guest-memory", self.guest_memory, capabilities.guest_memory);
         push_bool_missing(
             &mut out,
             "artifact-loading",
@@ -417,20 +406,12 @@ impl AuthorityRequirementSet {
             capabilities.artifact_loading,
         );
         if !self.dmw.is_satisfied_by(capabilities.dmw) {
-            out.push(AuthorityMismatch::new(
-                "dmw",
-                self.dmw.as_str(),
-                capabilities.dmw.as_str(),
-            ));
+            out.push(AuthorityMismatch::new("dmw", self.dmw.as_str(), capabilities.dmw.as_str()));
         }
         push_bool_missing(&mut out, "mmio", self.mmio, capabilities.mmio);
         push_bool_missing(&mut out, "irq", self.irq, capabilities.irq);
         if !self.dma.is_satisfied_by(capabilities.dma) {
-            out.push(AuthorityMismatch::new(
-                "dma",
-                self.dma.as_str(),
-                capabilities.dma.as_str(),
-            ));
+            out.push(AuthorityMismatch::new("dma", self.dma.as_str(), capabilities.dma.as_str()));
         }
         if !self.snapshot.is_satisfied_by(capabilities.snapshot) {
             out.push(AuthorityMismatch::new(
@@ -453,18 +434,8 @@ impl AuthorityRequirementSet {
         let mut out = Vec::new();
         push_bool_present(&mut out, "console", self.console, capabilities.console);
         push_bool_present(&mut out, "timer", self.timer, capabilities.timer);
-        push_bool_present(
-            &mut out,
-            "event-queue",
-            self.event_queue,
-            capabilities.event_queue,
-        );
-        push_bool_present(
-            &mut out,
-            "guest-memory",
-            self.guest_memory,
-            capabilities.guest_memory,
-        );
+        push_bool_present(&mut out, "event-queue", self.event_queue, capabilities.event_queue);
+        push_bool_present(&mut out, "guest-memory", self.guest_memory, capabilities.guest_memory);
         push_bool_present(
             &mut out,
             "artifact-loading",
@@ -480,16 +451,10 @@ impl AuthorityRequirementSet {
             out.push(AuthorityPresent::new("dma", capabilities.dma.as_str()));
         }
         if self.snapshot.is_present_in(capabilities.snapshot) {
-            out.push(AuthorityPresent::new(
-                "snapshot",
-                capabilities.snapshot.as_str(),
-            ));
+            out.push(AuthorityPresent::new("snapshot", capabilities.snapshot.as_str()));
         }
         if self.code_publish.is_present_in(capabilities.code_publish) {
-            out.push(AuthorityPresent::new(
-                "code-publish",
-                capabilities.code_publish.as_str(),
-            ));
+            out.push(AuthorityPresent::new("code-publish", capabilities.code_publish.as_str()));
         }
         out
     }
@@ -558,10 +523,7 @@ pub struct AuthorityRequirementParseError {
 
 impl AuthorityRequirementParseError {
     pub fn unknown(token: &str) -> Self {
-        Self {
-            token: token.into(),
-            reason: "unknown authority requirement",
-        }
+        Self { token: token.into(), reason: "unknown authority requirement" }
     }
 }
 
@@ -685,10 +647,7 @@ impl SnapshotRequirement {
                     | SnapshotSupport::DeterministicReplay
             ),
             Self::CowPagesOrBetter => {
-                matches!(
-                    support,
-                    SnapshotSupport::CowPages | SnapshotSupport::DeterministicReplay
-                )
+                matches!(support, SnapshotSupport::CowPages | SnapshotSupport::DeterministicReplay)
             }
             Self::DeterministicReplay => matches!(support, SnapshotSupport::DeterministicReplay),
         }
@@ -731,10 +690,7 @@ impl CodePublishRequirement {
                     | CodePublishSupport::NativeWx
             ),
             Self::RuntimeOnly => {
-                matches!(
-                    support,
-                    CodePublishSupport::RuntimeOnly | CodePublishSupport::NativeWx
-                )
+                matches!(support, CodePublishSupport::RuntimeOnly | CodePublishSupport::NativeWx)
             }
             Self::NativeWx => matches!(support, CodePublishSupport::NativeWx),
         }
@@ -797,11 +753,7 @@ impl AuthorityMismatch {
         required: &'static str,
         actual: &'static str,
     ) -> Self {
-        Self {
-            authority,
-            required,
-            actual,
-        }
+        Self { authority, required, actual }
     }
 }
 

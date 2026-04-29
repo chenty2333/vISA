@@ -2,10 +2,7 @@ use crate::*;
 
 pub trait ConsoleAuthority {
     fn console_write(&mut self, _bytes: &[u8]) -> SubstrateResult<usize> {
-        Err(SubstrateError::unsupported(
-            "ConsoleAuthority",
-            "console_write",
-        ))
+        Err(SubstrateError::unsupported("ConsoleAuthority", "console_write"))
     }
 }
 
@@ -21,10 +18,7 @@ pub trait TimerAuthority {
 
 pub trait EventQueueAuthority {
     fn push_event(&mut self, _event: SubstrateEvent) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "EventQueueAuthority",
-            "push_event",
-        ))
+        Err(SubstrateError::unsupported("EventQueueAuthority", "push_event"))
     }
 
     fn pop_event(&mut self) -> Option<SubstrateEvent> {
@@ -39,17 +33,11 @@ pub trait GuestMemoryAuthority {
         _ptr: u64,
         _len: usize,
     ) -> SubstrateResult<GuestBytes> {
-        Err(SubstrateError::unsupported(
-            "GuestMemoryAuthority",
-            "copyin",
-        ))
+        Err(SubstrateError::unsupported("GuestMemoryAuthority", "copyin"))
     }
 
     fn copyout(&mut self, _mem: UserMemoryHandle, _ptr: u64, _data: &[u8]) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "GuestMemoryAuthority",
-            "copyout",
-        ))
+        Err(SubstrateError::unsupported("GuestMemoryAuthority", "copyout"))
     }
 }
 
@@ -61,26 +49,17 @@ pub trait DmwAuthority {
         _len: usize,
         _perms: WindowPerms,
     ) -> SubstrateResult<WindowLeaseRef> {
-        Err(SubstrateError::unsupported(
-            "DmwAuthority",
-            "map_user_window",
-        ))
+        Err(SubstrateError::unsupported("DmwAuthority", "map_user_window"))
     }
 
     fn unmap_user_window(&mut self, _lease: WindowLeaseRef) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "DmwAuthority",
-            "unmap_user_window",
-        ))
+        Err(SubstrateError::unsupported("DmwAuthority", "unmap_user_window"))
     }
 }
 
 pub trait ArtifactAuthority {
     fn load_artifact_image(&mut self, _artifact: ArtifactImageRef) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "ArtifactAuthority",
-            "load_artifact_image",
-        ))
+        Err(SubstrateError::unsupported("ArtifactAuthority", "load_artifact_image"))
     }
 }
 
@@ -90,17 +69,11 @@ pub trait CodePublisherAuthority {
         _artifact: ArtifactImageRef,
         _code: CodeObjectRef,
     ) -> SubstrateResult<PublishedCodeRef> {
-        Err(SubstrateError::unsupported(
-            "CodePublisherAuthority",
-            "publish_code",
-        ))
+        Err(SubstrateError::unsupported("CodePublisherAuthority", "publish_code"))
     }
 
     fn unpublish_code(&mut self, _code: PublishedCodeRef) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "CodePublisherAuthority",
-            "unpublish_code",
-        ))
+        Err(SubstrateError::unsupported("CodePublisherAuthority", "unpublish_code"))
     }
 }
 
@@ -145,16 +118,10 @@ pub trait IrqAuthority {
 
 pub trait SnapshotAuthority {
     fn enter_snapshot_barrier(&mut self) -> SubstrateResult<SnapshotBarrierRef> {
-        Err(SubstrateError::unsupported(
-            "SnapshotAuthority",
-            "enter_snapshot_barrier",
-        ))
+        Err(SubstrateError::unsupported("SnapshotAuthority", "enter_snapshot_barrier"))
     }
 
     fn exit_snapshot_barrier(&mut self, _barrier: SnapshotBarrierRef) -> SubstrateResult<()> {
-        Err(SubstrateError::unsupported(
-            "SnapshotAuthority",
-            "exit_snapshot_barrier",
-        ))
+        Err(SubstrateError::unsupported("SnapshotAuthority", "exit_snapshot_barrier"))
     }
 }

@@ -40,10 +40,7 @@ impl SemanticGraph {
                 task.pending_wait = Some(wait);
             }
             self.set_task_state(owner_task, TaskState::Pending);
-            self.tasks
-                .iter()
-                .find(|task| task.id == owner_task)
-                .map(|task| task.generation)
+            self.tasks.iter().find(|task| task.id == owner_task).map(|task| task.generation)
         } else {
             None
         };
@@ -78,48 +75,29 @@ impl SemanticGraph {
         }
         self.event_log.push(
             "wait",
-            EventKind::WaitCreated {
-                wait,
-                task: owner_task.unwrap_or(0),
-                kind,
-                generation,
-            },
+            EventKind::WaitCreated { wait, task: owner_task.unwrap_or(0), kind, generation },
         );
-        self.event_log
-            .push("wait", EventKind::WaitPending { wait, generation });
+        self.event_log.push("wait", EventKind::WaitPending { wait, generation });
     }
 
     pub fn record_wait_resolved(&mut self, wait: WaitId, reason: &str) {
-        let owner_task = self
-            .waits
-            .iter()
-            .find(|record| record.id == wait)
-            .and_then(|record| record.owner_task);
+        let owner_task =
+            self.waits.iter().find(|record| record.id == wait).and_then(|record| record.owner_task);
         if let Some(record) = self.waits.iter_mut().find(|record| record.id == wait) {
             record.state = WaitState::Resolved;
         }
         self.clear_task_wait_if_current(owner_task, wait);
-        self.event_log.push(
-            "wait",
-            EventKind::WaitResolved {
-                wait,
-                reason: reason.to_string(),
-            },
-        );
+        self.event_log.push("wait", EventKind::WaitResolved { wait, reason: reason.to_string() });
     }
 
     pub fn record_wait_consumed(&mut self, wait: WaitId) {
-        let owner_task = self
-            .waits
-            .iter()
-            .find(|record| record.id == wait)
-            .and_then(|record| record.owner_task);
+        let owner_task =
+            self.waits.iter().find(|record| record.id == wait).and_then(|record| record.owner_task);
         if let Some(record) = self.waits.iter_mut().find(|record| record.id == wait) {
             record.state = WaitState::Consumed;
         }
         self.clear_task_wait_if_current(owner_task, wait);
-        self.event_log
-            .push("wait", EventKind::WaitConsumed { wait });
+        self.event_log.push("wait", EventKind::WaitConsumed { wait });
     }
 
     pub fn record_wait_cancelled(&mut self, wait: WaitId, errno: i32) {
@@ -132,39 +110,25 @@ impl SemanticGraph {
         errno: i32,
         reason: WaitCancelReason,
     ) {
-        let owner_task = self
-            .waits
-            .iter()
-            .find(|record| record.id == wait)
-            .and_then(|record| record.owner_task);
+        let owner_task =
+            self.waits.iter().find(|record| record.id == wait).and_then(|record| record.owner_task);
         if let Some(record) = self.waits.iter_mut().find(|record| record.id == wait) {
             record.state = WaitState::Cancelled;
             record.cancel_reason = Some(reason);
         }
         self.clear_task_wait_if_current(owner_task, wait);
-        self.event_log.push(
-            "wait",
-            EventKind::WaitCancelled {
-                wait,
-                errno,
-                reason,
-            },
-        );
+        self.event_log.push("wait", EventKind::WaitCancelled { wait, errno, reason });
     }
 
     pub fn record_wait_interrupted(&mut self, wait: WaitId, reason: WaitCancelReason) {
-        let owner_task = self
-            .waits
-            .iter()
-            .find(|record| record.id == wait)
-            .and_then(|record| record.owner_task);
+        let owner_task =
+            self.waits.iter().find(|record| record.id == wait).and_then(|record| record.owner_task);
         if let Some(record) = self.waits.iter_mut().find(|record| record.id == wait) {
             record.state = WaitState::Interrupted;
             record.cancel_reason = Some(reason);
         }
         self.clear_task_wait_if_current(owner_task, wait);
-        self.event_log
-            .push("wait", EventKind::WaitInterrupted { wait, reason });
+        self.event_log.push("wait", EventKind::WaitInterrupted { wait, reason });
     }
 
     pub fn record_wait_restarted(&mut self, wait: WaitId, class: &str) {
@@ -173,27 +137,17 @@ impl SemanticGraph {
             record.generation += 1;
             record.cancel_reason = None;
         }
-        self.event_log.push(
-            "wait",
-            EventKind::WaitRestarted {
-                wait,
-                class: class.to_string(),
-            },
-        );
+        self.event_log.push("wait", EventKind::WaitRestarted { wait, class: class.to_string() });
     }
 
     pub fn wait_index(&self) -> WaitIndex {
         let mut index = WaitIndex::default();
         for wait in &self.waits {
             if let Some(task) = wait.owner_task {
-                index
-                    .by_task
-                    .push((task, wait.owner_task_generation.unwrap_or(0), wait.id));
+                index.by_task.push((task, wait.owner_task_generation.unwrap_or(0), wait.id));
             }
             if let Some(store) = wait.owner_store {
-                index
-                    .by_store
-                    .push((store, wait.owner_store_generation.unwrap_or(0), wait.id));
+                index.by_store.push((store, wait.owner_store_generation.unwrap_or(0), wait.id));
             }
             if let Some(deadline) = wait.deadline {
                 index.by_deadline.push((deadline, wait.id));
@@ -245,10 +199,7 @@ impl SemanticGraph {
         if activation_wait == 0
             || wait == 0
             || blockers.is_empty() && deadline.is_none()
-            || self
-                .activation_waits
-                .iter()
-                .any(|record| record.id == activation_wait)
+            || self.activation_waits.iter().any(|record| record.id == activation_wait)
             || self.waits.iter().any(|record| record.id == wait)
         {
             return false;
@@ -409,11 +360,8 @@ impl SemanticGraph {
 
         self.record_wait_cancelled_with_reason(wait, errno, reason);
         let owner_task = self.activation_waits[activation_wait_index].owner_task;
-        let Some(owner_task_generation) = self
-            .tasks
-            .iter()
-            .find(|task| task.id == owner_task)
-            .map(|task| task.generation)
+        let Some(owner_task_generation) =
+            self.tasks.iter().find(|task| task.id == owner_task).map(|task| task.generation)
         else {
             return false;
         };
@@ -467,10 +415,8 @@ impl SemanticGraph {
         let Some(owner_task) = owner_task else {
             return;
         };
-        let should_clear = self
-            .tasks
-            .iter()
-            .any(|task| task.id == owner_task && task.pending_wait == Some(wait));
+        let should_clear =
+            self.tasks.iter().any(|task| task.id == owner_task && task.pending_wait == Some(wait));
         if !should_clear {
             return;
         }
@@ -538,10 +484,7 @@ impl SemanticGraph {
         self.waits.len()
     }
     pub fn pending_wait_count(&self) -> usize {
-        self.waits
-            .iter()
-            .filter(|wait| wait.state == WaitState::Pending)
-            .count()
+        self.waits.iter().filter(|wait| wait.state == WaitState::Pending).count()
     }
 
     pub fn activation_wait_count(&self) -> usize {
@@ -616,10 +559,7 @@ impl SemanticGraph {
                     wait: activation_wait.wait,
                 });
             };
-            let Some(task) = self
-                .tasks
-                .iter()
-                .find(|task| task.id == activation_wait.owner_task)
+            let Some(task) = self.tasks.iter().find(|task| task.id == activation_wait.owner_task)
             else {
                 return Err(SemanticInvariantError::ActivationWaitMissingTask {
                     activation_wait: activation_wait.id,

@@ -21,11 +21,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("network driver cleanup reason is empty");
         }
-        if self
-            .network_driver_cleanups
-            .iter()
-            .any(|record| record.id == cleanup)
-        {
+        if self.network_driver_cleanups.iter().any(|record| record.id == cleanup) {
             return Err("network driver cleanup already exists");
         }
         let Some(adapter_record) = self.network_stack_adapters.iter().find(|record| {
@@ -170,32 +166,31 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_driver_cleanups
-            .push(NetworkDriverCleanupRecord {
-                id: cleanup,
-                io_cleanup,
-                io_cleanup_generation: generation,
-                driver_store: binding_record.driver_store,
-                driver_store_generation: binding_record.driver_store_generation,
-                device: binding_record.device,
-                device_generation: binding_record.device_generation,
-                driver_binding: binding_record.id,
-                driver_binding_generation: binding_record.generation,
-                packet_device,
-                packet_device_generation,
-                adapter,
-                adapter_generation,
-                backend,
-                cancelled_socket_waits: Vec::new(),
-                cancelled_wait_tokens: Vec::new(),
-                revoked_packet_capabilities: Vec::new(),
-                generation,
-                state: NetworkDriverCleanupState::Started,
-                started_at_event,
-                completed_at_event: None,
-                reason: reason.to_string(),
-                note: note.to_string(),
-            });
+        self.network_driver_cleanups.push(NetworkDriverCleanupRecord {
+            id: cleanup,
+            io_cleanup,
+            io_cleanup_generation: generation,
+            driver_store: binding_record.driver_store,
+            driver_store_generation: binding_record.driver_store_generation,
+            device: binding_record.device,
+            device_generation: binding_record.device_generation,
+            driver_binding: binding_record.id,
+            driver_binding_generation: binding_record.generation,
+            packet_device,
+            packet_device_generation,
+            adapter,
+            adapter_generation,
+            backend,
+            cancelled_socket_waits: Vec::new(),
+            cancelled_wait_tokens: Vec::new(),
+            revoked_packet_capabilities: Vec::new(),
+            generation,
+            state: NetworkDriverCleanupState::Started,
+            started_at_event,
+            completed_at_event: None,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
 
         if !self.cleanup_io_driver_for_device_fault_with_id(
             io_cleanup,
@@ -219,14 +214,7 @@ impl SemanticGraph {
                     && record.adapter_generation == adapter_generation
                     && record.state == SocketWaitState::Pending
             })
-            .map(|record| {
-                (
-                    record.id,
-                    record.generation,
-                    record.wait,
-                    record.wait_generation,
-                )
-            })
+            .map(|record| (record.id, record.generation, record.wait, record.wait_generation))
             .collect::<Vec<_>>();
         let mut cancelled_socket_waits = Vec::new();
         let mut cancelled_wait_tokens = Vec::new();
@@ -374,12 +362,10 @@ impl SemanticGraph {
                     });
                 }
             } else if cleanup.state != NetworkDriverCleanupState::Started {
-                return Err(
-                    SemanticInvariantError::NetworkDriverCleanupMissingIoCleanup {
-                        cleanup: cleanup.id,
-                        io_cleanup: cleanup.io_cleanup,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkDriverCleanupMissingIoCleanup {
+                    cleanup: cleanup.id,
+                    io_cleanup: cleanup.io_cleanup,
+                });
             }
             let Some(adapter) = self.network_stack_adapters.iter().find(|record| {
                 record.id == cleanup.adapter && record.generation == cleanup.adapter_generation
@@ -393,12 +379,10 @@ impl SemanticGraph {
                 record.id == cleanup.packet_device
                     && record.generation == cleanup.packet_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkDriverCleanupMissingPacketDevice {
-                        cleanup: cleanup.id,
-                        packet_device: cleanup.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkDriverCleanupMissingPacketDevice {
+                    cleanup: cleanup.id,
+                    packet_device: cleanup.packet_device,
+                });
             };
             let Some(backend) = self.virtio_net_backends.iter().find(|record| {
                 record.id == cleanup.backend.id && record.generation == cleanup.backend.generation
@@ -429,12 +413,10 @@ impl SemanticGraph {
                 .chain(cleanup.revoked_packet_capabilities.iter())
             {
                 if !self.io_validation_historical_object_exists(*target) {
-                    return Err(
-                        SemanticInvariantError::NetworkDriverCleanupMissingEffectTarget {
-                            cleanup: cleanup.id,
-                            target: *target,
-                        },
-                    );
+                    return Err(SemanticInvariantError::NetworkDriverCleanupMissingEffectTarget {
+                        cleanup: cleanup.id,
+                        target: *target,
+                    });
                 }
             }
             if cleanup.state == NetworkDriverCleanupState::Completed {

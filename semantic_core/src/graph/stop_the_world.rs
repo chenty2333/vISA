@@ -1,5 +1,4 @@
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use super::*;
 
@@ -145,22 +144,21 @@ impl SemanticGraph {
                 generation: 1,
             },
         );
-        self.stop_the_world_rendezvous
-            .push(StopTheWorldRendezvousRecord {
-                id: rendezvous,
-                epoch,
-                safe_point,
-                safe_point_generation,
-                coordinator_hart: safe_point_record.coordinator_hart,
-                coordinator_hart_generation: safe_point_record.coordinator_hart_generation,
-                participants: participants.clone(),
-                stop_new_activations,
-                generation: 1,
-                state: StopTheWorldRendezvousState::Completed,
-                completed_at_event: event,
-                reason: reason.to_string(),
-                note: note.to_string(),
-            });
+        self.stop_the_world_rendezvous.push(StopTheWorldRendezvousRecord {
+            id: rendezvous,
+            epoch,
+            safe_point,
+            safe_point_generation,
+            coordinator_hart: safe_point_record.coordinator_hart,
+            coordinator_hart_generation: safe_point_record.coordinator_hart_generation,
+            participants: participants.clone(),
+            stop_new_activations,
+            generation: 1,
+            state: StopTheWorldRendezvousState::Completed,
+            completed_at_event: event,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
         for participant in participants {
             let _ = self.push_hart_event_attribution(
                 participant.hart,
@@ -189,10 +187,8 @@ impl SemanticGraph {
         rendezvous: StopTheWorldRendezvousId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .stop_the_world_rendezvous
-            .iter_mut()
-            .find(|record| record.id == rendezvous)
+        if let Some(record) =
+            self.stop_the_world_rendezvous.iter_mut().find(|record| record.id == rendezvous)
         {
             record.completed_at_event = event;
         }
@@ -217,12 +213,10 @@ impl SemanticGraph {
                 record.id == rendezvous.safe_point
                     && record.generation == rendezvous.safe_point_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::StopTheWorldRendezvousSafePointMissing {
-                        rendezvous: rendezvous.id,
-                        safe_point: rendezvous.safe_point,
-                    },
-                );
+                return Err(SemanticInvariantError::StopTheWorldRendezvousSafePointMissing {
+                    rendezvous: rendezvous.id,
+                    safe_point: rendezvous.safe_point,
+                });
             };
             if safe_point.recorded_at_event >= rendezvous.completed_at_event
                 || safe_point.coordinator_hart != rendezvous.coordinator_hart
@@ -285,10 +279,8 @@ impl SemanticGraph {
                         },
                     );
                 }
-                let Some(current_hart) = self
-                    .harts
-                    .iter()
-                    .find(|record| record.id == participant.hart)
+                let Some(current_hart) =
+                    self.harts.iter().find(|record| record.id == participant.hart)
                 else {
                     return Err(
                         SemanticInvariantError::StopTheWorldRendezvousParticipantMismatch {

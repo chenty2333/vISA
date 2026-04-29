@@ -38,11 +38,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("network benchmark id cannot advance generation cursor");
         }
-        if self
-            .network_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.network_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("network benchmark already exists");
         }
         if scenario.is_empty() {
@@ -310,9 +306,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_network_benchmark_id = self
-            .next_network_benchmark_id
-            .max(benchmark.saturating_add(1));
+        self.next_network_benchmark_id =
+            self.next_network_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkBenchmarkRecorded {
@@ -397,9 +392,7 @@ impl SemanticGraph {
         sample_bytes: u64,
         measured_nanos: u64,
     ) -> Option<u64> {
-        sample_bytes
-            .checked_mul(1_000_000_000)?
-            .checked_div(measured_nanos)
+        sample_bytes.checked_mul(1_000_000_000)?.checked_div(measured_nanos)
     }
 
     pub fn check_network_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
@@ -624,12 +617,10 @@ impl SemanticGraph {
                 (record.backpressure, record.backpressure_generation)
             {
                 let Some(backpressure_record) =
-                    self.network_backpressures
-                        .iter()
-                        .find(|backpressure_record| {
-                            backpressure_record.id == backpressure
-                                && backpressure_record.generation == backpressure_generation
-                        })
+                    self.network_backpressures.iter().find(|backpressure_record| {
+                        backpressure_record.id == backpressure
+                            && backpressure_record.generation == backpressure_generation
+                    })
                 else {
                     return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
                         benchmark: record.id,
@@ -729,10 +720,8 @@ impl SemanticGraph {
         benchmark: NetworkBenchmarkId,
         throughput_bytes_per_sec: u64,
     ) {
-        if let Some(record) = self
-            .network_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.network_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.throughput_bytes_per_sec = throughput_bytes_per_sec;
         }

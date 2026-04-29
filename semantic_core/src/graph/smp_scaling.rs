@@ -15,11 +15,7 @@ impl SemanticGraph {
         if benchmark == 0 {
             return Err("smp scaling benchmark id=0 is invalid");
         }
-        if self
-            .smp_scaling_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.smp_scaling_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("smp scaling benchmark already exists");
         }
         if scenario.is_empty() {
@@ -171,12 +167,10 @@ impl SemanticGraph {
             let Some(stress) = self.smp_stress_runs.iter().find(|stress| {
                 stress.id == record.stress_run && stress.generation == record.stress_run_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::SmpScalingBenchmarkMissingStressRun {
-                        benchmark: record.id,
-                        stress_run: record.stress_run,
-                    },
-                );
+                return Err(SemanticInvariantError::SmpScalingBenchmarkMissingStressRun {
+                    benchmark: record.id,
+                    stress_run: record.stress_run,
+                });
             };
             let minimum_workload = stress.iterations as u64 * stress.hart_count as u64;
             let speedup_milli = Self::derive_scaling_speedup_milli(
@@ -251,9 +245,7 @@ impl SemanticGraph {
         if measured_nanos == 0 {
             return None;
         }
-        baseline_nanos
-            .checked_mul(1_000)?
-            .checked_div(measured_nanos)
+        baseline_nanos.checked_mul(1_000)?.checked_div(measured_nanos)
     }
 
     #[cfg(test)]
@@ -262,10 +254,8 @@ impl SemanticGraph {
         benchmark: SmpScalingBenchmarkId,
         speedup_milli: u64,
     ) {
-        if let Some(record) = self
-            .smp_scaling_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.smp_scaling_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.speedup_milli = speedup_milli;
         }

@@ -161,14 +161,7 @@ impl TargetSectionHeaderV1 {
     pub const WIRE_LEN: usize = TARGET_SECTION_HEADER_LEN;
 
     pub const fn new(kind: SectionKindV1, offset: u64, len: u64, align: u32) -> Self {
-        Self {
-            kind,
-            flags: 0,
-            offset,
-            len,
-            align,
-            hash: [0; 32],
-        }
+        Self { kind, flags: 0, offset, len, align, hash: [0; 32] }
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, TargetArtifactError> {
@@ -324,9 +317,7 @@ impl<'a> TargetArtifactImage<'a> {
     }
 
     pub fn section(&self, kind: SectionKindV1) -> Option<TargetSectionHeaderV1> {
-        self.sections()
-            .flatten()
-            .find(|section| section.kind == kind)
+        self.sections().flatten().find(|section| section.kind == kind)
     }
 
     pub fn section_payload(
@@ -368,9 +359,8 @@ impl<'a> TargetArtifactImage<'a> {
             }
         }
 
-        let manifest_section = manifest_section.ok_or(
-            TargetArtifactError::MissingRequiredSection(SectionKindV1::Manifest),
-        )?;
+        let manifest_section = manifest_section
+            .ok_or(TargetArtifactError::MissingRequiredSection(SectionKindV1::Manifest))?;
         verify_manifest_hash(self.bytes, &self.header, &manifest_section)?;
         verify_canonical_zero_field_image_hash(self.bytes)?;
         Ok(())
@@ -518,11 +508,8 @@ fn validate_header(
         TARGET_SECTION_HEADER_LEN,
         TargetArtifactError::SectionTableOutOfBounds,
     )?;
-    let table_end = checked_add(
-        table_off,
-        table_len,
-        TargetArtifactError::SectionTableOutOfBounds,
-    )?;
+    let table_end =
+        checked_add(table_off, table_len, TargetArtifactError::SectionTableOutOfBounds)?;
     if table_end > bytes.len() {
         return Err(TargetArtifactError::SectionTableOutOfBounds);
     }
@@ -559,9 +546,7 @@ fn section_payload<'a>(
         usize::try_from(section.offset).map_err(|_| TargetArtifactError::SectionOutOfBounds)?;
     let len = usize::try_from(section.len).map_err(|_| TargetArtifactError::SectionOutOfBounds)?;
     let end = checked_add(offset, len, TargetArtifactError::SectionOutOfBounds)?;
-    bytes
-        .get(offset..end)
-        .ok_or(TargetArtifactError::SectionOutOfBounds)
+    bytes.get(offset..end).ok_or(TargetArtifactError::SectionOutOfBounds)
 }
 
 fn verify_section_payload_hash(
@@ -609,33 +594,24 @@ fn verify_manifest_hash(
 }
 
 fn required_section_bit(kind: SectionKindV1) -> Option<u16> {
-    REQUIRED_SECTIONS
-        .iter()
-        .position(|required| *required == kind)
-        .map(|index| 1u16 << index)
+    REQUIRED_SECTIONS.iter().position(|required| *required == kind).map(|index| 1u16 << index)
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, TargetArtifactError> {
     let end = checked_add(offset, 2, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, TargetArtifactError> {
     let end = checked_add(offset, 4, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, TargetArtifactError> {
     let end = checked_add(offset, 8, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     Ok(u64::from_le_bytes([
         slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
     ]))
@@ -643,27 +619,21 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, TargetArtifactError> {
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<(), TargetArtifactError> {
     let end = checked_add(offset, 2, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) -> Result<(), TargetArtifactError> {
     let end = checked_add(offset, 4, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) -> Result<(), TargetArtifactError> {
     let end = checked_add(offset, 8, TargetArtifactError::ImageTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(TargetArtifactError::ImageTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(TargetArtifactError::ImageTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
@@ -692,14 +662,8 @@ mod tests {
 
     #[test]
     fn target_artifact_wire_layout_sizes_are_fixed() {
-        assert_eq!(
-            core::mem::size_of::<TargetArtifactHeaderV1>(),
-            TARGET_ARTIFACT_HEADER_LEN
-        );
-        assert_eq!(
-            core::mem::size_of::<TargetSectionHeaderV1>(),
-            TARGET_SECTION_HEADER_LEN
-        );
+        assert_eq!(core::mem::size_of::<TargetArtifactHeaderV1>(), TARGET_ARTIFACT_HEADER_LEN);
+        assert_eq!(core::mem::size_of::<TargetSectionHeaderV1>(), TARGET_SECTION_HEADER_LEN);
     }
 
     #[test]
@@ -709,10 +673,7 @@ mod tests {
 
         assert_eq!(parsed.header().magic, TARGET_ARTIFACT_MAGIC);
         assert_eq!(parsed.header().schema_major, 1);
-        assert_eq!(
-            parsed.header().section_count,
-            REQUIRED_SECTIONS.len() as u32
-        );
+        assert_eq!(parsed.header().section_count, REQUIRED_SECTIONS.len() as u32);
         assert!(parsed.section(SectionKindV1::CodeObject).is_some());
         assert!(parsed.section(SectionKindV1::Signature).is_some());
     }
@@ -722,10 +683,7 @@ mod tests {
         let mut image = fake_image(&REQUIRED_SECTIONS);
         image[0] = b'X';
 
-        assert_eq!(
-            TargetArtifactImage::parse(&image),
-            Err(TargetArtifactError::BadMagic)
-        );
+        assert_eq!(TargetArtifactImage::parse(&image), Err(TargetArtifactError::BadMagic));
     }
 
     #[test]
@@ -756,9 +714,7 @@ mod tests {
 
         assert_eq!(
             TargetArtifactImage::parse(&image),
-            Err(TargetArtifactError::MissingRequiredSection(
-                SectionKindV1::Signature
-            ))
+            Err(TargetArtifactError::MissingRequiredSection(SectionKindV1::Signature))
         );
     }
 
@@ -782,9 +738,7 @@ mod tests {
 
         assert_eq!(
             TargetArtifactImage::parse(&image),
-            Err(TargetArtifactError::SectionHashMismatch(
-                SectionKindV1::CodeObject
-            ))
+            Err(TargetArtifactError::SectionHashMismatch(SectionKindV1::CodeObject))
         );
     }
 
@@ -823,9 +777,7 @@ mod tests {
 
         assert_eq!(
             TargetArtifactImage::parse(&image),
-            Err(TargetArtifactError::SectionHashMismatch(
-                SectionKindV1::Signature
-            ))
+            Err(TargetArtifactError::SectionHashMismatch(SectionKindV1::Signature))
         );
     }
 
@@ -861,9 +813,7 @@ mod tests {
 
         assert_eq!(
             TargetArtifactImage::parse(&image),
-            Err(TargetArtifactError::DuplicateRequiredSection(
-                SectionKindV1::Manifest
-            ))
+            Err(TargetArtifactError::DuplicateRequiredSection(SectionKindV1::Manifest))
         );
     }
 

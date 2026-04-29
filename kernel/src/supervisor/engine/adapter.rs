@@ -1,17 +1,18 @@
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{format, string::String, vec::Vec};
 
 use semantic_core::RuntimeMode;
 use supervisor_catalog::{DMW_LAYOUT, RUNTIME_ONLY_EXECUTOR_ABI};
 
-use super::super::artifacts::{ArtifactLoadPlan, StoreLoadBlueprint};
-use super::contract::{
-    ArtifactFormat, ArtifactLoadError, ExecutorPlanError, RuntimeOnlyProfile, SupervisorArtifact,
-};
-use super::state::{
-    ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorMemoryLayout, ExecutorRuntimeState,
-    ExecutorStoreState, ExecutorTableState, ExecutorTrapSurface,
+use super::{
+    super::artifacts::{ArtifactLoadPlan, StoreLoadBlueprint},
+    contract::{
+        ArtifactFormat, ArtifactLoadError, ExecutorPlanError, RuntimeOnlyProfile,
+        SupervisorArtifact,
+    },
+    state::{
+        ExecutorHostcallTable, ExecutorInstanceHandle, ExecutorMemoryLayout, ExecutorRuntimeState,
+        ExecutorStoreState, ExecutorTableState, ExecutorTrapSurface,
+    },
 };
 
 pub(crate) struct RuntimeOnlyExecutor {
@@ -20,9 +21,7 @@ pub(crate) struct RuntimeOnlyExecutor {
 
 impl Default for RuntimeOnlyExecutor {
     fn default() -> Self {
-        Self {
-            profile: RuntimeOnlyProfile::current(),
-        }
+        Self { profile: RuntimeOnlyProfile::current() }
     }
 }
 
@@ -194,9 +193,5 @@ fn cleanup_policy(fault_policy: &str) -> &'static str {
 }
 
 fn rebind_policy(fault_policy: &str) -> &'static str {
-    if fault_policy == "restartable" {
-        "manifest-binding-rebind"
-    } else {
-        "no-rebind"
-    }
+    if fault_policy == "restartable" { "manifest-binding-rebind" } else { "no-rebind" }
 }

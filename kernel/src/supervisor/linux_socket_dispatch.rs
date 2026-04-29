@@ -1,18 +1,16 @@
-use crate::interrupts;
 use vmos_abi::{ERR_EOPNOTSUPP, ERR_EPERM, PlanKind};
 
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::runtime::PrototypeRuntime;
-use super::types::{FdEntry, FdResource, ServiceCallError};
+use super::{
+    linux::{LinuxCallResult, LinuxPlan},
+    runtime::PrototypeRuntime,
+    types::{FdEntry, FdResource, ServiceCallError},
+};
+use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "socket")
-            .is_err()
-            || self
-                .require_capability("net_core", "net.socket", "create")
-                .is_err()
+        if self.require_capability("linux_syscall", "linux.socket", "socket").is_err()
+            || self.require_capability("net_core", "net.socket", "create").is_err()
         {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
@@ -42,10 +40,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
-        match self
-            .linux_socket
-            .register_socket(socket_id, domain, ty, protocol, ready_key)
-        {
+        match self.linux_socket.register_socket(socket_id, domain, ty, protocol, ready_key) {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -58,10 +53,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let fd = self.alloc_fd(FdEntry {
-            resource: FdResource::Socket {
-                socket_id: socket_id as u64,
-                ready_key,
-            },
+            resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
         });
         if let Some(handle) = self.fd_handle(fd) {
@@ -80,10 +72,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Connect => "connect",
             _ => "socket-state",
         };
-        if self
-            .require_capability("linux_syscall", "linux.socket", operation)
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "linux.socket", operation).is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
 
@@ -131,10 +120,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_accept(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "accept")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "linux.socket", "accept").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "accept fd overflowed")?;
@@ -160,12 +146,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_sendto(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "send")
-            .is_err()
-            || self
-                .require_capability("net_core", "net.socket", "send")
-                .is_err()
+        if self.require_capability("linux_syscall", "linux.socket", "send").is_err()
+            || self.require_capability("net_core", "net.socket", "send").is_err()
         {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
@@ -209,10 +191,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     }
                     Err(ServiceCallError::Invalid(err)) => return Err(err),
                 };
-                match self
-                    .net_driver
-                    .submit_tx_frame(interrupts::tick_count(), &frame)
-                {
+                match self.net_driver.submit_tx_frame(interrupts::tick_count(), &frame) {
                     Ok(_) => {}
                     Err(ServiceCallError::Errno(errno)) => {
                         return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -243,12 +222,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "recv")
-            .is_err()
-            || self
-                .require_capability("net_core", "net.socket", "recv")
-                .is_err()
+        if self.require_capability("linux_syscall", "linux.socket", "recv").is_err()
+            || self.require_capability("net_core", "net.socket", "recv").is_err()
         {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
@@ -283,10 +258,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "setsockopt")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "linux.socket", "setsockopt").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "setsockopt fd overflowed")?;
@@ -304,10 +276,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
-        match self
-            .linux_socket
-            .setsockopt(socket_id, level, optname, optlen)
-        {
+        match self.linux_socket.setsockopt(socket_id, level, optname, optlen) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
@@ -321,10 +290,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "getsockopt")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "linux.socket", "getsockopt").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "getsockopt fd overflowed")?;
@@ -352,10 +318,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_fcntl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "linux.socket", "fcntl")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "linux.socket", "fcntl").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl fd overflowed")?;

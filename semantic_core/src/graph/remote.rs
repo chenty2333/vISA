@@ -18,11 +18,7 @@ impl SemanticGraph {
         if remote_preempt == 0 {
             return Err("remote preempt id=0 is invalid");
         }
-        if self
-            .remote_preempts
-            .iter()
-            .any(|record| record.id == remote_preempt)
-        {
+        if self.remote_preempts.iter().any(|record| record.id == remote_preempt) {
             return Err("remote preempt already exists");
         }
         if source_hart == target_hart {
@@ -66,12 +62,11 @@ impl SemanticGraph {
         {
             return Err("remote preempt ipi source/target mismatch");
         }
-        if self.runnable_queues.iter().any(|record| {
-            record
-                .entries
-                .iter()
-                .any(|entry| entry.activation == activation)
-        }) {
+        if self
+            .runnable_queues
+            .iter()
+            .any(|record| record.entries.iter().any(|entry| entry.activation == activation))
+        {
             return Err("remote preempt activation already queued");
         }
         let Some(queue_record) = self
@@ -252,13 +247,11 @@ impl SemanticGraph {
         );
         self.runtime_activations[activation_index].last_event =
             Some(remote_event.max(state_event).max(queued_event));
-        self.runnable_queues[queue_index]
-            .entries
-            .push(RunnableQueueEntry {
-                activation,
-                activation_generation: activation_generation_after,
-                enqueued_at: queued_event,
-            });
+        self.runnable_queues[queue_index].entries.push(RunnableQueueEntry {
+            activation,
+            activation_generation: activation_generation_after,
+            enqueued_at: queued_event,
+        });
         self.remote_preempts.push(RemotePreemptRecord {
             id: remote_preempt,
             ipi,
@@ -313,10 +306,8 @@ impl SemanticGraph {
         remote_preempt: RemotePreemptId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .remote_preempts
-            .iter_mut()
-            .find(|record| record.id == remote_preempt)
+        if let Some(record) =
+            self.remote_preempts.iter_mut().find(|record| record.id == remote_preempt)
         {
             record.ipi_generation = generation;
         }
@@ -328,10 +319,8 @@ impl SemanticGraph {
         remote_preempt: RemotePreemptId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .remote_preempts
-            .iter_mut()
-            .find(|record| record.id == remote_preempt)
+        if let Some(record) =
+            self.remote_preempts.iter_mut().find(|record| record.id == remote_preempt)
         {
             record.preempted_at_event = event;
         }
@@ -372,10 +361,7 @@ impl SemanticGraph {
                     ipi: remote.ipi,
                 });
             }
-            let Some(source) = self
-                .harts
-                .iter()
-                .find(|record| record.id == remote.source_hart)
+            let Some(source) = self.harts.iter().find(|record| record.id == remote.source_hart)
             else {
                 return Err(SemanticInvariantError::RemotePreemptMissingHart {
                     remote_preempt: remote.id,
@@ -383,17 +369,12 @@ impl SemanticGraph {
                 });
             };
             if source.generation < remote.source_hart_generation {
-                return Err(
-                    SemanticInvariantError::RemotePreemptHartGenerationMismatch {
-                        remote_preempt: remote.id,
-                        hart: remote.source_hart,
-                    },
-                );
+                return Err(SemanticInvariantError::RemotePreemptHartGenerationMismatch {
+                    remote_preempt: remote.id,
+                    hart: remote.source_hart,
+                });
             }
-            let Some(target) = self
-                .harts
-                .iter()
-                .find(|record| record.id == remote.target_hart)
+            let Some(target) = self.harts.iter().find(|record| record.id == remote.target_hart)
             else {
                 return Err(SemanticInvariantError::RemotePreemptMissingHart {
                     remote_preempt: remote.id,
@@ -406,12 +387,10 @@ impl SemanticGraph {
                         || target.current_activation.is_some()
                         || target.current_activation_generation.is_some()))
             {
-                return Err(
-                    SemanticInvariantError::RemotePreemptHartGenerationMismatch {
-                        remote_preempt: remote.id,
-                        hart: remote.target_hart,
-                    },
-                );
+                return Err(SemanticInvariantError::RemotePreemptHartGenerationMismatch {
+                    remote_preempt: remote.id,
+                    hart: remote.target_hart,
+                });
             }
             let queue = self.runnable_queues.iter().find(|record| {
                 record.id == remote.queue && record.generation == remote.queue_generation
@@ -514,12 +493,10 @@ impl SemanticGraph {
                     && attribution.hart_generation == remote.target_hart_generation_after
                     && attribution.event_kind == "RemotePreemptTargetRecorded"
             }) {
-                return Err(
-                    SemanticInvariantError::RemotePreemptMissingHartEventAttribution {
-                        remote_preempt: remote.id,
-                        event: remote.preempted_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::RemotePreemptMissingHartEventAttribution {
+                    remote_preempt: remote.id,
+                    event: remote.preempted_at_event,
+                });
             }
         }
         Ok(())

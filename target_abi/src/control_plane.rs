@@ -1,5 +1,7 @@
-use core::fmt::{self, Write};
-use core::str;
+use core::{
+    fmt::{self, Write},
+    str,
+};
 
 pub const OSCTL_JSONL_FRAME_SCHEMA: &str = "osctl-jsonl-frame-v1";
 pub const OSCTL_CURSOR_SCHEMA: &str = "osctl-cursor-v1";
@@ -71,13 +73,7 @@ pub struct OsctlCursorV1 {
 
 impl OsctlCursorV1 {
     pub const fn new(epoch: u64, stream: OsctlStreamV1, seq: u64, event: u64, view: u64) -> Self {
-        Self {
-            epoch,
-            stream,
-            seq,
-            event,
-            view,
-        }
+        Self { epoch, stream, seq, event, view }
     }
 
     pub fn parse_cli(value: &str) -> Result<Self, ControlPlaneError> {
@@ -174,14 +170,8 @@ pub fn write_jsonl_frame(
     }
     if estimated_len > normal_limit {
         let mut writer = SliceWriter::new(out);
-        write_truncated_frame(
-            &mut writer,
-            frame.seq,
-            frame.kind,
-            estimated_len,
-            normal_limit,
-        )
-        .map_err(|_| ControlPlaneError::BufferTooSmall)?;
+        write_truncated_frame(&mut writer, frame.seq, frame.kind, estimated_len, normal_limit)
+            .map_err(|_| ControlPlaneError::BufferTooSmall)?;
         return Ok(JsonlWriteOutcome {
             bytes_written: writer.len(),
             cursor_advanced: false,
@@ -191,11 +181,7 @@ pub fn write_jsonl_frame(
 
     let mut writer = SliceWriter::new(out);
     write_jsonl_frame_inner(&mut writer, frame).map_err(|_| ControlPlaneError::BufferTooSmall)?;
-    Ok(JsonlWriteOutcome {
-        bytes_written: writer.len(),
-        cursor_advanced: true,
-        truncated: false,
-    })
+    Ok(JsonlWriteOutcome { bytes_written: writer.len(), cursor_advanced: true, truncated: false })
 }
 
 #[repr(C)]
@@ -301,14 +287,7 @@ struct PanicRecordSlotV1 {
 
 impl PanicRecordSlotV1 {
     const EMPTY: Self = Self {
-        header: PanicRecordHeaderV1 {
-            seq: 0,
-            kind: 0,
-            flags: 0,
-            len: 0,
-            crc32: 0,
-            committed: 0,
-        },
+        header: PanicRecordHeaderV1 { seq: 0, kind: 0, flags: 0, len: 0, crc32: 0, committed: 0 },
         payload: [0; PANIC_RECORD_MAX_LEN],
     };
 }
@@ -348,11 +327,7 @@ impl PanicRingV1 {
                 .map_err(|_| ControlPlaneError::BufferTooSmall)?;
                 writer.len()
             };
-            (
-                PanicRecordKindV1::TruncatedPanicRecord,
-                &truncated_payload[..len],
-                true,
-            )
+            (PanicRecordKindV1::TruncatedPanicRecord, &truncated_payload[..len], true)
         } else {
             validate_payload(payload_json)?;
             (kind, payload_json, false)
@@ -386,12 +361,7 @@ impl PanicRingV1 {
 
         self.header.write_seq = seq;
         self.header.write_off = (slot_index * PANIC_RECORD_MAX_LEN) as u32;
-        Ok(PanicWriteOutcome {
-            seq,
-            truncated,
-            overwritten,
-            lost_count: self.header.lost_count,
-        })
+        Ok(PanicWriteOutcome { seq, truncated, overwritten, lost_count: self.header.lost_count })
     }
 
     pub fn dump_jsonl(&self, out: &mut [u8]) -> Result<usize, ControlPlaneError> {
@@ -409,21 +379,14 @@ impl PanicRingV1 {
             let slot_index = ((seq - 1) as usize) % PANIC_RING_SLOT_COUNT;
             let slot = &self.slots[slot_index];
             let valid_len = slot.header.len as usize <= PANIC_RECORD_MAX_LEN;
-            let payload = if valid_len {
-                &slot.payload[..slot.header.len as usize]
-            } else {
-                &[]
-            };
+            let payload = if valid_len { &slot.payload[..slot.header.len as usize] } else { &[] };
             let valid = slot.header.seq == seq
                 && slot.header.committed == 1
                 && valid_len
                 && slot.header.crc32 == crc32(payload);
             if !valid {
-                write!(
-                    writer,
-                    "{{\"schema\":\"panic-ring-corrupt-record-v1\",\"seq\":{seq}}}\n"
-                )
-                .map_err(|_| ControlPlaneError::BufferTooSmall)?;
+                write!(writer, "{{\"schema\":\"panic-ring-corrupt-record-v1\",\"seq\":{seq}}}\n")
+                    .map_err(|_| ControlPlaneError::BufferTooSmall)?;
                 continue;
             }
             let kind = PanicRecordKindV1::from_u16(slot.header.kind)
@@ -451,10 +414,7 @@ impl PanicRingV1 {
         crc32_value: u32,
     ) -> Result<(), ControlPlaneError> {
         let slot_index = ((seq - 1) as usize) % PANIC_RING_SLOT_COUNT;
-        let slot = self
-            .slots
-            .get_mut(slot_index)
-            .ok_or(ControlPlaneError::PanicRecordMissing)?;
+        let slot = self.slots.get_mut(slot_index).ok_or(ControlPlaneError::PanicRecordMissing)?;
         if slot.header.seq != seq {
             return Err(ControlPlaneError::PanicRecordMissing);
         }
@@ -506,10 +466,7 @@ fn write_truncated_frame<W: Write>(
 
 fn parse_field(value: Option<&str>, name: &str) -> Result<u64, ControlPlaneError> {
     let value = value.ok_or(ControlPlaneError::InvalidCursor)?;
-    let Some(raw) = value
-        .strip_prefix(name)
-        .and_then(|rest| rest.strip_prefix('='))
-    else {
+    let Some(raw) = value.strip_prefix(name).and_then(|rest| rest.strip_prefix('=')) else {
         return Err(ControlPlaneError::InvalidCursorField);
     };
     parse_decimal_u64(raw)
@@ -517,10 +474,7 @@ fn parse_field(value: Option<&str>, name: &str) -> Result<u64, ControlPlaneError
 
 fn parse_stream_field(value: Option<&str>, name: &str) -> Result<OsctlStreamV1, ControlPlaneError> {
     let value = value.ok_or(ControlPlaneError::InvalidCursor)?;
-    let Some(raw) = value
-        .strip_prefix(name)
-        .and_then(|rest| rest.strip_prefix('='))
-    else {
+    let Some(raw) = value.strip_prefix(name).and_then(|rest| rest.strip_prefix('=')) else {
         return Err(ControlPlaneError::InvalidCursorField);
     };
     OsctlStreamV1::parse(raw)
@@ -547,10 +501,7 @@ fn parse_decimal_u64(value: &str) -> Result<u64, ControlPlaneError> {
 }
 
 fn validate_json_atom(bytes: &[u8]) -> Result<(), ControlPlaneError> {
-    if bytes
-        .iter()
-        .any(|byte| *byte == b'\n' || *byte == b'\r' || *byte == b'"')
-    {
+    if bytes.iter().any(|byte| *byte == b'\n' || *byte == b'\r' || *byte == b'"') {
         return Err(ControlPlaneError::NewlineInFrame);
     }
     Ok(())
@@ -658,13 +609,7 @@ mod tests {
         assert!(!result.truncated);
         assert!(line.starts_with(r#"{"schema":"osctl-jsonl-frame-v1""#));
         assert!(line.ends_with('\n'));
-        assert_eq!(
-            line.as_bytes()
-                .iter()
-                .filter(|byte| **byte == b'\n')
-                .count(),
-            1
-        );
+        assert_eq!(line.as_bytes().iter().filter(|byte| **byte == b'\n').count(), 1);
     }
 
     #[test]
@@ -703,13 +648,7 @@ mod tests {
         assert!(result.truncated);
         assert!(line.contains(r#""kind":"truncated-frame-v1""#));
         assert!(line.contains(r#""original_kind":"event-log-view-v1""#));
-        assert_eq!(
-            line.as_bytes()
-                .iter()
-                .filter(|byte| **byte == b'\n')
-                .count(),
-            1
-        );
+        assert_eq!(line.as_bytes().iter().filter(|byte| **byte == b'\n').count(), 1);
     }
 
     #[test]
@@ -736,13 +675,7 @@ mod tests {
         assert!(result.truncated);
         assert!(line.contains(r#""kind":"truncated-frame-v1""#));
         assert!(line.contains(r#""limit":65536"#));
-        assert_eq!(
-            line.as_bytes()
-                .iter()
-                .filter(|byte| **byte == b'\n')
-                .count(),
-            1
-        );
+        assert_eq!(line.as_bytes().iter().filter(|byte| **byte == b'\n').count(), 1);
     }
 
     #[test]
@@ -753,8 +686,7 @@ mod tests {
         payload[1] = b'}';
 
         for _ in 0..=PANIC_RING_SLOT_COUNT {
-            ring.push_record(PanicRecordKindV1::PanicRecord, &payload)
-                .expect("panic record");
+            ring.push_record(PanicRecordKindV1::PanicRecord, &payload).expect("panic record");
         }
 
         assert_eq!(ring.header().capacity, PANIC_RING_SIZE as u32);
@@ -770,8 +702,7 @@ mod tests {
         let payload = br#"{"cpu":0,"pc":"0x80200000","reason":"substrate_panic"}"#;
 
         for _ in 0..(PANIC_RING_SLOT_COUNT + 3) {
-            ring.push_record(PanicRecordKindV1::PanicRecord, payload)
-                .expect("panic record");
+            ring.push_record(PanicRecordKindV1::PanicRecord, payload).expect("panic record");
         }
 
         assert_eq!(ring.header().record_count as usize, PANIC_RING_SLOT_COUNT);
@@ -784,9 +715,8 @@ mod tests {
         let mut ring = PanicRingV1::new();
         let payload = [b'a'; PANIC_RECORD_MAX_LEN + 1];
 
-        let result = ring
-            .push_record(PanicRecordKindV1::PanicRecord, &payload)
-            .expect("truncated panic");
+        let result =
+            ring.push_record(PanicRecordKindV1::PanicRecord, &payload).expect("truncated panic");
 
         assert!(result.truncated);
         assert_eq!(ring.header().write_seq, 1);
@@ -825,10 +755,8 @@ mod tests {
         let uncommitted = ring
             .push_record(PanicRecordKindV1::PanicRecord, br#"{"reason":"panic2"}"#)
             .expect("panic record");
-        ring.corrupt_record_for_test(bad_crc.seq, 1, 0)
-            .expect("corrupt record");
-        ring.corrupt_record_for_test(uncommitted.seq, 0, 0)
-            .expect("corrupt record");
+        ring.corrupt_record_for_test(bad_crc.seq, 1, 0).expect("corrupt record");
+        ring.corrupt_record_for_test(uncommitted.seq, 0, 0).expect("corrupt record");
         let mut out = [0u8; 512];
 
         let len = ring.dump_jsonl(&mut out).expect("dump panic ring");

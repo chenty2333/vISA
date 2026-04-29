@@ -5,10 +5,12 @@ use vmos_abi::{
     SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, StepTag, SyscallContext,
 };
 
-use super::events::Event;
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::runtime::PrototypeRuntime;
-use super::types::{FdResource, ServiceCallError, WaitRestartClass, WaitToken};
+use super::{
+    events::Event,
+    linux::{LinuxCallResult, LinuxPlan},
+    runtime::PrototypeRuntime,
+    types::{FdResource, ServiceCallError, WaitRestartClass, WaitToken},
+};
 
 const CURRENT_CWD: &[u8] = b"/sandbox";
 const UNAME_BYTES: &[u8] = b"prototype2";
@@ -96,8 +98,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.restart_count
     }
     pub(crate) fn inject_wait_restart(&mut self, token: WaitToken, class: WaitRestartClass) {
-        self.scheduler
-            .push_event(Event::WaitRestart(token.id, class));
+        self.scheduler.push_event(Event::WaitRestart(token.id, class));
     }
     pub(crate) fn fd_path(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
         self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
@@ -109,12 +110,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {
-        self.lookup_path(path)
-            .map(|info| info.node)
-            .map_err(|err| match err {
-                ServiceCallError::Errno(errno) => errno,
-                ServiceCallError::Trap(_) | ServiceCallError::Invalid(_) => vmos_abi::ERR_EINVAL,
-            })
+        self.lookup_path(path).map(|info| info.node).map_err(|err| match err {
+            ServiceCallError::Errno(errno) => errno,
+            ServiceCallError::Trap(_) | ServiceCallError::Invalid(_) => vmos_abi::ERR_EINVAL,
+        })
     }
     pub(crate) fn dispatch_linux_syscall(
         &mut self,
@@ -152,9 +151,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         timeout_ms: u64,
         current_word: u64,
     ) -> Result<LinuxCallResult, &'static str> {
-        let step = self
-            .linux
-            .dispatch_futex_raw(key, op, val, timeout_ms, current_word)?;
+        let step = self.linux.dispatch_futex_raw(key, op, val, timeout_ms, current_word)?;
         self.execute_linux_step(label, step)
     }
     pub(crate) fn uname_abi(&mut self) -> Result<Vec<u8>, &'static str> {
@@ -162,9 +159,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.linux.encode_uname(&release)
     }
     pub(crate) fn getdents64_abi(&mut self, fd: u32, count: u32) -> Result<Vec<u8>, &'static str> {
-        let dir_path = self
-            .fd_path(fd)
-            .map_err(|_| "getdents64 targeted an unknown fd")?;
+        let dir_path = self.fd_path(fd).map_err(|_| "getdents64 targeted an unknown fd")?;
         let listing = self.getdents(fd, count)?;
         let records = self.build_dirent_records(&dir_path, &listing)?;
         self.linux.encode_dirents64(&records, count)

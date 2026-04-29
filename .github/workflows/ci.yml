@@ -1,0 +1,27 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown,x86_64-unknown-none
+          components: rustfmt,clippy
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Check host targets
+        run: cargo check --workspace --all-targets
+
+      - name: Check wasm targets
+        run: cargo check -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p replay_snapshot -p vfs_service -p wasm_app --target wasm32-unknown-unknown
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: File size gate
+        run: bash scripts/check-file-size.sh

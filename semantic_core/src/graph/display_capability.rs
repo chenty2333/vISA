@@ -17,11 +17,7 @@ impl SemanticGraph {
         if display_capability == 0 {
             return Err("display capability id=0 is invalid");
         }
-        if self
-            .display_capabilities
-            .iter()
-            .any(|record| record.id == display_capability)
-        {
+        if self.display_capabilities.iter().any(|record| record.id == display_capability) {
             return Err("display capability already exists");
         }
         if owner_store_generation == 0
@@ -33,10 +29,7 @@ impl SemanticGraph {
             return Err("display capability identity values must be nonzero");
         }
         if !operations.iter().all(|operation| {
-            matches!(
-                operation.as_str(),
-                "flush" | "present" | "lease" | "inspect"
-            )
+            matches!(operation.as_str(), "flush" | "present" | "lease" | "inspect")
         }) {
             return Err("display capability operation is unsupported");
         }
@@ -70,30 +63,20 @@ impl SemanticGraph {
         {
             return Err("display capability handle mismatch");
         }
-        if !operations
-            .iter()
-            .all(|operation| handle.rights_hint.contains(operation))
-        {
+        if !operations.iter().all(|operation| handle.rights_hint.contains(operation)) {
             return Err("display capability handle rights are insufficient");
         }
         let authority =
             AuthorityObjectRef::internal(CapabilityClass::Display, display_record.object_ref());
         let capability_record = self
             .capabilities
-            .check_authority(
-                &store_record.package,
-                authority,
-                &operations[0],
-                Some(handle),
-            )
+            .check_authority(&store_record.package, authority, &operations[0], Some(handle))
             .map_err(|_| "display capability handle is not authorized")?;
         if capability_record.id != capability
             || capability_record.generation != capability_generation
             || capability_record.owner_store != Some(owner_store)
             || capability_record.owner_store_generation != Some(owner_store_generation)
-            || !operations
-                .iter()
-                .all(|operation| capability_record.operations.contains(operation))
+            || !operations.iter().all(|operation| capability_record.operations.contains(operation))
             || !capability_record.manifest_decl
         {
             return Err("display capability attribution mismatch");
@@ -151,9 +134,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_display_capability_id = self
-            .next_display_capability_id
-            .max(display_capability.saturating_add(1));
+        self.next_display_capability_id =
+            self.next_display_capability_id.max(display_capability.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayCapabilityRecorded {
@@ -226,12 +208,10 @@ impl SemanticGraph {
                 framebuffer.id == record.framebuffer
                     && framebuffer.generation == record.framebuffer_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::DisplayCapabilityMissingFramebuffer {
-                        display_capability: record.id,
-                        framebuffer: record.framebuffer,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayCapabilityMissingFramebuffer {
+                    display_capability: record.id,
+                    framebuffer: record.framebuffer,
+                });
             };
             let Some(capability_record) = self.capabilities.record(record.capability) else {
                 return Err(SemanticInvariantError::DisplayCapabilityMissingCapability {
@@ -250,10 +230,7 @@ impl SemanticGraph {
                 || record.framebuffer_generation == 0
                 || record.capability_generation == 0
                 || record.operations.is_empty()
-                || record
-                    .operations
-                    .iter()
-                    .any(|operation| operation.is_empty())
+                || record.operations.iter().any(|operation| operation.is_empty())
                 || (!active && !revoked)
                 || (active && store_record.state == StoreState::Dead)
                 || display_record.state != DisplayObjectState::Registered
@@ -346,10 +323,8 @@ impl SemanticGraph {
         display_capability: DisplayCapabilityId,
         capability_generation: Generation,
     ) {
-        if let Some(record) = self
-            .display_capabilities
-            .iter_mut()
-            .find(|record| record.id == display_capability)
+        if let Some(record) =
+            self.display_capabilities.iter_mut().find(|record| record.id == display_capability)
         {
             record.capability_generation = capability_generation;
         }

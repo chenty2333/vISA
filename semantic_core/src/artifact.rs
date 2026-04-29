@@ -1,5 +1,4 @@
-use alloc::format;
-use alloc::string::String;
+use alloc::{format, string::String};
 
 use super::*;
 
@@ -44,11 +43,7 @@ pub struct ArtifactVerificationRecord {
 
 impl ArtifactVerificationRecord {
     pub fn summary(&self) -> String {
-        let blocked_by = self
-            .blocked_by
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or("none");
+        let blocked_by = self.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
         format!(
             "artifact {} name={} state={} binding={} artifact_hash={} hash_status={} abi={} signature={} signature_status={} signature_verified={} signer={} blocked={} generation={}",
             self.package,

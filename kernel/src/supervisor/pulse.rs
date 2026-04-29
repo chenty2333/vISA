@@ -35,11 +35,7 @@ impl PulseDevice {
     }
 
     pub(crate) fn ready_key_for_path(path: &[u8]) -> Option<u64> {
-        if path == b"/dev/pulse" {
-            Some(PULSE_READY_KEY)
-        } else {
-            None
-        }
+        if path == b"/dev/pulse" { Some(PULSE_READY_KEY) } else { None }
     }
 
     pub(crate) fn collect_events(&mut self, now_ticks: u64, out: &mut Vec<PulseEvent>) {

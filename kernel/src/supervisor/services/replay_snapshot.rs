@@ -1,5 +1,7 @@
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_ok};
-use super::super::types::ServiceCallError;
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_ok},
+    types::ServiceCallError,
+};
 
 const REPLAY_SNAPSHOT_WASM: &[u8] = include_bytes!(env!("VMOS_REPLAY_SNAPSHOT_WASM"));
 
@@ -17,24 +19,13 @@ impl ReplaySnapshotService {
             REPLAY_SNAPSHOT_WASM,
             "failed to instantiate replay_snapshot",
         )?;
-        let validate_barrier = io.bind(
-            "validate_barrier",
-            "missing replay_snapshot validate_barrier export",
-        )?;
-        let replay_until = io.bind(
-            "replay_until",
-            "missing replay_snapshot replay_until export",
-        )?;
-        let last_replay_cursor = io.bind(
-            "last_replay_cursor",
-            "missing replay_snapshot last_replay_cursor export",
-        )?;
-        Ok(Self {
-            io,
-            validate_barrier,
-            replay_until,
-            last_replay_cursor,
-        })
+        let validate_barrier =
+            io.bind("validate_barrier", "missing replay_snapshot validate_barrier export")?;
+        let replay_until =
+            io.bind("replay_until", "missing replay_snapshot replay_until export")?;
+        let last_replay_cursor =
+            io.bind("last_replay_cursor", "missing replay_snapshot last_replay_cursor export")?;
+        Ok(Self { io, validate_barrier, replay_until, last_replay_cursor })
     }
 
     pub(crate) fn validate_barrier(
@@ -48,12 +39,7 @@ impl ReplaySnapshotService {
             self.io
                 .call(
                     &self.validate_barrier,
-                    (
-                        pending_waits,
-                        active_transactions,
-                        active_dmw_leases,
-                        pending_dma,
-                    ),
+                    (pending_waits, active_transactions, active_dmw_leases, pending_dma),
                     "replay_snapshot trapped",
                 )
                 .map_err(ServiceCallError::Trap)?,

@@ -1,8 +1,10 @@
-use std::env;
-use std::error::Error;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use artifact_manifest::{
     ArtifactBundleManifest, CapabilityManifest, CompilerManifest, ExternManifest, ImportManifest,
@@ -48,32 +50,20 @@ fn run() -> Result<(), Box<dyn Error>> {
     let workspace_root = workspace_root()?;
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let wasm_build_root = workspace_root.join("target/aotc/wasm-build");
-    let artifact_root = workspace_root.join(format!(
-        "target/aotc/wasmtime/{HOST_ARTIFACT_PROFILE}/{}",
-        cli.profile.dir_name()
-    ));
+    let artifact_root = workspace_root
+        .join(format!("target/aotc/wasmtime/{HOST_ARTIFACT_PROFILE}/{}", cli.profile.dir_name()));
 
     match cli.command {
         CommandKind::Compile => {
             build_wasm_modules(&cargo, &workspace_root, &wasm_build_root, cli.profile)?;
-            compile_artifacts(
-                &workspace_root,
-                &wasm_build_root,
-                &artifact_root,
-                cli.profile,
-            )?;
+            compile_artifacts(&workspace_root, &wasm_build_root, &artifact_root, cli.profile)?;
         }
         CommandKind::Verify => {
             verify_artifacts(&artifact_root)?;
         }
         CommandKind::All => {
             build_wasm_modules(&cargo, &workspace_root, &wasm_build_root, cli.profile)?;
-            compile_artifacts(
-                &workspace_root,
-                &wasm_build_root,
-                &artifact_root,
-                cli.profile,
-            )?;
+            compile_artifacts(&workspace_root, &wasm_build_root, &artifact_root, cli.profile)?;
             verify_artifacts(&artifact_root)?;
         }
     }
@@ -127,9 +117,8 @@ fn strip_wasm_custom_sections(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
         offset += 1;
         let (section_len, leb_len) = read_leb_u32(&bytes[offset..])?;
         offset += leb_len;
-        let end = offset
-            .checked_add(section_len as usize)
-            .ok_or("wasm section length overflowed")?;
+        let end =
+            offset.checked_add(section_len as usize).ok_or("wasm section length overflowed")?;
         if end > bytes.len() {
             return Err("wasm section exceeded file length".into());
         }
@@ -224,10 +213,7 @@ fn compile_artifacts(
             profile: HOST_ARTIFACT_PROFILE,
         })?;
         TargetArtifactImage::parse(&target_artifact).map_err(|error| {
-            format!(
-                "{} target artifact validation failed: {error:?}",
-                module.package
-            )
+            format!("{} target artifact validation failed: {error:?}", module.package)
         })?;
         fs::write(&target_artifact_path, &target_artifact)?;
         let target_artifact_sha256 = sha256_hex(&target_artifact);
@@ -256,11 +242,7 @@ fn compile_artifacts(
                 .iter()
                 .map(|capability| CapabilityManifest {
                     name: capability.name.to_owned(),
-                    rights: capability
-                        .rights
-                        .iter()
-                        .map(|right| (*right).to_owned())
-                        .collect(),
+                    rights: capability.rights.iter().map(|right| (*right).to_owned()).collect(),
                     lifetime: capability.lifetime.to_owned(),
                 })
                 .collect(),
@@ -316,10 +298,7 @@ fn compile_artifacts(
     let manifest_path = artifact_root.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     build_validated_artifact_plan(&manifest)?;
-    println!(
-        "wrote {}",
-        relative_to_workspace(workspace_root, &manifest_path)
-    );
+    println!("wrote {}", relative_to_workspace(workspace_root, &manifest_path));
 
     Ok(())
 }
@@ -337,11 +316,7 @@ fn interface_manifest(module: &supervisor_catalog::WasmModuleSpec) -> InterfaceR
             .iter()
             .map(|entry| (*entry).to_owned())
             .collect(),
-        custom_wit_worlds: spec
-            .custom_wit_worlds
-            .iter()
-            .map(|entry| (*entry).to_owned())
-            .collect(),
+        custom_wit_worlds: spec.custom_wit_worlds.iter().map(|entry| (*entry).to_owned()).collect(),
         wit_package_versions: spec
             .wit_package_versions
             .iter()
@@ -354,21 +329,9 @@ fn interface_manifest(module: &supervisor_catalog::WasmModuleSpec) -> InterfaceR
         semantic_contract_version: spec.semantic_contract_version.to_owned(),
         substrate_profile_required: spec.substrate_profile_required.to_owned(),
         substrate_authorities: SubstrateAuthorityRequirementManifest {
-            required: spec
-                .substrate_required
-                .iter()
-                .map(|entry| (*entry).to_owned())
-                .collect(),
-            optional: spec
-                .substrate_optional
-                .iter()
-                .map(|entry| (*entry).to_owned())
-                .collect(),
-            forbidden: spec
-                .substrate_forbidden
-                .iter()
-                .map(|entry| (*entry).to_owned())
-                .collect(),
+            required: spec.substrate_required.iter().map(|entry| (*entry).to_owned()).collect(),
+            optional: spec.substrate_optional.iter().map(|entry| (*entry).to_owned()).collect(),
+            forbidden: spec.substrate_forbidden.iter().map(|entry| (*entry).to_owned()).collect(),
         },
     }
 }
@@ -589,24 +552,15 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
             return Err(format!("{} target artifact hash mismatch", entry.package).into());
         }
         let image = TargetArtifactImage::parse(&target_artifact).map_err(|error| {
-            format!(
-                "{} target artifact validation failed: {error:?}",
-                entry.package
-            )
+            format!("{} target artifact validation failed: {error:?}", entry.package)
         })?;
         let artifact = image
             .section_payload(SectionKindV1::CodeObject)
             .map_err(|error| {
-                format!(
-                    "{} code payload extraction failed: {error:?}",
-                    entry.package
-                )
+                format!("{} code payload extraction failed: {error:?}", entry.package)
             })?
             .ok_or_else(|| {
-                format!(
-                    "{} target artifact missing CodeObject section",
-                    entry.package
-                )
+                format!("{} target artifact missing CodeObject section", entry.package)
             })?;
         if sha256_hex(artifact) != entry.cwasm_sha256 {
             return Err(format!("{} CodeObject cwasm payload hash mismatch", entry.package).into());
@@ -618,24 +572,20 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
             return Err(format!("{} cwasm sidecar hash mismatch", entry.package).into());
         }
         if cwasm_sidecar != artifact {
-            return Err(format!(
-                "{} cwasm sidecar differs from CodeObject payload",
-                entry.package
-            )
-            .into());
+            return Err(
+                format!("{} cwasm sidecar differs from CodeObject payload", entry.package).into()
+            );
         }
 
         match Engine::detect_precompiled(artifact) {
             Some(Precompiled::Module) => {}
             Some(Precompiled::Component) => {
                 return Err(
-                    format!("{} was compiled as a component unexpectedly", entry.package).into(),
+                    format!("{} was compiled as a component unexpectedly", entry.package).into()
                 );
             }
             None => {
-                return Err(
-                    format!("{} is not a valid precompiled artifact", entry.package).into(),
-                );
+                return Err(format!("{} is not a valid precompiled artifact", entry.package).into());
             }
         }
 
@@ -652,15 +602,10 @@ fn verify_artifacts(artifact_root: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn verify_exports(entry: &ValidatedArtifactEntry, module: &Module) -> Result<(), Box<dyn Error>> {
-    let export_names = module
-        .exports()
-        .map(|export| export.name().to_owned())
-        .collect::<Vec<_>>();
+    let export_names = module.exports().map(|export| export.name().to_owned()).collect::<Vec<_>>();
     for expected in &entry.expected_exports {
         if !export_names.iter().any(|name| name == expected) {
-            return Err(
-                format!("{} is missing expected export `{expected}`", entry.package).into(),
-            );
+            return Err(format!("{} is missing expected export `{expected}`", entry.package).into());
         }
     }
     Ok(())
@@ -691,9 +636,7 @@ fn run_smoke_checks(
         if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
             let rc = func.call(&mut *store, (0, 0))?;
             if rc != 0 {
-                return Err(
-                    "console_service commit_write(0, 0) failed in host verification".into(),
-                );
+                return Err("console_service commit_write(0, 0) failed in host verification".into());
             }
         }
     }
@@ -703,10 +646,7 @@ fn run_smoke_checks(
             let _ = func.call(&mut *store, ())?;
         }
     }
-    if matches!(
-        entry.package.as_str(),
-        "driver_virtio_net" | "net_core" | "linux_socket_service"
-    ) {
+    if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core" | "linux_socket_service") {
         check_u32_export_eq(
             instance,
             store,
@@ -716,18 +656,8 @@ fn run_smoke_checks(
     }
     if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core") {
         check_u32_export_eq(instance, store, "packet_mtu", VIRTIO_NET0_MTU)?;
-        check_u32_export_eq(
-            instance,
-            store,
-            "packet_rx_queue_depth",
-            VIRTIO_NET0_RX_QUEUE_DEPTH,
-        )?;
-        check_u32_export_eq(
-            instance,
-            store,
-            "packet_tx_queue_depth",
-            VIRTIO_NET0_TX_QUEUE_DEPTH,
-        )?;
+        check_u32_export_eq(instance, store, "packet_rx_queue_depth", VIRTIO_NET0_RX_QUEUE_DEPTH)?;
+        check_u32_export_eq(instance, store, "packet_tx_queue_depth", VIRTIO_NET0_TX_QUEUE_DEPTH)?;
     }
 
     Ok(())
@@ -774,17 +704,11 @@ fn runtime_engine() -> Result<Engine, Box<dyn Error>> {
 }
 
 fn wasm_artifact_path(build_root: &Path, profile: Profile, package: &str) -> PathBuf {
-    build_root
-        .join(WASM_TARGET)
-        .join(profile.dir_name())
-        .join(format!("{package}.wasm"))
+    build_root.join(WASM_TARGET).join(profile.dir_name()).join(format!("{package}.wasm"))
 }
 
 fn relative_to_workspace(workspace_root: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    path.strip_prefix(workspace_root).unwrap_or(path).display().to_string()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -806,10 +730,7 @@ fn extern_kind(ty: ExternType) -> &'static str {
 fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest dir")?);
-    Ok(manifest_dir
-        .parent()
-        .ok_or("aotc must live in workspace root")?
-        .to_path_buf())
+    Ok(manifest_dir.parent().ok_or("aotc must live in workspace root")?.to_path_buf())
 }
 
 #[derive(Clone, Copy)]
@@ -888,10 +809,7 @@ mod tests {
         .expect("target artifact image");
         let parsed = TargetArtifactImage::parse(&image).expect("parse target artifact");
 
-        assert_eq!(
-            parsed.header().code_format,
-            CodeFormatCodeV1::WasmtimeSerialized as u16
-        );
+        assert_eq!(parsed.header().code_format, CodeFormatCodeV1::WasmtimeSerialized as u16);
         assert!(parsed.section(SectionKindV1::Manifest).is_some());
         assert!(parsed.section(SectionKindV1::ContractMetadata).is_some());
         assert_eq!(

@@ -2,12 +2,10 @@ use super::*;
 
 impl SemanticGraph {
     pub fn record_snapshot_barrier_enter(&mut self, barrier: SnapshotBarrierId) {
-        self.event_log
-            .push("snapshot", EventKind::SnapshotBarrierEnter { barrier });
+        self.event_log.push("snapshot", EventKind::SnapshotBarrierEnter { barrier });
     }
     pub fn record_snapshot_barrier_exit(&mut self, barrier: SnapshotBarrierId) {
-        self.event_log
-            .push("snapshot", EventKind::SnapshotBarrierExit { barrier });
+        self.event_log.push("snapshot", EventKind::SnapshotBarrierExit { barrier });
     }
     pub fn migration_package(
         &self,

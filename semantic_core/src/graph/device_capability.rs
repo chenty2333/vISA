@@ -14,11 +14,7 @@ impl SemanticGraph {
         if device_capability == 0 {
             return Err("device capability id=0 is invalid");
         }
-        if self
-            .device_capabilities
-            .iter()
-            .any(|record| record.id == device_capability)
-        {
+        if self.device_capabilities.iter().any(|record| record.id == device_capability) {
             return Err("device capability already exists");
         }
         if operation.is_empty() {
@@ -286,26 +282,21 @@ impl SemanticGraph {
         class: CapabilityClass,
     ) -> bool {
         match (class, target.kind) {
-            (CapabilityClass::Device, ContractObjectKind::DeviceObject) => self
-                .device_objects
-                .iter()
-                .any(|record| record.object_ref() == target),
-            (CapabilityClass::DmaBuffer, ContractObjectKind::DmaBufferObject) => self
-                .dma_buffer_objects
-                .iter()
-                .any(|record| record.object_ref() == target),
-            (CapabilityClass::MmioRegion, ContractObjectKind::MmioRegionObject) => self
-                .mmio_region_objects
-                .iter()
-                .any(|record| record.object_ref() == target),
-            (CapabilityClass::IrqLine, ContractObjectKind::IrqLineObject) => self
-                .irq_line_objects
-                .iter()
-                .any(|record| record.object_ref() == target),
-            (CapabilityClass::PacketDevice, ContractObjectKind::PacketDeviceObject) => self
-                .packet_device_objects
-                .iter()
-                .any(|record| record.object_ref() == target),
+            (CapabilityClass::Device, ContractObjectKind::DeviceObject) => {
+                self.device_objects.iter().any(|record| record.object_ref() == target)
+            }
+            (CapabilityClass::DmaBuffer, ContractObjectKind::DmaBufferObject) => {
+                self.dma_buffer_objects.iter().any(|record| record.object_ref() == target)
+            }
+            (CapabilityClass::MmioRegion, ContractObjectKind::MmioRegionObject) => {
+                self.mmio_region_objects.iter().any(|record| record.object_ref() == target)
+            }
+            (CapabilityClass::IrqLine, ContractObjectKind::IrqLineObject) => {
+                self.irq_line_objects.iter().any(|record| record.object_ref() == target)
+            }
+            (CapabilityClass::PacketDevice, ContractObjectKind::PacketDeviceObject) => {
+                self.packet_device_objects.iter().any(|record| record.object_ref() == target)
+            }
             _ => false,
         }
     }
@@ -316,10 +307,8 @@ impl SemanticGraph {
         device_capability: DeviceCapabilityId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .device_capabilities
-            .iter_mut()
-            .find(|record| record.id == device_capability)
+        if let Some(record) =
+            self.device_capabilities.iter_mut().find(|record| record.id == device_capability)
         {
             record.target.generation = generation;
         }

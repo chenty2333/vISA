@@ -16,11 +16,7 @@ impl SemanticGraph {
         if packet_device == 0 {
             return Err("packet device object id=0 is invalid");
         }
-        if self
-            .packet_device_objects
-            .iter()
-            .any(|record| record.id == packet_device)
-        {
+        if self.packet_device_objects.iter().any(|record| record.id == packet_device) {
             return Err("packet device object already exists");
         }
         if name.is_empty() {
@@ -206,10 +202,8 @@ impl SemanticGraph {
         packet_device: PacketDeviceObjectId,
         device_generation: Generation,
     ) {
-        if let Some(record) = self
-            .packet_device_objects
-            .iter_mut()
-            .find(|record| record.id == packet_device)
+        if let Some(record) =
+            self.packet_device_objects.iter_mut().find(|record| record.id == packet_device)
         {
             record.device_generation = device_generation;
         }

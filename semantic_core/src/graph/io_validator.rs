@@ -8,11 +8,7 @@ impl SemanticGraph {
         if report == 0 {
             return Err("io validation report id=0 is invalid");
         }
-        if self
-            .io_validation_reports
-            .iter()
-            .any(|record| record.id == report)
-        {
+        if self.io_validation_reports.iter().any(|record| record.id == report) {
             return Err("io validation report already exists");
         }
         Ok(())
@@ -551,15 +547,11 @@ impl SemanticGraph {
     }
 
     fn resource_exists(&self, resource: ResourceId, generation: Generation) -> bool {
-        self.resources
-            .iter()
-            .any(|record| record.id == resource && record.generation == generation)
+        self.resources.iter().any(|record| record.id == resource && record.generation == generation)
     }
 
     fn store_exists(&self, store: StoreId, generation: Generation) -> bool {
-        self.stores
-            .iter()
-            .any(|record| record.id == store && record.generation == generation)
+        self.stores.iter().any(|record| record.id == store && record.generation == generation)
     }
 
     fn device_exists(&self, device: DeviceObjectId, generation: Generation) -> bool {
@@ -581,9 +573,7 @@ impl SemanticGraph {
     }
 
     fn wait_exists(&self, wait: WaitId, generation: Generation) -> bool {
-        self.waits
-            .iter()
-            .any(|record| record.id == wait && record.generation == generation)
+        self.waits.iter().any(|record| record.id == wait && record.generation == generation)
     }
 
     fn driver_binding_exists(&self, binding: DriverStoreBindingId, generation: Generation) -> bool {
@@ -1019,11 +1009,7 @@ impl SemanticGraph {
         cleanup: IoCleanupId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .io_cleanups
-            .iter_mut()
-            .find(|record| record.id == cleanup)
-        {
+        if let Some(record) = self.io_cleanups.iter_mut().find(|record| record.id == cleanup) {
             if let Some(capability) = record.revoked_capabilities.first_mut() {
                 capability.generation = generation;
             }

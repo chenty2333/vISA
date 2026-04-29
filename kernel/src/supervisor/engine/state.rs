@@ -112,10 +112,7 @@ impl ExecutorTrapSurface {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutorTransitionError {
-    InvalidStoreTransition {
-        from: ExecutorStoreState,
-        to: ExecutorStoreState,
-    },
+    InvalidStoreTransition { from: ExecutorStoreState, to: ExecutorStoreState },
     HostcallTableNotLinked,
     TrapSurfaceNotLinked,
 }
@@ -151,19 +148,13 @@ impl ExecutorRuntimeState {
     pub(crate) fn publish_code(
         &mut self,
     ) -> Result<ExecutorTransitionReport, ExecutorTransitionError> {
-        self.transition_to(
-            ExecutorStoreState::CodePublished,
-            Some("hostcall-table-not-linked"),
-        )
+        self.transition_to(ExecutorStoreState::CodePublished, Some("hostcall-table-not-linked"))
     }
 
     pub(crate) fn link_hostcalls(
         &mut self,
     ) -> Result<ExecutorTransitionReport, ExecutorTransitionError> {
-        self.transition_to(
-            ExecutorStoreState::HostcallsLinked,
-            Some("store-entry-not-runnable"),
-        )?;
+        self.transition_to(ExecutorStoreState::HostcallsLinked, Some("store-entry-not-runnable"))?;
         self.hostcall_table.state = ExecutorTableState::Bound;
         self.trap_surface.state = ExecutorTrapSurfaceState::Linked;
         self.blocked_by = Some("store-entry-not-runnable");
@@ -256,8 +247,9 @@ const fn valid_store_transition(from: ExecutorStoreState, to: ExecutorStoreState
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use supervisor_catalog::RUNTIME_ONLY_EXECUTOR_ABI;
+
+    use super::*;
 
     fn runtime_state(state: ExecutorStoreState) -> ExecutorRuntimeState {
         ExecutorRuntimeState {
@@ -277,19 +269,14 @@ mod tests {
     fn executor_runtime_requires_publish_and_hostcall_link_before_runnable() {
         let mut runtime = runtime_state(ExecutorStoreState::ArtifactVerified);
 
-        assert_eq!(
-            runtime.mark_runnable(),
-            Err(ExecutorTransitionError::HostcallTableNotLinked)
-        );
+        assert_eq!(runtime.mark_runnable(), Err(ExecutorTransitionError::HostcallTableNotLinked));
         let published = runtime.publish_code().expect("code publish transition");
         assert_eq!(published.from, ExecutorStoreState::ArtifactVerified);
         assert_eq!(published.to, ExecutorStoreState::CodePublished);
         assert_eq!(published.blocked_by, Some("hostcall-table-not-linked"));
         assert_eq!(published.hostcall_table, ExecutorTableState::NotLinked);
 
-        let linked = runtime
-            .link_hostcalls()
-            .expect("hostcall table link transition");
+        let linked = runtime.link_hostcalls().expect("hostcall table link transition");
         assert_eq!(linked.from, ExecutorStoreState::CodePublished);
         assert_eq!(linked.to, ExecutorStoreState::HostcallsLinked);
         assert_eq!(linked.hostcall_table, ExecutorTableState::Bound);
@@ -305,22 +292,13 @@ mod tests {
     fn executor_recovery_cycle_resets_linked_surfaces() {
         let mut runtime = runtime_state(ExecutorStoreState::ArtifactVerified);
 
-        assert_eq!(
-            runtime.begin_draining().expect("draining").to,
-            ExecutorStoreState::Draining
-        );
-        assert_eq!(
-            runtime.mark_dropped().expect("dropped").to,
-            ExecutorStoreState::Dropped
-        );
+        assert_eq!(runtime.begin_draining().expect("draining").to, ExecutorStoreState::Draining);
+        assert_eq!(runtime.mark_dropped().expect("dropped").to, ExecutorStoreState::Dropped);
         let rebound = runtime.mark_rebound().expect("rebound");
         assert_eq!(rebound.from, ExecutorStoreState::Dropped);
         assert_eq!(rebound.to, ExecutorStoreState::Rebound);
         assert_eq!(runtime.hostcall_table.state, ExecutorTableState::NotLinked);
-        assert_eq!(
-            runtime.trap_surface.state,
-            ExecutorTrapSurfaceState::ContractDeclared
-        );
+        assert_eq!(runtime.trap_surface.state, ExecutorTrapSurfaceState::ContractDeclared);
         assert_eq!(runtime.blocked_by, Some("code-publish-not-linked"));
         assert_eq!(
             runtime.mark_dropped(),

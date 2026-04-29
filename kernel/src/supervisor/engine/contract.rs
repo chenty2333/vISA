@@ -67,19 +67,11 @@ pub(crate) struct SupervisorArtifact<'bytes> {
 
 impl<'bytes> SupervisorArtifact<'bytes> {
     pub(crate) const fn embedded_wasm(package: &'static str, bytes: &'bytes [u8]) -> Self {
-        Self {
-            package,
-            format: ArtifactFormat::WasmModuleBytes,
-            bytes,
-        }
+        Self { package, format: ArtifactFormat::WasmModuleBytes, bytes }
     }
 
     pub(crate) const fn precompiled(package: &'static str, bytes: &'bytes [u8]) -> Self {
-        Self {
-            package,
-            format: ArtifactFormat::WasmtimePrecompiledModule,
-            bytes,
-        }
+        Self { package, format: ArtifactFormat::WasmtimePrecompiledModule, bytes }
     }
 }
 

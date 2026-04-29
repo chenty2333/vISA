@@ -23,11 +23,7 @@ impl SemanticGraph {
         if audit == 0 {
             return Err("network generation audit id=0 is invalid");
         }
-        if self
-            .network_generation_audits
-            .iter()
-            .any(|record| record.id == audit)
-        {
+        if self.network_generation_audits.iter().any(|record| record.id == audit) {
             return Err("network generation audit already exists");
         }
         if rejected_packet_generation_probes == 0 || rejected_dma_generation_probes == 0 {
@@ -186,28 +182,27 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_generation_audits
-            .push(NetworkGenerationAuditRecord {
-                id: audit,
-                adapter,
-                adapter_generation,
-                packet_device,
-                packet_device_generation,
-                packet_queue,
-                packet_queue_generation,
-                packet_descriptor,
-                packet_descriptor_generation,
-                packet_buffer,
-                packet_buffer_generation,
-                dma_buffer,
-                device_capability,
-                rejected_packet_generation_probes,
-                rejected_dma_generation_probes,
-                generation,
-                state: NetworkGenerationAuditState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.network_generation_audits.push(NetworkGenerationAuditRecord {
+            id: audit,
+            adapter,
+            adapter_generation,
+            packet_device,
+            packet_device_generation,
+            packet_queue,
+            packet_queue_generation,
+            packet_descriptor,
+            packet_descriptor_generation,
+            packet_buffer,
+            packet_buffer_generation,
+            dma_buffer,
+            device_capability,
+            rejected_packet_generation_probes,
+            rejected_dma_generation_probes,
+            generation,
+            state: NetworkGenerationAuditState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -242,76 +237,66 @@ impl SemanticGraph {
             let Some(adapter) = self.network_stack_adapters.iter().find(|record| {
                 record.id == audit.adapter && record.generation == audit.adapter_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::NetworkStackAdapter,
-                            audit.adapter,
-                            audit.adapter_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::NetworkStackAdapter,
+                        audit.adapter,
+                        audit.adapter_generation,
+                    ),
+                });
             };
             let Some(packet_device) = self.packet_device_objects.iter().find(|record| {
                 record.id == audit.packet_device
                     && record.generation == audit.packet_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::PacketDeviceObject,
-                            audit.packet_device,
-                            audit.packet_device_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::PacketDeviceObject,
+                        audit.packet_device,
+                        audit.packet_device_generation,
+                    ),
+                });
             };
             let Some(packet_queue) = self.packet_queue_objects.iter().find(|record| {
                 record.id == audit.packet_queue
                     && record.generation == audit.packet_queue_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::PacketQueueObject,
-                            audit.packet_queue,
-                            audit.packet_queue_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::PacketQueueObject,
+                        audit.packet_queue,
+                        audit.packet_queue_generation,
+                    ),
+                });
             };
             let Some(packet_descriptor) = self.packet_descriptors.iter().find(|record| {
                 record.id == audit.packet_descriptor
                     && record.generation == audit.packet_descriptor_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::PacketDescriptorObject,
-                            audit.packet_descriptor,
-                            audit.packet_descriptor_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::PacketDescriptorObject,
+                        audit.packet_descriptor,
+                        audit.packet_descriptor_generation,
+                    ),
+                });
             };
             let Some(packet_buffer) = self.packet_buffer_objects.iter().find(|record| {
                 record.id == audit.packet_buffer
                     && record.generation == audit.packet_buffer_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::PacketBufferObject,
-                            audit.packet_buffer,
-                            audit.packet_buffer_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::PacketBufferObject,
+                        audit.packet_buffer,
+                        audit.packet_buffer_generation,
+                    ),
+                });
             };
 
             if adapter.state != NetworkStackAdapterState::Bound
@@ -341,12 +326,10 @@ impl SemanticGraph {
 
             for target in [audit.dma_buffer, audit.device_capability] {
                 if !self.io_validation_historical_object_exists(target) {
-                    return Err(
-                        SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                            audit: audit.id,
-                            target,
-                        },
-                    );
+                    return Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+                        audit: audit.id,
+                        target,
+                    });
                 }
             }
             if !self.event_log.events.iter().any(|event| {
@@ -405,10 +388,8 @@ impl SemanticGraph {
         audit: NetworkGenerationAuditId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_generation_audits
-            .iter_mut()
-            .find(|record| record.id == audit)
+        if let Some(record) =
+            self.network_generation_audits.iter_mut().find(|record| record.id == audit)
         {
             record.packet_descriptor_generation = generation;
         }

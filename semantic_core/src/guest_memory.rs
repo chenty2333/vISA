@@ -1,6 +1,8 @@
-use alloc::string::{String, ToString};
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use super::*;
 
@@ -14,11 +16,7 @@ pub struct GuestAddressSpaceRef(pub ContractObjectRef);
 
 impl GuestAddressSpaceRef {
     pub const fn new(id: GuestAddressSpaceId, generation: Generation) -> Self {
-        Self(ContractObjectRef::new(
-            ContractObjectKind::GuestAddressSpace,
-            id,
-            generation,
-        ))
+        Self(ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, id, generation))
     }
 
     pub const fn id(self) -> GuestAddressSpaceId {
@@ -39,11 +37,7 @@ pub struct VmaRegionRef(pub ContractObjectRef);
 
 impl VmaRegionRef {
     pub const fn new(id: VmaRegionId, generation: Generation) -> Self {
-        Self(ContractObjectRef::new(
-            ContractObjectKind::VmaRegion,
-            id,
-            generation,
-        ))
+        Self(ContractObjectRef::new(ContractObjectKind::VmaRegion, id, generation))
     }
 
     pub const fn id(self) -> VmaRegionId {
@@ -64,11 +58,7 @@ pub struct PageObjectRef(pub ContractObjectRef);
 
 impl PageObjectRef {
     pub const fn new(id: PageObjectId, generation: Generation) -> Self {
-        Self(ContractObjectRef::new(
-            ContractObjectKind::PageObject,
-            id,
-            generation,
-        ))
+        Self(ContractObjectRef::new(ContractObjectKind::PageObject, id, generation))
     }
 
     pub const fn id(self) -> PageObjectId {
@@ -181,19 +171,11 @@ pub struct VmaFlags {
 
 impl VmaFlags {
     pub const fn anonymous() -> Self {
-        Self {
-            cow: false,
-            shared: false,
-            device: false,
-        }
+        Self { cow: false, shared: false, device: false }
     }
 
     pub const fn cow() -> Self {
-        Self {
-            cow: true,
-            shared: false,
-            device: false,
-        }
+        Self { cow: true, shared: false, device: false }
     }
 }
 
@@ -470,11 +452,7 @@ impl GuestMemoryManager {
         if self.snapshot_barrier_active {
             return Err(GuestMemoryError::SnapshotBarrierActive);
         }
-        if self
-            .pending_cleanup_stores
-            .iter()
-            .any(|store| *store == aspace.owner)
-        {
+        if self.pending_cleanup_stores.iter().any(|store| *store == aspace.owner) {
             return Err(GuestMemoryError::PendingCleanup);
         }
         let region = self.region_exact(fast_path.region)?;
@@ -494,12 +472,7 @@ impl GuestMemoryManager {
             }
         }
         let record = ledger
-            .check_authority(
-                subject,
-                authority,
-                permission_operation(required_perm),
-                Some(handle),
-            )
+            .check_authority(subject, authority, permission_operation(required_perm), Some(handle))
             .map_err(|_| GuestMemoryError::BadCapability)?;
         if record.generation != fast_path.cap_generation {
             return Err(GuestMemoryError::GenerationMismatch);
@@ -536,14 +509,7 @@ impl GuestMemoryManager {
         handle: &CapabilityHandle,
         ledger: &CapabilityLedger,
     ) -> Result<(), GuestMemoryError> {
-        self.validate_fast_path(
-            fast_path,
-            GuestPerms::READ,
-            subject,
-            authority,
-            handle,
-            ledger,
-        )
+        self.validate_fast_path(fast_path, GuestPerms::READ, subject, authority, handle, ledger)
     }
 
     pub fn copyout(
@@ -554,14 +520,7 @@ impl GuestMemoryManager {
         handle: &CapabilityHandle,
         ledger: &CapabilityLedger,
     ) -> Result<(), GuestMemoryError> {
-        self.validate_fast_path(
-            fast_path,
-            GuestPerms::WRITE,
-            subject,
-            authority,
-            handle,
-            ledger,
-        )
+        self.validate_fast_path(fast_path, GuestPerms::WRITE, subject, authority, handle, ledger)
     }
 
     pub fn unmap_region(&mut self, region: VmaRegionRef) -> Result<(), GuestMemoryError> {
@@ -627,11 +586,7 @@ impl GuestMemoryManager {
     }
 
     pub fn begin_cleanup_for_store(&mut self, store: ContractObjectRef) {
-        if !self
-            .pending_cleanup_stores
-            .iter()
-            .any(|existing| *existing == store)
-        {
+        if !self.pending_cleanup_stores.iter().any(|existing| *existing == store) {
             self.pending_cleanup_stores.push(store);
         }
     }
@@ -652,10 +607,7 @@ impl GuestMemoryManager {
         for aspace in &mut self.aspaces {
             aspace.state = AddressSpaceState::Frozen;
         }
-        Ok(SnapshotBarrierReport {
-            released_dmw_leases: 0,
-            frozen_pages,
-        })
+        Ok(SnapshotBarrierReport { released_dmw_leases: 0, frozen_pages })
     }
 
     pub fn rebuild_substrate_mappings(
@@ -853,17 +805,7 @@ mod tests {
                 .store_local_handle(vec!["read".to_string(), "write".to_string()])
                 .expect("store local handle");
             let cap_generation = record.generation;
-            Self {
-                memory,
-                ledger,
-                store,
-                aspace,
-                region,
-                page,
-                authority,
-                handle,
-                cap_generation,
-            }
+            Self { memory, ledger, store, aspace, region, page, authority, handle, cap_generation }
         }
 
         fn fast_path(&self) -> UserBufferFastPath {
@@ -886,8 +828,7 @@ mod tests {
         fast_path.aspace = GuestAddressSpaceRef::new(h.aspace.id(), h.aspace.generation() + 1);
 
         assert_eq!(
-            h.memory
-                .copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::GenerationMismatch)
         );
     }
@@ -910,8 +851,7 @@ mod tests {
         fast_path.pages[0] = PageObjectRef::new(h.page.id(), h.page.generation() + 1);
 
         assert_eq!(
-            h.memory
-                .copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::GenerationMismatch)
         );
     }
@@ -925,8 +865,7 @@ mod tests {
         forged.tag = 0;
 
         assert_eq!(
-            h.memory
-                .copyin(&h.fast_path(), SUBJECT, h.authority, &forged, &h.ledger),
+            h.memory.copyin(&h.fast_path(), SUBJECT, h.authority, &forged, &h.ledger),
             Err(GuestMemoryError::BadCapability)
         );
     }
@@ -938,8 +877,7 @@ mod tests {
         stale.generation += 1;
 
         assert_eq!(
-            h.memory
-                .copyin(&h.fast_path(), SUBJECT, h.authority, &stale, &h.ledger),
+            h.memory.copyin(&h.fast_path(), SUBJECT, h.authority, &stale, &h.ledger),
             Err(GuestMemoryError::BadCapability)
         );
     }
@@ -951,8 +889,7 @@ mod tests {
         forged.tag ^= 0x55aa;
 
         assert_eq!(
-            h.memory
-                .copyin(&h.fast_path(), SUBJECT, h.authority, &forged, &h.ledger),
+            h.memory.copyin(&h.fast_path(), SUBJECT, h.authority, &forged, &h.ledger),
             Err(GuestMemoryError::BadCapability)
         );
     }
@@ -964,8 +901,7 @@ mod tests {
         h.memory.unmap_region(h.region).expect("unmap");
 
         assert_eq!(
-            h.memory
-                .copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::GenerationMismatch)
         );
     }
@@ -977,8 +913,7 @@ mod tests {
         h.memory.cow_break(h.page).expect("cow break");
 
         assert_eq!(
-            h.memory
-                .copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::GenerationMismatch)
         );
     }
@@ -989,29 +924,21 @@ mod tests {
         let fast_path = h.fast_path();
 
         assert_eq!(
-            h.memory
-                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Ok(())
         );
         h.memory.open_dmw_lease();
-        assert_eq!(
-            h.memory.snapshot_barrier(),
-            Err(GuestMemoryError::ActiveDmwLease)
-        );
+        assert_eq!(h.memory.snapshot_barrier(), Err(GuestMemoryError::ActiveDmwLease));
         assert_eq!(h.memory.active_dmw_leases(), 1);
         h.memory.close_dmw_lease();
         assert_eq!(h.memory.active_dmw_leases(), 0);
 
         h.memory.cow_break(h.page).expect("cow break");
         assert_eq!(
-            h.memory
-                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::GenerationMismatch)
         );
-        let mappings = h
-            .memory
-            .rebuild_substrate_mappings(h.aspace)
-            .expect("rebuild after cow");
+        let mappings = h.memory.rebuild_substrate_mappings(h.aspace).expect("rebuild after cow");
         assert_eq!(mappings.len(), 1);
         assert_eq!(mappings[0].page.id(), h.page.id());
         assert_eq!(mappings[0].page.generation(), h.page.generation() + 1);
@@ -1021,18 +948,13 @@ mod tests {
             .build_user_buffer_fast_path(h.aspace, h.region, 0x4000, 0x1000, h.cap_generation)
             .expect("fresh fast path");
         assert_eq!(fresh.pages[0], mappings[0].page);
-        assert_eq!(
-            h.memory
-                .copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger),
-            Ok(())
-        );
+        assert_eq!(h.memory.copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger), Ok(()));
 
         let report = h.memory.snapshot_barrier().expect("snapshot barrier");
         assert_eq!(report.released_dmw_leases, 0);
         assert_eq!(report.frozen_pages[0].page, mappings[0].page);
         assert_eq!(
-            h.memory
-                .copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyout(&fresh, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::SnapshotBarrierActive)
         );
     }
@@ -1044,8 +966,7 @@ mod tests {
         fast_path.perms = GuestPerms::READ;
 
         assert_eq!(
-            h.memory
-                .copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::PermissionDenied)
         );
     }
@@ -1056,10 +977,7 @@ mod tests {
         h.memory.open_dmw_lease();
         h.memory.open_dmw_lease();
 
-        assert_eq!(
-            h.memory.snapshot_barrier(),
-            Err(GuestMemoryError::ActiveDmwLease)
-        );
+        assert_eq!(h.memory.snapshot_barrier(), Err(GuestMemoryError::ActiveDmwLease));
         assert_eq!(h.memory.active_dmw_leases(), 2);
     }
 
@@ -1073,8 +991,7 @@ mod tests {
         assert_eq!(report.frozen_pages[0].page, h.page);
         assert_eq!(report.frozen_pages[0].dirty_generation, 1);
         assert_eq!(
-            h.memory
-                .copyin(&h.fast_path(), SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&h.fast_path(), SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::SnapshotBarrierActive)
         );
     }
@@ -1086,8 +1003,7 @@ mod tests {
         h.memory.begin_cleanup_for_store(h.store);
 
         assert_eq!(
-            h.memory
-                .copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
+            h.memory.copyin(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::PendingCleanup)
         );
     }
@@ -1106,10 +1022,7 @@ mod tests {
     fn substrate_mapping_rebuilt_from_semantic_guest_memory() {
         let h = Harness::new();
 
-        let mappings = h
-            .memory
-            .rebuild_substrate_mappings(h.aspace)
-            .expect("rebuild mappings");
+        let mappings = h.memory.rebuild_substrate_mappings(h.aspace).expect("rebuild mappings");
 
         assert_eq!(mappings.len(), 1);
         assert_eq!(mappings[0].aspace, h.aspace);

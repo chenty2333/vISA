@@ -15,11 +15,7 @@ impl SemanticGraph {
         if tx_gate == 0 {
             return Err("network tx capability gate id=0 is invalid");
         }
-        if self
-            .network_tx_capability_gates
-            .iter()
-            .any(|record| record.id == tx_gate)
-        {
+        if self.network_tx_capability_gates.iter().any(|record| record.id == tx_gate) {
             return Err("network tx capability gate already exists");
         }
         let Some(store_record) = self.stores.iter().find(|record| {
@@ -213,34 +209,33 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_tx_capability_gates
-            .push(NetworkTxCapabilityGateRecord {
-                id: tx_gate,
-                driver_store,
-                driver_store_generation,
-                packet_device,
-                packet_device_generation,
-                tx_queue,
-                tx_queue_generation,
-                packet_descriptor,
-                packet_descriptor_generation,
-                packet_buffer,
-                packet_buffer_generation,
-                device_capability,
-                device_capability_generation,
-                capability,
-                capability_generation,
-                handle_slot: handle.slot,
-                handle_generation: handle.generation,
-                handle_tag: handle.tag,
-                operation,
-                byte_len,
-                sequence,
-                generation,
-                state: NetworkTxCapabilityGateState::Allowed,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.network_tx_capability_gates.push(NetworkTxCapabilityGateRecord {
+            id: tx_gate,
+            driver_store,
+            driver_store_generation,
+            packet_device,
+            packet_device_generation,
+            tx_queue,
+            tx_queue_generation,
+            packet_descriptor,
+            packet_descriptor_generation,
+            packet_buffer,
+            packet_buffer_generation,
+            device_capability,
+            device_capability_generation,
+            capability,
+            capability_generation,
+            handle_slot: handle.slot,
+            handle_generation: handle.generation,
+            handle_tag: handle.tag,
+            operation,
+            byte_len,
+            sequence,
+            generation,
+            state: NetworkTxCapabilityGateState::Allowed,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -262,12 +257,10 @@ impl SemanticGraph {
                         && packet_descriptor.generation == record.packet_descriptor_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::NetworkTxCapabilityGateMissingDescriptor {
-                        tx_gate: record.id,
-                        packet_descriptor: record.packet_descriptor,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCapabilityGateMissingDescriptor {
+                    tx_gate: record.id,
+                    packet_descriptor: record.packet_descriptor,
+                });
             };
             let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|tx_queue| {
                 tx_queue.id == record.tx_queue && tx_queue.generation == record.tx_queue_generation
@@ -300,20 +293,16 @@ impl SemanticGraph {
                         && device_capability.generation == record.device_capability_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::NetworkTxCapabilityGateMissingCapability {
-                        tx_gate: record.id,
-                        device_capability: record.device_capability,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCapabilityGateMissingCapability {
+                    tx_gate: record.id,
+                    device_capability: record.device_capability,
+                });
             };
             let Some(capability_record) = self.capabilities.record(record.capability) else {
-                return Err(
-                    SemanticInvariantError::NetworkTxCapabilityGateMissingCapability {
-                        tx_gate: record.id,
-                        device_capability: record.device_capability,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCapabilityGateMissingCapability {
+                    tx_gate: record.id,
+                    device_capability: record.device_capability,
+                });
             };
             let Some(store_record) = self.stores.iter().find(|store| {
                 store.id == record.driver_store
@@ -406,12 +395,10 @@ impl SemanticGraph {
                     && other.packet_descriptor_generation == record.packet_descriptor_generation
                     && other.state == NetworkTxCapabilityGateState::Allowed
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkTxCapabilityGateDuplicateDescriptor {
-                        tx_gate: duplicate.id,
-                        packet_descriptor: record.packet_descriptor,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCapabilityGateDuplicateDescriptor {
+                    tx_gate: duplicate.id,
+                    packet_descriptor: record.packet_descriptor,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -462,11 +449,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkTxCapabilityGateMissingEvent {
-                        tx_gate: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCapabilityGateMissingEvent {
+                    tx_gate: record.id,
+                });
             }
         }
         Ok(())
@@ -478,10 +463,8 @@ impl SemanticGraph {
         tx_gate: NetworkTxCapabilityGateId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_tx_capability_gates
-            .iter_mut()
-            .find(|record| record.id == tx_gate)
+        if let Some(record) =
+            self.network_tx_capability_gates.iter_mut().find(|record| record.id == tx_gate)
         {
             record.capability_generation = generation;
         }

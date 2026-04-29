@@ -20,11 +20,7 @@ impl SemanticGraph {
         if injection == 0 {
             return Err("SIMD fault injection id=0 is invalid");
         }
-        if self
-            .simd_fault_injections
-            .iter()
-            .any(|record| record.id == injection)
-        {
+        if self.simd_fault_injections.iter().any(|record| record.id == injection) {
             return Err("SIMD fault injection already exists");
         }
         if activation.kind != ContractObjectKind::Activation

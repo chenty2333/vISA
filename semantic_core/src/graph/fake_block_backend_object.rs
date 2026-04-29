@@ -22,11 +22,7 @@ impl SemanticGraph {
         if fake_block_backend == 0 {
             return Err("fake block backend object id=0 is invalid");
         }
-        if self
-            .fake_block_backends
-            .iter()
-            .any(|record| record.id == fake_block_backend)
-        {
+        if self.fake_block_backends.iter().any(|record| record.id == fake_block_backend) {
             return Err("fake block backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() {
@@ -107,9 +103,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_fake_block_backend_object_id = self
-            .next_fake_block_backend_object_id
-            .max(fake_block_backend.saturating_add(1));
+        self.next_fake_block_backend_object_id =
+            self.next_fake_block_backend_object_id.max(fake_block_backend.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FakeBlockBackendObjectBound {
@@ -158,12 +153,10 @@ impl SemanticGraph {
                 block_device.id == record.block_device
                     && block_device.generation == record.block_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FakeBlockBackendObjectMissingBlockDevice {
-                        fake_block_backend: record.id,
-                        block_device: record.block_device,
-                    },
-                );
+                return Err(SemanticInvariantError::FakeBlockBackendObjectMissingBlockDevice {
+                    fake_block_backend: record.id,
+                    block_device: record.block_device,
+                });
             };
             if record.id == 0
                 || record.generation == 0
@@ -192,12 +185,10 @@ impl SemanticGraph {
                     && other.block_device_generation == record.block_device_generation
                     && other.state == FakeBlockBackendObjectState::Bound
             }) {
-                return Err(
-                    SemanticInvariantError::FakeBlockBackendObjectDuplicateBinding {
-                        fake_block_backend: duplicate.id,
-                        block_device: record.block_device,
-                    },
-                );
+                return Err(SemanticInvariantError::FakeBlockBackendObjectDuplicateBinding {
+                    fake_block_backend: duplicate.id,
+                    block_device: record.block_device,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -238,10 +229,8 @@ impl SemanticGraph {
         fake_block_backend: FakeBlockBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .fake_block_backends
-            .iter_mut()
-            .find(|record| record.id == fake_block_backend)
+        if let Some(record) =
+            self.fake_block_backends.iter_mut().find(|record| record.id == fake_block_backend)
         {
             record.block_device_generation = generation;
         }

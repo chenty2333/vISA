@@ -82,11 +82,7 @@ impl SemanticGraph {
         if panic_last_frame == 0 {
             return Err("display panic last-frame id=0 is invalid");
         }
-        if self
-            .display_panic_last_frames
-            .iter()
-            .any(|record| record.id == panic_last_frame)
-        {
+        if self.display_panic_last_frames.iter().any(|record| record.id == panic_last_frame) {
             return Err("display panic last-frame already exists");
         }
         if owner_store_generation == 0
@@ -298,9 +294,8 @@ impl SemanticGraph {
         let generation = 1;
         let panic_cpu = 0;
         let panic_reason_code = 1;
-        self.next_display_panic_last_frame_id = self
-            .next_display_panic_last_frame_id
-            .max(panic_last_frame.saturating_add(1));
+        self.next_display_panic_last_frame_id =
+            self.next_display_panic_last_frame_id.max(panic_last_frame.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayPanicLastFrameRecorded {
@@ -329,43 +324,42 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_panic_last_frames
-            .push(DisplayPanicLastFrameRecord {
-                id: panic_last_frame,
-                owner_store,
-                owner_store_generation,
-                display: barrier.display,
-                display_generation: barrier.display_generation,
-                framebuffer: barrier.framebuffer,
-                framebuffer_generation: barrier.framebuffer_generation,
-                display_snapshot_barrier,
-                display_snapshot_barrier_generation,
-                display_event_log,
-                display_event_log_generation,
-                framebuffer_write,
-                framebuffer_write_generation,
-                framebuffer_flush_region,
-                framebuffer_flush_region_generation,
-                x: flush.x,
-                y: flush.y,
-                width: flush.width,
-                height: flush.height,
-                byte_offset: flush.byte_offset,
-                byte_len: flush.byte_len,
-                pixel_format: flush.pixel_format,
-                payload_digest,
-                summary_digest,
-                summary_record_bytes,
-                panic_epoch,
-                panic_cpu,
-                panic_reason_code,
-                panic_record_kind: panic_record_kind.to_string(),
-                raw_framebuffer_bytes_exported,
-                generation,
-                state: DisplayPanicLastFrameState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.display_panic_last_frames.push(DisplayPanicLastFrameRecord {
+            id: panic_last_frame,
+            owner_store,
+            owner_store_generation,
+            display: barrier.display,
+            display_generation: barrier.display_generation,
+            framebuffer: barrier.framebuffer,
+            framebuffer_generation: barrier.framebuffer_generation,
+            display_snapshot_barrier,
+            display_snapshot_barrier_generation,
+            display_event_log,
+            display_event_log_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region,
+            framebuffer_flush_region_generation,
+            x: flush.x,
+            y: flush.y,
+            width: flush.width,
+            height: flush.height,
+            byte_offset: flush.byte_offset,
+            byte_len: flush.byte_len,
+            pixel_format: flush.pixel_format,
+            payload_digest,
+            summary_digest,
+            summary_record_bytes,
+            panic_epoch,
+            panic_cpu,
+            panic_reason_code,
+            panic_record_kind: panic_record_kind.to_string(),
+            raw_framebuffer_bytes_exported,
+            generation,
+            state: DisplayPanicLastFrameState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         self.check_invariants().is_ok()
     }
 
@@ -420,45 +414,37 @@ impl SemanticGraph {
                     && display.framebuffer == record.framebuffer
                     && display.framebuffer_generation == record.framebuffer_generation
             }) {
-                return Err(
-                    SemanticInvariantError::DisplayPanicLastFrameMissingDisplay {
-                        panic_last_frame: record.id,
-                        display: record.display,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayPanicLastFrameMissingDisplay {
+                    panic_last_frame: record.id,
+                    display: record.display,
+                });
             }
             if !self.framebuffer_objects.iter().any(|framebuffer| {
                 framebuffer.id == record.framebuffer
                     && framebuffer.generation == record.framebuffer_generation
             }) {
-                return Err(
-                    SemanticInvariantError::DisplayPanicLastFrameMissingFramebuffer {
-                        panic_last_frame: record.id,
-                        framebuffer: record.framebuffer,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayPanicLastFrameMissingFramebuffer {
+                    panic_last_frame: record.id,
+                    framebuffer: record.framebuffer,
+                });
             }
             let Some(barrier) = self.display_snapshot_barriers.iter().find(|barrier| {
                 barrier.id == record.display_snapshot_barrier
                     && barrier.generation == record.display_snapshot_barrier_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::DisplayPanicLastFrameMissingBarrier {
-                        panic_last_frame: record.id,
-                        barrier: record.display_snapshot_barrier,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayPanicLastFrameMissingBarrier {
+                    panic_last_frame: record.id,
+                    barrier: record.display_snapshot_barrier,
+                });
             };
             let Some(event_log) = self.display_event_logs.iter().find(|event_log| {
                 event_log.id == record.display_event_log
                     && event_log.generation == record.display_event_log_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::DisplayPanicLastFrameMissingEventLog {
-                        panic_last_frame: record.id,
-                        display_event_log: record.display_event_log,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayPanicLastFrameMissingEventLog {
+                    panic_last_frame: record.id,
+                    display_event_log: record.display_event_log,
+                });
             };
             let Some(write) = self.framebuffer_writes.iter().find(|write| {
                 write.id == record.framebuffer_write
@@ -613,10 +599,8 @@ impl SemanticGraph {
         panic_last_frame: DisplayPanicLastFrameId,
         summary_digest: u64,
     ) {
-        if let Some(record) = self
-            .display_panic_last_frames
-            .iter_mut()
-            .find(|record| record.id == panic_last_frame)
+        if let Some(record) =
+            self.display_panic_last_frames.iter_mut().find(|record| record.id == panic_last_frame)
         {
             record.summary_digest = summary_digest;
         }

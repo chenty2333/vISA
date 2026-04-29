@@ -1,13 +1,14 @@
 use alloc::vec::Vec;
 
+use vmos_abi::PlanKind;
+#[cfg(not(target_os = "none"))]
+use vmos_abi::{PackedStep, SyscallContext};
+
 #[cfg(not(target_os = "none"))]
 use super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
 #[cfg(not(target_os = "none"))]
 use super::types::WaitRestartClass;
 use super::types::WaitToken;
-use vmos_abi::PlanKind;
-#[cfg(not(target_os = "none"))]
-use vmos_abi::{PackedStep, SyscallContext};
 
 #[cfg(target_os = "none")]
 #[path = "linux_native.rs"]
@@ -81,14 +82,10 @@ impl LinuxFrontend {
             "failed to fetch linux result buffer capacity",
         )?;
         let dispatch = module.bind("dispatch", "missing linux dispatch export")?;
-        let dispatch_sleep_ms = module.bind(
-            "dispatch_sleep_ms",
-            "missing linux dispatch_sleep_ms export",
-        )?;
-        let dispatch_futex_raw = module.bind(
-            "dispatch_futex_raw",
-            "missing linux dispatch_futex_raw export",
-        )?;
+        let dispatch_sleep_ms =
+            module.bind("dispatch_sleep_ms", "missing linux dispatch_sleep_ms export")?;
+        let dispatch_futex_raw =
+            module.bind("dispatch_futex_raw", "missing linux dispatch_futex_raw export")?;
         let resume_wait = module.bind("resume_wait", "missing linux resume_wait export")?;
         let cancel_wait = module.bind("cancel_wait", "missing linux cancel_wait export")?;
         let restart_wait = module.bind("restart_wait", "missing linux restart_wait export")?;
@@ -96,10 +93,8 @@ impl LinuxFrontend {
         let encode_uname = module.bind("encode_uname", "missing linux encode_uname export")?;
         let encode_dirents64 =
             module.bind("encode_dirents64", "missing linux encode_dirents64 export")?;
-        let encode_epoll_events = module.bind(
-            "encode_epoll_events",
-            "missing linux encode_epoll_events export",
-        )?;
+        let encode_epoll_events =
+            module.bind("encode_epoll_events", "missing linux encode_epoll_events export")?;
 
         Ok(Self {
             module,
@@ -123,30 +118,17 @@ impl LinuxFrontend {
     pub(super) fn dispatch(&mut self, ctx: SyscallContext) -> Result<u64, &'static str> {
         self.module.call(
             &self.dispatch,
-            (
-                ctx.nr,
-                ctx.args[0],
-                ctx.args[1],
-                ctx.args[2],
-                ctx.args[3],
-                ctx.args[4],
-                ctx.args[5],
-            ),
+            (ctx.nr, ctx.args[0], ctx.args[1], ctx.args[2], ctx.args[3], ctx.args[4], ctx.args[5]),
             "linux_syscall dispatch trapped",
         )
     }
 
     pub(super) fn resume_wait(&mut self, token: u32) -> Result<u64, &'static str> {
-        self.module
-            .call(&self.resume_wait, token, "linux_syscall resume trapped")
+        self.module.call(&self.resume_wait, token, "linux_syscall resume trapped")
     }
 
     pub(super) fn cancel_wait(&mut self, token: u32, errno: i32) -> Result<u64, &'static str> {
-        self.module.call(
-            &self.cancel_wait,
-            (token, errno),
-            "linux_syscall cancel trapped",
-        )
+        self.module.call(&self.cancel_wait, (token, errno), "linux_syscall cancel trapped")
     }
 
     pub(super) fn restart_wait(
@@ -154,11 +136,7 @@ impl LinuxFrontend {
         token: u32,
         class: WaitRestartClass,
     ) -> Result<u64, &'static str> {
-        self.module.call(
-            &self.restart_wait,
-            (token, class as u32),
-            "linux_syscall restart trapped",
-        )
+        self.module.call(&self.restart_wait, (token, class as u32), "linux_syscall restart trapped")
     }
 
     pub(super) fn dispatch_sleep_ms(&mut self, delay_ms: u64) -> Result<u64, &'static str> {
@@ -189,17 +167,12 @@ impl LinuxFrontend {
             return Err("linux arg buffer overflowed");
         }
 
-        self.module.write_memory(
-            self.arg_buffer_ptr,
-            bytes,
-            "failed to write linux arg buffer",
-        )?;
+        self.module.write_memory(self.arg_buffer_ptr, bytes, "failed to write linux arg buffer")?;
         Ok((self.arg_buffer_ptr, bytes.len() as u32))
     }
 
     pub(super) fn read_bytes(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, &'static str> {
-        self.module
-            .read_memory(ptr, len, "failed to read linux linear memory")
+        self.module.read_memory(ptr, len, "failed to read linux linear memory")
     }
 
     pub(super) fn encode_uname(&mut self, release: &[u8]) -> Result<Vec<u8>, &'static str> {
@@ -248,8 +221,7 @@ impl LinuxFrontend {
         let mut args = [0u64; 6];
         for (idx, slot) in args.iter_mut().enumerate() {
             *slot =
-                self.module
-                    .call(&self.plan_arg, idx as u32, "failed to read linux plan arg")?;
+                self.module.call(&self.plan_arg, idx as u32, "failed to read linux plan arg")?;
         }
 
         Ok(LinuxPlan { kind, args })
@@ -264,10 +236,6 @@ impl LinuxFrontend {
         if len > self.result_buffer_capacity {
             return Err("linux result buffer overflowed");
         }
-        self.module.read_memory(
-            self.result_buffer_ptr,
-            len,
-            "failed to read linux result buffer",
-        )
+        self.module.read_memory(self.result_buffer_ptr, len, "failed to read linux result buffer")
     }
 }

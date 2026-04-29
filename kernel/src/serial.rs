@@ -28,9 +28,7 @@ pub fn write_bytes(bytes: &[u8]) {
 pub fn _print(args: fmt::Arguments<'_>) {
     interrupts::without_interrupts(|| {
         let mut serial = SERIAL1.lock();
-        serial
-            .write_fmt(args)
-            .expect("serial output should not fail");
+        serial.write_fmt(args).expect("serial output should not fail");
     });
 }
 

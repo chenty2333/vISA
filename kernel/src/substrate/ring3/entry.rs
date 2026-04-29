@@ -1,14 +1,24 @@
-use core::arch::{asm, global_asm};
-use core::ptr::addr_of;
+use core::{
+    arch::{asm, global_asm},
+    ptr::addr_of,
+};
 
 use spin::Lazy;
-use x86_64::VirtAddr;
-use x86_64::instructions::segmentation::{CS, SS, Segment};
-use x86_64::instructions::tables::load_tss;
-use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask, Star};
-use x86_64::registers::rflags::RFlags;
-use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
-use x86_64::structures::tss::TaskStateSegment;
+use x86_64::{
+    VirtAddr,
+    instructions::{
+        segmentation::{CS, SS, Segment},
+        tables::load_tss,
+    },
+    registers::{
+        model_specific::{Efer, EferFlags, LStar, SFMask, Star},
+        rflags::RFlags,
+    },
+    structures::{
+        gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
+        tss::TaskStateSegment,
+    },
+};
 
 const PAGE_SIZE: usize = 4096;
 // Wasm service dispatch can consume a non-trivial amount of stack while we are
@@ -63,16 +73,7 @@ static GDT: Lazy<(GlobalDescriptorTable, Selectors)> = Lazy::new(|| {
     let user_code = gdt.append(Descriptor::user_code_segment());
     let tss = gdt.append(Descriptor::tss_segment(&TSS));
 
-    (
-        gdt,
-        Selectors {
-            kernel_code,
-            kernel_data,
-            user_code,
-            user_data,
-            tss,
-        },
-    )
+    (gdt, Selectors { kernel_code, kernel_data, user_code, user_data, tss })
 });
 
 global_asm!(

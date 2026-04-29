@@ -26,18 +26,9 @@ pub(crate) struct WaitToken {
 
 #[derive(Clone, Debug)]
 pub(crate) enum FdResource {
-    ServiceNode {
-        route: ServiceRoute,
-        node: NodeKind,
-        path: Vec<u8>,
-    },
-    EpollInstance {
-        epoll_id: u32,
-    },
-    Socket {
-        socket_id: u64,
-        ready_key: u64,
-    },
+    ServiceNode { route: ServiceRoute, node: NodeKind, path: Vec<u8> },
+    EpollInstance { epoll_id: u32 },
+    Socket { socket_id: u64, ready_key: u64 },
 }
 
 #[derive(Clone, Debug)]

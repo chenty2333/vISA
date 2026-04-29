@@ -80,11 +80,7 @@ impl SemanticGraph {
         if block_dma_buffer == 0 {
             return Err("block dma buffer id=0 is invalid");
         }
-        if self
-            .block_dma_buffers
-            .iter()
-            .any(|record| record.id == block_dma_buffer)
-        {
+        if self.block_dma_buffers.iter().any(|record| record.id == block_dma_buffer) {
             return Err("block dma buffer already exists");
         }
         if backend.generation == 0
@@ -256,9 +252,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_dma_buffer_id = self
-            .next_block_dma_buffer_id
-            .max(block_dma_buffer.saturating_add(1));
+        self.next_block_dma_buffer_id =
+            self.next_block_dma_buffer_id.max(block_dma_buffer.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockDmaBufferBound {
@@ -519,19 +514,10 @@ impl SemanticGraph {
     ) -> bool {
         matches!(
             (operation, access),
-            (
-                BlockRequestOperation::Read,
-                DmaBufferObjectAccess::WriteOnly
-            ) | (
-                BlockRequestOperation::Read,
-                DmaBufferObjectAccess::ReadWrite
-            ) | (
-                BlockRequestOperation::Write,
-                DmaBufferObjectAccess::ReadOnly
-            ) | (
-                BlockRequestOperation::Write,
-                DmaBufferObjectAccess::ReadWrite
-            )
+            (BlockRequestOperation::Read, DmaBufferObjectAccess::WriteOnly)
+                | (BlockRequestOperation::Read, DmaBufferObjectAccess::ReadWrite)
+                | (BlockRequestOperation::Write, DmaBufferObjectAccess::ReadOnly)
+                | (BlockRequestOperation::Write, DmaBufferObjectAccess::ReadWrite)
         )
     }
 
@@ -541,10 +527,8 @@ impl SemanticGraph {
         block_dma_buffer: BlockDmaBufferId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_dma_buffers
-            .iter_mut()
-            .find(|record| record.id == block_dma_buffer)
+        if let Some(record) =
+            self.block_dma_buffers.iter_mut().find(|record| record.id == block_dma_buffer)
         {
             record.dma_buffer_generation = generation;
         }
@@ -556,10 +540,8 @@ impl SemanticGraph {
         block_dma_buffer: BlockDmaBufferId,
         digest: u64,
     ) {
-        if let Some(record) = self
-            .block_dma_buffers
-            .iter_mut()
-            .find(|record| record.id == block_dma_buffer)
+        if let Some(record) =
+            self.block_dma_buffers.iter_mut().find(|record| record.id == block_dma_buffer)
         {
             record.buffer_digest = digest;
         }

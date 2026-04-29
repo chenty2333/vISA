@@ -188,11 +188,7 @@ impl SemanticGraph {
         run: SmpStressRunId,
         property_failures: u32,
     ) {
-        if let Some(record) = self
-            .smp_stress_runs
-            .iter_mut()
-            .find(|record| record.id == run)
-        {
+        if let Some(record) = self.smp_stress_runs.iter_mut().find(|record| record.id == run) {
             record.property_failures = property_failures;
         }
     }
@@ -203,11 +199,7 @@ impl SemanticGraph {
         run: SmpStressRunId,
         snapshot_barriers: u32,
     ) {
-        if let Some(record) = self
-            .smp_stress_runs
-            .iter_mut()
-            .find(|record| record.id == run)
-        {
+        if let Some(record) = self.smp_stress_runs.iter_mut().find(|record| record.id == run) {
             record.observed_snapshot_barrier_count = snapshot_barriers;
         }
     }
@@ -266,72 +258,56 @@ impl SemanticGraph {
                 "smp-safe-point",
                 record.last_safe_point,
                 record.last_safe_point_generation,
-                self.smp_safe_points
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_safe_points.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "stop-the-world-rendezvous",
                 record.last_rendezvous,
                 record.last_rendezvous_generation,
-                self.stop_the_world_rendezvous
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.stop_the_world_rendezvous.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-code-publish-barrier",
                 record.last_code_publish_barrier,
                 record.last_code_publish_barrier_generation,
-                self.smp_code_publish_barriers
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_code_publish_barriers.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-cleanup-quiescence",
                 record.last_cleanup_quiescence,
                 record.last_cleanup_quiescence_generation,
-                self.smp_cleanup_quiescence
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_cleanup_quiescence.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "smp-snapshot-barrier",
                 record.last_snapshot_barrier,
                 record.last_snapshot_barrier_generation,
-                self.smp_snapshot_barriers
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_snapshot_barriers.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "activation-migration",
                 record.last_activation_migration,
                 record.last_activation_migration_generation,
-                self.activation_migrations
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.activation_migrations.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "remote-preempt",
                 record.last_remote_preempt,
                 record.last_remote_preempt_generation,
-                self.remote_preempts
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.remote_preempts.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_stress_ref(
                 record.id,
                 "remote-park",
                 record.last_remote_park,
                 record.last_remote_park_generation,
-                self.remote_parks
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.remote_parks.iter().map(|item| (item.id, item.generation)),
             )?;
             if record.observed_safe_point_count as usize > self.smp_safe_point_count()
                 || record.observed_rendezvous_count as usize
@@ -378,50 +354,34 @@ impl SemanticGraph {
     }
 
     fn latest_smp_safe_point_ref(&self) -> Option<(SmpSafePointId, Generation)> {
-        self.smp_safe_points
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.smp_safe_points.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_rendezvous_ref(&self) -> Option<(StopTheWorldRendezvousId, Generation)> {
-        self.stop_the_world_rendezvous
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.stop_the_world_rendezvous.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_code_publish_barrier_ref(&self) -> Option<(SmpCodePublishBarrierId, Generation)> {
-        self.smp_code_publish_barriers
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.smp_code_publish_barriers.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_cleanup_quiescence_ref(&self) -> Option<(SmpCleanupQuiescenceId, Generation)> {
-        self.smp_cleanup_quiescence
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.smp_cleanup_quiescence.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_smp_snapshot_barrier_ref(&self) -> Option<(SmpSnapshotBarrierId, Generation)> {
-        self.smp_snapshot_barriers
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.smp_snapshot_barriers.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_activation_migration_ref(&self) -> Option<(ActivationMigrationId, Generation)> {
-        self.activation_migrations
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.activation_migrations.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_remote_preempt_ref(&self) -> Option<(RemotePreemptId, Generation)> {
-        self.remote_preempts
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.remote_preempts.last().map(|record| (record.id, record.generation))
     }
 
     fn latest_remote_park_ref(&self) -> Option<(RemoteParkId, Generation)> {
-        self.remote_parks
-            .last()
-            .map(|record| (record.id, record.generation))
+        self.remote_parks.last().map(|record| (record.id, record.generation))
     }
 }

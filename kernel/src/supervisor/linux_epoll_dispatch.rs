@@ -1,21 +1,20 @@
-use crate::interrupts;
 use semantic_core::FailureEffect;
 use vmos_abi::ERR_EPERM;
 
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::runtime::PrototypeRuntime;
-use super::types::{FdEntry, FdResource, ServiceCallError};
-use super::wait::WaitRegistration;
+use super::{
+    linux::{LinuxCallResult, LinuxPlan},
+    runtime::PrototypeRuntime,
+    types::{FdEntry, FdResource, ServiceCallError},
+    wait::WaitRegistration,
+};
+use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_epoll_create1(
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("epoll_service", "epoll.instance", "create")
-            .is_err()
-        {
+        if self.require_capability("epoll_service", "epoll.instance", "create").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let flags = u32::try_from(plan.args[0]).map_err(|_| "epoll_create1 flags overflowed")?;
@@ -39,10 +38,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("epoll_service", "epoll.instance", "ctl")
-            .is_err()
-        {
+        if self.require_capability("epoll_service", "epoll.instance", "ctl").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_ctl epfd overflowed")?;
@@ -50,12 +46,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = u32::try_from(plan.args[2]).map_err(|_| "epoll_ctl fd overflowed")?;
         let events = u32::try_from(plan.args[3]).map_err(|_| "epoll_ctl events overflowed")?;
         let data = plan.args[4];
-        let epoll_id = self
-            .epoll_id_from_fd(epfd)
-            .map_err(|_| "epoll_ctl targeted an invalid epoll fd")?;
-        let ready_key = self
-            .fd_ready_key(fd)
-            .map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
+        let epoll_id =
+            self.epoll_id_from_fd(epfd).map_err(|_| "epoll_ctl targeted an invalid epoll fd")?;
+        let ready_key =
+            self.fd_ready_key(fd).map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
         match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
             Ok(()) => {
                 if self.pulse.is_ready_key(ready_key)
@@ -77,10 +71,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("epoll_service", "epoll.instance", "wait")
-            .is_err()
-        {
+        if self.require_capability("epoll_service", "epoll.instance", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let epfd = u32::try_from(plan.args[0]).map_err(|_| "epoll_wait epfd overflowed")?;
@@ -93,9 +84,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let resume_cookie =
             u32::try_from(plan.args[3]).map_err(|_| "epoll_wait resume cookie overflowed")?;
-        let epoll_id = self
-            .epoll_id_from_fd(epfd)
-            .map_err(|_| "epoll_wait targeted an invalid epoll fd")?;
+        let epoll_id =
+            self.epoll_id_from_fd(epfd).map_err(|_| "epoll_wait targeted an invalid epoll fd")?;
 
         self.pump_async_sources();
         let ready = match self.epoll.collect_ready(epoll_id, max_events) {
@@ -118,12 +108,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Epoll {
-                epoll_id,
-                max_events,
-                timeout_ms,
-                resume_cookie,
-            },
+            WaitRegistration::Epoll { epoll_id, max_events, timeout_ms, resume_cookie },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -134,11 +119,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Errno(errno)) => {
                 self.semantic.record_wait_cancelled(token.id, errno);
-                self.semantic
-                    .record_failure_effect(FailureEffect::CancelWaitToken {
-                        wait: token.id,
-                        errno,
-                    });
+                self.semantic.record_failure_effect(FailureEffect::CancelWaitToken {
+                    wait: token.id,
+                    errno,
+                });
                 Ok(LinuxCallResult::Ret(-(errno as i64)))
             }
             Err(ServiceCallError::Trap(reason)) => {
@@ -153,10 +137,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("epoll_service", "epoll.instance", "wait")
-            .is_err()
-        {
+        if self.require_capability("epoll_service", "epoll.instance", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let epoll_id =

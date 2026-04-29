@@ -1,7 +1,9 @@
-use std::env;
-use std::error::Error;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+};
 
 mod runtime;
 
@@ -73,14 +75,6 @@ use fs_adapter::{
 };
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
-use semantic_core::target_executor::{
-    ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
-    ContractObjectKind, ContractObjectRef, ExpectedTargetArtifact, HostcallCategory, HostcallFrame,
-    HostcallSpec, HostcallTraceRecord, ManagedStoreRecord, MigrationObjectRecord,
-    TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec, TargetExecutor,
-    TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata, TombstoneRecord,
-    VerifiedArtifact,
-};
 use semantic_core::{
     ActivationContextState, ActivationVectorState, ArtifactVerificationState, AuthorityObjectRef,
     BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation, BlockRequestQueueEntryRef,
@@ -99,31 +93,36 @@ use semantic_core::{
     SemanticGraph, SemanticWaitKind, SimdFaultInjectionEffect, SimdFaultInjectionKind,
     SnapshotBarrierValidationState, SnapshotBarrierValidator, StoreRecord, StoreState, TaskState,
     TrapSurfaceState, VectorStateState, WaitCancelReason, memory_class_policies,
+    target_executor::{
+        ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
+        ContractObjectKind, ContractObjectRef, ExpectedTargetArtifact, HostcallCategory,
+        HostcallFrame, HostcallSpec, HostcallTraceRecord, ManagedStoreRecord,
+        MigrationObjectRecord, TargetAddressMapEntry, TargetArtifactImage, TargetCapabilitySpec,
+        TargetExecutor, TargetMemoryPlan, TargetStoreManager, TargetTrapClass, TargetTrapMetadata,
+        TombstoneRecord, VerifiedArtifact,
+    },
     validate_contract_graph,
 };
-use service_core::fake_block::{
-    FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig,
-};
-use service_core::fake_net::{
-    FAKE_NET_BACKEND_PROFILE, FAKE_NET_BACKEND_PROVIDER, FAKE_NET_BACKEND_SEED,
-};
-use service_core::net_contract::{
-    PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
+use service_core::{
+    fake_block::{FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig},
+    fake_net::{FAKE_NET_BACKEND_PROFILE, FAKE_NET_BACKEND_PROVIDER, FAKE_NET_BACKEND_SEED},
+    net_contract::{PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT},
 };
 use substrate_api::{SubstrateEvent, SubstrateRequester};
-use substrate_virtio::block::{
-    VIRTIO_BLK_BACKEND_MODEL, VIRTIO_BLK_BACKEND_PROFILE, VIRTIO_BLK_BACKEND_PROVIDER,
-    VirtioBlkBackendConfig,
-};
-use substrate_virtio::net::{
-    VIRTIO_NET_BACKEND_MODEL, VIRTIO_NET_BACKEND_PROFILE, VIRTIO_NET_BACKEND_PROVIDER,
-    VirtioNetBackendConfig,
+use substrate_virtio::{
+    block::{
+        VIRTIO_BLK_BACKEND_MODEL, VIRTIO_BLK_BACKEND_PROFILE, VIRTIO_BLK_BACKEND_PROVIDER,
+        VirtioBlkBackendConfig,
+    },
+    net::{
+        VIRTIO_NET_BACKEND_MODEL, VIRTIO_NET_BACKEND_PROFILE, VIRTIO_NET_BACKEND_PROVIDER,
+        VirtioNetBackendConfig,
+    },
 };
 use target_abi::{
-    OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1,
-    TrapMapEntryV1,
+    OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, PANIC_RECORD_MAX_LEN, PANIC_RING_SIZE,
+    PanicRecordKindV1, PanicRingV1, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1, TrapMapEntryV1,
 };
-use target_abi::{PANIC_RECORD_MAX_LEN, PANIC_RING_SIZE, PanicRecordKindV1, PanicRingV1};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
@@ -275,14 +274,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         semantic.fault_domain_count(),
         semantic.runtime_mode().as_str()
     );
-    println!(
-        "semantic store graph contains {} stores",
-        semantic.store_count()
-    );
-    println!(
-        "semantic event log contains {} events",
-        semantic.event_count()
-    );
+    println!("semantic store graph contains {} stores", semantic.store_count());
+    println!("semantic event log contains {} events", semantic.event_count());
     for store in stores {
         println!(
             "store {} role={} fault_policy={} abi={} binding={}",
@@ -370,11 +363,7 @@ fn register_store_semantics(semantic: &mut SemanticGraph, entry: &ValidatedArtif
         Some("target-runtime-only-loader"),
     );
     for capability in &entry.capabilities {
-        let rights = capability
-            .rights
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
+        let rights = capability.rights.iter().map(String::as_str).collect::<Vec<_>>();
         semantic.grant_manifest_capability(
             &entry.package,
             &capability.name,
@@ -825,10 +814,7 @@ fn record_network_runtime_n8_evidence(semantic: &mut SemanticGraph) -> Result<()
         },
     ));
     if denied.status != CommandStatus::Rejected
-        || !denied
-            .violations
-            .iter()
-            .any(|violation| violation.contains("handle"))
+        || !denied.violations.iter().any(|violation| violation.contains("handle"))
     {
         return Err(format!(
             "network runtime n8 forged tx capability command {} ({}) was not rejected: status={} violations={:?}",
@@ -881,10 +867,7 @@ fn record_network_runtime_n9_evidence(semantic: &mut SemanticGraph) -> Result<()
         },
     ));
     if duplicate.status != CommandStatus::Rejected
-        || !duplicate
-            .violations
-            .iter()
-            .any(|violation| violation.contains("already completed"))
+        || !duplicate.violations.iter().any(|violation| violation.contains("already completed"))
     {
         return Err(format!(
             "network runtime n9 duplicate tx completion command {} ({}) was not rejected: status={} violations={:?}",
@@ -969,10 +952,7 @@ fn record_network_runtime_n10_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if duplicate.status != CommandStatus::Rejected
-        || !duplicate
-            .violations
-            .iter()
-            .any(|violation| violation.contains("already bound"))
+        || !duplicate.violations.iter().any(|violation| violation.contains("already bound"))
     {
         return Err(format!(
             "network runtime n10 duplicate adapter command {} ({}) was not rejected: status={} violations={:?}",
@@ -1096,10 +1076,7 @@ fn record_network_runtime_n12_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if stale_socket.status != CommandStatus::Rejected
-        || !stale_socket
-            .violations
-            .iter()
-            .any(|violation| violation.contains("socket generation"))
+        || !stale_socket.violations.iter().any(|violation| violation.contains("socket generation"))
     {
         return Err(format!(
             "network runtime n12 stale socket command {} ({}) was not rejected: status={} violations={:?}",
@@ -1256,10 +1233,7 @@ fn record_network_runtime_n13_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if invalid_send.status != CommandStatus::Rejected
-        || !invalid_send
-            .violations
-            .iter()
-            .any(|violation| violation.contains("connected endpoint"))
+        || !invalid_send.violations.iter().any(|violation| violation.contains("connected endpoint"))
     {
         return Err(format!(
             "network runtime n13 invalid send command {} ({}) was not rejected: status={} violations={:?}",
@@ -1399,10 +1373,7 @@ fn record_network_runtime_n14_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if stale_wait.status != CommandStatus::Rejected
-        || !stale_wait
-            .violations
-            .iter()
-            .any(|violation| violation.contains("not pending"))
+        || !stale_wait.violations.iter().any(|violation| violation.contains("not pending"))
     {
         return Err(format!(
             "network runtime n14 stale wait command {} ({}) was not rejected: status={} violations={:?}",
@@ -1473,10 +1444,7 @@ fn record_linux_wait_service_d1_evidence(
         CommandEnvelope::new(
             272,
             "target-executor-d1",
-            SemanticCommand::ResolveWait {
-                wait: 30_002,
-                reason: "epoll-ready".to_owned(),
-            },
+            SemanticCommand::ResolveWait { wait: 30_002, reason: "epoll-ready".to_owned() },
         ),
         CommandEnvelope::new(
             273,
@@ -1554,10 +1522,7 @@ fn record_linux_wait_service_d1_evidence(
         CommandEnvelope::new(
             278,
             "target-executor-d1",
-            SemanticCommand::ResolveWait {
-                wait: 30_006,
-                reason: "futex-wake".to_owned(),
-            },
+            SemanticCommand::ResolveWait { wait: 30_006, reason: "futex-wake".to_owned() },
         ),
         CommandEnvelope::new(
             279,
@@ -1720,10 +1685,7 @@ fn record_network_runtime_n15_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if invalid_drop.status != CommandStatus::Rejected
-        || !invalid_drop
-            .violations
-            .iter()
-            .any(|violation| violation.contains("drop action"))
+        || !invalid_drop.violations.iter().any(|violation| violation.contains("drop action"))
     {
         return Err(format!(
             "network runtime n15 invalid drop command {} ({}) was not rejected: status={} violations={:?}",
@@ -2098,10 +2060,7 @@ fn record_network_runtime_n20_evidence(semantic: &mut SemanticGraph) -> Result<(
         },
     ));
     if budget_overrun.status != CommandStatus::Rejected
-        || !budget_overrun
-            .violations
-            .iter()
-            .any(|violation| violation.contains("recovery budget"))
+        || !budget_overrun.violations.iter().any(|violation| violation.contains("recovery budget"))
     {
         return Err(format!(
             "network runtime n20 budget command {} ({}) was not rejected: status={} violations={:?}",
@@ -2125,11 +2084,8 @@ fn record_network_runtime_n17_evidence(semantic: &mut SemanticGraph) -> Result<(
         .map(|handle| handle.generation)
         .ok_or("driver_virtio_net store handle is missing for n17 evidence")?;
 
-    let dma_resource = semantic.register_resource(
-        ResourceKind::DmaBuffer,
-        None,
-        "dma:virtio-net0-tx-stale-probe",
-    );
+    let dma_resource =
+        semantic.register_resource(ResourceKind::DmaBuffer, None, "dma:virtio-net0-tx-stale-probe");
     let dma_resource_generation = semantic
         .resource_handle(dma_resource)
         .map(|handle| handle.generation)
@@ -2592,10 +2548,7 @@ fn record_block_runtime_b0_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if stale_device.status != CommandStatus::Rejected
-        || !stale_device
-            .violations
-            .iter()
-            .any(|violation| violation.contains("device generation"))
+        || !stale_device.violations.iter().any(|violation| violation.contains("device generation"))
     {
         return Err(format!(
             "block runtime b0 stale device command {} ({}) was not rejected: status={} violations={:?}",
@@ -2623,10 +2576,7 @@ fn record_block_runtime_b0_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if bad_contract.status != CommandStatus::Rejected
-        || !bad_contract
-            .violations
-            .iter()
-            .any(|violation| violation.contains("contract values"))
+        || !bad_contract.violations.iter().any(|violation| violation.contains("contract values"))
     {
         return Err(format!(
             "block runtime b0 bad contract command {} ({}) was not rejected: status={} violations={:?}",
@@ -2734,10 +2684,7 @@ fn record_block_runtime_b1_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if over_transfer.status != CommandStatus::Rejected
-        || !over_transfer
-            .violations
-            .iter()
-            .any(|violation| violation.contains("max transfer"))
+        || !over_transfer.violations.iter().any(|violation| violation.contains("max transfer"))
     {
         return Err(format!(
             "block runtime b1 over-transfer command {} ({}) was not rejected: status={} violations={:?}",
@@ -2992,10 +2939,7 @@ fn record_block_runtime_b3_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if bad_byte_count.status != CommandStatus::Rejected
-        || !bad_byte_count
-            .violations
-            .iter()
-            .any(|violation| violation.contains("full byte range"))
+        || !bad_byte_count.violations.iter().any(|violation| violation.contains("full byte range"))
     {
         return Err(format!(
             "block runtime b3 bad byte count command {} ({}) was not rejected: status={} violations={:?}",
@@ -3324,10 +3268,7 @@ fn record_block_runtime_b5_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if duplicate_backend.status != CommandStatus::Rejected
-        || !duplicate_backend
-            .violations
-            .iter()
-            .any(|violation| violation.contains("already bound"))
+        || !duplicate_backend.violations.iter().any(|violation| violation.contains("already bound"))
     {
         return Err(format!(
             "block runtime b5 duplicate fake backend command {} ({}) was not rejected: status={} violations={:?}",
@@ -3578,10 +3519,7 @@ fn record_block_runtime_b6_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if duplicate_backend.status != CommandStatus::Rejected
-        || !duplicate_backend
-            .violations
-            .iter()
-            .any(|violation| violation.contains("already bound"))
+        || !duplicate_backend.violations.iter().any(|violation| violation.contains("already bound"))
     {
         return Err(format!(
             "block runtime b6 duplicate backend command {} ({}) was not rejected: status={} violations={:?}",
@@ -3912,10 +3850,7 @@ fn record_block_runtime_b7_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if bad_digest.status != CommandStatus::Rejected
-        || !bad_digest
-            .violations
-            .iter()
-            .any(|violation| violation.contains("data digest mismatch"))
+        || !bad_digest.violations.iter().any(|violation| violation.contains("data digest mismatch"))
     {
         return Err(format!(
             "block runtime b7 bad digest command {} ({}) was not rejected: status={} violations={:?}",
@@ -4241,10 +4176,7 @@ fn record_block_runtime_b9_evidence(semantic: &mut SemanticGraph) -> Result<(), 
         },
     ));
     if over_depth.status != CommandStatus::Rejected
-        || !over_depth
-            .violations
-            .iter()
-            .any(|violation| violation.contains("depth exceeded"))
+        || !over_depth.violations.iter().any(|violation| violation.contains("depth exceeded"))
     {
         return Err(format!(
             "block runtime b9 over-depth queue command {} ({}) was not rejected: status={} violations={:?}",
@@ -4432,10 +4364,7 @@ fn record_block_runtime_b10_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_dma.status != CommandStatus::Rejected
-        || !stale_dma
-            .violations
-            .iter()
-            .any(|violation| violation.contains("dma generation"))
+        || !stale_dma.violations.iter().any(|violation| violation.contains("dma generation"))
     {
         return Err(format!(
             "block runtime b10 stale dma command {} ({}) was not rejected: status={} violations={:?}",
@@ -4462,10 +4391,7 @@ fn record_block_runtime_b10_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if bad_digest.status != CommandStatus::Rejected
-        || !bad_digest
-            .violations
-            .iter()
-            .any(|violation| violation.contains("digest mismatch"))
+        || !bad_digest.violations.iter().any(|violation| violation.contains("digest mismatch"))
     {
         return Err(format!(
             "block runtime b10 bad digest command {} ({}) was not rejected: status={} violations={:?}",
@@ -4569,10 +4495,7 @@ fn record_block_runtime_b11_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_dma.status != CommandStatus::Rejected
-        || !stale_dma
-            .violations
-            .iter()
-            .any(|violation| violation.contains("dma buffer generation"))
+        || !stale_dma.violations.iter().any(|violation| violation.contains("dma buffer generation"))
     {
         return Err(format!(
             "block runtime b11 stale dma command {} ({}) was not rejected: status={} violations={:?}",
@@ -4606,10 +4529,7 @@ fn record_block_runtime_b11_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if dead_page.status != CommandStatus::Rejected
-        || !dead_page
-            .violations
-            .iter()
-            .any(|violation| violation.contains("page must be live"))
+        || !dead_page.violations.iter().any(|violation| violation.contains("page must be live"))
     {
         return Err(format!(
             "block runtime b11 dead page command {} ({}) was not rejected: status={} violations={:?}",
@@ -4873,10 +4793,7 @@ fn record_block_runtime_b13_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if oversized.status != CommandStatus::Rejected
-        || !oversized
-            .violations
-            .iter()
-            .any(|violation| violation.contains("byte range exceeds"))
+        || !oversized.violations.iter().any(|violation| violation.contains("byte range exceeds"))
     {
         return Err(format!(
             "block runtime b13 oversized command {} ({}) was not rejected: status={} violations={:?}",
@@ -4978,10 +4895,7 @@ fn record_block_runtime_b14_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_file.status != CommandStatus::Rejected
-        || !stale_file
-            .violations
-            .iter()
-            .any(|violation| violation.contains("file generation"))
+        || !stale_file.violations.iter().any(|violation| violation.contains("file generation"))
     {
         return Err(format!(
             "block runtime b14 stale file command {} ({}) was not rejected: status={} violations={:?}",
@@ -5014,10 +4928,7 @@ fn record_block_runtime_b14_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if mismatch.status != CommandStatus::Rejected
-        || !mismatch
-            .violations
-            .iter()
-            .any(|violation| violation.contains("file identity mismatch"))
+        || !mismatch.violations.iter().any(|violation| violation.contains("file identity mismatch"))
     {
         return Err(format!(
             "block runtime b14 mismatch command {} ({}) was not rejected: status={} violations={:?}",
@@ -5496,10 +5407,7 @@ fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_file.status != CommandStatus::Rejected
-        || !stale_file
-            .violations
-            .iter()
-            .any(|violation| violation.contains("file generation"))
+        || !stale_file.violations.iter().any(|violation| violation.contains("file generation"))
     {
         return Err(format!(
             "block runtime b17 stale file command {} ({}) was not rejected: status={} violations={:?}",
@@ -5535,10 +5443,7 @@ fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if forged.status != CommandStatus::Rejected
-        || !forged
-            .violations
-            .iter()
-            .any(|violation| violation.contains("handle is not authorized"))
+        || !forged.violations.iter().any(|violation| violation.contains("handle is not authorized"))
     {
         return Err(format!(
             "block runtime b17 forged handle command {} ({}) was not rejected: status={} violations={:?}",
@@ -5572,10 +5477,7 @@ fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if oversized.status != CommandStatus::Rejected
-        || !oversized
-            .violations
-            .iter()
-            .any(|violation| violation.contains("file binding mismatch"))
+        || !oversized.violations.iter().any(|violation| violation.contains("file binding mismatch"))
     {
         return Err(format!(
             "block runtime b17 oversized file command {} ({}) was not rejected: status={} violations={:?}",
@@ -5609,10 +5511,7 @@ fn record_block_runtime_b17_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if duplicate.status != CommandStatus::Rejected
-        || !duplicate
-            .violations
-            .iter()
-            .any(|violation| violation.contains("already allowed"))
+        || !duplicate.violations.iter().any(|violation| violation.contains("already allowed"))
     {
         return Err(format!(
             "block runtime b17 duplicate command {} ({}) was not rejected: status={} violations={:?}",
@@ -6094,9 +5993,8 @@ fn record_block_runtime_b19_evidence(semantic: &mut SemanticGraph) -> Result<(),
 }
 
 fn record_block_runtime_b20_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
-    let driver_store = semantic
-        .store_id("b4.block.driver")
-        .ok_or("block runtime b20 driver store is missing")?;
+    let driver_store =
+        semantic.store_id("b4.block.driver").ok_or("block runtime b20 driver store is missing")?;
     let driver_store_generation = semantic
         .store_handle(driver_store)
         .map(|handle| handle.generation)
@@ -6355,9 +6253,8 @@ fn record_block_runtime_b20_evidence(semantic: &mut SemanticGraph) -> Result<(),
 }
 
 fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
-    let driver_store = semantic
-        .store_id("b4.block.driver")
-        .ok_or("block runtime b21 driver store is missing")?;
+    let driver_store =
+        semantic.store_id("b4.block.driver").ok_or("block runtime b21 driver store is missing")?;
     let driver_store_generation = semantic
         .store_handle(driver_store)
         .map(|handle| handle.generation)
@@ -6488,10 +6385,7 @@ fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_dma.status != CommandStatus::Rejected
-        || !stale_dma
-            .violations
-            .iter()
-            .any(|violation| violation.contains("request generation"))
+        || !stale_dma.violations.iter().any(|violation| violation.contains("request generation"))
     {
         return Err(format!(
             "block runtime b21 stale dma command {} ({}) was not rejected: status={} violations={:?}",
@@ -6517,10 +6411,7 @@ fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if stale_queue.status != CommandStatus::Rejected
-        || !stale_queue
-            .violations
-            .iter()
-            .any(|violation| violation.contains("request generation"))
+        || !stale_queue.violations.iter().any(|violation| violation.contains("request generation"))
     {
         return Err(format!(
             "block runtime b21 stale queue command {} ({}) was not rejected: status={} violations={:?}",
@@ -6569,19 +6460,15 @@ fn record_block_runtime_b21_evidence(semantic: &mut SemanticGraph) -> Result<(),
         )
         .into());
     }
-    if !semantic
-        .block_request_generation_audits()
-        .iter()
-        .any(|audit| {
-            audit.id == 20_131
-                && audit.block_request == 20_111
-                && audit.block_request_generation == 1
-                && audit.rejected_completion_generation_probes == 1
-                && audit.rejected_wait_generation_probes == 1
-                && audit.rejected_dma_generation_probes == 1
-                && audit.rejected_queue_generation_probes == 1
-        })
-    {
+    if !semantic.block_request_generation_audits().iter().any(|audit| {
+        audit.id == 20_131
+            && audit.block_request == 20_111
+            && audit.block_request_generation == 1
+            && audit.rejected_completion_generation_probes == 1
+            && audit.rejected_wait_generation_probes == 1
+            && audit.rejected_dma_generation_probes == 1
+            && audit.rejected_queue_generation_probes == 1
+    }) {
         return Err("block runtime b21 generation audit evidence is missing".into());
     }
 
@@ -6711,10 +6598,7 @@ fn record_block_runtime_b22_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if over_budget.status != CommandStatus::Rejected
-        || !over_budget
-            .violations
-            .iter()
-            .any(|violation| violation.contains("latency budget"))
+        || !over_budget.violations.iter().any(|violation| violation.contains("latency budget"))
     {
         return Err(format!(
             "block runtime b22 over-budget command {} ({}) was not rejected: status={} violations={:?}",
@@ -6848,10 +6732,7 @@ fn record_block_runtime_b23_evidence(semantic: &mut SemanticGraph) -> Result<(),
         },
     ));
     if budget_overrun.status != CommandStatus::Rejected
-        || !budget_overrun
-            .violations
-            .iter()
-            .any(|violation| violation.contains("recovery budget"))
+        || !budget_overrun.violations.iter().any(|violation| violation.contains("recovery budget"))
     {
         return Err(format!(
             "block runtime b23 budget command {} ({}) was not rejected: status={} violations={:?}",
@@ -7049,12 +6930,8 @@ fn record_preemptive_runtime_context_evidence(
         .resource_handle(packet_device_resource)
         .map(|handle| handle.generation)
         .ok_or("n0 packet device resource handle is missing")?;
-    let io_driver_store = semantic.register_store(
-        "i6.irq.driver",
-        "i6-irq-driver.fake-aot",
-        "driver",
-        "restartable",
-    );
+    let io_driver_store =
+        semantic.register_store("i6.irq.driver", "i6-irq-driver.fake-aot", "driver", "restartable");
     semantic.set_store_state(io_driver_store, StoreState::Running);
     let io_driver_store_generation = semantic
         .store_handle(io_driver_store)
@@ -7165,10 +7042,7 @@ fn record_preemptive_runtime_context_evidence(
         CommandEnvelope::new(
             9_001,
             "target-executor-s6",
-            SemanticCommand::DequeueRunnable {
-                queue: 9004,
-                activation: 9004,
-            },
+            SemanticCommand::DequeueRunnable { queue: 9004, activation: 9004 },
         ),
         CommandEnvelope::new(
             9_002,
@@ -7424,10 +7298,7 @@ fn record_preemptive_runtime_context_evidence(
         CommandEnvelope::new(
             23,
             "target-executor-p2",
-            SemanticCommand::DequeueRunnable {
-                queue: 9002,
-                activation: 9002,
-            },
+            SemanticCommand::DequeueRunnable { queue: 9002, activation: 9002 },
         ),
         CommandEnvelope::new(
             24,
@@ -7613,10 +7484,7 @@ fn record_preemptive_runtime_context_evidence(
         CommandEnvelope::new(
             83,
             "target-executor-p8",
-            SemanticCommand::DequeueRunnable {
-                queue: 9003,
-                activation: 9003,
-            },
+            SemanticCommand::DequeueRunnable { queue: 9003, activation: 9003 },
         ),
         CommandEnvelope::new(
             84,
@@ -8324,20 +8192,11 @@ fn record_interface_boundary_evidence(semantic: &mut SemanticGraph) {
 
 fn record_substrate_event(semantic: &mut SemanticGraph, event: SubstrateEvent) {
     match event {
-        SubstrateEvent::Unsupported {
-            authority,
-            operation,
-            requester,
-        } => {
+        SubstrateEvent::Unsupported { authority, operation, requester } => {
             let (requester, artifact, store) = substrate_requester_parts(requester);
             semantic.record_substrate_unsupported(authority, operation, requester, artifact, store);
         }
-        SubstrateEvent::CapabilityDenied {
-            authority,
-            operation,
-            requester,
-            capability,
-        } => {
+        SubstrateEvent::CapabilityDenied { authority, operation, requester, capability } => {
             let (requester, artifact, store) = substrate_requester_parts(requester);
             semantic.record_substrate_capability_denied(
                 authority,
@@ -8380,9 +8239,7 @@ fn build_target_executor_v1(
 
     for (index, entry) in plan.modules.iter().enumerate() {
         let image = target_artifact_image((index + 1) as u64, entry, plan);
-        report
-            .target_artifacts
-            .push(target_artifact_manifest(&image));
+        report.target_artifacts.push(target_artifact_manifest(&image));
         let verified = registry.verify(image).map_err(|error| error.message())?;
         verified_artifacts.push(verified.clone());
         let store_id = semantic_store_id(semantic, &entry.package)?;
@@ -8392,43 +8249,28 @@ fn build_target_executor_v1(
             &entry.fault_policy,
             "rebuild-from-verified-artifact",
         );
-        store_manager
-            .set_running(store_id)
-            .map_err(|error| error.message())?;
+        store_manager.set_running(store_id).map_err(|error| error.message())?;
 
-        let code_id = publisher
-            .allocate(&verified)
-            .map_err(|error| error.message())?;
+        let code_id = publisher.allocate(&verified).map_err(|error| error.message())?;
         publisher.fill(code_id).map_err(|error| error.message())?;
         publisher.seal(code_id).map_err(|error| error.message())?;
-        publisher
-            .publish_rx(code_id)
-            .map_err(|error| error.message())?;
-        let store = store_manager
-            .record(store_id)
-            .ok_or("store manager lost store after register")?;
+        publisher.publish_rx(code_id).map_err(|error| error.message())?;
+        let store =
+            store_manager.record(store_id).ok_or("store manager lost store after register")?;
         grant_verified_capabilities(&mut ledger, &verified, store_id, store.store.generation)?;
-        publisher
-            .bind_to_store(code_id, &store.store)
-            .map_err(|error| error.message())?;
-        if let Some(runtime_store) = runtime_stores
-            .iter()
-            .find(|store| store.package == entry.package)
+        publisher.bind_to_store(code_id, &store.store).map_err(|error| error.message())?;
+        if let Some(runtime_store) =
+            runtime_stores.iter().find(|store| store.package == entry.package)
         {
-            let code_object = publisher
-                .object_mut(code_id)
-                .map_err(|error| error.message())?;
+            let code_object = publisher.object_mut(code_id).map_err(|error| error.message())?;
             append_cwasm_smoke_hostcalls(code_object, index, &runtime_store.smoke_trace);
         }
-        let code = publisher
-            .object(code_id)
-            .ok_or("publisher lost code object after bind")?
-            .clone();
+        let code =
+            publisher.object(code_id).ok_or("publisher lost code object after bind")?.clone();
 
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
-        if let Some(runtime_store) = runtime_stores
-            .iter()
-            .find(|store| store.package == entry.package)
+        if let Some(runtime_store) =
+            runtime_stores.iter().find(|store| store.package == entry.package)
         {
             run_cwasm_smoke_evidence(
                 index,
@@ -8447,9 +8289,7 @@ fn build_target_executor_v1(
             "restartable",
             "cleanup-harness-rebuild",
         );
-        store_manager
-            .set_running(cleanup_store_id)
-            .map_err(|error| error.message())?;
+        store_manager.set_running(cleanup_store_id).map_err(|error| error.message())?;
         let cleanup_store_snapshot = store_manager
             .record(cleanup_store_id)
             .ok_or("cleanup store missing after registration")?
@@ -8476,18 +8316,11 @@ fn build_target_executor_v1(
                 true,
             )
             .map_err(|error| error.message())?;
-        let cleanup_code_id = publisher
-            .allocate(cleanup_artifact)
-            .map_err(|error| error.message())?;
-        publisher
-            .fill(cleanup_code_id)
-            .map_err(|error| error.message())?;
-        publisher
-            .seal(cleanup_code_id)
-            .map_err(|error| error.message())?;
-        publisher
-            .publish_rx(cleanup_code_id)
-            .map_err(|error| error.message())?;
+        let cleanup_code_id =
+            publisher.allocate(cleanup_artifact).map_err(|error| error.message())?;
+        publisher.fill(cleanup_code_id).map_err(|error| error.message())?;
+        publisher.seal(cleanup_code_id).map_err(|error| error.message())?;
+        publisher.publish_rx(cleanup_code_id).map_err(|error| error.message())?;
         publisher
             .bind_to_store(cleanup_code_id, &cleanup_store_snapshot)
             .map_err(|error| error.message())?;
@@ -8510,9 +8343,8 @@ fn build_target_executor_v1(
                 .record_mut(cleanup_store_id)
                 .map_err(|error| error.message())?
                 .store;
-            let cleanup_code = publisher
-                .object_mut(cleanup_code_id)
-                .map_err(|error| error.message())?;
+            let cleanup_code =
+                publisher.object_mut(cleanup_code_id).map_err(|error| error.message())?;
             executor
                 .run_fault_cleanup(
                     cleanup_store,
@@ -8576,12 +8408,7 @@ fn build_target_executor_v1(
         &mut store_manager,
         &mut executor,
     )?;
-    run_simd_benchmark_harness(
-        &verified_artifacts,
-        semantic,
-        &mut publisher,
-        &mut store_manager,
-    )?;
+    run_simd_benchmark_harness(&verified_artifacts, semantic, &mut publisher, &mut store_manager)?;
     run_simd_context_switch_benchmark_harness(semantic)?;
     run_framebuffer_object_harness(semantic)?;
     run_display_object_harness(semantic)?;
@@ -8610,14 +8437,9 @@ fn build_target_executor_v1(
     let snapshot_validation =
         SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
     report.snapshot_validation = boundary_validation_report_manifest(&snapshot_validation);
-    executor
-        .snapshot_barrier()
-        .map_err(|error| error.message())?;
-    let replay_record_modes = executor
-        .hostcall_trace()
-        .iter()
-        .map(|trace| trace.record_mode)
-        .collect::<Vec<_>>();
+    executor.snapshot_barrier().map_err(|error| error.message())?;
+    let replay_record_modes =
+        executor.hostcall_trace().iter().map(|trace| trace.record_mode).collect::<Vec<_>>();
     let replay_state = ReplayPackageValidationState::clean(replay_record_modes);
     let replay_validation = PackageReplayValidator::validate(&replay_state);
     report.replay_validation = boundary_validation_report_manifest(&replay_validation);
@@ -8628,14 +8450,10 @@ fn build_target_executor_v1(
         report.code_objects.push(code_object_manifest(code));
     }
     for store in store_manager.records() {
-        report
-            .store_records
-            .push(store_record_manifest(&store.store));
+        report.store_records.push(store_record_manifest(&store.store));
     }
     for capability in ledger.records() {
-        report
-            .capability_records
-            .push(capability_record_manifest(capability));
+        report.capability_records.push(capability_record_manifest(capability));
     }
     let semantic_cleanup_tombstones = semantic_cleanup_tombstones(semantic);
     append_display_capability_contract_evidence(
@@ -8644,9 +8462,7 @@ fn build_target_executor_v1(
         &mut report.capability_records,
     );
     for activation in executor.activations() {
-        report
-            .activation_records
-            .push(activation_record_manifest(activation));
+        report.activation_records.push(activation_record_manifest(activation));
     }
     for trap in executor.traps() {
         report.trap_records.push(trap_record_manifest(trap));
@@ -8655,14 +8471,10 @@ fn build_target_executor_v1(
         report.hostcall_trace.push(hostcall_trace_manifest(trace));
     }
     for object in executor.classify_migration_objects(publisher.objects()) {
-        report
-            .migration_objects
-            .push(migration_object_manifest(&object));
+        report.migration_objects.push(migration_object_manifest(&object));
     }
     for cleanup in executor.cleanup_transactions() {
-        report
-            .cleanup_transactions
-            .push(cleanup_transaction_manifest(cleanup));
+        report.cleanup_transactions.push(cleanup_transaction_manifest(cleanup));
     }
     for tombstone in publisher
         .tombstones()
@@ -8771,11 +8583,8 @@ fn build_target_executor_v1(
         .collect();
     report.target_event_tail = executor.event_log().to_vec();
     report.substrate_events = substrate_event_manifests(semantic.event_log().tail(usize::MAX));
-    report.command_results = semantic
-        .command_results()
-        .iter()
-        .map(command_result_manifest)
-        .collect();
+    report.command_results =
+        semantic.command_results().iter().map(command_result_manifest).collect();
     report.interface_events = interface_event_manifests(semantic.event_log().tail(usize::MAX));
     Ok(report)
 }
@@ -8795,17 +8604,13 @@ fn run_simd_trap_classification_harness(
     };
     let store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-trap-harness");
-    store_manager
-        .set_running(store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(store_id).map_err(|error| error.message())?;
     let store = store_manager
         .record(store_id)
         .ok_or("SIMD trap harness store missing after registration")?
         .store
         .clone();
-    let code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             code_id,
@@ -8818,22 +8623,12 @@ fn run_simd_trap_classification_harness(
         .map_err(|error| error.message())?;
     publisher.fill(code_id).map_err(|error| error.message())?;
     publisher.seal(code_id).map_err(|error| error.message())?;
-    publisher
-        .publish_rx(code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(code_id, &store)
-        .map_err(|error| error.message())?;
-    let code = publisher
-        .object(code_id)
-        .ok_or("SIMD trap harness code missing after bind")?
-        .clone();
+    publisher.publish_rx(code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(code_id, &store).map_err(|error| error.message())?;
+    let code =
+        publisher.object(code_id).ok_or("SIMD trap harness code missing after bind")?.clone();
     let activation = executor
-        .start_activation(
-            &store,
-            &code,
-            ActivationEntry::Symbol("simd_trap_harness".to_owned()),
-        )
+        .start_activation(&store, &code, ActivationEntry::Symbol("simd_trap_harness".to_owned()))
         .map_err(|error| error.message())?;
     let offset = RV64_ENTRY_TRAP_EBREAK_OFFSET + 0x40;
     let trap_map = [TrapMapEntryV1::new(
@@ -8859,11 +8654,7 @@ fn run_simd_vector_state_harness(
     let Some(feature_set) = semantic.target_feature_sets().first().cloned() else {
         return Ok(());
     };
-    let Some(code) = publisher
-        .objects()
-        .iter()
-        .find(|code| code.simd_requirement.uses_simd)
-    else {
+    let Some(code) = publisher.objects().iter().find(|code| code.simd_requirement.uses_simd) else {
         return Ok(());
     };
     let Some(activation) = executor.activations().iter().find(|activation| {
@@ -9020,17 +8811,13 @@ fn run_simd_lazy_vector_enable_harness(
 
     let store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-lazy-enable");
-    store_manager
-        .set_running(store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(store_id).map_err(|error| error.message())?;
     let store = store_manager
         .record(store_id)
         .ok_or("SIMD lazy enable store missing after registration")?
         .store
         .clone();
-    let code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             code_id,
@@ -9043,16 +8830,9 @@ fn run_simd_lazy_vector_enable_harness(
         .map_err(|error| error.message())?;
     publisher.fill(code_id).map_err(|error| error.message())?;
     publisher.seal(code_id).map_err(|error| error.message())?;
-    publisher
-        .publish_rx(code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(code_id, &store)
-        .map_err(|error| error.message())?;
-    let code = publisher
-        .object(code_id)
-        .ok_or("SIMD lazy enable code missing after bind")?
-        .clone();
+    publisher.publish_rx(code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(code_id, &store).map_err(|error| error.message())?;
+    let code = publisher.object(code_id).ok_or("SIMD lazy enable code missing after bind")?.clone();
     let activation = executor
         .start_activation(
             &store,
@@ -9061,11 +8841,7 @@ fn run_simd_lazy_vector_enable_harness(
         )
         .map_err(|error| error.message())?;
 
-    semantic.ensure_task(
-        9_060,
-        FrontendKind::WasmApp,
-        "v6-simd-lazy-vector-enable-task",
-    );
+    semantic.ensure_task(9_060, FrontendKind::WasmApp, "v6-simd-lazy-vector-enable-task");
     let commands = [
         CommandEnvelope::new(
             60_011,
@@ -9193,17 +8969,13 @@ fn run_simd_preempt_vector_save_harness(
         "restartable",
         "simd-preempt-vector-save",
     );
-    store_manager
-        .set_running(store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(store_id).map_err(|error| error.message())?;
     let store = store_manager
         .record(store_id)
         .ok_or("SIMD preempt vector save store missing after registration")?
         .store
         .clone();
-    let code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             code_id,
@@ -9216,12 +8988,8 @@ fn run_simd_preempt_vector_save_harness(
         .map_err(|error| error.message())?;
     publisher.fill(code_id).map_err(|error| error.message())?;
     publisher.seal(code_id).map_err(|error| error.message())?;
-    publisher
-        .publish_rx(code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(code_id, &store)
-        .map_err(|error| error.message())?;
+    publisher.publish_rx(code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(code_id, &store).map_err(|error| error.message())?;
     let code = publisher
         .object(code_id)
         .ok_or("SIMD preempt vector save code missing after bind")?
@@ -9267,9 +9035,7 @@ fn run_simd_preempt_vector_save_harness(
             hostcall_spec.number,
             &hostcall_spec.object,
             &hostcall_spec.operation,
-            ledger
-                .generation_of(&code.package, &hostcall_spec.object)
-                .unwrap_or(1),
+            ledger.generation_of(&code.package, &hostcall_spec.object).unwrap_or(1),
         )
         .with_hostcall_seq(hostcall_seq);
         frame.activation_generation = activation_generation;
@@ -9281,11 +9047,7 @@ fn run_simd_preempt_vector_save_harness(
             .map_err(|error| error.message())?;
     }
 
-    semantic.ensure_task(
-        9_070,
-        FrontendKind::WasmApp,
-        "v7-simd-preempt-vector-save-task",
-    );
+    semantic.ensure_task(9_070, FrontendKind::WasmApp, "v7-simd-preempt-vector-save-task");
     let commands = [
         CommandEnvelope::new(
             70_011,
@@ -9343,19 +9105,12 @@ fn run_simd_preempt_vector_save_harness(
         CommandEnvelope::new(
             70_016,
             "simd-runtime-v7",
-            SemanticCommand::EnqueueRunnable {
-                queue: 9_070,
-                activation,
-                activation_generation: 1,
-            },
+            SemanticCommand::EnqueueRunnable { queue: 9_070, activation, activation_generation: 1 },
         ),
         CommandEnvelope::new(
             70_017,
             "simd-runtime-v7",
-            SemanticCommand::DequeueRunnable {
-                queue: 9_070,
-                activation,
-            },
+            SemanticCommand::DequeueRunnable { queue: 9_070, activation },
         ),
         CommandEnvelope::new(
             70_018,
@@ -9546,9 +9301,7 @@ fn run_simd_resume_vector_restore_harness(
         hostcall_spec.number,
         &hostcall_spec.object,
         &hostcall_spec.operation,
-        ledger
-            .generation_of(&code.package, &hostcall_spec.object)
-            .unwrap_or(1),
+        ledger.generation_of(&code.package, &hostcall_spec.object).unwrap_or(1),
     )
     .with_hostcall_seq(4);
     frame.activation_generation = target_activation_generation;
@@ -9652,17 +9405,13 @@ fn run_simd_cross_hart_vector_migration_harness(
 
     let store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-vector-migration");
-    store_manager
-        .set_running(store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(store_id).map_err(|error| error.message())?;
     let store = store_manager
         .record(store_id)
         .ok_or("SIMD vector migration store missing after registration")?
         .store
         .clone();
-    let code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             code_id,
@@ -9675,16 +9424,10 @@ fn run_simd_cross_hart_vector_migration_harness(
         .map_err(|error| error.message())?;
     publisher.fill(code_id).map_err(|error| error.message())?;
     publisher.seal(code_id).map_err(|error| error.message())?;
-    publisher
-        .publish_rx(code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(code_id, &store)
-        .map_err(|error| error.message())?;
-    let code = publisher
-        .object(code_id)
-        .ok_or("SIMD vector migration code missing after bind")?
-        .clone();
+    publisher.publish_rx(code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(code_id, &store).map_err(|error| error.message())?;
+    let code =
+        publisher.object(code_id).ok_or("SIMD vector migration code missing after bind")?.clone();
     let activation = executor
         .start_activation(
             &store,
@@ -9726,9 +9469,7 @@ fn run_simd_cross_hart_vector_migration_harness(
             hostcall_spec.number,
             &hostcall_spec.object,
             &hostcall_spec.operation,
-            ledger
-                .generation_of(&code.package, &hostcall_spec.object)
-                .unwrap_or(1),
+            ledger.generation_of(&code.package, &hostcall_spec.object).unwrap_or(1),
         )
         .with_hostcall_seq(hostcall_seq);
         frame.activation_generation = activation_generation;
@@ -9740,11 +9481,7 @@ fn run_simd_cross_hart_vector_migration_harness(
             .map_err(|error| error.message())?;
     }
 
-    semantic.ensure_task(
-        9_080,
-        FrontendKind::WasmApp,
-        "v9-simd-cross-hart-vector-migration-task",
-    );
+    semantic.ensure_task(9_080, FrontendKind::WasmApp, "v9-simd-cross-hart-vector-migration-task");
     let commands = [
         CommandEnvelope::new(
             90_002,
@@ -9843,11 +9580,7 @@ fn run_simd_cross_hart_vector_migration_harness(
         CommandEnvelope::new(
             90_011,
             "simd-runtime-v9",
-            SemanticCommand::EnqueueRunnable {
-                queue: 9_080,
-                activation,
-                activation_generation: 1,
-            },
+            SemanticCommand::EnqueueRunnable { queue: 9_080, activation, activation_generation: 1 },
         ),
         CommandEnvelope::new(
             90_012,
@@ -9953,17 +9686,13 @@ fn run_simd_fault_injection_harness(
         .ok_or("SIMD fault injection harness requires an unsupported riscv-v feature set")?;
     let store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-fault-injection");
-    store_manager
-        .set_running(store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(store_id).map_err(|error| error.message())?;
     let store = store_manager
         .record(store_id)
         .ok_or("SIMD fault injection store missing after registration")?
         .store
         .clone();
-    let code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             code_id,
@@ -9976,22 +9705,12 @@ fn run_simd_fault_injection_harness(
         .map_err(|error| error.message())?;
     publisher.fill(code_id).map_err(|error| error.message())?;
     publisher.seal(code_id).map_err(|error| error.message())?;
-    publisher
-        .publish_rx(code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(code_id, &store)
-        .map_err(|error| error.message())?;
-    let code = publisher
-        .object(code_id)
-        .ok_or("SIMD fault injection code missing after bind")?
-        .clone();
+    publisher.publish_rx(code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(code_id, &store).map_err(|error| error.message())?;
+    let code =
+        publisher.object(code_id).ok_or("SIMD fault injection code missing after bind")?.clone();
     let activation = executor
-        .start_activation(
-            &store,
-            &code,
-            ActivationEntry::Symbol("simd_fault_injection".to_owned()),
-        )
+        .start_activation(&store, &code, ActivationEntry::Symbol("simd_fault_injection".to_owned()))
         .map_err(|error| error.message())?;
     let offset = RV64_ENTRY_TRAP_EBREAK_OFFSET + 0x50;
     let trap_map = [TrapMapEntryV1::new(
@@ -10098,29 +9817,17 @@ fn run_simd_benchmark_harness(
 
     let scalar_store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-benchmark-scalar");
-    store_manager
-        .set_running(scalar_store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(scalar_store_id).map_err(|error| error.message())?;
     let scalar_store = store_manager
         .record(scalar_store_id)
         .ok_or("SIMD benchmark scalar store missing after registration")?
         .store
         .clone();
-    let scalar_code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
-    publisher
-        .fill(scalar_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .seal(scalar_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .publish_rx(scalar_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(scalar_code_id, &scalar_store)
-        .map_err(|error| error.message())?;
+    let scalar_code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
+    publisher.fill(scalar_code_id).map_err(|error| error.message())?;
+    publisher.seal(scalar_code_id).map_err(|error| error.message())?;
+    publisher.publish_rx(scalar_code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(scalar_code_id, &scalar_store).map_err(|error| error.message())?;
     let scalar_code = publisher
         .object(scalar_code_id)
         .ok_or("SIMD benchmark scalar code missing after bind")?
@@ -10128,17 +9835,13 @@ fn run_simd_benchmark_harness(
 
     let vector_store_id =
         store_manager.register_verified_artifact(artifact, "restartable", "simd-benchmark-vector");
-    store_manager
-        .set_running(vector_store_id)
-        .map_err(|error| error.message())?;
+    store_manager.set_running(vector_store_id).map_err(|error| error.message())?;
     let vector_store = store_manager
         .record(vector_store_id)
         .ok_or("SIMD benchmark vector store missing after registration")?
         .store
         .clone();
-    let vector_code_id = publisher
-        .allocate(artifact)
-        .map_err(|error| error.message())?;
+    let vector_code_id = publisher.allocate(artifact).map_err(|error| error.message())?;
     publisher
         .declare_simd_requirement(
             vector_code_id,
@@ -10149,18 +9852,10 @@ fn run_simd_benchmark_harness(
             "v11 SIMD benchmark vector code requirement",
         )
         .map_err(|error| error.message())?;
-    publisher
-        .fill(vector_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .seal(vector_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .publish_rx(vector_code_id)
-        .map_err(|error| error.message())?;
-    publisher
-        .bind_to_store(vector_code_id, &vector_store)
-        .map_err(|error| error.message())?;
+    publisher.fill(vector_code_id).map_err(|error| error.message())?;
+    publisher.seal(vector_code_id).map_err(|error| error.message())?;
+    publisher.publish_rx(vector_code_id).map_err(|error| error.message())?;
+    publisher.bind_to_store(vector_code_id, &vector_store).map_err(|error| error.message())?;
     let vector_code = publisher
         .object(vector_code_id)
         .ok_or("SIMD benchmark vector code missing after bind")?
@@ -11264,20 +10959,15 @@ fn run_integrated_display_panic_harness(
     )
     .map_err(|err| format!("push contract panic summary record: {err:?}"))?;
     let mut out = [0u8; 8192];
-    let len = ring
-        .dump_jsonl(&mut out)
-        .map_err(|err| format!("dump panic ring jsonl: {err:?}"))?;
+    let len = ring.dump_jsonl(&mut out).map_err(|err| format!("dump panic ring jsonl: {err:?}"))?;
     let jsonl = std::str::from_utf8(&out[..len])?;
     let jsonl_frame_count = jsonl.lines().count() as u32;
-    let contract_panic_summary_records = jsonl
-        .matches("\"schema\":\"contract-panic-summary-v1\"")
-        .count() as u32;
-    let corrupt_record_count = jsonl
-        .matches("\"schema\":\"panic-ring-corrupt-record-v1\"")
-        .count() as u32;
-    let truncated_record_count = jsonl
-        .matches("\"schema\":\"truncated-panic-record-v1\"")
-        .count() as u32;
+    let contract_panic_summary_records =
+        jsonl.matches("\"schema\":\"contract-panic-summary-v1\"").count() as u32;
+    let corrupt_record_count =
+        jsonl.matches("\"schema\":\"panic-ring-corrupt-record-v1\"").count() as u32;
+    let truncated_record_count =
+        jsonl.matches("\"schema\":\"truncated-panic-record-v1\"").count() as u32;
 
     let result = semantic.apply_envelope(CommandEnvelope::new(
         100_009,
@@ -11386,9 +11076,8 @@ fn append_display_capability_contract_evidence(
         if !capability_records.iter().any(|record| {
             record.id == display_capability.capability
                 && record.generation == display_capability.capability_generation
-        }) && let Some(capability) = semantic
-            .capabilities()
-            .record(display_capability.capability)
+        }) && let Some(capability) =
+            semantic.capabilities().record(display_capability.capability)
         {
             capability_records.push(capability_record_manifest(capability));
         }
@@ -11423,11 +11112,8 @@ fn contract_graph_store_records(
     semantic: &SemanticGraph,
     store_manager: &TargetStoreManager,
 ) -> Vec<StoreRecord> {
-    let mut stores = store_manager
-        .records()
-        .iter()
-        .map(|record| record.store.clone())
-        .collect::<Vec<_>>();
+    let mut stores =
+        store_manager.records().iter().map(|record| record.store.clone()).collect::<Vec<_>>();
     for display_capability in semantic.display_capabilities() {
         if stores.iter().any(|store| {
             store.id == display_capability.owner_store
@@ -11485,10 +11171,7 @@ fn contract_graph_capability_records(
         }) {
             continue;
         }
-        if let Some(capability) = semantic
-            .capabilities()
-            .record(display_capability.capability)
-        {
+        if let Some(capability) = semantic.capabilities().record(display_capability.capability) {
             capabilities.push(capability.clone());
         }
     }
@@ -11577,12 +11260,8 @@ fn run_cwasm_smoke_evidence(
             1,
         )
         .to_wire_frame();
-        executor
-            .invoke_hostcall(code, frame, ledger)
-            .map_err(|error| error.message())?;
-        executor
-            .return_exit(activation)
-            .map_err(|error| error.message())?;
+        executor.invoke_hostcall(code, frame, ledger).map_err(|error| error.message())?;
+        executor.return_exit(activation).map_err(|error| error.message())?;
     }
     Ok(())
 }
@@ -11606,9 +11285,7 @@ fn run_activation_harness(
         )
         .map_err(|error| error.message())?;
     if let Some(spec) = code.hostcalls.iter().find(|spec| spec.number < 9000) {
-        let generation = ledger
-            .generation_of(&code.package, &spec.object)
-            .unwrap_or(1);
+        let generation = ledger.generation_of(&code.package, &spec.object).unwrap_or(1);
         let mut frame = HostcallFrame::new_bound(
             activation,
             &store.store,
@@ -11625,9 +11302,7 @@ fn run_activation_harness(
             .invoke_hostcall(code, frame.to_wire_frame(), ledger)
             .map_err(|error| error.message())?;
     }
-    executor
-        .return_exit(activation)
-        .map_err(|error| error.message())?;
+    executor.return_exit(activation).map_err(|error| error.message())?;
 
     if index == 0 {
         for (number, object, operation) in [
@@ -11668,9 +11343,7 @@ fn run_activation_harness(
                     ActivationEntry::Symbol("bad_hostcall_abi".to_owned()),
                 )
                 .map_err(|error| error.message())?;
-            let generation = ledger
-                .generation_of(&code.package, &spec.object)
-                .unwrap_or(1);
+            let generation = ledger.generation_of(&code.package, &spec.object).unwrap_or(1);
             let frame = HostcallFrame::new_bound(
                 bad_abi,
                 &store.store,
@@ -11768,11 +11441,7 @@ fn run_activation_harness(
         }
 
         let dmw = executor
-            .start_activation(
-                &store.store,
-                code,
-                ActivationEntry::Symbol("dmw_pending".to_owned()),
-            )
+            .start_activation(&store.store, code, ActivationEntry::Symbol("dmw_pending".to_owned()))
             .map_err(|error| error.message())?;
         let lease = executor
             .acquire_dmw_lease(dmw, "dmw.handle-mode.harness")
@@ -11783,9 +11452,7 @@ fn run_activation_harness(
                 .to_wire_frame(),
             ledger,
         );
-        executor
-            .release_dmw_lease(lease)
-            .map_err(|error| error.message())?;
+        executor.release_dmw_lease(lease).map_err(|error| error.message())?;
 
         let pc_trap = executor
             .start_activation(
@@ -11862,9 +11529,7 @@ fn target_artifact_image(
     image.signer = entry.signer.clone();
     image.exports = entry.expected_exports.clone();
     image.payload_len = entry.cwasm_sha256.len();
-    image
-        .address_map
-        .push(TargetAddressMapEntry::new("vmos_service_entry", 0, 64));
+    image.address_map.push(TargetAddressMapEntry::new("vmos_service_entry", 0, 64));
     image.trap_metadata.push(TargetTrapMetadata::new(
         TargetTrapClass::CodeObjectTrap,
         "vmos_service_entry",
@@ -12083,11 +11748,7 @@ fn grant_verified_capabilities(
     store_generation: u64,
 ) -> Result<(), &'static str> {
     for capability in &verified.capabilities {
-        let operations = capability
-            .operations
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
+        let operations = capability.operations.iter().map(String::as_str).collect::<Vec<_>>();
         ledger
             .grant_manifest_binding(
                 &verified.package,
@@ -12111,16 +11772,9 @@ fn capability_handle_arg_for(
     spec: &HostcallSpec,
 ) -> Option<CapabilityHandleArg> {
     let capability = ledger.check(subject, &spec.object, &spec.operation).ok()?;
-    let index = capability
-        .operations
-        .as_slice()
-        .iter()
-        .position(|right| right == &spec.operation)?;
-    Some(CapabilityHandleArg::from_record(
-        capability,
-        1u64 << index,
-        &[spec.operation.as_str()],
-    ))
+    let index =
+        capability.operations.as_slice().iter().position(|right| right == &spec.operation)?;
+    Some(CapabilityHandleArg::from_record(capability, 1u64 << index, &[spec.operation.as_str()]))
 }
 
 fn semantic_store_id(semantic: &SemanticGraph, package: &str) -> Result<u64, Box<dyn Error>> {
@@ -12146,11 +11800,7 @@ fn semantic_capability_ref(
             record.subject == subject
                 && record.object == object
                 && !record.revoked
-                && record
-                    .operations
-                    .as_slice()
-                    .iter()
-                    .any(|right| right == operation)
+                && record.operations.as_slice().iter().any(|right| right == operation)
         })
         .map(|record| {
             ContractObjectRef::new(ContractObjectKind::Capability, record.id, record.generation)
@@ -12171,11 +11821,7 @@ fn semantic_store_resource_ref(
         .resource_handle(resource)
         .map(|handle| handle.generation)
         .ok_or_else(|| format!("semantic graph missing resource handle for store {store}"))?;
-    Ok(ContractObjectRef::new(
-        ContractObjectKind::Resource,
-        resource,
-        generation,
-    ))
+    Ok(ContractObjectRef::new(ContractObjectKind::Resource, resource, generation))
 }
 
 fn prepare_migration_package(
@@ -12233,12 +11879,8 @@ fn demo_migration_package(
         schema_version: 1,
         package_format: "vmos-semantic-package-v1".to_owned(),
         package_id: "target-executor-semantic-package-v1".to_owned(),
-        source: MigrationHostManifest {
-            arch: "x86_64".to_owned(),
-        },
-        target: MigrationTargetManifest {
-            arch_requirement: "target-native".to_owned(),
-        },
+        source: MigrationHostManifest { arch: "x86_64".to_owned() },
+        target: MigrationTargetManifest { arch_requirement: "target-native".to_owned() },
         required_artifact_profile: RequiredArtifactProfileManifest {
             artifact_profile: manifest.artifact_profile.clone(),
             target_arch: "target-native".to_owned(),
@@ -12435,36 +12077,20 @@ fn demo_migration_package(
                 .iter()
                 .map(activation_context_manifest)
                 .collect(),
-            saved_contexts: semantic
-                .saved_contexts()
-                .iter()
-                .map(saved_context_manifest)
-                .collect(),
+            saved_contexts: semantic.saved_contexts().iter().map(saved_context_manifest).collect(),
             timer_interrupts: semantic
                 .timer_interrupts()
                 .iter()
                 .map(timer_interrupt_manifest)
                 .collect(),
-            ipi_events: semantic
-                .ipi_events()
-                .iter()
-                .map(ipi_event_manifest)
-                .collect(),
+            ipi_events: semantic.ipi_events().iter().map(ipi_event_manifest).collect(),
             remote_preempts: semantic
                 .remote_preempts()
                 .iter()
                 .map(remote_preempt_manifest)
                 .collect(),
-            remote_parks: semantic
-                .remote_parks()
-                .iter()
-                .map(remote_park_manifest)
-                .collect(),
-            preemptions: semantic
-                .preemptions()
-                .iter()
-                .map(preemption_manifest)
-                .collect(),
+            remote_parks: semantic.remote_parks().iter().map(remote_park_manifest).collect(),
+            preemptions: semantic.preemptions().iter().map(preemption_manifest).collect(),
             scheduler_decisions: semantic
                 .scheduler_decisions()
                 .iter()
@@ -12565,16 +12191,8 @@ fn demo_migration_package(
                 .iter()
                 .map(integrated_osctl_trace_replay_manifest)
                 .collect(),
-            device_objects: semantic
-                .device_objects()
-                .iter()
-                .map(device_object_manifest)
-                .collect(),
-            queue_objects: semantic
-                .queue_objects()
-                .iter()
-                .map(queue_object_manifest)
-                .collect(),
+            device_objects: semantic.device_objects().iter().map(device_object_manifest).collect(),
+            queue_objects: semantic.queue_objects().iter().map(queue_object_manifest).collect(),
             descriptor_objects: semantic
                 .descriptor_objects()
                 .iter()
@@ -12595,11 +12213,7 @@ fn demo_migration_package(
                 .iter()
                 .map(irq_line_object_manifest)
                 .collect(),
-            irq_events: semantic
-                .irq_events()
-                .iter()
-                .map(irq_event_manifest)
-                .collect(),
+            irq_events: semantic.irq_events().iter().map(irq_event_manifest).collect(),
             device_capabilities: semantic
                 .device_capabilities()
                 .iter()
@@ -12611,11 +12225,7 @@ fn demo_migration_package(
                 .map(driver_store_binding_manifest)
                 .collect(),
             io_waits: semantic.io_waits().iter().map(io_wait_manifest).collect(),
-            io_cleanups: semantic
-                .io_cleanups()
-                .iter()
-                .map(io_cleanup_manifest)
-                .collect(),
+            io_cleanups: semantic.io_cleanups().iter().map(io_cleanup_manifest).collect(),
             io_fault_injections: semantic
                 .io_fault_injections()
                 .iter()
@@ -12681,11 +12291,7 @@ fn demo_migration_package(
                 .iter()
                 .map(network_stack_adapter_manifest)
                 .collect(),
-            socket_objects: semantic
-                .socket_objects()
-                .iter()
-                .map(socket_object_manifest)
-                .collect(),
+            socket_objects: semantic.socket_objects().iter().map(socket_object_manifest).collect(),
             endpoint_objects: semantic
                 .endpoint_objects()
                 .iter()
@@ -12696,11 +12302,7 @@ fn demo_migration_package(
                 .iter()
                 .map(socket_operation_manifest)
                 .collect(),
-            socket_waits: semantic
-                .socket_waits()
-                .iter()
-                .map(socket_wait_manifest)
-                .collect(),
+            socket_waits: semantic.socket_waits().iter().map(socket_wait_manifest).collect(),
             network_backpressures: semantic
                 .network_backpressures()
                 .iter()
@@ -12751,11 +12353,7 @@ fn demo_migration_package(
                 .iter()
                 .map(block_completion_object_manifest)
                 .collect(),
-            block_waits: semantic
-                .block_waits()
-                .iter()
-                .map(block_wait_manifest)
-                .collect(),
+            block_waits: semantic.block_waits().iter().map(block_wait_manifest).collect(),
             fake_block_backends: semantic
                 .fake_block_backends()
                 .iter()
@@ -12796,11 +12394,7 @@ fn demo_migration_package(
                 .iter()
                 .map(buffer_cache_object_manifest)
                 .collect(),
-            file_objects: semantic
-                .file_objects()
-                .iter()
-                .map(file_object_manifest)
-                .collect(),
+            file_objects: semantic.file_objects().iter().map(file_object_manifest).collect(),
             directory_objects: semantic
                 .directory_objects()
                 .iter()
@@ -12852,11 +12446,7 @@ fn demo_migration_package(
                 .iter()
                 .map(target_feature_set_manifest)
                 .collect(),
-            vector_states: semantic
-                .vector_states()
-                .iter()
-                .map(vector_state_manifest)
-                .collect(),
+            vector_states: semantic.vector_states().iter().map(vector_state_manifest).collect(),
             simd_fault_injections: semantic
                 .simd_fault_injections()
                 .iter()
@@ -16195,21 +15785,13 @@ fn target_artifact_manifest(image: &TargetArtifactImage) -> TargetArtifactImageM
         exports: image.exports.clone(),
         imports: image.imports.clone(),
         hostcalls: image.hostcalls.iter().map(hostcall_manifest).collect(),
-        capabilities: image
-            .capabilities
-            .iter()
-            .map(target_capability_manifest)
-            .collect(),
+        capabilities: image.capabilities.iter().map(target_capability_manifest).collect(),
         memory_plan: TargetMemoryPlanManifest {
             max_memory_pages: image.memory_plan.max_memory_pages,
             max_table_elements: image.memory_plan.max_table_elements,
             max_hostcalls_per_activation: image.memory_plan.max_hostcalls_per_activation,
         },
-        trap_metadata: image
-            .trap_metadata
-            .iter()
-            .map(trap_metadata_manifest)
-            .collect(),
+        trap_metadata: image.trap_metadata.iter().map(trap_metadata_manifest).collect(),
         address_map: image.address_map.iter().map(address_map_manifest).collect(),
         payload_len: image.payload_len,
     }
@@ -16234,11 +15816,7 @@ fn code_object_manifest(code: &CodeObject) -> CodeObjectManifest {
         rodata_permission: code.rodata.permission.as_str().to_owned(),
         code_hash: code.code_hash.clone(),
         hostcalls: code.hostcalls.iter().map(hostcall_manifest).collect(),
-        trap_metadata: code
-            .trap_metadata
-            .iter()
-            .map(trap_metadata_manifest)
-            .collect(),
+        trap_metadata: code.trap_metadata.iter().map(trap_metadata_manifest).collect(),
         address_map: code.address_map.iter().map(address_map_manifest).collect(),
         simd_requirement: CodeObjectSimdRequirementManifest {
             uses_simd: code.simd_requirement.uses_simd,
@@ -16574,12 +16152,8 @@ fn activation_migration_manifest(
         context: migration.context,
         context_generation_before: migration.context_generation_before,
         context_generation_after: migration.context_generation_after,
-        source_vector_state: migration
-            .source_vector_state
-            .map(contract_object_ref_manifest),
-        migrated_vector_state: migration
-            .migrated_vector_state
-            .map(contract_object_ref_manifest),
+        source_vector_state: migration.source_vector_state.map(contract_object_ref_manifest),
+        migrated_vector_state: migration.migrated_vector_state.map(contract_object_ref_manifest),
         vector_status: migration.vector_status.as_str().to_owned(),
         vector_migrated_at_event: migration.vector_migrated_at_event,
         generation: migration.generation,
@@ -17949,9 +17523,7 @@ fn io_wait_manifest(io_wait: &semantic_core::IoWaitRecord) -> IoWaitManifest {
         completed_at_event: io_wait.completed_at_event,
         completion_irq_event: io_wait.completion_irq_event,
         completion_irq_event_generation: io_wait.completion_irq_event_generation,
-        cancel_reason: io_wait
-            .cancel_reason
-            .map(|reason| reason.as_str().to_owned()),
+        cancel_reason: io_wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
         note: io_wait.note.clone(),
     }
 }
@@ -19208,11 +18780,7 @@ fn display_cleanup_manifest(
             .copied()
             .map(contract_object_ref_manifest)
             .collect(),
-        steps: cleanup
-            .steps
-            .iter()
-            .map(display_cleanup_step_manifest)
-            .collect(),
+        steps: cleanup.steps.iter().map(display_cleanup_step_manifest).collect(),
         note: cleanup.note.clone(),
     }
 }
@@ -19343,9 +18911,7 @@ fn activation_resume_manifest(
         saved_context: resume.saved_context,
         saved_context_generation: resume.saved_context_generation,
         saved_vector_state: resume.saved_vector_state.map(contract_object_ref_manifest),
-        restored_vector_state: resume
-            .restored_vector_state
-            .map(contract_object_ref_manifest),
+        restored_vector_state: resume.restored_vector_state.map(contract_object_ref_manifest),
         vector_status: resume.vector_status.as_str().to_owned(),
         vector_restored_at_event: resume.vector_restored_at_event,
         generation: resume.generation,
@@ -19458,12 +19024,7 @@ fn wait_record_manifest(wait: &semantic_core::WaitRecord) -> WaitRecordManifest 
         kind: wait.kind.as_str().to_owned(),
         generation: wait.generation,
         state: wait.state.as_str().to_owned(),
-        blockers: wait
-            .blockers
-            .iter()
-            .copied()
-            .map(contract_object_ref_manifest)
-            .collect(),
+        blockers: wait.blockers.iter().copied().map(contract_object_ref_manifest).collect(),
         deadline: wait.deadline,
         cancel_reason: wait.cancel_reason.map(|reason| reason.as_str().to_owned()),
         restart_policy: wait.restart_policy.as_str().to_owned(),
@@ -19619,13 +19180,7 @@ fn substrate_event_manifests(events: &[EventRecord]) -> Vec<SubstrateEventManife
 
 fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifest> {
     match &event.kind {
-        EventKind::SubstrateUnsupported {
-            authority,
-            operation,
-            requester,
-            artifact,
-            store,
-        } => {
+        EventKind::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
             let requester_label = requester.as_deref().unwrap_or("unknown");
             Some(SubstrateEventManifest {
                 id: event.id,
@@ -19902,11 +19457,7 @@ fn boundary_validation_report_manifest(
         validator: report.validator.as_str().to_owned(),
         ok: report.is_ok(),
         violation_count: report.violations.len(),
-        violations: report
-            .violations
-            .iter()
-            .map(boundary_validation_violation_manifest)
-            .collect(),
+        violations: report.violations.iter().map(boundary_validation_violation_manifest).collect(),
     }
 }
 
@@ -19994,16 +19545,14 @@ fn restore_migration_package(
 ) -> Result<(), Box<dyn Error>> {
     if package.semantic.fault_domain_count > semantic.fault_domain_count() {
         return Err(
-            "migration package requires more fault domains than the executor rebuilt".into(),
+            "migration package requires more fault domains than the executor rebuilt".into()
         );
     }
     if package.semantic.store_count > semantic.store_count() {
         return Err("migration package requires more stores than the executor rebuilt".into());
     }
     if package.semantic.capability_count > semantic.capabilities().records().len() {
-        return Err(
-            "migration package requires more capabilities than the executor rebound".into(),
-        );
+        return Err("migration package requires more capabilities than the executor rebound".into());
     }
     for capability in &package.logical_capabilities {
         if is_semantic_evidence_capability(capability) {
@@ -20016,10 +19565,8 @@ fn restore_migration_package(
             )
             .into());
         };
-        let Some(target_capability) = module
-            .capabilities
-            .iter()
-            .find(|target| target.name == capability.object)
+        let Some(target_capability) =
+            module.capabilities.iter().find(|target| target.name == capability.object)
         else {
             return Err(format!(
                 "target manifest cannot satisfy capability {}::{}",
@@ -20035,26 +19582,21 @@ fn restore_migration_package(
             .into());
         }
         for right in &capability.rights {
-            if !target_capability
-                .rights
-                .iter()
-                .any(|target_right| target_right == right)
-            {
+            if !target_capability.rights.iter().any(|target_right| target_right == right) {
                 return Err(format!(
                     "target manifest cannot satisfy right {} for {}::{}",
                     right, capability.subject, capability.object
                 )
                 .into());
             }
-            semantic
-                .capabilities()
-                .check(&capability.subject, &capability.object, right)
-                .map_err(|_| {
+            semantic.capabilities().check(&capability.subject, &capability.object, right).map_err(
+                |_| {
                     format!(
                         "target executor failed to rebind capability {}::{} right {}",
                         capability.subject, capability.object, right
                     )
-                })?;
+                },
+            )?;
         }
     }
 
@@ -20092,10 +19634,7 @@ fn restore_migration_package(
         semantic.fault_domain_count(),
         package.logical_capabilities.len()
     );
-    println!(
-        "restore plan: not migrated = {}",
-        package.not_migrated.join(", ")
-    );
+    println!("restore plan: not migrated = {}", package.not_migrated.join(", "));
     Ok(())
 }
 
@@ -20120,8 +19659,5 @@ fn read_migration_package(path: &Path) -> Result<MigrationPackageManifest, Box<d
 fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest dir")?);
-    Ok(manifest_dir
-        .parent()
-        .ok_or("target_executor must live in workspace root")?
-        .to_path_buf())
+    Ok(manifest_dir.parent().ok_or("target_executor must live in workspace root")?.to_path_buf())
 }

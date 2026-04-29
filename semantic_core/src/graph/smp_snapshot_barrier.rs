@@ -1,5 +1,4 @@
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use super::*;
 
@@ -22,11 +21,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("smp snapshot barrier reason is empty");
         }
-        if self
-            .smp_snapshot_barriers
-            .iter()
-            .any(|record| record.id == barrier)
-        {
+        if self.smp_snapshot_barriers.iter().any(|record| record.id == barrier) {
             return Err("smp snapshot barrier already exists");
         }
         let Some(rendezvous_record) = self
@@ -203,10 +198,8 @@ impl SemanticGraph {
         barrier: SmpSnapshotBarrierId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .smp_snapshot_barriers
-            .iter_mut()
-            .find(|record| record.id == barrier)
+        if let Some(record) =
+            self.smp_snapshot_barriers.iter_mut().find(|record| record.id == barrier)
         {
             record.validated_at_event = event;
         }
@@ -234,12 +227,10 @@ impl SemanticGraph {
                 record.id == barrier.rendezvous
                     && record.generation == barrier.rendezvous_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::SmpSnapshotBarrierRendezvousMissing {
-                        barrier: barrier.id,
-                        rendezvous: barrier.rendezvous,
-                    },
-                );
+                return Err(SemanticInvariantError::SmpSnapshotBarrierRendezvousMissing {
+                    barrier: barrier.id,
+                    rendezvous: barrier.rendezvous,
+                });
             };
             if rendezvous.state != StopTheWorldRendezvousState::Completed
                 || !rendezvous.stop_new_activations
@@ -283,56 +274,44 @@ impl SemanticGraph {
                     || !participant.snapshot_safe
                     || !seen.insert(participant.hart)
                 {
-                    return Err(
-                        SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
                 let Some(rendezvous_participant) = rendezvous.participants.iter().find(|record| {
                     record.hart == participant.hart
                         && record.hart_generation == participant.hart_generation
                 }) else {
-                    return Err(
-                        SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 };
                 if rendezvous_participant.hardware_hart != participant.hardware_hart
                     || rendezvous_participant.hart_state != participant.hart_state
                 {
-                    return Err(
-                        SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
-                let Some(current_hart) = self
-                    .harts
-                    .iter()
-                    .find(|record| record.id == participant.hart)
+                let Some(current_hart) =
+                    self.harts.iter().find(|record| record.id == participant.hart)
                 else {
-                    return Err(
-                        SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 };
                 if current_hart.generation < participant.hart_generation
                     || (current_hart.generation == participant.hart_generation
                         && !Self::hart_is_snapshot_barrier_quiesced(current_hart))
                 {
-                    return Err(
-                        SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
-                            barrier: barrier.id,
-                            hart: participant.hart,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSnapshotBarrierParticipantMismatch {
+                        barrier: barrier.id,
+                        hart: participant.hart,
+                    });
                 }
                 if !self.hart_event_attributions.iter().any(|attribution| {
                     attribution.event == barrier.validated_at_event

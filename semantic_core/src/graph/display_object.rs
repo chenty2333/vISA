@@ -16,11 +16,7 @@ impl SemanticGraph {
         if display == 0 {
             return Err("display object id=0 is invalid");
         }
-        if self
-            .display_objects
-            .iter()
-            .any(|record| record.id == display)
-        {
+        if self.display_objects.iter().any(|record| record.id == display) {
             return Err("display object already exists");
         }
         if name.is_empty() || mode_name.is_empty() {
@@ -178,11 +174,7 @@ impl SemanticGraph {
         display: DisplayObjectId,
         framebuffer_generation: Generation,
     ) {
-        if let Some(record) = self
-            .display_objects
-            .iter_mut()
-            .find(|record| record.id == display)
-        {
+        if let Some(record) = self.display_objects.iter_mut().find(|record| record.id == display) {
             record.framebuffer_generation = framebuffer_generation;
         }
     }

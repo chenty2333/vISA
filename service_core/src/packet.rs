@@ -22,14 +22,8 @@ pub struct PacketFrameMeta {
 }
 
 impl PacketFrameMeta {
-    pub const EMPTY: Self = Self {
-        protocol: 0,
-        flags: 0,
-        src_port: 0,
-        dst_port: 0,
-        payload_len: 0,
-        sequence: 0,
-    };
+    pub const EMPTY: Self =
+        Self { protocol: 0, flags: 0, src_port: 0, dst_port: 0, payload_len: 0, sequence: 0 };
 
     pub const fn demo_http_response(sequence: u64, payload_len: usize) -> Self {
         Self {
@@ -80,12 +74,7 @@ pub struct PacketDeviceState {
 
 impl PacketDeviceState {
     pub const fn new() -> Self {
-        Self {
-            rx: [PacketSlot::EMPTY; PACKET_RX_QUEUE_DEPTH],
-            rx_head: 0,
-            rx_len: 0,
-            sequence: 1,
-        }
+        Self { rx: [PacketSlot::EMPTY; PACKET_RX_QUEUE_DEPTH], rx_head: 0, rx_len: 0, sequence: 1 }
     }
 
     pub fn reset(&mut self) {
@@ -110,10 +99,7 @@ impl PacketDeviceState {
         }
 
         let tail = (self.rx_head + self.rx_len) % PACKET_RX_QUEUE_DEPTH;
-        self.rx[tail].meta = PacketFrameMeta {
-            payload_len: payload.len() as u32,
-            ..meta
-        };
+        self.rx[tail].meta = PacketFrameMeta { payload_len: payload.len() as u32, ..meta };
         self.rx[tail].payload[..payload.len()].copy_from_slice(payload);
         self.rx[tail].payload_len = payload.len();
         self.rx[tail].active = true;
@@ -142,11 +128,7 @@ impl PacketDeviceState {
             return 0;
         }
         let slot = self.rx[self.rx_head];
-        if slot.active {
-            (FRAME_HEADER_LEN + slot.payload_len) as u32
-        } else {
-            0
-        }
+        if slot.active { (FRAME_HEADER_LEN + slot.payload_len) as u32 } else { 0 }
     }
 
     pub fn pending_rx_frames(&self) -> u32 {
@@ -185,9 +167,7 @@ pub fn decode_frame(frame: &[u8]) -> Result<(PacketFrameMeta, &[u8]), i32> {
     }
 
     let payload_len = u32::from_le_bytes([frame[8], frame[9], frame[10], frame[11]]) as usize;
-    let frame_len = FRAME_HEADER_LEN
-        .checked_add(payload_len)
-        .ok_or(ERR_EINVAL)?;
+    let frame_len = FRAME_HEADER_LEN.checked_add(payload_len).ok_or(ERR_EINVAL)?;
     if frame_len > frame.len() || payload_len > PACKET_PAYLOAD_CAPACITY {
         return Err(ERR_EINVAL);
     }
@@ -229,12 +209,8 @@ mod tests {
     fn packet_device_dequeues_in_fifo_order() {
         let mut device = PacketDeviceState::new();
         let mut buffer = [0u8; PACKET_FRAME_CAPACITY];
-        device
-            .enqueue_rx(PacketFrameMeta::demo_http_response(1, 1), b"a")
-            .unwrap();
-        device
-            .enqueue_rx(PacketFrameMeta::demo_http_response(2, 1), b"b")
-            .unwrap();
+        device.enqueue_rx(PacketFrameMeta::demo_http_response(1, 1), b"a").unwrap();
+        device.enqueue_rx(PacketFrameMeta::demo_http_response(2, 1), b"b").unwrap();
 
         let len = device.dequeue_rx_frame(&mut buffer).unwrap();
         let (meta, payload) = decode_frame(&buffer[..len as usize]).unwrap();

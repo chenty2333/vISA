@@ -44,12 +44,7 @@ pub extern "C" fn validate_barrier(
     pending_dma: u32,
 ) -> i32 {
     match unsafe {
-        state().validate_barrier(
-            pending_waits,
-            active_transactions,
-            active_dmw_leases,
-            pending_dma,
-        )
+        state().validate_barrier(pending_waits, active_transactions, active_dmw_leases, pending_dma)
     } {
         Ok(()) => 0,
         Err(errno) => -errno,

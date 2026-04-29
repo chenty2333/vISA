@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::*;
 
@@ -186,11 +188,7 @@ pub struct ActivationContextRecord {
 
 impl ActivationContextRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::ActivationContext,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::ActivationContext, self.id, self.generation)
     }
 }
 
@@ -270,11 +268,7 @@ pub struct HartEventAttributionRecord {
 
 impl HartEventAttributionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::HartEventAttribution,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::HartEventAttribution, self.id, self.generation)
     }
 }
 
@@ -318,11 +312,7 @@ pub struct SchedulerDecisionRecord {
 
 impl SchedulerDecisionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SchedulerDecision,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SchedulerDecision, self.id, self.generation)
     }
 }
 
@@ -391,11 +381,7 @@ pub struct ActivationMigrationRecord {
 
 impl ActivationMigrationRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::ActivationMigration,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::ActivationMigration, self.id, self.generation)
     }
 }
 
@@ -455,11 +441,7 @@ pub struct StopTheWorldRendezvousRecord {
 
 impl StopTheWorldRendezvousRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::StopTheWorldRendezvous,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::StopTheWorldRendezvous, self.id, self.generation)
     }
 }
 
@@ -493,11 +475,7 @@ pub struct SmpCodePublishBarrierRecord {
 
 impl SmpCodePublishBarrierRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SmpCodePublishBarrier,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SmpCodePublishBarrier, self.id, self.generation)
     }
 }
 
@@ -541,11 +519,7 @@ pub struct SmpCleanupQuiescenceRecord {
 
 impl SmpCleanupQuiescenceRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SmpCleanupQuiescence,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SmpCleanupQuiescence, self.id, self.generation)
     }
 }
 
@@ -588,11 +562,7 @@ pub struct SmpSnapshotBarrierRecord {
 
 impl SmpSnapshotBarrierRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SmpSnapshotBarrier,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SmpSnapshotBarrier, self.id, self.generation)
     }
 }
 
@@ -667,11 +637,7 @@ pub struct SmpScalingBenchmarkRecord {
 
 impl SmpScalingBenchmarkRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SmpScalingBenchmark,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SmpScalingBenchmark, self.id, self.generation)
     }
 }
 
@@ -1070,11 +1036,7 @@ pub struct IntegratedDisplayPanicRecord {
 
 impl IntegratedDisplayPanicRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::IntegratedDisplayPanic,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::IntegratedDisplayPanic, self.id, self.generation)
     }
 }
 
@@ -1187,11 +1149,7 @@ pub struct DescriptorObjectRecord {
 
 impl DescriptorObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DescriptorObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DescriptorObject, self.id, self.generation)
     }
 }
 
@@ -1212,11 +1170,7 @@ pub struct DmaBufferObjectRecord {
 
 impl DmaBufferObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DmaBufferObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DmaBufferObject, self.id, self.generation)
     }
 }
 
@@ -1239,11 +1193,7 @@ pub struct MmioRegionObjectRecord {
 
 impl MmioRegionObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::MmioRegionObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::MmioRegionObject, self.id, self.generation)
     }
 }
 
@@ -1313,11 +1263,7 @@ pub struct DeviceCapabilityRecord {
 
 impl DeviceCapabilityRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DeviceCapability,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DeviceCapability, self.id, self.generation)
     }
 }
 
@@ -1340,11 +1286,7 @@ pub struct DriverStoreBindingRecord {
 
 impl DriverStoreBindingRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DriverStoreBinding,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DriverStoreBinding, self.id, self.generation)
     }
 }
 
@@ -1436,11 +1378,7 @@ pub struct IoFaultInjectionRecord {
 
 impl IoFaultInjectionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::IoFaultInjection,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::IoFaultInjection, self.id, self.generation)
     }
 }
 
@@ -1477,11 +1415,7 @@ pub struct IoValidationReportRecord {
 
 impl IoValidationReportRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::IoValidationReport,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::IoValidationReport, self.id, self.generation)
     }
 }
 
@@ -1505,11 +1439,7 @@ pub struct PacketDeviceObjectRecord {
 
 impl PacketDeviceObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::PacketDeviceObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::PacketDeviceObject, self.id, self.generation)
     }
 }
 
@@ -1531,11 +1461,7 @@ pub struct PacketBufferObjectRecord {
 
 impl PacketBufferObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::PacketBufferObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::PacketBufferObject, self.id, self.generation)
     }
 }
 
@@ -1556,11 +1482,7 @@ pub struct PacketQueueObjectRecord {
 
 impl PacketQueueObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::PacketQueueObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::PacketQueueObject, self.id, self.generation)
     }
 }
 
@@ -1581,11 +1503,7 @@ pub struct PacketDescriptorObjectRecord {
 
 impl PacketDescriptorObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::PacketDescriptorObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::PacketDescriptorObject, self.id, self.generation)
     }
 }
 
@@ -1612,11 +1530,7 @@ pub struct FakeNetBackendObjectRecord {
 
 impl FakeNetBackendObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FakeNetBackendObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FakeNetBackendObject, self.id, self.generation)
     }
 }
 
@@ -1654,11 +1568,7 @@ pub struct VirtioNetBackendObjectRecord {
 
 impl VirtioNetBackendObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::VirtioNetBackendObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, self.id, self.generation)
     }
 }
 
@@ -1683,11 +1593,7 @@ pub struct NetworkRxInterruptRecord {
 
 impl NetworkRxInterruptRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkRxInterrupt,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkRxInterrupt, self.id, self.generation)
     }
 }
 
@@ -1790,11 +1696,7 @@ pub struct NetworkTxCompletionRecord {
 
 impl NetworkTxCompletionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkTxCompletion,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkTxCompletion, self.id, self.generation)
     }
 }
 
@@ -1828,11 +1730,7 @@ pub struct NetworkStackAdapterRecord {
 
 impl NetworkStackAdapterRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkStackAdapter,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkStackAdapter, self.id, self.generation)
     }
 }
 
@@ -1915,11 +1813,7 @@ pub struct SocketOperationRecord {
 
 impl SocketOperationRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SocketOperation,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SocketOperation, self.id, self.generation)
     }
 }
 
@@ -1985,11 +1879,7 @@ pub struct NetworkBackpressureRecord {
 
 impl NetworkBackpressureRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkBackpressure,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkBackpressure, self.id, self.generation)
     }
 }
 
@@ -2035,11 +1925,7 @@ pub struct NetworkBenchmarkRecord {
 
 impl NetworkBenchmarkRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkBenchmark,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkBenchmark, self.id, self.generation)
     }
 }
 
@@ -2100,11 +1986,7 @@ pub struct BlockDeviceObjectRecord {
 
 impl BlockDeviceObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockDeviceObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockDeviceObject, self.id, self.generation)
     }
 }
 
@@ -2125,11 +2007,7 @@ pub struct BlockRangeObjectRecord {
 
 impl BlockRangeObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockRangeObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockRangeObject, self.id, self.generation)
     }
 }
 
@@ -2151,11 +2029,7 @@ pub struct BlockRequestObjectRecord {
 
 impl BlockRequestObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockRequestObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockRequestObject, self.id, self.generation)
     }
 }
 
@@ -2179,11 +2053,7 @@ pub struct BlockCompletionObjectRecord {
 
 impl BlockCompletionObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockCompletionObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockCompletionObject, self.id, self.generation)
     }
 }
 
@@ -2238,11 +2108,7 @@ pub struct FakeBlockBackendObjectRecord {
 
 impl FakeBlockBackendObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FakeBlockBackendObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FakeBlockBackendObject, self.id, self.generation)
     }
 }
 
@@ -2277,11 +2143,7 @@ pub struct VirtioBlkBackendObjectRecord {
 
 impl VirtioBlkBackendObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::VirtioBlkBackendObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::VirtioBlkBackendObject, self.id, self.generation)
     }
 }
 
@@ -2349,12 +2211,7 @@ pub struct BlockRequestQueueEntryRef {
 
 impl BlockRequestQueueEntryRef {
     pub const fn pending(request: BlockRequestObjectId, request_generation: Generation) -> Self {
-        Self {
-            request,
-            request_generation,
-            completion: None,
-            completion_generation: None,
-        }
+        Self { request, request_generation, completion: None, completion_generation: None }
     }
 
     pub const fn completed(
@@ -2404,11 +2261,7 @@ pub struct BlockRequestQueueRecord {
 
 impl BlockRequestQueueRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockRequestQueue,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockRequestQueue, self.id, self.generation)
     }
 }
 
@@ -2478,11 +2331,7 @@ pub struct BlockPageObjectRecord {
 
 impl BlockPageObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockPageObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockPageObject, self.id, self.generation)
     }
 }
 
@@ -2515,11 +2364,7 @@ pub struct BufferCacheObjectRecord {
 
 impl BufferCacheObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BufferCacheObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BufferCacheObject, self.id, self.generation)
     }
 }
 
@@ -2576,11 +2421,7 @@ pub struct DirectoryObjectRecord {
 
 impl DirectoryObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DirectoryObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DirectoryObject, self.id, self.generation)
     }
 }
 
@@ -2613,11 +2454,7 @@ pub struct FatAdapterObjectRecord {
 
 impl FatAdapterObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FatAdapterObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FatAdapterObject, self.id, self.generation)
     }
 }
 
@@ -2650,11 +2487,7 @@ pub struct Ext4AdapterObjectRecord {
 
 impl Ext4AdapterObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::Ext4AdapterObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::Ext4AdapterObject, self.id, self.generation)
     }
 }
 
@@ -2684,11 +2517,7 @@ pub struct FileHandleCapabilityRecord {
 
 impl FileHandleCapabilityRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FileHandleCapability,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FileHandleCapability, self.id, self.generation)
     }
 }
 
@@ -2751,11 +2580,7 @@ pub struct BlockDriverCleanupRecord {
 
 impl BlockDriverCleanupRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockDriverCleanup,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockDriverCleanup, self.id, self.generation)
     }
 }
 
@@ -2789,11 +2614,7 @@ pub struct BlockPendingIoPolicyRecord {
 
 impl BlockPendingIoPolicyRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockPendingIoPolicy,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockPendingIoPolicy, self.id, self.generation)
     }
 }
 
@@ -2901,11 +2722,7 @@ pub struct BlockRecoveryBenchmarkRecord {
 
 impl BlockRecoveryBenchmarkRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::BlockRecoveryBenchmark,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::BlockRecoveryBenchmark, self.id, self.generation)
     }
 }
 
@@ -2931,11 +2748,7 @@ pub struct TargetFeatureSetRecord {
 
 impl TargetFeatureSetRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::TargetFeatureSet,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, self.id, self.generation)
     }
 }
 
@@ -2984,11 +2797,7 @@ pub struct SimdFaultInjectionRecord {
 
 impl SimdFaultInjectionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::SimdFaultInjection,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::SimdFaultInjection, self.id, self.generation)
     }
 }
 
@@ -3069,11 +2878,7 @@ pub struct FramebufferObjectRecord {
 
 impl FramebufferObjectRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferObject,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferObject, self.id, self.generation)
     }
 }
 
@@ -3122,11 +2927,7 @@ pub struct DisplayCapabilityRecord {
 
 impl DisplayCapabilityRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DisplayCapability,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DisplayCapability, self.id, self.generation)
     }
 }
 
@@ -3156,11 +2957,7 @@ pub struct FramebufferWindowLeaseRecord {
 
 impl FramebufferWindowLeaseRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferWindowLease,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferWindowLease, self.id, self.generation)
     }
 }
 
@@ -3196,11 +2993,7 @@ pub struct FramebufferMappingRecord {
 
 impl FramebufferMappingRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferMapping,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferMapping, self.id, self.generation)
     }
 }
 
@@ -3238,11 +3031,7 @@ pub struct FramebufferWriteRecord {
 
 impl FramebufferWriteRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferWrite,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferWrite, self.id, self.generation)
     }
 }
 
@@ -3275,11 +3064,7 @@ pub struct FramebufferFlushRegionRecord {
 
 impl FramebufferFlushRegionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferFlushRegion,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferFlushRegion, self.id, self.generation)
     }
 }
 
@@ -3316,11 +3101,7 @@ pub struct FramebufferDirtyRegionRecord {
 
 impl FramebufferDirtyRegionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferDirtyRegion,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferDirtyRegion, self.id, self.generation)
     }
 }
 
@@ -3350,11 +3131,7 @@ pub struct DisplayEventLogRecord {
 
 impl DisplayEventLogRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DisplayEventLog,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DisplayEventLog, self.id, self.generation)
     }
 }
 
@@ -3421,11 +3198,7 @@ pub struct DisplaySnapshotBarrierRecord {
 
 impl DisplaySnapshotBarrierRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DisplaySnapshotBarrier,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DisplaySnapshotBarrier, self.id, self.generation)
     }
 }
 
@@ -3469,11 +3242,7 @@ pub struct DisplayPanicLastFrameRecord {
 
 impl DisplayPanicLastFrameRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::DisplayPanicLastFrame,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::DisplayPanicLastFrame, self.id, self.generation)
     }
 }
 
@@ -3516,11 +3285,7 @@ pub struct FramebufferBenchmarkRecord {
 
 impl FramebufferBenchmarkRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::FramebufferBenchmark,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::FramebufferBenchmark, self.id, self.generation)
     }
 }
 
@@ -3553,11 +3318,7 @@ pub struct NetworkDriverCleanupRecord {
 
 impl NetworkDriverCleanupRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkDriverCleanup,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkDriverCleanup, self.id, self.generation)
     }
 }
 
@@ -3586,11 +3347,7 @@ pub struct NetworkGenerationAuditRecord {
 
 impl NetworkGenerationAuditRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkGenerationAudit,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkGenerationAudit, self.id, self.generation)
     }
 }
 
@@ -3629,11 +3386,7 @@ pub struct NetworkFaultInjectionRecord {
 
 impl NetworkFaultInjectionRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::NetworkFaultInjection,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::NetworkFaultInjection, self.id, self.generation)
     }
 }
 
@@ -3666,11 +3419,7 @@ pub struct ActivationResumeRecord {
 
 impl ActivationResumeRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::ActivationResume,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::ActivationResume, self.id, self.generation)
     }
 }
 
@@ -3777,11 +3526,7 @@ pub struct ActivationCleanupRecord {
 
 impl ActivationCleanupRecord {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::ActivationCleanup,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::ActivationCleanup, self.id, self.generation)
     }
 }
 

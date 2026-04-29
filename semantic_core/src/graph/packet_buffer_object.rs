@@ -16,11 +16,7 @@ impl SemanticGraph {
         if packet_buffer == 0 {
             return Err("packet buffer object id=0 is invalid");
         }
-        if self
-            .packet_buffer_objects
-            .iter()
-            .any(|record| record.id == packet_buffer)
-        {
+        if self.packet_buffer_objects.iter().any(|record| record.id == packet_buffer) {
             return Err("packet buffer object already exists");
         }
         if frame_format_version == 0 || capacity == 0 || sequence == 0 {
@@ -196,17 +192,11 @@ impl SemanticGraph {
     }
 
     const fn packet_buffer_direction_is_supported(direction: PacketBufferDirection) -> bool {
-        matches!(
-            direction,
-            PacketBufferDirection::Rx | PacketBufferDirection::Tx
-        )
+        matches!(direction, PacketBufferDirection::Rx | PacketBufferDirection::Tx)
     }
 
     const fn packet_buffer_state_is_recordable(state: PacketBufferObjectState) -> bool {
-        matches!(
-            state,
-            PacketBufferObjectState::Allocated | PacketBufferObjectState::Filled
-        )
+        matches!(state, PacketBufferObjectState::Allocated | PacketBufferObjectState::Filled)
     }
 
     #[cfg(test)]
@@ -215,10 +205,8 @@ impl SemanticGraph {
         packet_buffer: PacketBufferObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .packet_buffer_objects
-            .iter_mut()
-            .find(|record| record.id == packet_buffer)
+        if let Some(record) =
+            self.packet_buffer_objects.iter_mut().find(|record| record.id == packet_buffer)
         {
             record.packet_device_generation = generation;
         }

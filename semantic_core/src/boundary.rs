@@ -1,5 +1,4 @@
-use alloc::format;
-use alloc::string::String;
+use alloc::{format, string::String};
 
 use super::*;
 
@@ -94,11 +93,7 @@ pub struct BoundaryRecord {
 
 impl BoundaryRecord {
     pub fn summary(&self) -> String {
-        let blocked_by = self
-            .blocked_by
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or("none");
+        let blocked_by = self.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
         format!(
             "boundary {} kind={} status={} backend={} blocked={} generation={}",
             self.name,

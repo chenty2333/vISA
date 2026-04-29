@@ -23,11 +23,7 @@ impl SemanticGraph {
         if feature_set == u64::MAX {
             return Err("target feature set id cannot advance generation cursor");
         }
-        if self
-            .target_feature_sets
-            .iter()
-            .any(|record| record.id == feature_set)
-        {
+        if self.target_feature_sets.iter().any(|record| record.id == feature_set) {
             return Err("target feature set already exists");
         }
         if name.is_empty()
@@ -101,9 +97,8 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_target_feature_set_id = self
-            .next_target_feature_set_id
-            .max(feature_set.saturating_add(1));
+        self.next_target_feature_set_id =
+            self.next_target_feature_set_id.max(feature_set.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "target",
             EventKind::TargetFeatureSetDiscovered {
@@ -226,10 +221,8 @@ impl SemanticGraph {
         feature_set: TargetFeatureSetId,
         vector_register_bits: u16,
     ) {
-        if let Some(record) = self
-            .target_feature_sets
-            .iter_mut()
-            .find(|record| record.id == feature_set)
+        if let Some(record) =
+            self.target_feature_sets.iter_mut().find(|record| record.id == feature_set)
         {
             record.vector_register_bits = vector_register_bits;
         }

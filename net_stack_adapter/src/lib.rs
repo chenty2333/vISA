@@ -10,10 +10,12 @@ use alloc::vec::Vec;
 use service_core::net_contract::{
     PacketDeviceContract, VIRTIO_NET0_CONTRACT, validate_packet_device_contract,
 };
-use smoltcp::iface::{Config, Interface, PollResult, SocketSet};
-use smoltcp::phy::{Loopback, Medium};
-use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
+use smoltcp::{
+    iface::{Config, Interface, PollResult, SocketSet},
+    phy::{Loopback, Medium},
+    time::Instant,
+    wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr},
+};
 
 pub const SMOLTCP_ADAPTER_IMPLEMENTATION: &str = "smoltcp";
 pub const SMOLTCP_ADAPTER_VERSION: &str = "0.13.0";
@@ -72,9 +74,8 @@ pub fn build_smoltcp_adapter_evidence(
     }
 
     let mut device = Loopback::new(Medium::Ethernet);
-    let mut iface_config = Config::new(HardwareAddress::Ethernet(EthernetAddress(
-        config.contract.mac,
-    )));
+    let mut iface_config =
+        Config::new(HardwareAddress::Ethernet(EthernetAddress(config.contract.mac)));
     iface_config.random_seed = config.random_seed;
     let mut iface = Interface::new(iface_config, &mut device, Instant::from_millis(0));
     let ipv4_addr = Ipv4Address::new(

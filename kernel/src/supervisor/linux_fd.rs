@@ -1,17 +1,19 @@
 use alloc::vec::Vec;
 
-use crate::interrupts;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_ENOTSOCK, ERR_EPERM, NodeKind, ServiceRoute,
 };
 
-use super::events::Event;
-use super::pulse::PulseDevice;
-use super::runtime::PrototypeRuntime;
-use super::semantic::{fd_resource_kind, fd_resource_label};
-use super::services::ProcfsService;
-use super::types::{FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError};
+use super::{
+    events::Event,
+    pulse::PulseDevice,
+    runtime::PrototypeRuntime,
+    semantic::{fd_resource_kind, fd_resource_label},
+    services::ProcfsService,
+    types::{FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError},
+};
+use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn lookup_path(&mut self, path: &[u8]) -> Result<LookupInfo, ServiceCallError> {
@@ -24,19 +26,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.require_capability("procfs_service", "procfs.tree", "lookup")
                     .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 let node = self.procfs_mut().lookup(path, false)?;
-                Ok(LookupInfo {
-                    route: ServiceRoute::Procfs,
-                    node,
-                })
+                Ok(LookupInfo { route: ServiceRoute::Procfs, node })
             }
             ServiceRoute::Devfs => {
                 self.require_capability("devfs_service", "device.pulse", "read")
                     .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
                 let node = self.devfs.lookup(path, false)?;
-                Ok(LookupInfo {
-                    route: ServiceRoute::Devfs,
-                    node,
-                })
+                Ok(LookupInfo { route: ServiceRoute::Devfs, node })
             }
         }
     }
@@ -214,8 +210,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let resource_label = fd_resource_label(&entry.resource);
         let owner_task = Some(self.scheduler.current_task());
         let resource_id =
-            self.semantic
-                .register_resource(resource_kind, owner_task, &resource_label);
+            self.semantic.register_resource(resource_kind, owner_task, &resource_label);
 
         if let Some(fd) = (3..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             self.fd_table[fd] = Some(entry);
@@ -225,8 +220,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         self.fd_table.push(Some(entry));
-        self.fd_handles
-            .push(self.semantic.resource_handle(resource_id));
+        self.fd_handles.push(self.semantic.resource_handle(resource_id));
         (self.fd_table.len() - 1) as u32
     }
 
@@ -249,11 +243,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             let Some(entry) = entry else {
                 continue;
             };
-            let FdResource::Socket {
-                socket_id,
-                ready_key: socket_key,
-            } = &entry.resource
-            else {
+            let FdResource::Socket { socket_id, ready_key: socket_key } = &entry.resource else {
                 continue;
             };
             if *socket_key == ready_key {
@@ -265,8 +255,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn socket_resource_for_ready_key(&self, ready_key: u64) -> Option<ResourceHandle> {
-        self.socket_for_ready_key(ready_key)
-            .map(|(_, handle)| handle)
+        self.socket_for_ready_key(ready_key).map(|(_, handle)| handle)
     }
 
     pub(super) fn socket_fd_snapshot(
@@ -274,19 +263,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         fd: u32,
     ) -> Result<(u32, u64, ResourceHandle), ServiceCallError> {
         self.validate_fd_handle(fd)?;
-        let entry = self
-            .fd_entry(fd)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
-        let FdResource::Socket {
-            socket_id,
-            ready_key,
-        } = &entry.resource
-        else {
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        let FdResource::Socket { socket_id, ready_key } = &entry.resource else {
             return Err(ServiceCallError::Errno(ERR_ENOTSOCK));
         };
-        let handle = self
-            .fd_handle(fd)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        let handle = self.fd_handle(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
         Ok((*socket_id as u32, *ready_key, handle))
     }
 
@@ -294,10 +275,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some((socket_id, _)) = self.socket_for_ready_key(ready_key) else {
             return false;
         };
-        self.net_core
-            .poll_socket(socket_id)
-            .map(|events| events & EPOLLIN != 0)
-            .unwrap_or(false)
+        self.net_core.poll_socket(socket_id).map(|events| events & EPOLLIN != 0).unwrap_or(false)
     }
 
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
@@ -320,11 +298,8 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn validate_fd_handle(&mut self, fd: u32) -> Result<(), ServiceCallError> {
-        let handle = self
-            .fd_handle(fd)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
-        self.validate_resource_handle(handle)
-            .map_err(|_| ServiceCallError::Errno(ERR_EBADF))
+        let handle = self.fd_handle(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        self.validate_resource_handle(handle).map_err(|_| ServiceCallError::Errno(ERR_EBADF))
     }
 
     fn service_fd_snapshot(
@@ -332,9 +307,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         fd: u32,
     ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>), ServiceCallError> {
         self.validate_fd_handle(fd)?;
-        let entry = self
-            .fd_entry(fd)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
         match &entry.resource {
             FdResource::ServiceNode { route, node, path } => {
                 Ok((*route, *node, entry.cursor, path.clone()))
@@ -357,34 +330,25 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn epoll_id_from_fd(&mut self, fd: u32) -> Result<u32, ServiceCallError> {
         self.validate_fd_handle(fd)?;
         match self.fd_entry(fd) {
-            Some(FdEntry {
-                resource: FdResource::EpollInstance { epoll_id },
-                ..
-            }) => Ok(*epoll_id),
+            Some(FdEntry { resource: FdResource::EpollInstance { epoll_id }, .. }) => Ok(*epoll_id),
             _ => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 
     pub(super) fn fd_ready_key(&mut self, fd: u32) -> Result<u64, ServiceCallError> {
         self.validate_fd_handle(fd)?;
-        let entry = self
-            .fd_entry(fd)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
         match &entry.resource {
-            FdResource::ServiceNode {
-                route: ServiceRoute::Devfs,
-                path,
-                ..
-            } => PulseDevice::ready_key_for_path(path).ok_or(ServiceCallError::Errno(ERR_EINVAL)),
+            FdResource::ServiceNode { route: ServiceRoute::Devfs, path, .. } => {
+                PulseDevice::ready_key_for_path(path).ok_or(ServiceCallError::Errno(ERR_EINVAL))
+            }
             FdResource::Socket { ready_key, .. } => Ok(*ready_key),
             _ => Err(ServiceCallError::Errno(ERR_EINVAL)),
         }
     }
 
     fn procfs_mut(&mut self) -> &mut ProcfsService {
-        self.procfs
-            .as_mut()
-            .expect("procfs service should always be installed outside recovery")
+        self.procfs.as_mut().expect("procfs service should always be installed outside recovery")
     }
 }
 

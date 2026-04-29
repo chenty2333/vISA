@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::*;
 
@@ -202,10 +204,7 @@ impl MigrationPackage {
             self.semantic.artifact_verifications.len(),
             self.semantic.store_activations.len()
         ));
-        lines.push(format!(
-            "required artifacts: {}",
-            self.required_artifact_profile.summary()
-        ));
+        lines.push(format!("required artifacts: {}", self.required_artifact_profile.summary()));
         lines.push(
             "not migrated: raw pointers, native stacks, active semantic transactions, active DMW leases, DMA mappings, MMIO mappings, IRQ registrations, translated code cache"
                 .to_string(),

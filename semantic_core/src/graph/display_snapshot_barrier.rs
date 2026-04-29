@@ -25,11 +25,7 @@ impl SemanticGraph {
         {
             return Err("display snapshot barrier requires exact refs and reason");
         }
-        if self
-            .display_snapshot_barriers
-            .iter()
-            .any(|record| record.id == barrier)
-        {
+        if self.display_snapshot_barriers.iter().any(|record| record.id == barrier) {
             return Err("display snapshot barrier already exists");
         }
         let Some(store_record) = self
@@ -138,9 +134,8 @@ impl SemanticGraph {
             framebuffer_generation,
         );
         let generation = 1;
-        self.next_display_snapshot_barrier_id = self
-            .next_display_snapshot_barrier_id
-            .max(barrier.saturating_add(1));
+        self.next_display_snapshot_barrier_id =
+            self.next_display_snapshot_barrier_id.max(barrier.saturating_add(1));
         let validated_at_event = self.event_log.push(
             "display",
             EventKind::DisplaySnapshotBarrierValidated {
@@ -160,28 +155,27 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.display_snapshot_barriers
-            .push(DisplaySnapshotBarrierRecord {
-                id: barrier,
-                owner_store,
-                owner_store_generation,
-                display,
-                display_generation,
-                framebuffer,
-                framebuffer_generation,
-                display_cleanup,
-                display_cleanup_generation,
-                active_framebuffer_window_lease_count: snapshot_state
-                    .active_framebuffer_window_lease_count,
-                active_framebuffer_mapping_count: snapshot_state.active_framebuffer_mapping_count,
-                dirty_framebuffer_region_count: snapshot_state.dirty_framebuffer_region_count,
-                snapshot_validation_ok: true,
-                generation,
-                state: DisplaySnapshotBarrierState::Validated,
-                validated_at_event,
-                reason: reason.to_string(),
-                note: note.to_string(),
-            });
+        self.display_snapshot_barriers.push(DisplaySnapshotBarrierRecord {
+            id: barrier,
+            owner_store,
+            owner_store_generation,
+            display,
+            display_generation,
+            framebuffer,
+            framebuffer_generation,
+            display_cleanup,
+            display_cleanup_generation,
+            active_framebuffer_window_lease_count: snapshot_state
+                .active_framebuffer_window_lease_count,
+            active_framebuffer_mapping_count: snapshot_state.active_framebuffer_mapping_count,
+            dirty_framebuffer_region_count: snapshot_state.dirty_framebuffer_region_count,
+            snapshot_validation_ok: true,
+            generation,
+            state: DisplaySnapshotBarrierState::Validated,
+            validated_at_event,
+            reason: reason.to_string(),
+            note: note.to_string(),
+        });
         self.check_invariants().is_ok()
     }
 
@@ -280,23 +274,19 @@ impl SemanticGraph {
                     && display.framebuffer == barrier.framebuffer
                     && display.framebuffer_generation == barrier.framebuffer_generation
             }) {
-                return Err(
-                    SemanticInvariantError::DisplaySnapshotBarrierMissingDisplay {
-                        barrier: barrier.id,
-                        display: barrier.display,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplaySnapshotBarrierMissingDisplay {
+                    barrier: barrier.id,
+                    display: barrier.display,
+                });
             }
             if !self.framebuffer_objects.iter().any(|framebuffer| {
                 framebuffer.id == barrier.framebuffer
                     && framebuffer.generation == barrier.framebuffer_generation
             }) {
-                return Err(
-                    SemanticInvariantError::DisplaySnapshotBarrierMissingFramebuffer {
-                        barrier: barrier.id,
-                        framebuffer: barrier.framebuffer,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplaySnapshotBarrierMissingFramebuffer {
+                    barrier: barrier.id,
+                    framebuffer: barrier.framebuffer,
+                });
             }
             match (barrier.display_cleanup, barrier.display_cleanup_generation) {
                 (Some(cleanup), Some(generation)) => {
@@ -305,12 +295,10 @@ impl SemanticGraph {
                         .iter()
                         .find(|record| record.id == cleanup && record.generation == generation)
                     else {
-                        return Err(
-                            SemanticInvariantError::DisplaySnapshotBarrierMissingCleanup {
-                                barrier: barrier.id,
-                                cleanup,
-                            },
-                        );
+                        return Err(SemanticInvariantError::DisplaySnapshotBarrierMissingCleanup {
+                            barrier: barrier.id,
+                            cleanup,
+                        });
                     };
                     if cleanup_record.owner_store != barrier.owner_store
                         || cleanup_record.owner_store_generation != barrier.owner_store_generation
@@ -382,10 +370,8 @@ impl SemanticGraph {
         barrier: DisplaySnapshotBarrierId,
         dirty_count: u32,
     ) {
-        if let Some(record) = self
-            .display_snapshot_barriers
-            .iter_mut()
-            .find(|record| record.id == barrier)
+        if let Some(record) =
+            self.display_snapshot_barriers.iter_mut().find(|record| record.id == barrier)
         {
             record.dirty_framebuffer_region_count = dirty_count;
         }

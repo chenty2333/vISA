@@ -32,11 +32,7 @@ impl SemanticGraph {
         if adapter == 0 {
             return Err("network stack adapter id=0 is invalid");
         }
-        if self
-            .network_stack_adapters
-            .iter()
-            .any(|record| record.id == adapter)
-        {
+        if self.network_stack_adapters.iter().any(|record| record.id == adapter) {
             return Err("network stack adapter already exists");
         }
         if implementation != NETWORK_STACK_ADAPTER_IMPLEMENTATION_SMOLTCP
@@ -240,12 +236,10 @@ impl SemanticGraph {
                         && packet_device.generation == record.packet_device_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::NetworkStackAdapterMissingPacketDevice {
-                        adapter: record.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkStackAdapterMissingPacketDevice {
+                    adapter: record.id,
+                    packet_device: record.packet_device,
+                });
             };
             let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|queue| {
                 queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
@@ -308,12 +302,10 @@ impl SemanticGraph {
                     && other.packet_device_generation == record.packet_device_generation
                     && other.state == NetworkStackAdapterState::Bound
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkStackAdapterDuplicatePacketDevice {
-                        adapter: duplicate.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkStackAdapterDuplicatePacketDevice {
+                    adapter: duplicate.id,
+                    packet_device: record.packet_device,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -405,10 +397,8 @@ impl SemanticGraph {
         adapter: NetworkStackAdapterId,
         profile: &str,
     ) {
-        if let Some(record) = self
-            .network_stack_adapters
-            .iter_mut()
-            .find(|record| record.id == adapter)
+        if let Some(record) =
+            self.network_stack_adapters.iter_mut().find(|record| record.id == adapter)
         {
             record.profile = profile.to_string();
         }

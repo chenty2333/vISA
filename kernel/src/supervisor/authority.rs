@@ -1,5 +1,4 @@
-use alloc::format;
-use alloc::string::String;
+use alloc::{format, string::String};
 
 use semantic_core::{
     AuthorityId, AuthorityKind, AuthorityState, CapabilityDenyReason, CapabilityOwnerSummary,
@@ -92,9 +91,7 @@ impl AuthorityPlane {
         object: &str,
         operation: &str,
     ) -> Result<(), CapabilityDenyReason> {
-        semantic
-            .check_capability(subject, object, operation)
-            .map(|_| ())
+        semantic.check_capability(subject, object, operation).map(|_| ())
     }
 
     pub(crate) fn require_generation(
@@ -182,12 +179,7 @@ impl AuthorityPlane {
         let handle = semantic
             .resource_handle(resource)
             .ok_or("substrate authority resource did not publish a handle")?;
-        Ok(SubstrateAuthorityLease {
-            class: spec.class,
-            resource,
-            authority,
-            handle,
-        })
+        Ok(SubstrateAuthorityLease { class: spec.class, resource, authority, handle })
     }
 
     pub(crate) fn substrate_authority_line(&self, semantic: &SemanticGraph) -> String {
@@ -385,8 +377,7 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn record_hostcall_plan(&mut self, label: &str, kind: PlanKind) {
-        self.authority
-            .record_hostcall_plan(&mut self.semantic, label, kind);
+        self.authority.record_hostcall_plan(&mut self.semantic, label, kind);
     }
 
     pub(crate) fn require_capability(
@@ -395,8 +386,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         object: &str,
         operation: &str,
     ) -> Result<(), CapabilityDenyReason> {
-        self.authority
-            .require(&mut self.semantic, subject, object, operation)
+        self.authority.require(&mut self.semantic, subject, object, operation)
     }
 
     pub(crate) fn require_capability_generation(
@@ -449,7 +439,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         operations: &[&str],
         lifetime: &str,
     ) {
-        self.authority
-            .grant(&mut self.semantic, subject, object, operations, lifetime);
+        self.authority.grant(&mut self.semantic, subject, object, operations, lifetime);
     }
 }

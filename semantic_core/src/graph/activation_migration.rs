@@ -23,11 +23,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("activation migration reason is empty");
         }
-        if self
-            .activation_migrations
-            .iter()
-            .any(|record| record.id == migration)
-        {
+        if self.activation_migrations.iter().any(|record| record.id == migration) {
             return Err("activation migration already exists");
         }
         if source_hart == target_hart {
@@ -95,11 +91,7 @@ impl SemanticGraph {
         {
             return Err("activation migration target queue owner mismatch");
         }
-        if target
-            .entries
-            .iter()
-            .any(|entry| entry.activation == activation)
-        {
+        if target.entries.iter().any(|entry| entry.activation == activation) {
             return Err("activation migration target queue already contains activation");
         }
         let Some(activation_record) = self.runtime_activations.iter().find(|record| {
@@ -212,13 +204,10 @@ impl SemanticGraph {
             return false;
         };
         let Some(source_entry_index) =
-            self.runnable_queues[source_index]
-                .entries
-                .iter()
-                .position(|entry| {
-                    entry.activation == activation
-                        && entry.activation_generation == activation_generation
-                })
+            self.runnable_queues[source_index].entries.iter().position(|entry| {
+                entry.activation == activation
+                    && entry.activation_generation == activation_generation
+            })
         else {
             return false;
         };
@@ -262,9 +251,7 @@ impl SemanticGraph {
         });
 
         self.next_activation_migration_id = self.next_activation_migration_id.max(migration + 1);
-        self.runnable_queues[source_index]
-            .entries
-            .remove(source_entry_index);
+        self.runnable_queues[source_index].entries.remove(source_entry_index);
         let owner_task = self.runtime_activations[activation_index].owner_task;
         let owner_task_generation =
             self.runtime_activations[activation_index].owner_task_generation;
@@ -294,11 +281,7 @@ impl SemanticGraph {
         );
         let dequeued_event = self.event_log.push(
             "scheduler",
-            EventKind::RunnableDequeued {
-                queue: source_queue,
-                activation,
-                activation_generation,
-            },
+            EventKind::RunnableDequeued { queue: source_queue, activation, activation_generation },
         );
         let queued_event = self.event_log.push(
             "scheduler",
@@ -310,13 +293,11 @@ impl SemanticGraph {
         );
         self.runtime_activations[activation_index].last_event =
             Some(migration_event.max(dequeued_event).max(queued_event));
-        self.runnable_queues[target_index]
-            .entries
-            .push(RunnableQueueEntry {
-                activation,
-                activation_generation: activation_generation_after,
-                enqueued_at: queued_event,
-            });
+        self.runnable_queues[target_index].entries.push(RunnableQueueEntry {
+            activation,
+            activation_generation: activation_generation_after,
+            enqueued_at: queued_event,
+        });
         let mut context = None;
         let mut context_generation_before = None;
         let mut context_generation_after = None;
@@ -474,10 +455,8 @@ impl SemanticGraph {
         migration: ActivationMigrationId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .activation_migrations
-            .iter_mut()
-            .find(|record| record.id == migration)
+        if let Some(record) =
+            self.activation_migrations.iter_mut().find(|record| record.id == migration)
         {
             record.migrated_at_event = event;
         }
@@ -528,25 +507,19 @@ impl SemanticGraph {
                 migration.target_hart,
                 migration.target_queue_owner_hart_generation,
             )?;
-            let Some(activation) = self
-                .runtime_activations
-                .iter()
-                .find(|record| record.id == migration.activation)
+            let Some(activation) =
+                self.runtime_activations.iter().find(|record| record.id == migration.activation)
             else {
-                return Err(
-                    SemanticInvariantError::ActivationMigrationMissingActivation {
-                        migration: migration.id,
-                        activation: migration.activation,
-                    },
-                );
+                return Err(SemanticInvariantError::ActivationMigrationMissingActivation {
+                    migration: migration.id,
+                    activation: migration.activation,
+                });
             };
             if activation.generation < migration.activation_generation_after {
-                return Err(
-                    SemanticInvariantError::ActivationMigrationMissingActivation {
-                        migration: migration.id,
-                        activation: migration.activation,
-                    },
-                );
+                return Err(SemanticInvariantError::ActivationMigrationMissingActivation {
+                    migration: migration.id,
+                    activation: migration.activation,
+                });
             }
             if activation.generation == migration.activation_generation_after
                 && (activation.state != RuntimeActivationState::Runnable
@@ -554,17 +527,13 @@ impl SemanticGraph {
                     || activation.runnable_queue_generation
                         != Some(migration.target_queue_generation))
             {
-                return Err(
-                    SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
-                        migration: migration.id,
-                        activation: migration.activation,
-                    },
-                );
+                return Err(SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
+                    migration: migration.id,
+                    activation: migration.activation,
+                });
             }
-            let Some(target_queue) = self
-                .runnable_queues
-                .iter()
-                .find(|record| record.id == migration.target_queue)
+            let Some(target_queue) =
+                self.runnable_queues.iter().find(|record| record.id == migration.target_queue)
             else {
                 return Err(SemanticInvariantError::ActivationMigrationMissingQueue {
                     migration: migration.id,
@@ -578,12 +547,10 @@ impl SemanticGraph {
                 })
                 && activation.generation == migration.activation_generation_after
             {
-                return Err(
-                    SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
-                        migration: migration.id,
-                        activation: migration.activation,
-                    },
-                );
+                return Err(SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
+                    migration: migration.id,
+                    activation: migration.activation,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == migration.migrated_at_event
@@ -761,12 +728,10 @@ impl SemanticGraph {
                         && *activation_generation == migration.activation_generation_after
                 )
             }) {
-                return Err(
-                    SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
-                        migration: migration.id,
-                        activation: migration.activation,
-                    },
-                );
+                return Err(SemanticInvariantError::ActivationMigrationQueueEntryMismatch {
+                    migration: migration.id,
+                    activation: migration.activation,
+                });
             }
             if !self.hart_event_attributions.iter().any(|attribution| {
                 attribution.event == migration.migrated_at_event
@@ -806,12 +771,10 @@ impl SemanticGraph {
             return Err(SemanticInvariantError::ActivationMigrationMissingHart { migration, hart });
         };
         if record.generation < generation {
-            return Err(
-                SemanticInvariantError::ActivationMigrationHartGenerationMismatch {
-                    migration,
-                    hart,
-                },
-            );
+            return Err(SemanticInvariantError::ActivationMigrationHartGenerationMismatch {
+                migration,
+                hart,
+            });
         }
         Ok(())
     }
@@ -824,11 +787,7 @@ impl SemanticGraph {
         owner_hart: HartId,
         owner_hart_generation: Generation,
     ) -> Result<(), SemanticInvariantError> {
-        let Some(record) = self
-            .runnable_queues
-            .iter()
-            .find(|record| record.id == queue)
-        else {
+        let Some(record) = self.runnable_queues.iter().find(|record| record.id == queue) else {
             return Err(SemanticInvariantError::ActivationMigrationMissingQueue {
                 migration,
                 queue,
@@ -839,9 +798,10 @@ impl SemanticGraph {
                 && (record.owner_hart != Some(owner_hart)
                     || record.owner_hart_generation != Some(owner_hart_generation)))
         {
-            return Err(
-                SemanticInvariantError::ActivationMigrationQueueOwnerMismatch { migration, queue },
-            );
+            return Err(SemanticInvariantError::ActivationMigrationQueueOwnerMismatch {
+                migration,
+                queue,
+            });
         }
         Ok(())
     }

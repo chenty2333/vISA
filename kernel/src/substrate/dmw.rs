@@ -49,12 +49,8 @@ impl DmwManager {
 
             let generation = self.next_generation;
             self.next_generation += 1;
-            *slot = DmwSlot {
-                activation_id,
-                generation,
-                active: true,
-                quarantined_activation_id: 0,
-            };
+            *slot =
+                DmwSlot { activation_id, generation, active: true, quarantined_activation_id: 0 };
             return Ok((index, generation));
         }
 
@@ -166,15 +162,13 @@ impl DmwLease {
     }
 
     pub(crate) fn bytes(&self) -> Result<&[u8], DmwFault> {
-        DMW.lock()
-            .validate(self.slot_index, self.generation, self.activation_id)?;
+        DMW.lock().validate(self.slot_index, self.generation, self.activation_id)?;
         Ok(unsafe { slice::from_raw_parts(self.ptr as *const u8, self.len) })
     }
 
     pub(crate) fn bytes_mut(&mut self) -> Result<&mut [u8], DmwFault> {
         assert!(self.writable, "DMW lease was not writable");
-        DMW.lock()
-            .validate(self.slot_index, self.generation, self.activation_id)?;
+        DMW.lock().validate(self.slot_index, self.generation, self.activation_id)?;
         Ok(unsafe { slice::from_raw_parts_mut(self.ptr as *mut u8, self.len) })
     }
 }
@@ -192,14 +186,7 @@ pub(crate) fn acquire(
     writable: bool,
 ) -> Result<DmwLease, DmwFault> {
     let (slot_index, generation) = DMW.lock().acquire(activation_id)?;
-    Ok(DmwLease {
-        slot_index,
-        generation,
-        activation_id,
-        ptr,
-        len: len as usize,
-        writable,
-    })
+    Ok(DmwLease { slot_index, generation, activation_id, ptr, len: len as usize, writable })
 }
 
 pub(crate) fn assert_quiescent() -> Result<(), &'static str> {

@@ -19,20 +19,13 @@ impl SemanticGraph {
         });
         self.event_log.push(
             "transaction",
-            EventKind::TransactionBegan {
-                transaction: id,
-                store,
-                task,
-                label: label.to_string(),
-            },
+            EventKind::TransactionBegan { transaction: id, store, task, label: label.to_string() },
         );
         id
     }
     pub fn commit_transaction(&mut self, id: TransactionId) {
-        let Some(transaction) = self
-            .transactions
-            .iter_mut()
-            .find(|transaction| transaction.id == id)
+        let Some(transaction) =
+            self.transactions.iter_mut().find(|transaction| transaction.id == id)
         else {
             return;
         };
@@ -43,17 +36,12 @@ impl SemanticGraph {
         transaction.generation += 1;
         self.event_log.push(
             "transaction",
-            EventKind::TransactionCommitted {
-                transaction: id,
-                generation: transaction.generation,
-            },
+            EventKind::TransactionCommitted { transaction: id, generation: transaction.generation },
         );
     }
     pub fn rollback_transaction(&mut self, id: TransactionId, reason: &str) {
-        let Some(transaction) = self
-            .transactions
-            .iter_mut()
-            .find(|transaction| transaction.id == id)
+        let Some(transaction) =
+            self.transactions.iter_mut().find(|transaction| transaction.id == id)
         else {
             return;
         };
@@ -87,8 +75,7 @@ impl SemanticGraph {
             generation: 1,
             valid: true,
         });
-        self.event_log
-            .push("fastpath", EventKind::FastPathPlanInstalled { plan: id });
+        self.event_log.push("fastpath", EventKind::FastPathPlanInstalled { plan: id });
         id
     }
     pub fn invalidate_fast_path_plan(&mut self, id: PlanId) {
@@ -100,12 +87,10 @@ impl SemanticGraph {
         }
         plan.valid = false;
         plan.generation += 1;
-        self.event_log
-            .push("fastpath", EventKind::FastPathPlanInvalidated { plan: id });
+        self.event_log.push("fastpath", EventKind::FastPathPlanInvalidated { plan: id });
     }
     pub fn record_failure_effect(&mut self, effect: FailureEffect) {
-        self.event_log
-            .push("failure", EventKind::FailureEffect { effect });
+        self.event_log.push("failure", EventKind::FailureEffect { effect });
     }
     pub fn transaction_count(&self) -> usize {
         self.transactions.len()
@@ -114,10 +99,7 @@ impl SemanticGraph {
         self.fast_path_plans.len()
     }
     pub fn active_fast_path_plan_count(&self) -> usize {
-        self.fast_path_plans
-            .iter()
-            .filter(|plan| plan.valid)
-            .count()
+        self.fast_path_plans.iter().filter(|plan| plan.valid).count()
     }
     pub fn active_transaction_count(&self) -> usize {
         self.transactions

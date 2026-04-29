@@ -18,11 +18,7 @@ impl SemanticGraph {
         if display_event_log == 0 {
             return Err("display event log id=0 is invalid");
         }
-        if self
-            .display_event_logs
-            .iter()
-            .any(|record| record.id == display_event_log)
-        {
+        if self.display_event_logs.iter().any(|record| record.id == display_event_log) {
             return Err("display event log already exists");
         }
         if owner_store_generation == 0
@@ -130,9 +126,8 @@ impl SemanticGraph {
             .expect("validated display event log dirty region exists")
             .clone();
         let generation = 1;
-        self.next_display_event_log_id = self
-            .next_display_event_log_id
-            .max(display_event_log.saturating_add(1));
+        self.next_display_event_log_id =
+            self.next_display_event_log_id.max(display_event_log.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::DisplayEventLogRecorded {
@@ -322,10 +317,8 @@ impl SemanticGraph {
         display_event_log: DisplayEventLogId,
         event_count: u64,
     ) {
-        if let Some(record) = self
-            .display_event_logs
-            .iter_mut()
-            .find(|record| record.id == display_event_log)
+        if let Some(record) =
+            self.display_event_logs.iter_mut().find(|record| record.id == display_event_log)
         {
             record.event_count = event_count;
         }

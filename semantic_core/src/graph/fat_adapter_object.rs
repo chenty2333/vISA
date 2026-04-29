@@ -28,11 +28,7 @@ impl SemanticGraph {
         if fat_adapter_object == 0 {
             return Err("fat adapter object id=0 is invalid");
         }
-        if self
-            .fat_adapter_objects
-            .iter()
-            .any(|record| record.id == fat_adapter_object)
-        {
+        if self.fat_adapter_objects.iter().any(|record| record.id == fat_adapter_object) {
             return Err("fat adapter object already exists");
         }
         if directory_object_generation == 0
@@ -149,9 +145,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_fat_adapter_object_id = self
-            .next_fat_adapter_object_id
-            .max(fat_adapter_object.saturating_add(1));
+        self.next_fat_adapter_object_id =
+            self.next_fat_adapter_object_id.max(fat_adapter_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FatAdapterObjectRecorded {
@@ -220,12 +215,10 @@ impl SemanticGraph {
                 directory.id == record.directory_object
                     && directory.generation == record.directory_object_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FatAdapterObjectMissingDirectoryObject {
-                        fat_adapter_object: record.id,
-                        directory_object: record.directory_object,
-                    },
-                );
+                return Err(SemanticInvariantError::FatAdapterObjectMissingDirectoryObject {
+                    fat_adapter_object: record.id,
+                    directory_object: record.directory_object,
+                });
             };
             let Some(file) = self.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
@@ -342,10 +335,8 @@ impl SemanticGraph {
         fat_adapter_object: FatAdapterObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .fat_adapter_objects
-            .iter_mut()
-            .find(|record| record.id == fat_adapter_object)
+        if let Some(record) =
+            self.fat_adapter_objects.iter_mut().find(|record| record.id == fat_adapter_object)
         {
             record.file_object_generation = generation;
         }

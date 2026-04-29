@@ -17,11 +17,7 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated snapshot/io lease barrier id=0 is invalid");
         }
-        if self
-            .integrated_snapshot_io_lease_barriers
-            .iter()
-            .any(|record| record.id == integrated)
-        {
+        if self.integrated_snapshot_io_lease_barriers.iter().any(|record| record.id == integrated) {
             return Err("integrated snapshot/io lease barrier evidence already exists");
         }
         if scenario.is_empty() {
@@ -90,22 +86,21 @@ impl SemanticGraph {
                 "integrated snapshot/io lease barrier requires clean display snapshot barrier",
             );
         }
-        let Some(display_cleanup) = (match (
-            display_barrier.display_cleanup,
-            display_barrier.display_cleanup_generation,
-        ) {
-            (Some(cleanup_id), Some(generation)) => self.display_cleanups.iter().find(|record| {
-                record.id == cleanup_id
-                    && record.generation == generation
-                    && record.state == DisplayCleanupState::Completed
-            }),
-            _ => None,
-        }) else {
+        let Some(display_cleanup) =
+            (match (display_barrier.display_cleanup, display_barrier.display_cleanup_generation) {
+                (Some(cleanup_id), Some(generation)) => {
+                    self.display_cleanups.iter().find(|record| {
+                        record.id == cleanup_id
+                            && record.generation == generation
+                            && record.state == DisplayCleanupState::Completed
+                    })
+                }
+                _ => None,
+            })
+        else {
             return Err("integrated snapshot/io lease barrier requires display cleanup evidence");
         };
-        if display_cleanup
-            .released_framebuffer_window_leases
-            .is_empty()
+        if display_cleanup.released_framebuffer_window_leases.is_empty()
             || display_cleanup.revoked_display_capabilities.is_empty()
             || display_cleanup.owner_store != display_barrier.owner_store
             || display_cleanup.owner_store_generation != display_barrier.owner_store_generation
@@ -169,23 +164,21 @@ impl SemanticGraph {
         }) else {
             return false;
         };
-        let Some(display_cleanup) = (match (
-            display_barrier.display_cleanup,
-            display_barrier.display_cleanup_generation,
-        ) {
-            (Some(cleanup_id), Some(generation)) => self
-                .display_cleanups
-                .iter()
-                .find(|record| record.id == cleanup_id && record.generation == generation),
-            _ => None,
-        }) else {
+        let Some(display_cleanup) =
+            (match (display_barrier.display_cleanup, display_barrier.display_cleanup_generation) {
+                (Some(cleanup_id), Some(generation)) => self
+                    .display_cleanups
+                    .iter()
+                    .find(|record| record.id == cleanup_id && record.generation == generation),
+                _ => None,
+            })
+        else {
             return false;
         };
 
         let generation = 1;
-        self.next_integrated_snapshot_io_lease_barrier_id = self
-            .next_integrated_snapshot_io_lease_barrier_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_snapshot_io_lease_barrier_id =
+            self.next_integrated_snapshot_io_lease_barrier_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSnapshotIoLeaseBarrierRecorded {
@@ -211,50 +204,48 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_snapshot_io_lease_barriers
-            .push(IntegratedSnapshotIoLeaseBarrierRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                smp_snapshot_barrier,
-                smp_snapshot_barrier_generation,
-                io_cleanup,
-                io_cleanup_generation,
-                display_snapshot_barrier,
-                display_snapshot_barrier_generation,
-                driver_store: cleanup.driver_store,
-                driver_store_generation: cleanup.driver_store_generation,
-                device: cleanup.device,
-                device_generation: cleanup.device_generation,
-                display: display_barrier.display,
-                display_generation: display_barrier.display_generation,
-                framebuffer: display_barrier.framebuffer,
-                framebuffer_generation: display_barrier.framebuffer_generation,
-                active_dmw_lease_count: smp_barrier.active_dmw_lease_count,
-                in_flight_dma_count: smp_barrier.in_flight_dma_count,
-                raw_dma_binding_count: smp_barrier.raw_dma_binding_count,
-                raw_mmio_binding_count: smp_barrier.raw_mmio_binding_count,
-                active_framebuffer_window_lease_count: display_barrier
-                    .active_framebuffer_window_lease_count,
-                active_framebuffer_mapping_count: display_barrier.active_framebuffer_mapping_count,
-                dirty_framebuffer_region_count: display_barrier.dirty_framebuffer_region_count,
-                released_dma_buffers: cleanup.released_dma_buffers.len() as u32,
-                released_mmio_regions: cleanup.released_mmio_regions.len() as u32,
-                released_irq_lines: cleanup.released_irq_lines.len() as u32,
-                released_framebuffer_window_leases: display_cleanup
-                    .released_framebuffer_window_leases
-                    .len() as u32,
-                revoked_device_capabilities: cleanup.revoked_device_capabilities.len() as u32,
-                revoked_display_capabilities: display_cleanup.revoked_display_capabilities.len()
-                    as u32,
-                smp_barrier_event: smp_barrier.validated_at_event,
-                io_cleanup_completed_event: cleanup.completed_at_event,
-                display_barrier_event: display_barrier.validated_at_event,
-                invariant_checks,
-                generation,
-                state: IntegratedSnapshotIoLeaseBarrierState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_snapshot_io_lease_barriers.push(IntegratedSnapshotIoLeaseBarrierRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            smp_snapshot_barrier,
+            smp_snapshot_barrier_generation,
+            io_cleanup,
+            io_cleanup_generation,
+            display_snapshot_barrier,
+            display_snapshot_barrier_generation,
+            driver_store: cleanup.driver_store,
+            driver_store_generation: cleanup.driver_store_generation,
+            device: cleanup.device,
+            device_generation: cleanup.device_generation,
+            display: display_barrier.display,
+            display_generation: display_barrier.display_generation,
+            framebuffer: display_barrier.framebuffer,
+            framebuffer_generation: display_barrier.framebuffer_generation,
+            active_dmw_lease_count: smp_barrier.active_dmw_lease_count,
+            in_flight_dma_count: smp_barrier.in_flight_dma_count,
+            raw_dma_binding_count: smp_barrier.raw_dma_binding_count,
+            raw_mmio_binding_count: smp_barrier.raw_mmio_binding_count,
+            active_framebuffer_window_lease_count: display_barrier
+                .active_framebuffer_window_lease_count,
+            active_framebuffer_mapping_count: display_barrier.active_framebuffer_mapping_count,
+            dirty_framebuffer_region_count: display_barrier.dirty_framebuffer_region_count,
+            released_dma_buffers: cleanup.released_dma_buffers.len() as u32,
+            released_mmio_regions: cleanup.released_mmio_regions.len() as u32,
+            released_irq_lines: cleanup.released_irq_lines.len() as u32,
+            released_framebuffer_window_leases: display_cleanup
+                .released_framebuffer_window_leases
+                .len() as u32,
+            revoked_device_capabilities: cleanup.revoked_device_capabilities.len() as u32,
+            revoked_display_capabilities: display_cleanup.revoked_display_capabilities.len() as u32,
+            smp_barrier_event: smp_barrier.validated_at_event,
+            io_cleanup_completed_event: cleanup.completed_at_event,
+            display_barrier_event: display_barrier.validated_at_event,
+            invariant_checks,
+            generation,
+            state: IntegratedSnapshotIoLeaseBarrierState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -301,11 +292,9 @@ impl SemanticGraph {
                 || record.display_barrier_event == 0
                 || record.invariant_checks == 0
             {
-                return Err(
-                    SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierInvalid {
+                    integrated: record.id,
+                });
             }
             for (label, id, generation, refs) in [
                 (
@@ -362,11 +351,9 @@ impl SemanticGraph {
                 )
                 .is_err()
             {
-                return Err(
-                    SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierInvalid {
+                    integrated: record.id,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -413,11 +400,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSnapshotIoLeaseBarrierMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

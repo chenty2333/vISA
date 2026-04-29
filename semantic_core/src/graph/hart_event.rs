@@ -54,11 +54,7 @@ impl SemanticGraph {
             return false;
         };
         let hardware_hart = hart_record.hardware_id;
-        let Some(event_record) = self
-            .event_log
-            .events
-            .iter()
-            .find(|record| record.id == event)
+        let Some(event_record) = self.event_log.events.iter().find(|record| record.id == event)
         else {
             return false;
         };
@@ -89,25 +85,24 @@ impl SemanticGraph {
 
         self.next_hart_event_attribution_id =
             self.next_hart_event_attribution_id.max(attribution + 1);
-        self.hart_event_attributions
-            .push(HartEventAttributionRecord {
-                id: attribution,
-                hart,
-                hart_generation,
-                hardware_hart,
-                event,
-                event_source,
-                event_kind: event_kind.to_string(),
-                activation,
-                activation_generation,
-                task,
-                task_generation,
-                store,
-                store_generation,
-                generation: 1,
-                state: HartEventAttributionState::Recorded,
-                note: note.to_string(),
-            });
+        self.hart_event_attributions.push(HartEventAttributionRecord {
+            id: attribution,
+            hart,
+            hart_generation,
+            hardware_hart,
+            event,
+            event_source,
+            event_kind: event_kind.to_string(),
+            activation,
+            activation_generation,
+            task,
+            task_generation,
+            store,
+            store_generation,
+            generation: 1,
+            state: HartEventAttributionState::Recorded,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -125,10 +120,8 @@ impl SemanticGraph {
         attribution: HartEventAttributionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .hart_event_attributions
-            .iter_mut()
-            .find(|record| record.id == attribution)
+        if let Some(record) =
+            self.hart_event_attributions.iter_mut().find(|record| record.id == attribution)
         {
             record.hart_generation = generation;
         }
@@ -151,11 +144,7 @@ impl SemanticGraph {
                     attribution: attribution.id,
                 });
             }
-            let Some(hart) = self
-                .harts
-                .iter()
-                .find(|record| record.id == attribution.hart)
-            else {
+            let Some(hart) = self.harts.iter().find(|record| record.id == attribution.hart) else {
                 return Err(SemanticInvariantError::HartEventAttributionMissingHart {
                     attribution: attribution.id,
                     hart: attribution.hart,
@@ -164,18 +153,13 @@ impl SemanticGraph {
             if hart.generation < attribution.hart_generation
                 || hart.hardware_id != attribution.hardware_hart
             {
-                return Err(
-                    SemanticInvariantError::HartEventAttributionHartGenerationMismatch {
-                        attribution: attribution.id,
-                        hart: attribution.hart,
-                    },
-                );
+                return Err(SemanticInvariantError::HartEventAttributionHartGenerationMismatch {
+                    attribution: attribution.id,
+                    hart: attribution.hart,
+                });
             }
-            let Some(event) = self
-                .event_log
-                .events
-                .iter()
-                .find(|record| record.id == attribution.event)
+            let Some(event) =
+                self.event_log.events.iter().find(|record| record.id == attribution.event)
             else {
                 return Err(SemanticInvariantError::HartEventAttributionMissingEvent {
                     attribution: attribution.id,
@@ -205,12 +189,10 @@ impl SemanticGraph {
                 }
                 (None, None) => {}
                 _ => {
-                    return Err(
-                        SemanticInvariantError::HartEventAttributionActivationMismatch {
-                            attribution: attribution.id,
-                            activation: attribution.activation.unwrap_or(0),
-                        },
-                    );
+                    return Err(SemanticInvariantError::HartEventAttributionActivationMismatch {
+                        attribution: attribution.id,
+                        activation: attribution.activation.unwrap_or(0),
+                    });
                 }
             }
         }

@@ -14,11 +14,7 @@ impl SemanticGraph {
         if packet_descriptor == 0 {
             return Err("packet descriptor object id=0 is invalid");
         }
-        if self
-            .packet_descriptors
-            .iter()
-            .any(|record| record.id == packet_descriptor)
-        {
+        if self.packet_descriptors.iter().any(|record| record.id == packet_descriptor) {
             return Err("packet descriptor object already exists");
         }
         if length == 0 {
@@ -115,9 +111,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_packet_descriptor_object_id = self
-            .next_packet_descriptor_object_id
-            .max(packet_descriptor + 1);
+        self.next_packet_descriptor_object_id =
+            self.next_packet_descriptor_object_id.max(packet_descriptor + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::PacketDescriptorObjectRecorded {
@@ -170,12 +165,10 @@ impl SemanticGraph {
                 packet_buffer.id == record.packet_buffer
                     && packet_buffer.generation == record.packet_buffer_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
-                        packet_descriptor: record.id,
-                        packet_buffer: record.packet_buffer,
-                    },
-                );
+                return Err(SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
+                    packet_descriptor: record.id,
+                    packet_buffer: record.packet_buffer,
+                });
             };
             if record.id == 0
                 || record.generation == 0
@@ -212,13 +205,11 @@ impl SemanticGraph {
                     && other.slot == record.slot
                     && other.state == PacketDescriptorObjectState::Registered
             }) {
-                return Err(
-                    SemanticInvariantError::PacketDescriptorObjectDuplicateSlot {
-                        packet_descriptor: duplicate.id,
-                        packet_queue: record.packet_queue,
-                        slot: record.slot,
-                    },
-                );
+                return Err(SemanticInvariantError::PacketDescriptorObjectDuplicateSlot {
+                    packet_descriptor: duplicate.id,
+                    packet_queue: record.packet_queue,
+                    slot: record.slot,
+                });
             }
             if let Some(duplicate) = self.packet_descriptors.iter().find(|other| {
                 other.id != record.id
@@ -226,12 +217,10 @@ impl SemanticGraph {
                     && other.packet_buffer_generation == record.packet_buffer_generation
                     && other.state == PacketDescriptorObjectState::Registered
             }) {
-                return Err(
-                    SemanticInvariantError::PacketDescriptorObjectDuplicateBuffer {
-                        packet_descriptor: duplicate.id,
-                        packet_buffer: record.packet_buffer,
-                    },
-                );
+                return Err(SemanticInvariantError::PacketDescriptorObjectDuplicateBuffer {
+                    packet_descriptor: duplicate.id,
+                    packet_buffer: record.packet_buffer,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -281,10 +270,8 @@ impl SemanticGraph {
         packet_descriptor: PacketDescriptorObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .packet_descriptors
-            .iter_mut()
-            .find(|record| record.id == packet_descriptor)
+        if let Some(record) =
+            self.packet_descriptors.iter_mut().find(|record| record.id == packet_descriptor)
         {
             record.packet_queue_generation = generation;
         }
@@ -296,10 +283,8 @@ impl SemanticGraph {
         packet_descriptor: PacketDescriptorObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .packet_descriptors
-            .iter_mut()
-            .find(|record| record.id == packet_descriptor)
+        if let Some(record) =
+            self.packet_descriptors.iter_mut().find(|record| record.id == packet_descriptor)
         {
             record.packet_buffer_generation = generation;
         }

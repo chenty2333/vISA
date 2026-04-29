@@ -25,11 +25,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("block recovery benchmark id cannot advance generation cursor");
         }
-        if self
-            .block_recovery_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.block_recovery_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("block recovery benchmark already exists");
         }
         if scenario.is_empty() {
@@ -149,9 +145,8 @@ impl SemanticGraph {
         let driver_binding = cleanup_record.driver_binding;
         let driver_binding_generation = cleanup_record.driver_binding_generation;
         let generation = 1;
-        self.next_block_recovery_benchmark_id = self
-            .next_block_recovery_benchmark_id
-            .max(benchmark.saturating_add(1));
+        self.next_block_recovery_benchmark_id =
+            self.next_block_recovery_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRecoveryBenchmarkRecorded {
@@ -180,36 +175,35 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_recovery_benchmarks
-            .push(BlockRecoveryBenchmarkRecord {
-                id: benchmark,
-                scenario: scenario.to_string(),
-                cleanup,
-                cleanup_generation,
-                io_cleanup,
-                io_cleanup_generation,
-                backend,
-                block_device,
-                block_device_generation,
-                driver_store,
-                driver_store_generation,
-                device,
-                device_generation,
-                driver_binding,
-                driver_binding_generation,
-                recovery_start_event,
-                recovery_complete_event,
-                cancelled_block_waits,
-                cancelled_wait_tokens,
-                released_dma_buffers,
-                revoked_device_capabilities,
-                recovery_nanos,
-                budget_nanos,
-                generation,
-                state: BlockRecoveryBenchmarkState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.block_recovery_benchmarks.push(BlockRecoveryBenchmarkRecord {
+            id: benchmark,
+            scenario: scenario.to_string(),
+            cleanup,
+            cleanup_generation,
+            io_cleanup,
+            io_cleanup_generation,
+            backend,
+            block_device,
+            block_device_generation,
+            driver_store,
+            driver_store_generation,
+            device,
+            device_generation,
+            driver_binding,
+            driver_binding_generation,
+            recovery_start_event,
+            recovery_complete_event,
+            cancelled_block_waits,
+            cancelled_wait_tokens,
+            released_dma_buffers,
+            revoked_device_capabilities,
+            recovery_nanos,
+            budget_nanos,
+            generation,
+            state: BlockRecoveryBenchmarkState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -255,16 +249,14 @@ impl SemanticGraph {
                     && cleanup.generation == record.cleanup_generation
                     && cleanup.state == BlockDriverCleanupState::Completed
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRecoveryBenchmarkMissingTarget {
-                        benchmark: record.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::BlockDriverCleanup,
-                            record.cleanup,
-                            record.cleanup_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRecoveryBenchmarkMissingTarget {
+                    benchmark: record.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::BlockDriverCleanup,
+                        record.cleanup,
+                        record.cleanup_generation,
+                    ),
+                });
             };
             let Some(completed_at_event) = cleanup.completed_at_event else {
                 return Err(SemanticInvariantError::BlockRecoveryBenchmarkInvalid {
@@ -294,11 +286,9 @@ impl SemanticGraph {
                 || cleanup.revoked_device_capabilities.len() as u32
                     != record.revoked_device_capabilities
             {
-                return Err(
-                    SemanticInvariantError::BlockRecoveryBenchmarkMetricMismatch {
-                        benchmark: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRecoveryBenchmarkMetricMismatch {
+                    benchmark: record.id,
+                });
             }
 
             if !self.event_log.events.iter().any(|event| {
@@ -369,10 +359,8 @@ impl SemanticGraph {
         benchmark: BlockRecoveryBenchmarkId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_recovery_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.block_recovery_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.cleanup_generation = cleanup_generation;
         }

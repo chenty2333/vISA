@@ -15,11 +15,7 @@ impl SemanticGraph {
         if block_device == 0 {
             return Err("block device object id=0 is invalid");
         }
-        if self
-            .block_device_objects
-            .iter()
-            .any(|record| record.id == block_device)
-        {
+        if self.block_device_objects.iter().any(|record| record.id == block_device) {
             return Err("block device object already exists");
         }
         if name.is_empty() {
@@ -86,9 +82,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_block_device_object_id = self
-            .next_block_device_object_id
-            .max(block_device.saturating_add(1));
+        self.next_block_device_object_id =
+            self.next_block_device_object_id.max(block_device.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockDeviceObjectRecorded {
@@ -196,10 +191,8 @@ impl SemanticGraph {
         block_device: BlockDeviceObjectId,
         device_generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_device_objects
-            .iter_mut()
-            .find(|record| record.id == block_device)
+        if let Some(record) =
+            self.block_device_objects.iter_mut().find(|record| record.id == block_device)
         {
             record.device_generation = device_generation;
         }

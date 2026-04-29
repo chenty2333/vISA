@@ -1,5 +1,7 @@
-use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::{
+    format,
+    string::{String, ToString},
+};
 
 use super::*;
 
@@ -148,11 +150,7 @@ impl StoreActivationRecord {
     }
 
     pub fn summary(&self) -> String {
-        let blocked_by = self
-            .blocked_by
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or("none");
+        let blocked_by = self.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
         format!(
             "store-activation store={} package={} binding={} code_hash={} code={} memory={} hostcalls={} traps={} entry={} blocked={} generation={}",
             self.store,

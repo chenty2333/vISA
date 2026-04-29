@@ -1,24 +1,22 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use crate::interrupts;
 use semantic_core::{FailureEffect, TaskState};
 use vmos_abi::{ERR_EFAULT, ERR_EPERM};
 
-use super::events::Event;
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::pulse::PulseEvent;
-use super::runtime::PrototypeRuntime;
-use super::services::DriverNetEventKind;
-use super::types::{ServiceCallError, WaitRestartClass, WaitToken};
-use super::wait::{WaitOutcome, WaitRegistration, WaitSource};
+use super::{
+    events::Event,
+    linux::{LinuxCallResult, LinuxPlan},
+    pulse::PulseEvent,
+    runtime::PrototypeRuntime,
+    services::DriverNetEventKind,
+    types::{ServiceCallError, WaitRestartClass, WaitToken},
+    wait::{WaitOutcome, WaitRegistration, WaitSource},
+};
+use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_sleep(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "timer.sleep", "arm")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "timer.sleep", "arm").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let resume_cookie =
@@ -26,10 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let delay_ms = u32::try_from(plan.args[1]).map_err(|_| "sleep delay overflowed")?;
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Timer {
-                delay_ms,
-                resume_cookie,
-            },
+            WaitRegistration::Timer { delay_ms, resume_cookie },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -40,10 +35,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("futex_service", "futex.waitset", "wait")
-            .is_err()
-        {
+        if self.require_capability("futex_service", "futex.waitset", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let key = plan.args[0];
@@ -56,10 +48,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             u32::try_from(plan.args[2]).map_err(|_| "futex resume cookie overflowed")?;
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Futex {
-                timeout_ms,
-                resume_cookie,
-            },
+            WaitRegistration::Futex { timeout_ms, resume_cookie },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -71,11 +60,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Errno(errno)) => {
                 self.semantic.record_wait_cancelled(token.id, errno);
-                self.semantic
-                    .record_failure_effect(FailureEffect::CancelWaitToken {
-                        wait: token.id,
-                        errno,
-                    });
+                self.semantic.record_failure_effect(FailureEffect::CancelWaitToken {
+                    wait: token.id,
+                    errno,
+                });
                 Ok(LinuxCallResult::Ret(-(errno as i64)))
             }
             Err(ServiceCallError::Trap(reason)) => {
@@ -90,10 +78,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("futex_service", "futex.waitset", "wake")
-            .is_err()
-        {
+        if self.require_capability("futex_service", "futex.waitset", "wake").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let key = plan.args[0];
@@ -122,8 +107,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.validate_wait_token(token)
             .map_err(|_| "wait token generation check failed before blocking")?;
         if let Err(err) = crate::substrate::dmw::assert_quiescent() {
-            self.semantic
-                .record_failure_effect(FailureEffect::CompleteWithErrno(ERR_EFAULT));
+            self.semantic.record_failure_effect(FailureEffect::CompleteWithErrno(ERR_EFAULT));
             return Err(err);
         }
         loop {
@@ -134,14 +118,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                     self.validate_wait_token(token)
                         .map_err(|_| "wait token generation check failed before resume")?;
                 }
-                self.semantic
-                    .set_task_state(token.owner_task, TaskState::Running);
+                self.semantic.set_task_state(token.owner_task, TaskState::Running);
                 return match resolution.outcome {
                     WaitOutcome::Ready => match resolution.source {
-                        WaitSource::Epoll {
-                            epoll_id,
-                            max_events,
-                        } => {
+                        WaitSource::Epoll { epoll_id, max_events } => {
                             let _ = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.collect_epoll_ready(epoll_id, max_events)
                         }
@@ -151,11 +131,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                         }
                     },
                     WaitOutcome::Cancelled(errno) => {
-                        self.semantic
-                            .record_failure_effect(FailureEffect::CancelWaitToken {
-                                wait: token.id,
-                                errno,
-                            });
+                        self.semantic.record_failure_effect(FailureEffect::CancelWaitToken {
+                            wait: token.id,
+                            errno,
+                        });
                         match token.kind {
                             super::types::WaitKind::Futex => {
                                 match self.futex.cancel_wait(token.id) {
@@ -187,10 +166,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     WaitOutcome::Restart(class) => {
                         self.restart_count += 1;
                         crate::kinfo!("{} restarted as {:?}", label, class);
-                        self.semantic
-                            .record_failure_effect(FailureEffect::RestartSyscall {
-                                wait: Some(token.id),
-                            });
+                        self.semantic.record_failure_effect(FailureEffect::RestartSyscall {
+                            wait: Some(token.id),
+                        });
                         let restarted = self.linux.restart_wait(resolution.resume_cookie, class)?;
                         Ok(match self.execute_linux_step("linux_restart", restarted)? {
                             LinuxCallResult::Pending(next) => self.block_on_wait(label, next),
@@ -211,15 +189,13 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
     pub(super) fn pump_async_sources(&mut self) {
         let mut due_events = vec![];
-        self.waits
-            .collect_due_events(interrupts::tick_count(), &mut due_events);
+        self.waits.collect_due_events(interrupts::tick_count(), &mut due_events);
         for event in due_events {
             self.scheduler.push_event(event);
         }
 
         let mut pulse_events = Vec::new();
-        self.pulse
-            .collect_events(interrupts::tick_count(), &mut pulse_events);
+        self.pulse.collect_events(interrupts::tick_count(), &mut pulse_events);
         for event in pulse_events {
             match event {
                 PulseEvent::Ready(ready_key) => match self.epoll.notify_ready(ready_key) {
@@ -294,9 +270,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     self.net.device.id,
                     event.len as usize,
                 ),
-                DriverNetEventKind::DriverCompletion => self
-                    .semantic
-                    .record_driver_completion(self.net.device.id, "virtio-net-rx"),
+                DriverNetEventKind::DriverCompletion => {
+                    self.semantic.record_driver_completion(self.net.device.id, "virtio-net-rx")
+                }
                 DriverNetEventKind::PacketRx => {
                     match self.net_core.deliver_packet_frame(&event.frame) {
                         Ok(Some(ready_key)) => {

@@ -14,11 +14,7 @@ impl SemanticGraph {
         if socket_wait == 0 {
             return Err("socket wait id=0 is invalid");
         }
-        if self
-            .socket_waits
-            .iter()
-            .any(|record| record.id == socket_wait)
-        {
+        if self.socket_waits.iter().any(|record| record.id == socket_wait) {
             return Err("socket wait already exists");
         }
         if !matches!(
@@ -369,9 +365,7 @@ impl SemanticGraph {
                 || endpoint.owner_store_generation != record.owner_store_generation
                 || (record.state == SocketWaitState::Pending && store.state == StoreState::Dead)
             {
-                return Err(SemanticInvariantError::SocketWaitInvalid {
-                    socket_wait: record.id,
-                });
+                return Err(SemanticInvariantError::SocketWaitInvalid { socket_wait: record.id });
             }
             if record.state == SocketWaitState::Pending
                 && self.socket_waits.iter().any(|other| {
@@ -525,11 +519,7 @@ impl SemanticGraph {
         socket_wait: SocketWaitId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .socket_waits
-            .iter_mut()
-            .find(|record| record.id == socket_wait)
-        {
+        if let Some(record) = self.socket_waits.iter_mut().find(|record| record.id == socket_wait) {
             record.endpoint_generation = generation;
         }
     }

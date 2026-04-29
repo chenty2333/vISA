@@ -25,11 +25,7 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated smp/preemption/cleanup id=0 is invalid");
         }
-        if self
-            .integrated_smp_preemption_cleanups
-            .iter()
-            .any(|record| record.id == integrated)
-        {
+        if self.integrated_smp_preemption_cleanups.iter().any(|record| record.id == integrated) {
             return Err("integrated smp/preemption/cleanup evidence already exists");
         }
         if scenario.is_empty() {
@@ -234,9 +230,8 @@ impl SemanticGraph {
         let cleanup_activation = cleanup.activation;
         let cleanup_activation_generation_after = cleanup.activation_generation_after;
         let generation = 1;
-        self.next_integrated_smp_preemption_cleanup_id = self
-            .next_integrated_smp_preemption_cleanup_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_smp_preemption_cleanup_id =
+            self.next_integrated_smp_preemption_cleanup_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSmpPreemptionCleanupRecorded {
@@ -260,36 +255,35 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_smp_preemption_cleanups
-            .push(IntegratedSmpPreemptionCleanupRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                stress_run,
-                stress_run_generation,
-                preemption,
-                preemption_generation,
-                timer_interrupt,
-                timer_interrupt_generation,
-                saved_context,
-                saved_context_generation,
-                remote_preempt,
-                remote_preempt_generation,
-                activation_cleanup,
-                activation_cleanup_generation,
-                smp_cleanup_quiescence,
-                smp_cleanup_quiescence_generation,
-                cleanup_store,
-                target_store_generation,
-                result_store_generation,
-                cleanup_activation,
-                cleanup_activation_generation_after,
-                hart_count,
-                invariant_checks,
-                generation,
-                state: IntegratedSmpPreemptionCleanupState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_smp_preemption_cleanups.push(IntegratedSmpPreemptionCleanupRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            stress_run,
+            stress_run_generation,
+            preemption,
+            preemption_generation,
+            timer_interrupt,
+            timer_interrupt_generation,
+            saved_context,
+            saved_context_generation,
+            remote_preempt,
+            remote_preempt_generation,
+            activation_cleanup,
+            activation_cleanup_generation,
+            smp_cleanup_quiescence,
+            smp_cleanup_quiescence_generation,
+            cleanup_store,
+            target_store_generation,
+            result_store_generation,
+            cleanup_activation,
+            cleanup_activation_generation_after,
+            hart_count,
+            invariant_checks,
+            generation,
+            state: IntegratedSmpPreemptionCleanupState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -322,74 +316,58 @@ impl SemanticGraph {
                 || record.hart_count < 2
                 || record.invariant_checks == 0
             {
-                return Err(
-                    SemanticInvariantError::IntegratedSmpPreemptionCleanupInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSmpPreemptionCleanupInvalid {
+                    integrated: record.id,
+                });
             }
             self.check_integrated_evidence_ref(
                 record.id,
                 "smp-stress-run",
                 record.stress_run,
                 record.stress_run_generation,
-                self.smp_stress_runs
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_stress_runs.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "preemption",
                 record.preemption,
                 record.preemption_generation,
-                self.preemptions
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.preemptions.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "timer-interrupt",
                 record.timer_interrupt,
                 record.timer_interrupt_generation,
-                self.timer_interrupts
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.timer_interrupts.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "saved-context",
                 record.saved_context,
                 record.saved_context_generation,
-                self.saved_contexts
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.saved_contexts.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "remote-preempt",
                 record.remote_preempt,
                 record.remote_preempt_generation,
-                self.remote_preempts
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.remote_preempts.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "activation-cleanup",
                 record.activation_cleanup,
                 record.activation_cleanup_generation,
-                self.activation_cleanups
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.activation_cleanups.iter().map(|item| (item.id, item.generation)),
             )?;
             self.check_integrated_evidence_ref(
                 record.id,
                 "smp-cleanup-quiescence",
                 record.smp_cleanup_quiescence,
                 record.smp_cleanup_quiescence_generation,
-                self.smp_cleanup_quiescence
-                    .iter()
-                    .map(|item| (item.id, item.generation)),
+                self.smp_cleanup_quiescence.iter().map(|item| (item.id, item.generation)),
             )?;
             if self
                 .validate_integrated_smp_preemption_cleanup(
@@ -413,11 +391,9 @@ impl SemanticGraph {
                 )
                 .is_err()
             {
-                return Err(
-                    SemanticInvariantError::IntegratedSmpPreemptionCleanupInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedSmpPreemptionCleanupInvalid {
+                    integrated: record.id,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -484,12 +460,10 @@ impl SemanticGraph {
         I: Iterator<Item = (u64, Generation)>,
     {
         if id == 0 || generation == 0 || !refs.into_iter().any(|item| item == (id, generation)) {
-            return Err(
-                SemanticInvariantError::IntegratedSmpPreemptionCleanupMissingEvidence {
-                    integrated,
-                    evidence,
-                },
-            );
+            return Err(SemanticInvariantError::IntegratedSmpPreemptionCleanupMissingEvidence {
+                integrated,
+                evidence,
+            });
         }
         Ok(())
     }

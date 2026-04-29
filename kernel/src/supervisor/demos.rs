@@ -1,8 +1,6 @@
 use alloc::string::String;
 use core::fmt::Write;
 
-use crate::serial;
-use crate::serial_println;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLLIN, ERR_EPERM, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep,
@@ -10,9 +8,12 @@ use vmos_abi::{
     SyscallContext,
 };
 
-use super::linux::LinuxCallResult;
-use super::runtime::PrototypeRuntime;
-use super::types::{FdEntry, FdResource, InjectedFault, WaitRestartClass, WaitToken};
+use super::{
+    linux::LinuxCallResult,
+    runtime::PrototypeRuntime,
+    types::{FdEntry, FdResource, InjectedFault, WaitRestartClass, WaitToken},
+};
+use crate::{serial, serial_println};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn run_prototype_demos(&mut self) -> Result<(), &'static str> {
@@ -102,10 +103,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.close_fd(root_fd)?;
 
         let cwd = self.getcwd()?;
-        serial_println!(
-            "getcwd() -> {}",
-            core::str::from_utf8(&cwd).unwrap_or("<invalid utf8>")
-        );
+        serial_println!("getcwd() -> {}", core::str::from_utf8(&cwd).unwrap_or("<invalid utf8>"));
 
         let link = self.readlinkat(b"/sandbox/readme.link")?;
         serial_println!(
@@ -114,10 +112,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         );
 
         let uname = self.uname()?;
-        serial_println!(
-            "uname() -> {}",
-            core::str::from_utf8(&uname).unwrap_or("<invalid utf8>")
-        );
+        serial_println!("uname() -> {}", core::str::from_utf8(&uname).unwrap_or("<invalid utf8>"));
 
         Ok(())
     }
@@ -187,19 +182,12 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn run_fastpath_plan_demo(&mut self) -> Result<(), &'static str> {
         serial_println!("== fastpath plan demo ==");
-        let plan = self
-            .semantic
-            .install_fast_path_plan("linux_syscall", "linux.socket", "recv");
+        let plan = self.semantic.install_fast_path_plan("linux_syscall", "linux.socket", "recv");
         if self.semantic.active_fast_path_plan_count() == 0 {
             return Err("fastpath plan was not installed as active");
         }
         self.semantic.invalidate_fast_path_plan(plan);
-        if self
-            .semantic
-            .fast_path_plans()
-            .iter()
-            .any(|entry| entry.id == plan && entry.valid)
-        {
+        if self.semantic.fast_path_plans().iter().any(|entry| entry.id == plan && entry.valid) {
             return Err("fastpath plan invalidation did not take effect");
         }
         serial_println!("fastpath plan install/invalidate recorded");
@@ -241,12 +229,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             _ => return Err("revoked timer.sleep did not deny nanosleep"),
         }
 
-        self.grant_capability(
-            "linux_syscall",
-            "timer.sleep",
-            &["arm", "cancel"],
-            "wait-token",
-        );
+        self.grant_capability("linux_syscall", "timer.sleep", &["arm", "cancel"], "wait-token");
         if self
             .require_capability_generation("linux_syscall", "timer.sleep", "arm", old_generation)
             .is_ok()
@@ -263,9 +246,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         serial_println!("== resource/wait/dmw generation demo ==");
 
         let fd = self.open_path(b"/sandbox/hello.txt")?;
-        let fd_handle = self
-            .fd_handle_for_demo(fd)
-            .ok_or("opened fd did not publish a resource handle")?;
+        let fd_handle =
+            self.fd_handle_for_demo(fd).ok_or("opened fd did not publish a resource handle")?;
         self.validate_resource_handle(fd_handle)
             .map_err(|_| "fresh fd resource handle was rejected")?;
         self.close_fd(fd)?;
@@ -279,10 +261,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Pending(token) => token,
             _ => return Err("generation wait did not enter pending state"),
         };
-        let stale_token = WaitToken {
-            generation: token.generation.saturating_add(1),
-            ..token
-        };
+        let stale_token = WaitToken { generation: token.generation.saturating_add(1), ..token };
         if self.validate_wait_token(stale_token).is_ok() {
             return Err("stale wait token generation was accepted");
         }
@@ -314,24 +293,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             .ready_key(socket_id)
             .map_err(|_| "net_core did not return a socket ready key")?;
         self.linux_socket
-            .register_socket(
-                socket_id,
-                vmos_abi::AF_INET,
-                vmos_abi::SOCK_STREAM,
-                0,
-                ready_key,
-            )
+            .register_socket(socket_id, vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0, ready_key)
             .map_err(|_| "linux_socket_service failed to register demo socket")?;
         let fd = self.alloc_fd(FdEntry {
-            resource: FdResource::Socket {
-                socket_id: socket_id as u64,
-                ready_key,
-            },
+            resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
         });
-        let handle = self
-            .fd_handle(fd)
-            .ok_or("demo socket fd did not publish a resource handle")?;
+        let handle =
+            self.fd_handle(fd).ok_or("demo socket fd did not publish a resource handle")?;
         self.semantic.record_socket_state_changed(handle.id, "open");
         Ok(fd)
     }
@@ -391,14 +360,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             "epoll_ctl",
             SyscallContext::new(
                 SYS_EPOLL_CTL,
-                [
-                    epfd as u64,
-                    EPOLL_CTL_ADD as u64,
-                    pulse_fd as u64,
-                    EPOLLIN as u64,
-                    0x33,
-                    0,
-                ],
+                [epfd as u64, EPOLL_CTL_ADD as u64, pulse_fd as u64, EPOLLIN as u64, 0x33, 0],
             ),
         )?;
         let added = self.expect_ret("epoll_ctl", ctl)?;
@@ -442,10 +404,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (ptr, len) = self.write_linux_arg_bytes(get)?;
         let sent = self.dispatch_linux_syscall(
             "net_sendto",
-            SyscallContext::new(
-                SYS_SENDTO,
-                [socket_fd as u64, ptr as u64, len as u64, 0, 0, 0],
-            ),
+            SyscallContext::new(SYS_SENDTO, [socket_fd as u64, ptr as u64, len as u64, 0, 0, 0]),
         )?;
         let sent = self.expect_ret("net_sendto", sent)?;
         if sent as usize != get.len() {
@@ -460,14 +419,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             "net_epoll_ctl",
             SyscallContext::new(
                 SYS_EPOLL_CTL,
-                [
-                    epfd as u64,
-                    EPOLL_CTL_ADD as u64,
-                    socket_fd as u64,
-                    EPOLLIN as u64,
-                    0x51,
-                    0,
-                ],
+                [epfd as u64, EPOLL_CTL_ADD as u64, socket_fd as u64, EPOLLIN as u64, 0x51, 0],
             ),
         )?;
         self.expect_ret("net_epoll_ctl", ctl)?;
@@ -538,12 +490,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             StepTag::ConsoleWrite => {
                 let len = u32::try_from(decoded.value)
                     .map_err(|_| "wasm console write length was negative")?;
-                crate::kdebug!(
-                    "{}: ConsoleWrite(ptr=0x{:x}, len={})",
-                    label,
-                    decoded.aux,
-                    len
-                );
+                crate::kdebug!("{}: ConsoleWrite(ptr=0x{:x}, len={})", label, decoded.aux, len);
                 self.require_capability("wasm_app", "console.write", "write")
                     .map_err(|_| "wasm_app console.write capability denied")?;
                 let bytes = self.app.read_bytes(decoded.aux, len)?;

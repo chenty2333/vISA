@@ -15,17 +15,11 @@ impl SemanticGraph {
             state: FaultDomainState::Created,
             generation: 1,
         });
-        self.event_log.push(
-            "fault-domain",
-            EventKind::FaultDomainRegistered { domain: id },
-        );
+        self.event_log.push("fault-domain", EventKind::FaultDomainRegistered { domain: id });
         id
     }
     pub fn fault_domain_id(&self, name: &str) -> Option<FaultDomainId> {
-        self.fault_domains
-            .iter()
-            .find(|domain| domain.name == name)
-            .map(|domain| domain.id)
+        self.fault_domains.iter().find(|domain| domain.name == name).map(|domain| domain.id)
     }
     pub fn set_fault_domain_state(&mut self, id: FaultDomainId, state: FaultDomainState) {
         let Some(domain) = self.fault_domains.iter_mut().find(|domain| domain.id == id) else {
@@ -40,12 +34,7 @@ impl SemanticGraph {
         let generation = domain.generation;
         self.event_log.push(
             "fault-domain",
-            EventKind::FaultDomainStateChanged {
-                domain: id,
-                from,
-                to: state,
-                generation,
-            },
+            EventKind::FaultDomainStateChanged { domain: id, from, to: state, generation },
         );
     }
     pub fn register_store(
@@ -82,20 +71,12 @@ impl SemanticGraph {
         });
         self.event_log.push(
             "store",
-            EventKind::StoreRegistered {
-                store: id,
-                domain: fault_domain,
-                resource,
-                generation: 1,
-            },
+            EventKind::StoreRegistered { store: id, domain: fault_domain, resource, generation: 1 },
         );
         id
     }
     pub fn store_id(&self, package: &str) -> Option<StoreId> {
-        self.stores
-            .iter()
-            .find(|store| store.package == package)
-            .map(|store| store.id)
+        self.stores.iter().find(|store| store.package == package).map(|store| store.id)
     }
     pub fn store_handle(&self, id: StoreId) -> Option<StoreHandle> {
         self.stores
@@ -104,10 +85,7 @@ impl SemanticGraph {
             .map(|store| StoreHandle::new(store.id, store.generation))
     }
     pub fn store_resource(&self, id: StoreId) -> Option<ResourceId> {
-        self.stores
-            .iter()
-            .find(|store| store.id == id)
-            .and_then(|store| store.resource)
+        self.stores.iter().find(|store| store.id == id).and_then(|store| store.resource)
     }
     pub fn validate_store_handle(
         &mut self,
@@ -123,9 +101,9 @@ impl SemanticGraph {
                     actual,
                 })
             }
-            Some(store) if store.state == StoreState::Dead => Err(GenerationCheckError::Dead {
-                actual: store.generation,
-            }),
+            Some(store) if store.state == StoreState::Dead => {
+                Err(GenerationCheckError::Dead { actual: store.generation })
+            }
             Some(_) => Ok(()),
         }
     }
@@ -144,23 +122,12 @@ impl SemanticGraph {
         }
         let generation = self.stores[index].generation;
         let fault_domain = self.stores[index].fault_domain;
-        self.event_log.push(
-            "store",
-            EventKind::StoreStateChanged {
-                store: id,
-                from,
-                to: state,
-                generation,
-            },
-        );
+        self.event_log
+            .push("store", EventKind::StoreStateChanged { store: id, from, to: state, generation });
         self.set_fault_domain_state(fault_domain, state.fault_domain_state());
         if state == StoreState::Running && self.stores[index].restart_count > 0 {
-            self.event_log.push(
-                "fault-domain",
-                EventKind::FaultDomainRestarted {
-                    domain: fault_domain,
-                },
-            );
+            self.event_log
+                .push("fault-domain", EventKind::FaultDomainRestarted { domain: fault_domain });
         }
     }
     pub fn record_store_executor_transition(
@@ -191,11 +158,8 @@ impl SemanticGraph {
         self.record_store_trap_class(id, TrapClass::ServiceTrap, trap);
     }
     pub fn record_store_trap_class(&mut self, id: StoreId, trap: TrapClass, detail: &str) {
-        let domain = self
-            .stores
-            .iter()
-            .find(|store| store.id == id)
-            .map(|store| store.fault_domain);
+        let domain =
+            self.stores.iter().find(|store| store.id == id).map(|store| store.fault_domain);
         self.event_log.push(
             "fault",
             EventKind::FaultClassified {
@@ -206,14 +170,8 @@ impl SemanticGraph {
                 detail: detail.to_string(),
             },
         );
-        self.event_log.push(
-            "store",
-            EventKind::StoreTrap {
-                store: id,
-                trap,
-                detail: detail.to_string(),
-            },
-        );
+        self.event_log
+            .push("store", EventKind::StoreTrap { store: id, trap, detail: detail.to_string() });
         self.record_driver_trap_class(domain, trap, detail);
         self.set_store_state(id, StoreState::Degraded);
     }
@@ -223,14 +181,7 @@ impl SemanticGraph {
         let cleanup = self.cleanup_resources_owned_by_store(id);
         self.set_store_state(id, StoreState::Dead);
         let generation = self.stores[index].generation;
-        self.event_log.push(
-            "store",
-            EventKind::StoreDropped {
-                store: id,
-                generation,
-                resource,
-            },
-        );
+        self.event_log.push("store", EventKind::StoreDropped { store: id, generation, resource });
         Some(StoreDropReport {
             store: id,
             generation,
@@ -253,23 +204,12 @@ impl SemanticGraph {
         self.stores[index].generation += 1;
         self.stores[index].state = StoreState::Rebinding;
         let generation = self.stores[index].generation;
-        self.event_log.push(
-            "store",
-            EventKind::StoreRebound {
-                store: id,
-                generation,
-                resource,
-            },
-        );
+        self.event_log.push("store", EventKind::StoreRebound { store: id, generation, resource });
         self.set_fault_domain_state(
             self.stores[index].fault_domain,
             StoreState::Rebinding.fault_domain_state(),
         );
-        Some(StoreRebindReport {
-            store: id,
-            generation,
-            resource,
-        })
+        Some(StoreRebindReport { store: id, generation, resource })
     }
     pub fn record_driver_trap(&mut self, domain: Option<FaultDomainId>, trap: &str) {
         self.record_driver_trap_class(domain, TrapClass::DriverTrap, trap);
@@ -280,14 +220,8 @@ impl SemanticGraph {
         trap: TrapClass,
         detail: &str,
     ) {
-        self.event_log.push(
-            "trap",
-            EventKind::DriverTrap {
-                domain,
-                trap,
-                detail: detail.to_string(),
-            },
-        );
+        self.event_log
+            .push("trap", EventKind::DriverTrap { domain, trap, detail: detail.to_string() });
     }
     pub fn fault_domain_count(&self) -> usize {
         self.fault_domains.len()

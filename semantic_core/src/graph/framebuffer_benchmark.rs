@@ -34,11 +34,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("framebuffer benchmark id cannot advance generation cursor");
         }
-        if self
-            .framebuffer_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.framebuffer_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("framebuffer benchmark already exists");
         }
         if scenario.is_empty() {
@@ -103,14 +99,8 @@ impl SemanticGraph {
                 capability.state,
                 DisplayCapabilityState::Active | DisplayCapabilityState::Revoked
             )
-            || !capability
-                .operations
-                .iter()
-                .any(|operation| operation == "lease")
-            || !capability
-                .operations
-                .iter()
-                .any(|operation| operation == "flush")
+            || !capability.operations.iter().any(|operation| operation == "lease")
+            || !capability.operations.iter().any(|operation| operation == "flush")
         {
             return Err("framebuffer benchmark display capability binding mismatch");
         }
@@ -322,9 +312,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_framebuffer_benchmark_id = self
-            .next_framebuffer_benchmark_id
-            .max(benchmark.saturating_add(1));
+        self.next_framebuffer_benchmark_id =
+            self.next_framebuffer_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferBenchmarkRecorded {
@@ -359,42 +348,41 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_benchmarks
-            .push(FramebufferBenchmarkRecord {
-                id: benchmark,
-                scenario: scenario.to_string(),
-                owner_store,
-                owner_store_generation,
-                display: capability.display,
-                display_generation: capability.display_generation,
-                framebuffer: capability.framebuffer,
-                framebuffer_generation: capability.framebuffer_generation,
-                display_capability,
-                display_capability_generation,
-                framebuffer_write,
-                framebuffer_write_generation,
-                framebuffer_flush_region,
-                framebuffer_flush_region_generation,
-                display_event_log,
-                display_event_log_generation,
-                display_snapshot_barrier,
-                display_snapshot_barrier_generation,
-                sample_frames,
-                sample_bytes,
-                frame_area_pixels,
-                write_nanos,
-                flush_nanos,
-                measured_nanos,
-                budget_nanos,
-                throughput_bytes_per_sec,
-                flushes_per_sec_milli,
-                p50_latency_nanos,
-                p99_latency_nanos,
-                generation,
-                state: FramebufferBenchmarkState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.framebuffer_benchmarks.push(FramebufferBenchmarkRecord {
+            id: benchmark,
+            scenario: scenario.to_string(),
+            owner_store,
+            owner_store_generation,
+            display: capability.display,
+            display_generation: capability.display_generation,
+            framebuffer: capability.framebuffer,
+            framebuffer_generation: capability.framebuffer_generation,
+            display_capability,
+            display_capability_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region,
+            framebuffer_flush_region_generation,
+            display_event_log,
+            display_event_log_generation,
+            display_snapshot_barrier,
+            display_snapshot_barrier_generation,
+            sample_frames,
+            sample_bytes,
+            frame_area_pixels,
+            write_nanos,
+            flush_nanos,
+            measured_nanos,
+            budget_nanos,
+            throughput_bytes_per_sec,
+            flushes_per_sec_milli,
+            p50_latency_nanos,
+            p99_latency_nanos,
+            generation,
+            state: FramebufferBenchmarkState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -410,18 +398,14 @@ impl SemanticGraph {
         sample_bytes: u64,
         measured_nanos: u64,
     ) -> Option<u64> {
-        sample_bytes
-            .checked_mul(1_000_000_000)?
-            .checked_div(measured_nanos)
+        sample_bytes.checked_mul(1_000_000_000)?.checked_div(measured_nanos)
     }
 
     pub fn derive_framebuffer_flushes_per_sec_milli(
         sample_frames: u32,
         measured_nanos: u64,
     ) -> Option<u64> {
-        u64::from(sample_frames)
-            .checked_mul(1_000_000_000_000)?
-            .checked_div(measured_nanos)
+        u64::from(sample_frames).checked_mul(1_000_000_000_000)?.checked_div(measured_nanos)
     }
 
     pub fn check_framebuffer_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
@@ -577,9 +561,7 @@ impl SemanticGraph {
                 || flush.framebuffer_write != write.id
                 || flush.framebuffer_write_generation != write.generation
                 || flush.payload_digest != write.payload_digest
-                || flush
-                    .byte_len
-                    .checked_mul(u64::from(benchmark.sample_frames))
+                || flush.byte_len.checked_mul(u64::from(benchmark.sample_frames))
                     != Some(benchmark.sample_bytes)
                 || u64::from(flush.width).checked_mul(u64::from(flush.height))
                     != Some(benchmark.frame_area_pixels)
@@ -718,10 +700,8 @@ impl SemanticGraph {
         benchmark: FramebufferBenchmarkId,
         throughput: u64,
     ) {
-        if let Some(record) = self
-            .framebuffer_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.framebuffer_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.throughput_bytes_per_sec = throughput;
         }

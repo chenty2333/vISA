@@ -32,14 +32,8 @@ impl SemanticGraph {
         {
             task.resources.push(id);
         }
-        self.event_log.push(
-            "resource",
-            EventKind::ResourceCreated {
-                resource: id,
-                kind,
-                generation: 1,
-            },
-        );
+        self.event_log
+            .push("resource", EventKind::ResourceCreated { resource: id, kind, generation: 1 });
         id
     }
     pub fn close_resource(&mut self, id: ResourceId) {
@@ -53,10 +47,7 @@ impl SemanticGraph {
         resource.generation += 1;
         self.event_log.push(
             "resource",
-            EventKind::ResourceClosed {
-                resource: id,
-                generation: resource.generation,
-            },
+            EventKind::ResourceClosed { resource: id, generation: resource.generation },
         );
     }
     pub fn mark_resource_dead(&mut self, id: ResourceId) {
@@ -64,8 +55,7 @@ impl SemanticGraph {
         self.record_failure_effect(FailureEffect::MarkResourceDead(id));
     }
     pub fn close_resources_owned_by_store(&mut self, store: StoreId) -> usize {
-        self.cleanup_resources_owned_by_store(store)
-            .closed_resources
+        self.cleanup_resources_owned_by_store(store).closed_resources
     }
     pub fn cleanup_resources_owned_by_store(
         &mut self,
@@ -82,19 +72,11 @@ impl SemanticGraph {
         for resource in resources {
             revoked_authorities +=
                 self.revoke_authority_for_resource(resource, "owner store dropped");
-            if self
-                .resources
-                .iter()
-                .any(|entry| entry.id == resource && entry.live)
-            {
+            if self.resources.iter().any(|entry| entry.id == resource && entry.live) {
                 self.mark_resource_dead(resource);
             }
         }
-        StoreResourceCleanupReport {
-            store,
-            closed_resources: count,
-            revoked_authorities,
-        }
+        StoreResourceCleanupReport { store, closed_resources: count, revoked_authorities }
     }
     pub fn resource_handle(&self, id: ResourceId) -> Option<ResourceHandle> {
         self.resources
@@ -106,10 +88,7 @@ impl SemanticGraph {
         &mut self,
         handle: ResourceHandle,
     ) -> Result<(), GenerationCheckError> {
-        let resource = self
-            .resources
-            .iter()
-            .find(|resource| resource.id == handle.id);
+        let resource = self.resources.iter().find(|resource| resource.id == handle.id);
         let actual = resource.map(|resource| resource.generation);
         let result = match resource {
             None => Err(GenerationCheckError::Missing),
@@ -119,9 +98,9 @@ impl SemanticGraph {
                     actual,
                 })
             }
-            Some(resource) if !resource.live => Err(GenerationCheckError::Dead {
-                actual: resource.generation,
-            }),
+            Some(resource) if !resource.live => {
+                Err(GenerationCheckError::Dead { actual: resource.generation })
+            }
             Some(_) => Ok(()),
         };
 
@@ -157,14 +136,12 @@ impl SemanticGraph {
         generation: Generation,
     ) -> ResourceId {
         let lease = self.register_resource(ResourceKind::WindowLease, owner_task, label);
-        self.event_log
-            .push("dmw", EventKind::WindowLeaseCreated { lease, generation });
+        self.event_log.push("dmw", EventKind::WindowLeaseCreated { lease, generation });
         lease
     }
     pub fn record_window_lease_destroyed(&mut self, lease: ResourceId, generation: Generation) {
         self.close_resource(lease);
-        self.event_log
-            .push("dmw", EventKind::WindowLeaseDestroyed { lease, generation });
+        self.event_log.push("dmw", EventKind::WindowLeaseDestroyed { lease, generation });
     }
     pub fn resource_count(&self) -> usize {
         self.resources.len()
@@ -173,9 +150,6 @@ impl SemanticGraph {
         &self.resources
     }
     pub fn live_resource_count(&self) -> usize {
-        self.resources
-            .iter()
-            .filter(|resource| resource.live)
-            .count()
+        self.resources.iter().filter(|resource| resource.live).count()
     }
 }

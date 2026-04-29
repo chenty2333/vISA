@@ -1,8 +1,10 @@
 use vmos_abi::{ERR_EBADF, ERR_EPERM, FD_STDOUT, PlanKind, ServiceRoute};
 
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::runtime::PrototypeRuntime;
-use super::types::{FdEntry, FdResource, ServiceCallError};
+use super::{
+    linux::{LinuxCallResult, LinuxPlan},
+    runtime::PrototypeRuntime,
+    types::{FdEntry, FdResource, ServiceCallError},
+};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_write(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -12,10 +14,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = self.linux.read_bytes(ptr, len)?;
 
         if fd == FD_STDOUT || fd == vmos_abi::FD_STDERR {
-            if self
-                .require_capability("linux_syscall", "console.write", "write")
-                .is_err()
-            {
+            if self.require_capability("linux_syscall", "console.write", "write").is_err() {
                 return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
             }
             self.console.write_bytes(&bytes, false)?;
@@ -32,16 +31,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             });
         }
 
-        let entry = self
-            .fd_entry(fd)
-            .ok_or("write targeted an unknown file descriptor")?;
+        let entry = self.fd_entry(fd).ok_or("write targeted an unknown file descriptor")?;
         match &entry.resource {
             FdResource::ServiceNode { route, path, .. } if *route == ServiceRoute::Devfs => {
                 let path = path.clone();
-                if self
-                    .require_capability("devfs_service", "device.pulse", "poll")
-                    .is_err()
-                {
+                if self.require_capability("devfs_service", "device.pulse", "poll").is_err() {
                     return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
                 }
                 match self.devfs.write_device(&path, bytes.len() as u32, false) {
@@ -64,11 +58,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.lookup_path(&path) {
             Ok(info) => {
                 let fd = self.alloc_fd(FdEntry {
-                    resource: FdResource::ServiceNode {
-                        route: info.route,
-                        node: info.node,
-                        path,
-                    },
+                    resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
                     cursor: 0,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
@@ -104,10 +94,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_close(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self
-            .require_capability("linux_syscall", "fd.table", "close")
-            .is_err()
-        {
+        if self.require_capability("linux_syscall", "fd.table", "close").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "close plan fd overflowed")?;
@@ -127,12 +114,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             _ => None,
         });
         if let Some(socket_id) = closing_socket {
-            if self
-                .require_capability("linux_syscall", "linux.socket", "close")
-                .is_err()
-                || self
-                    .require_capability("net_core", "net.socket", "close")
-                    .is_err()
+            if self.require_capability("linux_syscall", "linux.socket", "close").is_err()
+                || self.require_capability("net_core", "net.socket", "close").is_err()
             {
                 return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
             }
@@ -171,8 +154,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             && let Some(handle) = slot.take()
         {
             if closing_socket.is_some() {
-                self.semantic
-                    .record_socket_state_changed(handle.id, "closed");
+                self.semantic.record_socket_state_changed(handle.id, "closed");
             }
             self.semantic.close_resource(handle.id);
         }

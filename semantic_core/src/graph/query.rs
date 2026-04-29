@@ -45,11 +45,7 @@ impl SemanticGraph {
         }
 
         for store in &self.stores {
-            if !self
-                .fault_domains
-                .iter()
-                .any(|entry| entry.id == store.fault_domain)
-            {
+            if !self.fault_domains.iter().any(|entry| entry.id == store.fault_domain) {
                 return Err(SemanticInvariantError::StoreReferencesMissingFaultDomain {
                     store: store.id,
                     fault_domain: store.fault_domain,
@@ -183,10 +179,7 @@ impl SemanticGraph {
             if authority.state != AuthorityState::Bound {
                 continue;
             }
-            let Some(resource) = self
-                .resources
-                .iter()
-                .find(|entry| entry.id == authority.resource)
+            let Some(resource) = self.resources.iter().find(|entry| entry.id == authority.resource)
             else {
                 return Err(SemanticInvariantError::AuthorityReferencesMissingResource {
                     authority: authority.id,

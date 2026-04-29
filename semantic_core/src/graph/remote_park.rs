@@ -15,11 +15,7 @@ impl SemanticGraph {
         if remote_park == 0 {
             return Err("remote park id=0 is invalid");
         }
-        if self
-            .remote_parks
-            .iter()
-            .any(|record| record.id == remote_park)
-        {
+        if self.remote_parks.iter().any(|record| record.id == remote_park) {
             return Err("remote park already exists");
         }
         if source_hart == target_hart {
@@ -39,10 +35,7 @@ impl SemanticGraph {
         else {
             return Err("remote park source hart generation is missing");
         };
-        if matches!(
-            source.state,
-            HartState::Offline | HartState::Faulted | HartState::Parked
-        ) {
+        if matches!(source.state, HartState::Offline | HartState::Faulted | HartState::Parked) {
             return Err("remote park source hart is inactive");
         }
         let Some(target) = self
@@ -183,11 +176,7 @@ impl SemanticGraph {
         remote_park: RemoteParkId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .remote_parks
-            .iter_mut()
-            .find(|record| record.id == remote_park)
-        {
+        if let Some(record) = self.remote_parks.iter_mut().find(|record| record.id == remote_park) {
             record.ipi_generation = generation;
         }
     }
@@ -198,11 +187,7 @@ impl SemanticGraph {
         remote_park: RemoteParkId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .remote_parks
-            .iter_mut()
-            .find(|record| record.id == remote_park)
-        {
+        if let Some(record) = self.remote_parks.iter_mut().find(|record| record.id == remote_park) {
             record.parked_at_event = event;
         }
     }
@@ -217,9 +202,7 @@ impl SemanticGraph {
                 || remote.target_hart == 0
                 || remote.source_hart == remote.target_hart
             {
-                return Err(SemanticInvariantError::RemoteParkInvalid {
-                    remote_park: remote.id,
-                });
+                return Err(SemanticInvariantError::RemoteParkInvalid { remote_park: remote.id });
             }
             let Some(ipi) = self.ipi_events.iter().find(|record| {
                 record.id == remote.ipi && record.generation == remote.ipi_generation
@@ -240,10 +223,7 @@ impl SemanticGraph {
                     ipi: remote.ipi,
                 });
             }
-            let Some(source) = self
-                .harts
-                .iter()
-                .find(|record| record.id == remote.source_hart)
+            let Some(source) = self.harts.iter().find(|record| record.id == remote.source_hart)
             else {
                 return Err(SemanticInvariantError::RemoteParkMissingHart {
                     remote_park: remote.id,
@@ -256,10 +236,7 @@ impl SemanticGraph {
                     hart: remote.source_hart,
                 });
             }
-            let Some(target) = self
-                .harts
-                .iter()
-                .find(|record| record.id == remote.target_hart)
+            let Some(target) = self.harts.iter().find(|record| record.id == remote.target_hart)
             else {
                 return Err(SemanticInvariantError::RemoteParkMissingHart {
                     remote_park: remote.id,
@@ -319,12 +296,10 @@ impl SemanticGraph {
                     && attribution.hart_generation == remote.target_hart_generation_after
                     && attribution.event_kind == "RemoteParkTargetRecorded"
             }) {
-                return Err(
-                    SemanticInvariantError::RemoteParkMissingHartEventAttribution {
-                        remote_park: remote.id,
-                        event: remote.parked_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::RemoteParkMissingHartEventAttribution {
+                    remote_park: remote.id,
+                    event: remote.parked_at_event,
+                });
             }
         }
         Ok(())

@@ -21,11 +21,7 @@ impl SemanticGraph {
         if audit == 0 {
             return Err("block request generation audit id=0 is invalid");
         }
-        if self
-            .block_request_generation_audits
-            .iter()
-            .any(|record| record.id == audit)
-        {
+        if self.block_request_generation_audits.iter().any(|record| record.id == audit) {
             return Err("block request generation audit already exists");
         }
         if block_device_generation == 0
@@ -148,9 +144,8 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_block_request_generation_audit_id = self
-            .next_block_request_generation_audit_id
-            .max(audit.saturating_add(1));
+        self.next_block_request_generation_audit_id =
+            self.next_block_request_generation_audit_id.max(audit.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRequestGenerationAuditRecorded {
@@ -170,26 +165,25 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_request_generation_audits
-            .push(BlockRequestGenerationAuditRecord {
-                id: audit,
-                block_device,
-                block_device_generation,
-                block_range,
-                block_range_generation,
-                block_request,
-                block_request_generation,
-                backend,
-                dma_buffer,
-                rejected_completion_generation_probes,
-                rejected_wait_generation_probes,
-                rejected_dma_generation_probes,
-                rejected_queue_generation_probes,
-                generation,
-                state: BlockRequestGenerationAuditState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.block_request_generation_audits.push(BlockRequestGenerationAuditRecord {
+            id: audit,
+            block_device,
+            block_device_generation,
+            block_range,
+            block_range_generation,
+            block_request,
+            block_request_generation,
+            backend,
+            dma_buffer,
+            rejected_completion_generation_probes,
+            rejected_wait_generation_probes,
+            rejected_dma_generation_probes,
+            rejected_queue_generation_probes,
+            generation,
+            state: BlockRequestGenerationAuditState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -226,56 +220,48 @@ impl SemanticGraph {
             let Some(backend) = self.fake_block_backends.iter().find(|record| {
                 record.id == audit.backend.id && record.generation == audit.backend.generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: audit.backend,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: audit.backend,
+                });
             };
             let Some(block_device) = self.block_device_objects.iter().find(|record| {
                 record.id == audit.block_device
                     && record.generation == audit.block_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::BlockDeviceObject,
-                            audit.block_device,
-                            audit.block_device_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::BlockDeviceObject,
+                        audit.block_device,
+                        audit.block_device_generation,
+                    ),
+                });
             };
             let Some(block_range) = self.block_range_objects.iter().find(|record| {
                 record.id == audit.block_range && record.generation == audit.block_range_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::BlockRangeObject,
-                            audit.block_range,
-                            audit.block_range_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::BlockRangeObject,
+                        audit.block_range,
+                        audit.block_range_generation,
+                    ),
+                });
             };
             let Some(block_request) = self.block_request_objects.iter().find(|record| {
                 record.id == audit.block_request
                     && record.generation == audit.block_request_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::BlockRequestObject,
-                            audit.block_request,
-                            audit.block_request_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::BlockRequestObject,
+                        audit.block_request,
+                        audit.block_request_generation,
+                    ),
+                });
             };
             if backend.state != FakeBlockBackendObjectState::Bound
                 || block_device.state != BlockDeviceObjectState::Registered
@@ -297,12 +283,10 @@ impl SemanticGraph {
                 });
             }
             if !self.io_validation_historical_object_exists(audit.dma_buffer) {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                        audit: audit.id,
-                        target: audit.dma_buffer,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+                    audit: audit.id,
+                    target: audit.dma_buffer,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == audit.recorded_at_event
@@ -343,12 +327,10 @@ impl SemanticGraph {
                             && *generation == audit.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::BlockRequestGenerationAuditMissingEvent {
-                        audit: audit.id,
-                        event: audit.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestGenerationAuditMissingEvent {
+                    audit: audit.id,
+                    event: audit.recorded_at_event,
+                });
             }
         }
         Ok(())
@@ -360,10 +342,8 @@ impl SemanticGraph {
         audit: BlockRequestGenerationAuditId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_request_generation_audits
-            .iter_mut()
-            .find(|record| record.id == audit)
+        if let Some(record) =
+            self.block_request_generation_audits.iter_mut().find(|record| record.id == audit)
         {
             record.block_request_generation = generation;
         }

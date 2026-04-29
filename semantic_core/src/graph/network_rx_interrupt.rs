@@ -19,11 +19,7 @@ impl SemanticGraph {
         if rx_interrupt == 0 {
             return Err("network rx interrupt id=0 is invalid");
         }
-        if self
-            .network_rx_interrupts
-            .iter()
-            .any(|record| record.id == rx_interrupt)
-        {
+        if self.network_rx_interrupts.iter().any(|record| record.id == rx_interrupt) {
             return Err("network rx interrupt already exists");
         }
         if ready_descriptors == 0 || sequence == 0 {
@@ -217,12 +213,10 @@ impl SemanticGraph {
                         && packet_device.generation == record.packet_device_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::NetworkRxInterruptMissingPacketDevice {
-                        rx_interrupt: record.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxInterruptMissingPacketDevice {
+                    rx_interrupt: record.id,
+                    packet_device: record.packet_device,
+                });
             };
             let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|queue| {
                 queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
@@ -261,12 +255,10 @@ impl SemanticGraph {
                     && capability.state == DeviceCapabilityState::Active
             });
             if !irq_capability_active && !cleanup_covers_binding {
-                return Err(
-                    SemanticInvariantError::NetworkRxInterruptMissingIrqCapability {
-                        rx_interrupt: record.id,
-                        irq_line: irq_record.irq_line,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxInterruptMissingIrqCapability {
+                    rx_interrupt: record.id,
+                    irq_line: irq_record.irq_line,
+                });
             }
             if record.id == 0
                 || record.generation == 0
@@ -303,12 +295,10 @@ impl SemanticGraph {
                     && other.irq_event_generation == record.irq_event_generation
                     && other.state == NetworkRxInterruptState::Recorded
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkRxInterruptDuplicateIrqEvent {
-                        rx_interrupt: duplicate.id,
-                        irq_event: record.irq_event,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxInterruptDuplicateIrqEvent {
+                    rx_interrupt: duplicate.id,
+                    irq_event: record.irq_event,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -355,10 +345,8 @@ impl SemanticGraph {
         rx_interrupt: NetworkRxInterruptId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_rx_interrupts
-            .iter_mut()
-            .find(|record| record.id == rx_interrupt)
+        if let Some(record) =
+            self.network_rx_interrupts.iter_mut().find(|record| record.id == rx_interrupt)
         {
             record.rx_queue_generation = generation;
         }

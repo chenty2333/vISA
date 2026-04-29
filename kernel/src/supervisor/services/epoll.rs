@@ -1,7 +1,9 @@
 use alloc::vec::Vec;
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
-use super::super::types::ServiceCallError;
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::ServiceCallError,
+};
 
 const EPOLL_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_EPOLL_SERVICE_WASM"));
 
@@ -64,11 +66,7 @@ impl EpollService {
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(
-                    &self.ctl,
-                    (epoll_id, op, ready_key, events, data),
-                    "epoll_service trapped",
-                )
+                .call(&self.ctl, (epoll_id, op, ready_key, events, data), "epoll_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -80,16 +78,10 @@ impl EpollService {
     ) -> Result<Vec<u8>, ServiceCallError> {
         let len = expect_len(
             self.io
-                .call(
-                    &self.collect_ready,
-                    (epoll_id, max_events),
-                    "epoll_service trapped",
-                )
+                .call(&self.collect_ready, (epoll_id, max_events), "epoll_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn arm_wait(&mut self, epoll_id: u32, wait_id: u64) -> Result<(), ServiceCallError> {
@@ -126,14 +118,9 @@ impl EpollService {
 
     fn read_wait_ids(&mut self, raw_len: i32) -> Result<Vec<u64>, ServiceCallError> {
         let len = expect_len(raw_len)?;
-        let bytes = self
-            .io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)?;
+        let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
         if bytes.len() % 8 != 0 {
-            return Err(ServiceCallError::Invalid(
-                "epoll_service returned a malformed wait list",
-            ));
+            return Err(ServiceCallError::Invalid("epoll_service returned a malformed wait list"));
         }
 
         let mut ids = Vec::with_capacity(bytes.len() / 8);

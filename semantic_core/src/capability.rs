@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::*;
 
@@ -49,15 +51,11 @@ pub struct OperationSet {
 
 impl OperationSet {
     pub fn from_static(operations: &[&str]) -> Self {
-        Self {
-            operations: operations.iter().map(|op| (*op).to_string()).collect(),
-        }
+        Self { operations: operations.iter().map(|op| (*op).to_string()).collect() }
     }
 
     pub fn contains_all(&self, requested: &[&str]) -> bool {
-        requested
-            .iter()
-            .all(|requested| self.operations.iter().any(|op| op == requested))
+        requested.iter().all(|requested| self.operations.iter().any(|op| op == requested))
     }
 
     pub fn contains(&self, requested: &str) -> bool {
@@ -243,14 +241,8 @@ impl CapabilityClass {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthorityObjectRef {
-    Internal {
-        class: CapabilityClass,
-        object: ContractObjectRef,
-    },
-    External {
-        class: CapabilityClass,
-        object: ContractObjectRef,
-    },
+    Internal { class: CapabilityClass, object: ContractObjectRef },
+    External { class: CapabilityClass, object: ContractObjectRef },
 }
 
 impl AuthorityObjectRef {
@@ -421,10 +413,7 @@ pub struct CapabilityLedger {
 
 impl CapabilityLedger {
     pub const fn new() -> Self {
-        Self {
-            next_id: 1,
-            records: Vec::new(),
-        }
+        Self { next_id: 1, records: Vec::new() }
     }
 
     pub fn grant(
@@ -626,12 +615,8 @@ impl CapabilityLedger {
         lifetime: &str,
     ) -> Option<CapabilityId> {
         let parent = self.active(parent_id)?.clone();
-        let operations = parent
-            .operations
-            .as_slice()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
+        let operations =
+            parent.operations.as_slice().iter().map(String::as_str).collect::<Vec<_>>();
         let object_ref = parent.object_ref?;
         let delegated = self
             .grant_with_authority_ref(
@@ -647,11 +632,7 @@ impl CapabilityLedger {
                 parent.manifest_decl,
             )
             .ok()?;
-        if let Some(record) = self
-            .records
-            .iter_mut()
-            .find(|record| record.id == delegated)
-        {
+        if let Some(record) = self.records.iter_mut().find(|record| record.id == delegated) {
             record.object_ref = parent.object_ref;
             record.manifest_decl = parent.manifest_decl;
             record.parent = Some(parent_id);
@@ -685,11 +666,7 @@ impl CapabilityLedger {
                 parent.manifest_decl,
             )
             .ok()?;
-        if let Some(record) = self
-            .records
-            .iter_mut()
-            .find(|record| record.id == attenuated)
-        {
+        if let Some(record) = self.records.iter_mut().find(|record| record.id == attenuated) {
             record.object_ref = parent.object_ref;
             record.manifest_decl = parent.manifest_decl;
             record.parent = Some(parent_id);
@@ -839,21 +816,14 @@ impl CapabilityLedger {
                 revoked_ids.push(record.id);
             }
         }
-        CapabilityRevocationReport {
-            subject: subject.to_string(),
-            revoked: revoked_ids,
-        }
+        CapabilityRevocationReport { subject: subject.to_string(), revoked: revoked_ids }
     }
 
     pub fn owner_summary(&self, subject: &str) -> CapabilityOwnerSummary {
         let mut active = 0;
         let mut revoked = 0;
         let mut generation_high_watermark = 0;
-        for record in self
-            .records
-            .iter()
-            .filter(|record| record.subject == subject)
-        {
+        for record in self.records.iter().filter(|record| record.subject == subject) {
             if record.revoked {
                 revoked += 1;
             } else {
@@ -870,9 +840,7 @@ impl CapabilityLedger {
     }
 
     pub fn active(&self, id: CapabilityId) -> Option<&CapabilityRecord> {
-        self.records
-            .iter()
-            .find(|record| record.id == id && !record.revoked)
+        self.records.iter().find(|record| record.id == id && !record.revoked)
     }
 
     pub fn record(&self, id: CapabilityId) -> Option<&CapabilityRecord> {

@@ -1,6 +1,5 @@
-use crate::serial;
-
 use super::super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
+use crate::serial;
 
 const CONSOLE_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_CONSOLE_SERVICE_WASM"));
 
@@ -30,12 +29,7 @@ impl ConsoleService {
         )?;
         let commit_write = module.bind("commit_write", "missing console commit_write export")?;
 
-        Ok(Self {
-            module,
-            buffer_ptr,
-            buffer_capacity,
-            commit_write,
-        })
+        Ok(Self { module, buffer_ptr, buffer_capacity, commit_write })
     }
 
     pub(crate) fn write_bytes(

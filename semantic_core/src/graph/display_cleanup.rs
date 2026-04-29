@@ -78,9 +78,8 @@ impl SemanticGraph {
         {
             return Err("display cleanup display capability binding mismatch");
         }
-        let Some(capability_record) = self
-            .capabilities
-            .record(display_capability_record.capability)
+        let Some(capability_record) =
+            self.capabilities.record(display_capability_record.capability)
         else {
             return Err("display cleanup capability ledger record is missing");
         };
@@ -178,11 +177,8 @@ impl SemanticGraph {
             },
         );
 
-        let store_ref = ContractObjectRef::new(
-            ContractObjectKind::Store,
-            owner_store,
-            owner_store_generation,
-        );
+        let store_ref =
+            ContractObjectRef::new(ContractObjectKind::Store, owner_store, owner_store_generation);
         let display_capability_ref = ContractObjectRef::new(
             ContractObjectKind::DisplayCapability,
             display_capability,
@@ -245,14 +241,8 @@ impl SemanticGraph {
         }) {
             let capability = self.display_capabilities[index].capability;
             let capability_generation = self.display_capabilities[index].capability_generation;
-            if self
-                .capabilities
-                .revoke_generation(capability, capability_generation)
-            {
-                self.event_log.push(
-                    "capability",
-                    EventKind::CapabilityRevoked { cap: capability },
-                );
+            if self.capabilities.revoke_generation(capability, capability_generation) {
+                self.event_log.push("capability", EventKind::CapabilityRevoked { cap: capability });
                 let revoked_generation = self
                     .capabilities
                     .record(capability)
@@ -368,9 +358,7 @@ impl SemanticGraph {
                 || cleanup.reason.is_empty()
                 || cleanup.state != DisplayCleanupState::Completed
             {
-                return Err(SemanticInvariantError::DisplayCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::DisplayCleanupInvalid { cleanup: cleanup.id });
             }
             if !self.stores.iter().any(|store| {
                 store.id == cleanup.owner_store
@@ -385,12 +373,10 @@ impl SemanticGraph {
                 record.id == cleanup.display_capability
                     && record.generation == cleanup.display_capability_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::DisplayCleanupMissingDisplayCapability {
-                        cleanup: cleanup.id,
-                        display_capability: cleanup.display_capability,
-                    },
-                );
+                return Err(SemanticInvariantError::DisplayCleanupMissingDisplayCapability {
+                    cleanup: cleanup.id,
+                    display_capability: cleanup.display_capability,
+                });
             };
             if display_capability.state != DisplayCapabilityState::Revoked
                 || display_capability.owner_store != cleanup.owner_store
@@ -400,9 +386,7 @@ impl SemanticGraph {
                 || display_capability.framebuffer != cleanup.framebuffer
                 || display_capability.framebuffer_generation != cleanup.framebuffer_generation
             {
-                return Err(SemanticInvariantError::DisplayCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::DisplayCleanupInvalid { cleanup: cleanup.id });
             }
             for mapping in &cleanup.unmapped_framebuffer_mappings {
                 if !self.framebuffer_mappings.iter().any(|record| {
@@ -477,9 +461,7 @@ impl SemanticGraph {
                 ),
             ];
             if cleanup.steps.len() != expected_steps.len() {
-                return Err(SemanticInvariantError::DisplayCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::DisplayCleanupInvalid { cleanup: cleanup.id });
             }
             for (step, (kind, target_kind, target_id, target_generation, empty_effect)) in
                 cleanup.steps.iter().zip(expected_steps)
@@ -580,10 +562,7 @@ impl SemanticGraph {
         cleanup: DisplayCleanupId,
         mapping_generation: Generation,
     ) {
-        if let Some(record) = self
-            .display_cleanups
-            .iter_mut()
-            .find(|record| record.id == cleanup)
+        if let Some(record) = self.display_cleanups.iter_mut().find(|record| record.id == cleanup)
             && let Some(mapping) = record.unmapped_framebuffer_mappings.first_mut()
         {
             mapping.generation = mapping_generation;

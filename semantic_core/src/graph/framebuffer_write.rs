@@ -63,11 +63,7 @@ impl SemanticGraph {
         if framebuffer_write == 0 {
             return Err("framebuffer write id=0 is invalid");
         }
-        if self
-            .framebuffer_writes
-            .iter()
-            .any(|record| record.id == framebuffer_write)
-        {
+        if self.framebuffer_writes.iter().any(|record| record.id == framebuffer_write) {
             return Err("framebuffer write already exists");
         }
         if owner_store_generation == 0
@@ -121,19 +117,16 @@ impl SemanticGraph {
         };
         if x < mapping_record.x
             || y < mapping_record.y
-            || x.checked_add(width)
-                .is_none_or(|right| right > mapping_right)
-            || y.checked_add(height)
-                .is_none_or(|bottom| bottom > mapping_bottom)
+            || x.checked_add(width).is_none_or(|right| right > mapping_right)
+            || y.checked_add(height).is_none_or(|bottom| bottom > mapping_bottom)
         {
             return Err("framebuffer write region exceeds mapping window");
         }
         let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {
             return Err("framebuffer write byte geometry overflows");
         };
-        let Some(expected_byte_offset) = u64::from(y)
-            .checked_mul(u64::from(framebuffer_record.stride_bytes))
-            .and_then(|base| {
+        let Some(expected_byte_offset) =
+            u64::from(y).checked_mul(u64::from(framebuffer_record.stride_bytes)).and_then(|base| {
                 u64::from(x)
                     .checked_mul(bytes_per_pixel)
                     .and_then(|x_bytes| base.checked_add(x_bytes))
@@ -150,16 +143,13 @@ impl SemanticGraph {
         if byte_offset != expected_byte_offset || byte_len < min_write_bytes {
             return Err("framebuffer write byte range does not match region geometry");
         }
-        let Some(mapping_byte_end) = mapping_record
-            .byte_offset
-            .checked_add(mapping_record.byte_len)
+        let Some(mapping_byte_end) =
+            mapping_record.byte_offset.checked_add(mapping_record.byte_len)
         else {
             return Err("framebuffer write mapping byte range overflows");
         };
         if byte_offset < mapping_record.byte_offset
-            || byte_offset
-                .checked_add(byte_len)
-                .is_none_or(|end| end > mapping_byte_end)
+            || byte_offset.checked_add(byte_len).is_none_or(|end| end > mapping_byte_end)
         {
             return Err("framebuffer write byte range exceeds mapping lease");
         }
@@ -239,9 +229,8 @@ impl SemanticGraph {
             .expect("validated framebuffer write framebuffer exists")
             .clone();
         let generation = 1;
-        self.next_framebuffer_write_id = self
-            .next_framebuffer_write_id
-            .max(framebuffer_write.saturating_add(1));
+        self.next_framebuffer_write_id =
+            self.next_framebuffer_write_id.max(framebuffer_write.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferWriteRecorded {
@@ -458,10 +447,8 @@ impl SemanticGraph {
         framebuffer_write: FramebufferWriteId,
         framebuffer_mapping_generation: Generation,
     ) {
-        if let Some(record) = self
-            .framebuffer_writes
-            .iter_mut()
-            .find(|record| record.id == framebuffer_write)
+        if let Some(record) =
+            self.framebuffer_writes.iter_mut().find(|record| record.id == framebuffer_write)
         {
             record.framebuffer_mapping_generation = framebuffer_mapping_generation;
         }

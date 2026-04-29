@@ -1,9 +1,6 @@
 #![recursion_limit = "256"]
 
-use std::env;
-use std::error::Error;
-use std::fs;
-use std::path::Path;
+use std::{env, error::Error, fs, path::Path};
 
 use artifact_manifest::{
     ActivationCleanupManifest, ActivationContextManifest, ActivationMigrationManifest,
@@ -499,10 +496,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "activation" => {
             let collected = args.collect::<Vec<_>>();
-            if collected
-                .first()
-                .is_some_and(|arg| arg == "show" || arg == "list")
-            {
+            if collected.first().is_some_and(|arg| arg == "show" || arg == "list") {
                 return handle_view_command("activation", collected);
             }
             let mut blocked_only = false;
@@ -587,10 +581,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "replay syntax is: osctl replay --until <cursor> [--manifest <manifest.json>] [--json] <package.json>".into(),
                 );
             }
-            let cursor = args
-                .next()
-                .ok_or("replay requires a cursor")?
-                .parse::<u64>()?;
+            let cursor = args.next().ok_or("replay requires a cursor")?.parse::<u64>()?;
             let mut manifest_path = None;
             let mut package_path = None;
             let mut json = false;
@@ -607,12 +598,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             }
             let path = package_path.ok_or("replay requires a package JSON path")?;
-            replay_until(
-                cursor,
-                manifest_path.as_deref().map(Path::new),
-                Path::new(&path),
-                json,
-            )
+            replay_until(cursor, manifest_path.as_deref().map(Path::new), Path::new(&path), json)
         }
         _ => {
             print_usage();
@@ -709,11 +695,7 @@ fn handle_view_command(kind: &str, args: Vec<String>) -> Result<(), Box<dyn Erro
     }
     let path = path.ok_or_else(|| format!("{kind} {subcommand} requires a migration JSON path"))?;
     if !json {
-        let filter = if subcommand == "show" {
-            id.as_deref()
-        } else {
-            None
-        };
+        let filter = if subcommand == "show" { id.as_deref() } else { None };
         return inspect_object(kind, Path::new(&path), filter, false);
     }
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
@@ -825,18 +807,10 @@ fn artifact_plan_view_v1(
     let mode = plan
         .and_then(|plan| RuntimeMode::parse(&plan.runtime_mode))
         .unwrap_or(RuntimeMode::Research);
-    let package_roots = manifest
-        .modules
-        .iter()
-        .map(|module| module.package.clone())
-        .collect::<Vec<_>>();
+    let package_roots =
+        manifest.modules.iter().map(|module| module.package.clone()).collect::<Vec<_>>();
     let modules = plan
-        .map(|plan| {
-            plan.modules
-                .iter()
-                .map(artifact_plan_module_view_v1)
-                .collect::<Vec<_>>()
-        })
+        .map(|plan| plan.modules.iter().map(artifact_plan_module_view_v1).collect::<Vec<_>>())
         .unwrap_or_else(|| {
             manifest
                 .modules
@@ -846,23 +820,11 @@ fn artifact_plan_view_v1(
         });
     let module_count = plan.map_or(manifest.modules.len(), ValidatedArtifactPlan::module_count);
     let capability_count = plan.map_or_else(
-        || {
-            manifest
-                .modules
-                .iter()
-                .map(|module| module.capabilities.len())
-                .sum()
-        },
+        || manifest.modules.iter().map(|module| module.capabilities.len()).sum(),
         ValidatedArtifactPlan::capability_count,
     );
     let expected_export_count = plan.map_or_else(
-        || {
-            manifest
-                .modules
-                .iter()
-                .map(|module| module.expected_exports.len())
-                .sum()
-        },
+        || manifest.modules.iter().map(|module| module.expected_exports.len()).sum(),
         ValidatedArtifactPlan::expected_export_count,
     );
 
@@ -1229,11 +1191,8 @@ fn runnable_queue_view_v1(queue: &RunnableQueueManifest) -> serde_json::Value {
 }
 
 fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json::Value {
-    let vector_status = if context.vector_status.is_empty() {
-        "absent"
-    } else {
-        context.vector_status.as_str()
-    };
+    let vector_status =
+        if context.vector_status.is_empty() { "absent" } else { context.vector_status.as_str() };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "activation-context",
@@ -1270,11 +1229,8 @@ fn activation_context_view_v1(context: &ActivationContextManifest) -> serde_json
 }
 
 fn saved_context_view_v1(saved: &SavedContextManifest) -> serde_json::Value {
-    let vector_status = if saved.vector_status.is_empty() {
-        "absent"
-    } else {
-        saved.vector_status.as_str()
-    };
+    let vector_status =
+        if saved.vector_status.is_empty() { "absent" } else { saved.vector_status.as_str() };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "saved-context",
@@ -3320,15 +3276,13 @@ fn driver_store_binding_view_v1(binding: &DriverStoreBindingManifest) -> serde_j
 }
 
 fn io_wait_view_v1(io_wait: &IoWaitManifest) -> serde_json::Value {
-    let completion_irq_event = match (
-        io_wait.completion_irq_event,
-        io_wait.completion_irq_event_generation,
-    ) {
-        (Some(irq_event), Some(irq_event_generation)) => {
-            object_ref_json("irq-event", irq_event, irq_event_generation)
-        }
-        _ => serde_json::Value::Null,
-    };
+    let completion_irq_event =
+        match (io_wait.completion_irq_event, io_wait.completion_irq_event_generation) {
+            (Some(irq_event), Some(irq_event_generation)) => {
+                object_ref_json("irq-event", irq_event, irq_event_generation)
+            }
+            _ => serde_json::Value::Null,
+        };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "io-wait",
@@ -7120,13 +7074,13 @@ fn framebuffer_flush_region_view_v1(flush: &FramebufferFlushRegionManifest) -> s
 }
 
 fn framebuffer_dirty_region_view_v1(dirty: &FramebufferDirtyRegionManifest) -> serde_json::Value {
-    let flush_ref = match (
-        dirty.framebuffer_flush_region,
-        dirty.framebuffer_flush_region_generation,
-    ) {
-        (Some(id), Some(generation)) => object_ref_json("framebuffer-flush-region", id, generation),
-        _ => serde_json::Value::Null,
-    };
+    let flush_ref =
+        match (dirty.framebuffer_flush_region, dirty.framebuffer_flush_region_generation) {
+            (Some(id), Some(generation)) => {
+                object_ref_json("framebuffer-flush-region", id, generation)
+            }
+            _ => serde_json::Value::Null,
+        };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "framebuffer-dirty-region",
@@ -7469,11 +7423,8 @@ fn display_panic_last_frame_view_v1(frame: &DisplayPanicLastFrameManifest) -> se
 }
 
 fn activation_resume_view_v1(resume: &ActivationResumeManifest) -> serde_json::Value {
-    let vector_status = if resume.vector_status.is_empty() {
-        "absent"
-    } else {
-        resume.vector_status.as_str()
-    };
+    let vector_status =
+        if resume.vector_status.is_empty() { "absent" } else { resume.vector_status.as_str() };
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "kind": "activation-resume",
@@ -8474,18 +8425,8 @@ fn stable_views_for_kind(
     package: &MigrationPackageManifest,
 ) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
     match kind {
-        "hart" => Ok(package
-            .semantic
-            .hart_records
-            .iter()
-            .map(hart_view_v1)
-            .collect()),
-        "task" => Ok(package
-            .semantic
-            .task_records
-            .iter()
-            .map(task_view_v1)
-            .collect()),
+        "hart" => Ok(package.semantic.hart_records.iter().map(hart_view_v1).collect()),
+        "task" => Ok(package.semantic.task_records.iter().map(task_view_v1).collect()),
         "activation" | "runtime-activation" => Ok(package
             .semantic
             .runtime_activation_records
@@ -8493,54 +8434,31 @@ fn stable_views_for_kind(
             .map(runtime_activation_view_v1)
             .collect()),
         "scheduler" => Ok(vec![scheduler_view_v1(package)]),
-        "runnable-queue" => Ok(package
-            .semantic
-            .runnable_queues
-            .iter()
-            .map(runnable_queue_view_v1)
-            .collect()),
+        "runnable-queue" => {
+            Ok(package.semantic.runnable_queues.iter().map(runnable_queue_view_v1).collect())
+        }
         "activation-context" | "context" => Ok(package
             .semantic
             .activation_contexts
             .iter()
             .map(activation_context_view_v1)
             .collect()),
-        "saved-context" => Ok(package
-            .semantic
-            .saved_contexts
-            .iter()
-            .map(saved_context_view_v1)
-            .collect()),
-        "timer-interrupt" => Ok(package
-            .semantic
-            .timer_interrupts
-            .iter()
-            .map(timer_interrupt_view_v1)
-            .collect()),
-        "ipi" | "ipi-event" => Ok(package
-            .semantic
-            .ipi_events
-            .iter()
-            .map(ipi_event_view_v1)
-            .collect()),
-        "remote-preempt" => Ok(package
-            .semantic
-            .remote_preempts
-            .iter()
-            .map(remote_preempt_view_v1)
-            .collect()),
-        "remote-park" => Ok(package
-            .semantic
-            .remote_parks
-            .iter()
-            .map(remote_park_view_v1)
-            .collect()),
-        "preemption" => Ok(package
-            .semantic
-            .preemptions
-            .iter()
-            .map(preemption_view_v1)
-            .collect()),
+        "saved-context" => {
+            Ok(package.semantic.saved_contexts.iter().map(saved_context_view_v1).collect())
+        }
+        "timer-interrupt" => {
+            Ok(package.semantic.timer_interrupts.iter().map(timer_interrupt_view_v1).collect())
+        }
+        "ipi" | "ipi-event" => {
+            Ok(package.semantic.ipi_events.iter().map(ipi_event_view_v1).collect())
+        }
+        "remote-preempt" => {
+            Ok(package.semantic.remote_preempts.iter().map(remote_preempt_view_v1).collect())
+        }
+        "remote-park" => {
+            Ok(package.semantic.remote_parks.iter().map(remote_park_view_v1).collect())
+        }
+        "preemption" => Ok(package.semantic.preemptions.iter().map(preemption_view_v1).collect()),
         "scheduler-decision" => Ok(package
             .semantic
             .scheduler_decisions
@@ -8559,12 +8477,9 @@ fn stable_views_for_kind(
             .iter()
             .map(activation_migration_view_v1)
             .collect()),
-        "smp-safe-point" | "safepoint" => Ok(package
-            .semantic
-            .smp_safe_points
-            .iter()
-            .map(smp_safe_point_view_v1)
-            .collect()),
+        "smp-safe-point" | "safepoint" => {
+            Ok(package.semantic.smp_safe_points.iter().map(smp_safe_point_view_v1).collect())
+        }
         "stop-the-world-rendezvous" | "stop-the-world" | "stw" => Ok(package
             .semantic
             .stop_the_world_rendezvous
@@ -8589,12 +8504,9 @@ fn stable_views_for_kind(
             .iter()
             .map(smp_snapshot_barrier_view_v1)
             .collect()),
-        "smp-stress-run" | "smp-stress" => Ok(package
-            .semantic
-            .smp_stress_runs
-            .iter()
-            .map(smp_stress_run_view_v1)
-            .collect()),
+        "smp-stress-run" | "smp-stress" => {
+            Ok(package.semantic.smp_stress_runs.iter().map(smp_stress_run_view_v1).collect())
+        }
         "smp-scaling-benchmark" | "smp-scaling" => Ok(package
             .semantic
             .smp_scaling_benchmarks
@@ -8679,72 +8591,41 @@ fn stable_views_for_kind(
                 .map(integrated_osctl_trace_replay_view_v1)
                 .collect())
         }
-        "device" | "device-object" => Ok(package
-            .semantic
-            .device_objects
-            .iter()
-            .map(device_object_view_v1)
-            .collect()),
-        "queue" | "queue-object" => Ok(package
-            .semantic
-            .queue_objects
-            .iter()
-            .map(queue_object_view_v1)
-            .collect()),
-        "descriptor" | "descriptor-object" => Ok(package
-            .semantic
-            .descriptor_objects
-            .iter()
-            .map(descriptor_object_view_v1)
-            .collect()),
-        "dma-buffer" | "dma-buffer-object" => Ok(package
-            .semantic
-            .dma_buffer_objects
-            .iter()
-            .map(dma_buffer_object_view_v1)
-            .collect()),
+        "device" | "device-object" => {
+            Ok(package.semantic.device_objects.iter().map(device_object_view_v1).collect())
+        }
+        "queue" | "queue-object" => {
+            Ok(package.semantic.queue_objects.iter().map(queue_object_view_v1).collect())
+        }
+        "descriptor" | "descriptor-object" => {
+            Ok(package.semantic.descriptor_objects.iter().map(descriptor_object_view_v1).collect())
+        }
+        "dma-buffer" | "dma-buffer-object" => {
+            Ok(package.semantic.dma_buffer_objects.iter().map(dma_buffer_object_view_v1).collect())
+        }
         "mmio-region" | "mmio-region-object" => Ok(package
             .semantic
             .mmio_region_objects
             .iter()
             .map(mmio_region_object_view_v1)
             .collect()),
-        "irq-line" | "irq-line-object" => Ok(package
-            .semantic
-            .irq_line_objects
-            .iter()
-            .map(irq_line_object_view_v1)
-            .collect()),
-        "irq-event" => Ok(package
-            .semantic
-            .irq_events
-            .iter()
-            .map(irq_event_view_v1)
-            .collect()),
-        "device-capability" | "io-capability" => Ok(package
-            .semantic
-            .device_capabilities
-            .iter()
-            .map(device_capability_view_v1)
-            .collect()),
+        "irq-line" | "irq-line-object" => {
+            Ok(package.semantic.irq_line_objects.iter().map(irq_line_object_view_v1).collect())
+        }
+        "irq-event" => Ok(package.semantic.irq_events.iter().map(irq_event_view_v1).collect()),
+        "device-capability" | "io-capability" => {
+            Ok(package.semantic.device_capabilities.iter().map(device_capability_view_v1).collect())
+        }
         "driver-store-binding" | "driver-binding" => Ok(package
             .semantic
             .driver_store_bindings
             .iter()
             .map(driver_store_binding_view_v1)
             .collect()),
-        "io-wait" | "io-wait-token" => Ok(package
-            .semantic
-            .io_waits
-            .iter()
-            .map(io_wait_view_v1)
-            .collect()),
-        "io-cleanup" => Ok(package
-            .semantic
-            .io_cleanups
-            .iter()
-            .map(io_cleanup_view_v1)
-            .collect()),
+        "io-wait" | "io-wait-token" => {
+            Ok(package.semantic.io_waits.iter().map(io_wait_view_v1).collect())
+        }
+        "io-cleanup" => Ok(package.semantic.io_cleanups.iter().map(io_cleanup_view_v1).collect()),
         "io-fault" | "io-fault-injection" => Ok(package
             .semantic
             .io_fault_injections
@@ -8823,30 +8704,18 @@ fn stable_views_for_kind(
             .iter()
             .map(network_stack_adapter_view_v1)
             .collect()),
-        "socket-object" | "socket" => Ok(package
-            .semantic
-            .socket_objects
-            .iter()
-            .map(socket_object_view_v1)
-            .collect()),
-        "endpoint-object" | "endpoint" => Ok(package
-            .semantic
-            .endpoint_objects
-            .iter()
-            .map(endpoint_object_view_v1)
-            .collect()),
-        "socket-operation" | "socket-op" => Ok(package
-            .semantic
-            .socket_operations
-            .iter()
-            .map(socket_operation_view_v1)
-            .collect()),
-        "socket-wait" | "socket-wait-token" => Ok(package
-            .semantic
-            .socket_waits
-            .iter()
-            .map(socket_wait_view_v1)
-            .collect()),
+        "socket-object" | "socket" => {
+            Ok(package.semantic.socket_objects.iter().map(socket_object_view_v1).collect())
+        }
+        "endpoint-object" | "endpoint" => {
+            Ok(package.semantic.endpoint_objects.iter().map(endpoint_object_view_v1).collect())
+        }
+        "socket-operation" | "socket-op" => {
+            Ok(package.semantic.socket_operations.iter().map(socket_operation_view_v1).collect())
+        }
+        "socket-wait" | "socket-wait-token" => {
+            Ok(package.semantic.socket_waits.iter().map(socket_wait_view_v1).collect())
+        }
         "network-backpressure" | "backpressure" | "drop-policy" => Ok(package
             .semantic
             .network_backpressures
@@ -8871,12 +8740,9 @@ fn stable_views_for_kind(
             .iter()
             .map(network_fault_injection_view_v1)
             .collect()),
-        "network-benchmark" | "network-throughput" | "network-latency" => Ok(package
-            .semantic
-            .network_benchmarks
-            .iter()
-            .map(network_benchmark_view_v1)
-            .collect()),
+        "network-benchmark" | "network-throughput" | "network-latency" => {
+            Ok(package.semantic.network_benchmarks.iter().map(network_benchmark_view_v1).collect())
+        }
         "network-recovery-benchmark" | "network-recovery" => Ok(package
             .semantic
             .network_recovery_benchmarks
@@ -8907,12 +8773,9 @@ fn stable_views_for_kind(
             .iter()
             .map(block_completion_object_view_v1)
             .collect()),
-        "block-wait" | "block-wait-token" => Ok(package
-            .semantic
-            .block_waits
-            .iter()
-            .map(block_wait_view_v1)
-            .collect()),
+        "block-wait" | "block-wait-token" => {
+            Ok(package.semantic.block_waits.iter().map(block_wait_view_v1).collect())
+        }
         "fake-block-backend" | "fake-block-backend-object" => Ok(package
             .semantic
             .fake_block_backends
@@ -8925,54 +8788,36 @@ fn stable_views_for_kind(
             .iter()
             .map(virtio_blk_backend_object_view_v1)
             .collect()),
-        "block-read-path" | "block-read" => Ok(package
-            .semantic
-            .block_read_paths
-            .iter()
-            .map(block_read_path_view_v1)
-            .collect()),
-        "block-write-path" | "block-write" => Ok(package
-            .semantic
-            .block_write_paths
-            .iter()
-            .map(block_write_path_view_v1)
-            .collect()),
+        "block-read-path" | "block-read" => {
+            Ok(package.semantic.block_read_paths.iter().map(block_read_path_view_v1).collect())
+        }
+        "block-write-path" | "block-write" => {
+            Ok(package.semantic.block_write_paths.iter().map(block_write_path_view_v1).collect())
+        }
         "block-request-queue" | "block-queue" => Ok(package
             .semantic
             .block_request_queues
             .iter()
             .map(block_request_queue_view_v1)
             .collect()),
-        "block-dma-buffer" | "block-buffer" => Ok(package
-            .semantic
-            .block_dma_buffers
-            .iter()
-            .map(block_dma_buffer_view_v1)
-            .collect()),
-        "block-page-object" | "block-page" => Ok(package
-            .semantic
-            .block_page_objects
-            .iter()
-            .map(block_page_object_view_v1)
-            .collect()),
+        "block-dma-buffer" | "block-buffer" => {
+            Ok(package.semantic.block_dma_buffers.iter().map(block_dma_buffer_view_v1).collect())
+        }
+        "block-page-object" | "block-page" => {
+            Ok(package.semantic.block_page_objects.iter().map(block_page_object_view_v1).collect())
+        }
         "buffer-cache-object" | "buffer-cache" | "fs-cache" => Ok(package
             .semantic
             .buffer_cache_objects
             .iter()
             .map(buffer_cache_object_view_v1)
             .collect()),
-        "file-object" | "file" => Ok(package
-            .semantic
-            .file_objects
-            .iter()
-            .map(file_object_view_v1)
-            .collect()),
-        "directory-object" | "directory" => Ok(package
-            .semantic
-            .directory_objects
-            .iter()
-            .map(directory_object_view_v1)
-            .collect()),
+        "file-object" | "file" => {
+            Ok(package.semantic.file_objects.iter().map(file_object_view_v1).collect())
+        }
+        "directory-object" | "directory" => {
+            Ok(package.semantic.directory_objects.iter().map(directory_object_view_v1).collect())
+        }
         "fat-adapter-object" | "fat-adapter" => Ok(package
             .semantic
             .fat_adapter_objects
@@ -8991,12 +8836,9 @@ fn stable_views_for_kind(
             .iter()
             .map(file_handle_capability_view_v1)
             .collect()),
-        "fs-wait" | "filesystem-wait" | "file-wait" => Ok(package
-            .semantic
-            .fs_waits
-            .iter()
-            .map(fs_wait_view_v1)
-            .collect()),
+        "fs-wait" | "filesystem-wait" | "file-wait" => {
+            Ok(package.semantic.fs_waits.iter().map(fs_wait_view_v1).collect())
+        }
         "block-driver-cleanup" | "disk-driver-cleanup" | "disk-cleanup" => Ok(package
             .semantic
             .block_driver_cleanups
@@ -9017,12 +8859,9 @@ fn stable_views_for_kind(
             .iter()
             .map(block_request_generation_audit_view_v1)
             .collect()),
-        "block-benchmark" | "disk-benchmark" | "block-iops" => Ok(package
-            .semantic
-            .block_benchmarks
-            .iter()
-            .map(block_benchmark_view_v1)
-            .collect()),
+        "block-benchmark" | "disk-benchmark" | "block-iops" => {
+            Ok(package.semantic.block_benchmarks.iter().map(block_benchmark_view_v1).collect())
+        }
         "block-recovery-benchmark" | "disk-recovery-benchmark" | "disk-recovery" => Ok(package
             .semantic
             .block_recovery_benchmarks
@@ -9035,24 +8874,18 @@ fn stable_views_for_kind(
             .iter()
             .map(target_feature_set_view_v1)
             .collect()),
-        "vector-state" | "vector" | "simd-vector-state" => Ok(package
-            .semantic
-            .vector_states
-            .iter()
-            .map(vector_state_view_v1)
-            .collect()),
+        "vector-state" | "vector" | "simd-vector-state" => {
+            Ok(package.semantic.vector_states.iter().map(vector_state_view_v1).collect())
+        }
         "simd-fault-injection" | "simd-fault" => Ok(package
             .semantic
             .simd_fault_injections
             .iter()
             .map(simd_fault_injection_view_v1)
             .collect()),
-        "simd-benchmark" | "simd-scalar-vector-benchmark" => Ok(package
-            .semantic
-            .simd_benchmarks
-            .iter()
-            .map(simd_benchmark_view_v1)
-            .collect()),
+        "simd-benchmark" | "simd-scalar-vector-benchmark" => {
+            Ok(package.semantic.simd_benchmarks.iter().map(simd_benchmark_view_v1).collect())
+        }
         "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => {
             Ok(package
                 .semantic
@@ -9067,12 +8900,9 @@ fn stable_views_for_kind(
             .iter()
             .map(framebuffer_object_view_v1)
             .collect()),
-        "display-object" | "display" | "display-mode" => Ok(package
-            .semantic
-            .display_objects
-            .iter()
-            .map(display_object_view_v1)
-            .collect()),
+        "display-object" | "display" | "display-mode" => {
+            Ok(package.semantic.display_objects.iter().map(display_object_view_v1).collect())
+        }
         "display-capability" | "display-cap" => Ok(package
             .semantic
             .display_capabilities
@@ -9091,12 +8921,9 @@ fn stable_views_for_kind(
             .iter()
             .map(framebuffer_mapping_view_v1)
             .collect()),
-        "framebuffer-write" | "fb-write" | "display-write" => Ok(package
-            .semantic
-            .framebuffer_writes
-            .iter()
-            .map(framebuffer_write_view_v1)
-            .collect()),
+        "framebuffer-write" | "fb-write" | "display-write" => {
+            Ok(package.semantic.framebuffer_writes.iter().map(framebuffer_write_view_v1).collect())
+        }
         "framebuffer-flush-region" | "flush-region" | "display-flush" => Ok(package
             .semantic
             .framebuffer_flush_regions
@@ -9109,18 +8936,12 @@ fn stable_views_for_kind(
             .iter()
             .map(framebuffer_dirty_region_view_v1)
             .collect()),
-        "display-event-log" | "display-log" => Ok(package
-            .semantic
-            .display_event_logs
-            .iter()
-            .map(display_event_log_view_v1)
-            .collect()),
-        "display-cleanup" => Ok(package
-            .semantic
-            .display_cleanups
-            .iter()
-            .map(display_cleanup_view_v1)
-            .collect()),
+        "display-event-log" | "display-log" => {
+            Ok(package.semantic.display_event_logs.iter().map(display_event_log_view_v1).collect())
+        }
+        "display-cleanup" => {
+            Ok(package.semantic.display_cleanups.iter().map(display_cleanup_view_v1).collect())
+        }
         "display-snapshot-barrier" | "display-snapshot" => Ok(package
             .semantic
             .display_snapshot_barriers
@@ -9139,18 +8960,12 @@ fn stable_views_for_kind(
             .iter()
             .map(framebuffer_benchmark_view_v1)
             .collect()),
-        "activation-resume" => Ok(package
-            .semantic
-            .activation_resumes
-            .iter()
-            .map(activation_resume_view_v1)
-            .collect()),
-        "activation-wait" => Ok(package
-            .semantic
-            .activation_waits
-            .iter()
-            .map(activation_wait_view_v1)
-            .collect()),
+        "activation-resume" => {
+            Ok(package.semantic.activation_resumes.iter().map(activation_resume_view_v1).collect())
+        }
+        "activation-wait" => {
+            Ok(package.semantic.activation_waits.iter().map(activation_wait_view_v1).collect())
+        }
         "activation-cleanup" => Ok(package
             .semantic
             .activation_cleanups
@@ -9169,54 +8984,28 @@ fn stable_views_for_kind(
             .iter()
             .map(hart_event_attribution_view_v1)
             .collect()),
-        "store" => Ok(package
-            .semantic
-            .store_records
-            .iter()
-            .map(store_view_v1)
-            .collect()),
-        "cap" | "capability" => Ok(package
-            .semantic
-            .capability_records
-            .iter()
-            .map(capability_view_v1)
-            .collect()),
-        "wait" => Ok(package
-            .semantic
-            .wait_records
-            .iter()
-            .map(wait_view_v1)
-            .collect()),
-        "cleanup" => Ok(package
-            .semantic
-            .cleanup_transactions
-            .iter()
-            .map(cleanup_view_v1)
-            .collect()),
-        "command" => Ok(package
-            .semantic
-            .command_results
-            .iter()
-            .map(command_result_view_v1)
-            .collect()),
+        "store" => Ok(package.semantic.store_records.iter().map(store_view_v1).collect()),
+        "cap" | "capability" => {
+            Ok(package.semantic.capability_records.iter().map(capability_view_v1).collect())
+        }
+        "wait" => Ok(package.semantic.wait_records.iter().map(wait_view_v1).collect()),
+        "cleanup" => {
+            Ok(package.semantic.cleanup_transactions.iter().map(cleanup_view_v1).collect())
+        }
+        "command" => {
+            Ok(package.semantic.command_results.iter().map(command_result_view_v1).collect())
+        }
         _ => Err(format!("stable view does not support `{kind}`").into()),
     }
 }
 
 fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
-    let structural_error = validate_migration_package(&package)
-        .err()
-        .map(|error| error.to_string());
+    let structural_error =
+        validate_migration_package(&package).err().map(|error| error.to_string());
     let value = contract_validation_view_v1(&package, structural_error.as_deref());
-    let ok = value
-        .get("ok")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let last_error = value
-        .get("last_error")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
+    let ok = value.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let last_error = value.get("last_error").and_then(serde_json::Value::as_str).map(str::to_owned);
     if json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
@@ -9235,9 +9024,7 @@ fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
     if ok {
         Ok(())
     } else {
-        Err(last_error
-            .unwrap_or_else(|| "contract validation failed".to_owned())
-            .into())
+        Err(last_error.unwrap_or_else(|| "contract validation failed".to_owned()).into())
     }
 }
 
@@ -9357,11 +9144,7 @@ fn check_substrate_compatibility(
     } else {
         print_substrate_compatibility_text(profile, &report);
     }
-    if report.ok {
-        Ok(())
-    } else {
-        Err("substrate compatibility check failed".into())
-    }
+    if report.ok { Ok(()) } else { Err("substrate compatibility check failed".into()) }
 }
 
 fn substrate_capabilities_for_profile(profile: &str) -> Option<SubstrateCapabilitySet> {
@@ -9473,11 +9256,7 @@ fn check_interface_compatibility(
     } else {
         print_interface_compatibility_text(profile, &report);
     }
-    if report.ok {
-        Ok(())
-    } else {
-        Err("interface compatibility check failed".into())
-    }
+    if report.ok { Ok(()) } else { Err("interface compatibility check failed".into()) }
 }
 
 fn interface_capabilities_for_profile(profile: &str) -> Option<InterfaceHostCapabilitySet> {
@@ -9718,11 +9497,7 @@ fn print_modes() -> Result<(), Box<dyn Error>> {
             mode.as_str(),
             mode.event_log_policy(),
             mode.dmw_policy(),
-            if mode.fast_path_enabled() {
-                "enabled"
-            } else {
-                "disabled"
-            },
+            if mode.fast_path_enabled() { "enabled" } else { "disabled" },
             mode.deterministic_boundary(),
             mode.capability_audit_policy(),
             mode.debug_metadata_policy(),
@@ -9884,12 +9659,8 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
             package.substrate_boundary.active_mmio_authority_count,
             package.substrate_boundary.active_dma_authority_count,
             package.substrate_boundary.active_irq_authority_count,
-            package
-                .substrate_boundary
-                .active_packet_device_authority_count,
-            package
-                .substrate_boundary
-                .active_virtio_queue_authority_count,
+            package.substrate_boundary.active_packet_device_authority_count,
+            package.substrate_boundary.active_virtio_queue_authority_count,
             package.substrate_boundary.cow_epoch,
             package.substrate_boundary.background_copy_pages
         );
@@ -9911,11 +9682,7 @@ fn print_state(path: &Path) -> Result<(), Box<dyn Error>> {
         "mode policy event_log={} dmw={} fastpath={} deterministic={} capability_audit={} metadata={} nondeterminism={}",
         mode.event_log_policy(),
         mode.dmw_policy(),
-        if mode.fast_path_enabled() {
-            "enabled"
-        } else {
-            "disabled"
-        },
+        if mode.fast_path_enabled() { "enabled" } else { "disabled" },
         mode.deterministic_boundary(),
         mode.capability_audit_policy(),
         mode.debug_metadata_policy(),
@@ -10006,11 +9773,7 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         package.semantic.roots.ipi_event_roots.len(),
         package.semantic.roots.remote_preempt_roots.len(),
         package.semantic.roots.remote_park_roots.len(),
-        package
-            .semantic
-            .roots
-            .cross_hart_scheduler_decision_roots
-            .len(),
+        package.semantic.roots.cross_hart_scheduler_decision_roots.len(),
         package.semantic.roots.activation_migration_roots.len(),
         package.semantic.roots.smp_safe_point_roots.len(),
         package.semantic.roots.stop_the_world_rendezvous_roots.len(),
@@ -10049,68 +9812,32 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     );
     print_roots("hart", &package.semantic.roots.hart_roots);
     print_roots("task", &package.semantic.roots.task_roots);
-    print_roots(
-        "activation-context",
-        &package.semantic.roots.activation_context_roots,
-    );
+    print_roots("activation-context", &package.semantic.roots.activation_context_roots);
     print_roots("saved-context", &package.semantic.roots.saved_context_roots);
-    print_roots(
-        "timer-interrupt",
-        &package.semantic.roots.timer_interrupt_roots,
-    );
+    print_roots("timer-interrupt", &package.semantic.roots.timer_interrupt_roots);
     print_roots("ipi-event", &package.semantic.roots.ipi_event_roots);
-    print_roots(
-        "remote-preempt",
-        &package.semantic.roots.remote_preempt_roots,
-    );
+    print_roots("remote-preempt", &package.semantic.roots.remote_preempt_roots);
     print_roots("remote-park", &package.semantic.roots.remote_park_roots);
     print_roots("preemption", &package.semantic.roots.preemption_roots);
-    print_roots(
-        "scheduler-decision",
-        &package.semantic.roots.scheduler_decision_roots,
-    );
+    print_roots("scheduler-decision", &package.semantic.roots.scheduler_decision_roots);
     print_roots(
         "cross-hart-scheduler-decision",
         &package.semantic.roots.cross_hart_scheduler_decision_roots,
     );
-    print_roots(
-        "activation-migration",
-        &package.semantic.roots.activation_migration_roots,
-    );
-    print_roots(
-        "smp-safe-point",
-        &package.semantic.roots.smp_safe_point_roots,
-    );
+    print_roots("activation-migration", &package.semantic.roots.activation_migration_roots);
+    print_roots("smp-safe-point", &package.semantic.roots.smp_safe_point_roots);
     print_roots(
         "stop-the-world-rendezvous",
         &package.semantic.roots.stop_the_world_rendezvous_roots,
     );
-    print_roots(
-        "smp-code-publish-barrier",
-        &package.semantic.roots.smp_code_publish_barrier_roots,
-    );
-    print_roots(
-        "smp-cleanup-quiescence",
-        &package.semantic.roots.smp_cleanup_quiescence_roots,
-    );
-    print_roots(
-        "smp-snapshot-barrier",
-        &package.semantic.roots.smp_snapshot_barrier_roots,
-    );
-    print_roots(
-        "smp-stress-run",
-        &package.semantic.roots.smp_stress_run_roots,
-    );
-    print_roots(
-        "smp-scaling-benchmark",
-        &package.semantic.roots.smp_scaling_benchmark_roots,
-    );
+    print_roots("smp-code-publish-barrier", &package.semantic.roots.smp_code_publish_barrier_roots);
+    print_roots("smp-cleanup-quiescence", &package.semantic.roots.smp_cleanup_quiescence_roots);
+    print_roots("smp-snapshot-barrier", &package.semantic.roots.smp_snapshot_barrier_roots);
+    print_roots("smp-stress-run", &package.semantic.roots.smp_stress_run_roots);
+    print_roots("smp-scaling-benchmark", &package.semantic.roots.smp_scaling_benchmark_roots);
     print_roots(
         "integrated-smp-preemption-cleanup",
-        &package
-            .semantic
-            .roots
-            .integrated_smp_preemption_cleanup_roots,
+        &package.semantic.roots.integrated_smp_preemption_cleanup_roots,
     );
     print_roots(
         "integrated-smp-network-fault",
@@ -10130,95 +9857,41 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
     );
     print_roots(
         "integrated-display-scheduler-load",
-        &package
-            .semantic
-            .roots
-            .integrated_display_scheduler_load_roots,
+        &package.semantic.roots.integrated_display_scheduler_load_roots,
     );
     print_roots(
         "integrated-snapshot-io-lease-barrier",
-        &package
-            .semantic
-            .roots
-            .integrated_snapshot_io_lease_barrier_roots,
+        &package.semantic.roots.integrated_snapshot_io_lease_barrier_roots,
     );
     print_roots(
         "integrated-code-publish-smp-workload",
-        &package
-            .semantic
-            .roots
-            .integrated_code_publish_smp_workload_roots,
+        &package.semantic.roots.integrated_code_publish_smp_workload_roots,
     );
-    print_roots(
-        "integrated-display-panic",
-        &package.semantic.roots.integrated_display_panic_roots,
-    );
+    print_roots("integrated-display-panic", &package.semantic.roots.integrated_display_panic_roots);
     print_roots(
         "integrated-osctl-trace-replay",
         &package.semantic.roots.integrated_osctl_trace_replay_roots,
     );
     print_roots("device", &package.semantic.roots.device_object_roots);
     print_roots("queue", &package.semantic.roots.queue_object_roots);
-    print_roots(
-        "descriptor",
-        &package.semantic.roots.descriptor_object_roots,
-    );
-    print_roots(
-        "dma-buffer",
-        &package.semantic.roots.dma_buffer_object_roots,
-    );
-    print_roots(
-        "mmio-region",
-        &package.semantic.roots.mmio_region_object_roots,
-    );
+    print_roots("descriptor", &package.semantic.roots.descriptor_object_roots);
+    print_roots("dma-buffer", &package.semantic.roots.dma_buffer_object_roots);
+    print_roots("mmio-region", &package.semantic.roots.mmio_region_object_roots);
     print_roots("irq-line", &package.semantic.roots.irq_line_object_roots);
     print_roots("irq-event", &package.semantic.roots.irq_event_roots);
-    print_roots(
-        "device-capability",
-        &package.semantic.roots.device_capability_roots,
-    );
-    print_roots(
-        "driver-store-binding",
-        &package.semantic.roots.driver_store_binding_roots,
-    );
+    print_roots("device-capability", &package.semantic.roots.device_capability_roots);
+    print_roots("driver-store-binding", &package.semantic.roots.driver_store_binding_roots);
     print_roots("io-wait", &package.semantic.roots.io_wait_roots);
     print_roots("io-cleanup", &package.semantic.roots.io_cleanup_roots);
-    print_roots(
-        "io-fault-injection",
-        &package.semantic.roots.io_fault_injection_roots,
-    );
-    print_roots(
-        "io-validation-report",
-        &package.semantic.roots.io_validation_report_roots,
-    );
-    print_roots(
-        "packet-device",
-        &package.semantic.roots.packet_device_object_roots,
-    );
-    print_roots(
-        "packet-buffer",
-        &package.semantic.roots.packet_buffer_object_roots,
-    );
-    print_roots(
-        "packet-queue",
-        &package.semantic.roots.packet_queue_object_roots,
-    );
-    print_roots(
-        "packet-descriptor",
-        &package.semantic.roots.packet_descriptor_object_roots,
-    );
-    print_roots(
-        "fake-net-backend",
-        &package.semantic.roots.fake_net_backend_object_roots,
-    );
-    print_roots(
-        "virtio-net-backend",
-        &package.semantic.roots.virtio_net_backend_object_roots,
-    );
-    print_roots(
-        "network-rx-interrupt",
-        &package.semantic.roots.network_rx_interrupt_roots,
-    );
+    print_roots("io-fault-injection", &package.semantic.roots.io_fault_injection_roots);
+    print_roots("io-validation-report", &package.semantic.roots.io_validation_report_roots);
+    print_roots("packet-device", &package.semantic.roots.packet_device_object_roots);
+    print_roots("packet-buffer", &package.semantic.roots.packet_buffer_object_roots);
+    print_roots("packet-queue", &package.semantic.roots.packet_queue_object_roots);
+    print_roots("packet-descriptor", &package.semantic.roots.packet_descriptor_object_roots);
+    print_roots("fake-net-backend", &package.semantic.roots.fake_net_backend_object_roots);
+    print_roots("virtio-net-backend", &package.semantic.roots.virtio_net_backend_object_roots);
+    print_roots("network-rx-interrupt", &package.semantic.roots.network_rx_interrupt_roots);
     print_roots(
         "network-rx-wait-resolution",
         &package.semantic.roots.network_rx_wait_resolution_roots,
@@ -10227,168 +9900,60 @@ fn print_graph(path: &Path, mode: GraphEdgeMode, json: bool) -> Result<(), Box<d
         "network-tx-capability-gate",
         &package.semantic.roots.network_tx_capability_gate_roots,
     );
-    print_roots(
-        "network-tx-completion",
-        &package.semantic.roots.network_tx_completion_roots,
-    );
-    print_roots(
-        "network-stack-adapter",
-        &package.semantic.roots.network_stack_adapter_roots,
-    );
+    print_roots("network-tx-completion", &package.semantic.roots.network_tx_completion_roots);
+    print_roots("network-stack-adapter", &package.semantic.roots.network_stack_adapter_roots);
     print_roots("socket-object", &package.semantic.roots.socket_object_roots);
-    print_roots(
-        "endpoint-object",
-        &package.semantic.roots.endpoint_object_roots,
-    );
-    print_roots(
-        "socket-operation",
-        &package.semantic.roots.socket_operation_roots,
-    );
+    print_roots("endpoint-object", &package.semantic.roots.endpoint_object_roots);
+    print_roots("socket-operation", &package.semantic.roots.socket_operation_roots);
     print_roots("socket-wait", &package.semantic.roots.socket_wait_roots);
-    print_roots(
-        "network-backpressure",
-        &package.semantic.roots.network_backpressure_roots,
-    );
-    print_roots(
-        "network-driver-cleanup",
-        &package.semantic.roots.network_driver_cleanup_roots,
-    );
+    print_roots("network-backpressure", &package.semantic.roots.network_backpressure_roots);
+    print_roots("network-driver-cleanup", &package.semantic.roots.network_driver_cleanup_roots);
     print_roots(
         "network-recovery-benchmark",
         &package.semantic.roots.network_recovery_benchmark_roots,
     );
-    print_roots(
-        "block-device",
-        &package.semantic.roots.block_device_object_roots,
-    );
-    print_roots(
-        "block-range",
-        &package.semantic.roots.block_range_object_roots,
-    );
-    print_roots(
-        "block-request",
-        &package.semantic.roots.block_request_object_roots,
-    );
-    print_roots(
-        "block-completion",
-        &package.semantic.roots.block_completion_object_roots,
-    );
+    print_roots("block-device", &package.semantic.roots.block_device_object_roots);
+    print_roots("block-range", &package.semantic.roots.block_range_object_roots);
+    print_roots("block-request", &package.semantic.roots.block_request_object_roots);
+    print_roots("block-completion", &package.semantic.roots.block_completion_object_roots);
     print_roots("block-wait", &package.semantic.roots.block_wait_roots);
-    print_roots(
-        "fake-block-backend",
-        &package.semantic.roots.fake_block_backend_object_roots,
-    );
-    print_roots(
-        "virtio-blk-backend",
-        &package.semantic.roots.virtio_blk_backend_object_roots,
-    );
-    print_roots(
-        "block-read-path",
-        &package.semantic.roots.block_read_path_roots,
-    );
-    print_roots(
-        "block-write-path",
-        &package.semantic.roots.block_write_path_roots,
-    );
-    print_roots(
-        "block-request-queue",
-        &package.semantic.roots.block_request_queue_roots,
-    );
-    print_roots(
-        "block-dma-buffer",
-        &package.semantic.roots.block_dma_buffer_roots,
-    );
-    print_roots(
-        "block-page-object",
-        &package.semantic.roots.block_page_object_roots,
-    );
-    print_roots(
-        "buffer-cache-object",
-        &package.semantic.roots.buffer_cache_object_roots,
-    );
+    print_roots("fake-block-backend", &package.semantic.roots.fake_block_backend_object_roots);
+    print_roots("virtio-blk-backend", &package.semantic.roots.virtio_blk_backend_object_roots);
+    print_roots("block-read-path", &package.semantic.roots.block_read_path_roots);
+    print_roots("block-write-path", &package.semantic.roots.block_write_path_roots);
+    print_roots("block-request-queue", &package.semantic.roots.block_request_queue_roots);
+    print_roots("block-dma-buffer", &package.semantic.roots.block_dma_buffer_roots);
+    print_roots("block-page-object", &package.semantic.roots.block_page_object_roots);
+    print_roots("buffer-cache-object", &package.semantic.roots.buffer_cache_object_roots);
     print_roots("file-object", &package.semantic.roots.file_object_roots);
-    print_roots(
-        "directory-object",
-        &package.semantic.roots.directory_object_roots,
-    );
-    print_roots(
-        "fat-adapter-object",
-        &package.semantic.roots.fat_adapter_object_roots,
-    );
-    print_roots(
-        "ext4-adapter-object",
-        &package.semantic.roots.ext4_adapter_object_roots,
-    );
-    print_roots(
-        "file-handle-capability",
-        &package.semantic.roots.file_handle_capability_roots,
-    );
+    print_roots("directory-object", &package.semantic.roots.directory_object_roots);
+    print_roots("fat-adapter-object", &package.semantic.roots.fat_adapter_object_roots);
+    print_roots("ext4-adapter-object", &package.semantic.roots.ext4_adapter_object_roots);
+    print_roots("file-handle-capability", &package.semantic.roots.file_handle_capability_roots);
     print_roots("fs-wait", &package.semantic.roots.fs_wait_roots);
-    print_roots(
-        "block-driver-cleanup",
-        &package.semantic.roots.block_driver_cleanup_roots,
-    );
-    print_roots(
-        "activation-resume",
-        &package.semantic.roots.activation_resume_roots,
-    );
-    print_roots(
-        "activation-wait",
-        &package.semantic.roots.activation_wait_roots,
-    );
-    print_roots(
-        "activation-cleanup",
-        &package.semantic.roots.activation_cleanup_roots,
-    );
-    print_roots(
-        "preemption-latency",
-        &package.semantic.roots.preemption_latency_roots,
-    );
-    print_roots(
-        "hart-event-attribution",
-        &package.semantic.roots.hart_event_attribution_roots,
-    );
+    print_roots("block-driver-cleanup", &package.semantic.roots.block_driver_cleanup_roots);
+    print_roots("activation-resume", &package.semantic.roots.activation_resume_roots);
+    print_roots("activation-wait", &package.semantic.roots.activation_wait_roots);
+    print_roots("activation-cleanup", &package.semantic.roots.activation_cleanup_roots);
+    print_roots("preemption-latency", &package.semantic.roots.preemption_latency_roots);
+    print_roots("hart-event-attribution", &package.semantic.roots.hart_event_attribution_roots);
     print_roots("resource", &package.semantic.roots.resource_roots);
     print_roots("authority", &package.semantic.roots.authority_roots);
     print_roots("store", &package.semantic.roots.store_roots);
     print_roots("capability", &package.semantic.roots.capability_roots);
-    print_roots(
-        "target-store",
-        &package.semantic.roots.target_store_record_roots,
-    );
-    print_roots(
-        "target-capability",
-        &package.semantic.roots.target_capability_record_roots,
-    );
+    print_roots("target-store", &package.semantic.roots.target_store_record_roots);
+    print_roots("target-capability", &package.semantic.roots.target_capability_record_roots);
     print_roots("fastpath", &package.semantic.roots.fast_path_roots);
     print_roots("boundary", &package.semantic.roots.boundary_roots);
-    print_roots(
-        "artifact-verification",
-        &package.semantic.roots.artifact_verification_roots,
-    );
-    print_roots(
-        "store-activation",
-        &package.semantic.roots.store_activation_roots,
-    );
-    print_roots(
-        "executor-transition",
-        &package.semantic.roots.executor_transition_roots,
-    );
-    print_roots(
-        "target-artifact",
-        &package.semantic.roots.target_artifact_roots,
-    );
+    print_roots("artifact-verification", &package.semantic.roots.artifact_verification_roots);
+    print_roots("store-activation", &package.semantic.roots.store_activation_roots);
+    print_roots("executor-transition", &package.semantic.roots.executor_transition_roots);
+    print_roots("target-artifact", &package.semantic.roots.target_artifact_roots);
     print_roots("code-object", &package.semantic.roots.code_object_roots);
-    print_roots(
-        "activation-record",
-        &package.semantic.roots.activation_record_roots,
-    );
+    print_roots("activation-record", &package.semantic.roots.activation_record_roots);
     print_roots("trap", &package.semantic.roots.trap_roots);
     print_roots("hostcall", &package.semantic.roots.hostcall_trace_roots);
-    print_roots(
-        "migration-object",
-        &package.semantic.roots.migration_object_roots,
-    );
+    print_roots("migration-object", &package.semantic.roots.migration_object_roots);
     print_roots("tombstone", &package.semantic.roots.tombstone_roots);
     print_roots("contract", &package.semantic.roots.contract_violation_roots);
     Ok(())
@@ -10412,10 +9977,7 @@ fn graph_edges_for_package(
 fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value> {
     let mut edges = Vec::new();
     for activation in &package.semantic.runtime_activation_records {
-        if matches!(
-            activation.state.as_str(),
-            "runnable" | "running" | "pending"
-        ) {
+        if matches!(activation.state.as_str(), "runnable" | "running" | "pending") {
             let task_generation = package
                 .semantic
                 .task_records
@@ -10433,10 +9995,9 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 "live",
                 activation.last_event,
             ));
-            if let (Some(queue), Some(queue_generation)) = (
-                activation.runnable_queue,
-                activation.runnable_queue_generation,
-            ) {
+            if let (Some(queue), Some(queue_generation)) =
+                (activation.runnable_queue, activation.runnable_queue_generation)
+            {
                 edges.push(graph_edge(
                     object_ref_json("activation", activation.id, activation.generation),
                     object_ref_json("runnable-queue", queue, queue_generation),
@@ -10476,20 +10037,15 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             continue;
         }
         edges.push(graph_edge(
-            object_ref_json(
-                "activation",
-                context.activation,
-                context.activation_generation,
-            ),
+            object_ref_json("activation", context.activation, context.activation_generation),
             object_ref_json("activation-context", context.id, context.generation),
             "has-context",
             "live",
             context.last_event,
         ));
-        if let (Some(saved), Some(saved_generation)) = (
-            context.current_saved_context,
-            context.current_saved_context_generation,
-        ) {
+        if let (Some(saved), Some(saved_generation)) =
+            (context.current_saved_context, context.current_saved_context_generation)
+        {
             edges.push(graph_edge(
                 object_ref_json("activation-context", context.id, context.generation),
                 object_ref_json("saved-context", saved, saved_generation),
@@ -10517,11 +10073,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             continue;
         }
         edges.push(graph_edge(
-            object_ref_json(
-                "activation-context",
-                saved.context,
-                saved.context_generation,
-            ),
+            object_ref_json("activation-context", saved.context, saved.context_generation),
             object_ref_json("saved-context", saved.id, saved.generation),
             "captures",
             "live",
@@ -10534,11 +10086,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("packet-device", packet_device.id, packet_device.generation),
-            object_ref_json(
-                "device",
-                packet_device.device,
-                packet_device.device_generation,
-            ),
+            object_ref_json("device", packet_device.device, packet_device.device_generation),
             "packet-device->device",
             "live",
             Some(packet_device.recorded_at_event),
@@ -10550,11 +10098,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("block-device", block_device.id, block_device.generation),
-            object_ref_json(
-                "device",
-                block_device.device,
-                block_device.device_generation,
-            ),
+            object_ref_json("device", block_device.device, block_device.device_generation),
             "block-device->device",
             "live",
             Some(block_device.recorded_at_event),
@@ -10582,22 +10126,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("block-request", request.id, request.generation),
-            object_ref_json(
-                "block-device",
-                request.block_device,
-                request.block_device_generation,
-            ),
+            object_ref_json("block-device", request.block_device, request.block_device_generation),
             "block-request->block-device",
             "live",
             Some(request.recorded_at_event),
         ));
         edges.push(graph_edge(
             object_ref_json("block-request", request.id, request.generation),
-            object_ref_json(
-                "block-range",
-                request.block_range,
-                request.block_range_generation,
-            ),
+            object_ref_json("block-range", request.block_range, request.block_range_generation),
             "block-request->block-range",
             "live",
             Some(request.recorded_at_event),
@@ -10644,11 +10180,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("fake-block-backend", backend.id, backend.generation),
-            object_ref_json(
-                "block-device",
-                backend.block_device,
-                backend.block_device_generation,
-            ),
+            object_ref_json("block-device", backend.block_device, backend.block_device_generation),
             "fake-block-backend->block-device",
             "live",
             Some(backend.recorded_at_event),
@@ -10660,11 +10192,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("virtio-blk-backend", backend.id, backend.generation),
-            object_ref_json(
-                "block-device",
-                backend.block_device,
-                backend.block_device_generation,
-            ),
+            object_ref_json("block-device", backend.block_device, backend.block_device_generation),
             "virtio-blk-backend->block-device",
             "live",
             Some(backend.recorded_at_event),
@@ -10777,11 +10305,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                queue.block_device,
-                queue.block_device_generation,
-            ),
+            object_ref_json("block-device", queue.block_device, queue.block_device_generation),
             "block-request-queue->block-device",
             "historical",
             Some(queue.recorded_at_event),
@@ -10825,55 +10349,35 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-request",
-                buffer.block_request,
-                buffer.block_request_generation,
-            ),
+            object_ref_json("block-request", buffer.block_request, buffer.block_request_generation),
             "block-dma-buffer->block-request",
             "historical",
             Some(buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "dma-buffer",
-                buffer.dma_buffer,
-                buffer.dma_buffer_generation,
-            ),
+            object_ref_json("dma-buffer", buffer.dma_buffer, buffer.dma_buffer_generation),
             "block-dma-buffer->dma-buffer",
             "historical",
             Some(buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                buffer.block_device,
-                buffer.block_device_generation,
-            ),
+            object_ref_json("block-device", buffer.block_device, buffer.block_device_generation),
             "block-dma-buffer->block-device",
             "historical",
             Some(buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-range",
-                buffer.block_range,
-                buffer.block_range_generation,
-            ),
+            object_ref_json("block-range", buffer.block_range, buffer.block_range_generation),
             "block-dma-buffer->block-range",
             "historical",
             Some(buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "descriptor",
-                buffer.descriptor,
-                buffer.descriptor_generation,
-            ),
+            object_ref_json("descriptor", buffer.descriptor, buffer.descriptor_generation),
             "block-dma-buffer->descriptor",
             "historical",
             Some(buffer.recorded_at_event),
@@ -10904,11 +10408,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-request",
-                page.block_request,
-                page.block_request_generation,
-            ),
+            object_ref_json("block-request", page.block_request, page.block_request_generation),
             "block-page-object->block-request",
             "historical",
             Some(page.recorded_at_event),
@@ -10933,11 +10433,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                page.block_device,
-                page.block_device_generation,
-            ),
+            object_ref_json("block-device", page.block_device, page.block_device_generation),
             "block-page-object->block-device",
             "historical",
             Some(page.recorded_at_event),
@@ -11000,22 +10496,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                cache.block_device,
-                cache.block_device_generation,
-            ),
+            object_ref_json("block-device", cache.block_device, cache.block_device_generation),
             "buffer-cache-object->block-device",
             "historical",
             Some(cache.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-range",
-                cache.block_range,
-                cache.block_range_generation,
-            ),
+            object_ref_json("block-range", cache.block_range, cache.block_range_generation),
             "buffer-cache-object->block-range",
             "historical",
             Some(cache.recorded_at_event),
@@ -11060,11 +10548,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                file.block_device,
-                file.block_device_generation,
-            ),
+            object_ref_json("block-device", file.block_device, file.block_device_generation),
             "file-object->block-device",
             "historical",
             Some(file.recorded_at_event),
@@ -11090,11 +10574,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("directory-object", directory.id, directory.generation),
-            object_ref_json(
-                "file-object",
-                directory.file_object,
-                directory.file_object_generation,
-            ),
+            object_ref_json("file-object", directory.file_object, directory.file_object_generation),
             "directory-object->file-object",
             "historical",
             Some(directory.recorded_at_event),
@@ -11118,22 +10598,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "file-object",
-                adapter.file_object,
-                adapter.file_object_generation,
-            ),
+            object_ref_json("file-object", adapter.file_object, adapter.file_object_generation),
             "fat-adapter-object->file-object",
             "historical",
             Some(adapter.recorded_at_event),
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "block-device",
-                adapter.block_device,
-                adapter.block_device_generation,
-            ),
+            object_ref_json("block-device", adapter.block_device, adapter.block_device_generation),
             "fat-adapter-object->block-device",
             "historical",
             Some(adapter.recorded_at_event),
@@ -11157,22 +10629,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "file-object",
-                adapter.file_object,
-                adapter.file_object_generation,
-            ),
+            object_ref_json("file-object", adapter.file_object, adapter.file_object_generation),
             "ext4-adapter-object->file-object",
             "historical",
             Some(adapter.recorded_at_event),
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "block-device",
-                adapter.block_device,
-                adapter.block_device_generation,
-            ),
+            object_ref_json("block-device", adapter.block_device, adapter.block_device_generation),
             "ext4-adapter-object->block-device",
             "historical",
             Some(adapter.recorded_at_event),
@@ -11182,18 +10646,10 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         if capability.state != "allowed" {
             continue;
         }
-        let from = object_ref_json(
-            "file-handle-capability",
-            capability.id,
-            capability.generation,
-        );
+        let from = object_ref_json("file-handle-capability", capability.id, capability.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                capability.owner_store,
-                capability.owner_store_generation,
-            ),
+            object_ref_json("store", capability.owner_store, capability.owner_store_generation),
             "file-handle-capability->store",
             "historical",
             Some(capability.recorded_at_event),
@@ -11222,11 +10678,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "capability",
-                capability.capability,
-                capability.capability_generation,
-            ),
+            object_ref_json("capability", capability.capability, capability.capability_generation),
             "file-handle-capability->capability",
             "historical",
             Some(capability.recorded_at_event),
@@ -11409,22 +10861,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "packet-queue",
-                adapter.rx_queue,
-                adapter.rx_queue_generation,
-            ),
+            object_ref_json("packet-queue", adapter.rx_queue, adapter.rx_queue_generation),
             "network-stack-adapter->rx-queue",
             "live",
             Some(adapter.recorded_at_event),
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "packet-queue",
-                adapter.tx_queue,
-                adapter.tx_queue_generation,
-            ),
+            object_ref_json("packet-queue", adapter.tx_queue, adapter.tx_queue_generation),
             "network-stack-adapter->tx-queue",
             "live",
             Some(adapter.recorded_at_event),
@@ -11437,11 +10881,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         let from = object_ref_json("socket-object", socket.id, socket.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "network-stack-adapter",
-                socket.adapter,
-                socket.adapter_generation,
-            ),
+            object_ref_json("network-stack-adapter", socket.adapter, socket.adapter_generation),
             "socket-object->network-stack-adapter",
             "live",
             Some(socket.created_at_event),
@@ -11468,22 +10908,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "network-stack-adapter",
-                endpoint.adapter,
-                endpoint.adapter_generation,
-            ),
+            object_ref_json("network-stack-adapter", endpoint.adapter, endpoint.adapter_generation),
             "endpoint-object->network-stack-adapter",
             "live",
             Some(endpoint.created_at_event),
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "store",
-                endpoint.owner_store,
-                endpoint.owner_store_generation,
-            ),
+            object_ref_json("store", endpoint.owner_store, endpoint.owner_store_generation),
             "endpoint-object->owner-store",
             "live",
             Some(endpoint.created_at_event),
@@ -11517,11 +10949,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "network-stack-adapter",
-                wait.adapter,
-                wait.adapter_generation,
-            ),
+            object_ref_json("network-stack-adapter", wait.adapter, wait.adapter_generation),
             "socket-wait->network-stack-adapter",
             "live",
             Some(wait.created_at_event),
@@ -11537,11 +10965,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             from,
             object_ref_manifest_json(&wait.blocker),
             "socket-wait->blocker",
-            if wait.blocker.kind == "external" {
-                "external"
-            } else {
-                "live"
-            },
+            if wait.blocker.kind == "external" { "external" } else { "live" },
             Some(wait.created_at_event),
         ));
     }
@@ -11579,11 +11003,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
             ));
             edges.push(graph_edge(
                 object_ref_json("activation", activation.id, activation.generation),
-                object_ref_json(
-                    "code-object",
-                    activation.code_object,
-                    activation.code_generation,
-                ),
+                object_ref_json("code-object", activation.code_object, activation.code_generation),
                 "bound-to",
                 "live",
                 Some(activation.start_event),
@@ -11607,11 +11027,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         if let Some(store) = capability.owner_store {
             edges.push(graph_edge(
-                object_ref_json(
-                    "store",
-                    store,
-                    capability.owner_store_generation.unwrap_or(0),
-                ),
+                object_ref_json("store", store, capability.owner_store_generation.unwrap_or(0)),
                 object_ref_json("capability", capability.id, capability.generation),
                 "owns",
                 "live",
@@ -11675,22 +11091,14 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         }
         edges.push(graph_edge(
             object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
-            object_ref_json(
-                "descriptor",
-                dma_buffer.descriptor,
-                dma_buffer.descriptor_generation,
-            ),
+            object_ref_json("descriptor", dma_buffer.descriptor, dma_buffer.descriptor_generation),
             "dma-buffer-descriptor",
             "live",
             Some(dma_buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
-            object_ref_json(
-                "resource",
-                dma_buffer.resource,
-                dma_buffer.resource_generation,
-            ),
+            object_ref_json("resource", dma_buffer.resource, dma_buffer.resource_generation),
             "dma-buffer-resource",
             "live",
             Some(dma_buffer.recorded_at_event),
@@ -11709,11 +11117,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
-            object_ref_json(
-                "resource",
-                mmio_region.resource,
-                mmio_region.resource_generation,
-            ),
+            object_ref_json("resource", mmio_region.resource, mmio_region.resource_generation),
             "mmio-region-resource",
             "live",
             Some(mmio_region.recorded_at_event),
@@ -11784,11 +11188,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         let from = object_ref_json("driver-store-binding", binding.id, binding.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                binding.driver_store,
-                binding.driver_store_generation,
-            ),
+            object_ref_json("store", binding.driver_store, binding.driver_store_generation),
             "driver-store-binding-store",
             "live",
             Some(binding.recorded_at_event),
@@ -11813,11 +11213,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "capability",
-                binding.capability,
-                binding.capability_generation,
-            ),
+            object_ref_json("capability", binding.capability, binding.capability_generation),
             "driver-store-binding-ledger",
             "live",
             Some(binding.recorded_at_event),
@@ -11837,11 +11233,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                io_wait.driver_store,
-                io_wait.driver_store_generation,
-            ),
+            object_ref_json("store", io_wait.driver_store, io_wait.driver_store_generation),
             "io-wait-driver-store",
             "live",
             Some(io_wait.created_at_event),
@@ -11899,11 +11291,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
                 object_ref_json("wait-token", wait.id, wait.generation),
                 object_ref_manifest_json(blocker),
                 "blocks-on",
-                if blocker.kind == "external" {
-                    "external"
-                } else {
-                    "live"
-                },
+                if blocker.kind == "external" { "external" } else { "live" },
                 None,
             ));
         }
@@ -11912,11 +11300,8 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         if activation_wait.state != "pending" {
             continue;
         }
-        let from = object_ref_json(
-            "activation-wait",
-            activation_wait.id,
-            activation_wait.generation,
-        );
+        let from =
+            object_ref_json("activation-wait", activation_wait.id, activation_wait.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -11930,11 +11315,7 @@ fn live_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Value
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "wait-token",
-                activation_wait.wait,
-                activation_wait.wait_generation,
-            ),
+            object_ref_json("wait-token", activation_wait.wait, activation_wait.wait_generation),
             "waits-on",
             "live",
             Some(activation_wait.blocked_at_event),
@@ -11989,18 +11370,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 record.context,
                 record.context_generation_after,
             ),
-            (
-                "integrated-source-hart",
-                "hart",
-                record.source_hart,
-                record.source_hart_generation,
-            ),
-            (
-                "integrated-target-hart",
-                "hart",
-                record.target_hart,
-                record.target_hart_generation,
-            ),
+            ("integrated-source-hart", "hart", record.source_hart, record.source_hart_generation),
+            ("integrated-target-hart", "hart", record.target_hart, record.target_hart_generation),
             (
                 "integrated-source-queue",
                 "runnable-queue",
@@ -12023,14 +11394,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             ));
         }
         for (label, reference) in [
-            (
-                "integrated-source-vector-state",
-                &record.source_vector_state,
-            ),
-            (
-                "integrated-migrated-vector-state",
-                &record.migrated_vector_state,
-            ),
+            ("integrated-source-vector-state", &record.source_vector_state),
+            ("integrated-migrated-vector-state", &record.migrated_vector_state),
         ] {
             edges.push(graph_edge(
                 from.clone(),
@@ -12074,12 +11439,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 record.packet_device,
                 record.packet_device_generation,
             ),
-            (
-                "integrated-socket",
-                "socket-object",
-                record.socket,
-                record.socket_generation,
-            ),
+            ("integrated-socket", "socket-object", record.socket, record.socket_generation),
             (
                 "integrated-block-device",
                 "block-device-object",
@@ -12116,11 +11476,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for record in &package.semantic.integrated_display_scheduler_loads {
-        let from = object_ref_json(
-            "integrated-display-scheduler-load",
-            record.id,
-            record.generation,
-        );
+        let from =
+            object_ref_json("integrated-display-scheduler-load", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-framebuffer-benchmark",
@@ -12134,36 +11491,16 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 record.scheduler_decision,
                 record.scheduler_decision_generation,
             ),
-            (
-                "integrated-owner-store",
-                "store",
-                record.owner_store,
-                record.owner_store_generation,
-            ),
-            (
-                "integrated-owner-task",
-                "task",
-                record.owner_task,
-                record.owner_task_generation,
-            ),
-            (
-                "integrated-runnable-queue",
-                "runnable-queue",
-                record.queue,
-                record.queue_generation,
-            ),
+            ("integrated-owner-store", "store", record.owner_store, record.owner_store_generation),
+            ("integrated-owner-task", "task", record.owner_task, record.owner_task_generation),
+            ("integrated-runnable-queue", "runnable-queue", record.queue, record.queue_generation),
             (
                 "integrated-selected-activation",
                 "activation",
                 record.selected_activation,
                 record.selected_activation_generation,
             ),
-            (
-                "integrated-display",
-                "display-object",
-                record.display,
-                record.display_generation,
-            ),
+            ("integrated-display", "display-object", record.display, record.display_generation),
             (
                 "integrated-framebuffer",
                 "framebuffer-object",
@@ -12205,11 +11542,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
     }
     for record in &package.semantic.integrated_snapshot_io_lease_barriers {
-        let from = object_ref_json(
-            "integrated-snapshot-io-lease-barrier",
-            record.id,
-            record.generation,
-        );
+        let from =
+            object_ref_json("integrated-snapshot-io-lease-barrier", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-smp-snapshot-barrier",
@@ -12235,18 +11569,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 record.driver_store,
                 record.driver_store_generation,
             ),
-            (
-                "integrated-device",
-                "device-object",
-                record.device,
-                record.device_generation,
-            ),
-            (
-                "integrated-display",
-                "display-object",
-                record.display,
-                record.display_generation,
-            ),
+            ("integrated-device", "device-object", record.device, record.device_generation),
+            ("integrated-display", "display-object", record.display, record.display_generation),
             (
                 "integrated-framebuffer",
                 "framebuffer-object",
@@ -12264,11 +11588,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
     }
     for record in &package.semantic.integrated_code_publish_smp_workloads {
-        let from = object_ref_json(
-            "integrated-code-publish-smp-workload",
-            record.id,
-            record.generation,
-        );
+        let from =
+            object_ref_json("integrated-code-publish-smp-workload", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-smp-stress-run",
@@ -12330,11 +11651,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for record in &package.semantic.integrated_osctl_trace_replays {
-        let from = object_ref_json(
-            "integrated-osctl-trace-replay",
-            record.id,
-            record.generation,
-        );
+        let from = object_ref_json("integrated-osctl-trace-replay", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-osctl-trace-replay->x0-smp-preemption-cleanup",
@@ -12443,9 +11760,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         if block_wait.state == "pending" {
             continue;
         }
-        let event = block_wait
-            .completed_at_event
-            .or(Some(block_wait.created_at_event));
+        let event = block_wait.completed_at_event.or(Some(block_wait.created_at_event));
         let from = object_ref_json("block-wait", block_wait.id, block_wait.generation);
         edges.push(graph_edge(
             from.clone(),
@@ -12517,28 +11832,18 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for cleanup in &package.semantic.block_driver_cleanups {
-        let event = cleanup
-            .completed_at_event
-            .or(Some(cleanup.started_at_event));
+        let event = cleanup.completed_at_event.or(Some(cleanup.started_at_event));
         let from = object_ref_json("block-driver-cleanup", cleanup.id, cleanup.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "io-cleanup",
-                cleanup.io_cleanup,
-                cleanup.io_cleanup_generation,
-            ),
+            object_ref_json("io-cleanup", cleanup.io_cleanup, cleanup.io_cleanup_generation),
             "block-driver-cleanup->io-cleanup",
             "historical",
             event,
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                cleanup.driver_store,
-                cleanup.driver_store_generation,
-            ),
+            object_ref_json("store", cleanup.driver_store, cleanup.driver_store_generation),
             "block-driver-cleanup->driver-store",
             "historical",
             event,
@@ -12563,11 +11868,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                cleanup.block_device,
-                cleanup.block_device_generation,
-            ),
+            object_ref_json("block-device", cleanup.block_device, cleanup.block_device_generation),
             "block-driver-cleanup->block-device",
             "historical",
             event,
@@ -12621,11 +11922,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("block-pending-io-policy", policy.id, policy.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-wait",
-                policy.block_wait,
-                policy.block_wait_generation,
-            ),
+            object_ref_json("block-wait", policy.block_wait, policy.block_wait_generation),
             "block-pending-io-policy->block-wait",
             "historical",
             event,
@@ -12639,11 +11936,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-request",
-                policy.block_request,
-                policy.block_request_generation,
-            ),
+            object_ref_json("block-request", policy.block_request, policy.block_request_generation),
             "block-pending-io-policy->block-request",
             "historical",
             event,
@@ -12661,22 +11954,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                policy.block_device,
-                policy.block_device_generation,
-            ),
+            object_ref_json("block-device", policy.block_device, policy.block_device_generation),
             "block-pending-io-policy->block-device",
             "historical",
             event,
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "block-range",
-                policy.block_range,
-                policy.block_range_generation,
-            ),
+            object_ref_json("block-range", policy.block_range, policy.block_range_generation),
             "block-pending-io-policy->block-range",
             "historical",
             event,
@@ -12687,33 +11972,21 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("block-request-generation-audit", audit.id, audit.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-device",
-                audit.block_device,
-                audit.block_device_generation,
-            ),
+            object_ref_json("block-device", audit.block_device, audit.block_device_generation),
             "block-request-generation-audit->block-device",
             "historical",
             event,
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-range",
-                audit.block_range,
-                audit.block_range_generation,
-            ),
+            object_ref_json("block-range", audit.block_range, audit.block_range_generation),
             "block-request-generation-audit->block-range",
             "historical",
             event,
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-request",
-                audit.block_request,
-                audit.block_request_generation,
-            ),
+            object_ref_json("block-request", audit.block_request, audit.block_request_generation),
             "block-request-generation-audit->block-request",
             "historical",
             event,
@@ -12756,22 +12029,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-range",
-                benchmark.block_range,
-                benchmark.block_range_generation,
-            ),
+            object_ref_json("block-range", benchmark.block_range, benchmark.block_range_generation),
             "block-benchmark->block-range",
             "historical",
             event,
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "block-read-path",
-                benchmark.read_path,
-                benchmark.read_path_generation,
-            ),
+            object_ref_json("block-read-path", benchmark.read_path, benchmark.read_path_generation),
             "block-benchmark->read-path",
             "historical",
             event,
@@ -12812,11 +12077,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     }
     for benchmark in &package.semantic.block_recovery_benchmarks {
         let event = Some(benchmark.recorded_at_event);
-        let from = object_ref_json(
-            "block-recovery-benchmark",
-            benchmark.id,
-            benchmark.generation,
-        );
+        let from = object_ref_json("block-recovery-benchmark", benchmark.id, benchmark.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -12830,11 +12091,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "io-cleanup",
-                benchmark.io_cleanup,
-                benchmark.io_cleanup_generation,
-            ),
+            object_ref_json("io-cleanup", benchmark.io_cleanup, benchmark.io_cleanup_generation),
             "block-recovery-benchmark->io-cleanup",
             "historical",
             event,
@@ -12859,11 +12116,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                benchmark.driver_store,
-                benchmark.driver_store_generation,
-            ),
+            object_ref_json("store", benchmark.driver_store, benchmark.driver_store_generation),
             "block-recovery-benchmark->driver-store",
             "historical",
             event,
@@ -12904,38 +12157,22 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             (
                 &vector_state.owner_activation,
                 "vector-state->activation",
-                if vector_state.state == "reserved" {
-                    "live"
-                } else {
-                    "historical"
-                },
+                if vector_state.state == "reserved" { "live" } else { "historical" },
             ),
             (
                 &vector_state.owner_store,
                 "vector-state->store",
-                if vector_state.state == "reserved" {
-                    "live"
-                } else {
-                    "historical"
-                },
+                if vector_state.state == "reserved" { "live" } else { "historical" },
             ),
             (
                 &vector_state.code_object,
                 "vector-state->code-object",
-                if vector_state.state == "reserved" {
-                    "live"
-                } else {
-                    "historical"
-                },
+                if vector_state.state == "reserved" { "live" } else { "historical" },
             ),
             (
                 &vector_state.target_feature_set,
                 "vector-state->target-feature-set",
-                if vector_state.state == "reserved" {
-                    "live"
-                } else {
-                    "historical"
-                },
+                if vector_state.state == "reserved" { "live" } else { "historical" },
             ),
         ] {
             edges.push(graph_edge(
@@ -12961,10 +12198,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             (&injection.activation, "simd-fault-injection->activation"),
             (&injection.code_object, "simd-fault-injection->code-object"),
             (&injection.trap, "simd-fault-injection->trap"),
-            (
-                &injection.target_feature_set,
-                "simd-fault-injection->target-feature-set",
-            ),
+            (&injection.target_feature_set, "simd-fault-injection->target-feature-set"),
         ] {
             edges.push(graph_edge(
                 from.clone(),
@@ -12995,18 +12229,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let event = Some(benchmark.recorded_at_event);
         let from = object_ref_json("simd-benchmark", benchmark.id, benchmark.generation);
         for (target, label) in [
-            (
-                &benchmark.target_feature_set,
-                "simd-benchmark->target-feature-set",
-            ),
-            (
-                &benchmark.scalar_code_object,
-                "simd-benchmark->scalar-code-object",
-            ),
-            (
-                &benchmark.vector_code_object,
-                "simd-benchmark->vector-code-object",
-            ),
+            (&benchmark.target_feature_set, "simd-benchmark->target-feature-set"),
+            (&benchmark.scalar_code_object, "simd-benchmark->scalar-code-object"),
+            (&benchmark.vector_code_object, "simd-benchmark->vector-code-object"),
         ] {
             edges.push(graph_edge(
                 from.clone(),
@@ -13026,32 +12251,17 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     }
     for benchmark in &package.semantic.simd_context_switch_benchmarks {
         let event = Some(benchmark.recorded_at_event);
-        let from = object_ref_json(
-            "simd-context-switch-benchmark",
-            benchmark.id,
-            benchmark.generation,
-        );
+        let from =
+            object_ref_json("simd-context-switch-benchmark", benchmark.id, benchmark.generation);
         for (target, label) in [
-            (
-                &benchmark.preemption,
-                "simd-context-switch-benchmark->preemption",
-            ),
-            (
-                &benchmark.activation_resume,
-                "simd-context-switch-benchmark->activation-resume",
-            ),
-            (
-                &benchmark.saved_vector_state,
-                "simd-context-switch-benchmark->saved-vector-state",
-            ),
+            (&benchmark.preemption, "simd-context-switch-benchmark->preemption"),
+            (&benchmark.activation_resume, "simd-context-switch-benchmark->activation-resume"),
+            (&benchmark.saved_vector_state, "simd-context-switch-benchmark->saved-vector-state"),
             (
                 &benchmark.restored_vector_state,
                 "simd-context-switch-benchmark->restored-vector-state",
             ),
-            (
-                &benchmark.target_feature_set,
-                "simd-context-switch-benchmark->target-feature-set",
-            ),
+            (&benchmark.target_feature_set, "simd-context-switch-benchmark->target-feature-set"),
         ] {
             edges.push(graph_edge(
                 from.clone(),
@@ -13074,11 +12284,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("framebuffer-object", framebuffer.id, framebuffer.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "resource",
-                framebuffer.resource,
-                framebuffer.resource_generation,
-            ),
+            object_ref_json("resource", framebuffer.resource, framebuffer.resource_generation),
             "framebuffer-object->resource",
             "live",
             event,
@@ -13118,22 +12324,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("display-capability", capability.id, capability.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                capability.owner_store,
-                capability.owner_store_generation,
-            ),
+            object_ref_json("store", capability.owner_store, capability.owner_store_generation),
             "display-capability->owner-store",
             "live",
             event,
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "display-object",
-                capability.display,
-                capability.display_generation,
-            ),
+            object_ref_json("display-object", capability.display, capability.display_generation),
             "display-capability->display-object",
             "live",
             event,
@@ -13151,11 +12349,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "capability",
-                capability.capability,
-                capability.capability_generation,
-            ),
+            object_ref_json("capability", capability.capability, capability.capability_generation),
             "display-capability->capability",
             "live",
             event,
@@ -13198,11 +12392,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "framebuffer-object",
-                lease.framebuffer,
-                lease.framebuffer_generation,
-            ),
+            object_ref_json("framebuffer-object", lease.framebuffer, lease.framebuffer_generation),
             "framebuffer-window-lease->framebuffer-object",
             "live",
             event,
@@ -13249,11 +12439,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "display-object",
-                mapping.display,
-                mapping.display_generation,
-            ),
+            object_ref_json("display-object", mapping.display, mapping.display_generation),
             "framebuffer-mapping->display-object",
             "live",
             event,
@@ -13329,11 +12515,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "framebuffer-object",
-                write.framebuffer,
-                write.framebuffer_generation,
-            ),
+            object_ref_json("framebuffer-object", write.framebuffer, write.framebuffer_generation),
             "framebuffer-write->framebuffer-object",
             "historical",
             event,
@@ -13387,11 +12569,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "framebuffer-object",
-                flush.framebuffer,
-                flush.framebuffer_generation,
-            ),
+            object_ref_json("framebuffer-object", flush.framebuffer, flush.framebuffer_generation),
             "framebuffer-flush-region->framebuffer-object",
             "historical",
             event,
@@ -13407,11 +12585,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     for dirty in &package.semantic.framebuffer_dirty_regions {
         let event = Some(dirty.recorded_at_event);
         let from = object_ref_json("framebuffer-dirty-region", dirty.id, dirty.generation);
-        let owner_mode = if dirty.state == "dirty" {
-            "live"
-        } else {
-            "historical"
-        };
+        let owner_mode = if dirty.state == "dirty" { "live" } else { "historical" };
         edges.push(graph_edge(
             from.clone(),
             object_ref_json("store", dirty.owner_store, dirty.owner_store_generation),
@@ -13430,10 +12604,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             event,
         ));
-        if let (Some(flush), Some(generation)) = (
-            dirty.framebuffer_flush_region,
-            dirty.framebuffer_flush_region_generation,
-        ) {
+        if let (Some(flush), Some(generation)) =
+            (dirty.framebuffer_flush_region, dirty.framebuffer_flush_region_generation)
+        {
             edges.push(graph_edge(
                 from.clone(),
                 object_ref_json("framebuffer-flush-region", flush, generation),
@@ -13462,11 +12635,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "framebuffer-object",
-                dirty.framebuffer,
-                dirty.framebuffer_generation,
-            ),
+            object_ref_json("framebuffer-object", dirty.framebuffer, dirty.framebuffer_generation),
             "framebuffer-dirty-region->framebuffer-object",
             "historical",
             event,
@@ -13520,11 +12689,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "framebuffer-object",
-                log.framebuffer,
-                log.framebuffer_generation,
-            ),
+            object_ref_json("framebuffer-object", log.framebuffer, log.framebuffer_generation),
             "display-event-log->framebuffer-object",
             "historical",
             event,
@@ -13560,11 +12725,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "display-object",
-                cleanup.display,
-                cleanup.display_generation,
-            ),
+            object_ref_json("display-object", cleanup.display, cleanup.display_generation),
             "display-cleanup->display-object",
             "historical",
             event,
@@ -13633,11 +12794,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "display-object",
-                barrier.display,
-                barrier.display_generation,
-            ),
+            object_ref_json("display-object", barrier.display, barrier.display_generation),
             "display-snapshot-barrier->display-object",
             "historical",
             event,
@@ -13727,19 +12884,11 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         for (relation, to) in [
             (
                 "framebuffer-benchmark->owner-store",
-                object_ref_json(
-                    "store",
-                    benchmark.owner_store,
-                    benchmark.owner_store_generation,
-                ),
+                object_ref_json("store", benchmark.owner_store, benchmark.owner_store_generation),
             ),
             (
                 "framebuffer-benchmark->display-object",
-                object_ref_json(
-                    "display-object",
-                    benchmark.display,
-                    benchmark.display_generation,
-                ),
+                object_ref_json("display-object", benchmark.display, benchmark.display_generation),
             ),
             (
                 "framebuffer-benchmark->framebuffer-object",
@@ -13800,22 +12949,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("socket-operation", operation.id, operation.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "endpoint-object",
-                operation.endpoint,
-                operation.endpoint_generation,
-            ),
+            object_ref_json("endpoint-object", operation.endpoint, operation.endpoint_generation),
             "socket-operation->endpoint-object",
             "historical",
             Some(operation.recorded_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "socket-object",
-                operation.socket,
-                operation.socket_generation,
-            ),
+            object_ref_json("socket-object", operation.socket, operation.socket_generation),
             "socket-operation->socket-object",
             "historical",
             Some(operation.recorded_at_event),
@@ -13833,11 +12974,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "store",
-                operation.owner_store,
-                operation.owner_store_generation,
-            ),
+            object_ref_json("store", operation.owner_store, operation.owner_store_generation),
             "socket-operation->owner-store",
             "historical",
             Some(operation.recorded_at_event),
@@ -13872,11 +13009,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "network-stack-adapter",
-                wait.adapter,
-                wait.adapter_generation,
-            ),
+            object_ref_json("network-stack-adapter", wait.adapter, wait.adapter_generation),
             "socket-wait->network-stack-adapter",
             "historical",
             event,
@@ -13892,20 +13025,13 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             from,
             object_ref_manifest_json(&wait.blocker),
             "socket-wait->blocker",
-            if wait.blocker.kind == "external" {
-                "external"
-            } else {
-                "historical"
-            },
+            if wait.blocker.kind == "external" { "external" } else { "historical" },
             event,
         ));
     }
     for backpressure in &package.semantic.network_backpressures {
-        let from = object_ref_json(
-            "network-backpressure",
-            backpressure.id,
-            backpressure.generation,
-        );
+        let from =
+            object_ref_json("network-backpressure", backpressure.id, backpressure.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -13961,10 +13087,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(backpressure.recorded_at_event),
             ));
         }
-        if let (Some(store), Some(store_generation)) = (
-            backpressure.owner_store,
-            backpressure.owner_store_generation,
-        ) {
+        if let (Some(store), Some(store_generation)) =
+            (backpressure.owner_store, backpressure.owner_store_generation)
+        {
             edges.push(graph_edge(
                 from,
                 object_ref_json("store", store, store_generation),
@@ -13976,24 +13101,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     }
     for cleanup in &package.semantic.network_driver_cleanups {
         let from = object_ref_json("network-driver-cleanup", cleanup.id, cleanup.generation);
-        let event = cleanup
-            .completed_at_event
-            .or(Some(cleanup.started_at_event));
+        let event = cleanup.completed_at_event.or(Some(cleanup.started_at_event));
         for (target, relation) in [
             (
-                object_ref_json(
-                    "io-cleanup",
-                    cleanup.io_cleanup,
-                    cleanup.io_cleanup_generation,
-                ),
+                object_ref_json("io-cleanup", cleanup.io_cleanup, cleanup.io_cleanup_generation),
                 "network-driver-cleanup->io-cleanup",
             ),
             (
-                object_ref_json(
-                    "store",
-                    cleanup.driver_store,
-                    cleanup.driver_store_generation,
-                ),
+                object_ref_json("store", cleanup.driver_store, cleanup.driver_store_generation),
                 "network-driver-cleanup->driver-store",
             ),
             (
@@ -14024,18 +13139,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 ),
                 "network-driver-cleanup->network-stack-adapter",
             ),
-            (
-                object_ref_manifest_json(&cleanup.backend),
-                "network-driver-cleanup->backend",
-            ),
+            (object_ref_manifest_json(&cleanup.backend), "network-driver-cleanup->backend"),
         ] {
-            edges.push(graph_edge(
-                from.clone(),
-                target,
-                relation,
-                "historical",
-                event,
-            ));
+            edges.push(graph_edge(from.clone(), target, relation, "historical", event));
         }
         for socket_wait in &cleanup.cancelled_socket_waits {
             edges.push(graph_edge(
@@ -14070,11 +13176,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let event = Some(audit.recorded_at_event);
         for (target, relation) in [
             (
-                object_ref_json(
-                    "network-stack-adapter",
-                    audit.adapter,
-                    audit.adapter_generation,
-                ),
+                object_ref_json("network-stack-adapter", audit.adapter, audit.adapter_generation),
                 "network-generation-audit->network-stack-adapter",
             ),
             (
@@ -14086,11 +13188,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "network-generation-audit->packet-device",
             ),
             (
-                object_ref_json(
-                    "packet-queue",
-                    audit.packet_queue,
-                    audit.packet_queue_generation,
-                ),
+                object_ref_json("packet-queue", audit.packet_queue, audit.packet_queue_generation),
                 "network-generation-audit->packet-queue",
             ),
             (
@@ -14109,30 +13207,17 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 ),
                 "network-generation-audit->packet-buffer",
             ),
-            (
-                object_ref_manifest_json(&audit.dma_buffer),
-                "network-generation-audit->dma-buffer",
-            ),
+            (object_ref_manifest_json(&audit.dma_buffer), "network-generation-audit->dma-buffer"),
             (
                 object_ref_manifest_json(&audit.device_capability),
                 "network-generation-audit->device-capability",
             ),
         ] {
-            edges.push(graph_edge(
-                from.clone(),
-                target,
-                relation,
-                "historical",
-                event,
-            ));
+            edges.push(graph_edge(from.clone(), target, relation, "historical", event));
         }
     }
     for injection in &package.semantic.network_fault_injections {
-        let from = object_ref_json(
-            "network-fault-injection",
-            injection.id,
-            injection.generation,
-        );
+        let from = object_ref_json("network-fault-injection", injection.id, injection.generation);
         let event = Some(injection.recorded_at_event);
         for (target, relation) in [
             (
@@ -14160,18 +13245,11 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "network-fault-injection->packet-queue",
             ),
         ] {
-            edges.push(graph_edge(
-                from.clone(),
-                target,
-                relation,
-                "historical",
-                event,
-            ));
+            edges.push(graph_edge(from.clone(), target, relation, "historical", event));
         }
-        if let (Some(packet_descriptor), Some(packet_descriptor_generation)) = (
-            injection.packet_descriptor,
-            injection.packet_descriptor_generation,
-        ) {
+        if let (Some(packet_descriptor), Some(packet_descriptor_generation)) =
+            (injection.packet_descriptor, injection.packet_descriptor_generation)
+        {
             edges.push(graph_edge(
                 from.clone(),
                 object_ref_json(
@@ -14250,19 +13328,11 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "network-benchmark->packet-device",
             ),
             (
-                object_ref_json(
-                    "packet-queue",
-                    benchmark.tx_queue,
-                    benchmark.tx_queue_generation,
-                ),
+                object_ref_json("packet-queue", benchmark.tx_queue, benchmark.tx_queue_generation),
                 "network-benchmark->tx-queue",
             ),
             (
-                object_ref_json(
-                    "packet-queue",
-                    benchmark.rx_queue,
-                    benchmark.rx_queue_generation,
-                ),
+                object_ref_json("packet-queue", benchmark.rx_queue, benchmark.rx_queue_generation),
                 "network-benchmark->rx-queue",
             ),
             (
@@ -14290,40 +13360,22 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 "network-benchmark->endpoint-object",
             ),
             (
-                object_ref_json(
-                    "socket-object",
-                    benchmark.socket,
-                    benchmark.socket_generation,
-                ),
+                object_ref_json("socket-object", benchmark.socket, benchmark.socket_generation),
                 "network-benchmark->socket-object",
             ),
             (
-                object_ref_json(
-                    "store",
-                    benchmark.owner_store,
-                    benchmark.owner_store_generation,
-                ),
+                object_ref_json("store", benchmark.owner_store, benchmark.owner_store_generation),
                 "network-benchmark->owner-store",
             ),
         ] {
-            edges.push(graph_edge(
-                from.clone(),
-                target,
-                relation,
-                "historical",
-                event,
-            ));
+            edges.push(graph_edge(from.clone(), target, relation, "historical", event));
         }
         if let (Some(backpressure), Some(backpressure_generation)) =
             (benchmark.backpressure, benchmark.backpressure_generation)
         {
             edges.push(graph_edge(
                 from.clone(),
-                object_ref_json(
-                    "network-backpressure",
-                    backpressure,
-                    backpressure_generation,
-                ),
+                object_ref_json("network-backpressure", backpressure, backpressure_generation),
                 "network-benchmark->network-backpressure",
                 "historical",
                 event,
@@ -14331,11 +13383,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
     }
     for benchmark in &package.semantic.network_recovery_benchmarks {
-        let from = object_ref_json(
-            "network-recovery-benchmark",
-            benchmark.id,
-            benchmark.generation,
-        );
+        let from =
+            object_ref_json("network-recovery-benchmark", benchmark.id, benchmark.generation);
         let event = Some(benchmark.recorded_at_event);
         for (target, relation) in [
             (
@@ -14370,31 +13419,17 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 ),
                 "network-recovery-benchmark->packet-device",
             ),
+            (object_ref_manifest_json(&benchmark.backend), "network-recovery-benchmark->backend"),
             (
-                object_ref_manifest_json(&benchmark.backend),
-                "network-recovery-benchmark->backend",
-            ),
-            (
-                object_ref_json(
-                    "store",
-                    benchmark.driver_store,
-                    benchmark.driver_store_generation,
-                ),
+                object_ref_json("store", benchmark.driver_store, benchmark.driver_store_generation),
                 "network-recovery-benchmark->driver-store",
             ),
         ] {
-            edges.push(graph_edge(
-                from.clone(),
-                target,
-                relation,
-                "historical",
-                event,
-            ));
+            edges.push(graph_edge(from.clone(), target, relation, "historical", event));
         }
-        if let (Some(fault_injection), Some(fault_injection_generation)) = (
-            benchmark.fault_injection,
-            benchmark.fault_injection_generation,
-        ) {
+        if let (Some(fault_injection), Some(fault_injection_generation)) =
+            (benchmark.fault_injection, benchmark.fault_injection_generation)
+        {
             edges.push(graph_edge(
                 from.clone(),
                 object_ref_json(
@@ -14419,22 +13454,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     }
     for resolution in &package.semantic.network_rx_wait_resolutions {
         edges.push(graph_edge(
-            object_ref_json(
-                "network-rx-wait-resolution",
-                resolution.id,
-                resolution.generation,
-            ),
+            object_ref_json("network-rx-wait-resolution", resolution.id, resolution.generation),
             object_ref_json("io-wait", resolution.io_wait, resolution.io_wait_generation),
             "network-rx-wait-resolution->io-wait",
             "historical",
             Some(resolution.resolved_at_event),
         ));
         edges.push(graph_edge(
-            object_ref_json(
-                "network-rx-wait-resolution",
-                resolution.id,
-                resolution.generation,
-            ),
+            object_ref_json("network-rx-wait-resolution", resolution.id, resolution.generation),
             object_ref_json(
                 "network-rx-interrupt",
                 resolution.rx_interrupt,
@@ -14445,16 +13472,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             Some(resolution.resolved_at_event),
         ));
         edges.push(graph_edge(
-            object_ref_json(
-                "network-rx-wait-resolution",
-                resolution.id,
-                resolution.generation,
-            ),
-            object_ref_json(
-                "packet-queue",
-                resolution.rx_queue,
-                resolution.rx_queue_generation,
-            ),
+            object_ref_json("network-rx-wait-resolution", resolution.id, resolution.generation),
+            object_ref_json("packet-queue", resolution.rx_queue, resolution.rx_queue_generation),
             "network-rx-wait-resolution->rx-queue",
             "historical",
             Some(resolution.resolved_at_event),
@@ -14475,11 +13494,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "packet-device",
-                gate.packet_device,
-                gate.packet_device_generation,
-            ),
+            object_ref_json("packet-device", gate.packet_device, gate.packet_device_generation),
             "network-tx-capability-gate->packet-device",
             "historical",
             Some(gate.recorded_at_event),
@@ -14504,11 +13519,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for completion in &package.semantic.network_tx_completions {
-        let from = object_ref_json(
-            "network-tx-completion",
-            completion.id,
-            completion.generation,
-        );
+        let from = object_ref_json("network-tx-completion", completion.id, completion.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -14576,10 +13587,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 Some(interrupt.recorded_at_event),
             ));
         }
-        if let (Some(activation), Some(generation)) = (
-            interrupt.target_activation,
-            interrupt.target_activation_generation,
-        ) {
+        if let (Some(activation), Some(generation)) =
+            (interrupt.target_activation, interrupt.target_activation_generation)
+        {
             edges.push(graph_edge(
                 from.clone(),
                 object_ref_json("activation", activation, generation),
@@ -14635,44 +13645,28 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                remote.target_hart,
-                remote.target_hart_generation_before,
-            ),
+            object_ref_json("hart", remote.target_hart, remote.target_hart_generation_before),
             "target-hart-before",
             "historical",
             Some(remote.preempted_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                remote.target_hart,
-                remote.target_hart_generation_after,
-            ),
+            object_ref_json("hart", remote.target_hart, remote.target_hart_generation_after),
             "target-hart-after",
             "historical",
             Some(remote.preempted_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                remote.activation,
-                remote.activation_generation_before,
-            ),
+            object_ref_json("activation", remote.activation, remote.activation_generation_before),
             "activation-before",
             "historical",
             Some(remote.preempted_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                remote.activation,
-                remote.activation_generation_after,
-            ),
+            object_ref_json("activation", remote.activation, remote.activation_generation_after),
             "activation-after",
             "historical",
             Some(remote.preempted_at_event),
@@ -14703,33 +13697,22 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                remote.target_hart,
-                remote.target_hart_generation_before,
-            ),
+            object_ref_json("hart", remote.target_hart, remote.target_hart_generation_before),
             "target-hart-before",
             "historical",
             Some(remote.parked_at_event),
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "hart",
-                remote.target_hart,
-                remote.target_hart_generation_after,
-            ),
+            object_ref_json("hart", remote.target_hart, remote.target_hart_generation_after),
             "target-hart-after",
             "historical",
             Some(remote.parked_at_event),
         ));
     }
     for attribution in &package.semantic.hart_event_attributions {
-        let from = object_ref_json(
-            "hart-event-attribution",
-            attribution.id,
-            attribution.generation,
-        );
+        let from =
+            object_ref_json("hart-event-attribution", attribution.id, attribution.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json("hart", attribution.hart, attribution.hart_generation),
@@ -14795,11 +13778,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "runnable-queue",
-                preemption.queue,
-                preemption.queue_generation,
-            ),
+            object_ref_json("runnable-queue", preemption.queue, preemption.queue_generation),
             "queued-into",
             "historical",
             Some(preemption.preempted_at_event),
@@ -14856,11 +13835,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for decision in &package.semantic.cross_hart_scheduler_decisions {
-        let from = object_ref_json(
-            "cross-hart-scheduler-decision",
-            decision.id,
-            decision.generation,
-        );
+        let from =
+            object_ref_json("cross-hart-scheduler-decision", decision.id, decision.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -14874,22 +13850,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                decision.deciding_hart,
-                decision.deciding_hart_generation,
-            ),
+            object_ref_json("hart", decision.deciding_hart, decision.deciding_hart_generation),
             "deciding-hart",
             "historical",
             Some(decision.decided_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                decision.target_hart,
-                decision.target_hart_generation,
-            ),
+            object_ref_json("hart", decision.target_hart, decision.target_hart_generation),
             "target-hart",
             "historical",
             Some(decision.decided_at_event),
@@ -14939,22 +13907,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                migration.source_hart,
-                migration.source_hart_generation,
-            ),
+            object_ref_json("hart", migration.source_hart, migration.source_hart_generation),
             "source-hart",
             "historical",
             Some(migration.migrated_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "hart",
-                migration.target_hart,
-                migration.target_hart_generation,
-            ),
+            object_ref_json("hart", migration.target_hart, migration.target_hart_generation),
             "target-hart",
             "historical",
             Some(migration.migrated_at_event),
@@ -14987,9 +13947,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 object_ref_manifest_json(source_vector_state),
                 "source-vector-state",
                 "historical",
-                migration
-                    .vector_migrated_at_event
-                    .or(Some(migration.migrated_at_event)),
+                migration.vector_migrated_at_event.or(Some(migration.migrated_at_event)),
             ));
         }
         if let Some(migrated_vector_state) = &migration.migrated_vector_state {
@@ -14998,9 +13956,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 object_ref_manifest_json(migrated_vector_state),
                 "migrated-vector-state",
                 "historical",
-                migration
-                    .vector_migrated_at_event
-                    .or(Some(migration.migrated_at_event)),
+                migration.vector_migrated_at_event.or(Some(migration.migrated_at_event)),
             ));
         }
     }
@@ -15028,11 +13984,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
     }
     for rendezvous in &package.semantic.stop_the_world_rendezvous {
-        let from = object_ref_json(
-            "stop-the-world-rendezvous",
-            rendezvous.id,
-            rendezvous.generation,
-        );
+        let from =
+            object_ref_json("stop-the-world-rendezvous", rendezvous.id, rendezvous.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -15089,11 +14042,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
     }
     for quiescence in &package.semantic.smp_cleanup_quiescence {
-        let from = object_ref_json(
-            "smp-cleanup-quiescence",
-            quiescence.id,
-            quiescence.generation,
-        );
+        let from = object_ref_json("smp-cleanup-quiescence", quiescence.id, quiescence.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -15107,11 +14056,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                quiescence.store,
-                quiescence.result_store_generation,
-            ),
+            object_ref_json("store", quiescence.store, quiescence.result_store_generation),
             "dead-store",
             "historical",
             Some(quiescence.validated_at_event),
@@ -15236,11 +14181,8 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
     }
     for record in &package.semantic.integrated_smp_preemption_cleanups {
-        let from = object_ref_json(
-            "integrated-smp-preemption-cleanup",
-            record.id,
-            record.generation,
-        );
+        let from =
+            object_ref_json("integrated-smp-preemption-cleanup", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-stress-run",
@@ -15356,22 +14298,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         }
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                &record.backend.kind,
-                record.backend.id,
-                record.backend.generation,
-            ),
+            object_ref_json(&record.backend.kind, record.backend.id, record.backend.generation),
             "integrated-network-backend",
             "historical",
             Some(record.recorded_at_event),
         ));
     }
     for record in &package.semantic.integrated_disk_preempt_faults {
-        let from = object_ref_json(
-            "integrated-disk-preempt-fault",
-            record.id,
-            record.generation,
-        );
+        let from = object_ref_json("integrated-disk-preempt-fault", record.id, record.generation);
         for (label, kind, id, generation) in [
             (
                 "integrated-preemption",
@@ -15397,12 +14331,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 record.block_wait,
                 record.block_wait_generation,
             ),
-            (
-                "integrated-wait-token",
-                "wait-token",
-                record.wait,
-                record.wait_generation,
-            ),
+            ("integrated-wait-token", "wait-token", record.wait, record.wait_generation),
             (
                 "integrated-block-request",
                 "block-request-object",
@@ -15472,22 +14401,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
     for dma_buffer in &package.semantic.dma_buffer_objects {
         edges.push(graph_edge(
             object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
-            object_ref_json(
-                "descriptor",
-                dma_buffer.descriptor,
-                dma_buffer.descriptor_generation,
-            ),
+            object_ref_json("descriptor", dma_buffer.descriptor, dma_buffer.descriptor_generation),
             "dma-buffer-descriptor",
             "live",
             Some(dma_buffer.recorded_at_event),
         ));
         edges.push(graph_edge(
             object_ref_json("dma-buffer", dma_buffer.id, dma_buffer.generation),
-            object_ref_json(
-                "resource",
-                dma_buffer.resource,
-                dma_buffer.resource_generation,
-            ),
+            object_ref_json("resource", dma_buffer.resource, dma_buffer.resource_generation),
             "dma-buffer-resource",
             "live",
             Some(dma_buffer.recorded_at_event),
@@ -15503,11 +14424,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             object_ref_json("mmio-region", mmio_region.id, mmio_region.generation),
-            object_ref_json(
-                "resource",
-                mmio_region.resource,
-                mmio_region.resource_generation,
-            ),
+            object_ref_json("resource", mmio_region.resource, mmio_region.resource_generation),
             "mmio-region-resource",
             "live",
             Some(mmio_region.recorded_at_event),
@@ -15533,11 +14450,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("irq-event", irq_event.id, irq_event.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "irq-line",
-                irq_event.irq_line,
-                irq_event.irq_line_generation,
-            ),
+            object_ref_json("irq-line", irq_event.irq_line, irq_event.irq_line_generation),
             "irq-event-line",
             "historical",
             Some(irq_event.recorded_at_event),
@@ -15551,11 +14464,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "store",
-                irq_event.driver_store,
-                irq_event.driver_store_generation,
-            ),
+            object_ref_json("store", irq_event.driver_store, irq_event.driver_store_generation),
             "irq-event-driver-store",
             "historical",
             Some(irq_event.recorded_at_event),
@@ -15601,11 +14510,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("driver-store-binding", binding.id, binding.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                binding.driver_store,
-                binding.driver_store_generation,
-            ),
+            object_ref_json("store", binding.driver_store, binding.driver_store_generation),
             "driver-store-binding-store",
             "live",
             Some(binding.recorded_at_event),
@@ -15630,11 +14535,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from,
-            object_ref_json(
-                "capability",
-                binding.capability,
-                binding.capability_generation,
-            ),
+            object_ref_json("capability", binding.capability, binding.capability_generation),
             "driver-store-binding-ledger",
             "live",
             Some(binding.recorded_at_event),
@@ -15651,11 +14552,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                io_wait.driver_store,
-                io_wait.driver_store_generation,
-            ),
+            object_ref_json("store", io_wait.driver_store, io_wait.driver_store_generation),
             "io-wait-driver-store",
             "historical",
             Some(io_wait.created_at_event),
@@ -15685,10 +14582,9 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
             "historical",
             Some(io_wait.created_at_event),
         ));
-        if let (Some(irq_event), Some(irq_event_generation)) = (
-            io_wait.completion_irq_event,
-            io_wait.completion_irq_event_generation,
-        ) {
+        if let (Some(irq_event), Some(irq_event_generation)) =
+            (io_wait.completion_irq_event, io_wait.completion_irq_event_generation)
+        {
             edges.push(graph_edge(
                 from,
                 object_ref_json("irq-event", irq_event, irq_event_generation),
@@ -15702,11 +14598,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("io-cleanup", cleanup.id, cleanup.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "store",
-                cleanup.driver_store,
-                cleanup.driver_store_generation,
-            ),
+            object_ref_json("store", cleanup.driver_store, cleanup.driver_store_generation),
             "io-cleanup-driver-store",
             "historical",
             Some(cleanup.started_at_event),
@@ -15853,22 +14745,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                resume.activation,
-                resume.activation_generation_before,
-            ),
+            object_ref_json("activation", resume.activation, resume.activation_generation_before),
             "resumed-from",
             "historical",
             Some(resume.resumed_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                resume.activation,
-                resume.activation_generation_after,
-            ),
+            object_ref_json("activation", resume.activation, resume.activation_generation_after),
             "resumed-to",
             "historical",
             Some(resume.resumed_at_event),
@@ -15907,9 +14791,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 object_ref_manifest_json(saved_vector_state),
                 "restores-saved-vector-state",
                 "historical",
-                resume
-                    .vector_restored_at_event
-                    .or(Some(resume.resumed_at_event)),
+                resume.vector_restored_at_event.or(Some(resume.resumed_at_event)),
             ));
         }
         if let Some(restored_vector_state) = &resume.restored_vector_state {
@@ -15918,18 +14800,13 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
                 object_ref_manifest_json(restored_vector_state),
                 "restored-vector-state",
                 "historical",
-                resume
-                    .vector_restored_at_event
-                    .or(Some(resume.resumed_at_event)),
+                resume.vector_restored_at_event.or(Some(resume.resumed_at_event)),
             ));
         }
     }
     for activation_wait in &package.semantic.activation_waits {
-        let from = object_ref_json(
-            "activation-wait",
-            activation_wait.id,
-            activation_wait.generation,
-        );
+        let from =
+            object_ref_json("activation-wait", activation_wait.id, activation_wait.generation);
         edges.push(graph_edge(
             from.clone(),
             object_ref_json(
@@ -15954,11 +14831,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "wait-token",
-                activation_wait.wait,
-                activation_wait.wait_generation,
-            ),
+            object_ref_json("wait-token", activation_wait.wait, activation_wait.wait_generation),
             "created-wait",
             "historical",
             Some(activation_wait.blocked_at_event),
@@ -15991,22 +14864,14 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                cleanup.activation,
-                cleanup.activation_generation_before,
-            ),
+            object_ref_json("activation", cleanup.activation, cleanup.activation_generation_before),
             "sealed-from",
             "historical",
             Some(cleanup.started_at_event),
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                cleanup.activation,
-                cleanup.activation_generation_after,
-            ),
+            object_ref_json("activation", cleanup.activation, cleanup.activation_generation_after),
             "sealed-to",
             "cleanup-effect",
             Some(cleanup.completed_at_event),
@@ -16036,11 +14901,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "preemption",
-                sample.preemption,
-                sample.preemption_generation,
-            ),
+            object_ref_json("preemption", sample.preemption, sample.preemption_generation),
             "measured-preemption",
             "historical",
             Some(sample.recorded_at_event),
@@ -16082,11 +14943,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         if let Some(activation) = trap.activation {
             edges.push(graph_edge(
                 from.clone(),
-                object_ref_json(
-                    "activation",
-                    activation,
-                    trap.activation_generation.unwrap_or(0),
-                ),
+                object_ref_json("activation", activation, trap.activation_generation.unwrap_or(0)),
                 "recorded",
                 "historical",
                 None,
@@ -16095,11 +14952,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         if let Some(code_object) = trap.code_object {
             edges.push(graph_edge(
                 from.clone(),
-                object_ref_json(
-                    "code-object",
-                    code_object,
-                    trap.code_generation.unwrap_or(0),
-                ),
+                object_ref_json("code-object", code_object, trap.code_generation.unwrap_or(0)),
                 "recorded",
                 "historical",
                 None,
@@ -16119,11 +14972,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         let from = object_ref_json("hostcall", hostcall.id, hostcall.generation);
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "activation",
-                hostcall.activation,
-                hostcall.activation_generation,
-            ),
+            object_ref_json("activation", hostcall.activation, hostcall.activation_generation),
             "recorded",
             "historical",
             None,
@@ -16137,11 +14986,7 @@ fn history_graph_edges(package: &MigrationPackageManifest) -> Vec<serde_json::Va
         ));
         edges.push(graph_edge(
             from.clone(),
-            object_ref_json(
-                "code-object",
-                hostcall.code_object,
-                hostcall.code_generation,
-            ),
+            object_ref_json("code-object", hostcall.code_object, hostcall.code_generation),
             "recorded",
             "historical",
             None,
@@ -16571,11 +15416,7 @@ fn inspect_package_object(
                 package.semantic.roots.event_log_tail.len()
             );
             print_roots_filtered("event", &package.semantic.roots.event_log_tail, filter);
-            print_roots_filtered(
-                "hostcall",
-                &package.semantic.roots.hostcall_trace_roots,
-                filter,
-            );
+            print_roots_filtered("hostcall", &package.semantic.roots.hostcall_trace_roots, filter);
         }
         "hostcall" => {
             println!(
@@ -17032,10 +15873,7 @@ fn inspect_package_object(
                     .vector_state
                     .as_ref()
                     .map(|reference| {
-                        format!(
-                            "{}:{}@{}",
-                            reference.kind, reference.id, reference.generation
-                        )
+                        format!("{}:{}@{}", reference.kind, reference.id, reference.generation)
                     })
                     .unwrap_or_else(|| "none".to_owned());
                 let line = format!(
@@ -17715,17 +16553,10 @@ fn inspect_package_object(
                 );
                 print_if_matches(&line, filter);
             }
-            if package
-                .semantic
-                .integrated_smp_preemption_cleanups
-                .is_empty()
-            {
+            if package.semantic.integrated_smp_preemption_cleanups.is_empty() {
                 print_roots_filtered(
                     "integrated-smp-preemption-cleanup",
-                    &package
-                        .semantic
-                        .roots
-                        .integrated_smp_preemption_cleanup_roots,
+                    &package.semantic.roots.integrated_smp_preemption_cleanup_roots,
                     filter,
                 );
             }
@@ -17973,17 +16804,10 @@ fn inspect_package_object(
                 );
                 print_if_matches(&line, filter);
             }
-            if package
-                .semantic
-                .integrated_display_scheduler_loads
-                .is_empty()
-            {
+            if package.semantic.integrated_display_scheduler_loads.is_empty() {
                 print_roots_filtered(
                     "integrated-display-scheduler-load",
-                    &package
-                        .semantic
-                        .roots
-                        .integrated_display_scheduler_load_roots,
+                    &package.semantic.roots.integrated_display_scheduler_load_roots,
                     filter,
                 );
             }
@@ -18027,17 +16851,10 @@ fn inspect_package_object(
                 );
                 print_if_matches(&line, filter);
             }
-            if package
-                .semantic
-                .integrated_snapshot_io_lease_barriers
-                .is_empty()
-            {
+            if package.semantic.integrated_snapshot_io_lease_barriers.is_empty() {
                 print_roots_filtered(
                     "integrated-snapshot-io-lease-barrier",
-                    &package
-                        .semantic
-                        .roots
-                        .integrated_snapshot_io_lease_barrier_roots,
+                    &package.semantic.roots.integrated_snapshot_io_lease_barrier_roots,
                     filter,
                 );
             }
@@ -18073,17 +16890,10 @@ fn inspect_package_object(
                 );
                 print_if_matches(&line, filter);
             }
-            if package
-                .semantic
-                .integrated_code_publish_smp_workloads
-                .is_empty()
-            {
+            if package.semantic.integrated_code_publish_smp_workloads.is_empty() {
                 print_roots_filtered(
                     "integrated-code-publish-smp-workload",
-                    &package
-                        .semantic
-                        .roots
-                        .integrated_code_publish_smp_workload_roots,
+                    &package.semantic.roots.integrated_code_publish_smp_workload_roots,
                     filter,
                 );
             }
@@ -18214,23 +17024,13 @@ fn inspect_package_object_json(
         "artifact" => (
             "artifact",
             package.semantic.target_artifact_count,
-            package
-                .semantic
-                .target_artifacts
-                .iter()
-                .map(artifact_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.target_artifacts.iter().map(artifact_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.target_artifact_roots.len() }),
         ),
         "code" => (
             "code",
             package.semantic.code_object_count,
-            package
-                .semantic
-                .code_objects
-                .iter()
-                .map(code_object_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.code_objects.iter().map(code_object_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.code_object_roots.len() }),
         ),
         "store" => (
@@ -18247,12 +17047,7 @@ fn inspect_package_object_json(
         "activation" => (
             "activation",
             package.semantic.activation_record_count,
-            package
-                .semantic
-                .activation_records
-                .iter()
-                .map(activation_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.activation_records.iter().map(activation_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.activation_record_roots.len() }),
         ),
         "cap" | "capability" => (
@@ -18299,34 +17094,19 @@ fn inspect_package_object_json(
         "trap" => (
             "trap",
             package.semantic.trap_record_count,
-            package
-                .semantic
-                .trap_records
-                .iter()
-                .map(trap_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.trap_records.iter().map(trap_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.trap_roots.len() }),
         ),
         "hostcall" => (
             "hostcall",
             package.semantic.hostcall_trace_count,
-            package
-                .semantic
-                .hostcall_trace
-                .iter()
-                .map(hostcall_trace_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.hostcall_trace.iter().map(hostcall_trace_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.hostcall_trace_roots.len() }),
         ),
         "cleanup" => (
             "cleanup",
             package.semantic.cleanup_transaction_count,
-            package
-                .semantic
-                .cleanup_transactions
-                .iter()
-                .map(cleanup_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.cleanup_transactions.iter().map(cleanup_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.cleanup_roots.len() }),
         ),
         "file-handle-capability" | "file-handle" => (
@@ -18343,12 +17123,7 @@ fn inspect_package_object_json(
         "fs-wait" | "filesystem-wait" | "file-wait" => (
             "fs-wait",
             package.semantic.fs_wait_count,
-            package
-                .semantic
-                .fs_waits
-                .iter()
-                .map(fs_wait_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.fs_waits.iter().map(fs_wait_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.fs_wait_roots.len() }),
         ),
         "block-driver-cleanup" | "disk-driver-cleanup" | "disk-cleanup" => (
@@ -18422,12 +17197,7 @@ fn inspect_package_object_json(
         "vector-state" | "vector" | "simd-vector-state" => (
             "vector-state",
             package.semantic.vector_state_count,
-            package
-                .semantic
-                .vector_states
-                .iter()
-                .map(vector_state_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.vector_states.iter().map(vector_state_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.vector_state_roots.len() }),
         ),
         "simd-fault-injection" | "simd-fault" => (
@@ -18444,12 +17214,7 @@ fn inspect_package_object_json(
         "simd-benchmark" | "simd-scalar-vector-benchmark" => (
             "simd-benchmark",
             package.semantic.simd_benchmark_count,
-            package
-                .semantic
-                .simd_benchmarks
-                .iter()
-                .map(simd_benchmark_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.simd_benchmarks.iter().map(simd_benchmark_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.simd_benchmark_roots.len() }),
         ),
         "simd-context-switch-benchmark" | "simd-context-switch" | "simd-switch-benchmark" => (
@@ -18485,12 +17250,7 @@ fn inspect_package_object_json(
         "display-object" | "display" | "display-mode" => (
             "display-object",
             package.semantic.display_object_count,
-            package
-                .semantic
-                .display_objects
-                .iter()
-                .map(display_object_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.display_objects.iter().map(display_object_view_v1).collect::<Vec<_>>(),
             serde_json::json!({
                 "root_count": package.semantic.roots.display_object_roots.len()
             }),
@@ -18821,12 +17581,7 @@ fn inspect_package_object_json(
         "command" => (
             "command",
             package.semantic.command_result_count,
-            package
-                .semantic
-                .command_results
-                .iter()
-                .map(command_result_view_v1)
-                .collect::<Vec<_>>(),
+            package.semantic.command_results.iter().map(command_result_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.command_result_roots.len() }),
         ),
         "contract" => (
@@ -19238,11 +17993,7 @@ fn replay_until(
         package.semantic.roots.network_generation_audit_roots.len(),
         package.semantic.roots.network_fault_injection_roots.len(),
         package.semantic.roots.network_benchmark_roots.len(),
-        package
-            .semantic
-            .roots
-            .network_recovery_benchmark_roots
-            .len(),
+        package.semantic.roots.network_recovery_benchmark_roots.len(),
         package.semantic.roots.block_device_object_roots.len(),
         package.semantic.roots.block_range_object_roots.len(),
         package.semantic.roots.block_request_object_roots.len(),
@@ -19318,11 +18069,7 @@ fn replay_until(
     for benchmark in &package.semantic.roots.smp_scaling_benchmark_roots {
         println!("replay smp-scaling-benchmark {benchmark}");
     }
-    for integrated in &package
-        .semantic
-        .roots
-        .integrated_smp_preemption_cleanup_roots
-    {
+    for integrated in &package.semantic.roots.integrated_smp_preemption_cleanup_roots {
         println!("replay integrated-smp-preemption-cleanup {integrated}");
     }
     for integrated in &package.semantic.roots.integrated_smp_network_fault_roots {
@@ -19337,25 +18084,13 @@ fn replay_until(
     for integrated in &package.semantic.roots.integrated_network_disk_io_roots {
         println!("replay integrated-network-disk-io {integrated}");
     }
-    for integrated in &package
-        .semantic
-        .roots
-        .integrated_display_scheduler_load_roots
-    {
+    for integrated in &package.semantic.roots.integrated_display_scheduler_load_roots {
         println!("replay integrated-display-scheduler-load {integrated}");
     }
-    for integrated in &package
-        .semantic
-        .roots
-        .integrated_snapshot_io_lease_barrier_roots
-    {
+    for integrated in &package.semantic.roots.integrated_snapshot_io_lease_barrier_roots {
         println!("replay integrated-snapshot-io-lease-barrier {integrated}");
     }
-    for integrated in &package
-        .semantic
-        .roots
-        .integrated_code_publish_smp_workload_roots
-    {
+    for integrated in &package.semantic.roots.integrated_code_publish_smp_workload_roots {
         println!("replay integrated-code-publish-smp-workload {integrated}");
     }
     for integrated in &package.semantic.roots.integrated_display_panic_roots {
@@ -19549,10 +18284,7 @@ fn print_replay_json(
     package: &MigrationPackageManifest,
 ) -> Result<(), Box<dyn Error>> {
     let mut roots = serde_json::Map::new();
-    roots.insert(
-        "tasks".to_owned(),
-        serde_json::json!(package.semantic.roots.task_roots.len()),
-    );
+    roots.insert("tasks".to_owned(), serde_json::json!(package.semantic.roots.task_roots.len()));
     roots.insert(
         "timer_interrupts".to_owned(),
         serde_json::json!(package.semantic.roots.timer_interrupt_roots.len()),
@@ -19571,13 +18303,7 @@ fn print_replay_json(
     );
     roots.insert(
         "cross_hart_scheduler_decisions".to_owned(),
-        serde_json::json!(
-            package
-                .semantic
-                .roots
-                .cross_hart_scheduler_decision_roots
-                .len()
-        ),
+        serde_json::json!(package.semantic.roots.cross_hart_scheduler_decision_roots.len()),
     );
     roots.insert(
         "activation_migrations".to_owned(),
@@ -19693,23 +18419,11 @@ fn print_replay_json(
     );
     roots.insert(
         "network_rx_wait_resolutions".to_owned(),
-        serde_json::json!(
-            package
-                .semantic
-                .roots
-                .network_rx_wait_resolution_roots
-                .len()
-        ),
+        serde_json::json!(package.semantic.roots.network_rx_wait_resolution_roots.len()),
     );
     roots.insert(
         "network_tx_capability_gates".to_owned(),
-        serde_json::json!(
-            package
-                .semantic
-                .roots
-                .network_tx_capability_gate_roots
-                .len()
-        ),
+        serde_json::json!(package.semantic.roots.network_tx_capability_gate_roots.len()),
     );
     roots.insert(
         "network_tx_completions".to_owned(),
@@ -19757,13 +18471,7 @@ fn print_replay_json(
     );
     roots.insert(
         "network_recovery_benchmarks".to_owned(),
-        serde_json::json!(
-            package
-                .semantic
-                .roots
-                .network_recovery_benchmark_roots
-                .len()
-        ),
+        serde_json::json!(package.semantic.roots.network_recovery_benchmark_roots.len()),
     );
     roots.insert(
         "block_devices".to_owned(),
@@ -19851,13 +18559,7 @@ fn print_replay_json(
     );
     roots.insert(
         "block_request_generation_audits".to_owned(),
-        serde_json::json!(
-            package
-                .semantic
-                .roots
-                .block_request_generation_audit_roots
-                .len()
-        ),
+        serde_json::json!(package.semantic.roots.block_request_generation_audit_roots.len()),
     );
     roots.insert(
         "block_benchmarks".to_owned(),
@@ -19879,10 +18581,7 @@ fn print_replay_json(
         "authorities".to_owned(),
         serde_json::json!(package.semantic.roots.authority_roots.len()),
     );
-    roots.insert(
-        "stores".to_owned(),
-        serde_json::json!(package.semantic.roots.store_roots.len()),
-    );
+    roots.insert("stores".to_owned(), serde_json::json!(package.semantic.roots.store_roots.len()));
     roots.insert(
         "capabilities".to_owned(),
         serde_json::json!(package.semantic.roots.capability_roots.len()),
@@ -19923,10 +18622,7 @@ fn print_replay_json(
         "activation_records".to_owned(),
         serde_json::json!(package.semantic.roots.activation_record_roots.len()),
     );
-    roots.insert(
-        "traps".to_owned(),
-        serde_json::json!(package.semantic.roots.trap_roots.len()),
-    );
+    roots.insert("traps".to_owned(), serde_json::json!(package.semantic.roots.trap_roots.len()));
     roots.insert(
         "hostcalls".to_owned(),
         serde_json::json!(package.semantic.roots.hostcall_trace_roots.len()),
@@ -20023,10 +18719,7 @@ fn print_replay_json(
         "activation_record_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.activation_record_roots),
     );
-    roots.insert(
-        "trap_roots".to_owned(),
-        serde_json::json!(&package.semantic.roots.trap_roots),
-    );
+    roots.insert("trap_roots".to_owned(), serde_json::json!(&package.semantic.roots.trap_roots));
     roots.insert(
         "hostcall_trace_roots".to_owned(),
         serde_json::json!(&package.semantic.roots.hostcall_trace_roots),
@@ -20445,102 +19138,41 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.substrate_boundary.active_mmio_authority_count,
         package.substrate_boundary.active_dma_authority_count,
         package.substrate_boundary.active_irq_authority_count,
-        package
-            .substrate_boundary
-            .active_packet_device_authority_count,
-        package
-            .substrate_boundary
-            .active_virtio_queue_authority_count,
+        package.substrate_boundary.active_packet_device_authority_count,
+        package.substrate_boundary.active_virtio_queue_authority_count,
         package.substrate_boundary.cow_epoch,
         package.substrate_boundary.background_copy_pages
     );
     print_roots("hart", &package.semantic.roots.hart_roots);
     print_roots("boundary", &package.semantic.roots.boundary_roots);
-    print_roots(
-        "artifact-verification",
-        &package.semantic.roots.artifact_verification_roots,
-    );
-    print_roots(
-        "store-activation",
-        &package.semantic.roots.store_activation_roots,
-    );
-    print_roots(
-        "executor-transition",
-        &package.semantic.roots.executor_transition_roots,
-    );
-    print_roots(
-        "target-artifact",
-        &package.semantic.roots.target_artifact_roots,
-    );
+    print_roots("artifact-verification", &package.semantic.roots.artifact_verification_roots);
+    print_roots("store-activation", &package.semantic.roots.store_activation_roots);
+    print_roots("executor-transition", &package.semantic.roots.executor_transition_roots);
+    print_roots("target-artifact", &package.semantic.roots.target_artifact_roots);
     print_roots("code-object", &package.semantic.roots.code_object_roots);
-    print_roots(
-        "activation-record",
-        &package.semantic.roots.activation_record_roots,
-    );
+    print_roots("activation-record", &package.semantic.roots.activation_record_roots);
     print_roots("trap", &package.semantic.roots.trap_roots);
     print_roots("hostcall", &package.semantic.roots.hostcall_trace_roots);
-    print_roots(
-        "migration-object",
-        &package.semantic.roots.migration_object_roots,
-    );
-    print_roots(
-        "substrate-event",
-        &package.semantic.roots.substrate_event_roots,
-    );
-    print_roots(
-        "command-result",
-        &package.semantic.roots.command_result_roots,
-    );
-    print_roots(
-        "interface-event",
-        &package.semantic.roots.interface_event_roots,
-    );
+    print_roots("migration-object", &package.semantic.roots.migration_object_roots);
+    print_roots("substrate-event", &package.semantic.roots.substrate_event_roots);
+    print_roots("command-result", &package.semantic.roots.command_result_roots);
+    print_roots("interface-event", &package.semantic.roots.interface_event_roots);
     print_roots("socket-wait", &package.semantic.roots.socket_wait_roots);
-    print_roots(
-        "network-backpressure",
-        &package.semantic.roots.network_backpressure_roots,
-    );
-    print_roots(
-        "network-driver-cleanup",
-        &package.semantic.roots.network_driver_cleanup_roots,
-    );
-    print_roots(
-        "fat-adapter-object",
-        &package.semantic.roots.fat_adapter_object_roots,
-    );
-    print_roots(
-        "ext4-adapter-object",
-        &package.semantic.roots.ext4_adapter_object_roots,
-    );
-    print_roots(
-        "file-handle-capability",
-        &package.semantic.roots.file_handle_capability_roots,
-    );
+    print_roots("network-backpressure", &package.semantic.roots.network_backpressure_roots);
+    print_roots("network-driver-cleanup", &package.semantic.roots.network_driver_cleanup_roots);
+    print_roots("fat-adapter-object", &package.semantic.roots.fat_adapter_object_roots);
+    print_roots("ext4-adapter-object", &package.semantic.roots.ext4_adapter_object_roots);
+    print_roots("file-handle-capability", &package.semantic.roots.file_handle_capability_roots);
     print_roots("fs-wait", &package.semantic.roots.fs_wait_roots);
-    print_roots(
-        "block-driver-cleanup",
-        &package.semantic.roots.block_driver_cleanup_roots,
-    );
-    print_roots(
-        "block-pending-io-policy",
-        &package.semantic.roots.block_pending_io_policy_roots,
-    );
+    print_roots("block-driver-cleanup", &package.semantic.roots.block_driver_cleanup_roots);
+    print_roots("block-pending-io-policy", &package.semantic.roots.block_pending_io_policy_roots);
     print_roots(
         "block-request-generation-audit",
         &package.semantic.roots.block_request_generation_audit_roots,
     );
-    print_roots(
-        "block-benchmark",
-        &package.semantic.roots.block_benchmark_roots,
-    );
-    print_roots(
-        "block-recovery-benchmark",
-        &package.semantic.roots.block_recovery_benchmark_roots,
-    );
-    print_roots(
-        "target-feature-set",
-        &package.semantic.roots.target_feature_set_roots,
-    );
+    print_roots("block-benchmark", &package.semantic.roots.block_benchmark_roots);
+    print_roots("block-recovery-benchmark", &package.semantic.roots.block_recovery_benchmark_roots);
+    print_roots("target-feature-set", &package.semantic.roots.target_feature_set_roots);
 }
 
 fn print_artifact_summary(manifest: &ArtifactBundleManifest) -> Result<(), Box<dyn Error>> {
@@ -20613,11 +19245,7 @@ fn print_plan_text(plan: &ValidatedArtifactPlan) {
         "mode policy event_log={} dmw={} fastpath={} deterministic={} capability_audit={} metadata={} nondeterminism={}",
         mode.event_log_policy(),
         mode.dmw_policy(),
-        if mode.fast_path_enabled() {
-            "enabled"
-        } else {
-            "disabled"
-        },
+        if mode.fast_path_enabled() { "enabled" } else { "disabled" },
         mode.deterministic_boundary(),
         mode.capability_audit_policy(),
         mode.debug_metadata_policy(),
@@ -20657,11 +19285,7 @@ fn print_roots(label: &str, roots: &[String]) {
 }
 
 fn display_capability_class<'a>(class: &'a str, object: &str) -> &'a str {
-    if class.is_empty() {
-        CapabilityClass::from_object(object).as_str()
-    } else {
-        class
-    }
+    if class.is_empty() { CapabilityClass::from_object(object).as_str() } else { class }
 }
 
 fn display_default<'a>(value: &'a str, fallback: &'a str) -> &'a str {
@@ -20669,9 +19293,7 @@ fn display_default<'a>(value: &'a str, fallback: &'a str) -> &'a str {
 }
 
 fn display_option_u64(value: Option<u64>) -> String {
-    value
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "none".to_owned())
+    value.map(|value| value.to_string()).unwrap_or_else(|| "none".to_owned())
 }
 
 fn short_hash(hash: &str) -> &str {
@@ -20680,17 +19302,19 @@ fn short_hash(hash: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use artifact_manifest::{
         AuthorityObjectRefManifest, CleanupEffectManifest, CleanupStepManifest,
         ContractObjectRefManifest, ContractViolationManifest,
     };
-    use semantic_core::target_executor::{CleanupStep, ContractObjectKind, ContractObjectRef};
     use semantic_core::{
         AuthorityObjectRef, CapabilityClass, ContractGraphSnapshot, ExternalObjectDeclaration,
         FrontendKind, RestartPolicy, SemanticCommand, SemanticGraph, SemanticWaitKind,
-        WaitCancelReason, WaitState, validate_contract_graph,
+        WaitCancelReason, WaitState,
+        target_executor::{CleanupStep, ContractObjectKind, ContractObjectRef},
+        validate_contract_graph,
     };
+
+    use super::*;
 
     #[test]
     fn store_view_v1_exposes_stable_identity_state_and_references() {
@@ -20805,10 +19429,7 @@ mod tests {
         assert_eq!(epoll["owner"]["store_generation"], 2);
         assert_eq!(epoll["references"]["blockers"][0]["kind"], "capability");
         assert_eq!(epoll["restart_policy"], "restart-with-adjusted-timeout");
-        assert_eq!(
-            epoll["saved_context"],
-            "linux-wait-service:epoll_wait:pending"
-        );
+        assert_eq!(epoll["saved_context"], "linux-wait-service:epoll_wait:pending");
 
         let futex = wait_view_v1(&WaitRecordManifest {
             id: 30_007,
@@ -20833,18 +19454,12 @@ mod tests {
         assert_eq!(futex["state"], "cancelled");
         assert_eq!(futex["cancel_reason"], "timeout");
         assert_eq!(futex["last_error"], "timeout");
-        assert_eq!(
-            futex["saved_context"],
-            "linux-wait-service:futex_wait:timeout-cancel"
-        );
+        assert_eq!(futex["saved_context"], "linux-wait-service:futex_wait:timeout-cancel");
     }
 
     fn b4_core_view_package() -> MigrationPackageManifest {
-        let target_store = ContractObjectRefManifest {
-            kind: "store".to_owned(),
-            id: 1,
-            generation: 2,
-        };
+        let target_store =
+            ContractObjectRefManifest { kind: "store".to_owned(), id: 1, generation: 2 };
         let mut package = minimal_graph_package();
         package.package_id = "b4-core-view-boundary".to_owned();
         package.semantic.store_records.push(StoreRecordManifest {
@@ -20859,35 +19474,32 @@ mod tests {
             generation: 2,
             restart_count: 1,
         });
-        package
-            .semantic
-            .capability_records
-            .push(CapabilityRecordManifest {
-                id: 4,
-                subject: "driver_virtio_net".to_owned(),
-                object: "packet-device.net0".to_owned(),
-                object_ref: Some(AuthorityObjectRefManifest {
-                    scope: "internal".to_owned(),
-                    class: "packet-device".to_owned(),
-                    object: ContractObjectRefManifest {
-                        kind: "resource".to_owned(),
-                        id: 99,
-                        generation: 1,
-                    },
-                }),
-                rights: vec!["rx".to_owned()],
-                lifetime: "store".to_owned(),
+        package.semantic.capability_records.push(CapabilityRecordManifest {
+            id: 4,
+            subject: "driver_virtio_net".to_owned(),
+            object: "packet-device.net0".to_owned(),
+            object_ref: Some(AuthorityObjectRefManifest {
+                scope: "internal".to_owned(),
                 class: "packet-device".to_owned(),
-                owner_store: Some(1),
-                owner_store_generation: Some(2),
-                owner_task: None,
-                source: "manifest".to_owned(),
-                generation: 1,
-                parent: None,
-                manifest_decl: true,
-                debug_object_label: "packet-device.net0".to_owned(),
-                revoked: false,
-            });
+                object: ContractObjectRefManifest {
+                    kind: "resource".to_owned(),
+                    id: 99,
+                    generation: 1,
+                },
+            }),
+            rights: vec!["rx".to_owned()],
+            lifetime: "store".to_owned(),
+            class: "packet-device".to_owned(),
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            owner_task: None,
+            source: "manifest".to_owned(),
+            generation: 1,
+            parent: None,
+            manifest_decl: true,
+            debug_object_label: "packet-device.net0".to_owned(),
+            revoked: false,
+        });
         package.semantic.wait_records.push(WaitRecordManifest {
             id: 8,
             owner_task: None,
@@ -20907,67 +19519,60 @@ mod tests {
             restart_policy: "restart-if-allowed".to_owned(),
             saved_context: None,
         });
-        package
-            .semantic
-            .cleanup_transactions
-            .push(CleanupTransactionManifest {
-                id: 5,
-                store: 1,
-                store_generation: 2,
-                target_store_generation: 2,
-                result_store_generation: Some(2),
-                activation: None,
-                activation_generation: None,
-                code_object: None,
-                code_generation: None,
-                generation: 1,
-                started_at: 10,
-                finished_at: Some(11),
-                state: "completed".to_owned(),
-                reason: "fault".to_owned(),
-                released_dmw_leases: 1,
-                cancelled_waits: 1,
-                revoked_capabilities: vec![4],
-                revoked_capability_refs: vec![ContractObjectRefManifest {
-                    kind: "capability".to_owned(),
-                    id: 4,
-                    generation: 2,
-                }],
-                dropped_resources: 1,
-                unbound_code_object: true,
-                state_digest: "store:1@2:dead|code:none|activations=[]|leases=[]|caps=[]"
-                    .to_owned(),
-                effect: "errno".to_owned(),
-                steps: vec![CleanupStepManifest {
-                    step: "mark-store-state".to_owned(),
-                    state: "done".to_owned(),
-                    detail: "store marked dead".to_owned(),
-                    target: Some(target_store.clone()),
-                    observed_generation: Some(2),
-                    error: None,
-                    idempotency_key: "mark-store-state".to_owned(),
-                    event_seq: 11,
-                }],
-                effects: vec![CleanupEffectManifest {
-                    kind: "mark-store-dead".to_owned(),
-                    target: target_store,
-                    expected_generation: 2,
-                    status: "applied".to_owned(),
-                    event_seq: 11,
-                }],
-            });
-        package
-            .semantic
-            .command_results
-            .push(CommandResultManifest {
-                id: 12,
-                issuer: "b4-test".to_owned(),
-                command: "validate-contract-graph".to_owned(),
+        package.semantic.cleanup_transactions.push(CleanupTransactionManifest {
+            id: 5,
+            store: 1,
+            store_generation: 2,
+            target_store_generation: 2,
+            result_store_generation: Some(2),
+            activation: None,
+            activation_generation: None,
+            code_object: None,
+            code_generation: None,
+            generation: 1,
+            started_at: 10,
+            finished_at: Some(11),
+            state: "completed".to_owned(),
+            reason: "fault".to_owned(),
+            released_dmw_leases: 1,
+            cancelled_waits: 1,
+            revoked_capabilities: vec![4],
+            revoked_capability_refs: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 4,
+                generation: 2,
+            }],
+            dropped_resources: 1,
+            unbound_code_object: true,
+            state_digest: "store:1@2:dead|code:none|activations=[]|leases=[]|caps=[]".to_owned(),
+            effect: "errno".to_owned(),
+            steps: vec![CleanupStepManifest {
+                step: "mark-store-state".to_owned(),
+                state: "done".to_owned(),
+                detail: "store marked dead".to_owned(),
+                target: Some(target_store.clone()),
+                observed_generation: Some(2),
+                error: None,
+                idempotency_key: "mark-store-state".to_owned(),
+                event_seq: 11,
+            }],
+            effects: vec![CleanupEffectManifest {
+                kind: "mark-store-dead".to_owned(),
+                target: target_store,
+                expected_generation: 2,
                 status: "applied".to_owned(),
-                events: vec![10, 11],
-                effects: Vec::new(),
-                violations: Vec::new(),
-            });
+                event_seq: 11,
+            }],
+        });
+        package.semantic.command_results.push(CommandResultManifest {
+            id: 12,
+            issuer: "b4-test".to_owned(),
+            command: "validate-contract-graph".to_owned(),
+            status: "applied".to_owned(),
+            events: vec![10, 11],
+            effects: Vec::new(),
+            violations: Vec::new(),
+        });
         package
     }
 
@@ -21010,24 +19615,13 @@ mod tests {
         let mut package = minimal_graph_package();
         package.package_id = "b4-contract-error".to_owned();
         package.semantic.contract_violation_count = 1;
-        package
-            .semantic
-            .contract_violations
-            .push(ContractViolationManifest {
-                kind: "dangling-edge".to_owned(),
-                edge: "store->missing-task".to_owned(),
-                from: ContractObjectRefManifest {
-                    kind: "store".to_owned(),
-                    id: 1,
-                    generation: 1,
-                },
-                to: Some(ContractObjectRefManifest {
-                    kind: "task".to_owned(),
-                    id: 9,
-                    generation: 1,
-                }),
-                detail: "edge references missing target".to_owned(),
-            });
+        package.semantic.contract_violations.push(ContractViolationManifest {
+            kind: "dangling-edge".to_owned(),
+            edge: "store->missing-task".to_owned(),
+            from: ContractObjectRefManifest { kind: "store".to_owned(), id: 1, generation: 1 },
+            to: Some(ContractObjectRefManifest { kind: "task".to_owned(), id: 9, generation: 1 }),
+            detail: "edge references missing target".to_owned(),
+        });
 
         let contract_error = contract_validation_view_v1(&package, None);
         assert_eq!(contract_error["schema"], VIEW_SCHEMA_V1);
@@ -21046,10 +19640,7 @@ mod tests {
             structure_error["structure_validation"]["violations"][0]["code"],
             "package-structure"
         );
-        assert_eq!(
-            structure_error["violations"][1]["code"],
-            "package-structure"
-        );
+        assert_eq!(structure_error["violations"][1]["code"], "package-structure");
         assert_eq!(structure_error["last_error"], "missing roots");
     }
 
@@ -21187,18 +19778,12 @@ mod tests {
         assert_eq!(accepted["accepted"], true);
         assert_eq!(accepted["state"], "accepted");
         assert_eq!(accepted["package_roots"][0], "console_service");
-        assert_eq!(
-            accepted["target_profile"]["artifact_profile"],
-            "host-validation"
-        );
+        assert_eq!(accepted["target_profile"]["artifact_profile"], "host-validation");
         assert_eq!(
             accepted["modules"][0]["artifact_manifest"]["target_artifact_sha256"],
             "artifact-hash"
         );
-        assert_eq!(
-            accepted["modules"][0]["capability_manifest"][0]["name"],
-            "console.write"
-        );
+        assert_eq!(accepted["modules"][0]["capability_manifest"][0]["name"], "console.write");
         assert_eq!(
             accepted["modules"][0]["target_profile"]["hash_status"],
             contract_core::ARTIFACT_HASH_STATUS_MANIFEST_BOUND
@@ -21207,31 +19792,16 @@ mod tests {
             accepted["modules"][0]["target_profile"]["signature_status"],
             contract_core::ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
         );
-        assert_eq!(
-            accepted["modules"][0]["target_profile"]["signature_verified"],
-            false
-        );
+        assert_eq!(accepted["modules"][0]["target_profile"]["signature_verified"], false);
         assert_eq!(accepted["last_error"], serde_json::Value::Null);
 
-        let rejected = artifact_plan_view_v1(
-            &manifest,
-            None,
-            Some("console_service target hash mismatch"),
-        );
+        let rejected =
+            artifact_plan_view_v1(&manifest, None, Some("console_service target hash mismatch"));
         assert_eq!(rejected["accepted"], false);
         assert_eq!(rejected["state"], "rejected");
-        assert_eq!(
-            rejected["modules"][0]["target_profile"]["hash_status"],
-            "rejected"
-        );
-        assert_eq!(
-            rejected["modules"][0]["target_profile"]["signature_status"],
-            "rejected"
-        );
-        assert_eq!(
-            rejected["last_error"],
-            "console_service target hash mismatch"
-        );
+        assert_eq!(rejected["modules"][0]["target_profile"]["hash_status"], "rejected");
+        assert_eq!(rejected["modules"][0]["target_profile"]["signature_status"], "rejected");
+        assert_eq!(rejected["last_error"], "console_service target hash mismatch");
     }
 
     #[test]
@@ -21294,14 +19864,8 @@ mod tests {
         });
         assert_eq!(view["kind"], "io-cleanup");
         assert_eq!(view["owner"]["driver_store"]["generation"], 2);
-        assert_eq!(
-            view["references"]["cancelled_io_waits"][0]["kind"],
-            "io-wait"
-        );
-        assert_eq!(
-            view["references"]["released_dma_buffers"][0]["generation"],
-            1
-        );
+        assert_eq!(view["references"]["cancelled_io_waits"][0]["kind"], "io-wait");
+        assert_eq!(view["references"]["released_dma_buffers"][0]["generation"], 1);
         assert_eq!(view["steps"][0]["kind"], "cancel-io-waits");
         assert_eq!(view["last_transition"]["completed_at_event"], 57);
     }
@@ -21375,10 +19939,7 @@ mod tests {
         assert_eq!(view["observed"]["io_fault_injections"], 1);
         assert_eq!(view["validation"]["ok"], false);
         assert_eq!(view["validation"]["violation_count"], 1);
-        assert_eq!(
-            view["validation"]["violations"][0]["subject"]["kind"],
-            "io-wait"
-        );
+        assert_eq!(view["validation"]["violations"][0]["subject"]["kind"], "io-wait");
         assert_eq!(view["last_transition"]["validated_at_event"], 59);
     }
 
@@ -21551,16 +20112,10 @@ mod tests {
         });
         assert_eq!(view["kind"], "virtio-net-backend");
         assert_eq!(view["owner"]["packet_device"]["kind"], "packet-device");
-        assert_eq!(
-            view["owner"]["driver_binding"]["kind"],
-            "driver-store-binding"
-        );
+        assert_eq!(view["owner"]["driver_binding"]["kind"], "driver-store-binding");
         assert_eq!(view["owner"]["driver_binding"]["generation"], 2);
         assert_eq!(view["identity"]["provider"], "substrate_virtio");
-        assert_eq!(
-            view["identity"]["profile"],
-            "virtio-net-backend-skeleton-v1"
-        );
+        assert_eq!(view["identity"]["profile"], "virtio-net-backend-skeleton-v1");
         assert_eq!(view["contract"]["negotiated_features"], 32);
         assert_eq!(view["contract"]["queue_size"], 4);
         assert_eq!(view["last_transition"]["recorded_at_event"], 65);
@@ -21586,10 +20141,7 @@ mod tests {
             note: "rx interrupt".to_owned(),
         });
         assert_eq!(view["kind"], "network-rx-interrupt");
-        assert_eq!(
-            view["owner"]["virtio_net_backend"]["kind"],
-            "virtio-net-backend"
-        );
+        assert_eq!(view["owner"]["virtio_net_backend"]["kind"], "virtio-net-backend");
         assert_eq!(view["owner"]["packet_device"]["generation"], 4);
         assert_eq!(view["references"]["irq_event"]["kind"], "irq-event");
         assert_eq!(view["references"]["irq_event"]["generation"], 2);
@@ -21627,10 +20179,7 @@ mod tests {
         assert_eq!(view["owner"]["io_wait"]["generation"], 2);
         assert_eq!(view["references"]["wait"]["kind"], "wait-token");
         assert_eq!(view["references"]["wait"]["generation"], 3);
-        assert_eq!(
-            view["references"]["rx_interrupt"]["kind"],
-            "network-rx-interrupt"
-        );
+        assert_eq!(view["references"]["rx_interrupt"]["kind"], "network-rx-interrupt");
         assert_eq!(view["references"]["rx_queue"]["generation"], 3);
         assert_eq!(view["readiness"]["sequence"], 9);
         assert_eq!(view["last_transition"]["resolved_at_event"], 67);
@@ -21668,15 +20217,9 @@ mod tests {
         assert_eq!(view["kind"], "network-tx-capability-gate");
         assert_eq!(view["owner"]["driver_store"]["kind"], "store");
         assert_eq!(view["owner"]["driver_store"]["generation"], 2);
-        assert_eq!(
-            view["references"]["packet_descriptor"]["kind"],
-            "packet-descriptor"
-        );
+        assert_eq!(view["references"]["packet_descriptor"]["kind"], "packet-descriptor");
         assert_eq!(view["references"]["packet_descriptor"]["generation"], 2);
-        assert_eq!(
-            view["references"]["device_capability"]["kind"],
-            "device-capability"
-        );
+        assert_eq!(view["references"]["device_capability"]["kind"], "device-capability");
         assert_eq!(view["references"]["capability"]["generation"], 5);
         assert_eq!(view["authority"]["operation"], "tx");
         assert_eq!(view["authority"]["handle_slot"], 4);
@@ -21714,15 +20257,9 @@ mod tests {
         assert_eq!(view["kind"], "network-tx-completion");
         assert_eq!(view["owner"]["backend"]["kind"], "virtio-net-backend");
         assert_eq!(view["owner"]["backend"]["generation"], 3);
-        assert_eq!(
-            view["references"]["tx_gate"]["kind"],
-            "network-tx-capability-gate"
-        );
+        assert_eq!(view["references"]["tx_gate"]["kind"], "network-tx-capability-gate");
         assert_eq!(view["references"]["tx_gate"]["generation"], 2);
-        assert_eq!(
-            view["references"]["packet_descriptor"]["kind"],
-            "packet-descriptor"
-        );
+        assert_eq!(view["references"]["packet_descriptor"]["kind"], "packet-descriptor");
         assert_eq!(view["references"]["packet_descriptor"]["generation"], 7);
         assert_eq!(view["references"]["packet_buffer"]["generation"], 8);
         assert_eq!(view["tx"]["completion_sequence"], 10);
@@ -21793,10 +20330,7 @@ mod tests {
         assert_eq!(view["kind"], "socket-object");
         assert_eq!(view["owner"]["store"]["kind"], "store");
         assert_eq!(view["owner"]["store"]["generation"], 3);
-        assert_eq!(
-            view["references"]["adapter"]["kind"],
-            "network-stack-adapter"
-        );
+        assert_eq!(view["references"]["adapter"]["kind"], "network-stack-adapter");
         assert_eq!(view["references"]["adapter"]["generation"], 1);
         assert_eq!(view["socket"]["domain"], 2);
         assert_eq!(view["socket"]["type"], 1);
@@ -21832,10 +20366,7 @@ mod tests {
         assert_eq!(view["owner"]["store"]["generation"], 3);
         assert_eq!(view["owner"]["socket"]["kind"], "socket-object");
         assert_eq!(view["references"]["socket"]["generation"], 1);
-        assert_eq!(
-            view["references"]["adapter"]["kind"],
-            "network-stack-adapter"
-        );
+        assert_eq!(view["references"]["adapter"]["kind"], "network-stack-adapter");
         assert_eq!(view["endpoint"]["family"], "inet");
         assert_eq!(view["endpoint"]["transport"], "tcp");
         assert_eq!(view["endpoint"]["local_port"], 0);
@@ -22018,16 +20549,10 @@ mod tests {
         assert_eq!(view["owner"]["packet_device"]["generation"], 4);
         assert_eq!(view["references"]["io_cleanup"]["kind"], "io-cleanup");
         assert_eq!(view["references"]["driver_binding"]["generation"], 2);
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "virtio-net-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "virtio-net-backend-object");
         assert_eq!(view["references"]["cancelled_socket_waits"][0]["id"], 90);
         assert_eq!(view["references"]["cancelled_wait_tokens"][0]["id"], 91);
-        assert_eq!(
-            view["references"]["revoked_packet_capabilities"][0]["id"],
-            92
-        );
+        assert_eq!(view["references"]["revoked_packet_capabilities"][0]["id"], 92);
         assert_eq!(view["cleanup"]["reason"], "device-fault");
         assert_eq!(view["cleanup"]["cancelled_socket_wait_count"], 1);
         assert_eq!(view["last_transition"]["completed_at_event"], 89);
@@ -22069,15 +20594,9 @@ mod tests {
         assert_eq!(view["owner"]["adapter"]["generation"], 5);
         assert_eq!(view["references"]["packet_descriptor"]["generation"], 8);
         assert_eq!(view["references"]["packet_buffer"]["generation"], 9);
-        assert_eq!(
-            view["references"]["dma_buffer"]["kind"],
-            "dma-buffer-object"
-        );
+        assert_eq!(view["references"]["dma_buffer"]["kind"], "dma-buffer-object");
         assert_eq!(view["references"]["dma_buffer"]["generation"], 10);
-        assert_eq!(
-            view["references"]["device_capability"]["kind"],
-            "device-capability"
-        );
+        assert_eq!(view["references"]["device_capability"]["kind"], "device-capability");
         assert_eq!(view["audit"]["rejected_packet_generation_probes"], 2);
         assert_eq!(view["audit"]["rejected_dma_generation_probes"], 1);
         assert_eq!(view["last_transition"]["recorded_at_event"], 95);
@@ -22170,14 +20689,8 @@ mod tests {
         });
         assert_eq!(view["kind"], "network-benchmark");
         assert_eq!(view["owner"]["adapter"]["generation"], 5);
-        assert_eq!(
-            view["references"]["tx_completion"]["kind"],
-            "network-tx-completion"
-        );
-        assert_eq!(
-            view["references"]["rx_wait_resolution"]["kind"],
-            "network-rx-wait-resolution"
-        );
+        assert_eq!(view["references"]["tx_completion"]["kind"], "network-tx-completion");
+        assert_eq!(view["references"]["rx_wait_resolution"]["kind"], "network-rx-wait-resolution");
         assert_eq!(view["references"]["backpressure"]["generation"], 1);
         assert_eq!(view["benchmark"]["sample_packets"], 3);
         assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 50_000_000);
@@ -22220,18 +20733,9 @@ mod tests {
         });
         assert_eq!(view["kind"], "network-recovery-benchmark");
         assert_eq!(view["owner"]["driver_store"]["generation"], 8);
-        assert_eq!(
-            view["references"]["cleanup"]["kind"],
-            "network-driver-cleanup"
-        );
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "virtio-net-backend-object"
-        );
-        assert_eq!(
-            view["references"]["fault_injection"]["kind"],
-            "network-fault-injection"
-        );
+        assert_eq!(view["references"]["cleanup"]["kind"], "network-driver-cleanup");
+        assert_eq!(view["references"]["backend"]["kind"], "virtio-net-backend-object");
+        assert_eq!(view["references"]["fault_injection"]["kind"], "network-fault-injection");
         assert_eq!(view["benchmark"]["recovery_nanos"], 90_000);
         assert_eq!(view["benchmark"]["within_budget"], true);
         assert_eq!(view["last_transition"]["recorded_at_event"], 103);
@@ -22438,16 +20942,10 @@ mod tests {
         });
         assert_eq!(view["kind"], "virtio-blk-backend");
         assert_eq!(view["owner"]["block_device"]["kind"], "block-device");
-        assert_eq!(
-            view["owner"]["driver_binding"]["kind"],
-            "driver-store-binding"
-        );
+        assert_eq!(view["owner"]["driver_binding"]["kind"], "driver-store-binding");
         assert_eq!(view["references"]["device"]["kind"], "device");
         assert_eq!(view["identity"]["provider"], "substrate_virtio");
-        assert_eq!(
-            view["identity"]["profile"],
-            "virtio-blk-backend-skeleton-v1"
-        );
+        assert_eq!(view["identity"]["profile"], "virtio-blk-backend-skeleton-v1");
         assert_eq!(view["identity"]["model"], "virtio-blk");
         assert_eq!(view["contract"]["sector_size"], 512);
         assert_eq!(view["contract"]["queue_size"], 8);
@@ -22481,10 +20979,7 @@ mod tests {
         assert_eq!(view["kind"], "block-read-path");
         assert_eq!(view["owner"]["block_request"]["kind"], "block-request");
         assert_eq!(view["references"]["backend"]["kind"], "fake-block-backend");
-        assert_eq!(
-            view["references"]["block_completion"]["kind"],
-            "block-completion"
-        );
+        assert_eq!(view["references"]["block_completion"]["kind"], "block-completion");
         assert_eq!(view["references"]["block_device"]["generation"], 1);
         assert_eq!(view["read"]["completed_bytes"], 4096);
         assert_eq!(view["read"]["data_digest"], 0xfeed);
@@ -22517,10 +21012,7 @@ mod tests {
         assert_eq!(view["kind"], "block-write-path");
         assert_eq!(view["owner"]["block_request"]["kind"], "block-request");
         assert_eq!(view["references"]["backend"]["kind"], "fake-block-backend");
-        assert_eq!(
-            view["references"]["block_completion"]["kind"],
-            "block-completion"
-        );
+        assert_eq!(view["references"]["block_completion"]["kind"], "block-completion");
         assert_eq!(view["references"]["block_device"]["generation"], 1);
         assert_eq!(view["write"]["completed_bytes"], 4096);
         assert_eq!(view["write"]["payload_digest"], 0xbeef);
@@ -22570,18 +21062,9 @@ mod tests {
         });
         assert_eq!(view["kind"], "block-request-queue");
         assert_eq!(view["owner"]["backend"]["kind"], "fake-block-backend");
-        assert_eq!(
-            view["references"]["entries"][0]["request"]["kind"],
-            "block-request"
-        );
-        assert_eq!(
-            view["references"]["entries"][0]["completion"]["kind"],
-            "block-completion"
-        );
-        assert_eq!(
-            view["references"]["entries"][1]["completion"],
-            serde_json::Value::Null
-        );
+        assert_eq!(view["references"]["entries"][0]["request"]["kind"], "block-request");
+        assert_eq!(view["references"]["entries"][0]["completion"]["kind"], "block-completion");
+        assert_eq!(view["references"]["entries"][1]["completion"], serde_json::Value::Null);
         assert_eq!(view["queue"]["depth"], 4);
         assert_eq!(view["queue"]["pending_count"], 1);
         assert_eq!(view["queue"]["completed_count"], 1);
@@ -22673,10 +21156,7 @@ mod tests {
         });
         assert_eq!(view["kind"], "block-page-object");
         assert_eq!(view["owner"]["page"]["kind"], "page-object");
-        assert_eq!(
-            view["owner"]["block_dma_buffer"]["kind"],
-            "block-dma-buffer"
-        );
+        assert_eq!(view["owner"]["block_dma_buffer"]["kind"], "block-dma-buffer");
         assert_eq!(view["references"]["aspace"]["id"], 301);
         assert_eq!(view["references"]["vma_region"]["generation"], 1);
         assert_eq!(view["references"]["block_completion"]["id"], 109);
@@ -22728,10 +21208,7 @@ mod tests {
         assert_eq!(view["kind"], "buffer-cache-object");
         assert_eq!(view["owner"]["page"]["kind"], "page-object");
         assert_eq!(view["owner"]["block_range"]["kind"], "block-range");
-        assert_eq!(
-            view["references"]["block_page_object"]["kind"],
-            "block-page-object"
-        );
+        assert_eq!(view["references"]["block_page_object"]["kind"], "block-page-object");
         assert_eq!(view["references"]["block_dma_buffer"]["generation"], 1);
         assert_eq!(view["references"]["aspace"]["id"], 301);
         assert_eq!(view["cache"]["page_dirty_generation"], 2);
@@ -22772,10 +21249,7 @@ mod tests {
         assert_eq!(view["kind"], "file-object");
         assert_eq!(view["owner"]["namespace"], "rootfs");
         assert_eq!(view["owner"]["file_key"], "demo-file");
-        assert_eq!(
-            view["references"]["buffer_cache_object"]["kind"],
-            "buffer-cache-object"
-        );
+        assert_eq!(view["references"]["buffer_cache_object"]["kind"], "buffer-cache-object");
         assert_eq!(view["references"]["block_range"]["generation"], 1);
         assert_eq!(view["references"]["page"]["id"], 303);
         assert_eq!(view["file"]["content_digest"], 0xB13);
@@ -22845,10 +21319,7 @@ mod tests {
         assert_eq!(view["kind"], "fat-adapter-object");
         assert_eq!(view["owner"]["implementation"], "fatfs");
         assert_eq!(view["owner"]["profile"], "fatfs-read-write-demo-v1");
-        assert_eq!(
-            view["references"]["directory_object"]["kind"],
-            "directory-object"
-        );
+        assert_eq!(view["references"]["directory_object"]["kind"], "directory-object");
         assert_eq!(view["references"]["file_object"]["id"], 119);
         assert_eq!(view["references"]["block_device"]["generation"], 1);
         assert_eq!(view["fat"]["bytes_written"], 35);
@@ -22887,10 +21358,7 @@ mod tests {
         assert_eq!(view["kind"], "ext4-adapter-object");
         assert_eq!(view["owner"]["implementation"], "ext4-view");
         assert_eq!(view["owner"]["profile"], "ext4-read-only-demo-v1");
-        assert_eq!(
-            view["references"]["directory_object"]["kind"],
-            "directory-object"
-        );
+        assert_eq!(view["references"]["directory_object"]["kind"], "directory-object");
         assert_eq!(view["references"]["file_object"]["id"], 119);
         assert_eq!(view["references"]["block_device"]["generation"], 1);
         assert_eq!(view["ext4"]["bytes_read"], 34);
@@ -22973,10 +21441,7 @@ mod tests {
         assert_eq!(view["owner"]["store"]["id"], 7);
         assert_eq!(view["owner"]["operation"], "read");
         assert_eq!(view["references"]["wait"]["kind"], "wait-token");
-        assert_eq!(
-            view["references"]["file_handle_capability"]["kind"],
-            "file-handle-capability"
-        );
+        assert_eq!(view["references"]["file_handle_capability"]["kind"], "file-handle-capability");
         assert_eq!(view["references"]["file_object"]["id"], 119);
         assert_eq!(view["references"]["blocker"]["id"], 123);
         assert_eq!(view["wait"]["sequence"], 9);
@@ -23035,16 +21500,10 @@ mod tests {
         assert_eq!(view["owner"]["driver_store"]["generation"], 3);
         assert_eq!(view["owner"]["block_device"]["id"], 31);
         assert_eq!(view["references"]["io_cleanup"]["id"], 44);
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "virtio-blk-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "virtio-blk-backend-object");
         assert_eq!(view["references"]["cancelled_block_waits"][0]["id"], 103);
         assert_eq!(view["references"]["cancelled_wait_tokens"][0]["id"], 102);
-        assert_eq!(
-            view["references"]["revoked_device_capabilities"][0]["id"],
-            32
-        );
+        assert_eq!(view["references"]["revoked_device_capabilities"][0]["id"], 32);
         assert_eq!(view["references"]["released_dma_buffers"][0]["id"], 106);
         assert_eq!(view["cleanup"]["reason"], "virtio-blk-device-fault");
         assert_eq!(view["cleanup"]["cancelled_block_wait_count"], 1);
@@ -23138,15 +21597,9 @@ mod tests {
         });
         assert_eq!(view["kind"], "block-request-generation-audit");
         assert_eq!(view["owner"]["block_request"]["generation"], 13);
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "fake-block-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "fake-block-backend-object");
         assert_eq!(view["references"]["backend"]["generation"], 19);
-        assert_eq!(
-            view["references"]["dma_buffer"]["kind"],
-            "dma-buffer-object"
-        );
+        assert_eq!(view["references"]["dma_buffer"]["kind"], "dma-buffer-object");
         assert_eq!(view["references"]["dma_buffer"]["generation"], 29);
         assert_eq!(view["audit"]["rejected_completion_generation_probes"], 1);
         assert_eq!(view["audit"]["rejected_wait_generation_probes"], 2);
@@ -23194,10 +21647,7 @@ mod tests {
             note: "disk benchmark".to_owned(),
         });
         assert_eq!(view["kind"], "block-benchmark");
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "fake-block-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "fake-block-backend-object");
         assert_eq!(view["references"]["block_device"]["generation"], 1);
         assert_eq!(view["references"]["read_path"]["id"], 39);
         assert_eq!(view["references"]["write_path"]["id"], 48);
@@ -23246,15 +21696,9 @@ mod tests {
             note: "disk recovery benchmark".to_owned(),
         });
         assert_eq!(view["kind"], "block-recovery-benchmark");
-        assert_eq!(
-            view["references"]["cleanup"]["kind"],
-            "block-driver-cleanup"
-        );
+        assert_eq!(view["references"]["cleanup"]["kind"], "block-driver-cleanup");
         assert_eq!(view["references"]["io_cleanup"]["id"], 108);
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "virtio-blk-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "virtio-blk-backend-object");
         assert_eq!(view["references"]["block_device"]["id"], 31);
         assert_eq!(view["references"]["driver_store"]["generation"], 3);
         assert_eq!(view["benchmark"]["cancelled_block_waits"], 1);
@@ -23284,10 +21728,7 @@ mod tests {
             note: "target feature discovery".to_owned(),
         });
         assert_eq!(view["kind"], "target-feature-set");
-        assert_eq!(
-            view["owner"]["target_profile"],
-            "riscv64-qemu-virt-research"
-        );
+        assert_eq!(view["owner"]["target_profile"], "riscv64-qemu-virt-research");
         assert_eq!(view["features"]["base_isa"], "rv64imac");
         assert_eq!(view["features"]["simd"]["abi"], "riscv-v");
         assert_eq!(view["features"]["simd"]["supported"], false);
@@ -23351,11 +21792,7 @@ mod tests {
                 id: 9,
                 generation: 4,
             },
-            trap: ContractObjectRefManifest {
-                kind: "trap".to_owned(),
-                id: 33,
-                generation: 1,
-            },
+            trap: ContractObjectRefManifest { kind: "trap".to_owned(), id: 33, generation: 1 },
             target_feature_set: ContractObjectRefManifest {
                 kind: "target-feature-set".to_owned(),
                 id: 21_010,
@@ -23597,10 +22034,7 @@ mod tests {
         assert_eq!(view["authority"]["operations"][0], "flush");
         assert_eq!(view["authority"]["operations"][1], "lease");
         assert_eq!(view["authority"]["handle"]["slot"], 8);
-        assert_eq!(
-            view["authority"]["write_requires_framebuffer_window_lease"],
-            true
-        );
+        assert_eq!(view["authority"]["write_requires_framebuffer_window_lease"], true);
         assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 496);
     }
@@ -23638,10 +22072,7 @@ mod tests {
         assert_eq!(view["references"]["framebuffer"]["id"], 23_001);
         assert_eq!(view["window"]["width"], 800);
         assert_eq!(view["window"]["byte_len"], 1_920_000);
-        assert_eq!(
-            view["authority"]["requires_display_capability_operation"],
-            "lease"
-        );
+        assert_eq!(view["authority"]["requires_display_capability_operation"], "lease");
         assert_eq!(view["authority"]["write_requires_this_lease"], true);
         assert_eq!(view["authority"]["raw_mapping_is_semantic_truth"], false);
         assert_eq!(view["last_transition"]["recorded_at_event"], 497);
@@ -23919,14 +22350,8 @@ mod tests {
             view["cleanup"]["unmapped_framebuffer_mappings"][0]["kind"],
             "framebuffer-mapping"
         );
-        assert_eq!(
-            view["cleanup"]["released_framebuffer_window_leases"][0]["id"],
-            23_301
-        );
-        assert_eq!(
-            view["cleanup"]["revoked_display_capabilities"][0]["generation"],
-            1
-        );
+        assert_eq!(view["cleanup"]["released_framebuffer_window_leases"][0]["id"], 23_301);
+        assert_eq!(view["cleanup"]["revoked_display_capabilities"][0]["generation"], 1);
         assert_eq!(view["cleanup"]["revoked_capabilities"][0]["generation"], 2);
         assert_eq!(view["authority"]["releases_handle_mode_mappings"], true);
         assert_eq!(view["authority"]["real_present_executed"], false);
@@ -23962,10 +22387,7 @@ mod tests {
         assert_eq!(view["references"]["display_cleanup"]["id"], 23_901);
         assert_eq!(view["snapshot"]["snapshot_validation_ok"], true);
         assert_eq!(view["snapshot"]["active_framebuffer_window_lease_count"], 0);
-        assert_eq!(
-            view["authority"]["requires_no_active_framebuffer_lease"],
-            true
-        );
+        assert_eq!(view["authority"]["requires_no_active_framebuffer_lease"], true);
         assert_eq!(view["authority"]["real_snapshot_cow_executed"], false);
         assert_eq!(view["last_transition"]["validated_at_event"], 506);
     }
@@ -24072,10 +22494,7 @@ mod tests {
         assert_eq!(view["benchmark"]["throughput_bytes_per_sec"], 32_000_000);
         assert_eq!(view["benchmark"]["flushes_per_sec_milli"], 10_000_000);
         assert_eq!(view["authority"]["real_scanout_measured"], false);
-        assert_eq!(
-            view["authority"]["uses_semantic_write_flush_evidence"],
-            true
-        );
+        assert_eq!(view["authority"]["uses_semantic_write_flush_evidence"], true);
         assert_eq!(view["last_transition"]["recorded_at_event"], 508);
     }
 
@@ -24116,10 +22535,7 @@ mod tests {
         assert_eq!(view["kind"], "integrated-smp-preemption-cleanup");
         assert_eq!(view["owner"]["cleanup_store"]["generation"], 2);
         assert_eq!(view["owner"]["runtime_activation"]["id"], 77);
-        assert_eq!(
-            view["owner"]["runtime_activation"]["generation_after_cleanup"],
-            4
-        );
+        assert_eq!(view["owner"]["runtime_activation"]["generation_after_cleanup"], 4);
         assert_eq!(
             view["owner"]["runtime_activation"]["note"],
             "runtime-preemptive-activation-not-target-executor-object"
@@ -24132,10 +22548,7 @@ mod tests {
         assert_eq!(view["closure"]["result_store_generation"], 3);
         assert_eq!(view["closure"]["invariant_checks"], 7);
         assert_eq!(view["authority"]["real_smp_preemption_executed"], false);
-        assert_eq!(
-            view["authority"]["uses_semantic_preemption_cleanup_evidence"],
-            true
-        );
+        assert_eq!(view["authority"]["uses_semantic_preemption_cleanup_evidence"], true);
         assert_eq!(view["last_transition"]["recorded_at_event"], 570);
     }
 
@@ -24184,22 +22597,13 @@ mod tests {
         assert_eq!(view["references"]["smp_stress_run"]["id"], 9_501);
         assert_eq!(view["references"]["remote_preempt"]["generation"], 1);
         assert_eq!(view["references"]["smp_cleanup_quiescence"]["id"], 9_301);
-        assert_eq!(
-            view["references"]["backend"]["kind"],
-            "virtio-net-backend-object"
-        );
+        assert_eq!(view["references"]["backend"]["kind"], "virtio-net-backend-object");
         assert_eq!(view["references"]["io_cleanup"]["id"], 10_052);
         assert_eq!(view["closure"]["hart_count"], 2);
         assert_eq!(view["closure"]["cancelled_socket_wait_count"], 1);
         assert_eq!(view["closure"]["revoked_packet_capability_count"], 1);
-        assert_eq!(
-            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
-            true
-        );
-        assert_eq!(
-            view["authority"]["real_network_driver_fault_executed"],
-            false
-        );
+        assert_eq!(view["authority"]["adapter_internal_state_is_not_semantic_truth"], true);
+        assert_eq!(view["authority"]["real_network_driver_fault_executed"], false);
         assert_eq!(view["last_transition"]["event"], 571);
     }
 
@@ -24254,10 +22658,7 @@ mod tests {
         assert_eq!(view["closure"]["action"], "eio");
         assert_eq!(view["closure"]["errno"], 5);
         assert_eq!(view["closure"]["preempted_activation"]["id"], 88);
-        assert_eq!(
-            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
-            true
-        );
+        assert_eq!(view["authority"]["adapter_internal_state_is_not_semantic_truth"], true);
         assert_eq!(view["authority"]["real_disk_fault_executed"], false);
         assert_eq!(view["last_transition"]["event"], 572);
     }
@@ -24317,14 +22718,8 @@ mod tests {
         assert_eq!(view["closure"]["simd_abi"], "riscv-v");
         assert_eq!(view["closure"]["requires_clean_vector_context"], true);
         assert_eq!(view["closure"]["requires_source_vector_dropped"], true);
-        assert_eq!(
-            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
-            true
-        );
-        assert_eq!(
-            view["authority"]["real_vector_register_payload_migrated"],
-            false
-        );
+        assert_eq!(view["authority"]["adapter_internal_state_is_not_semantic_truth"], true);
+        assert_eq!(view["authority"]["real_vector_register_payload_migrated"], false);
         assert_eq!(view["last_transition"]["event"], 573);
     }
 
@@ -24332,55 +22727,48 @@ mod tests {
     fn integrated_simd_migration_graph_edges_are_history_only() {
         let mut package = minimal_graph_package();
         package.semantic.integrated_simd_migration_count = 1;
-        package
-            .semantic
-            .integrated_simd_migrations
-            .push(IntegratedSimdMigrationManifest {
-                id: 26_301,
-                scenario: "x3-simd-task-migration-across-harts".to_owned(),
-                activation_migration: 9_080,
-                activation_migration_generation: 1,
-                target_feature_set: 21_003,
-                target_feature_set_generation: 1,
-                source_vector_state: ContractObjectRefManifest {
-                    kind: "vector-state".to_owned(),
-                    id: 22_004,
-                    generation: 1,
-                },
-                migrated_vector_state: ContractObjectRefManifest {
-                    kind: "vector-state".to_owned(),
-                    id: 22_005,
-                    generation: 1,
-                },
-                activation: 89,
-                activation_generation_before: 2,
-                activation_generation_after: 3,
-                context: 9_080,
-                context_generation_after: 3,
-                source_hart: 8,
-                source_hart_generation: 2,
-                target_hart: 9,
-                target_hart_generation: 2,
-                source_queue: 9_080,
-                source_queue_generation: 2,
-                target_queue: 9_081,
-                target_queue_generation: 2,
-                simd_abi: "riscv-v".to_owned(),
-                vector_register_count: 32,
-                vector_register_bits: 128,
-                invariant_checks: 6,
+        package.semantic.integrated_simd_migrations.push(IntegratedSimdMigrationManifest {
+            id: 26_301,
+            scenario: "x3-simd-task-migration-across-harts".to_owned(),
+            activation_migration: 9_080,
+            activation_migration_generation: 1,
+            target_feature_set: 21_003,
+            target_feature_set_generation: 1,
+            source_vector_state: ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_004,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 573,
-                note: "x3 integrated SIMD migration".to_owned(),
-            });
+            },
+            migrated_vector_state: ContractObjectRefManifest {
+                kind: "vector-state".to_owned(),
+                id: 22_005,
+                generation: 1,
+            },
+            activation: 89,
+            activation_generation_before: 2,
+            activation_generation_after: 3,
+            context: 9_080,
+            context_generation_after: 3,
+            source_hart: 8,
+            source_hart_generation: 2,
+            target_hart: 9,
+            target_hart_generation: 2,
+            source_queue: 9_080,
+            source_queue_generation: 2,
+            target_queue: 9_081,
+            target_queue_generation: 2,
+            simd_abi: "riscv-v".to_owned(),
+            vector_register_count: 32,
+            vector_register_bits: 128,
+            invariant_checks: 6,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 573,
+            note: "x3 integrated SIMD migration".to_owned(),
+        });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "integrated-simd-migration")
-        );
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "integrated-simd-migration"));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -24447,81 +22835,62 @@ mod tests {
         assert_eq!(view["owner"]["network_owner_store"]["generation"], 3);
         assert_eq!(view["references"]["network_benchmark"]["id"], 10_067);
         assert_eq!(view["references"]["block_benchmark"]["id"], 20_132);
-        assert_eq!(
-            view["references"]["block_backend"]["kind"],
-            "fake-block-backend-object"
-        );
+        assert_eq!(view["references"]["block_backend"]["kind"], "fake-block-backend-object");
         assert_eq!(view["references"]["block_dma_buffer"]["id"], 20_061);
         assert_eq!(view["closure"]["network_sample_bytes"], 6_000);
         assert_eq!(view["closure"]["block_sample_bytes"], 8_192);
         assert_eq!(view["closure"]["concurrent_window_nanos"], 120_000);
-        assert_eq!(
-            view["closure"]["combined_throughput_bytes_per_sec"],
-            118_266_666
-        );
-        assert_eq!(
-            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
-            true
-        );
-        assert_eq!(
-            view["authority"]["real_concurrent_hardware_io_executed"],
-            false
-        );
+        assert_eq!(view["closure"]["combined_throughput_bytes_per_sec"], 118_266_666);
+        assert_eq!(view["authority"]["adapter_internal_state_is_not_semantic_truth"], true);
+        assert_eq!(view["authority"]["real_concurrent_hardware_io_executed"], false);
     }
 
     #[test]
     fn integrated_network_disk_io_graph_edges_are_history_only() {
         let mut package = minimal_graph_package();
         package.semantic.integrated_network_disk_io_count = 1;
-        package
-            .semantic
-            .integrated_network_disk_ios
-            .push(IntegratedNetworkDiskIoManifest {
-                id: 26_401,
-                scenario: "x4-network-disk-concurrent-io".to_owned(),
-                network_benchmark: 10_067,
-                network_benchmark_generation: 1,
-                block_benchmark: 20_132,
-                block_benchmark_generation: 1,
-                network_owner_store: 9,
-                network_owner_store_generation: 3,
-                network_adapter: 10_025,
-                network_adapter_generation: 1,
-                packet_device: 10_002,
-                packet_device_generation: 1,
-                socket: 10_031,
-                socket_generation: 1,
-                block_backend: ContractObjectRefManifest {
-                    kind: "fake-block-backend-object".to_owned(),
-                    id: 20_026,
-                    generation: 1,
-                },
-                block_device: 20_002,
-                block_device_generation: 1,
-                block_request_queue: 20_053,
-                block_request_queue_generation: 1,
-                block_dma_buffer: 20_061,
-                block_dma_buffer_generation: 1,
-                network_sample_bytes: 6_000,
-                block_sample_bytes: 8_192,
-                network_sample_packets: 3,
-                block_sample_requests: 2,
-                concurrent_window_nanos: 120_000,
-                combined_throughput_bytes_per_sec: 118_266_666,
-                max_p99_latency_nanos: 48_000,
-                invariant_checks: 6,
+        package.semantic.integrated_network_disk_ios.push(IntegratedNetworkDiskIoManifest {
+            id: 26_401,
+            scenario: "x4-network-disk-concurrent-io".to_owned(),
+            network_benchmark: 10_067,
+            network_benchmark_generation: 1,
+            block_benchmark: 20_132,
+            block_benchmark_generation: 1,
+            network_owner_store: 9,
+            network_owner_store_generation: 3,
+            network_adapter: 10_025,
+            network_adapter_generation: 1,
+            packet_device: 10_002,
+            packet_device_generation: 1,
+            socket: 10_031,
+            socket_generation: 1,
+            block_backend: ContractObjectRefManifest {
+                kind: "fake-block-backend-object".to_owned(),
+                id: 20_026,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 574,
-                note: "x4 integrated IO concurrency".to_owned(),
-            });
+            },
+            block_device: 20_002,
+            block_device_generation: 1,
+            block_request_queue: 20_053,
+            block_request_queue_generation: 1,
+            block_dma_buffer: 20_061,
+            block_dma_buffer_generation: 1,
+            network_sample_bytes: 6_000,
+            block_sample_bytes: 8_192,
+            network_sample_packets: 3,
+            block_sample_requests: 2,
+            concurrent_window_nanos: 120_000,
+            combined_throughput_bytes_per_sec: 118_266_666,
+            max_p99_latency_nanos: 48_000,
+            invariant_checks: 6,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 574,
+            note: "x4 integrated IO concurrency".to_owned(),
+        });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "integrated-network-disk-io")
-        );
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "integrated-network-disk-io"));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -24588,10 +22957,7 @@ mod tests {
         assert_eq!(view["closure"]["sample_bytes"], 3_200);
         assert_eq!(view["closure"]["scheduler_load_units"], 1);
         assert_eq!(view["authority"]["real_display_hardware_executed"], false);
-        assert_eq!(
-            view["authority"]["real_preemptive_scheduler_executed"],
-            false
-        );
+        assert_eq!(view["authority"]["real_preemptive_scheduler_executed"], false);
     }
 
     #[test]
@@ -24642,9 +23008,7 @@ mod tests {
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "integrated-display-scheduler-load")
+            !live.iter().any(|edge| edge["from"]["kind"] == "integrated-display-scheduler-load")
         );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
@@ -24725,14 +23089,8 @@ mod tests {
         assert_eq!(view["closure"]["released_framebuffer_window_leases"], 1);
         assert_eq!(view["closure"]["requires_clean_smp_snapshot_barrier"], true);
         assert_eq!(view["closure"]["requires_completed_io_cleanup"], true);
-        assert_eq!(
-            view["closure"]["requires_clean_display_snapshot_barrier"],
-            true
-        );
-        assert_eq!(
-            view["authority"]["real_snapshot_or_dma_hardware_executed"],
-            false
-        );
+        assert_eq!(view["closure"]["requires_clean_display_snapshot_barrier"], true);
+        assert_eq!(view["authority"]["real_snapshot_or_dma_hardware_executed"], false);
         assert_eq!(view["authority"]["real_display_hardware_executed"], false);
         assert_eq!(view["last_transition"]["event"], 576);
     }
@@ -24822,10 +23180,7 @@ mod tests {
         assert_eq!(view["closure"]["code_publish_epoch_after"], 1);
         assert_eq!(view["closure"]["remote_icache_sync_required"], true);
         assert_eq!(view["closure"]["code_publish_executed"], false);
-        assert_eq!(
-            view["authority"]["real_smp_dynamic_code_publish_executed"],
-            false
-        );
+        assert_eq!(view["authority"]["real_smp_dynamic_code_publish_executed"], false);
         assert_eq!(view["last_transition"]["event"], 577);
     }
 
@@ -24905,10 +23260,7 @@ mod tests {
         assert_eq!(view["owner"]["panic_cpu"], 0);
         assert_eq!(view["references"]["substrate_panic_event"]["id"], 578);
         assert_eq!(view["references"]["display_panic_last_frame"]["id"], 25_001);
-        assert_eq!(
-            view["references"]["display_panic_last_frame"]["generation"],
-            1
-        );
+        assert_eq!(view["references"]["display_panic_last_frame"]["generation"], 1);
         assert_eq!(view["panic_ring"]["ring_bytes"], 65_536);
         assert_eq!(view["panic_ring"]["record_max_bytes"], 4_096);
         assert_eq!(view["panic_ring"]["record_count"], 3);
@@ -24928,17 +23280,10 @@ mod tests {
     fn integrated_display_panic_graph_edges_are_history_only() {
         let mut package = minimal_graph_package();
         package.semantic.integrated_display_panic_count = 1;
-        package
-            .semantic
-            .integrated_display_panics
-            .push(test_integrated_display_panic_manifest());
+        package.semantic.integrated_display_panics.push(test_integrated_display_panic_manifest());
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
-        assert!(
-            !live
-                .iter()
-                .any(|edge| { edge["from"]["kind"] == "integrated-display-panic" })
-        );
+        assert!(!live.iter().any(|edge| { edge["from"]["kind"] == "integrated-display-panic" }));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -25008,10 +23353,7 @@ mod tests {
             view["references"]["x0_smp_preemption_cleanup"]["kind"],
             "integrated-smp-preemption-cleanup"
         );
-        assert_eq!(
-            view["references"]["x0_smp_preemption_cleanup"]["id"],
-            26_001
-        );
+        assert_eq!(view["references"]["x0_smp_preemption_cleanup"]["id"], 26_001);
         assert_eq!(view["references"]["x8_display_panic"]["id"], 26_801);
         assert_eq!(view["references"]["x8_display_panic"]["generation"], 1);
         assert_eq!(view["replay"]["event_cursor"], 579);
@@ -25021,15 +23363,9 @@ mod tests {
         assert_eq!(view["replay"]["contract_validation_ok"], true);
         assert_eq!(view["replay"]["replay_validation_ok"], true);
         assert_eq!(view["replay"]["graph_history_ok"], true);
-        assert_eq!(
-            view["closure"]["requires_x0_to_x8_integrated_evidence"],
-            true
-        );
+        assert_eq!(view["closure"]["requires_x0_to_x8_integrated_evidence"], true);
         assert_eq!(view["authority"]["osctl_is_read_only_control_plane"], true);
-        assert_eq!(
-            view["authority"]["adapter_internal_state_is_not_semantic_truth"],
-            true
-        );
+        assert_eq!(view["authority"]["adapter_internal_state_is_not_semantic_truth"], true);
         assert_eq!(view["last_transition"]["event"], 580);
     }
 
@@ -25044,9 +23380,7 @@ mod tests {
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(
-            !live
-                .iter()
-                .any(|edge| { edge["from"]["kind"] == "integrated-osctl-trace-replay" })
+            !live.iter().any(|edge| { edge["from"]["kind"] == "integrated-osctl-trace-replay" })
         );
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
@@ -25089,10 +23423,7 @@ mod tests {
 
         assert_eq!(view["kind"], "activation-context");
         assert_eq!(view["vector_context"]["status"], "dirty");
-        assert_eq!(
-            view["vector_context"]["vector_state"]["kind"],
-            "vector-state"
-        );
+        assert_eq!(view["vector_context"]["vector_state"]["kind"], "vector-state");
         assert_eq!(view["vector_context"]["vector_state"]["generation"], 1);
         assert_eq!(view["references"]["vector_state"]["id"], 22_000);
         assert_eq!(view["vector_context"]["last_event"], 42);
@@ -25352,58 +23683,49 @@ mod tests {
             pending_wait: None,
             resources: Vec::new(),
         });
-        package
-            .semantic
-            .runtime_activation_records
-            .push(RuntimeActivationRecordManifest {
-                id: 11,
-                owner_task: 7,
-                owner_task_generation: 1,
-                owner_store: None,
-                owner_store_generation: None,
-                code_object: None,
-                generation: 2,
-                state: "runnable".to_owned(),
-                runnable_queue: Some(1),
-                runnable_queue_generation: Some(1),
-                last_event: Some(9),
-            });
-        package
-            .semantic
-            .runnable_queues
-            .push(RunnableQueueManifest {
-                id: 1,
-                label: "main-rq".to_owned(),
-                generation: 1,
-                state: "active".to_owned(),
-                owner_hart: Some(1),
-                owner_hart_generation: Some(2),
-                entries: vec![artifact_manifest::RunnableQueueEntryManifest {
-                    activation: 11,
-                    activation_generation: 2,
-                    enqueued_at: 9,
-                }],
-            });
-        package
-            .semantic
-            .activation_contexts
-            .push(ActivationContextManifest {
-                id: 12,
+        package.semantic.runtime_activation_records.push(RuntimeActivationRecordManifest {
+            id: 11,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: None,
+            owner_store_generation: None,
+            code_object: None,
+            generation: 2,
+            state: "runnable".to_owned(),
+            runnable_queue: Some(1),
+            runnable_queue_generation: Some(1),
+            last_event: Some(9),
+        });
+        package.semantic.runnable_queues.push(RunnableQueueManifest {
+            id: 1,
+            label: "main-rq".to_owned(),
+            generation: 1,
+            state: "active".to_owned(),
+            owner_hart: Some(1),
+            owner_hart_generation: Some(2),
+            entries: vec![artifact_manifest::RunnableQueueEntryManifest {
                 activation: 11,
                 activation_generation: 2,
-                owner_task: 7,
-                owner_task_generation: 1,
-                owner_store: None,
-                owner_store_generation: None,
-                generation: 2,
-                state: "saved".to_owned(),
-                current_saved_context: Some(13),
-                current_saved_context_generation: Some(1),
-                vector_state: None,
-                vector_status: "absent".to_owned(),
-                vector_state_event: None,
-                last_event: Some(10),
-            });
+                enqueued_at: 9,
+            }],
+        });
+        package.semantic.activation_contexts.push(ActivationContextManifest {
+            id: 12,
+            activation: 11,
+            activation_generation: 2,
+            owner_task: 7,
+            owner_task_generation: 1,
+            owner_store: None,
+            owner_store_generation: None,
+            generation: 2,
+            state: "saved".to_owned(),
+            current_saved_context: Some(13),
+            current_saved_context_generation: Some(1),
+            vector_state: None,
+            vector_status: "absent".to_owned(),
+            vector_state_event: None,
+            last_event: Some(10),
+        });
         package.semantic.saved_contexts.push(SavedContextManifest {
             id: 13,
             context: 12,
@@ -25427,24 +23749,21 @@ mod tests {
             saved_at_event: 10,
             note: "preempted frame".to_owned(),
         });
-        package
-            .semantic
-            .timer_interrupts
-            .push(TimerInterruptManifest {
-                id: 14,
-                timer_epoch: 3,
-                hart: 1,
-                hart_generation: Some(2),
-                hardware_hart: Some(0),
-                target_activation: Some(11),
-                target_activation_generation: Some(2),
-                target_task: Some(7),
-                target_task_generation: Some(1),
-                generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 11,
-                note: "timer tick".to_owned(),
-            });
+        package.semantic.timer_interrupts.push(TimerInterruptManifest {
+            id: 14,
+            timer_epoch: 3,
+            hart: 1,
+            hart_generation: Some(2),
+            hardware_hart: Some(0),
+            target_activation: Some(11),
+            target_activation_generation: Some(2),
+            target_task: Some(7),
+            target_task_generation: Some(1),
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 11,
+            note: "timer tick".to_owned(),
+        });
         package.semantic.ipi_events.push(IpiEventManifest {
             id: 23,
             source_hart: 1,
@@ -25460,28 +23779,25 @@ mod tests {
             reason: "s5-scheduler-kick".to_owned(),
             note: "hart0 kicks hart1".to_owned(),
         });
-        package
-            .semantic
-            .remote_preempts
-            .push(RemotePreemptManifest {
-                id: 24,
-                ipi: 23,
-                ipi_generation: 1,
-                source_hart: 1,
-                source_hart_generation: 2,
-                target_hart: 2,
-                target_hart_generation_before: 2,
-                target_hart_generation_after: 3,
-                activation: 11,
-                activation_generation_before: 2,
-                activation_generation_after: 3,
-                queue: 1,
-                queue_generation: 1,
-                generation: 1,
-                state: "applied".to_owned(),
-                preempted_at_event: 13,
-                note: "remote preempt activation".to_owned(),
-            });
+        package.semantic.remote_preempts.push(RemotePreemptManifest {
+            id: 24,
+            ipi: 23,
+            ipi_generation: 1,
+            source_hart: 1,
+            source_hart_generation: 2,
+            target_hart: 2,
+            target_hart_generation_before: 2,
+            target_hart_generation_after: 3,
+            activation: 11,
+            activation_generation_before: 2,
+            activation_generation_after: 3,
+            queue: 1,
+            queue_generation: 1,
+            generation: 1,
+            state: "applied".to_owned(),
+            preempted_at_event: 13,
+            note: "remote preempt activation".to_owned(),
+        });
         package.semantic.remote_parks.push(RemoteParkManifest {
             id: 25,
             ipi: 23,
@@ -25497,27 +23813,24 @@ mod tests {
             reason: "remote-maintenance".to_owned(),
             note: "remote park hart".to_owned(),
         });
-        package
-            .semantic
-            .hart_event_attributions
-            .push(HartEventAttributionManifest {
-                id: 22,
-                hart: 1,
-                hart_generation: 2,
-                hardware_hart: 0,
-                event: 11,
-                event_source: "timer".to_owned(),
-                event_kind: "TimerInterruptRecorded".to_owned(),
-                activation: Some(11),
-                activation_generation: Some(2),
-                task: Some(7),
-                task_generation: Some(1),
-                store: None,
-                store_generation: None,
-                generation: 1,
-                state: "recorded".to_owned(),
-                note: "timer event attributed to hart".to_owned(),
-            });
+        package.semantic.hart_event_attributions.push(HartEventAttributionManifest {
+            id: 22,
+            hart: 1,
+            hart_generation: 2,
+            hardware_hart: 0,
+            event: 11,
+            event_source: "timer".to_owned(),
+            event_kind: "TimerInterruptRecorded".to_owned(),
+            activation: Some(11),
+            activation_generation: Some(2),
+            task: Some(7),
+            task_generation: Some(1),
+            store: None,
+            store_generation: None,
+            generation: 1,
+            state: "recorded".to_owned(),
+            note: "timer event attributed to hart".to_owned(),
+        });
         package.semantic.preemptions.push(PreemptionManifest {
             id: 15,
             activation: 11,
@@ -25532,78 +23845,69 @@ mod tests {
             preempted_at_event: 12,
             note: "preempted".to_owned(),
         });
-        package
-            .semantic
-            .scheduler_decisions
-            .push(SchedulerDecisionManifest {
-                id: 16,
-                queue: 1,
-                queue_generation: 1,
-                selected_activation: 11,
-                selected_activation_generation: 3,
-                owner_task: 7,
-                owner_task_generation: 1,
-                generation: 1,
-                state: "recorded".to_owned(),
-                decided_at_event: 13,
-                reason: "runnable-available".to_owned(),
-                note: "select activation".to_owned(),
-            });
-        package
-            .semantic
-            .cross_hart_scheduler_decisions
-            .push(CrossHartSchedulerDecisionManifest {
-                id: 26,
-                scheduler_decision: 16,
-                scheduler_decision_generation: 1,
-                deciding_hart: 2,
-                deciding_hart_generation: 2,
-                target_hart: 1,
-                target_hart_generation: 2,
-                queue: 1,
-                queue_generation: 1,
-                queue_owner_hart_generation: 2,
-                selected_activation: 11,
-                selected_activation_generation: 3,
-                generation: 1,
-                state: "recorded".to_owned(),
-                decided_at_event: 20,
-                reason: "remote-runnable".to_owned(),
-                note: "cross hart decision".to_owned(),
-            });
-        package
-            .semantic
-            .activation_migrations
-            .push(ActivationMigrationManifest {
-                id: 27,
-                activation: 11,
-                activation_generation_before: 3,
-                activation_generation_after: 4,
-                owner_task: 7,
-                owner_task_generation: 1,
-                source_hart: 2,
-                source_hart_generation: 2,
-                target_hart: 1,
-                target_hart_generation: 2,
-                source_queue: 2,
-                source_queue_generation: 1,
-                source_queue_owner_hart_generation: 2,
-                target_queue: 1,
-                target_queue_generation: 1,
-                target_queue_owner_hart_generation: 2,
-                context: None,
-                context_generation_before: None,
-                context_generation_after: None,
-                source_vector_state: None,
-                migrated_vector_state: None,
-                vector_status: "absent".to_owned(),
-                vector_migrated_at_event: None,
-                generation: 1,
-                state: "applied".to_owned(),
-                migrated_at_event: 21,
-                reason: "rebalance".to_owned(),
-                note: "activation migration".to_owned(),
-            });
+        package.semantic.scheduler_decisions.push(SchedulerDecisionManifest {
+            id: 16,
+            queue: 1,
+            queue_generation: 1,
+            selected_activation: 11,
+            selected_activation_generation: 3,
+            owner_task: 7,
+            owner_task_generation: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            decided_at_event: 13,
+            reason: "runnable-available".to_owned(),
+            note: "select activation".to_owned(),
+        });
+        package.semantic.cross_hart_scheduler_decisions.push(CrossHartSchedulerDecisionManifest {
+            id: 26,
+            scheduler_decision: 16,
+            scheduler_decision_generation: 1,
+            deciding_hart: 2,
+            deciding_hart_generation: 2,
+            target_hart: 1,
+            target_hart_generation: 2,
+            queue: 1,
+            queue_generation: 1,
+            queue_owner_hart_generation: 2,
+            selected_activation: 11,
+            selected_activation_generation: 3,
+            generation: 1,
+            state: "recorded".to_owned(),
+            decided_at_event: 20,
+            reason: "remote-runnable".to_owned(),
+            note: "cross hart decision".to_owned(),
+        });
+        package.semantic.activation_migrations.push(ActivationMigrationManifest {
+            id: 27,
+            activation: 11,
+            activation_generation_before: 3,
+            activation_generation_after: 4,
+            owner_task: 7,
+            owner_task_generation: 1,
+            source_hart: 2,
+            source_hart_generation: 2,
+            target_hart: 1,
+            target_hart_generation: 2,
+            source_queue: 2,
+            source_queue_generation: 1,
+            source_queue_owner_hart_generation: 2,
+            target_queue: 1,
+            target_queue_generation: 1,
+            target_queue_owner_hart_generation: 2,
+            context: None,
+            context_generation_before: None,
+            context_generation_after: None,
+            source_vector_state: None,
+            migrated_vector_state: None,
+            vector_status: "absent".to_owned(),
+            vector_migrated_at_event: None,
+            generation: 1,
+            state: "applied".to_owned(),
+            migrated_at_event: 21,
+            reason: "rebalance".to_owned(),
+            note: "activation migration".to_owned(),
+        });
         package.semantic.smp_safe_points.push(SmpSafePointManifest {
             id: 28,
             coordinator_hart: 1,
@@ -25632,167 +23936,155 @@ mod tests {
             reason: "quiescent-boundary".to_owned(),
             note: "smp safe point".to_owned(),
         });
-        package
-            .semantic
-            .stop_the_world_rendezvous
-            .push(StopTheWorldRendezvousManifest {
-                id: 29,
-                epoch: 1,
-                safe_point: 28,
-                safe_point_generation: 1,
-                coordinator_hart: 1,
-                coordinator_hart_generation: 2,
-                participants: vec![
-                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
-                        hart: 1,
-                        hart_generation: 2,
-                        hardware_hart: 0,
-                        hart_state: "idle".to_owned(),
-                    },
-                    artifact_manifest::StopTheWorldRendezvousParticipantManifest {
-                        hart: 2,
-                        hart_generation: 2,
-                        hardware_hart: 1,
-                        hart_state: "parked".to_owned(),
-                    },
-                ],
-                stop_new_activations: true,
-                generation: 1,
-                state: "completed".to_owned(),
-                completed_at_event: 23,
-                reason: "code-publish-boundary".to_owned(),
-                note: "stop the world".to_owned(),
-            });
-        package
-            .semantic
-            .smp_code_publish_barriers
-            .push(SmpCodePublishBarrierManifest {
-                id: 30,
-                rendezvous: 29,
-                rendezvous_generation: 1,
-                rendezvous_epoch: 1,
-                code_publish_epoch_before: 0,
-                code_publish_epoch_after: 1,
-                participants: vec![
-                    artifact_manifest::SmpCodePublishBarrierParticipantManifest {
-                        hart: 1,
-                        hart_generation: 2,
-                        hardware_hart: 0,
-                        last_seen_code_epoch_before: 0,
-                        last_seen_code_epoch_after: 1,
-                        semantic_icache_sync: true,
-                    },
-                    artifact_manifest::SmpCodePublishBarrierParticipantManifest {
-                        hart: 2,
-                        hart_generation: 2,
-                        hardware_hart: 1,
-                        last_seen_code_epoch_before: 0,
-                        last_seen_code_epoch_after: 1,
-                        semantic_icache_sync: true,
-                    },
-                ],
-                remote_icache_sync_required: true,
-                code_publish_executed: false,
-                generation: 1,
-                state: "validated".to_owned(),
-                validated_at_event: 24,
-                reason: "semantic-code-publish-barrier".to_owned(),
-                note: "smp publish barrier".to_owned(),
-            });
-        package
-            .semantic
-            .smp_cleanup_quiescence
-            .push(SmpCleanupQuiescenceManifest {
-                id: 31,
-                cleanup: 20,
-                cleanup_generation: 1,
-                store: 5,
-                target_store_generation: 2,
-                result_store_generation: 4,
-                activation: 11,
-                activation_generation_after: 6,
-                rendezvous: 29,
-                rendezvous_generation: 1,
-                rendezvous_epoch: 1,
-                participants: vec![
-                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
-                        hart: 1,
-                        hart_generation: 2,
-                        hardware_hart: 0,
-                        hart_state: "idle".to_owned(),
-                        current_activation: None,
-                        current_activation_generation: None,
-                        current_store: None,
-                        current_store_generation: None,
-                        quiesced: true,
-                    },
-                    artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
-                        hart: 2,
-                        hart_generation: 2,
-                        hardware_hart: 1,
-                        hart_state: "parked".to_owned(),
-                        current_activation: None,
-                        current_activation_generation: None,
-                        current_store: None,
-                        current_store_generation: None,
-                        quiesced: true,
-                    },
-                ],
-                no_running_activation: true,
-                no_pending_wait: true,
-                no_live_capability: true,
-                no_live_resource: true,
-                generation: 1,
-                state: "validated".to_owned(),
-                validated_at_event: 25,
-                reason: "smp-cleanup-quiescence".to_owned(),
-                note: "cleanup quiesced".to_owned(),
-            });
-        package
-            .semantic
-            .smp_snapshot_barriers
-            .push(SmpSnapshotBarrierManifest {
-                id: 32,
-                rendezvous: 29,
-                rendezvous_generation: 1,
-                rendezvous_epoch: 1,
-                event_log_cursor: 25,
-                participants: vec![
-                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
-                        hart: 1,
-                        hart_generation: 2,
-                        hardware_hart: 0,
-                        hart_state: "idle".to_owned(),
-                        event_log_cursor_observed: 25,
-                        snapshot_safe: true,
-                    },
-                    artifact_manifest::SmpSnapshotBarrierParticipantManifest {
-                        hart: 2,
-                        hart_generation: 2,
-                        hardware_hart: 1,
-                        hart_state: "parked".to_owned(),
-                        event_log_cursor_observed: 25,
-                        snapshot_safe: true,
-                    },
-                ],
-                pending_wait_count: 0,
-                active_transaction_count: 0,
-                active_dmw_lease_count: 0,
-                active_nonconvertible_activation_count: 0,
-                in_flight_dma_count: 0,
-                unsealed_event_log: false,
-                unflushed_trap_record_count: 0,
-                pending_cleanup_count: 0,
-                native_activation_stack_live: false,
-                raw_dma_binding_count: 0,
-                raw_mmio_binding_count: 0,
-                snapshot_validation_ok: true,
-                generation: 1,
-                state: "validated".to_owned(),
-                validated_at_event: 26,
-                reason: "smp-snapshot-barrier".to_owned(),
-                note: "snapshot barrier".to_owned(),
-            });
+        package.semantic.stop_the_world_rendezvous.push(StopTheWorldRendezvousManifest {
+            id: 29,
+            epoch: 1,
+            safe_point: 28,
+            safe_point_generation: 1,
+            coordinator_hart: 1,
+            coordinator_hart_generation: 2,
+            participants: vec![
+                artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                    hart: 1,
+                    hart_generation: 2,
+                    hardware_hart: 0,
+                    hart_state: "idle".to_owned(),
+                },
+                artifact_manifest::StopTheWorldRendezvousParticipantManifest {
+                    hart: 2,
+                    hart_generation: 2,
+                    hardware_hart: 1,
+                    hart_state: "parked".to_owned(),
+                },
+            ],
+            stop_new_activations: true,
+            generation: 1,
+            state: "completed".to_owned(),
+            completed_at_event: 23,
+            reason: "code-publish-boundary".to_owned(),
+            note: "stop the world".to_owned(),
+        });
+        package.semantic.smp_code_publish_barriers.push(SmpCodePublishBarrierManifest {
+            id: 30,
+            rendezvous: 29,
+            rendezvous_generation: 1,
+            rendezvous_epoch: 1,
+            code_publish_epoch_before: 0,
+            code_publish_epoch_after: 1,
+            participants: vec![
+                artifact_manifest::SmpCodePublishBarrierParticipantManifest {
+                    hart: 1,
+                    hart_generation: 2,
+                    hardware_hart: 0,
+                    last_seen_code_epoch_before: 0,
+                    last_seen_code_epoch_after: 1,
+                    semantic_icache_sync: true,
+                },
+                artifact_manifest::SmpCodePublishBarrierParticipantManifest {
+                    hart: 2,
+                    hart_generation: 2,
+                    hardware_hart: 1,
+                    last_seen_code_epoch_before: 0,
+                    last_seen_code_epoch_after: 1,
+                    semantic_icache_sync: true,
+                },
+            ],
+            remote_icache_sync_required: true,
+            code_publish_executed: false,
+            generation: 1,
+            state: "validated".to_owned(),
+            validated_at_event: 24,
+            reason: "semantic-code-publish-barrier".to_owned(),
+            note: "smp publish barrier".to_owned(),
+        });
+        package.semantic.smp_cleanup_quiescence.push(SmpCleanupQuiescenceManifest {
+            id: 31,
+            cleanup: 20,
+            cleanup_generation: 1,
+            store: 5,
+            target_store_generation: 2,
+            result_store_generation: 4,
+            activation: 11,
+            activation_generation_after: 6,
+            rendezvous: 29,
+            rendezvous_generation: 1,
+            rendezvous_epoch: 1,
+            participants: vec![
+                artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                    hart: 1,
+                    hart_generation: 2,
+                    hardware_hart: 0,
+                    hart_state: "idle".to_owned(),
+                    current_activation: None,
+                    current_activation_generation: None,
+                    current_store: None,
+                    current_store_generation: None,
+                    quiesced: true,
+                },
+                artifact_manifest::SmpCleanupQuiescenceParticipantManifest {
+                    hart: 2,
+                    hart_generation: 2,
+                    hardware_hart: 1,
+                    hart_state: "parked".to_owned(),
+                    current_activation: None,
+                    current_activation_generation: None,
+                    current_store: None,
+                    current_store_generation: None,
+                    quiesced: true,
+                },
+            ],
+            no_running_activation: true,
+            no_pending_wait: true,
+            no_live_capability: true,
+            no_live_resource: true,
+            generation: 1,
+            state: "validated".to_owned(),
+            validated_at_event: 25,
+            reason: "smp-cleanup-quiescence".to_owned(),
+            note: "cleanup quiesced".to_owned(),
+        });
+        package.semantic.smp_snapshot_barriers.push(SmpSnapshotBarrierManifest {
+            id: 32,
+            rendezvous: 29,
+            rendezvous_generation: 1,
+            rendezvous_epoch: 1,
+            event_log_cursor: 25,
+            participants: vec![
+                artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                    hart: 1,
+                    hart_generation: 2,
+                    hardware_hart: 0,
+                    hart_state: "idle".to_owned(),
+                    event_log_cursor_observed: 25,
+                    snapshot_safe: true,
+                },
+                artifact_manifest::SmpSnapshotBarrierParticipantManifest {
+                    hart: 2,
+                    hart_generation: 2,
+                    hardware_hart: 1,
+                    hart_state: "parked".to_owned(),
+                    event_log_cursor_observed: 25,
+                    snapshot_safe: true,
+                },
+            ],
+            pending_wait_count: 0,
+            active_transaction_count: 0,
+            active_dmw_lease_count: 0,
+            active_nonconvertible_activation_count: 0,
+            in_flight_dma_count: 0,
+            unsealed_event_log: false,
+            unflushed_trap_record_count: 0,
+            pending_cleanup_count: 0,
+            native_activation_stack_live: false,
+            raw_dma_binding_count: 0,
+            raw_mmio_binding_count: 0,
+            snapshot_validation_ok: true,
+            generation: 1,
+            state: "validated".to_owned(),
+            validated_at_event: 26,
+            reason: "smp-snapshot-barrier".to_owned(),
+            note: "snapshot barrier".to_owned(),
+        });
         package.semantic.smp_stress_runs.push(SmpStressRunManifest {
             id: 33,
             scenario: "s15-smp-stress-property".to_owned(),
@@ -25831,30 +24123,27 @@ mod tests {
             reason: "smp-stress-property-tests".to_owned(),
             note: "stress run".to_owned(),
         });
-        package
-            .semantic
-            .smp_scaling_benchmarks
-            .push(SmpScalingBenchmarkManifest {
-                id: 34,
-                scenario: "s16-smp-scaling-benchmark".to_owned(),
-                stress_run: 33,
-                stress_run_generation: 1,
-                hart_count: 2,
-                workload_units: 6,
-                baseline_single_hart_nanos: 120_000,
-                measured_smp_nanos: 72_000,
-                budget_nanos: 90_000,
-                speedup_milli: 1_666,
-                efficiency_milli: 833,
-                event_log_cursor: 27,
-                stress_safe_point_count: 3,
-                stress_rendezvous_count: 3,
-                stress_property_failures: 0,
-                generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 28,
-                note: "scaling benchmark".to_owned(),
-            });
+        package.semantic.smp_scaling_benchmarks.push(SmpScalingBenchmarkManifest {
+            id: 34,
+            scenario: "s16-smp-scaling-benchmark".to_owned(),
+            stress_run: 33,
+            stress_run_generation: 1,
+            hart_count: 2,
+            workload_units: 6,
+            baseline_single_hart_nanos: 120_000,
+            measured_smp_nanos: 72_000,
+            budget_nanos: 90_000,
+            speedup_milli: 1_666,
+            efficiency_milli: 833,
+            event_log_cursor: 27,
+            stress_safe_point_count: 3,
+            stress_rendezvous_count: 3,
+            stress_property_failures: 0,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 28,
+            note: "scaling benchmark".to_owned(),
+        });
         package.semantic.device_objects.push(DeviceObjectManifest {
             id: 35,
             name: "fake-io0".to_owned(),
@@ -25883,72 +24172,60 @@ mod tests {
             recorded_at_event: 30,
             note: "queue object".to_owned(),
         });
-        package
-            .semantic
-            .descriptor_objects
-            .push(DescriptorObjectManifest {
-                id: 37,
-                queue: 36,
-                queue_generation: 1,
-                slot: 0,
-                access: "read-write".to_owned(),
-                length: 2048,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 31,
-                note: "descriptor object".to_owned(),
-            });
-        package
-            .semantic
-            .dma_buffer_objects
-            .push(DmaBufferObjectManifest {
-                id: 38,
-                descriptor: 37,
-                descriptor_generation: 1,
-                resource: 100,
-                resource_generation: 1,
-                access: "read-write".to_owned(),
-                length: 2048,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 32,
-                note: "dma buffer object".to_owned(),
-            });
-        package
-            .semantic
-            .mmio_region_objects
-            .push(MmioRegionObjectManifest {
-                id: 39,
-                device: 35,
-                device_generation: 1,
-                resource: 101,
-                resource_generation: 1,
-                region_index: 0,
-                offset: 0x1000,
-                length: 0x100,
-                access: "read-write".to_owned(),
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 33,
-                note: "mmio region object".to_owned(),
-            });
-        package
-            .semantic
-            .irq_line_objects
-            .push(IrqLineObjectManifest {
-                id: 40,
-                device: 35,
-                device_generation: 1,
-                resource: 102,
-                resource_generation: 1,
-                irq_number: 5,
-                trigger: "level".to_owned(),
-                polarity: "active-high".to_owned(),
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 34,
-                note: "irq line object".to_owned(),
-            });
+        package.semantic.descriptor_objects.push(DescriptorObjectManifest {
+            id: 37,
+            queue: 36,
+            queue_generation: 1,
+            slot: 0,
+            access: "read-write".to_owned(),
+            length: 2048,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 31,
+            note: "descriptor object".to_owned(),
+        });
+        package.semantic.dma_buffer_objects.push(DmaBufferObjectManifest {
+            id: 38,
+            descriptor: 37,
+            descriptor_generation: 1,
+            resource: 100,
+            resource_generation: 1,
+            access: "read-write".to_owned(),
+            length: 2048,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 32,
+            note: "dma buffer object".to_owned(),
+        });
+        package.semantic.mmio_region_objects.push(MmioRegionObjectManifest {
+            id: 39,
+            device: 35,
+            device_generation: 1,
+            resource: 101,
+            resource_generation: 1,
+            region_index: 0,
+            offset: 0x1000,
+            length: 0x100,
+            access: "read-write".to_owned(),
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 33,
+            note: "mmio region object".to_owned(),
+        });
+        package.semantic.irq_line_objects.push(IrqLineObjectManifest {
+            id: 40,
+            device: 35,
+            device_generation: 1,
+            resource: 102,
+            resource_generation: 1,
+            irq_number: 5,
+            trigger: "level".to_owned(),
+            polarity: "active-high".to_owned(),
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 34,
+            note: "irq line object".to_owned(),
+        });
         package.semantic.irq_events.push(IrqEventManifest {
             id: 41,
             irq_line: 40,
@@ -25964,72 +24241,63 @@ mod tests {
             recorded_at_event: 35,
             note: "irq event".to_owned(),
         });
-        package
-            .semantic
-            .device_capabilities
-            .push(DeviceCapabilityManifest {
-                id: 42,
-                driver_store: 1,
-                driver_store_generation: 2,
-                target: ContractObjectRefManifest {
-                    kind: "mmio-region-object".to_owned(),
-                    id: 39,
-                    generation: 1,
-                },
-                class: "mmio-region".to_owned(),
-                operation: "write32".to_owned(),
-                capability: 7,
-                capability_generation: 1,
-                handle_slot: 3,
-                handle_generation: 1,
-                handle_tag: 9001,
+        package.semantic.device_capabilities.push(DeviceCapabilityManifest {
+            id: 42,
+            driver_store: 1,
+            driver_store_generation: 2,
+            target: ContractObjectRefManifest {
+                kind: "mmio-region-object".to_owned(),
+                id: 39,
                 generation: 1,
-                state: "active".to_owned(),
-                recorded_at_event: 36,
-                note: "device capability".to_owned(),
-            });
-        package
-            .semantic
-            .device_capabilities
-            .push(DeviceCapabilityManifest {
-                id: 43,
-                driver_store: 1,
-                driver_store_generation: 2,
-                target: ContractObjectRefManifest {
-                    kind: "device-object".to_owned(),
-                    id: 35,
-                    generation: 1,
-                },
-                class: "device".to_owned(),
-                operation: "probe".to_owned(),
-                capability: 8,
-                capability_generation: 1,
-                handle_slot: 4,
-                handle_generation: 1,
-                handle_tag: 9002,
+            },
+            class: "mmio-region".to_owned(),
+            operation: "write32".to_owned(),
+            capability: 7,
+            capability_generation: 1,
+            handle_slot: 3,
+            handle_generation: 1,
+            handle_tag: 9001,
+            generation: 1,
+            state: "active".to_owned(),
+            recorded_at_event: 36,
+            note: "device capability".to_owned(),
+        });
+        package.semantic.device_capabilities.push(DeviceCapabilityManifest {
+            id: 43,
+            driver_store: 1,
+            driver_store_generation: 2,
+            target: ContractObjectRefManifest {
+                kind: "device-object".to_owned(),
+                id: 35,
                 generation: 1,
-                state: "active".to_owned(),
-                recorded_at_event: 37,
-                note: "device capability".to_owned(),
-            });
-        package
-            .semantic
-            .driver_store_bindings
-            .push(DriverStoreBindingManifest {
-                id: 44,
-                driver_store: 1,
-                driver_store_generation: 2,
-                device: 35,
-                device_generation: 1,
-                device_capability: 43,
-                device_capability_generation: 1,
-                capability: 8,
-                capability_generation: 1,
-                generation: 1,
-                state: "bound".to_owned(),
-                recorded_at_event: 38,
-                note: "driver store binding".to_owned(),
-            });
+            },
+            class: "device".to_owned(),
+            operation: "probe".to_owned(),
+            capability: 8,
+            capability_generation: 1,
+            handle_slot: 4,
+            handle_generation: 1,
+            handle_tag: 9002,
+            generation: 1,
+            state: "active".to_owned(),
+            recorded_at_event: 37,
+            note: "device capability".to_owned(),
+        });
+        package.semantic.driver_store_bindings.push(DriverStoreBindingManifest {
+            id: 44,
+            driver_store: 1,
+            driver_store_generation: 2,
+            device: 35,
+            device_generation: 1,
+            device_capability: 43,
+            device_capability_generation: 1,
+            capability: 8,
+            capability_generation: 1,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 38,
+            note: "driver store binding".to_owned(),
+        });
         package.semantic.wait_records.push(WaitRecordManifest {
             id: 45,
             owner_task: None,
@@ -26073,123 +24341,111 @@ mod tests {
             cancel_reason: None,
             note: "io wait".to_owned(),
         });
-        package
-            .semantic
-            .activation_resumes
-            .push(ActivationResumeManifest {
-                id: 17,
-                scheduler_decision: 16,
-                scheduler_decision_generation: 1,
-                activation: 11,
-                activation_generation_before: 3,
-                activation_generation_after: 4,
-                owner_task: 7,
-                owner_task_generation: 1,
-                queue: 1,
-                queue_generation: 1,
-                context: Some(12),
-                context_generation_before: Some(2),
-                context_generation_after: Some(3),
-                saved_context: Some(13),
-                saved_context_generation: Some(2),
-                saved_vector_state: None,
-                restored_vector_state: None,
-                vector_status: "absent".to_owned(),
-                vector_restored_at_event: None,
-                generation: 1,
-                state: "applied".to_owned(),
-                resumed_at_event: 14,
-                note: "resume activation".to_owned(),
-            });
-        package
-            .semantic
-            .activation_waits
-            .push(ActivationWaitManifest {
-                id: 18,
-                activation: 11,
-                activation_generation_before: 4,
-                activation_generation_after_block: 5,
-                activation_generation_after_cancel: Some(6),
-                wait: 19,
-                wait_generation: 1,
-                owner_task: 7,
-                owner_task_generation: 2,
-                queue: None,
-                queue_generation: None,
-                generation: 1,
-                state: "cancelled".to_owned(),
-                blocked_at_event: 15,
-                completed_at_event: Some(16),
-                cancel_reason: Some("timeout".to_owned()),
-                note: "activation wait".to_owned(),
-            });
-        package
-            .semantic
-            .activation_cleanups
-            .push(ActivationCleanupManifest {
-                id: 20,
-                store: 3,
-                target_store_generation: 2,
-                result_store_generation: 4,
-                activation: 11,
-                activation_generation_before: 5,
-                activation_generation_after: 6,
-                wait: Some(19),
-                wait_generation: Some(1),
-                owner_task: 7,
-                owner_task_generation_before: 2,
-                owner_task_generation_after: 3,
-                generation: 1,
-                state: "completed".to_owned(),
-                reason: "driver-store-fault".to_owned(),
-                started_at_event: 17,
-                completed_at_event: 18,
-                steps: vec![artifact_manifest::ActivationCleanupStepManifest {
-                    kind: "cancel-wait".to_owned(),
-                    target: ContractObjectRefManifest {
-                        kind: "wait-token".to_owned(),
-                        id: 19,
-                        generation: 1,
-                    },
-                    observed_generation: 1,
-                    status: "done".to_owned(),
-                    event: Some(17),
-                }],
-                note: "cleanup".to_owned(),
-            });
-        package
-            .semantic
-            .preemption_latency_samples
-            .push(PreemptionLatencySampleManifest {
-                id: 21,
-                timer_interrupt: 14,
-                timer_interrupt_generation: 1,
-                preemption: 15,
-                preemption_generation: 1,
-                scheduler_decision: 16,
-                scheduler_decision_generation: 1,
-                activation_resume: 17,
-                activation_resume_generation: 1,
-                activation: 11,
-                activation_generation_before: 2,
-                activation_generation_after: 4,
-                queue: 1,
-                queue_generation: 1,
-                interrupt_recorded_at_event: 11,
-                preempted_at_event: 12,
-                decided_at_event: 13,
-                resumed_at_event: 14,
-                interrupt_to_preempt_events: 1,
-                preempt_to_decision_events: 1,
-                decision_to_resume_events: 1,
-                interrupt_to_resume_events: 3,
-                measured_nanos: 8_500,
-                budget_nanos: 50_000,
-                generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 19,
-                note: "latency sample".to_owned(),
-            });
+        package.semantic.activation_resumes.push(ActivationResumeManifest {
+            id: 17,
+            scheduler_decision: 16,
+            scheduler_decision_generation: 1,
+            activation: 11,
+            activation_generation_before: 3,
+            activation_generation_after: 4,
+            owner_task: 7,
+            owner_task_generation: 1,
+            queue: 1,
+            queue_generation: 1,
+            context: Some(12),
+            context_generation_before: Some(2),
+            context_generation_after: Some(3),
+            saved_context: Some(13),
+            saved_context_generation: Some(2),
+            saved_vector_state: None,
+            restored_vector_state: None,
+            vector_status: "absent".to_owned(),
+            vector_restored_at_event: None,
+            generation: 1,
+            state: "applied".to_owned(),
+            resumed_at_event: 14,
+            note: "resume activation".to_owned(),
+        });
+        package.semantic.activation_waits.push(ActivationWaitManifest {
+            id: 18,
+            activation: 11,
+            activation_generation_before: 4,
+            activation_generation_after_block: 5,
+            activation_generation_after_cancel: Some(6),
+            wait: 19,
+            wait_generation: 1,
+            owner_task: 7,
+            owner_task_generation: 2,
+            queue: None,
+            queue_generation: None,
+            generation: 1,
+            state: "cancelled".to_owned(),
+            blocked_at_event: 15,
+            completed_at_event: Some(16),
+            cancel_reason: Some("timeout".to_owned()),
+            note: "activation wait".to_owned(),
+        });
+        package.semantic.activation_cleanups.push(ActivationCleanupManifest {
+            id: 20,
+            store: 3,
+            target_store_generation: 2,
+            result_store_generation: 4,
+            activation: 11,
+            activation_generation_before: 5,
+            activation_generation_after: 6,
+            wait: Some(19),
+            wait_generation: Some(1),
+            owner_task: 7,
+            owner_task_generation_before: 2,
+            owner_task_generation_after: 3,
+            generation: 1,
+            state: "completed".to_owned(),
+            reason: "driver-store-fault".to_owned(),
+            started_at_event: 17,
+            completed_at_event: 18,
+            steps: vec![artifact_manifest::ActivationCleanupStepManifest {
+                kind: "cancel-wait".to_owned(),
+                target: ContractObjectRefManifest {
+                    kind: "wait-token".to_owned(),
+                    id: 19,
+                    generation: 1,
+                },
+                observed_generation: 1,
+                status: "done".to_owned(),
+                event: Some(17),
+            }],
+            note: "cleanup".to_owned(),
+        });
+        package.semantic.preemption_latency_samples.push(PreemptionLatencySampleManifest {
+            id: 21,
+            timer_interrupt: 14,
+            timer_interrupt_generation: 1,
+            preemption: 15,
+            preemption_generation: 1,
+            scheduler_decision: 16,
+            scheduler_decision_generation: 1,
+            activation_resume: 17,
+            activation_resume_generation: 1,
+            activation: 11,
+            activation_generation_before: 2,
+            activation_generation_after: 4,
+            queue: 1,
+            queue_generation: 1,
+            interrupt_recorded_at_event: 11,
+            preempted_at_event: 12,
+            decided_at_event: 13,
+            resumed_at_event: 14,
+            interrupt_to_preempt_events: 1,
+            preempt_to_decision_events: 1,
+            decision_to_resume_events: 1,
+            interrupt_to_resume_events: 3,
+            measured_nanos: 8_500,
+            budget_nanos: 50_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 19,
+            note: "latency sample".to_owned(),
+        });
         let hart = hart_view_v1(&package.semantic.hart_records[0]);
         assert_eq!(hart["kind"], "hart");
         assert_eq!(hart["owner"]["hardware_id"], 0);
@@ -26212,18 +24468,12 @@ mod tests {
             last_current_event: Some(21),
             note: "current activation".to_owned(),
         });
-        assert_eq!(
-            current_hart["references"]["current_activation"]["generation"],
-            2
-        );
+        assert_eq!(current_hart["references"]["current_activation"]["generation"], 2);
         assert_eq!(current_hart["references"]["current_task"]["id"], 7);
         let context = activation_context_view_v1(&package.semantic.activation_contexts[0]);
         assert_eq!(context["kind"], "activation-context");
         assert_eq!(context["references"]["activation"]["generation"], 2);
-        assert_eq!(
-            context["references"]["current_saved_context"]["generation"],
-            1
-        );
+        assert_eq!(context["references"]["current_saved_context"]["generation"], 1);
         let saved = saved_context_view_v1(&package.semantic.saved_contexts[0]);
         assert_eq!(saved["kind"], "saved-context");
         assert_eq!(saved["reason"], "timer-preempt");
@@ -26256,10 +24506,7 @@ mod tests {
             hart_event_attribution_view_v1(&package.semantic.hart_event_attributions[0]);
         assert_eq!(hart_event["kind"], "hart-event-attribution");
         assert_eq!(hart_event["owner"]["hart"]["generation"], 2);
-        assert_eq!(
-            hart_event["references"]["event"]["kind"],
-            "TimerInterruptRecorded"
-        );
+        assert_eq!(hart_event["references"]["event"]["kind"], "TimerInterruptRecorded");
         assert_eq!(hart_event["references"]["activation"]["id"], 11);
         let queue = runnable_queue_view_v1(&package.semantic.runnable_queues[0]);
         assert_eq!(queue["kind"], "runnable-queue");
@@ -26267,21 +24514,12 @@ mod tests {
         assert_eq!(queue["owner"]["hart"]["generation"], 2);
         let preemption = preemption_view_v1(&package.semantic.preemptions[0]);
         assert_eq!(preemption["kind"], "preemption");
-        assert_eq!(
-            preemption["references"]["activation"]["generation_before"],
-            2
-        );
-        assert_eq!(
-            preemption["references"]["activation"]["generation_after"],
-            3
-        );
+        assert_eq!(preemption["references"]["activation"]["generation_before"], 2);
+        assert_eq!(preemption["references"]["activation"]["generation_after"], 3);
         assert_eq!(preemption["references"]["timer_interrupt"]["generation"], 1);
         let decision = scheduler_decision_view_v1(&package.semantic.scheduler_decisions[0]);
         assert_eq!(decision["kind"], "scheduler-decision");
-        assert_eq!(
-            decision["references"]["selected_activation"]["generation"],
-            3
-        );
+        assert_eq!(decision["references"]["selected_activation"]["generation"], 3);
         assert_eq!(decision["references"]["queue"]["generation"], 1);
         assert_eq!(decision["reason"], "runnable-available");
         let cross_decision = cross_hart_scheduler_decision_view_v1(
@@ -26290,14 +24528,8 @@ mod tests {
         assert_eq!(cross_decision["kind"], "cross-hart-scheduler-decision");
         assert_eq!(cross_decision["owner"]["deciding_hart"]["id"], 2);
         assert_eq!(cross_decision["owner"]["target_hart"]["id"], 1);
-        assert_eq!(
-            cross_decision["references"]["scheduler_decision"]["generation"],
-            1
-        );
-        assert_eq!(
-            cross_decision["references"]["queue"]["owner_hart_generation"],
-            2
-        );
+        assert_eq!(cross_decision["references"]["scheduler_decision"]["generation"], 1);
+        assert_eq!(cross_decision["references"]["queue"]["owner_hart_generation"], 2);
         let migration = activation_migration_view_v1(&package.semantic.activation_migrations[0]);
         assert_eq!(migration["kind"], "activation-migration");
         assert_eq!(migration["owner"]["source_hart"]["id"], 2);
@@ -26308,29 +24540,20 @@ mod tests {
         assert_eq!(safe_point["kind"], "smp-safe-point");
         assert_eq!(safe_point["owner"]["coordinator_hart"]["id"], 1);
         assert_eq!(safe_point["references"]["participants"][0]["hart"]["id"], 1);
-        assert_eq!(
-            safe_point["references"]["participants"][0]["hart"]["generation"],
-            2
-        );
+        assert_eq!(safe_point["references"]["participants"][0]["hart"]["generation"], 2);
         assert_eq!(safe_point["last_transition"]["participant_count"], 2);
         let rendezvous =
             stop_the_world_rendezvous_view_v1(&package.semantic.stop_the_world_rendezvous[0]);
         assert_eq!(rendezvous["kind"], "stop-the-world-rendezvous");
         assert_eq!(rendezvous["epoch"], 1);
         assert_eq!(rendezvous["references"]["safe_point"]["id"], 28);
-        assert_eq!(
-            rendezvous["references"]["participants"][1]["hart"]["generation"],
-            2
-        );
+        assert_eq!(rendezvous["references"]["participants"][1]["hart"]["generation"], 2);
         assert_eq!(rendezvous["stop_new_activations"], true);
         let barrier =
             smp_code_publish_barrier_view_v1(&package.semantic.smp_code_publish_barriers[0]);
         assert_eq!(barrier["kind"], "smp-code-publish-barrier");
         assert_eq!(barrier["references"]["rendezvous"]["id"], 29);
-        assert_eq!(
-            barrier["references"]["participants"][0]["semantic_icache_sync"],
-            true
-        );
+        assert_eq!(barrier["references"]["participants"][0]["semantic_icache_sync"], true);
         assert_eq!(barrier["last_transition"]["code_publish_epoch_after"], 1);
         assert_eq!(barrier["code_publish_executed"], false);
         let quiescence =
@@ -26341,32 +24564,20 @@ mod tests {
         assert_eq!(quiescence["references"]["store"]["result_generation"], 4);
         assert_eq!(quiescence["references"]["rendezvous"]["id"], 29);
         assert_eq!(quiescence["postconditions"]["no_running_activation"], true);
-        assert_eq!(
-            quiescence["references"]["participants"][1]["quiesced"],
-            true
-        );
+        assert_eq!(quiescence["references"]["participants"][1]["quiesced"], true);
         let snapshot_barrier =
             smp_snapshot_barrier_view_v1(&package.semantic.smp_snapshot_barriers[0]);
         assert_eq!(snapshot_barrier["kind"], "smp-snapshot-barrier");
         assert_eq!(snapshot_barrier["references"]["rendezvous"]["id"], 29);
         assert_eq!(snapshot_barrier["last_transition"]["event_log_cursor"], 25);
-        assert_eq!(
-            snapshot_barrier["references"]["participants"][1]["snapshot_safe"],
-            true
-        );
-        assert_eq!(
-            snapshot_barrier["postconditions"]["snapshot_validation_ok"],
-            true
-        );
+        assert_eq!(snapshot_barrier["references"]["participants"][1]["snapshot_safe"], true);
+        assert_eq!(snapshot_barrier["postconditions"]["snapshot_validation_ok"], true);
         let stress = smp_stress_run_view_v1(&package.semantic.smp_stress_runs[0]);
         assert_eq!(stress["kind"], "smp-stress-run");
         assert_eq!(stress["owner"]["scenario"], "s15-smp-stress-property");
         assert_eq!(stress["coverage"]["iterations"], 3);
         assert_eq!(stress["coverage"]["property_failures"], 0);
-        assert_eq!(
-            stress["references"]["last_snapshot_barrier"]["generation"],
-            1
-        );
+        assert_eq!(stress["references"]["last_snapshot_barrier"]["generation"], 1);
         let scaling = smp_scaling_benchmark_view_v1(&package.semantic.smp_scaling_benchmarks[0]);
         assert_eq!(scaling["kind"], "smp-scaling-benchmark");
         assert_eq!(scaling["owner"]["scenario"], "s16-smp-scaling-benchmark");
@@ -26462,18 +24673,9 @@ mod tests {
         assert_eq!(resume["references"]["saved_context"]["generation"], 2);
         let activation_wait = activation_wait_view_v1(&package.semantic.activation_waits[0]);
         assert_eq!(activation_wait["kind"], "activation-wait");
-        assert_eq!(
-            activation_wait["references"]["activation"]["generation_before"],
-            4
-        );
-        assert_eq!(
-            activation_wait["references"]["activation"]["generation_after_block"],
-            5
-        );
-        assert_eq!(
-            activation_wait["references"]["activation"]["generation_after_cancel"],
-            6
-        );
+        assert_eq!(activation_wait["references"]["activation"]["generation_before"], 4);
+        assert_eq!(activation_wait["references"]["activation"]["generation_after_block"], 5);
+        assert_eq!(activation_wait["references"]["activation"]["generation_after_cancel"], 6);
         assert_eq!(activation_wait["references"]["wait"]["generation"], 1);
         assert_eq!(activation_wait["cancel_reason"], "timeout");
         let activation_cleanup =
@@ -26481,14 +24683,8 @@ mod tests {
         assert_eq!(activation_cleanup["kind"], "activation-cleanup");
         assert_eq!(activation_cleanup["owner"]["target_store_generation"], 2);
         assert_eq!(activation_cleanup["owner"]["result_store_generation"], 4);
-        assert_eq!(
-            activation_cleanup["references"]["activation"]["generation_after"],
-            6
-        );
-        assert_eq!(
-            activation_cleanup["references"]["steps"][0]["target"]["kind"],
-            "wait-token"
-        );
+        assert_eq!(activation_cleanup["references"]["activation"]["generation_after"], 6);
+        assert_eq!(activation_cleanup["references"]["steps"][0]["target"]["kind"], "wait-token");
         let latency = preemption_latency_view_v1(&package.semantic.preemption_latency_samples[0]);
         assert_eq!(latency["kind"], "preemption-latency");
         assert_eq!(latency["references"]["timer_interrupt"]["generation"], 1);
@@ -26501,10 +24697,7 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["hart_count"], 2);
         assert_eq!(scheduler["references"]["queues"][0]["entries"], 1);
         assert_eq!(scheduler["references"]["queues"][0]["owner_hart"], 1);
-        assert_eq!(
-            scheduler["references"]["queues"][0]["owner_hart_generation"],
-            2
-        );
+        assert_eq!(scheduler["references"]["queues"][0]["owner_hart_generation"], 2);
         assert_eq!(scheduler["references"]["preemptions"][0]["activation"], 11);
         assert_eq!(
             scheduler["references"]["scheduler_decisions"][0]["selected_activation_generation"],
@@ -26517,284 +24710,151 @@ mod tests {
         assert_eq!(scheduler["last_transition"]["remote_preempt_count"], 1);
         assert_eq!(scheduler["last_transition"]["remote_park_count"], 1);
         assert_eq!(scheduler["references"]["ipi_events"][0]["target_hart"], 2);
-        assert_eq!(
-            scheduler["references"]["remote_preempts"][0]["activation_generation_after"],
-            3
-        );
+        assert_eq!(scheduler["references"]["remote_preempts"][0]["activation_generation_after"], 3);
         assert_eq!(scheduler["references"]["remote_parks"][0]["target_hart"], 2);
-        assert_eq!(
-            scheduler["last_transition"]["hart_event_attribution_count"],
-            1
-        );
+        assert_eq!(scheduler["last_transition"]["hart_event_attribution_count"], 1);
         assert_eq!(
             scheduler["references"]["hart_event_attributions"][0]["event_kind"],
             "TimerInterruptRecorded"
         );
         assert_eq!(scheduler["last_transition"]["preemption_count"], 1);
         assert_eq!(scheduler["last_transition"]["scheduler_decision_count"], 1);
-        assert_eq!(
-            scheduler["last_transition"]["cross_hart_scheduler_decision_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["cross_hart_scheduler_decisions"][0]["target_hart"],
-            1
-        );
-        assert_eq!(
-            scheduler["last_transition"]["activation_migration_count"],
-            1
-        );
+        assert_eq!(scheduler["last_transition"]["cross_hart_scheduler_decision_count"], 1);
+        assert_eq!(scheduler["references"]["cross_hart_scheduler_decisions"][0]["target_hart"], 1);
+        assert_eq!(scheduler["last_transition"]["activation_migration_count"], 1);
         assert_eq!(
             scheduler["references"]["activation_migrations"][0]["activation_generation_after"],
             4
         );
         assert_eq!(scheduler["last_transition"]["smp_safe_point_count"], 1);
-        assert_eq!(
-            scheduler["references"]["smp_safe_points"][0]["participant_count"],
-            2
-        );
-        assert_eq!(
-            scheduler["last_transition"]["stop_the_world_rendezvous_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["stop_the_world_rendezvous"][0]["safe_point"],
-            28
-        );
-        assert_eq!(
-            scheduler["last_transition"]["smp_code_publish_barrier_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["smp_code_publish_barriers"][0]["rendezvous"],
-            29
-        );
-        assert_eq!(
-            scheduler["last_transition"]["smp_cleanup_quiescence_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["smp_cleanup_quiescence"][0]["cleanup"],
-            20
-        );
-        assert_eq!(
-            scheduler["last_transition"]["smp_snapshot_barrier_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["smp_snapshot_barriers"][0]["rendezvous"],
-            29
-        );
+        assert_eq!(scheduler["references"]["smp_safe_points"][0]["participant_count"], 2);
+        assert_eq!(scheduler["last_transition"]["stop_the_world_rendezvous_count"], 1);
+        assert_eq!(scheduler["references"]["stop_the_world_rendezvous"][0]["safe_point"], 28);
+        assert_eq!(scheduler["last_transition"]["smp_code_publish_barrier_count"], 1);
+        assert_eq!(scheduler["references"]["smp_code_publish_barriers"][0]["rendezvous"], 29);
+        assert_eq!(scheduler["last_transition"]["smp_cleanup_quiescence_count"], 1);
+        assert_eq!(scheduler["references"]["smp_cleanup_quiescence"][0]["cleanup"], 20);
+        assert_eq!(scheduler["last_transition"]["smp_snapshot_barrier_count"], 1);
+        assert_eq!(scheduler["references"]["smp_snapshot_barriers"][0]["rendezvous"], 29);
         assert_eq!(scheduler["last_transition"]["smp_stress_run_count"], 1);
-        assert_eq!(
-            scheduler["references"]["smp_stress_runs"][0]["property_failures"],
-            0
-        );
-        assert_eq!(
-            scheduler["last_transition"]["smp_scaling_benchmark_count"],
-            1
-        );
-        assert_eq!(
-            scheduler["references"]["smp_scaling_benchmarks"][0]["efficiency_milli"],
-            833
-        );
+        assert_eq!(scheduler["references"]["smp_stress_runs"][0]["property_failures"], 0);
+        assert_eq!(scheduler["last_transition"]["smp_scaling_benchmark_count"], 1);
+        assert_eq!(scheduler["references"]["smp_scaling_benchmarks"][0]["efficiency_milli"], 833);
         assert_eq!(scheduler["last_transition"]["activation_resume_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_wait_count"], 1);
         assert_eq!(scheduler["last_transition"]["activation_cleanup_count"], 1);
-        assert_eq!(
-            scheduler["last_transition"]["preemption_latency_sample_count"],
-            1
-        );
+        assert_eq!(scheduler["last_transition"]["preemption_latency_sample_count"], 1);
         assert_eq!(scheduler["last_transition"]["timer_epoch"], 3);
-        assert_eq!(
-            scheduler["last_transition"]["scheduler_decision_cursor"],
-            12
-        );
+        assert_eq!(scheduler["last_transition"]["scheduler_decision_cursor"], 12);
 
         let live_edges = live_graph_edges(&package);
         assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "task"
             && edge["from"]["generation"] == 1
             && edge["to"]["kind"] == "activation"
             && edge["to"]["generation"] == 2));
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "device"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 99
-                    && edge["relation"] == "device-resource"
-                    && edge["mode"] == "live")
-        );
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "device"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 99
+            && edge["relation"] == "device-resource"
+            && edge["mode"] == "live"));
         assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "queue"
             && edge["to"]["kind"] == "device"
             && edge["to"]["id"] == 35
             && edge["to"]["generation"] == 1
             && edge["relation"] == "queue-device"
             && edge["mode"] == "live"));
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "descriptor"
-                    && edge["to"]["kind"] == "queue"
-                    && edge["to"]["id"] == 36
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "descriptor-queue"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "dma-buffer"
-                    && edge["to"]["kind"] == "descriptor"
-                    && edge["to"]["id"] == 37
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "dma-buffer-descriptor"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "dma-buffer"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 100
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "dma-buffer-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "mmio-region"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "mmio-region-device"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "mmio-region"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 101
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "mmio-region-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-line"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "irq-line-device"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-line"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 102
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "irq-line-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation"
-                    && edge["to"]["kind"] == "runnable-queue"
-                    && edge["to"]["generation"] == 1)
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation"
-                    && edge["to"]["kind"] == "activation-context"
-                    && edge["to"]["generation"] == 2)
-        );
-        assert!(
-            live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation-context"
-                    && edge["to"]["kind"] == "saved-context"
-                    && edge["to"]["generation"] == 1)
-        );
-        assert!(
-            !live_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "timer-interrupt")
-        );
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "descriptor"
+            && edge["to"]["kind"] == "queue"
+            && edge["to"]["id"] == 36
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "descriptor-queue"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "dma-buffer"
+            && edge["to"]["kind"] == "descriptor"
+            && edge["to"]["id"] == 37
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "dma-buffer-descriptor"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "dma-buffer"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 100
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "dma-buffer-resource"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "mmio-region"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "mmio-region-device"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "mmio-region"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 101
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "mmio-region-resource"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "irq-line"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "irq-line-device"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "irq-line"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 102
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "irq-line-resource"
+            && edge["mode"] == "live"));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "activation"
+            && edge["to"]["kind"] == "runnable-queue"
+            && edge["to"]["generation"] == 1));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "activation"
+            && edge["to"]["kind"] == "activation-context"
+            && edge["to"]["generation"] == 2));
+        assert!(live_edges.iter().any(|edge| edge["from"]["kind"] == "activation-context"
+            && edge["to"]["kind"] == "saved-context"
+            && edge["to"]["generation"] == 1));
+        assert!(!live_edges.iter().any(|edge| edge["from"]["kind"] == "timer-interrupt"));
         let history_edges = history_graph_edges(&package);
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "timer-interrupt"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 2
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "preemption"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 3
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "saved-context"
-                    && edge["to"]["kind"] == "preemption"
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "captured-from-preemption"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "scheduler-decision"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 3
-                    && edge["relation"] == "selected"
-                    && edge["mode"] == "historical")
-        );
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "timer-interrupt"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 2
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "preemption"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 3
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "saved-context"
+            && edge["to"]["kind"] == "preemption"
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "captured-from-preemption"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "scheduler-decision"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 3
+            && edge["relation"] == "selected"
+            && edge["mode"] == "historical"));
         assert!(history_edges.iter().any(|edge| edge["from"]["kind"]
             == "cross-hart-scheduler-decision"
             && edge["to"]["kind"] == "hart"
             && edge["to"]["id"] == 1
             && edge["relation"] == "target-hart"
             && edge["mode"] == "historical"));
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation-migration"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 4
-                    && edge["relation"] == "migrated-to"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-safe-point"
-                    && edge["to"]["kind"] == "hart"
-                    && edge["to"]["id"] == 1
-                    && edge["relation"] == "coordinator-hart"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-safe-point"
-                    && edge["to"]["kind"] == "hart"
-                    && edge["to"]["id"] == 2
-                    && edge["relation"] == "participant-hart"
-                    && edge["mode"] == "historical")
-        );
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "activation-migration"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 4
+            && edge["relation"] == "migrated-to"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-safe-point"
+            && edge["to"]["kind"] == "hart"
+            && edge["to"]["id"] == 1
+            && edge["relation"] == "coordinator-hart"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-safe-point"
+            && edge["to"]["kind"] == "hart"
+            && edge["to"]["id"] == 2
+            && edge["relation"] == "participant-hart"
+            && edge["mode"] == "historical"));
         assert!(history_edges.iter().any(|edge| edge["from"]["kind"]
             == "stop-the-world-rendezvous"
             && edge["to"]["kind"] == "smp-safe-point"
@@ -26819,186 +24879,106 @@ mod tests {
             && edge["to"]["id"] == 2
             && edge["relation"] == "participant-hart"
             && edge["mode"] == "historical"));
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
-                    && edge["to"]["kind"] == "activation-cleanup"
-                    && edge["to"]["id"] == 20
-                    && edge["relation"] == "cleanup"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
-                    && edge["to"]["kind"] == "stop-the-world-rendezvous"
-                    && edge["to"]["id"] == 29
-                    && edge["relation"] == "cleanup-rendezvous"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-snapshot-barrier"
-                    && edge["to"]["kind"] == "stop-the-world-rendezvous"
-                    && edge["to"]["id"] == 29
-                    && edge["relation"] == "snapshot-rendezvous"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-stress-run"
-                    && edge["to"]["kind"] == "smp-snapshot-barrier"
-                    && edge["to"]["id"] == 32
-                    && edge["relation"] == "last-snapshot-barrier"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "smp-scaling-benchmark"
-                    && edge["to"]["kind"] == "smp-stress-run"
-                    && edge["to"]["id"] == 33
-                    && edge["relation"] == "scaling-stress-run"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "device"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 99
-                    && edge["relation"] == "device-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "queue"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["relation"] == "queue-device"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "descriptor"
-                    && edge["to"]["kind"] == "queue"
-                    && edge["to"]["id"] == 36
-                    && edge["relation"] == "descriptor-queue"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "dma-buffer"
-                    && edge["to"]["kind"] == "descriptor"
-                    && edge["to"]["id"] == 37
-                    && edge["relation"] == "dma-buffer-descriptor"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "dma-buffer"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 100
-                    && edge["relation"] == "dma-buffer-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "mmio-region"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["relation"] == "mmio-region-device"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "mmio-region"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 101
-                    && edge["relation"] == "mmio-region-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-line"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["relation"] == "irq-line-device"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-line"
-                    && edge["to"]["kind"] == "resource"
-                    && edge["to"]["id"] == 102
-                    && edge["relation"] == "irq-line-resource"
-                    && edge["mode"] == "live")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-event"
-                    && edge["to"]["kind"] == "irq-line"
-                    && edge["to"]["id"] == 40
-                    && edge["relation"] == "irq-event-line"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-event"
-                    && edge["to"]["kind"] == "device"
-                    && edge["to"]["id"] == 35
-                    && edge["relation"] == "irq-event-device"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "irq-event"
-                    && edge["to"]["kind"] == "store"
-                    && edge["to"]["id"] == 1
-                    && edge["relation"] == "irq-event-driver-store"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation-resume"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 4
-                    && edge["relation"] == "resumed-to"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "activation-wait"
-                    && edge["to"]["kind"] == "activation"
-                    && edge["to"]["generation"] == 6
-                    && edge["relation"] == "cancelled-to"
-                    && edge["mode"] == "historical")
-        );
-        assert!(
-            history_edges
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "preemption-latency"
-                    && edge["to"]["kind"] == "activation-resume"
-                    && edge["to"]["generation"] == 1
-                    && edge["relation"] == "measured-resume"
-                    && edge["mode"] == "historical")
-        );
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
+            && edge["to"]["kind"] == "activation-cleanup"
+            && edge["to"]["id"] == 20
+            && edge["relation"] == "cleanup"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-cleanup-quiescence"
+            && edge["to"]["kind"] == "stop-the-world-rendezvous"
+            && edge["to"]["id"] == 29
+            && edge["relation"] == "cleanup-rendezvous"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-snapshot-barrier"
+            && edge["to"]["kind"] == "stop-the-world-rendezvous"
+            && edge["to"]["id"] == 29
+            && edge["relation"] == "snapshot-rendezvous"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-stress-run"
+            && edge["to"]["kind"] == "smp-snapshot-barrier"
+            && edge["to"]["id"] == 32
+            && edge["relation"] == "last-snapshot-barrier"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "smp-scaling-benchmark"
+            && edge["to"]["kind"] == "smp-stress-run"
+            && edge["to"]["id"] == 33
+            && edge["relation"] == "scaling-stress-run"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "device"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 99
+            && edge["relation"] == "device-resource"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "queue"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["relation"] == "queue-device"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "descriptor"
+            && edge["to"]["kind"] == "queue"
+            && edge["to"]["id"] == 36
+            && edge["relation"] == "descriptor-queue"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "dma-buffer"
+            && edge["to"]["kind"] == "descriptor"
+            && edge["to"]["id"] == 37
+            && edge["relation"] == "dma-buffer-descriptor"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "dma-buffer"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 100
+            && edge["relation"] == "dma-buffer-resource"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "mmio-region"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["relation"] == "mmio-region-device"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "mmio-region"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 101
+            && edge["relation"] == "mmio-region-resource"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "irq-line"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["relation"] == "irq-line-device"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "irq-line"
+            && edge["to"]["kind"] == "resource"
+            && edge["to"]["id"] == 102
+            && edge["relation"] == "irq-line-resource"
+            && edge["mode"] == "live"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "irq-event"
+            && edge["to"]["kind"] == "irq-line"
+            && edge["to"]["id"] == 40
+            && edge["relation"] == "irq-event-line"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "irq-event"
+            && edge["to"]["kind"] == "device"
+            && edge["to"]["id"] == 35
+            && edge["relation"] == "irq-event-device"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "irq-event"
+            && edge["to"]["kind"] == "store"
+            && edge["to"]["id"] == 1
+            && edge["relation"] == "irq-event-driver-store"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "activation-resume"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 4
+            && edge["relation"] == "resumed-to"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "activation-wait"
+            && edge["to"]["kind"] == "activation"
+            && edge["to"]["generation"] == 6
+            && edge["relation"] == "cancelled-to"
+            && edge["mode"] == "historical"));
+        assert!(history_edges.iter().any(|edge| edge["from"]["kind"] == "preemption-latency"
+            && edge["to"]["kind"] == "activation-resume"
+            && edge["to"]["generation"] == 1
+            && edge["relation"] == "measured-resume"
+            && edge["mode"] == "historical"));
     }
 
     #[test]
@@ -27025,10 +25005,7 @@ mod tests {
         });
 
         let scheduler = scheduler_view_v1(&package);
-        assert_eq!(
-            scheduler["references"]["current_activation_owners"][0]["hart"]["id"],
-            2
-        );
+        assert_eq!(scheduler["references"]["current_activation_owners"][0]["hart"]["id"], 2);
         assert_eq!(
             scheduler["references"]["current_activation_owners"][0]["activation"]["generation"],
             4
@@ -27041,11 +25018,7 @@ mod tests {
 
     #[test]
     fn cleanup_view_v1_exposes_steps_effects_and_status() {
-        let target = ContractObjectRefManifest {
-            kind: "store".to_owned(),
-            id: 1,
-            generation: 2,
-        };
+        let target = ContractObjectRefManifest { kind: "store".to_owned(), id: 1, generation: 2 };
         let view = cleanup_view_v1(&CleanupTransactionManifest {
             id: 5,
             store: 1,
@@ -27128,10 +25101,7 @@ mod tests {
         assert_eq!(artifact["references"]["artifact_hash"], "artifact");
         assert_eq!(artifact["references"]["hash_status"], "manifest-bound");
         assert_eq!(artifact["references"]["manifest_binding_hash"], "binding");
-        assert_eq!(
-            artifact["verification"]["signature_status"],
-            "profile-bound-unverified"
-        );
+        assert_eq!(artifact["verification"]["signature_status"], "profile-bound-unverified");
         assert_eq!(artifact["verification"]["signature_verified"], false);
         assert_eq!(artifact["last_transition"]["payload_len"], 4096);
 
@@ -27170,10 +25140,7 @@ mod tests {
         assert_eq!(code["memory"]["text"]["permission"], "rx");
         assert_eq!(code["simd_requirement"]["uses_simd"], true);
         assert_eq!(code["simd_requirement"]["required_abi"], "riscv-v");
-        assert_eq!(
-            code["simd_requirement"]["target_feature_set"]["kind"],
-            "target-feature-set"
-        );
+        assert_eq!(code["simd_requirement"]["target_feature_set"]["kind"], "target-feature-set");
     }
 
     #[test]
@@ -27231,14 +25198,8 @@ mod tests {
         assert_eq!(trap["kind"], "trap");
         assert_eq!(trap["owner"]["activation_generation"], 6);
         assert_eq!(trap["references"]["code_object"]["generation"], 4);
-        assert_eq!(
-            trap["simd_attribution"]["classification"],
-            "unsupported-target-profile"
-        );
-        assert_eq!(
-            trap["simd_attribution"]["target_feature_set"]["generation"],
-            1
-        );
+        assert_eq!(trap["simd_attribution"]["classification"], "unsupported-target-profile");
+        assert_eq!(trap["simd_attribution"]["target_feature_set"]["generation"], 1);
         assert_eq!(trap["last_error"], "denied");
         assert_eq!(trap["attribution"]["status"], "trap-map-attributed");
 
@@ -27274,10 +25235,7 @@ mod tests {
         assert_eq!(hostcall["owner"]["activation_generation"], 6);
         assert_eq!(hostcall["references"]["artifact"]["generation"], 7);
         assert_eq!(hostcall["call"]["caller_offset"], 16);
-        assert_eq!(
-            hostcall["call"]["subject_source"],
-            "active-store-activation-code-object"
-        );
+        assert_eq!(hostcall["call"]["subject_source"], "active-store-activation-code-object");
         assert_eq!(hostcall["gate"]["status"], "denied");
         assert_eq!(hostcall["gate"]["denial_reason"], "cap-arg-generation");
         assert_eq!(hostcall["last_error"], "cap-arg-generation");
@@ -27332,10 +25290,7 @@ mod tests {
         assert_eq!(view["issuer"], "target-executor-command-probe");
         assert_eq!(view["command_name"], "create-wait");
         assert_eq!(view["last_transition"]["event_count"], 0);
-        assert_eq!(
-            view["last_error"],
-            "create-wait requires owner task or owner store"
-        );
+        assert_eq!(view["last_error"], "create-wait requires owner task or owner store");
     }
 
     #[test]
@@ -27369,22 +25324,19 @@ mod tests {
     #[test]
     fn graph_json_edges_separate_live_history_and_cleanup_modes() {
         let mut package = minimal_graph_package();
-        package
-            .semantic
-            .activation_records
-            .push(ActivationRecordManifest {
-                id: 10,
-                store: 1,
-                store_generation: 2,
-                code_object: 3,
-                code_generation: 4,
-                artifact: 5,
-                entry: "_start".to_owned(),
-                generation: 6,
-                state: "running".to_owned(),
-                start_event: 7,
-                ..ActivationRecordManifest::default()
-            });
+        package.semantic.activation_records.push(ActivationRecordManifest {
+            id: 10,
+            store: 1,
+            store_generation: 2,
+            code_object: 3,
+            code_generation: 4,
+            artifact: 5,
+            entry: "_start".to_owned(),
+            generation: 6,
+            state: "running".to_owned(),
+            start_event: 7,
+            ..ActivationRecordManifest::default()
+        });
         package.semantic.code_objects.push(CodeObjectManifest {
             id: 3,
             artifact_id: 5,
@@ -27396,32 +25348,29 @@ mod tests {
             bound_store_generation: Some(2),
             ..CodeObjectManifest::default()
         });
-        package
-            .semantic
-            .capability_records
-            .push(CapabilityRecordManifest {
-                id: 20,
-                subject: "driver".to_owned(),
-                object: "packet-device.net0".to_owned(),
-                object_ref: Some(AuthorityObjectRefManifest {
-                    scope: "internal".to_owned(),
-                    class: "packet-device".to_owned(),
-                    object: ContractObjectRefManifest {
-                        kind: "resource".to_owned(),
-                        id: 99,
-                        generation: 1,
-                    },
-                }),
-                rights: vec!["rx".to_owned()],
-                lifetime: "store".to_owned(),
+        package.semantic.capability_records.push(CapabilityRecordManifest {
+            id: 20,
+            subject: "driver".to_owned(),
+            object: "packet-device.net0".to_owned(),
+            object_ref: Some(AuthorityObjectRefManifest {
+                scope: "internal".to_owned(),
                 class: "packet-device".to_owned(),
-                owner_store: Some(1),
-                owner_store_generation: Some(2),
-                source: "test".to_owned(),
-                generation: 1,
-                manifest_decl: true,
-                ..CapabilityRecordManifest::default()
-            });
+                object: ContractObjectRefManifest {
+                    kind: "resource".to_owned(),
+                    id: 99,
+                    generation: 1,
+                },
+            }),
+            rights: vec!["rx".to_owned()],
+            lifetime: "store".to_owned(),
+            class: "packet-device".to_owned(),
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            source: "test".to_owned(),
+            generation: 1,
+            manifest_decl: true,
+            ..CapabilityRecordManifest::default()
+        });
         package.semantic.wait_records.push(WaitRecordManifest {
             id: 30,
             owner_store: Some(1),
@@ -27476,40 +25425,37 @@ mod tests {
             trap_generation_out: Some(1),
             ..HostcallTraceManifest::default()
         });
-        package
-            .semantic
-            .cleanup_transactions
-            .push(CleanupTransactionManifest {
-                id: 60,
-                store: 1,
-                store_generation: 2,
-                target_store_generation: 2,
-                activation: Some(10),
-                activation_generation: Some(6),
-                code_object: Some(3),
-                code_generation: Some(4),
+        package.semantic.cleanup_transactions.push(CleanupTransactionManifest {
+            id: 60,
+            store: 1,
+            store_generation: 2,
+            target_store_generation: 2,
+            activation: Some(10),
+            activation_generation: Some(6),
+            code_object: Some(3),
+            code_generation: Some(4),
+            generation: 1,
+            started_at: 8,
+            finished_at: Some(9),
+            state: "completed".to_owned(),
+            reason: "fault".to_owned(),
+            released_dmw_leases: 0,
+            cancelled_waits: 1,
+            revoked_capabilities: vec![20],
+            revoked_capability_refs: vec![ContractObjectRefManifest {
+                kind: "capability".to_owned(),
+                id: 20,
                 generation: 1,
-                started_at: 8,
-                finished_at: Some(9),
-                state: "completed".to_owned(),
-                reason: "fault".to_owned(),
-                released_dmw_leases: 0,
-                cancelled_waits: 1,
-                revoked_capabilities: vec![20],
-                revoked_capability_refs: vec![ContractObjectRefManifest {
-                    kind: "capability".to_owned(),
-                    id: 20,
-                    generation: 1,
-                }],
-                dropped_resources: 0,
-                unbound_code_object: true,
-                state_digest: "store:1@3:dead|code:3@4:retired|activations=[]|leases=[]|caps=[]"
-                    .to_owned(),
-                effect: "restart".to_owned(),
-                steps: Vec::new(),
-                effects: Vec::new(),
-                result_store_generation: Some(3),
-            });
+            }],
+            dropped_resources: 0,
+            unbound_code_object: true,
+            state_digest: "store:1@3:dead|code:3@4:retired|activations=[]|leases=[]|caps=[]"
+                .to_owned(),
+            effect: "restart".to_owned(),
+            steps: Vec::new(),
+            effects: Vec::new(),
+            result_store_generation: Some(3),
+        });
         package.semantic.io_cleanups.push(IoCleanupManifest {
             id: 70,
             driver_store: 1,
@@ -27556,316 +25502,274 @@ mod tests {
             steps: Vec::new(),
             note: "io cleanup graph".to_owned(),
         });
-        package
-            .semantic
-            .io_fault_injections
-            .push(IoFaultInjectionManifest {
-                id: 71,
-                driver_store: 1,
-                driver_store_generation: 2,
-                device: 35,
-                device_generation: 1,
-                driver_binding: 44,
-                driver_binding_generation: 1,
-                target: ContractObjectRefManifest {
-                    kind: "irq-line-object".to_owned(),
-                    id: 40,
-                    generation: 1,
-                },
-                cleanup: 70,
-                cleanup_generation: 1,
+        package.semantic.io_fault_injections.push(IoFaultInjectionManifest {
+            id: 71,
+            driver_store: 1,
+            driver_store_generation: 2,
+            device: 35,
+            device_generation: 1,
+            driver_binding: 44,
+            driver_binding_generation: 1,
+            target: ContractObjectRefManifest {
+                kind: "irq-line-object".to_owned(),
+                id: 40,
                 generation: 1,
-                kind: "device-fault".to_owned(),
-                state: "completed".to_owned(),
-                injected_at_event: 12,
-                note: "io fault graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_buffer_objects
-            .push(PacketBufferObjectManifest {
-                id: 80,
-                packet_device: 81,
-                packet_device_generation: 1,
-                direction: "rx".to_owned(),
-                frame_format_version: 2,
-                capacity: 512,
-                payload_len: 64,
-                sequence: 1,
-                generation: 1,
-                state: "filled".to_owned(),
-                recorded_at_event: 13,
-                note: "packet buffer graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_queue_objects
-            .push(PacketQueueObjectManifest {
-                id: 82,
-                name: "net0-rx0".to_owned(),
-                packet_device: 81,
-                packet_device_generation: 1,
-                role: "rx".to_owned(),
-                queue_index: 0,
-                depth: 4,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 14,
-                note: "packet queue graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_descriptors
-            .push(PacketDescriptorObjectManifest {
-                id: 83,
-                packet_queue: 82,
-                packet_queue_generation: 1,
-                packet_buffer: 80,
-                packet_buffer_generation: 1,
-                slot: 0,
-                length: 64,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 15,
-                note: "packet descriptor graph".to_owned(),
-            });
-        package
-            .semantic
-            .fake_net_backends
-            .push(FakeNetBackendObjectManifest {
-                id: 84,
-                name: "fake-net0".to_owned(),
-                packet_device: 81,
-                packet_device_generation: 1,
-                provider: "service_core".to_owned(),
-                profile: "fake-net-v1".to_owned(),
-                mtu: 1500,
-                rx_queue_depth: 4,
-                tx_queue_depth: 4,
-                mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
-                frame_format_version: 2,
-                max_payload_len: 512,
-                deterministic_seed: 7,
-                generation: 1,
-                state: "bound".to_owned(),
-                recorded_at_event: 16,
-                note: "fake net backend graph".to_owned(),
-            });
-        package
-            .semantic
-            .virtio_net_backends
-            .push(VirtioNetBackendObjectManifest {
-                id: 85,
-                name: "virtio-net0-backend".to_owned(),
-                packet_device: 81,
-                packet_device_generation: 1,
-                driver_binding: 70,
-                driver_binding_generation: 1,
-                device: 61,
-                device_generation: 1,
-                provider: "substrate_virtio".to_owned(),
-                profile: "virtio-net-backend-skeleton-v1".to_owned(),
-                model: "virtio-net".to_owned(),
-                mtu: 1500,
-                rx_queue_depth: 4,
-                tx_queue_depth: 4,
-                mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
-                frame_format_version: 2,
-                max_payload_len: 512,
-                device_features: 32,
-                driver_features: 32,
-                negotiated_features: 32,
-                rx_queue_index: 0,
-                tx_queue_index: 1,
-                queue_size: 4,
-                irq_vector: 5,
-                generation: 1,
-                state: "skeleton-ready".to_owned(),
-                recorded_at_event: 17,
-                note: "virtio net backend graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_rx_interrupts
-            .push(NetworkRxInterruptManifest {
-                id: 86,
-                virtio_net_backend: 85,
-                virtio_net_backend_generation: 1,
-                irq_event: 41,
-                irq_event_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                rx_queue: 82,
-                rx_queue_generation: 1,
-                ready_descriptors: 1,
-                sequence: 1,
-                generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 18,
-                note: "network rx interrupt graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_rx_wait_resolutions
-            .push(NetworkRxWaitResolutionManifest {
-                id: 87,
-                io_wait: 50,
-                io_wait_generation: 1,
-                wait: 5,
-                wait_generation: 1,
-                rx_interrupt: 86,
-                rx_interrupt_generation: 1,
-                irq_event: 41,
-                irq_event_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                rx_queue: 82,
-                rx_queue_generation: 1,
-                ready_descriptors: 1,
-                sequence: 1,
-                generation: 1,
-                state: "resolved".to_owned(),
-                resolved_at_event: 19,
-                note: "network rx wait resolution graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_buffer_objects
-            .push(PacketBufferObjectManifest {
-                id: 88,
-                packet_device: 81,
-                packet_device_generation: 1,
-                direction: "tx".to_owned(),
-                frame_format_version: 2,
-                capacity: 512,
-                payload_len: 64,
-                sequence: 2,
-                generation: 1,
-                state: "filled".to_owned(),
-                recorded_at_event: 20,
-                note: "tx packet buffer graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_queue_objects
-            .push(PacketQueueObjectManifest {
-                id: 89,
-                name: "net0-tx0".to_owned(),
-                packet_device: 81,
-                packet_device_generation: 1,
-                role: "tx".to_owned(),
-                queue_index: 1,
-                depth: 4,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 21,
-                note: "tx packet queue graph".to_owned(),
-            });
-        package
-            .semantic
-            .packet_descriptors
-            .push(PacketDescriptorObjectManifest {
-                id: 90,
-                packet_queue: 89,
-                packet_queue_generation: 1,
-                packet_buffer: 88,
-                packet_buffer_generation: 1,
-                slot: 0,
-                length: 64,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 22,
-                note: "tx packet descriptor graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_tx_capability_gates
-            .push(NetworkTxCapabilityGateManifest {
-                id: 91,
-                driver_store: 1,
-                driver_store_generation: 2,
-                packet_device: 81,
-                packet_device_generation: 1,
-                tx_queue: 89,
-                tx_queue_generation: 1,
-                packet_descriptor: 90,
-                packet_descriptor_generation: 1,
-                packet_buffer: 88,
-                packet_buffer_generation: 1,
-                device_capability: 42,
-                device_capability_generation: 1,
-                capability: 1,
-                capability_generation: 1,
-                handle_slot: 1,
-                handle_generation: 1,
-                handle_tag: 9,
-                operation: "tx".to_owned(),
-                byte_len: 64,
-                sequence: 2,
-                generation: 1,
-                state: "allowed".to_owned(),
-                recorded_at_event: 23,
-                note: "network tx capability gate graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_tx_completions
-            .push(NetworkTxCompletionManifest {
-                id: 92,
-                tx_gate: 91,
-                tx_gate_generation: 1,
-                backend_kind: "virtio-net-backend-object".to_owned(),
-                backend: 85,
-                backend_generation: 1,
-                driver_store: 1,
-                driver_store_generation: 2,
-                packet_device: 81,
-                packet_device_generation: 1,
-                tx_queue: 89,
-                tx_queue_generation: 1,
-                packet_descriptor: 90,
-                packet_descriptor_generation: 1,
-                packet_buffer: 88,
-                packet_buffer_generation: 1,
-                byte_len: 64,
-                sequence: 2,
-                completion_sequence: 1,
-                generation: 1,
-                state: "completed".to_owned(),
-                completed_at_event: 24,
-                note: "network tx completion graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_stack_adapters
-            .push(NetworkStackAdapterManifest {
-                id: 93,
-                implementation: "smoltcp".to_owned(),
-                implementation_version: "0.13.0".to_owned(),
-                profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_owned(),
-                medium: "ethernet".to_owned(),
-                backend_kind: "virtio-net-backend-object".to_owned(),
-                backend: 85,
-                backend_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                rx_queue: 82,
-                rx_queue_generation: 1,
-                tx_queue: 89,
-                tx_queue_generation: 1,
-                mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
-                ipv4_addr: [10, 0, 2, 15],
-                ipv4_prefix_len: 24,
-                mtu: 1500,
-                rx_queue_depth: 4,
-                tx_queue_depth: 4,
-                max_payload_len: 512,
-                socket_capacity: 0,
-                generation: 1,
-                state: "bound".to_owned(),
-                recorded_at_event: 25,
-                note: "network stack adapter graph".to_owned(),
-            });
+            },
+            cleanup: 70,
+            cleanup_generation: 1,
+            generation: 1,
+            kind: "device-fault".to_owned(),
+            state: "completed".to_owned(),
+            injected_at_event: 12,
+            note: "io fault graph".to_owned(),
+        });
+        package.semantic.packet_buffer_objects.push(PacketBufferObjectManifest {
+            id: 80,
+            packet_device: 81,
+            packet_device_generation: 1,
+            direction: "rx".to_owned(),
+            frame_format_version: 2,
+            capacity: 512,
+            payload_len: 64,
+            sequence: 1,
+            generation: 1,
+            state: "filled".to_owned(),
+            recorded_at_event: 13,
+            note: "packet buffer graph".to_owned(),
+        });
+        package.semantic.packet_queue_objects.push(PacketQueueObjectManifest {
+            id: 82,
+            name: "net0-rx0".to_owned(),
+            packet_device: 81,
+            packet_device_generation: 1,
+            role: "rx".to_owned(),
+            queue_index: 0,
+            depth: 4,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 14,
+            note: "packet queue graph".to_owned(),
+        });
+        package.semantic.packet_descriptors.push(PacketDescriptorObjectManifest {
+            id: 83,
+            packet_queue: 82,
+            packet_queue_generation: 1,
+            packet_buffer: 80,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 64,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 15,
+            note: "packet descriptor graph".to_owned(),
+        });
+        package.semantic.fake_net_backends.push(FakeNetBackendObjectManifest {
+            id: 84,
+            name: "fake-net0".to_owned(),
+            packet_device: 81,
+            packet_device_generation: 1,
+            provider: "service_core".to_owned(),
+            profile: "fake-net-v1".to_owned(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            deterministic_seed: 7,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 16,
+            note: "fake net backend graph".to_owned(),
+        });
+        package.semantic.virtio_net_backends.push(VirtioNetBackendObjectManifest {
+            id: 85,
+            name: "virtio-net0-backend".to_owned(),
+            packet_device: 81,
+            packet_device_generation: 1,
+            driver_binding: 70,
+            driver_binding_generation: 1,
+            device: 61,
+            device_generation: 1,
+            provider: "substrate_virtio".to_owned(),
+            profile: "virtio-net-backend-skeleton-v1".to_owned(),
+            model: "virtio-net".to_owned(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            device_features: 32,
+            driver_features: 32,
+            negotiated_features: 32,
+            rx_queue_index: 0,
+            tx_queue_index: 1,
+            queue_size: 4,
+            irq_vector: 5,
+            generation: 1,
+            state: "skeleton-ready".to_owned(),
+            recorded_at_event: 17,
+            note: "virtio net backend graph".to_owned(),
+        });
+        package.semantic.network_rx_interrupts.push(NetworkRxInterruptManifest {
+            id: 86,
+            virtio_net_backend: 85,
+            virtio_net_backend_generation: 1,
+            irq_event: 41,
+            irq_event_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            rx_queue: 82,
+            rx_queue_generation: 1,
+            ready_descriptors: 1,
+            sequence: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 18,
+            note: "network rx interrupt graph".to_owned(),
+        });
+        package.semantic.network_rx_wait_resolutions.push(NetworkRxWaitResolutionManifest {
+            id: 87,
+            io_wait: 50,
+            io_wait_generation: 1,
+            wait: 5,
+            wait_generation: 1,
+            rx_interrupt: 86,
+            rx_interrupt_generation: 1,
+            irq_event: 41,
+            irq_event_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            rx_queue: 82,
+            rx_queue_generation: 1,
+            ready_descriptors: 1,
+            sequence: 1,
+            generation: 1,
+            state: "resolved".to_owned(),
+            resolved_at_event: 19,
+            note: "network rx wait resolution graph".to_owned(),
+        });
+        package.semantic.packet_buffer_objects.push(PacketBufferObjectManifest {
+            id: 88,
+            packet_device: 81,
+            packet_device_generation: 1,
+            direction: "tx".to_owned(),
+            frame_format_version: 2,
+            capacity: 512,
+            payload_len: 64,
+            sequence: 2,
+            generation: 1,
+            state: "filled".to_owned(),
+            recorded_at_event: 20,
+            note: "tx packet buffer graph".to_owned(),
+        });
+        package.semantic.packet_queue_objects.push(PacketQueueObjectManifest {
+            id: 89,
+            name: "net0-tx0".to_owned(),
+            packet_device: 81,
+            packet_device_generation: 1,
+            role: "tx".to_owned(),
+            queue_index: 1,
+            depth: 4,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 21,
+            note: "tx packet queue graph".to_owned(),
+        });
+        package.semantic.packet_descriptors.push(PacketDescriptorObjectManifest {
+            id: 90,
+            packet_queue: 89,
+            packet_queue_generation: 1,
+            packet_buffer: 88,
+            packet_buffer_generation: 1,
+            slot: 0,
+            length: 64,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 22,
+            note: "tx packet descriptor graph".to_owned(),
+        });
+        package.semantic.network_tx_capability_gates.push(NetworkTxCapabilityGateManifest {
+            id: 91,
+            driver_store: 1,
+            driver_store_generation: 2,
+            packet_device: 81,
+            packet_device_generation: 1,
+            tx_queue: 89,
+            tx_queue_generation: 1,
+            packet_descriptor: 90,
+            packet_descriptor_generation: 1,
+            packet_buffer: 88,
+            packet_buffer_generation: 1,
+            device_capability: 42,
+            device_capability_generation: 1,
+            capability: 1,
+            capability_generation: 1,
+            handle_slot: 1,
+            handle_generation: 1,
+            handle_tag: 9,
+            operation: "tx".to_owned(),
+            byte_len: 64,
+            sequence: 2,
+            generation: 1,
+            state: "allowed".to_owned(),
+            recorded_at_event: 23,
+            note: "network tx capability gate graph".to_owned(),
+        });
+        package.semantic.network_tx_completions.push(NetworkTxCompletionManifest {
+            id: 92,
+            tx_gate: 91,
+            tx_gate_generation: 1,
+            backend_kind: "virtio-net-backend-object".to_owned(),
+            backend: 85,
+            backend_generation: 1,
+            driver_store: 1,
+            driver_store_generation: 2,
+            packet_device: 81,
+            packet_device_generation: 1,
+            tx_queue: 89,
+            tx_queue_generation: 1,
+            packet_descriptor: 90,
+            packet_descriptor_generation: 1,
+            packet_buffer: 88,
+            packet_buffer_generation: 1,
+            byte_len: 64,
+            sequence: 2,
+            completion_sequence: 1,
+            generation: 1,
+            state: "completed".to_owned(),
+            completed_at_event: 24,
+            note: "network tx completion graph".to_owned(),
+        });
+        package.semantic.network_stack_adapters.push(NetworkStackAdapterManifest {
+            id: 93,
+            implementation: "smoltcp".to_owned(),
+            implementation_version: "0.13.0".to_owned(),
+            profile: "smoltcp-0.13.0-ethernet-ipv4-tcp-v1".to_owned(),
+            medium: "ethernet".to_owned(),
+            backend_kind: "virtio-net-backend-object".to_owned(),
+            backend: 85,
+            backend_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            rx_queue: 82,
+            rx_queue_generation: 1,
+            tx_queue: 89,
+            tx_queue_generation: 1,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
+            ipv4_addr: [10, 0, 2, 15],
+            ipv4_prefix_len: 24,
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            max_payload_len: 512,
+            socket_capacity: 0,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 25,
+            note: "network stack adapter graph".to_owned(),
+        });
         package.semantic.socket_objects.push(SocketObjectManifest {
             id: 94,
             adapter: 93,
@@ -27883,54 +25787,48 @@ mod tests {
             created_at_event: 26,
             note: "socket object graph".to_owned(),
         });
-        package
-            .semantic
-            .endpoint_objects
-            .push(EndpointObjectManifest {
-                id: 95,
-                socket: 94,
-                socket_generation: 1,
-                adapter: 93,
-                adapter_generation: 1,
-                owner_store: 1,
-                owner_store_generation: 2,
-                family: "inet".to_owned(),
-                transport: "tcp".to_owned(),
-                local_addr: [0, 0, 0, 0],
-                local_port: 0,
-                remote_addr: [0, 0, 0, 0],
-                remote_port: 0,
-                generation: 1,
-                state: "allocated".to_owned(),
-                created_at_event: 27,
-                note: "endpoint object graph".to_owned(),
-            });
-        package
-            .semantic
-            .socket_operations
-            .push(SocketOperationManifest {
-                id: 96,
-                endpoint: 95,
-                endpoint_generation: 1,
-                socket: 94,
-                socket_generation: 1,
-                adapter: 93,
-                adapter_generation: 1,
-                owner_store: 1,
-                owner_store_generation: 2,
-                operation: "bind".to_owned(),
-                local_addr: [10, 0, 2, 15],
-                local_port: 8080,
-                remote_addr: [0, 0, 0, 0],
-                remote_port: 0,
-                backlog: 0,
-                byte_len: 0,
-                sequence: 1,
-                generation: 1,
-                state: "applied".to_owned(),
-                recorded_at_event: 28,
-                note: "socket operation graph".to_owned(),
-            });
+        package.semantic.endpoint_objects.push(EndpointObjectManifest {
+            id: 95,
+            socket: 94,
+            socket_generation: 1,
+            adapter: 93,
+            adapter_generation: 1,
+            owner_store: 1,
+            owner_store_generation: 2,
+            family: "inet".to_owned(),
+            transport: "tcp".to_owned(),
+            local_addr: [0, 0, 0, 0],
+            local_port: 0,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            generation: 1,
+            state: "allocated".to_owned(),
+            created_at_event: 27,
+            note: "endpoint object graph".to_owned(),
+        });
+        package.semantic.socket_operations.push(SocketOperationManifest {
+            id: 96,
+            endpoint: 95,
+            endpoint_generation: 1,
+            socket: 94,
+            socket_generation: 1,
+            adapter: 93,
+            adapter_generation: 1,
+            owner_store: 1,
+            owner_store_generation: 2,
+            operation: "bind".to_owned(),
+            local_addr: [10, 0, 2, 15],
+            local_port: 8080,
+            remote_addr: [0, 0, 0, 0],
+            remote_port: 0,
+            backlog: 0,
+            byte_len: 0,
+            sequence: 1,
+            generation: 1,
+            state: "applied".to_owned(),
+            recorded_at_event: 28,
+            note: "socket operation graph".to_owned(),
+        });
         package.semantic.socket_waits.push(SocketWaitManifest {
             id: 97,
             wait: 45,
@@ -27985,290 +25883,260 @@ mod tests {
             byte_len: Some(19),
             note: "resolved socket wait graph".to_owned(),
         });
-        package
-            .semantic
-            .network_backpressures
-            .push(NetworkBackpressureManifest {
-                id: 99,
-                adapter: 93,
-                adapter_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                packet_queue: 89,
-                packet_queue_generation: 1,
-                endpoint: Some(95),
-                endpoint_generation: Some(1),
-                socket: Some(94),
-                socket_generation: Some(1),
-                owner_store: Some(1),
-                owner_store_generation: Some(2),
-                direction: "tx".to_owned(),
-                reason: "queue-full".to_owned(),
-                action: "reject-send".to_owned(),
-                queue_depth: 4,
-                queue_limit: 4,
-                dropped_packets: 0,
-                dropped_bytes: 0,
-                sequence: 2,
+        package.semantic.network_backpressures.push(NetworkBackpressureManifest {
+            id: 99,
+            adapter: 93,
+            adapter_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            packet_queue: 89,
+            packet_queue_generation: 1,
+            endpoint: Some(95),
+            endpoint_generation: Some(1),
+            socket: Some(94),
+            socket_generation: Some(1),
+            owner_store: Some(1),
+            owner_store_generation: Some(2),
+            direction: "tx".to_owned(),
+            reason: "queue-full".to_owned(),
+            action: "reject-send".to_owned(),
+            queue_depth: 4,
+            queue_limit: 4,
+            dropped_packets: 0,
+            dropped_bytes: 0,
+            sequence: 2,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 32,
+            note: "network backpressure graph".to_owned(),
+        });
+        package.semantic.network_driver_cleanups.push(NetworkDriverCleanupManifest {
+            id: 100,
+            io_cleanup: 70,
+            io_cleanup_generation: 1,
+            driver_store: 1,
+            driver_store_generation: 2,
+            device: 35,
+            device_generation: 1,
+            driver_binding: 44,
+            driver_binding_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            adapter: 93,
+            adapter_generation: 1,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-net-backend-object".to_owned(),
+                id: 85,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 32,
-                note: "network backpressure graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_driver_cleanups
-            .push(NetworkDriverCleanupManifest {
-                id: 100,
-                io_cleanup: 70,
-                io_cleanup_generation: 1,
-                driver_store: 1,
-                driver_store_generation: 2,
-                device: 35,
-                device_generation: 1,
-                driver_binding: 44,
-                driver_binding_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                adapter: 93,
-                adapter_generation: 1,
-                backend: ContractObjectRefManifest {
-                    kind: "virtio-net-backend-object".to_owned(),
-                    id: 85,
-                    generation: 1,
-                },
-                cancelled_socket_waits: vec![ContractObjectRefManifest {
-                    kind: "socket-wait".to_owned(),
-                    id: 97,
-                    generation: 1,
-                }],
-                cancelled_wait_tokens: vec![ContractObjectRefManifest {
-                    kind: "wait-token".to_owned(),
-                    id: 45,
-                    generation: 1,
-                }],
-                revoked_packet_capabilities: vec![ContractObjectRefManifest {
-                    kind: "device-capability".to_owned(),
-                    id: 42,
-                    generation: 1,
-                }],
+            },
+            cancelled_socket_waits: vec![ContractObjectRefManifest {
+                kind: "socket-wait".to_owned(),
+                id: 97,
                 generation: 1,
-                state: "completed".to_owned(),
-                started_at_event: 33,
-                completed_at_event: Some(34),
-                reason: "device-fault".to_owned(),
-                note: "network driver cleanup graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_generation_audits
-            .push(NetworkGenerationAuditManifest {
-                id: 101,
-                adapter: 93,
-                adapter_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                packet_queue: 89,
-                packet_queue_generation: 1,
-                packet_descriptor: 88,
-                packet_descriptor_generation: 1,
-                packet_buffer: 87,
-                packet_buffer_generation: 1,
-                dma_buffer: ContractObjectRefManifest {
-                    kind: "dma-buffer-object".to_owned(),
-                    id: 50,
-                    generation: 1,
-                },
-                device_capability: ContractObjectRefManifest {
-                    kind: "device-capability".to_owned(),
-                    id: 42,
-                    generation: 1,
-                },
-                rejected_packet_generation_probes: 2,
-                rejected_dma_generation_probes: 1,
+            }],
+            cancelled_wait_tokens: vec![ContractObjectRefManifest {
+                kind: "wait-token".to_owned(),
+                id: 45,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 35,
-                note: "network generation audit graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_fault_injections
-            .push(NetworkFaultInjectionManifest {
-                id: 102,
-                adapter: 93,
-                adapter_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                packet_queue: 89,
-                packet_queue_generation: 1,
-                packet_descriptor: Some(88),
-                packet_descriptor_generation: Some(1),
-                packet_buffer: Some(87),
-                packet_buffer_generation: Some(1),
-                endpoint: Some(95),
-                endpoint_generation: Some(1),
-                socket: Some(94),
-                socket_generation: Some(1),
-                owner_store: Some(7),
-                owner_store_generation: Some(2),
-                direction: "tx".to_owned(),
-                kind: "packet-loss".to_owned(),
-                effect: "drop-packet".to_owned(),
-                injected_packets: 1,
-                dropped_packets: 1,
-                error_packets: 0,
-                error_code: String::new(),
-                sequence: 18,
+            }],
+            revoked_packet_capabilities: vec![ContractObjectRefManifest {
+                kind: "device-capability".to_owned(),
+                id: 42,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 36,
-                note: "network fault injection graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_benchmarks
-            .push(NetworkBenchmarkManifest {
-                id: 103,
-                scenario: "host-validation-network-throughput-latency".to_owned(),
-                adapter: 93,
-                adapter_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                tx_queue: 89,
-                tx_queue_generation: 1,
-                rx_queue: 82,
-                rx_queue_generation: 1,
-                tx_completion: 92,
-                tx_completion_generation: 1,
-                rx_wait_resolution: 87,
-                rx_wait_resolution_generation: 1,
-                endpoint: 95,
-                endpoint_generation: 1,
-                socket: 94,
-                socket_generation: 1,
-                owner_store: 7,
-                owner_store_generation: 2,
-                backpressure: Some(99),
-                backpressure_generation: Some(1),
-                sample_packets: 3,
-                sample_bytes: 6000,
-                tx_completed_packets: 1,
-                rx_resolved_packets: 1,
-                dropped_packets: 1,
-                measured_nanos: 120_000,
-                budget_nanos: 250_000,
-                throughput_bytes_per_sec: 50_000_000,
-                p50_latency_nanos: 18_000,
-                p99_latency_nanos: 48_000,
+            }],
+            generation: 1,
+            state: "completed".to_owned(),
+            started_at_event: 33,
+            completed_at_event: Some(34),
+            reason: "device-fault".to_owned(),
+            note: "network driver cleanup graph".to_owned(),
+        });
+        package.semantic.network_generation_audits.push(NetworkGenerationAuditManifest {
+            id: 101,
+            adapter: 93,
+            adapter_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            packet_queue: 89,
+            packet_queue_generation: 1,
+            packet_descriptor: 88,
+            packet_descriptor_generation: 1,
+            packet_buffer: 87,
+            packet_buffer_generation: 1,
+            dma_buffer: ContractObjectRefManifest {
+                kind: "dma-buffer-object".to_owned(),
+                id: 50,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 37,
-                note: "network benchmark graph".to_owned(),
-            });
-        package
-            .semantic
-            .network_recovery_benchmarks
-            .push(NetworkRecoveryBenchmarkManifest {
-                id: 104,
-                scenario: "host-validation-network-driver-recovery".to_owned(),
-                cleanup: 100,
-                cleanup_generation: 1,
-                io_cleanup: 70,
-                io_cleanup_generation: 1,
-                adapter: 93,
-                adapter_generation: 1,
-                packet_device: 81,
-                packet_device_generation: 1,
-                backend: ContractObjectRefManifest {
-                    kind: "virtio-net-backend-object".to_owned(),
-                    id: 85,
-                    generation: 1,
-                },
-                driver_store: 1,
-                driver_store_generation: 2,
-                fault_injection: Some(102),
-                fault_injection_generation: Some(1),
-                recovery_start_event: 33,
-                recovery_complete_event: 34,
-                cancelled_socket_waits: 1,
-                revoked_packet_capabilities: 1,
-                recovery_nanos: 90_000,
-                budget_nanos: 200_000,
+            },
+            device_capability: ContractObjectRefManifest {
+                kind: "device-capability".to_owned(),
+                id: 42,
                 generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 38,
-                note: "network recovery benchmark graph".to_owned(),
-            });
-        package
-            .semantic
-            .block_device_objects
-            .push(BlockDeviceObjectManifest {
-                id: 105,
-                name: "blk0".to_owned(),
-                device: 35,
-                device_generation: 1,
-                sector_size: 512,
-                sector_count: 4096,
-                read_only: false,
-                max_transfer_sectors: 128,
+            },
+            rejected_packet_generation_probes: 2,
+            rejected_dma_generation_probes: 1,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 35,
+            note: "network generation audit graph".to_owned(),
+        });
+        package.semantic.network_fault_injections.push(NetworkFaultInjectionManifest {
+            id: 102,
+            adapter: 93,
+            adapter_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            packet_queue: 89,
+            packet_queue_generation: 1,
+            packet_descriptor: Some(88),
+            packet_descriptor_generation: Some(1),
+            packet_buffer: Some(87),
+            packet_buffer_generation: Some(1),
+            endpoint: Some(95),
+            endpoint_generation: Some(1),
+            socket: Some(94),
+            socket_generation: Some(1),
+            owner_store: Some(7),
+            owner_store_generation: Some(2),
+            direction: "tx".to_owned(),
+            kind: "packet-loss".to_owned(),
+            effect: "drop-packet".to_owned(),
+            injected_packets: 1,
+            dropped_packets: 1,
+            error_packets: 0,
+            error_code: String::new(),
+            sequence: 18,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 36,
+            note: "network fault injection graph".to_owned(),
+        });
+        package.semantic.network_benchmarks.push(NetworkBenchmarkManifest {
+            id: 103,
+            scenario: "host-validation-network-throughput-latency".to_owned(),
+            adapter: 93,
+            adapter_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            tx_queue: 89,
+            tx_queue_generation: 1,
+            rx_queue: 82,
+            rx_queue_generation: 1,
+            tx_completion: 92,
+            tx_completion_generation: 1,
+            rx_wait_resolution: 87,
+            rx_wait_resolution_generation: 1,
+            endpoint: 95,
+            endpoint_generation: 1,
+            socket: 94,
+            socket_generation: 1,
+            owner_store: 7,
+            owner_store_generation: 2,
+            backpressure: Some(99),
+            backpressure_generation: Some(1),
+            sample_packets: 3,
+            sample_bytes: 6000,
+            tx_completed_packets: 1,
+            rx_resolved_packets: 1,
+            dropped_packets: 1,
+            measured_nanos: 120_000,
+            budget_nanos: 250_000,
+            throughput_bytes_per_sec: 50_000_000,
+            p50_latency_nanos: 18_000,
+            p99_latency_nanos: 48_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 37,
+            note: "network benchmark graph".to_owned(),
+        });
+        package.semantic.network_recovery_benchmarks.push(NetworkRecoveryBenchmarkManifest {
+            id: 104,
+            scenario: "host-validation-network-driver-recovery".to_owned(),
+            cleanup: 100,
+            cleanup_generation: 1,
+            io_cleanup: 70,
+            io_cleanup_generation: 1,
+            adapter: 93,
+            adapter_generation: 1,
+            packet_device: 81,
+            packet_device_generation: 1,
+            backend: ContractObjectRefManifest {
+                kind: "virtio-net-backend-object".to_owned(),
+                id: 85,
                 generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 39,
-                note: "block device graph".to_owned(),
-            });
-        package
-            .semantic
-            .block_range_objects
-            .push(BlockRangeObjectManifest {
-                id: 106,
-                block_device: 105,
-                block_device_generation: 1,
-                start_sector: 64,
-                sector_count: 8,
-                byte_offset: 32768,
-                byte_len: 4096,
-                generation: 1,
-                state: "registered".to_owned(),
-                recorded_at_event: 40,
-                note: "block range graph".to_owned(),
-            });
-        package
-            .semantic
-            .block_request_objects
-            .push(BlockRequestObjectManifest {
-                id: 107,
-                block_device: 105,
-                block_device_generation: 1,
-                block_range: 106,
-                block_range_generation: 1,
-                operation: "read".to_owned(),
-                sequence: 1,
-                byte_len: 4096,
-                generation: 1,
-                state: "submitted".to_owned(),
-                recorded_at_event: 41,
-                note: "block request graph".to_owned(),
-            });
-        package
-            .semantic
-            .block_completion_objects
-            .push(BlockCompletionObjectManifest {
-                id: 108,
-                block_request: 107,
-                block_request_generation: 1,
-                block_device: 105,
-                block_device_generation: 1,
-                block_range: 106,
-                block_range_generation: 1,
-                sequence: 1,
-                completed_bytes: 4096,
-                status: "success".to_owned(),
-                generation: 1,
-                state: "recorded".to_owned(),
-                recorded_at_event: 42,
-                note: "block completion graph".to_owned(),
-            });
+            },
+            driver_store: 1,
+            driver_store_generation: 2,
+            fault_injection: Some(102),
+            fault_injection_generation: Some(1),
+            recovery_start_event: 33,
+            recovery_complete_event: 34,
+            cancelled_socket_waits: 1,
+            revoked_packet_capabilities: 1,
+            recovery_nanos: 90_000,
+            budget_nanos: 200_000,
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 38,
+            note: "network recovery benchmark graph".to_owned(),
+        });
+        package.semantic.block_device_objects.push(BlockDeviceObjectManifest {
+            id: 105,
+            name: "blk0".to_owned(),
+            device: 35,
+            device_generation: 1,
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 39,
+            note: "block device graph".to_owned(),
+        });
+        package.semantic.block_range_objects.push(BlockRangeObjectManifest {
+            id: 106,
+            block_device: 105,
+            block_device_generation: 1,
+            start_sector: 64,
+            sector_count: 8,
+            byte_offset: 32768,
+            byte_len: 4096,
+            generation: 1,
+            state: "registered".to_owned(),
+            recorded_at_event: 40,
+            note: "block range graph".to_owned(),
+        });
+        package.semantic.block_request_objects.push(BlockRequestObjectManifest {
+            id: 107,
+            block_device: 105,
+            block_device_generation: 1,
+            block_range: 106,
+            block_range_generation: 1,
+            operation: "read".to_owned(),
+            sequence: 1,
+            byte_len: 4096,
+            generation: 1,
+            state: "submitted".to_owned(),
+            recorded_at_event: 41,
+            note: "block request graph".to_owned(),
+        });
+        package.semantic.block_completion_objects.push(BlockCompletionObjectManifest {
+            id: 108,
+            block_request: 107,
+            block_request_generation: 1,
+            block_device: 105,
+            block_device_generation: 1,
+            block_range: 106,
+            block_range_generation: 1,
+            sequence: 1,
+            completed_bytes: 4096,
+            status: "success".to_owned(),
+            generation: 1,
+            state: "recorded".to_owned(),
+            recorded_at_event: 42,
+            note: "block completion graph".to_owned(),
+        });
         package.semantic.block_waits.push(BlockWaitManifest {
             id: 109,
             wait: 110,
@@ -28291,56 +26159,50 @@ mod tests {
             cancel_reason: None,
             note: "block wait graph".to_owned(),
         });
-        package
-            .semantic
-            .fake_block_backends
-            .push(FakeBlockBackendObjectManifest {
-                id: 111,
-                name: "fake-block0".to_owned(),
-                block_device: 105,
-                block_device_generation: 1,
-                provider: "service_core".to_owned(),
-                profile: "fake-block-v1".to_owned(),
-                sector_size: 512,
-                sector_count: 4096,
-                read_only: false,
-                max_transfer_sectors: 128,
-                deterministic_seed: 7,
-                generation: 1,
-                state: "bound".to_owned(),
-                recorded_at_event: 45,
-                note: "fake block backend graph".to_owned(),
-            });
-        package
-            .semantic
-            .virtio_blk_backends
-            .push(VirtioBlkBackendObjectManifest {
-                id: 112,
-                name: "virtio-blk0-backend".to_owned(),
-                block_device: 105,
-                block_device_generation: 1,
-                driver_binding: 113,
-                driver_binding_generation: 1,
-                device: 103,
-                device_generation: 1,
-                provider: "substrate_virtio".to_owned(),
-                profile: "virtio-blk-backend-skeleton-v1".to_owned(),
-                model: "virtio-blk".to_owned(),
-                sector_size: 512,
-                sector_count: 4096,
-                read_only: false,
-                max_transfer_sectors: 128,
-                device_features: 0x40,
-                driver_features: 0x40,
-                negotiated_features: 0x40,
-                request_queue_index: 0,
-                queue_size: 8,
-                irq_vector: 6,
-                generation: 1,
-                state: "skeleton-ready".to_owned(),
-                recorded_at_event: 46,
-                note: "virtio block backend graph".to_owned(),
-            });
+        package.semantic.fake_block_backends.push(FakeBlockBackendObjectManifest {
+            id: 111,
+            name: "fake-block0".to_owned(),
+            block_device: 105,
+            block_device_generation: 1,
+            provider: "service_core".to_owned(),
+            profile: "fake-block-v1".to_owned(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            deterministic_seed: 7,
+            generation: 1,
+            state: "bound".to_owned(),
+            recorded_at_event: 45,
+            note: "fake block backend graph".to_owned(),
+        });
+        package.semantic.virtio_blk_backends.push(VirtioBlkBackendObjectManifest {
+            id: 112,
+            name: "virtio-blk0-backend".to_owned(),
+            block_device: 105,
+            block_device_generation: 1,
+            driver_binding: 113,
+            driver_binding_generation: 1,
+            device: 103,
+            device_generation: 1,
+            provider: "substrate_virtio".to_owned(),
+            profile: "virtio-blk-backend-skeleton-v1".to_owned(),
+            model: "virtio-blk".to_owned(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            device_features: 0x40,
+            driver_features: 0x40,
+            negotiated_features: 0x40,
+            request_queue_index: 0,
+            queue_size: 8,
+            irq_vector: 6,
+            generation: 1,
+            state: "skeleton-ready".to_owned(),
+            recorded_at_event: 46,
+            note: "virtio block backend graph".to_owned(),
+        });
 
         let live = graph_edges_for_package(&package, GraphEdgeMode::Live);
         assert!(live.iter().any(|edge| edge["mode"] == "live"
@@ -28463,36 +26325,12 @@ mod tests {
             && edge["from"]["kind"] == "socket-wait"
             && edge["from"]["id"] == 97
             && edge["to"]["kind"] == "endpoint-object"));
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-backpressure")
-        );
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-driver-cleanup")
-        );
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-generation-audit")
-        );
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-fault-injection")
-        );
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-benchmark")
-        );
-        assert!(
-            !live
-                .iter()
-                .any(|edge| edge["from"]["kind"] == "network-recovery-benchmark")
-        );
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-backpressure"));
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-driver-cleanup"));
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-generation-audit"));
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-fault-injection"));
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-benchmark"));
+        assert!(!live.iter().any(|edge| edge["from"]["kind"] == "network-recovery-benchmark"));
 
         let history = graph_edges_for_package(&package, GraphEdgeMode::History);
         assert!(history.iter().any(|edge| edge["mode"] == "historical"
@@ -28770,11 +26608,7 @@ mod tests {
         let host = interface_capabilities_for_profile("host-validation").expect("host profile");
         let none = interface_capabilities_for_profile("none").expect("none profile");
 
-        assert!(
-            host.custom_wit_worlds
-                .iter()
-                .any(|world| world == "semantic:machine")
-        );
+        assert!(host.custom_wit_worlds.iter().any(|world| world == "semantic:machine"));
         assert!(none.custom_wit_worlds.is_empty());
         assert!(interface_capabilities_for_profile("unknown-profile").is_none());
     }
@@ -28849,11 +26683,7 @@ mod tests {
                 other => panic!("unsupported wait replay fixture command {other}"),
             };
         }
-        let wait = graph
-            .wait_records()
-            .iter()
-            .find(|wait| wait.id == 21)
-            .expect("wait 21");
+        let wait = graph.wait_records().iter().find(|wait| wait.id == 21).expect("wait 21");
         assert_eq!(wait.state, WaitState::Consumed);
         assert_eq!(value["final_views"]["wait"]["state"], wait.state.as_str());
         let snapshot = ContractGraphSnapshot {
@@ -28903,9 +26733,7 @@ mod tests {
                             blockers: vec![ContractObjectRef::new(
                                 ContractObjectKind::Capability,
                                 command["blocker"]["id"].as_u64().expect("cap blocker"),
-                                command["blocker"]["generation"]
-                                    .as_u64()
-                                    .expect("cap generation"),
+                                command["blocker"]["generation"].as_u64().expect("cap generation"),
                             )],
                             deadline: None,
                             restart_policy: RestartPolicy::RestartIfAllowed,
@@ -28937,16 +26765,9 @@ mod tests {
         assert!(cap.revoked);
         assert_eq!(cap.generation, 2);
         assert_eq!(value["final_views"]["capability"]["id"], cap.id);
-        let wait = graph
-            .wait_records()
-            .iter()
-            .find(|wait| wait.id == 22)
-            .expect("wait 22");
+        let wait = graph.wait_records().iter().find(|wait| wait.id == 22).expect("wait 22");
         assert_eq!(wait.state, WaitState::Cancelled);
-        assert_eq!(
-            wait.cancel_reason,
-            Some(WaitCancelReason::CapabilityRevoked)
-        );
+        assert_eq!(wait.cancel_reason, Some(WaitCancelReason::CapabilityRevoked));
         let snapshot = ContractGraphSnapshot {
             stores: graph.stores().to_vec(),
             capabilities: graph.capabilities().records().to_vec(),
@@ -29001,9 +26822,8 @@ mod tests {
                 }
                 "ApplyCleanupStep" => {
                     let target = object_ref_from_json(&command["target"]);
-                    let observed_generation = command["observed_generation"]
-                        .as_u64()
-                        .expect("observed generation");
+                    let observed_generation =
+                        command["observed_generation"].as_u64().expect("observed generation");
                     if command["status"].as_str() == Some("skipped-stale-generation") {
                         assert_ne!(target.generation, observed_generation);
                     }
@@ -29035,14 +26855,9 @@ mod tests {
         assert_eq!(last_rebind_generation, 2);
         assert_eq!(
             graph.stores()[0].state.as_str(),
-            value["final_views"]["store"]["state"]
-                .as_str()
-                .expect("store state")
+            value["final_views"]["store"]["state"].as_str().expect("store state")
         );
-        assert_eq!(
-            value["final_views"]["store"]["generation"],
-            graph.stores()[0].generation
-        );
+        assert_eq!(value["final_views"]["store"]["generation"], graph.stores()[0].generation);
         for event in value["events"].as_array().expect("events") {
             match event["kind"].as_str().expect("event kind") {
                 "CleanupStepApplied" => {
@@ -29051,9 +26866,7 @@ mod tests {
                         event["cleanup"].as_u64().expect("cleanup"),
                         event["step"].as_str().expect("step"),
                         event["target"].as_str().expect("target"),
-                        event["observed_generation"]
-                            .as_u64()
-                            .expect("observed generation")
+                        event["observed_generation"].as_u64().expect("observed generation")
                     );
                     assert!(
                         graph
@@ -29075,10 +26888,7 @@ mod tests {
         }
         let digest = cleanup_replay_digest(&graph, store);
         assert_eq!(value["state_digest"]["cleanup_once"], digest);
-        assert_eq!(
-            value["state_digest"]["cleanup_once"],
-            value["state_digest"]["cleanup_twice"]
-        );
+        assert_eq!(value["state_digest"]["cleanup_once"], value["state_digest"]["cleanup_twice"]);
     }
 
     fn object_ref_from_json(value: &serde_json::Value) -> ContractObjectRef {
@@ -29117,11 +26927,7 @@ mod tests {
     }
 
     fn cleanup_replay_digest(graph: &SemanticGraph, store: u64) -> String {
-        let store = graph
-            .stores()
-            .iter()
-            .find(|record| record.id == store)
-            .expect("digest store");
+        let store = graph.stores().iter().find(|record| record.id == store).expect("digest store");
         format!(
             "store:{}@{}:{}|code:1@1:bound|caps:active",
             store.id,

@@ -18,11 +18,7 @@ impl SemanticGraph {
         if backend.id == 0 || backend.generation == 0 {
             return Err("network tx completion backend ref is invalid");
         }
-        if self
-            .network_tx_completions
-            .iter()
-            .any(|record| record.id == completion)
-        {
+        if self.network_tx_completions.iter().any(|record| record.id == completion) {
             return Err("network tx completion already exists");
         }
         let Some(gate_record) = self.network_tx_capability_gates.iter().find(|record| {
@@ -239,13 +235,11 @@ impl SemanticGraph {
                     && other.completion_sequence == record.completion_sequence
                     && other.state == NetworkTxCompletionState::Completed
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkTxCompletionDuplicateSequence {
-                        completion: duplicate.id,
-                        tx_queue: record.tx_queue,
-                        completion_sequence: record.completion_sequence,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkTxCompletionDuplicateSequence {
+                    completion: duplicate.id,
+                    tx_queue: record.tx_queue,
+                    completion_sequence: record.completion_sequence,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.completed_at_event
@@ -350,10 +344,8 @@ impl SemanticGraph {
         completion: NetworkTxCompletionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_tx_completions
-            .iter_mut()
-            .find(|record| record.id == completion)
+        if let Some(record) =
+            self.network_tx_completions.iter_mut().find(|record| record.id == completion)
         {
             record.tx_gate_generation = generation;
         }
@@ -365,10 +357,8 @@ impl SemanticGraph {
         completion: NetworkTxCompletionId,
         completion_sequence: u64,
     ) {
-        if let Some(record) = self
-            .network_tx_completions
-            .iter_mut()
-            .find(|record| record.id == completion)
+        if let Some(record) =
+            self.network_tx_completions.iter_mut().find(|record| record.id == completion)
         {
             record.completion_sequence = completion_sequence;
         }

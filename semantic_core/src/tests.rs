@@ -1,8 +1,6 @@
+use alloc::{format, string::ToString, vec, vec::Vec};
+
 use super::*;
-use alloc::format;
-use alloc::string::ToString;
-use alloc::vec;
-use alloc::vec::Vec;
 
 fn handle_for(record: &CapabilityRecord, rights: &[&str]) -> CapabilityHandle {
     record
@@ -13,24 +11,12 @@ fn handle_for(record: &CapabilityRecord, rights: &[&str]) -> CapabilityHandle {
 #[test]
 fn capability_attenuation_cannot_expand_rights() {
     let mut ledger = CapabilityLedger::new();
-    let parent = ledger
-        .grant("driver", "mmio-bar0", &["read"], "store")
-        .expect("test grant");
+    let parent = ledger.grant("driver", "mmio-bar0", &["read"], "store").expect("test grant");
 
-    assert!(
-        ledger
-            .attenuate(parent, "helper", &["read"], "activation")
-            .is_some()
-    );
-    let helper = ledger
-        .check("helper", "mmio-bar0", "read")
-        .expect("attenuated capability");
+    assert!(ledger.attenuate(parent, "helper", &["read"], "activation").is_some());
+    let helper = ledger.check("helper", "mmio-bar0", "read").expect("attenuated capability");
     assert_eq!(helper.source, "attenuated");
-    assert!(
-        ledger
-            .attenuate(parent, "helper", &["write"], "activation")
-            .is_none()
-    );
+    assert!(ledger.attenuate(parent, "helper", &["write"], "activation").is_none());
 }
 
 #[test]
@@ -49,18 +35,11 @@ fn capability_authority_uses_object_ref_not_debug_label() {
             "manifest",
         )
         .expect("test grant");
-    let record = ledger
-        .records()
-        .iter()
-        .find(|record| record.id == cap)
-        .expect("capability record");
+    let record =
+        ledger.records().iter().find(|record| record.id == cap).expect("capability record");
     let object_ref = record.object_ref.expect("authority object ref");
     let handle = handle_for(record, &["map"]);
-    assert!(
-        ledger
-            .check_authority("driver", object_ref, "map", Some(&handle))
-            .is_ok()
-    );
+    assert!(ledger.check_authority("driver", object_ref, "map", Some(&handle)).is_ok());
 
     let mut debug_only = CapabilityLedger::new();
     debug_only.grant_debug_label_only_for_test("driver", "mmio.virtio-net", &["map"], "store");
@@ -167,27 +146,15 @@ fn authority_binding_release_revokes_exact_granted_capability_not_same_label() {
     );
     let mmio = graph.register_resource(ResourceKind::MmioRegion, None, "mmio:virtio-net0");
     let authority = graph
-        .bind_authority_resource(
-            mmio,
-            "driver_virtio_net",
-            "mmio.virtio-net0",
-            &["read"],
-            "store",
-        )
+        .bind_authority_resource(mmio, "driver_virtio_net", "mmio.virtio-net0", &["read"], "store")
         .expect("authority binding");
     let binding_cap = graph.authority_bindings()[0].capability;
     assert_ne!(manifest_cap, binding_cap);
 
     assert!(graph.release_authority_binding(authority, "test release"));
 
-    let manifest_record = graph
-        .capabilities()
-        .record(manifest_cap)
-        .expect("manifest cap");
-    let binding_record = graph
-        .capabilities()
-        .record(binding_cap)
-        .expect("binding cap");
+    let manifest_record = graph.capabilities().record(manifest_cap).expect("manifest cap");
+    let binding_record = graph.capabilities().record(binding_cap).expect("binding cap");
     assert!(!manifest_record.revoked);
     assert!(binding_record.revoked);
 }
@@ -266,12 +233,8 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
             "manifest",
         )
         .expect("test grant");
-    let record = ledger
-        .records()
-        .iter()
-        .find(|record| record.id == cap)
-        .expect("capability record")
-        .clone();
+    let record =
+        ledger.records().iter().find(|record| record.id == cap).expect("capability record").clone();
     let object_ref = record.object_ref.expect("authority object ref");
     let mut stale_handle = handle_for(&record, &["rx"]);
     stale_handle.generation += 1;
@@ -281,12 +244,7 @@ fn capability_authority_rejects_stale_revoked_wrong_subject_and_undeclared_exter
     );
     let wrong_subject_handle = handle_for(&record, &["rx"]);
     assert_eq!(
-        ledger.check_authority(
-            "other-driver",
-            object_ref,
-            "rx",
-            Some(&wrong_subject_handle)
-        ),
+        ledger.check_authority("other-driver", object_ref, "rx", Some(&wrong_subject_handle)),
         Err(CapabilityDenyReason::SubjectMismatch)
     );
     assert!(ledger.revoke(cap));
@@ -427,9 +385,7 @@ fn store_activation_roots_and_handles_are_generation_checked() {
         EntrypointState::NotRunnable,
         Some("code-publish-not-linked"),
     );
-    let handle = graph
-        .store_activation_handle(store)
-        .expect("activation handle");
+    let handle = graph.store_activation_handle(store).expect("activation handle");
     assert_eq!(graph.validate_store_activation_handle(handle), Ok(()));
 
     graph.record_store_activation(
@@ -448,10 +404,7 @@ fn store_activation_roots_and_handles_are_generation_checked() {
     assert_eq!(graph.store_activation_count(), 1);
     assert_eq!(
         graph.validate_store_activation_handle(handle),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2)
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
     assert_eq!(
         graph.store_activations()[0].summary(),
@@ -469,10 +422,8 @@ fn capability_ledger_reports_owner_recovery_state() {
     let store = graph.register_store("driver", "driver", "driver", "restartable");
     graph.grant_manifest_capability("driver", "mmio.bar0", &["read", "write"], "store");
     graph.grant_capability("driver", "irq11", &["ack"], "store");
-    let mmio = graph
-        .capabilities()
-        .check("driver", "mmio.bar0", "read")
-        .expect("manifest capability");
+    let mmio =
+        graph.capabilities().check("driver", "mmio.bar0", "read").expect("manifest capability");
     assert_eq!(mmio.class, CapabilityClass::MmioRegion);
     assert_eq!(mmio.source, "artifact-manifest");
     assert_eq!(mmio.owner_store, Some(store));
@@ -494,16 +445,10 @@ fn capability_check_records_denial_and_generation_mismatch() {
     let mut graph = SemanticGraph::new();
     let generation = {
         graph.grant_capability("linux_syscall", "timer.sleep", &["arm"], "wait-token");
-        graph
-            .capability_generation("linux_syscall", "timer.sleep")
-            .expect("capability generation")
+        graph.capability_generation("linux_syscall", "timer.sleep").expect("capability generation")
     };
 
-    assert!(
-        graph
-            .check_capability("linux_syscall", "timer.sleep", "arm")
-            .is_ok()
-    );
+    assert!(graph.check_capability("linux_syscall", "timer.sleep", "arm").is_ok());
     graph.revoke_current_capability("linux_syscall", "timer.sleep");
     assert_eq!(
         graph.check_capability("linux_syscall", "timer.sleep", "arm"),
@@ -526,10 +471,7 @@ fn wait_flow_is_recorded_in_event_log() {
     graph.record_wait_resolved(11, "ready");
 
     assert_eq!(graph.wait_count(), 1);
-    assert_eq!(
-        graph.event_log_tail(1)[0].kind.summary(),
-        "WaitResolved wait=11 reason=ready"
-    );
+    assert_eq!(graph.event_log_tail(1)[0].kind.summary(), "WaitResolved wait=11 reason=ready");
 }
 
 #[test]
@@ -586,16 +528,9 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
         Some("irq-context".to_string()),
     );
     assert_eq!(graph.fake_capability_revoke_cancel_wait(5), 1);
-    let cancelled = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 22)
-        .expect("cancelled wait");
+    let cancelled = graph.wait_records().iter().find(|wait| wait.id == 22).expect("cancelled wait");
     assert_eq!(cancelled.state, WaitState::Cancelled);
-    assert_eq!(
-        cancelled.cancel_reason,
-        Some(WaitCancelReason::CapabilityRevoked)
-    );
+    assert_eq!(cancelled.cancel_reason, Some(WaitCancelReason::CapabilityRevoked));
 
     graph.record_wait_created(23, 7, SemanticWaitKind::Futex, 1);
     let old_handle = graph.wait_handle(23).expect("wait handle");
@@ -603,10 +538,7 @@ fn wait_token_event_bridge_indexes_resolves_cancels_and_restarts() {
     graph.record_wait_restarted(23, "restart-if-allowed");
     assert_eq!(
         graph.validate_wait_handle(old_handle),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
 }
 
@@ -704,11 +636,8 @@ fn linux_wait_service_convergence_records_epoll_and_futex_states() {
     );
     graph.record_wait_restarted(34, "driver-restart");
 
-    let pending_epoll = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 31)
-        .expect("pending epoll wait");
+    let pending_epoll =
+        graph.wait_records().iter().find(|wait| wait.id == 31).expect("pending epoll wait");
     assert_eq!(pending_epoll.kind, SemanticWaitKind::Epoll);
     assert_eq!(pending_epoll.state, WaitState::Pending);
     assert_eq!(pending_epoll.owner_store, Some(epoll_store));
@@ -722,34 +651,22 @@ fn linux_wait_service_convergence_records_epoll_and_futex_states() {
         Some("linux-wait-service:epoll_wait:pending")
     );
 
-    let resumed_epoll = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 32)
-        .expect("resumed epoll wait");
+    let resumed_epoll =
+        graph.wait_records().iter().find(|wait| wait.id == 32).expect("resumed epoll wait");
     assert_eq!(resumed_epoll.state, WaitState::Consumed);
 
-    let cancelled_futex = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 33)
-        .expect("cancelled futex wait");
+    let cancelled_futex =
+        graph.wait_records().iter().find(|wait| wait.id == 33).expect("cancelled futex wait");
     assert_eq!(cancelled_futex.kind, SemanticWaitKind::Futex);
     assert_eq!(cancelled_futex.state, WaitState::Cancelled);
-    assert_eq!(
-        cancelled_futex.cancel_reason,
-        Some(WaitCancelReason::Timeout)
-    );
+    assert_eq!(cancelled_futex.cancel_reason, Some(WaitCancelReason::Timeout));
     assert_eq!(
         cancelled_futex.saved_context.as_deref(),
         Some("linux-wait-service:futex_wait:timeout-cancel")
     );
 
-    let restarted_epoll = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 34)
-        .expect("restarted epoll wait");
+    let restarted_epoll =
+        graph.wait_records().iter().find(|wait| wait.id == 34).expect("restarted epoll wait");
     assert_eq!(restarted_epoll.state, WaitState::Restarted);
     assert_eq!(restarted_epoll.generation, 2);
     assert!(
@@ -895,10 +812,7 @@ fn contract_graph_rejects_active_capability_and_wait_owned_by_old_store_generati
         id: 4,
         subject: "driver".to_string(),
         object: "packet-device.net0".to_string(),
-        object_ref: Some(AuthorityObjectRef::internal(
-            CapabilityClass::PacketDevice,
-            object,
-        )),
+        object_ref: Some(AuthorityObjectRef::internal(CapabilityClass::PacketDevice, object)),
         operations: OperationSet::from_static(&["rx"]),
         lifetime: "store".to_string(),
         class: CapabilityClass::PacketDevice,
@@ -1039,16 +953,11 @@ fn assert_contract_violation(
     edge: &str,
 ) {
     assert!(
-        violations
-            .iter()
-            .any(|violation| violation.kind == kind && violation.edge == edge),
+        violations.iter().any(|violation| violation.kind == kind && violation.edge == edge),
         "missing violation kind={} edge={} in {:?}",
         kind.as_str(),
         edge,
-        violations
-            .iter()
-            .map(ContractViolation::summary)
-            .collect::<Vec<_>>()
+        violations.iter().map(ContractViolation::summary).collect::<Vec<_>>()
     );
 }
 
@@ -1056,14 +965,8 @@ fn assert_contract_violation(
 fn contract_graph_b3_accepts_valid_validator_boundary_snapshot() {
     let store = b3_store_record(1, 1, StoreState::Running);
     let authority_object = ContractObjectRef::new(ContractObjectKind::Resource, 77, 1);
-    let capability = b3_capability_record(
-        10,
-        store.id,
-        store.generation,
-        authority_object,
-        "manifest",
-        true,
-    );
+    let capability =
+        b3_capability_record(10, store.id, store.generation, authority_object, "manifest", true);
     let wait = WaitRecord {
         id: 20,
         owner_task: None,
@@ -1166,10 +1069,7 @@ fn contract_graph_b3_reports_validator_completeness_matrix() {
     let snapshot = ContractGraphSnapshot {
         stores: vec![running_store.clone(), dead_store],
         activations: vec![active_lease_activation],
-        capabilities: vec![
-            stale_handle_capability.clone(),
-            overclaimed_provenance_capability,
-        ],
+        capabilities: vec![stale_handle_capability.clone(), overclaimed_provenance_capability],
         waits: vec![dead_owner_wait],
         tombstones: vec![TombstoneRecord::new(
             ContractObjectKind::Store,
@@ -1307,11 +1207,7 @@ fn command_surface_grants_capability_and_precondition_failures_are_atomic() {
         .expect("grant command");
     assert!(outcome.changed);
     assert!(outcome.event_count_after > before);
-    assert!(
-        graph
-            .check_capability("driver", "packet-device.net0", "rx")
-            .is_ok()
-    );
+    assert!(graph.check_capability("driver", "packet-device.net0", "rx").is_ok());
 
     let wait_count = graph.wait_count();
     let events = graph.event_count();
@@ -1460,9 +1356,7 @@ fn command_surface_rejected_precondition_leaves_semantic_state_unchanged() {
 
     assert_eq!(
         result,
-        Err(CommandError::PreconditionFailed(
-            "activation generation mismatch".to_string()
-        ))
+        Err(CommandError::PreconditionFailed("activation generation mismatch".to_string()))
     );
     assert_eq!(graph.tasks()[0], task_before);
     assert_eq!(graph.runtime_activations()[0], activation_before);
@@ -1491,10 +1385,7 @@ fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() 
         })
         .expect("create wait");
     graph
-        .apply(SemanticCommand::ResolveWait {
-            wait: 41,
-            reason: "timer".to_string(),
-        })
+        .apply(SemanticCommand::ResolveWait { wait: 41, reason: "timer".to_string() })
         .expect("resolve wait");
     assert_eq!(graph.wait_records()[0].state, WaitState::Resolved);
     assert_eq!(
@@ -1503,9 +1394,7 @@ fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() 
             errno: 125,
             reason: WaitCancelReason::Signal,
         }),
-        Err(CommandError::PreconditionFailed(
-            "wait is not pending".to_string()
-        ))
+        Err(CommandError::PreconditionFailed("wait is not pending".to_string()))
     );
 
     let store = graph.register_store(
@@ -1531,16 +1420,13 @@ fn command_surface_wait_and_cleanup_transactions_are_canonical_and_idempotent() 
             observed_generation: 1,
         })
         .expect("apply cleanup step");
-    let first_commit = graph
-        .apply(SemanticCommand::CommitCleanup { cleanup: 77 })
-        .expect("commit cleanup");
+    let first_commit =
+        graph.apply(SemanticCommand::CommitCleanup { cleanup: 77 }).expect("commit cleanup");
     assert!(first_commit.changed);
     assert_eq!(graph.active_transaction_count(), 0);
     assert_eq!(
         graph.apply(SemanticCommand::CommitCleanup { cleanup: 77 }),
-        Err(CommandError::PreconditionFailed(
-            "cleanup transaction is not active".to_string()
-        ))
+        Err(CommandError::PreconditionFailed("cleanup transaction is not active".to_string()))
     );
 }
 
@@ -1554,10 +1440,7 @@ fn stale_resource_handles_are_rejected() {
     graph.close_resource(resource);
     assert_eq!(
         graph.validate_resource_handle(handle),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -1575,10 +1458,7 @@ fn stale_wait_tokens_are_rejected() {
     assert_eq!(graph.validate_wait_handle(handle), Ok(()));
     assert_eq!(
         graph.validate_wait_handle(WaitHandle::new(11, 2)),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 2,
-            actual: Some(3),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 2, actual: Some(3) })
     );
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -1598,22 +1478,15 @@ fn store_lifecycle_rebinds_instance_resource() {
     graph.record_store_trap(store, "injected procfs read fault");
     graph.set_store_state(store, StoreState::Draining);
     graph.set_store_state(store, StoreState::Restarting);
-    let drop_report = graph
-        .drop_store_instance(store)
-        .expect("dropped store instance");
+    let drop_report = graph.drop_store_instance(store).expect("dropped store instance");
     assert_eq!(drop_report.previous_resource, Some(first_resource));
     assert_eq!(drop_report.closed_resources, 1);
     assert_eq!(
         graph.validate_resource_handle(ResourceHandle::new(first_resource, 1)),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
 
-    let rebind_report = graph
-        .rebind_store_instance(store)
-        .expect("rebound store resource");
+    let rebind_report = graph.rebind_store_instance(store).expect("rebound store resource");
     let second_resource = rebind_report.resource;
     graph.set_store_state(store, StoreState::Running);
 
@@ -1622,10 +1495,7 @@ fn store_lifecycle_rebinds_instance_resource() {
     assert_eq!(graph.live_resource_count(), 1);
     assert_eq!(graph.stores()[0].restart_count, 1);
     assert_eq!(graph.stores()[0].state, StoreState::Running);
-    assert_eq!(
-        graph.event_log_tail(1)[0].kind.summary(),
-        "FaultDomainRestarted domain=1"
-    );
+    assert_eq!(graph.event_log_tail(1)[0].kind.summary(), "FaultDomainRestarted domain=1");
 }
 
 #[test]
@@ -1693,19 +1563,12 @@ fn transaction_rollback_and_store_owned_resource_cleanup_are_recorded() {
 
     assert_eq!(
         graph.validate_resource_handle(ResourceHandle::new(scratch, 1)),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
     assert_eq!(graph.transactions()[0].state, TransactionState::RolledBack);
     assert!(graph.event_log_tail(32).iter().any(|event| matches!(
         event.kind,
-        EventKind::FaultClassified {
-            trap: TrapClass::ServiceTrap,
-            class: FaultClass::Service,
-            ..
-        }
+        EventKind::FaultClassified { trap: TrapClass::ServiceTrap, class: FaultClass::Service, .. }
     )));
 }
 
@@ -1823,10 +1686,7 @@ fn io_runtime_i0_rejects_stale_or_non_device_resource() {
         },
     ));
     assert_eq!(stale.status, CommandStatus::Rejected);
-    assert_eq!(
-        stale.violations,
-        vec!["device object resource generation mismatch".to_string()]
-    );
+    assert_eq!(stale.violations, vec!["device object resource generation mismatch".to_string()]);
 
     let generation = graph.resource_handle(resource).unwrap().generation;
     assert!(graph.record_device_object_with_id(
@@ -1844,10 +1704,7 @@ fn io_runtime_i0_rejects_stale_or_non_device_resource() {
     graph.corrupt_device_object_resource_generation_for_test(302, generation + 1);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DeviceObjectMissingResource {
-            device: 302,
-            resource
-        })
+        Err(SemanticInvariantError::DeviceObjectMissingResource { device: 302, resource })
     );
 }
 
@@ -1956,10 +1813,7 @@ fn io_runtime_i1_rejects_stale_or_duplicate_queue() {
         },
     ));
     assert_eq!(zero_depth.status, CommandStatus::Rejected);
-    assert_eq!(
-        zero_depth.violations,
-        vec!["queue object depth is zero".to_string()]
-    );
+    assert_eq!(zero_depth.violations, vec!["queue object depth is zero".to_string()]);
 
     assert!(graph.record_queue_object_with_id(
         501,
@@ -1994,10 +1848,7 @@ fn io_runtime_i1_rejects_stale_or_duplicate_queue() {
     graph.corrupt_queue_object_device_generation_for_test(501, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::QueueObjectMissingDevice {
-            queue: 501,
-            device: 401
-        })
+        Err(SemanticInvariantError::QueueObjectMissingDevice { queue: 501, device: 401 })
     );
 }
 
@@ -2123,10 +1974,7 @@ fn io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor() {
         },
     ));
     assert_eq!(zero_length.status, CommandStatus::Rejected);
-    assert_eq!(
-        zero_length.violations,
-        vec!["descriptor object length is zero".to_string()]
-    );
+    assert_eq!(zero_length.violations, vec!["descriptor object length is zero".to_string()]);
 
     let out_of_bounds = graph.apply_envelope(CommandEnvelope::new(
         3,
@@ -2178,10 +2026,7 @@ fn io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor() {
     graph.corrupt_descriptor_object_queue_generation_for_test(601, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DescriptorObjectMissingQueue {
-            descriptor: 601,
-            queue: 501
-        })
+        Err(SemanticInvariantError::DescriptorObjectMissingQueue { descriptor: 601, queue: 501 })
     );
 }
 
@@ -2586,10 +2431,7 @@ fn io_runtime_i4_rejects_stale_wrong_resource_or_duplicate_mmio_region() {
         },
     ));
     assert_eq!(range_overflows.status, CommandStatus::Rejected);
-    assert_eq!(
-        range_overflows.violations,
-        vec!["mmio region object range overflows".to_string()]
-    );
+    assert_eq!(range_overflows.violations, vec!["mmio region object range overflows".to_string()]);
 
     assert!(graph.record_mmio_region_object_with_id(
         801,
@@ -2812,10 +2654,7 @@ fn io_runtime_i5_rejects_stale_wrong_resource_or_duplicate_irq_line() {
     graph.corrupt_irq_line_object_device_generation_for_test(901, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::IrqLineObjectMissingDevice {
-            irq_line: 901,
-            device: 401,
-        })
+        Err(SemanticInvariantError::IrqLineObjectMissingDevice { irq_line: 901, device: 401 })
     );
 }
 
@@ -3045,10 +2884,7 @@ fn io_runtime_i6_rejects_stale_wrong_store_or_duplicate_irq_event() {
         },
     ));
     assert_eq!(zero_sequence.status, CommandStatus::Rejected);
-    assert_eq!(
-        zero_sequence.violations,
-        vec!["irq event sequence is zero".to_string()]
-    );
+    assert_eq!(zero_sequence.violations, vec!["irq event sequence is zero".to_string()]);
 
     assert!(graph.record_irq_event_with_id(
         1001,
@@ -3315,12 +3151,8 @@ fn io_runtime_i7_device_capability_records_store_local_authority() {
 fn io_runtime_i7_rejects_label_only_stale_revoked_or_duplicate_capability() {
     let (mut graph, driver_store, driver_store_generation, _device, mmio, _dma, _irq) =
         setup_i7_device_capability_graph();
-    let label_cap = graph.grant_capability(
-        "driver.fake-io0",
-        "mmio.fake-io0.regs",
-        &["write32"],
-        "store",
-    );
+    let label_cap =
+        graph.grant_capability("driver.fake-io0", "mmio.fake-io0.regs", &["write32"], "store");
     let label_handle = graph
         .capabilities()
         .record(label_cap)
@@ -3397,10 +3229,7 @@ fn io_runtime_i7_rejects_label_only_stale_revoked_or_duplicate_capability() {
         },
     ));
     assert_eq!(revoked.status, CommandStatus::Rejected);
-    assert_eq!(
-        revoked.violations,
-        vec!["device capability handle is not authorized".to_string()]
-    );
+    assert_eq!(revoked.violations, vec!["device capability handle is not authorized".to_string()]);
 
     let fresh_cap = graph.grant_capability_with_authority_ref(
         "driver.fake-io0",
@@ -3671,21 +3500,13 @@ fn io_runtime_i8_rejects_stale_wrong_or_duplicate_driver_store_binding() {
     graph.corrupt_driver_store_binding_device_generation_for_test(1202, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DriverStoreBindingMissingDevice {
-            binding: 1202,
-            device: 401,
-        })
+        Err(SemanticInvariantError::DriverStoreBindingMissingDevice { binding: 1202, device: 401 })
     );
 }
 
-fn setup_i9_io_wait_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    ContractObjectRef,
-    ContractObjectRef,
-    DriverStoreBindingId,
-) {
+fn setup_i9_io_wait_graph()
+-> (SemanticGraph, StoreId, Generation, ContractObjectRef, ContractObjectRef, DriverStoreBindingId)
+{
     let (mut graph, driver_store, driver_store_generation, device, _mmio, _dma, irq) =
         setup_i7_device_capability_graph();
     let device_capability = record_i8_device_probe_capability(
@@ -3705,14 +3526,7 @@ fn setup_i9_io_wait_graph() -> (
         1,
         "i9 binding harness",
     ));
-    (
-        graph,
-        driver_store,
-        driver_store_generation,
-        device,
-        irq,
-        1302,
-    )
+    (graph, driver_store, driver_store_generation, device, irq, 1302)
 }
 
 #[test]
@@ -3758,11 +3572,7 @@ fn io_runtime_i9_io_wait_resolves_from_irq_event_with_exact_generations() {
     assert_eq!(record_io_wait.status, CommandStatus::Applied);
     let index = graph.wait_index();
     assert!(index.by_resource.contains(&(irq, 1303)));
-    assert!(
-        index
-            .by_store
-            .contains(&(driver_store, driver_store_generation, 1303))
-    );
+    assert!(index.by_store.contains(&(driver_store, driver_store_generation, 1303)));
 
     assert_eq!(graph.io_waits().len(), 1);
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Pending);
@@ -3789,11 +3599,7 @@ fn io_runtime_i9_io_wait_resolves_from_irq_event_with_exact_generations() {
         },
     ));
     assert_eq!(resolve.status, CommandStatus::Applied);
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 1303)
-        .unwrap();
+    let wait = graph.wait_records().iter().find(|wait| wait.id == 1303).unwrap();
     assert_eq!(wait.state, WaitState::Resolved);
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Resolved);
     assert_eq!(graph.io_waits()[0].completion_irq_event, Some(1305));
@@ -3873,15 +3679,11 @@ fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
     );
 
     let other_device_resource = graph.register_resource(ResourceKind::Device, None, "device:other");
-    let other_device_resource_generation = graph
-        .resource_handle(other_device_resource)
-        .unwrap()
-        .generation;
+    let other_device_resource_generation =
+        graph.resource_handle(other_device_resource).unwrap().generation;
     let other_dma_resource = graph.register_resource(ResourceKind::DmaBuffer, None, "dma:other");
-    let other_dma_resource_generation = graph
-        .resource_handle(other_dma_resource)
-        .unwrap()
-        .generation;
+    let other_dma_resource_generation =
+        graph.resource_handle(other_dma_resource).unwrap().generation;
     assert!(graph.record_device_object_with_id(
         402,
         "other-io",
@@ -4028,11 +3830,7 @@ fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
         },
     ));
     assert_eq!(cancel.status, CommandStatus::Applied);
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|wait| wait.id == 1310)
-        .unwrap();
+    let wait = graph.wait_records().iter().find(|wait| wait.id == 1310).unwrap();
     assert_eq!(wait.state, WaitState::Cancelled);
     assert_eq!(wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
@@ -4052,13 +3850,8 @@ fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
     );
 }
 
-fn setup_i10_io_cleanup_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    DriverStoreBindingId,
-    IoWaitId,
-) {
+fn setup_i10_io_cleanup_graph()
+-> (SemanticGraph, StoreId, Generation, DriverStoreBindingId, IoWaitId) {
     let (mut graph, driver_store, driver_store_generation, device, mmio, dma, irq) =
         setup_i7_device_capability_graph();
     let device_capability = record_i8_device_probe_capability(
@@ -4225,19 +4018,10 @@ fn io_runtime_i10_cleanup_cancels_waits_revokes_caps_and_releases_io_objects() {
     assert_eq!(cleanup.released_dma_buffers.len(), 1);
     assert_eq!(cleanup.released_mmio_regions.len(), 1);
     assert_eq!(cleanup.released_irq_lines.len(), 1);
-    assert!(
-        cleanup
-            .steps
-            .iter()
-            .any(|step| step.kind == IoCleanupStepKind::CancelIoWaits
-                && step.status == IoCleanupStepStatus::Done)
-    );
+    assert!(cleanup.steps.iter().any(|step| step.kind == IoCleanupStepKind::CancelIoWaits
+        && step.status == IoCleanupStepStatus::Done));
 
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|record| record.id == 1406)
-        .unwrap();
+    let wait = graph.wait_records().iter().find(|record| record.id == 1406).unwrap();
     assert_eq!(wait.state, WaitState::Cancelled);
     assert_eq!(wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
@@ -4249,22 +4033,10 @@ fn io_runtime_i10_cleanup_cancels_waits_revokes_caps_and_releases_io_objects() {
                 && record.driver_store_generation == driver_store_generation)
             .all(|record| record.state == DeviceCapabilityState::Revoked)
     );
-    assert_eq!(
-        graph.driver_store_bindings()[0].state,
-        DriverStoreBindingState::Released
-    );
-    assert_eq!(
-        graph.dma_buffer_objects()[0].state,
-        DmaBufferObjectState::Released
-    );
-    assert_eq!(
-        graph.mmio_region_objects()[0].state,
-        MmioRegionObjectState::Released
-    );
-    assert_eq!(
-        graph.irq_line_objects()[0].state,
-        IrqLineObjectState::Released
-    );
+    assert_eq!(graph.driver_store_bindings()[0].state, DriverStoreBindingState::Released);
+    assert_eq!(graph.dma_buffer_objects()[0].state, DmaBufferObjectState::Released);
+    assert_eq!(graph.mmio_region_objects()[0].state, MmioRegionObjectState::Released);
+    assert_eq!(graph.irq_line_objects()[0].state, IrqLineObjectState::Released);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "IoCleanupCompleted cleanup=1408 driver_store=1@2 device=401@1 driver_binding=1402@1 cancelled_io_waits=1 revoked_device_capabilities=4 released_dma_buffers=1 released_mmio_regions=1 released_irq_lines=1 generation=1"
@@ -4371,10 +4143,7 @@ fn io_runtime_i10_rejects_stale_cleanup_and_blocks_post_cleanup_wait_reuse() {
     graph.corrupt_io_cleanup_cancelled_wait_for_test(1410, 1407);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::IoWaitMissingBlocker {
-            io_wait: 1407,
-            blocker: irq,
-        })
+        Err(SemanticInvariantError::IoWaitMissingBlocker { io_wait: 1407, blocker: irq })
     );
 }
 
@@ -4412,10 +4181,7 @@ fn io_runtime_i11_fault_injection_triggers_cleanup_with_exact_generations() {
     assert_eq!(fault.cleanup_generation, 1);
     assert_eq!(graph.io_cleanups()[0].cancelled_io_waits[0].id, io_wait);
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Cancelled);
-    assert_eq!(
-        graph.irq_line_objects()[0].state,
-        IrqLineObjectState::Released
-    );
+    assert_eq!(graph.irq_line_objects()[0].state, IrqLineObjectState::Released);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "IoFaultInjected fault=1411 kind=device-fault driver_store=1@2 device=401@1 driver_binding=1402@1 target=irq-line-object:901@1 cleanup=1412@1 generation=1"
@@ -4510,10 +4276,7 @@ fn io_runtime_i11_rejects_stale_or_post_cleanup_fault_injection() {
     graph.corrupt_io_fault_cleanup_ref_for_test(1413, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::IoFaultInjectionMissingCleanup {
-            fault: 1413,
-            cleanup: 1414,
-        })
+        Err(SemanticInvariantError::IoFaultInjectionMissingCleanup { fault: 1413, cleanup: 1414 })
     );
 }
 
@@ -4581,10 +4344,7 @@ fn io_runtime_i12_validator_records_generation_violations_without_hiding_them() 
     let result = graph.apply_envelope(CommandEnvelope::new(
         1,
         "i12-test",
-        SemanticCommand::ValidateIoRuntime {
-            report: 1422,
-            note: "i12 bad validator".to_string(),
-        },
+        SemanticCommand::ValidateIoRuntime { report: 1422, note: "i12 bad validator".to_string() },
     ));
 
     assert_eq!(result.status, CommandStatus::Applied);
@@ -5565,12 +5325,10 @@ fn network_runtime_n3_invariants_reject_packet_descriptor_generation_leaks() {
     graph.corrupt_packet_descriptor_buffer_generation_for_test(1546, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
-                packet_descriptor: 1546,
-                packet_buffer: 1542,
-            }
-        )
+        Err(SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
+            packet_descriptor: 1546,
+            packet_buffer: 1542,
+        })
     );
 }
 
@@ -5789,12 +5547,10 @@ fn network_runtime_n4_invariants_reject_fake_net_backend_generation_leak() {
     graph.corrupt_fake_net_backend_packet_device_generation_for_test(1551, 2);
     assert!(matches!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::FakeNetBackendObjectMissingPacketDevice {
-                fake_net_backend: 1551,
-                packet_device: 1541,
-            }
-        )
+        Err(SemanticInvariantError::FakeNetBackendObjectMissingPacketDevice {
+            fake_net_backend: 1551,
+            packet_device: 1541,
+        })
     ));
 }
 
@@ -6213,12 +5969,10 @@ fn network_runtime_n5_invariants_reject_virtio_backend_generation_leak() {
     graph.corrupt_virtio_net_backend_driver_binding_generation_for_test(1553, 2);
     assert!(matches!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::VirtioNetBackendObjectMissingDriverBinding {
-                virtio_net_backend: 1553,
-                driver_binding: 1552,
-            }
-        )
+        Err(SemanticInvariantError::VirtioNetBackendObjectMissingDriverBinding {
+            virtio_net_backend: 1553,
+            driver_binding: 1552,
+        })
     ));
 }
 
@@ -6253,9 +6007,7 @@ fn network_runtime_n5_invariants_reject_invalid_virtio_irq_vector() {
     graph.corrupt_virtio_net_backend_irq_vector_for_test(1553, 0);
     assert!(matches!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::VirtioNetBackendObjectInvalid {
-            virtio_net_backend: 1553,
-        })
+        Err(SemanticInvariantError::VirtioNetBackendObjectInvalid { virtio_net_backend: 1553 })
     ));
 }
 
@@ -6294,12 +6046,8 @@ fn setup_n6_network_rx_interrupt_graph_with_irq_capability(
     ));
     let irq_resource = graph.register_resource(ResourceKind::IrqLine, None, "irq:virtio-net2-rx");
     let irq_resource_generation = graph.resource_handle(irq_resource).unwrap().generation;
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == binding)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == binding).cloned().unwrap();
     assert!(graph.record_irq_line_object_with_id(
         1554,
         1540,
@@ -6581,12 +6329,8 @@ fn setup_n7_network_rx_wait_graph() -> SemanticGraph {
         1,
         "n7 rx interrupt",
     ));
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1544, 1);
     assert!(
         graph
@@ -6640,11 +6384,7 @@ fn network_runtime_n7_rx_interrupt_resolves_rx_queue_wait() {
     assert_eq!(graph.network_rx_wait_resolution_count(), 1);
     assert_eq!(graph.io_waits()[0].state, IoWaitState::Resolved);
     assert_eq!(graph.io_waits()[0].completion_irq_event, Some(1555));
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|record| record.id == 1561)
-        .unwrap();
+    let wait = graph.wait_records().iter().find(|record| record.id == 1561).unwrap();
     assert_eq!(wait.state, WaitState::Resolved);
     let resolution = &graph.network_rx_wait_resolutions()[0];
     assert_eq!(
@@ -6681,12 +6421,8 @@ fn network_runtime_n7_rejects_stale_interrupt_and_wrong_wait_blocker() {
         vec!["network rx wait interrupt generation is missing or inactive".to_string()]
     );
 
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let tx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1545, 1);
     assert!(
         graph
@@ -6743,23 +6479,17 @@ fn network_runtime_n7_invariants_reject_resolution_queue_generation_leak() {
     graph.corrupt_network_rx_wait_resolution_queue_generation_for_test(1563, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::NetworkRxWaitResolutionMissingRxQueue {
-                resolution: 1563,
-                rx_queue: 1544,
-            }
-        )
+        Err(SemanticInvariantError::NetworkRxWaitResolutionMissingRxQueue {
+            resolution: 1563,
+            rx_queue: 1544,
+        })
     );
 }
 
 fn setup_n8_network_tx_gate_graph() -> (SemanticGraph, CapabilityHandle) {
     let mut graph = setup_n6_network_rx_interrupt_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     assert!(graph.record_packet_descriptor_object_with_id(
         1547,
         1545,
@@ -6801,12 +6531,8 @@ fn setup_n8_network_tx_gate_graph() -> (SemanticGraph, CapabilityHandle) {
 #[test]
 fn network_runtime_n8_tx_descriptor_requires_packet_device_capability() {
     let (mut graph, handle) = setup_n8_network_tx_gate_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let result = graph.apply_envelope(CommandEnvelope::new(
         1,
         "n8-test",
@@ -6848,12 +6574,8 @@ fn network_runtime_n8_tx_descriptor_requires_packet_device_capability() {
 #[test]
 fn network_runtime_n8_rejects_forged_handle_and_rx_descriptor() {
     let (mut graph, mut forged_handle) = setup_n8_network_tx_gate_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     forged_handle.generation += 1;
     let forged = graph.apply_envelope(CommandEnvelope::new(
         1,
@@ -6871,10 +6593,7 @@ fn network_runtime_n8_rejects_forged_handle_and_rx_descriptor() {
         },
     ));
     assert_eq!(forged.status, CommandStatus::Rejected);
-    assert_eq!(
-        forged.violations,
-        vec!["network tx capability gate handle mismatch".to_string()]
-    );
+    assert_eq!(forged.violations, vec!["network tx capability gate handle mismatch".to_string()]);
     assert_eq!(graph.network_tx_capability_gate_count(), 0);
 
     assert!(graph.record_packet_descriptor_object_with_id(
@@ -6890,12 +6609,7 @@ fn network_runtime_n8_rejects_forged_handle_and_rx_descriptor() {
     let valid_handle = graph
         .capabilities()
         .record(
-            graph
-                .device_capabilities()
-                .iter()
-                .find(|record| record.id == 1570)
-                .unwrap()
-                .capability,
+            graph.device_capabilities().iter().find(|record| record.id == 1570).unwrap().capability,
         )
         .and_then(|record| record.store_local_handle(vec!["tx".to_string()]))
         .unwrap();
@@ -6924,12 +6638,8 @@ fn network_runtime_n8_rejects_forged_handle_and_rx_descriptor() {
 #[test]
 fn network_runtime_n8_invariants_reject_capability_generation_leak() {
     let (mut graph, handle) = setup_n8_network_tx_gate_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     assert!(graph.record_network_tx_capability_gate_with_id(
         1571,
         binding_record.driver_store,
@@ -6950,12 +6660,8 @@ fn network_runtime_n8_invariants_reject_capability_generation_leak() {
 
 fn setup_n9_network_tx_completion_graph() -> SemanticGraph {
     let (mut graph, handle) = setup_n8_network_tx_gate_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     assert!(graph.record_network_tx_capability_gate_with_id(
         1571,
         binding_record.driver_store,
@@ -7106,12 +6812,8 @@ fn network_runtime_n9_invariants_reject_completion_generation_leak() {
 fn network_runtime_n9_invariants_reject_duplicate_completion_sequence() {
     let mut graph = setup_n9_network_tx_completion_graph();
     let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 1553, 1);
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let handle = graph
         .device_capabilities()
         .iter()
@@ -7171,13 +6873,11 @@ fn network_runtime_n9_invariants_reject_duplicate_completion_sequence() {
     graph.corrupt_network_tx_completion_sequence_for_test(1574, 1);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::NetworkTxCompletionDuplicateSequence {
-                completion: 1574,
-                tx_queue: 1545,
-                completion_sequence: 1,
-            }
-        )
+        Err(SemanticInvariantError::NetworkTxCompletionDuplicateSequence {
+            completion: 1574,
+            tx_queue: 1545,
+            completion_sequence: 1,
+        })
     );
 }
 
@@ -7522,10 +7222,7 @@ fn network_runtime_n11_rejects_stale_adapter_dead_store_and_unsupported_socket()
         },
     ));
     assert_eq!(unsupported.status, CommandStatus::Rejected);
-    assert_eq!(
-        unsupported.violations,
-        vec!["socket object contract is unsupported".to_string()]
-    );
+    assert_eq!(unsupported.violations, vec!["socket object contract is unsupported".to_string()]);
 
     graph.set_store_state(owner_store, StoreState::Dead);
     let dead_store_generation = graph.store_handle(owner_store).unwrap().generation;
@@ -7545,10 +7242,7 @@ fn network_runtime_n11_rejects_stale_adapter_dead_store_and_unsupported_socket()
         },
     ));
     assert_eq!(dead_store.status, CommandStatus::Rejected);
-    assert_eq!(
-        dead_store.violations,
-        vec!["socket object owner store is not live".to_string()]
-    );
+    assert_eq!(dead_store.violations, vec!["socket object owner store is not live".to_string()]);
 }
 
 #[test]
@@ -7568,10 +7262,7 @@ fn network_runtime_n11_invariants_reject_socket_adapter_generation_leak() {
     graph.corrupt_socket_object_adapter_generation_for_test(1576, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::SocketObjectMissingAdapter {
-            socket: 1576,
-            adapter: 1575,
-        })
+        Err(SemanticInvariantError::SocketObjectMissingAdapter { socket: 1576, adapter: 1575 })
     );
 }
 
@@ -7726,10 +7417,7 @@ fn network_runtime_n12_invariants_reject_endpoint_socket_generation_leak() {
     graph.corrupt_endpoint_object_socket_generation_for_test(1577, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::EndpointObjectMissingSocket {
-            endpoint: 1577,
-            socket: 1576,
-        })
+        Err(SemanticInvariantError::EndpointObjectMissingSocket { endpoint: 1577, socket: 1576 })
     );
 }
 
@@ -7856,20 +7544,12 @@ fn network_runtime_n13_socket_operations_record_listen_and_connected_flows() {
     }
 
     assert_eq!(graph.socket_operation_count(), 6);
-    let listen = graph
-        .socket_operations()
-        .iter()
-        .find(|operation| operation.id == 1583)
-        .unwrap();
+    let listen = graph.socket_operations().iter().find(|operation| operation.id == 1583).unwrap();
     assert_eq!(listen.operation, SocketOperationKind::Listen);
     assert_eq!(listen.local_addr, [10, 0, 2, 15]);
     assert_eq!(listen.local_port, 8080);
     assert_eq!(listen.backlog, 16);
-    let send = graph
-        .socket_operations()
-        .iter()
-        .find(|operation| operation.id == 1586)
-        .unwrap();
+    let send = graph.socket_operations().iter().find(|operation| operation.id == 1586).unwrap();
     assert_eq!(send.operation, SocketOperationKind::Send);
     assert_eq!(send.remote_addr, [10, 0, 2, 2]);
     assert_eq!(send.remote_port, 80);
@@ -8173,15 +7853,9 @@ fn network_runtime_n14_socket_wait_resolves_and_cancels_wait_tokens() {
     assert_eq!(graph.socket_waits()[0].ready_sequence, Some(1));
     assert_eq!(graph.socket_waits()[0].byte_len, Some(19));
     assert_eq!(graph.socket_waits()[1].state, SocketWaitState::Cancelled);
-    assert_eq!(
-        graph.socket_waits()[1].cancel_reason,
-        Some(WaitCancelReason::CloseFd)
-    );
+    assert_eq!(graph.socket_waits()[1].cancel_reason, Some(WaitCancelReason::CloseFd));
     assert!(
-        graph.event_log_tail(1)[0]
-            .kind
-            .summary()
-            .contains("SocketWaitCancelled socket_wait=1591")
+        graph.event_log_tail(1)[0].kind.summary().contains("SocketWaitCancelled socket_wait=1591")
     );
     assert!(graph.check_invariants().is_ok());
 }
@@ -8236,11 +7910,7 @@ fn network_runtime_n14_accept_wait_can_resolve_without_payload_bytes() {
             .is_ok()
     );
 
-    let socket_wait = graph
-        .socket_waits()
-        .iter()
-        .find(|record| record.id == 1593)
-        .unwrap();
+    let socket_wait = graph.socket_waits().iter().find(|record| record.id == 1593).unwrap();
     assert_eq!(socket_wait.state, SocketWaitState::Resolved);
     assert_eq!(socket_wait.byte_len, Some(0));
     assert!(graph.check_invariants().is_ok());
@@ -8465,11 +8135,7 @@ fn network_runtime_n15_backpressure_records_throttle_reject_and_drop_policy() {
     }
 
     assert_eq!(graph.network_backpressure_count(), 3);
-    let reject = graph
-        .network_backpressures()
-        .iter()
-        .find(|record| record.id == 1595)
-        .unwrap();
+    let reject = graph.network_backpressures().iter().find(|record| record.id == 1595).unwrap();
     assert_eq!(
         reject.object_ref(),
         ContractObjectRef::new(ContractObjectKind::NetworkBackpressure, 1595, 1)
@@ -8479,11 +8145,8 @@ fn network_runtime_n15_backpressure_records_throttle_reject_and_drop_policy() {
     assert_eq!(reject.owner_store, graph.store_id("linux_socket_service"));
     assert_eq!(reject.action, NetworkBackpressureAction::RejectSend);
     assert_eq!(reject.dropped_packets, 0);
-    let drop_record = graph
-        .network_backpressures()
-        .iter()
-        .find(|record| record.id == 1596)
-        .unwrap();
+    let drop_record =
+        graph.network_backpressures().iter().find(|record| record.id == 1596).unwrap();
     assert_eq!(drop_record.action, NetworkBackpressureAction::DropNewest);
     assert_eq!(drop_record.dropped_bytes, 1514);
     assert!(
@@ -8756,47 +8419,21 @@ fn network_runtime_n16_driver_cleanup_cancels_socket_waits_and_revokes_packet_ca
     );
     assert_eq!(
         cleanup.revoked_packet_capabilities,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::DeviceCapability,
-            1570,
-            1
-        )]
+        vec![ContractObjectRef::new(ContractObjectKind::DeviceCapability, 1570, 1)]
     );
-    let socket_wait = graph
-        .socket_waits()
-        .iter()
-        .find(|record| record.id == 1598)
-        .unwrap();
+    let socket_wait = graph.socket_waits().iter().find(|record| record.id == 1598).unwrap();
     assert_eq!(socket_wait.state, SocketWaitState::Cancelled);
+    assert_eq!(socket_wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
     assert_eq!(
-        socket_wait.cancel_reason,
-        Some(WaitCancelReason::DeviceFault)
-    );
-    assert_eq!(
-        graph
-            .wait_records()
-            .iter()
-            .find(|record| record.id == 1597)
-            .unwrap()
-            .state,
+        graph.wait_records().iter().find(|record| record.id == 1597).unwrap().state,
         WaitState::Cancelled
     );
     assert_eq!(
-        graph
-            .driver_store_bindings()
-            .iter()
-            .find(|record| record.id == 1552)
-            .unwrap()
-            .state,
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).unwrap().state,
         DriverStoreBindingState::Released
     );
     assert_eq!(
-        graph
-            .device_capabilities()
-            .iter()
-            .find(|record| record.id == 1570)
-            .unwrap()
-            .state,
+        graph.device_capabilities().iter().find(|record| record.id == 1570).unwrap().state,
         DeviceCapabilityState::Revoked
     );
     assert!(
@@ -8917,12 +8554,10 @@ fn network_runtime_n16_invariants_reject_stale_cleanup_effect_generation() {
     graph.corrupt_network_driver_cleanup_revoked_capability_generation_for_test(1599, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::NetworkDriverCleanupMissingEffectTarget {
-                cleanup: 1599,
-                target: ContractObjectRef::new(ContractObjectKind::DeviceCapability, 1570, 2),
-            }
-        )
+        Err(SemanticInvariantError::NetworkDriverCleanupMissingEffectTarget {
+            cleanup: 1599,
+            target: ContractObjectRef::new(ContractObjectKind::DeviceCapability, 1570, 2),
+        })
     );
 }
 
@@ -8959,17 +8594,12 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
     assert!(graph.release_authority_binding(authority, "driver micro-reboot"));
     assert_eq!(graph.active_authority_count(), 0);
     assert_eq!(
-        graph
-            .capabilities()
-            .check_authority("driver_virtio_net", cap_object_ref, "write", None),
+        graph.capabilities().check_authority("driver_virtio_net", cap_object_ref, "write", None),
         Err(CapabilityDenyReason::Revoked)
     );
     assert_eq!(
         graph.validate_resource_handle(ResourceHandle::new(mmio, 1)),
-        Err(GenerationCheckError::GenerationMismatch {
-            expected: 1,
-            actual: Some(2),
-        })
+        Err(GenerationCheckError::GenerationMismatch { expected: 1, actual: Some(2) })
     );
     assert!(graph.event_log_tail(8).iter().any(|event| matches!(
         event.kind,
@@ -9003,11 +8633,7 @@ fn authority_bindings_drive_resource_and_capability_lifecycle() {
         ),
         Err(CapabilityDenyReason::GenerationMismatch)
     );
-    assert!(
-        graph
-            .check_capability("driver_virtio_net", "mmio.virtio-net0", "write")
-            .is_ok()
-    );
+    assert!(graph.check_capability("driver_virtio_net", "mmio.virtio-net0", "write").is_ok());
     assert!(graph.check_invariants().is_ok());
 }
 
@@ -9025,10 +8651,7 @@ fn packet_device_authority_is_part_of_the_hardware_ledger() {
         )
         .expect("packet device authority binding");
 
-    assert_eq!(
-        graph.authority_bindings()[0].kind,
-        AuthorityKind::PacketDevice
-    );
+    assert_eq!(graph.authority_bindings()[0].kind, AuthorityKind::PacketDevice);
     let cap_object_ref = graph.capabilities().records()[0]
         .object_ref
         .expect("packet authority capability carries object ref");
@@ -9040,9 +8663,7 @@ fn packet_device_authority_is_part_of_the_hardware_ledger() {
     );
     assert!(graph.revoke_authority_binding(authority, "driver restart"));
     assert_eq!(
-        graph
-            .capabilities()
-            .check_authority("driver_virtio_net", cap_object_ref, "rx", None),
+        graph.capabilities().check_authority("driver_virtio_net", cap_object_ref, "rx", None),
         Err(CapabilityDenyReason::Revoked)
     );
 }
@@ -9103,10 +8724,7 @@ fn migration_package_rejects_active_dmw_leases() {
         false,
     );
 
-    assert_eq!(
-        package.validate_portability(),
-        Err(MigrationValidationError::ActiveDmwLease)
-    );
+    assert_eq!(package.validate_portability(), Err(MigrationValidationError::ActiveDmwLease));
 }
 
 #[test]
@@ -9509,28 +9127,15 @@ fn smp_runtime_s1_invariants_reject_stale_current_activation_generation() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::HartCurrentActivationMissing {
-            hart: 1,
-            activation: 11,
-        })
+        Err(SemanticInvariantError::HartCurrentActivationMissing { hart: 1, activation: 11 })
     );
 }
 
 fn add_n17_dma_generation_fixture(
     graph: &mut SemanticGraph,
-) -> (
-    ContractObjectRef,
-    ContractObjectRef,
-    CapabilityHandle,
-    StoreId,
-    Generation,
-) {
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+) -> (ContractObjectRef, ContractObjectRef, CapabilityHandle, StoreId, Generation) {
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let dma_resource =
         graph.register_resource(ResourceKind::DmaBuffer, None, "dma:virtio-net2-tx0");
     let dma_resource_generation = graph.resource_handle(dma_resource).unwrap().generation;
@@ -9803,12 +9408,10 @@ fn network_runtime_n17_invariants_reject_packet_descriptor_generation_leak() {
     graph.corrupt_network_generation_audit_descriptor_generation_for_test(1608, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::NetworkGenerationAuditMissingTarget {
-                audit: 1608,
-                target: ContractObjectRef::new(ContractObjectKind::PacketDescriptorObject, 1547, 2),
-            }
-        )
+        Err(SemanticInvariantError::NetworkGenerationAuditMissingTarget {
+            audit: 1608,
+            target: ContractObjectRef::new(ContractObjectKind::PacketDescriptorObject, 1547, 2),
+        })
     );
 }
 
@@ -9875,11 +9478,7 @@ fn network_runtime_n18_records_packet_loss_and_error_injection() {
     }
 
     assert_eq!(graph.network_fault_injection_count(), 2);
-    let loss = graph
-        .network_fault_injections()
-        .iter()
-        .find(|record| record.id == 1609)
-        .unwrap();
+    let loss = graph.network_fault_injections().iter().find(|record| record.id == 1609).unwrap();
     assert_eq!(
         loss.object_ref(),
         ContractObjectRef::new(ContractObjectKind::NetworkFaultInjection, 1609, 1)
@@ -9890,11 +9489,7 @@ fn network_runtime_n18_records_packet_loss_and_error_injection() {
     assert_eq!(loss.error_packets, 0);
     assert_eq!(loss.endpoint, Some(connected_endpoint));
 
-    let error = graph
-        .network_fault_injections()
-        .iter()
-        .find(|record| record.id == 1610)
-        .unwrap();
+    let error = graph.network_fault_injections().iter().find(|record| record.id == 1610).unwrap();
     assert_eq!(error.kind, NetworkFaultInjectionKind::PacketError);
     assert_eq!(error.effect, NetworkFaultInjectionEffect::ReportError);
     assert_eq!(error.error_code, "injected-checksum-error");
@@ -10045,12 +9640,8 @@ fn setup_n19_network_benchmark_graph() -> (SemanticGraph, EndpointObjectId) {
         1,
         "n19 rx interrupt evidence",
     ));
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
     let rx_queue_ref = ContractObjectRef::new(ContractObjectKind::PacketQueueObject, 1544, 1);
     assert_eq!(
         graph
@@ -10563,37 +10154,24 @@ fn network_runtime_n20_invariants_reject_cleanup_generation_drift() {
     graph.corrupt_network_recovery_benchmark_cleanup_generation_for_test(1615, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
-                benchmark: 1615,
-                target: ContractObjectRef::new(ContractObjectKind::NetworkDriverCleanup, 1599, 2),
-            }
-        )
+        Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
+            benchmark: 1615,
+            target: ContractObjectRef::new(ContractObjectKind::NetworkDriverCleanup, 1599, 2),
+        })
     );
 }
 
 #[test]
 fn network_convergence_d4_preserves_dma_generation_audit_and_wait_cleanup_evidence() {
     let (mut graph, _, connected_endpoint) = setup_n14_socket_wait_graph();
-    let binding_record = graph
-        .driver_store_bindings()
-        .iter()
-        .find(|record| record.id == 1552)
-        .cloned()
-        .unwrap();
-    let tx_gate = graph
-        .network_tx_capability_gates()
-        .iter()
-        .find(|record| record.id == 1571)
-        .unwrap();
+    let binding_record =
+        graph.driver_store_bindings().iter().find(|record| record.id == 1552).cloned().unwrap();
+    let tx_gate =
+        graph.network_tx_capability_gates().iter().find(|record| record.id == 1571).unwrap();
     assert_eq!(tx_gate.tx_queue, 1545);
     assert_eq!(tx_gate.device_capability, 1570);
     assert_ne!(tx_gate.capability_generation, 0);
-    let tx_queue = graph
-        .packet_queue_objects()
-        .iter()
-        .find(|record| record.id == 1545)
-        .unwrap();
+    let tx_queue = graph.packet_queue_objects().iter().find(|record| record.id == 1545).unwrap();
     assert_eq!(tx_queue.role, PacketQueueRole::Tx);
     assert_eq!(tx_queue.packet_device, 1541);
 
@@ -10662,11 +10240,8 @@ fn network_convergence_d4_preserves_dma_generation_audit_and_wait_cleanup_eviden
         let result = graph.apply_envelope(CommandEnvelope::new(command_id, "d4-test", command));
         assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
     }
-    let rx_resolution = graph
-        .network_rx_wait_resolutions()
-        .iter()
-        .find(|record| record.id == 1623)
-        .unwrap();
+    let rx_resolution =
+        graph.network_rx_wait_resolutions().iter().find(|record| record.id == 1623).unwrap();
     assert_eq!(rx_resolution.rx_queue, 1544);
     assert_eq!(rx_resolution.wait, 1621);
 
@@ -10751,10 +10326,8 @@ fn network_convergence_d4_preserves_dma_generation_audit_and_wait_cleanup_eviden
     let socket_blocker =
         ContractObjectRef::new(ContractObjectKind::EndpointObject, connected_endpoint, 1);
     let linux_socket_store = graph.store_id("linux_socket_service").unwrap();
-    let linux_socket_store_generation = graph
-        .store_handle(linux_socket_store)
-        .map(|handle| handle.generation)
-        .unwrap();
+    let linux_socket_store_generation =
+        graph.store_handle(linux_socket_store).map(|handle| handle.generation).unwrap();
     for (command_id, command) in [
         (
             409,
@@ -10807,81 +10380,37 @@ fn network_convergence_d4_preserves_dma_generation_audit_and_wait_cleanup_eviden
         assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
     }
 
-    let cleanup = graph
-        .network_driver_cleanups()
-        .iter()
-        .find(|record| record.id == 1626)
-        .unwrap();
+    let cleanup = graph.network_driver_cleanups().iter().find(|record| record.id == 1626).unwrap();
     assert_eq!(cleanup.state, NetworkDriverCleanupState::Completed);
     assert_eq!(
         cleanup.cancelled_socket_waits,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::SocketWait,
-            1625,
-            1
-        )]
+        vec![ContractObjectRef::new(ContractObjectKind::SocketWait, 1625, 1)]
     );
     assert_eq!(
         cleanup.cancelled_wait_tokens,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::WaitToken,
-            1624,
-            1
-        )]
+        vec![ContractObjectRef::new(ContractObjectKind::WaitToken, 1624, 1)]
     );
     assert_eq!(
         cleanup.revoked_packet_capabilities,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::DeviceCapability,
-            1570,
-            1
-        )]
+        vec![ContractObjectRef::new(ContractObjectKind::DeviceCapability, 1570, 1)]
     );
-    let io_cleanup = graph
-        .io_cleanups()
-        .iter()
-        .find(|record| record.id == 1627)
-        .unwrap();
+    let io_cleanup = graph.io_cleanups().iter().find(|record| record.id == 1627).unwrap();
     assert!(io_cleanup.released_dma_buffers.contains(&dma_ref));
-    assert!(
-        io_cleanup
-            .revoked_device_capabilities
-            .contains(&dma_capability_ref)
-    );
-    assert!(
-        io_cleanup
-            .revoked_device_capabilities
-            .contains(&ContractObjectRef::new(
-                ContractObjectKind::DeviceCapability,
-                1570,
-                1,
-            ))
-    );
-    let audit = graph
-        .network_generation_audits()
-        .iter()
-        .find(|record| record.id == 1608)
-        .unwrap();
+    assert!(io_cleanup.revoked_device_capabilities.contains(&dma_capability_ref));
+    assert!(io_cleanup.revoked_device_capabilities.contains(&ContractObjectRef::new(
+        ContractObjectKind::DeviceCapability,
+        1570,
+        1,
+    )));
+    let audit = graph.network_generation_audits().iter().find(|record| record.id == 1608).unwrap();
     assert_eq!(audit.dma_buffer, dma_ref);
     assert_eq!(audit.device_capability, dma_capability_ref);
     assert_eq!(audit.state, NetworkGenerationAuditState::Recorded);
-    let socket_wait = graph
-        .socket_waits()
-        .iter()
-        .find(|record| record.id == 1625)
-        .unwrap();
+    let socket_wait = graph.socket_waits().iter().find(|record| record.id == 1625).unwrap();
     assert_eq!(socket_wait.state, SocketWaitState::Cancelled);
+    assert_eq!(socket_wait.cancel_reason, Some(WaitCancelReason::DeviceFault));
     assert_eq!(
-        socket_wait.cancel_reason,
-        Some(WaitCancelReason::DeviceFault)
-    );
-    assert_eq!(
-        graph
-            .wait_records()
-            .iter()
-            .find(|record| record.id == 1624)
-            .unwrap()
-            .state,
+        graph.wait_records().iter().find(|record| record.id == 1624).unwrap().state,
         WaitState::Cancelled
     );
     assert!(graph.check_invariants().is_ok());
@@ -11511,10 +11040,7 @@ fn block_runtime_b3_block_completion_records_request_outcome() {
     assert_eq!(completion.sequence, 1);
     assert_eq!(completion.completed_bytes, 4096);
     assert_eq!(completion.status, BlockCompletionStatus::Success);
-    assert_eq!(
-        graph.block_request_objects()[0].state,
-        BlockRequestObjectState::Completed
-    );
+    assert_eq!(graph.block_request_objects()[0].state, BlockRequestObjectState::Completed);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "BlockCompletionObjectRecorded block_completion=1740 block_request=1739@1 block_device=1737@1 block_range=1738@1 sequence=1 completed_bytes=4096 status=success generation=1"
@@ -11685,9 +11211,7 @@ fn block_runtime_b3_invariants_reject_completion_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::BlockRequestObjectInvalid {
-            block_request: 1753,
-        })
+        Err(SemanticInvariantError::BlockRequestObjectInvalid { block_request: 1753 })
     );
 }
 
@@ -12019,11 +11543,7 @@ fn block_runtime_b4_cancelled_wait_records_reason_and_invariant_generation() {
         Some(driver_store_generation),
         SemanticWaitKind::DriverCompletion,
         1,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::BlockRequestObject,
-            1775,
-            1,
-        )],
+        vec![ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1775, 1)],
         None,
         RestartPolicy::InternalOnly,
         None,
@@ -12042,10 +11562,7 @@ fn block_runtime_b4_cancelled_wait_records_reason_and_invariant_generation() {
     ));
     assert_eq!(cancel.status, CommandStatus::Applied);
     assert_eq!(graph.block_waits()[0].state, BlockWaitState::Cancelled);
-    assert_eq!(
-        graph.block_waits()[0].cancel_reason,
-        Some(WaitCancelReason::DeviceFault)
-    );
+    assert_eq!(graph.block_waits()[0].cancel_reason, Some(WaitCancelReason::DeviceFault));
     assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -12276,12 +11793,10 @@ fn block_runtime_b5_invariants_reject_fake_backend_generation_leak() {
     graph.corrupt_fake_block_backend_block_device_generation_for_test(1789, 2);
     assert!(matches!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::FakeBlockBackendObjectMissingBlockDevice {
-                fake_block_backend: 1789,
-                block_device: 1788,
-            }
-        ),
+        Err(SemanticInvariantError::FakeBlockBackendObjectMissingBlockDevice {
+            fake_block_backend: 1789,
+            block_device: 1788,
+        }),
     ));
 }
 
@@ -12664,12 +12179,10 @@ fn block_runtime_b6_invariants_reject_virtio_blk_generation_and_irq_leaks() {
     graph.corrupt_virtio_blk_backend_driver_binding_generation_for_test(1794, 2);
     assert!(matches!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::VirtioBlkBackendObjectMissingDriverBinding {
-                virtio_blk_backend: 1794,
-                driver_binding: 1793,
-            }
-        )
+        Err(SemanticInvariantError::VirtioBlkBackendObjectMissingDriverBinding {
+            virtio_blk_backend: 1794,
+            driver_binding: 1793,
+        })
     ));
 
     let (mut graph, binding) = setup_b6_virtio_blk_backend_graph();
@@ -12698,9 +12211,7 @@ fn block_runtime_b6_invariants_reject_virtio_blk_generation_and_irq_leaks() {
     graph.corrupt_virtio_blk_backend_irq_vector_for_test(1794, 0);
     assert!(matches!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::VirtioBlkBackendObjectInvalid {
-            virtio_blk_backend: 1794,
-        })
+        Err(SemanticInvariantError::VirtioBlkBackendObjectInvalid { virtio_blk_backend: 1794 })
     ));
 }
 
@@ -12890,10 +12401,7 @@ fn block_runtime_b7_rejects_duplicate_stale_write_and_bad_digest_paths() {
         },
     ));
     assert_eq!(bad_digest.status, CommandStatus::Rejected);
-    assert_eq!(
-        bad_digest.violations,
-        vec!["block read path data digest mismatch".to_string()]
-    );
+    assert_eq!(bad_digest.violations, vec!["block read path data digest mismatch".to_string()]);
 
     assert!(graph.record_block_request_object_with_id(
         1806,
@@ -13161,10 +12669,7 @@ fn block_runtime_b8_rejects_duplicate_stale_read_and_bad_digest_paths() {
         },
     ));
     assert_eq!(bad_digest.status, CommandStatus::Rejected);
-    assert_eq!(
-        bad_digest.violations,
-        vec!["block write path payload digest mismatch".to_string()]
-    );
+    assert_eq!(bad_digest.violations, vec!["block write path payload digest mismatch".to_string()]);
 
     assert!(graph.record_block_request_object_with_id(
         1820,
@@ -13357,10 +12862,7 @@ fn block_runtime_b9_request_queue_records_backend_device_request_order() {
     assert_eq!(queue.completed_count, 1);
     assert_eq!(queue.first_sequence, 1);
     assert_eq!(queue.last_sequence, 2);
-    assert_eq!(
-        queue.entries[0].state,
-        BlockRequestQueueEntryState::Completed
-    );
+    assert_eq!(queue.entries[0].state, BlockRequestQueueEntryState::Completed);
     assert_eq!(queue.entries[1].state, BlockRequestQueueEntryState::Pending);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -13440,10 +12942,7 @@ fn block_runtime_b9_rejects_duplicate_stale_overdepth_and_bad_completion_queues(
         },
     ));
     assert_eq!(over_depth.status, CommandStatus::Rejected);
-    assert_eq!(
-        over_depth.violations,
-        vec!["block request queue depth exceeded".to_string()]
-    );
+    assert_eq!(over_depth.violations, vec!["block request queue depth exceeded".to_string()]);
 
     assert!(graph.record_block_request_object_with_id(
         1834,
@@ -13524,12 +13023,10 @@ fn block_runtime_b9_invariants_reject_backend_generation_and_count_leaks() {
     graph.corrupt_block_request_queue_block_device_generation_for_test(1830, 2);
     assert_eq!(
         graph.check_block_request_queue_invariants(),
-        Err(
-            SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
-                queue: 1830,
-                block_device: 1824,
-            }
-        )
+        Err(SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
+            queue: 1830,
+            block_device: 1824,
+        })
     );
 
     let mut graph = setup_b9_block_request_queue_graph();
@@ -13769,10 +13266,7 @@ fn block_runtime_b10_rejects_duplicate_stale_digest_and_access_mismatch() {
         },
     ));
     assert_eq!(bad_digest.status, CommandStatus::Rejected);
-    assert_eq!(
-        bad_digest.violations,
-        vec!["block dma buffer digest mismatch".to_string()]
-    );
+    assert_eq!(bad_digest.violations, vec!["block dma buffer digest mismatch".to_string()]);
 
     let mut graph = setup_b10_block_dma_buffer_graph(DmaBufferObjectAccess::WriteOnly);
     let wrong_access_digest = b10_expected_digest(DmaBufferObjectAccess::WriteOnly);
@@ -13834,9 +13328,7 @@ fn block_runtime_b10_invariants_reject_dma_generation_and_digest_leaks() {
     graph.corrupt_block_dma_buffer_digest_for_test(1834, digest ^ 1);
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::BlockDmaBufferInvalid {
-            block_dma_buffer: 1834,
-        })
+        Err(SemanticInvariantError::BlockDmaBufferInvalid { block_dma_buffer: 1834 })
     );
 }
 
@@ -13988,10 +13480,7 @@ fn block_runtime_b11_rejects_stale_dead_oversized_and_broken_page() {
         },
     ));
     assert_eq!(dead_page.status, CommandStatus::Rejected);
-    assert_eq!(
-        dead_page.violations,
-        vec!["block page object page must be live".to_string()]
-    );
+    assert_eq!(dead_page.violations, vec!["block page object page must be live".to_string()]);
 
     let oversized = graph.apply_envelope(CommandEnvelope::new(
         4,
@@ -14015,10 +13504,7 @@ fn block_runtime_b11_rejects_stale_dead_oversized_and_broken_page() {
         },
     ));
     assert_eq!(oversized.status, CommandStatus::Rejected);
-    assert_eq!(
-        oversized.violations,
-        vec!["block page object byte range exceeds page".to_string()]
-    );
+    assert_eq!(oversized.violations, vec!["block page object byte range exceeds page".to_string()]);
 
     let broken_cow = graph.apply_envelope(CommandEnvelope::new(
         5,
@@ -14072,9 +13558,7 @@ fn block_runtime_b11_invariants_reject_page_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::BlockPageObjectInvalid {
-            block_page_object: 1835,
-        })
+        Err(SemanticInvariantError::BlockPageObjectInvalid { block_page_object: 1835 })
     );
 }
 
@@ -14268,9 +13752,7 @@ fn block_runtime_b12_invariants_reject_cache_page_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::BufferCacheObjectInvalid {
-            buffer_cache_object: 1840,
-        })
+        Err(SemanticInvariantError::BufferCacheObjectInvalid { buffer_cache_object: 1840 })
     );
 }
 
@@ -14317,10 +13799,7 @@ fn block_runtime_b13_file_object_records_cache_backed_file_contract() {
     assert_eq!(result.status, CommandStatus::Applied);
     assert_eq!(graph.file_object_count(), 1);
     let file = &graph.file_objects()[0];
-    assert_eq!(
-        file.object_ref(),
-        ContractObjectRef::new(ContractObjectKind::FileObject, 1845, 1)
-    );
+    assert_eq!(file.object_ref(), ContractObjectRef::new(ContractObjectKind::FileObject, 1845, 1));
     assert_eq!(file.buffer_cache_object, 1840);
     assert_eq!(file.block_device, 1824);
     assert_eq!(file.block_range, 1825);
@@ -14450,10 +13929,7 @@ fn block_runtime_b13_rejects_stale_oversized_duplicate_and_invalid_file() {
         },
     ));
     assert_eq!(duplicate.status, CommandStatus::Rejected);
-    assert_eq!(
-        duplicate.violations,
-        vec!["file object range already materialized".to_string()]
-    );
+    assert_eq!(duplicate.violations, vec!["file object range already materialized".to_string()]);
 }
 
 #[test]
@@ -14602,10 +14078,7 @@ fn block_runtime_b14_rejects_stale_mismatch_duplicate_and_invalid_directory() {
         },
     ));
     assert_eq!(mismatch.status, CommandStatus::Rejected);
-    assert_eq!(
-        mismatch.violations,
-        vec!["directory object file identity mismatch".to_string()]
-    );
+    assert_eq!(mismatch.violations, vec!["directory object file identity mismatch".to_string()]);
 
     let invalid_state = graph.apply_envelope(CommandEnvelope::new(
         4,
@@ -14884,10 +14357,7 @@ fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_adapter() {
         },
     ));
     assert_eq!(invalid_state.status, CommandStatus::Rejected);
-    assert_eq!(
-        invalid_state.violations,
-        vec!["fat adapter object must be verified".to_string()]
-    );
+    assert_eq!(invalid_state.violations, vec!["fat adapter object must be verified".to_string()]);
 
     assert!(graph.record_fat_adapter_object_with_id(
         1855,
@@ -14940,10 +14410,7 @@ fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_adapter() {
         },
     ));
     assert_eq!(duplicate.status, CommandStatus::Rejected);
-    assert_eq!(
-        duplicate.violations,
-        vec!["fat adapter binding already verified".to_string()]
-    );
+    assert_eq!(duplicate.violations, vec!["fat adapter binding already verified".to_string()]);
 }
 
 #[test]
@@ -15200,10 +14667,7 @@ fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invalid_adapter()
         },
     ));
     assert_eq!(duplicate.status, CommandStatus::Rejected);
-    assert_eq!(
-        duplicate.violations,
-        vec!["ext4 adapter binding already verified".to_string()]
-    );
+    assert_eq!(duplicate.violations, vec!["ext4 adapter binding already verified".to_string()]);
 }
 
 #[test]
@@ -15245,12 +14709,7 @@ fn block_runtime_b16_invariants_reject_ext4_adapter_generation_leak() {
 
 fn setup_b17_file_handle_capability_graph() -> (SemanticGraph, CapabilityHandle, CapabilityId) {
     let mut graph = setup_b16_ext4_adapter_graph();
-    graph.register_store(
-        "linux_syscall",
-        "linux_syscall.wasm",
-        "personality",
-        "kill-on-trap",
-    );
+    graph.register_store("linux_syscall", "linux_syscall.wasm", "personality", "kill-on-trap");
     let file_ref = ContractObjectRef::new(ContractObjectKind::FileObject, 1845, 1);
     let cap = graph.grant_capability_with_authority_ref(
         "linux_syscall",
@@ -15486,12 +14945,10 @@ fn block_runtime_b17_invariants_reject_file_handle_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::FileHandleCapabilityMissingFileObject {
-                file_handle_capability: 1865,
-                file_object: 1845,
-            }
-        )
+        Err(SemanticInvariantError::FileHandleCapabilityMissingFileObject {
+            file_handle_capability: 1865,
+            file_object: 1845,
+        })
     );
 }
 
@@ -15581,15 +15038,7 @@ fn block_runtime_b18_fs_wait_resolves_through_wait_token() {
     ));
     assert_eq!(resolve.status, CommandStatus::Applied);
     assert_eq!(graph.fs_waits()[0].state, FsWaitState::Resolved);
-    assert_eq!(
-        graph
-            .wait_index()
-            .by_store
-            .iter()
-            .filter(|(_, _, wait)| *wait == 1870)
-            .count(),
-        1
-    );
+    assert_eq!(graph.wait_index().by_store.iter().filter(|(_, _, wait)| *wait == 1870).count(), 1);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "FsWaitResolved fs_wait=1871 wait=1870@1 generation=1"
@@ -15696,10 +15145,7 @@ fn block_runtime_b18_rejects_stale_or_duplicate_fs_wait_and_cancels_closefd() {
     ));
     assert_eq!(cancel.status, CommandStatus::Applied);
     assert_eq!(graph.fs_waits()[0].state, FsWaitState::Cancelled);
-    assert_eq!(
-        graph.fs_waits()[0].cancel_reason,
-        Some(WaitCancelReason::CloseFd)
-    );
+    assert_eq!(graph.fs_waits()[0].cancel_reason, Some(WaitCancelReason::CloseFd));
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "FsWaitCancelled fs_wait=1873 wait=1872@1 reason=close-fd generation=1"
@@ -15871,30 +15317,15 @@ fn block_runtime_b19_disk_driver_fault_cleanup_cancels_wait_and_releases_authori
     assert_eq!(graph.block_waits()[0].state, BlockWaitState::Cancelled);
     assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
     assert_eq!(
-        graph
-            .dma_buffer_objects()
-            .iter()
-            .find(|record| record.id == 1887)
-            .unwrap()
-            .state,
+        graph.dma_buffer_objects().iter().find(|record| record.id == 1887).unwrap().state,
         DmaBufferObjectState::Released
     );
     assert_eq!(
-        graph
-            .driver_store_bindings()
-            .iter()
-            .find(|record| record.id == 1793)
-            .unwrap()
-            .state,
+        graph.driver_store_bindings().iter().find(|record| record.id == 1793).unwrap().state,
         DriverStoreBindingState::Released
     );
     assert_eq!(
-        graph
-            .virtio_blk_backends()
-            .iter()
-            .find(|record| record.id == 1880)
-            .unwrap()
-            .state,
+        graph.virtio_blk_backends().iter().find(|record| record.id == 1880).unwrap().state,
         VirtioBlkBackendObjectState::Retired
     );
     assert_eq!(
@@ -15950,12 +15381,10 @@ fn block_runtime_b19_rejects_stale_cleanup_and_detects_effect_generation_leak() 
     graph.corrupt_block_driver_cleanup_wait_generation_for_test(1888, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::BlockDriverCleanupMissingEffectTarget {
-                cleanup: 1888,
-                target: ContractObjectRef::new(ContractObjectKind::BlockWait, 1884, 2),
-            }
-        )
+        Err(SemanticInvariantError::BlockDriverCleanupMissingEffectTarget {
+            cleanup: 1888,
+            target: ContractObjectRef::new(ContractObjectKind::BlockWait, 1884, 2),
+        })
     );
 }
 
@@ -15991,11 +15420,7 @@ fn setup_b20_pending_io_policy_graph() -> SemanticGraph {
             Some(store_generation),
             SemanticWaitKind::DriverCompletion,
             1,
-            vec![ContractObjectRef::new(
-                ContractObjectKind::BlockRequestObject,
-                request,
-                1,
-            )],
+            vec![ContractObjectRef::new(ContractObjectKind::BlockRequestObject, request, 1)],
             None,
             RestartPolicy::InternalOnly,
             Some("b20 pending block wait".to_string()),
@@ -16070,39 +15495,20 @@ fn block_runtime_b20_pending_io_policy_records_retry_eio_and_cancel() {
     }
 
     assert_eq!(graph.block_pending_io_policy_count(), 3);
-    let retry = graph
-        .block_pending_io_policies()
-        .iter()
-        .find(|record| record.id == 1892)
-        .unwrap();
+    let retry = graph.block_pending_io_policies().iter().find(|record| record.id == 1892).unwrap();
     assert_eq!(retry.action, BlockPendingIoAction::Retry);
     assert_eq!(retry.retry_request, Some(1891));
     assert_eq!(retry.state, BlockPendingIoPolicyState::RetryScheduled);
     assert_eq!(
-        graph
-            .block_waits()
-            .iter()
-            .find(|record| record.id == 1884)
-            .unwrap()
-            .cancel_reason,
+        graph.block_waits().iter().find(|record| record.id == 1884).unwrap().cancel_reason,
         Some(WaitCancelReason::DeviceFault)
     );
     assert_eq!(
-        graph
-            .block_pending_io_policies()
-            .iter()
-            .find(|record| record.id == 1899)
-            .unwrap()
-            .state,
+        graph.block_pending_io_policies().iter().find(|record| record.id == 1899).unwrap().state,
         BlockPendingIoPolicyState::EioReturned
     );
     assert_eq!(
-        graph
-            .block_waits()
-            .iter()
-            .find(|record| record.id == 1898)
-            .unwrap()
-            .cancel_reason,
+        graph.block_waits().iter().find(|record| record.id == 1898).unwrap().cancel_reason,
         Some(WaitCancelReason::ResourceDropped)
     );
     assert_eq!(
@@ -16161,12 +15567,10 @@ fn block_runtime_b20_rejects_stale_retry_and_detects_policy_generation_leak() {
     graph.corrupt_block_pending_io_policy_retry_generation_for_test(1892, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::BlockPendingIoPolicyMissingRetryRequest {
-                policy: 1892,
-                block_request: 1891,
-            }
-        )
+        Err(SemanticInvariantError::BlockPendingIoPolicyMissingRetryRequest {
+            policy: 1892,
+            block_request: 1891,
+        })
     );
 }
 
@@ -16203,11 +15607,7 @@ fn block_runtime_b21_records_stale_block_request_generation_audit() {
         None,
         SemanticWaitKind::DriverCompletion,
         1,
-        vec![ContractObjectRef::new(
-            ContractObjectKind::BlockRequestObject,
-            1828,
-            2,
-        )],
+        vec![ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1828, 2)],
         None,
         RestartPolicy::InternalOnly,
         Some("b21 stale wait probe".to_string()),
@@ -16397,12 +15797,10 @@ fn block_runtime_b21_invariants_reject_stale_audit_request_generation() {
     graph.corrupt_block_request_generation_audit_request_generation_for_test(1845, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
-                audit: 1845,
-                target: ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1828, 2),
-            }
-        )
+        Err(SemanticInvariantError::BlockRequestGenerationAuditMissingTarget {
+            audit: 1845,
+            target: ContractObjectRef::new(ContractObjectKind::BlockRequestObject, 1828, 2),
+        })
     );
 }
 
@@ -16530,10 +15928,7 @@ fn block_runtime_b22_disk_benchmark_records_iops_latency_evidence() {
     assert_eq!(benchmark.p50_latency_nanos, 18_000);
     assert_eq!(benchmark.p99_latency_nanos, 35_000);
     assert!(
-        graph.event_log_tail(1)[0]
-            .kind
-            .summary()
-            .contains("BlockBenchmarkRecorded benchmark=1850")
+        graph.event_log_tail(1)[0].kind.summary().contains("BlockBenchmarkRecorded benchmark=1850")
     );
     assert!(graph.check_invariants().is_ok());
 }
@@ -16611,10 +16006,7 @@ fn block_runtime_b22_rejects_stale_refs_and_invalid_metrics() {
         },
     ));
     assert_eq!(over_budget.status, CommandStatus::Rejected);
-    assert_eq!(
-        over_budget.violations,
-        vec!["block benchmark exceeds latency budget".to_string()]
-    );
+    assert_eq!(over_budget.violations, vec!["block benchmark exceeds latency budget".to_string()]);
 }
 
 #[test]
@@ -16810,12 +16202,10 @@ fn block_runtime_b23_invariants_reject_cleanup_generation_leak() {
     graph.corrupt_block_recovery_benchmark_cleanup_generation_for_test(1852, 2);
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::BlockRecoveryBenchmarkMissingTarget {
-                benchmark: 1852,
-                target: ContractObjectRef::new(ContractObjectKind::BlockDriverCleanup, 1888, 2),
-            }
-        )
+        Err(SemanticInvariantError::BlockRecoveryBenchmarkMissingTarget {
+            benchmark: 1852,
+            target: ContractObjectRef::new(ContractObjectKind::BlockDriverCleanup, 1888, 2),
+        })
     );
 }
 
@@ -16824,35 +16214,22 @@ fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_
     let mut fs_graph = setup_b18_fs_wait_graph();
     let store = fs_graph.store_id("linux_syscall").unwrap();
     {
-        let cache = fs_graph
-            .buffer_cache_objects()
-            .iter()
-            .find(|record| record.id == 1840)
-            .unwrap();
+        let cache =
+            fs_graph.buffer_cache_objects().iter().find(|record| record.id == 1840).unwrap();
         assert_eq!(cache.block_device, 1824);
         assert_eq!(cache.block_range, 1825);
         assert_eq!(cache.page, b11_page(1903));
         assert_eq!(cache.cache_state, BufferCacheObjectState::Dirty);
-        let file = fs_graph
-            .file_objects()
-            .iter()
-            .find(|record| record.id == 1845)
-            .unwrap();
+        let file = fs_graph.file_objects().iter().find(|record| record.id == 1845).unwrap();
         assert_eq!(file.buffer_cache_object, 1840);
         assert_eq!(file.path, "/demo/file.txt");
         assert_eq!(file.content_digest, 0xB13);
-        let directory = fs_graph
-            .directory_objects()
-            .iter()
-            .find(|record| record.id == 1850)
-            .unwrap();
+        let directory =
+            fs_graph.directory_objects().iter().find(|record| record.id == 1850).unwrap();
         assert_eq!(directory.file_object, 1845);
         assert_eq!(directory.child_path, "/demo/file.txt");
-        let gate = fs_graph
-            .file_handle_capabilities()
-            .iter()
-            .find(|record| record.id == 1865)
-            .unwrap();
+        let gate =
+            fs_graph.file_handle_capabilities().iter().find(|record| record.id == 1865).unwrap();
         assert_eq!(gate.owner_store, store);
         assert_eq!(gate.file_object, 1845);
         assert_eq!(gate.directory_object, 1850);
@@ -16915,30 +16292,21 @@ fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_
         let result = fs_graph.apply_envelope(CommandEnvelope::new(command_id, "d5-test", command));
         assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
     }
-    let fs_wait = fs_graph
-        .fs_waits()
-        .iter()
-        .find(|record| record.id == 1911)
-        .unwrap();
+    let fs_wait = fs_graph.fs_waits().iter().find(|record| record.id == 1911).unwrap();
     assert_eq!(fs_wait.blocker, blocker);
     assert_eq!(fs_wait.state, FsWaitState::Cancelled);
     assert_eq!(fs_wait.cancel_reason, Some(WaitCancelReason::CloseFd));
     assert!(fs_wait.completed_at_event.is_some());
     assert_eq!(
-        fs_graph
-            .wait_records()
-            .iter()
-            .find(|record| record.id == 1910)
-            .unwrap()
-            .state,
+        fs_graph.wait_records().iter().find(|record| record.id == 1910).unwrap().state,
         WaitState::Cancelled
     );
-    assert!(fs_graph.event_log_tail(8).iter().any(|event| {
-        event
-            .kind
-            .summary()
-            .contains("FsWaitCancelled fs_wait=1911")
-    }));
+    assert!(
+        fs_graph
+            .event_log_tail(8)
+            .iter()
+            .any(|event| { event.kind.summary().contains("FsWaitCancelled fs_wait=1911") })
+    );
     assert!(fs_graph.check_invariants().is_ok());
 
     let mut policy_graph = setup_b20_pending_io_policy_graph();
@@ -16995,36 +16363,24 @@ fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_
     ] {
         let result = policy_graph.apply_envelope(command);
         assert_eq!(result.status, CommandStatus::Applied, "{result:?}");
-        assert!(
-            !result.events.is_empty(),
-            "policy command must be event-visible"
-        );
+        assert!(!result.events.is_empty(), "policy command must be event-visible");
         policy_result_events.extend(result.events);
     }
     assert_eq!(policy_graph.block_pending_io_policy_count(), 3);
     assert_eq!(policy_result_events.len(), 9);
-    let retry = policy_graph
-        .block_pending_io_policies()
-        .iter()
-        .find(|record| record.id == 1892)
-        .unwrap();
+    let retry =
+        policy_graph.block_pending_io_policies().iter().find(|record| record.id == 1892).unwrap();
     assert_eq!(retry.action, BlockPendingIoAction::Retry);
     assert_eq!(retry.retry_request, Some(1891));
     assert_eq!(retry.state, BlockPendingIoPolicyState::RetryScheduled);
     assert_ne!(retry.recorded_at_event, 0);
-    let eio = policy_graph
-        .block_pending_io_policies()
-        .iter()
-        .find(|record| record.id == 1899)
-        .unwrap();
+    let eio =
+        policy_graph.block_pending_io_policies().iter().find(|record| record.id == 1899).unwrap();
     assert_eq!(eio.action, BlockPendingIoAction::Eio);
     assert_eq!(eio.state, BlockPendingIoPolicyState::EioReturned);
     assert_ne!(eio.recorded_at_event, 0);
-    let cancel = policy_graph
-        .block_pending_io_policies()
-        .iter()
-        .find(|record| record.id == 1900)
-        .unwrap();
+    let cancel =
+        policy_graph.block_pending_io_policies().iter().find(|record| record.id == 1900).unwrap();
     assert_eq!(cancel.action, BlockPendingIoAction::Cancel);
     assert_eq!(cancel.state, BlockPendingIoPolicyState::Cancelled);
     assert_ne!(cancel.recorded_at_event, 0);
@@ -17033,18 +16389,12 @@ fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_
         (1895, WaitCancelReason::DeviceFault),
         (1898, WaitCancelReason::ResourceDropped),
     ] {
-        let wait = policy_graph
-            .block_waits()
-            .iter()
-            .find(|record| record.id == block_wait)
-            .unwrap();
+        let wait =
+            policy_graph.block_waits().iter().find(|record| record.id == block_wait).unwrap();
         assert_eq!(wait.state, BlockWaitState::Cancelled);
         assert_eq!(wait.cancel_reason, Some(reason));
-        let token = policy_graph
-            .wait_records()
-            .iter()
-            .find(|record| record.id == wait.wait)
-            .unwrap();
+        let token =
+            policy_graph.wait_records().iter().find(|record| record.id == wait.wait).unwrap();
         assert_eq!(token.state, WaitState::Cancelled);
     }
     let policy_event_summaries: Vec<_> = policy_graph
@@ -17054,73 +16404,34 @@ fn block_filesystem_convergence_d5_preserves_capability_wait_policy_and_cleanup_
         .filter(|summary| summary.starts_with("BlockPendingIoPolicyApplied "))
         .collect();
     assert_eq!(policy_event_summaries.len(), 3);
-    assert!(
-        policy_event_summaries
-            .iter()
-            .any(|summary| summary.contains("action=retry"))
-    );
-    assert!(
-        policy_event_summaries
-            .iter()
-            .any(|summary| summary.contains("action=eio"))
-    );
-    assert!(
-        policy_event_summaries
-            .iter()
-            .any(|summary| summary.contains("action=cancel"))
-    );
+    assert!(policy_event_summaries.iter().any(|summary| summary.contains("action=retry")));
+    assert!(policy_event_summaries.iter().any(|summary| summary.contains("action=eio")));
+    assert!(policy_event_summaries.iter().any(|summary| summary.contains("action=cancel")));
     assert!(policy_graph.check_invariants().is_ok());
 
     let cleanup_graph = setup_b23_disk_recovery_benchmark_graph();
-    let cleanup = cleanup_graph
-        .block_driver_cleanups()
-        .iter()
-        .find(|record| record.id == 1888)
-        .unwrap();
+    let cleanup =
+        cleanup_graph.block_driver_cleanups().iter().find(|record| record.id == 1888).unwrap();
     assert_eq!(cleanup.state, BlockDriverCleanupState::Completed);
     assert_eq!(cleanup.cancelled_block_waits.len(), 1);
     assert_eq!(cleanup.cancelled_wait_tokens.len(), 1);
     assert_eq!(cleanup.released_dma_buffers.len(), 1);
     assert_eq!(cleanup.revoked_device_capabilities.len(), 1);
     assert!(cleanup.completed_at_event.unwrap() > cleanup.started_at_event);
-    let io_cleanup = cleanup_graph
-        .io_cleanups()
-        .iter()
-        .find(|record| record.id == cleanup.io_cleanup)
-        .unwrap();
+    let io_cleanup =
+        cleanup_graph.io_cleanups().iter().find(|record| record.id == cleanup.io_cleanup).unwrap();
+    assert_eq!(io_cleanup.released_dma_buffers, cleanup.released_dma_buffers);
+    assert_eq!(io_cleanup.revoked_device_capabilities, cleanup.revoked_device_capabilities);
     assert_eq!(
-        io_cleanup.released_dma_buffers,
-        cleanup.released_dma_buffers
-    );
-    assert_eq!(
-        io_cleanup.revoked_device_capabilities,
-        cleanup.revoked_device_capabilities
-    );
-    assert_eq!(
-        cleanup_graph
-            .block_waits()
-            .iter()
-            .find(|record| record.id == 1884)
-            .unwrap()
-            .state,
+        cleanup_graph.block_waits().iter().find(|record| record.id == 1884).unwrap().state,
         BlockWaitState::Cancelled
     );
     assert_eq!(
-        cleanup_graph
-            .wait_records()
-            .iter()
-            .find(|record| record.id == 1883)
-            .unwrap()
-            .state,
+        cleanup_graph.wait_records().iter().find(|record| record.id == 1883).unwrap().state,
         WaitState::Cancelled
     );
     assert_eq!(
-        cleanup_graph
-            .dma_buffer_objects()
-            .iter()
-            .find(|record| record.id == 1887)
-            .unwrap()
-            .state,
+        cleanup_graph.dma_buffer_objects().iter().find(|record| record.id == 1887).unwrap().state,
         DmaBufferObjectState::Released
     );
     assert!(cleanup_graph.check_invariants().is_ok());
@@ -17212,12 +16523,10 @@ fn smp_runtime_s2_invariants_reject_bad_hart_event_generation() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::HartEventAttributionHartGenerationMismatch {
-                attribution: 1,
-                hart: 1,
-            }
-        )
+        Err(SemanticInvariantError::HartEventAttributionHartGenerationMismatch {
+            attribution: 1,
+            hart: 1,
+        })
     );
 }
 
@@ -17240,12 +16549,10 @@ fn smp_runtime_s2_invariants_reject_timer_without_hart_event_attribution() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
-                interrupt: 5,
-                event: graph.timer_interrupts()[0].recorded_at_event,
-            }
-        )
+        Err(SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
+            interrupt: 5,
+            event: graph.timer_interrupts()[0].recorded_at_event,
+        })
     );
 }
 
@@ -17271,20 +16578,14 @@ fn smp_runtime_s3_binds_runnable_queue_to_owner_hart_generation() {
     assert_eq!(bound.status, CommandStatus::Applied);
     assert_eq!(graph.runnable_queues()[0].generation, 2);
     assert_eq!(graph.runnable_queues()[0].owner_hart, Some(1));
-    assert_eq!(
-        graph.runnable_queues()[0].owner_hart_generation,
-        Some(hart_generation)
-    );
+    assert_eq!(graph.runnable_queues()[0].owner_hart_generation, Some(hart_generation));
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
         "RunnableQueueOwnerBound queue=1 hart=1@2 generation=2 note=hart0 owns queue"
     );
     assert!(graph.create_runtime_activation_with_id(11, 7, 1, None, None, None));
     assert!(graph.enqueue_runnable_activation(1, 11, 1));
-    assert_eq!(
-        graph.runtime_activations()[0].runnable_queue_generation,
-        Some(2)
-    );
+    assert_eq!(graph.runtime_activations()[0].runnable_queue_generation, Some(2));
     assert!(graph.check_invariants().is_ok());
 }
 
@@ -17359,14 +16660,12 @@ fn smp_runtime_s3_invariants_reject_bad_queue_owner_generation() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::RunnableQueueOwnerHartGenerationMismatch {
-                queue: 1,
-                hart: 1,
-                expected: 99,
-                actual: 2,
-            }
-        )
+        Err(SemanticInvariantError::RunnableQueueOwnerHartGenerationMismatch {
+            queue: 1,
+            hart: 1,
+            expected: 99,
+            actual: 2,
+        })
     );
 }
 
@@ -17715,11 +17014,7 @@ fn smp_runtime_s6_remote_preempt_requeues_target_hart_activation() {
     assert_eq!(graph.remote_preempts()[0].target_hart_generation_before, 3);
     assert_eq!(graph.remote_preempts()[0].target_hart_generation_after, 4);
     assert_eq!(graph.remote_preempts()[0].activation_generation_after, 4);
-    let hart = graph
-        .harts()
-        .iter()
-        .find(|hart| hart.id == 2)
-        .expect("target hart");
+    let hart = graph.harts().iter().find(|hart| hart.id == 2).expect("target hart");
     assert_eq!(hart.state, HartState::Idle);
     assert_eq!(hart.generation, 4);
     assert_eq!(hart.current_activation, None);
@@ -17854,10 +17149,7 @@ fn smp_runtime_s6_invariants_reject_remote_preempt_ipi_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::RemotePreemptMissingIpi {
-            remote_preempt: 31,
-            ipi: 21,
-        })
+        Err(SemanticInvariantError::RemotePreemptMissingIpi { remote_preempt: 31, ipi: 21 })
     );
 }
 
@@ -18037,10 +17329,7 @@ fn smp_runtime_s7_invariants_reject_remote_park_ipi_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::RemoteParkMissingIpi {
-            remote_park: 31,
-            ipi: 21,
-        })
+        Err(SemanticInvariantError::RemoteParkMissingIpi { remote_park: 31, ipi: 21 })
     );
 }
 
@@ -18254,11 +17543,8 @@ fn smp_runtime_s9_activation_migration_moves_runnable_between_hart_queues() {
     assert_eq!(migration.activation_generation_after, 5);
     assert_eq!(migration.source_queue, 2);
     assert_eq!(migration.target_queue, 3);
-    let activation = graph
-        .runtime_activations()
-        .iter()
-        .find(|activation| activation.id == 11)
-        .unwrap();
+    let activation =
+        graph.runtime_activations().iter().find(|activation| activation.id == 11).unwrap();
     assert_eq!(activation.generation, 5);
     assert_eq!(activation.runnable_queue, Some(3));
     let source_queue = graph
@@ -18266,12 +17552,7 @@ fn smp_runtime_s9_activation_migration_moves_runnable_between_hart_queues() {
         .iter()
         .find(|queue| queue.id == 2 && queue.generation == 2)
         .unwrap();
-    assert!(
-        source_queue
-            .entries
-            .iter()
-            .all(|entry| entry.activation != 11)
-    );
+    assert!(source_queue.entries.iter().all(|entry| entry.activation != 11));
     let target_queue = graph
         .runnable_queues()
         .iter()
@@ -18549,13 +17830,7 @@ fn smp_runtime_s10_history_survives_later_hart_transition() {
         "quiescent-boundary",
         "record all harts quiesced",
     ));
-    assert!(graph.set_hart_state(
-        1,
-        2,
-        HartState::Booting,
-        "advance after safe point",
-        "later"
-    ));
+    assert!(graph.set_hart_state(1, 2, HartState::Booting, "advance after safe point", "later"));
     assert!(graph.check_invariants().is_ok());
 
     graph.corrupt_smp_safe_point_event_for_test(71, 999);
@@ -18706,13 +17981,7 @@ fn smp_runtime_s11_history_survives_later_hart_transition() {
         "code-publish-boundary",
         "all harts parked at activation boundary",
     ));
-    assert!(graph.set_hart_state(
-        2,
-        4,
-        HartState::Booting,
-        "advance after rendezvous",
-        "later"
-    ));
+    assert!(graph.set_hart_state(2, 4, HartState::Booting, "advance after rendezvous", "later"));
     assert!(graph.check_invariants().is_ok());
 
     graph.corrupt_stop_the_world_event_for_test(81, 999);
@@ -18767,14 +18036,9 @@ fn smp_runtime_s12_code_publish_barrier_validates_from_rendezvous() {
     assert!(barrier.remote_icache_sync_required);
     assert!(!barrier.code_publish_executed);
     assert_eq!(barrier.participants.len(), 2);
-    assert!(
-        barrier
-            .participants
-            .iter()
-            .all(|participant| participant.semantic_icache_sync
-                && participant.last_seen_code_epoch_before == 0
-                && participant.last_seen_code_epoch_after == 1)
-    );
+    assert!(barrier.participants.iter().all(|participant| participant.semantic_icache_sync
+        && participant.last_seen_code_epoch_before == 0
+        && participant.last_seen_code_epoch_after == 1));
     assert!(graph.hart_event_attributions().iter().any(|record| {
         record.event == barrier.validated_at_event
             && record.hart == 1
@@ -18926,10 +18190,7 @@ fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
     let queue = graph.apply_envelope(CommandEnvelope::new(
         1,
         "p0-test",
-        SemanticCommand::CreateRunnableQueue {
-            queue: 1,
-            label: "main-rq".to_string(),
-        },
+        SemanticCommand::CreateRunnableQueue { queue: 1, label: "main-rq".to_string() },
     ));
     assert_eq!(queue.status, CommandStatus::Applied);
 
@@ -18946,45 +18207,26 @@ fn preemptive_runtime_p0_queue_commands_emit_events_and_pass_invariants() {
         },
     ));
     assert_eq!(activation.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Created
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Created);
 
     let enqueue = graph.apply_envelope(CommandEnvelope::new(
         3,
         "p0-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 1,
-            activation: 11,
-            activation_generation: 1,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 1, activation: 11, activation_generation: 1 },
     ));
     assert_eq!(enqueue.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Runnable
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Runnable);
     assert_eq!(graph.runtime_activations()[0].generation, 2);
     assert_eq!(graph.runnable_queues()[0].entries[0].activation, 11);
-    assert_eq!(
-        graph.runnable_queues()[0].entries[0].activation_generation,
-        2
-    );
+    assert_eq!(graph.runnable_queues()[0].entries[0].activation_generation, 2);
 
     let dequeue = graph.apply_envelope(CommandEnvelope::new(
         4,
         "p0-test",
-        SemanticCommand::DequeueRunnable {
-            queue: 1,
-            activation: 11,
-        },
+        SemanticCommand::DequeueRunnable { queue: 1, activation: 11 },
     ));
     assert_eq!(dequeue.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Running
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Running);
     assert!(graph.runnable_queues()[0].entries.is_empty());
     assert_eq!(graph.check_invariants(), Ok(()));
     assert_eq!(
@@ -19003,11 +18245,7 @@ fn preemptive_runtime_p0_rejects_pending_task_and_stale_generation_enqueue() {
     let stale = graph.apply_envelope(CommandEnvelope::new(
         1,
         "p0-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 1,
-            activation: 11,
-            activation_generation: 99,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 1, activation: 11, activation_generation: 99 },
     ));
     assert_eq!(stale.status, CommandStatus::Rejected);
     let mut expected = Vec::new();
@@ -19035,11 +18273,7 @@ fn preemptive_runtime_p0_rejects_pending_task_and_stale_generation_enqueue() {
     let pending = graph.apply_envelope(CommandEnvelope::new(
         2,
         "p0-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 1,
-            activation: 11,
-            activation_generation: 1,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 1, activation: 11, activation_generation: 1 },
     ));
     assert_eq!(pending.status, CommandStatus::Rejected);
     let mut expected = Vec::new();
@@ -19080,11 +18314,7 @@ fn preemptive_runtime_p0_rejects_duplicate_queue_and_generationless_store_owner(
     let duplicate = graph.apply_envelope(CommandEnvelope::new(
         2,
         "p0-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 2,
-            activation: 11,
-            activation_generation: 2,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 2, activation: 11, activation_generation: 2 },
     ));
     assert_eq!(duplicate.status, CommandStatus::Rejected);
     let mut expected = Vec::new();
@@ -19105,10 +18335,7 @@ fn preemptive_runtime_p0_invariants_reject_bad_queue_ownership() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::RunnableQueueOwnershipMismatch {
-            queue: 1,
-            activation: 11,
-        })
+        Err(SemanticInvariantError::RunnableQueueOwnershipMismatch { queue: 1, activation: 11 })
     );
 }
 
@@ -19131,10 +18358,7 @@ fn preemptive_runtime_p1_context_commands_emit_events_and_pass_invariants() {
     ));
     assert_eq!(context.status, CommandStatus::Applied);
     assert_eq!(graph.activation_contexts()[0].generation, 1);
-    assert_eq!(
-        graph.activation_contexts()[0].state,
-        ActivationContextState::Created
-    );
+    assert_eq!(graph.activation_contexts()[0].state, ActivationContextState::Created);
 
     let saved = graph.apply_envelope(CommandEnvelope::new(
         2,
@@ -19150,17 +18374,9 @@ fn preemptive_runtime_p1_context_commands_emit_events_and_pass_invariants() {
             note: "initial frame".to_string(),
         },
     ));
-    assert_eq!(
-        saved.status,
-        CommandStatus::Applied,
-        "{:?}",
-        saved.violations
-    );
+    assert_eq!(saved.status, CommandStatus::Applied, "{:?}", saved.violations);
     assert_eq!(graph.activation_contexts()[0].generation, 2);
-    assert_eq!(
-        graph.activation_contexts()[0].state,
-        ActivationContextState::Saved
-    );
+    assert_eq!(graph.activation_contexts()[0].state, ActivationContextState::Saved);
     assert_eq!(graph.saved_contexts()[0].context_generation, 2);
     assert_eq!(graph.saved_contexts()[0].pc, 0x1000);
     assert!(graph.check_invariants().is_ok());
@@ -19264,12 +18480,10 @@ fn preemptive_runtime_p1_invariants_reject_context_saved_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::ActivationContextSavedGenerationMissing {
-                context: 12,
-                saved_context: 13,
-            }
-        )
+        Err(SemanticInvariantError::ActivationContextSavedGenerationMissing {
+            context: 12,
+            saved_context: 13,
+        })
     );
 }
 
@@ -19450,16 +18664,10 @@ fn preemptive_runtime_p3_preempt_activation_requeues_running_activation() {
         },
     ));
     assert_eq!(preempt.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Runnable
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Runnable);
     assert_eq!(graph.runtime_activations()[0].generation, 4);
     assert_eq!(graph.runnable_queues()[0].entries[0].activation, 11);
-    assert_eq!(
-        graph.runnable_queues()[0].entries[0].activation_generation,
-        4
-    );
+    assert_eq!(graph.runnable_queues()[0].entries[0].activation_generation, 4);
     assert_eq!(graph.preemptions()[0].activation_generation_before, 3);
     assert_eq!(graph.preemptions()[0].activation_generation_after, 4);
     assert!(graph.check_invariants().is_ok());
@@ -19468,10 +18676,7 @@ fn preemptive_runtime_p3_preempt_activation_requeues_running_activation() {
         "RuntimeActivationPreempted preemption=6 activation=11@3->4 timer=5@1 queue=1@1 generation=1"
     );
     assert!(graph.dequeue_runnable_activation(1, 11));
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Running
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Running);
     assert_eq!(graph.runtime_activations()[0].generation, 5);
     assert!(
         graph.check_invariants().is_ok(),
@@ -19499,10 +18704,7 @@ fn preemptive_runtime_p3_rejects_stale_or_mismatched_preemptions() {
     let mut expected = Vec::new();
     expected.push("preemption timer target does not match activation generation".to_string());
     assert_eq!(stale.violations, expected);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Running
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Running);
 
     let missing_timer = graph.apply_envelope(CommandEnvelope::new(
         2,
@@ -19566,17 +18768,11 @@ fn preemptive_runtime_p4_save_preempted_context_captures_timer_frame() {
     assert_eq!(graph.activation_contexts()[0].activation, 11);
     assert_eq!(graph.activation_contexts()[0].activation_generation, 4);
     assert_eq!(graph.activation_contexts()[0].generation, 2);
-    assert_eq!(
-        graph.saved_contexts()[0].reason,
-        SavedContextReason::TimerPreempt
-    );
+    assert_eq!(graph.saved_contexts()[0].reason, SavedContextReason::TimerPreempt);
     assert_eq!(graph.saved_contexts()[0].pc, 0x2000);
     assert_eq!(graph.saved_contexts()[0].sp, 0x9000);
     assert_eq!(graph.saved_contexts()[0].source_preemption, Some(6));
-    assert_eq!(
-        graph.saved_contexts()[0].source_preemption_generation,
-        Some(1)
-    );
+    assert_eq!(graph.saved_contexts()[0].source_preemption_generation, Some(1));
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -19665,20 +18861,11 @@ fn preemptive_runtime_p5_scheduler_decision_records_runnable_choice() {
     ));
     assert_eq!(decision.status, CommandStatus::Applied);
     assert_eq!(graph.scheduler_decisions().len(), 1);
-    assert_eq!(
-        graph.scheduler_decisions()[0].state,
-        SchedulerDecisionState::Recorded
-    );
+    assert_eq!(graph.scheduler_decisions()[0].state, SchedulerDecisionState::Recorded);
     assert_eq!(graph.scheduler_decisions()[0].selected_activation, 11);
-    assert_eq!(
-        graph.scheduler_decisions()[0].selected_activation_generation,
-        4
-    );
+    assert_eq!(graph.scheduler_decisions()[0].selected_activation_generation, 4);
     assert_eq!(graph.scheduler_decisions()[0].owner_task, 7);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Runnable
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Runnable);
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -19700,10 +18887,7 @@ fn preemptive_runtime_p5_scheduler_decision_is_historical_after_dequeue() {
     ));
     assert!(graph.dequeue_runnable_activation(1, 11));
 
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Running
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Running);
     assert_eq!(graph.runtime_activations()[0].generation, 5);
     assert!(graph.runnable_queues()[0].entries.is_empty());
     assert_eq!(graph.check_invariants(), Ok(()));
@@ -19766,12 +18950,10 @@ fn preemptive_runtime_p5_invariants_reject_decision_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
-                decision: 14,
-                activation: 11,
-            }
-        )
+        Err(SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+            decision: 14,
+            activation: 11,
+        })
     );
 }
 
@@ -19808,49 +18990,24 @@ fn preemptive_runtime_p6_resume_activation_consumes_decision_and_restores_contex
 
     assert_eq!(resume.status, CommandStatus::Applied);
     assert_eq!(graph.activation_resumes().len(), 1);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Running
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Running);
     assert_eq!(graph.runtime_activations()[0].generation, 5);
     assert!(graph.runnable_queues()[0].entries.is_empty());
-    assert_eq!(
-        graph.scheduler_decisions()[0].state,
-        SchedulerDecisionState::Superseded
-    );
+    assert_eq!(graph.scheduler_decisions()[0].state, SchedulerDecisionState::Superseded);
     assert_eq!(graph.activation_contexts()[0].generation, 3);
     assert_eq!(graph.activation_contexts()[0].activation_generation, 5);
-    assert_eq!(
-        graph.activation_contexts()[0].state,
-        ActivationContextState::Current
-    );
-    assert!(
-        graph.activation_contexts()[0]
-            .current_saved_context
-            .is_none()
-    );
+    assert_eq!(graph.activation_contexts()[0].state, ActivationContextState::Current);
+    assert!(graph.activation_contexts()[0].current_saved_context.is_none());
     assert_eq!(graph.saved_contexts()[0].generation, 2);
     assert_eq!(graph.saved_contexts()[0].state, SavedContextState::Restored);
     assert_eq!(graph.saved_contexts()[0].activation_generation, 4);
-    assert_eq!(
-        graph.activation_resumes()[0].activation_generation_before,
-        4
-    );
+    assert_eq!(graph.activation_resumes()[0].activation_generation_before, 4);
     assert_eq!(graph.activation_resumes()[0].activation_generation_after, 5);
     assert_eq!(graph.activation_resumes()[0].context, Some(12));
-    assert_eq!(
-        graph.activation_resumes()[0].context_generation_before,
-        Some(2)
-    );
-    assert_eq!(
-        graph.activation_resumes()[0].context_generation_after,
-        Some(3)
-    );
+    assert_eq!(graph.activation_resumes()[0].context_generation_before, Some(2));
+    assert_eq!(graph.activation_resumes()[0].context_generation_after, Some(3));
     assert_eq!(graph.activation_resumes()[0].saved_context, Some(13));
-    assert_eq!(
-        graph.activation_resumes()[0].saved_context_generation,
-        Some(2)
-    );
+    assert_eq!(graph.activation_resumes()[0].saved_context_generation, Some(2));
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -19878,10 +19035,7 @@ fn preemptive_runtime_p6_rejects_stale_decision_and_dead_store_resume() {
     expected.push("resume scheduler decision generation is missing or consumed".to_string());
     assert_eq!(stale.violations, expected);
     assert!(graph.activation_resumes().is_empty());
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Runnable
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Runnable);
 
     let mut dead_store_graph = SemanticGraph::new();
     dead_store_graph.ensure_task(7, FrontendKind::LinuxElf, "linux-thread-7");
@@ -20077,11 +19231,8 @@ fn preemptive_runtime_p9_invariants_reject_latency_delta_drift() {
 fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
     let mut graph = p7_resumed_activation();
 
-    let timer = graph
-        .timer_interrupts()
-        .iter()
-        .find(|record| record.id == 5)
-        .expect("timer interrupt");
+    let timer =
+        graph.timer_interrupts().iter().find(|record| record.id == 5).expect("timer interrupt");
     assert_eq!(timer.target_activation, Some(11));
     assert_eq!(timer.target_activation_generation, Some(3));
 
@@ -20116,11 +19267,7 @@ fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
         "d2 timer wait convergence"
     ));
 
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|record| record.id == 170)
-        .expect("d2 wait");
+    let wait = graph.wait_records().iter().find(|record| record.id == 170).expect("d2 wait");
     assert_eq!(wait.kind, SemanticWaitKind::Timer);
     assert_eq!(wait.state, WaitState::Pending);
     assert_eq!(wait.owner_task, Some(7));
@@ -20136,10 +19283,7 @@ fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
     assert_eq!(activation_wait.activation_generation_before, 5);
     assert_eq!(activation_wait.activation_generation_after_block, 6);
     assert_eq!(activation_wait.owner_task_generation, 2);
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Pending
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Pending);
     assert_eq!(graph.runtime_activations()[0].generation, 6);
 
     let mut pending_graph = graph.clone();
@@ -20176,11 +19320,8 @@ fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
         WaitCancelReason::Timeout,
         "d2 timer wait timeout"
     ));
-    let wait = graph
-        .wait_records()
-        .iter()
-        .find(|record| record.id == 170)
-        .expect("cancelled d2 wait");
+    let wait =
+        graph.wait_records().iter().find(|record| record.id == 170).expect("cancelled d2 wait");
     assert_eq!(wait.state, WaitState::Cancelled);
     assert_eq!(wait.cancel_reason, Some(WaitCancelReason::Timeout));
 
@@ -20191,10 +19332,7 @@ fn timer_wait_scheduler_convergence_keeps_generation_safe_cancel_chain() {
         .expect("cancelled d2 activation wait");
     assert_eq!(activation_wait.state, ActivationWaitState::Cancelled);
     assert_eq!(activation_wait.activation_generation_after_cancel, Some(7));
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Blocked
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Blocked);
     assert_eq!(graph.runtime_activations()[0].generation, 7);
     assert!(graph.runnable_queues()[0].entries.is_empty());
     assert!(!graph.cancel_activation_wait(
@@ -20344,9 +19482,7 @@ fn simd_runtime_v0_invariants_reject_vector_shape_drift() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::TargetFeatureSetInvalid {
-            feature_set: 21_000
-        })
+        Err(SemanticInvariantError::TargetFeatureSetInvalid { feature_set: 21_000 })
     );
 }
 
@@ -20491,27 +19627,18 @@ fn simd_runtime_v4_invariants_reject_vector_state_event_drift() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::VectorStateMissingEvent {
-            vector_state: 22_000,
-            event: 2
-        })
+        Err(SemanticInvariantError::VectorStateMissingEvent { vector_state: 22_000, event: 2 })
     );
 }
 
 fn v5_activation_context_with_reserved_vector_state() -> SemanticGraph {
     let mut graph = SemanticGraph::new();
     graph.ensure_task(7, FrontendKind::LinuxElf, "simd-vector-task");
-    let store = graph.register_store(
-        "v5.simd.store",
-        "v5-simd-context.fake-aot",
-        "service",
-        "restartable",
-    );
+    let store =
+        graph.register_store("v5.simd.store", "v5-simd-context.fake-aot", "service", "restartable");
     graph.set_store_state(store, StoreState::Running);
-    let store_generation = graph
-        .store_handle(store)
-        .map(|handle| handle.generation)
-        .expect("store generation");
+    let store_generation =
+        graph.store_handle(store).map(|handle| handle.generation).expect("store generation");
     let code_object = ContractObjectRef::new(ContractObjectKind::CodeObject, 9, 4);
     assert!(graph.create_runtime_activation_with_id(
         11,
@@ -20570,14 +19697,8 @@ fn simd_runtime_v5_activation_context_tracks_dirty_and_clean_vector_state() {
         },
     ));
     assert_eq!(dirty.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Dirty
-    );
-    assert_eq!(
-        graph.activation_contexts()[0].vector_state,
-        Some(vector_ref)
-    );
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Dirty);
+    assert_eq!(graph.activation_contexts()[0].vector_state, Some(vector_ref));
     assert_eq!(graph.activation_contexts()[0].generation, 2);
 
     let clean = graph.apply_envelope(CommandEnvelope::new(
@@ -20592,10 +19713,7 @@ fn simd_runtime_v5_activation_context_tracks_dirty_and_clean_vector_state() {
         },
     ));
     assert_eq!(clean.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Clean
-    );
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Clean);
     assert_eq!(graph.activation_contexts()[0].generation, 3);
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
@@ -20631,24 +19749,14 @@ fn simd_runtime_v5_rejects_missing_or_stale_vector_state_ref() {
         SemanticCommand::UpdateActivationContextVectorState {
             context: 12,
             context_generation: 1,
-            vector_state: Some(ContractObjectRef::new(
-                ContractObjectKind::VectorState,
-                22_000,
-                2,
-            )),
+            vector_state: Some(ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 2)),
             vector_status: ActivationVectorState::Clean,
             note: "stale vector generation".to_string(),
         },
     ));
     assert_eq!(stale.status, CommandStatus::Rejected);
-    assert_eq!(
-        stale.violations,
-        vec!["activation context vector state is missing".to_string()]
-    );
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Absent
-    );
+    assert_eq!(stale.violations, vec!["activation context vector state is missing".to_string()]);
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Absent);
 }
 
 #[test]
@@ -20657,11 +19765,7 @@ fn simd_runtime_v5_invariants_reject_vector_context_generation_drift() {
     assert!(graph.update_activation_context_vector_state(
         12,
         1,
-        Some(ContractObjectRef::new(
-            ContractObjectKind::VectorState,
-            22_000,
-            1,
-        )),
+        Some(ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1,)),
         ActivationVectorState::Dirty,
         "dirty vector state",
     ));
@@ -20690,14 +19794,8 @@ fn simd_runtime_v6_lazy_enable_transitions_absent_context_to_dirty() {
     ));
 
     assert_eq!(enabled.status, CommandStatus::Applied);
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Dirty
-    );
-    assert_eq!(
-        graph.activation_contexts()[0].vector_state,
-        Some(vector_ref)
-    );
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Dirty);
+    assert_eq!(graph.activation_contexts()[0].vector_state, Some(vector_ref));
     assert_eq!(graph.activation_contexts()[0].generation, 2);
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
@@ -20818,11 +19916,7 @@ fn v7_preempted_dirty_vector_context() -> SemanticGraph {
     assert!(graph.update_activation_context_vector_state(
         12,
         2,
-        Some(ContractObjectRef::new(
-            ContractObjectKind::VectorState,
-            22_002,
-            1,
-        )),
+        Some(ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1,)),
         ActivationVectorState::Dirty,
         "dirty vector state before preempt save",
     ));
@@ -20849,28 +19943,14 @@ fn simd_runtime_v7_preempt_saves_dirty_vector_state_as_clean_context() {
         },
     ));
 
-    assert_eq!(
-        saved.status,
-        CommandStatus::Applied,
-        "{:?}",
-        saved.violations
-    );
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Clean
-    );
+    assert_eq!(saved.status, CommandStatus::Applied, "{:?}", saved.violations);
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Clean);
     assert_eq!(graph.activation_contexts()[0].generation, 4);
-    assert_eq!(
-        graph.activation_contexts()[0].current_saved_context_generation,
-        Some(2)
-    );
+    assert_eq!(graph.activation_contexts()[0].current_saved_context_generation, Some(2));
     assert_eq!(graph.saved_contexts()[0].generation, 2);
     assert_eq!(graph.saved_contexts()[0].context_generation, 4);
     assert_eq!(graph.saved_contexts()[0].vector_state, Some(vector_ref));
-    assert_eq!(
-        graph.saved_contexts()[0].vector_status,
-        ActivationVectorState::Clean
-    );
+    assert_eq!(graph.saved_contexts()[0].vector_status, ActivationVectorState::Clean);
     assert!(graph.saved_contexts()[0].vector_saved_at_event.is_some());
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
@@ -20988,24 +20068,12 @@ fn simd_runtime_v8_resume_restores_vector_state_to_current_activation_generation
 
     assert_eq!(resumed.status, CommandStatus::Applied, "{resumed:?}");
     assert_eq!(graph.runtime_activations()[0].generation, 5);
-    assert_eq!(
-        graph.activation_contexts()[0].state,
-        ActivationContextState::Current
-    );
+    assert_eq!(graph.activation_contexts()[0].state, ActivationContextState::Current);
     assert_eq!(graph.activation_contexts()[0].generation, 5);
-    assert_eq!(
-        graph.activation_contexts()[0].vector_status,
-        ActivationVectorState::Clean
-    );
-    assert_eq!(
-        graph.activation_contexts()[0].vector_state,
-        Some(restored_vector_ref)
-    );
+    assert_eq!(graph.activation_contexts()[0].vector_status, ActivationVectorState::Clean);
+    assert_eq!(graph.activation_contexts()[0].vector_state, Some(restored_vector_ref));
     assert_eq!(graph.saved_contexts()[0].state, SavedContextState::Restored);
-    assert_eq!(
-        graph.saved_contexts()[0].vector_state,
-        Some(saved_vector_ref)
-    );
+    assert_eq!(graph.saved_contexts()[0].vector_state, Some(saved_vector_ref));
     let resume = &graph.activation_resumes()[0];
     assert_eq!(resume.saved_vector_state, Some(saved_vector_ref));
     assert_eq!(resume.restored_vector_state, Some(restored_vector_ref));
@@ -21132,11 +20200,7 @@ fn v9_cross_hart_clean_vector_migration_graph(
     assert!(graph.update_activation_context_vector_state(
         12,
         1,
-        Some(ContractObjectRef::new(
-            ContractObjectKind::VectorState,
-            22_004,
-            1,
-        )),
+        Some(ContractObjectRef::new(ContractObjectKind::VectorState, 22_004, 1,)),
         vector_status,
         "v9 context vector state before cross-hart migration",
     ));
@@ -21355,10 +20419,7 @@ fn simd_runtime_v10_fault_injection_records_exact_trap_attribution() {
         ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_010, 1)
     );
     assert_eq!(injection.kind, SimdFaultInjectionKind::UnsupportedFeature);
-    assert_eq!(
-        injection.effect,
-        SimdFaultInjectionEffect::ActivationTrapped
-    );
+    assert_eq!(injection.effect, SimdFaultInjectionEffect::ActivationTrapped);
     assert_eq!(injection.injected_faults, 1);
     assert!(graph.check_invariants().is_ok());
     assert_eq!(
@@ -21399,11 +20460,7 @@ fn simd_runtime_v10_rejects_unsupported_fault_with_live_vector_state() {
                 21_010,
                 1,
             ),
-            vector_state: Some(ContractObjectRef::new(
-                ContractObjectKind::VectorState,
-                22_000,
-                1,
-            )),
+            vector_state: Some(ContractObjectRef::new(ContractObjectKind::VectorState, 22_000, 1)),
             kind: SimdFaultInjectionKind::UnsupportedFeature,
             effect: SimdFaultInjectionEffect::ActivationTrapped,
             required_abi: "riscv-v".to_string(),
@@ -22120,10 +21177,7 @@ fn display_runtime_g2_display_capability_records_store_local_authority() {
         ContractObjectRef::new(ContractObjectKind::DisplayCapability, 23_201, 1)
     );
     assert_eq!(display_capability.owner_store, owner_store);
-    assert_eq!(
-        display_capability.owner_store_generation,
-        owner_store_generation
-    );
+    assert_eq!(display_capability.owner_store_generation, owner_store_generation);
     assert_eq!(display_capability.display, 23_101);
     assert_eq!(display_capability.display_generation, 1);
     assert_eq!(display_capability.framebuffer, 23_001);
@@ -22209,9 +21263,7 @@ fn display_runtime_g2_invariants_reject_capability_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DisplayCapabilityInvalid {
-            display_capability: 23_204,
-        })
+        Err(SemanticInvariantError::DisplayCapabilityInvalid { display_capability: 23_204 })
     );
 }
 
@@ -22268,11 +21320,8 @@ fn display_runtime_g2_contract_graph_uses_exact_store_generation() {
     ));
 
     let mut stores = graph.stores().to_vec();
-    let mut same_id_wrong_generation = stores
-        .iter()
-        .find(|store| store.id == owner_store)
-        .unwrap()
-        .clone();
+    let mut same_id_wrong_generation =
+        stores.iter().find(|store| store.id == owner_store).unwrap().clone();
     same_id_wrong_generation.generation = owner_store_generation + 1;
     stores.insert(0, same_id_wrong_generation);
     let snapshot = ContractGraphSnapshot {
@@ -22286,20 +21335,13 @@ fn display_runtime_g2_contract_graph_uses_exact_store_generation() {
     let violations = validate_contract_graph(&snapshot);
 
     assert!(
-        !violations
-            .iter()
-            .any(|violation| violation.edge == "display-capability->owner-store"),
+        !violations.iter().any(|violation| violation.edge == "display-capability->owner-store"),
         "unexpected owner-store violations: {violations:?}"
     );
 }
 
-fn g3_framebuffer_window_lease_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    DisplayCapabilityId,
-    Generation,
-) {
+fn g3_framebuffer_window_lease_graph()
+-> (SemanticGraph, StoreId, Generation, DisplayCapabilityId, Generation) {
     let (mut graph, owner_store, owner_store_generation, capability) =
         g2_display_capability_graph();
     let capability_record = graph.capabilities().record(capability).unwrap().clone();
@@ -22362,10 +21404,7 @@ fn display_runtime_g3_framebuffer_window_lease_records_exact_window() {
         ContractObjectRef::new(ContractObjectKind::FramebufferWindowLease, 23_301, 1)
     );
     assert_eq!(lease.display_capability, display_capability);
-    assert_eq!(
-        lease.display_capability_generation,
-        display_capability_generation
-    );
+    assert_eq!(lease.display_capability_generation, display_capability_generation);
     assert_eq!(lease.framebuffer, 23_001);
     assert_eq!(lease.byte_len, 1_920_000);
     assert_eq!(
@@ -22498,12 +21537,10 @@ fn display_runtime_g3_invariants_reject_display_capability_generation_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(
-            SemanticInvariantError::FramebufferWindowLeaseMissingDisplayCapability {
-                framebuffer_window_lease: 23_304,
-                display_capability,
-            }
-        )
+        Err(SemanticInvariantError::FramebufferWindowLeaseMissingDisplayCapability {
+            framebuffer_window_lease: 23_304,
+            display_capability,
+        })
     );
 }
 
@@ -22590,13 +21627,8 @@ fn display_runtime_g3_contract_graph_rejects_mismatched_byte_window() {
     }));
 }
 
-fn g4_framebuffer_mapping_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    FramebufferWindowLeaseId,
-    Generation,
-) {
+fn g4_framebuffer_mapping_graph()
+-> (SemanticGraph, StoreId, Generation, FramebufferWindowLeaseId, Generation) {
     let (
         mut graph,
         owner_store,
@@ -22665,10 +21697,7 @@ fn display_runtime_g4_framebuffer_mapping_records_handle_mode_mapping() {
         ContractObjectRef::new(ContractObjectKind::FramebufferMapping, 23_401, 1)
     );
     assert_eq!(mapping.framebuffer_window_lease, lease);
-    assert_eq!(
-        mapping.framebuffer_window_lease_generation,
-        lease_generation
-    );
+    assert_eq!(mapping.framebuffer_window_lease_generation, lease_generation);
     assert_eq!(mapping.map_handle_slot, 3);
     assert_eq!(mapping.mode, "handle-mode");
     assert_eq!(
@@ -22880,13 +21909,8 @@ fn display_runtime_g4_contract_graph_rejects_mapping_lease_binding_drift() {
     }));
 }
 
-fn g5_framebuffer_write_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    FramebufferMappingId,
-    Generation,
-) {
+fn g5_framebuffer_write_graph()
+-> (SemanticGraph, StoreId, Generation, FramebufferMappingId, Generation) {
     let (mut graph, owner_store, owner_store_generation, lease, lease_generation) =
         g4_framebuffer_mapping_graph();
     assert!(graph.record_framebuffer_mapping_with_id(
@@ -23187,14 +22211,8 @@ fn display_runtime_g5_contract_graph_rejects_write_mapping_binding_drift() {
     }));
 }
 
-fn g6_framebuffer_flush_region_graph() -> (
-    SemanticGraph,
-    StoreId,
-    Generation,
-    FramebufferWriteId,
-    Generation,
-    u64,
-) {
+fn g6_framebuffer_flush_region_graph()
+-> (SemanticGraph, StoreId, Generation, FramebufferWriteId, Generation, u64) {
     let (mut graph, owner_store, owner_store_generation, mapping, mapping_generation) =
         g5_framebuffer_write_graph();
     let payload_digest = SemanticGraph::expected_framebuffer_write_payload_digest_v1(
@@ -23224,14 +22242,7 @@ fn g6_framebuffer_flush_region_graph() -> (
         payload_digest,
         "g5 framebuffer write for g6",
     ));
-    (
-        graph,
-        owner_store,
-        owner_store_generation,
-        23_501,
-        1,
-        payload_digest,
-    )
+    (graph, owner_store, owner_store_generation, 23_501, 1, payload_digest)
 }
 
 #[test]
@@ -23273,10 +22284,7 @@ fn display_runtime_g6_flush_region_records_semantic_flush() {
         ContractObjectRef::new(ContractObjectKind::FramebufferFlushRegion, 23_601, 1)
     );
     assert_eq!(flush.framebuffer_write, framebuffer_write);
-    assert_eq!(
-        flush.framebuffer_write_generation,
-        framebuffer_write_generation
-    );
+    assert_eq!(flush.framebuffer_write_generation, framebuffer_write_generation);
     assert_eq!(flush.payload_digest, payload_digest);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -23577,10 +22585,7 @@ fn display_runtime_g7_dirty_region_tracks_clean_state_after_flush() {
     );
     assert_eq!(dirty.state, FramebufferDirtyRegionState::Clean);
     assert_eq!(dirty.framebuffer_write, framebuffer_write);
-    assert_eq!(
-        dirty.framebuffer_flush_region,
-        Some(framebuffer_flush_region)
-    );
+    assert_eq!(dirty.framebuffer_flush_region, Some(framebuffer_flush_region));
     assert_eq!(dirty.payload_digest, payload_digest);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
@@ -24058,9 +23063,7 @@ fn display_runtime_g8_invariants_reject_event_count_drift() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DisplayEventLogInvalid {
-            display_event_log: 23_805,
-        })
+        Err(SemanticInvariantError::DisplayEventLogInvalid { display_event_log: 23_805 })
     );
 }
 
@@ -24206,18 +23209,9 @@ fn display_runtime_g9_cleanup_releases_leases_mappings_and_revokes_capability() 
     assert_eq!(graph.display_cleanup_count(), 1);
     assert_eq!(graph.active_framebuffer_mapping_count(), 0);
     assert_eq!(graph.active_framebuffer_window_lease_count(), 0);
-    assert_eq!(
-        graph.framebuffer_mappings()[0].state,
-        FramebufferMappingState::Unmapped
-    );
-    assert_eq!(
-        graph.framebuffer_window_leases()[0].state,
-        FramebufferWindowLeaseState::Released
-    );
-    assert_eq!(
-        graph.display_capabilities()[0].state,
-        DisplayCapabilityState::Revoked
-    );
+    assert_eq!(graph.framebuffer_mappings()[0].state, FramebufferMappingState::Unmapped);
+    assert_eq!(graph.framebuffer_window_leases()[0].state, FramebufferWindowLeaseState::Released);
+    assert_eq!(graph.display_capabilities()[0].state, DisplayCapabilityState::Revoked);
     let cleanup = &graph.display_cleanups()[0];
     assert_eq!(
         cleanup.object_ref(),
@@ -24316,12 +23310,8 @@ fn display_runtime_g9_rejects_stale_cleanup_and_blocks_post_cleanup_write() {
 fn display_runtime_g9_rejects_cleanup_when_underlying_capability_is_not_active() {
     let (mut graph, owner_store, owner_store_generation) = g9_display_cleanup_graph();
     let display_capability = graph.display_capabilities()[0].clone();
-    let subject = graph
-        .capabilities()
-        .record(display_capability.capability)
-        .unwrap()
-        .subject
-        .clone();
+    let subject =
+        graph.capabilities().record(display_capability.capability).unwrap().subject.clone();
 
     graph.revoke_capabilities_for_subject(&subject);
 
@@ -24339,18 +23329,9 @@ fn display_runtime_g9_rejects_cleanup_when_underlying_capability_is_not_active()
         "g9 reject cleanup with stale ledger cap",
     ));
     assert_eq!(graph.display_cleanup_count(), 0);
-    assert_eq!(
-        graph.framebuffer_mappings()[0].state,
-        FramebufferMappingState::Active
-    );
-    assert_eq!(
-        graph.framebuffer_window_leases()[0].state,
-        FramebufferWindowLeaseState::Active
-    );
-    assert_eq!(
-        graph.display_capabilities()[0].state,
-        DisplayCapabilityState::Active
-    );
+    assert_eq!(graph.framebuffer_mappings()[0].state, FramebufferMappingState::Active);
+    assert_eq!(graph.framebuffer_window_leases()[0].state, FramebufferWindowLeaseState::Active);
+    assert_eq!(graph.display_capabilities()[0].state, DisplayCapabilityState::Active);
 }
 
 #[test]
@@ -24731,13 +23712,7 @@ fn g11_display_panic_last_frame_graph() -> (SemanticGraph, StoreId, Generation, 
         0,
         1,
     );
-    (
-        graph,
-        owner_store,
-        owner_store_generation,
-        payload_digest,
-        summary_digest,
-    )
+    (graph, owner_store, owner_store_generation, payload_digest, summary_digest)
 }
 
 #[test]
@@ -24878,9 +23853,7 @@ fn display_runtime_g11_invariants_reject_summary_digest_drift() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::DisplayPanicLastFrameInvalid {
-            panic_last_frame: 25_004,
-        })
+        Err(SemanticInvariantError::DisplayPanicLastFrameInvalid { panic_last_frame: 25_004 })
     );
 }
 
@@ -24983,13 +23956,7 @@ fn g12_framebuffer_benchmark_graph() -> (SemanticGraph, StoreId, Generation, u64
     let flush = &graph.framebuffer_flush_regions()[0];
     let sample_bytes = flush.byte_len;
     let frame_area_pixels = u64::from(flush.width) * u64::from(flush.height);
-    (
-        graph,
-        owner_store,
-        owner_store_generation,
-        sample_bytes,
-        frame_area_pixels,
-    )
+    (graph, owner_store, owner_store_generation, sample_bytes, frame_area_pixels)
 }
 
 #[test]
@@ -25244,10 +24211,7 @@ fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     assert_eq!(graph.wait_records().len(), 1);
     assert_eq!(graph.pending_wait_count(), 1);
     assert_eq!(graph.wait_records()[0].owner_task_generation, Some(2));
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Pending
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Pending);
     assert_eq!(graph.runtime_activations()[0].generation, 6);
     assert_eq!(graph.runtime_activations()[0].owner_task_generation, 2);
     assert_eq!(graph.tasks()[0].state, TaskState::Pending);
@@ -25269,22 +24233,10 @@ fn preemptive_runtime_p7_wait_blocks_and_cancel_does_not_auto_resume() {
     assert_eq!(cancelled.status, CommandStatus::Applied);
     assert_eq!(graph.pending_wait_count(), 0);
     assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
-    assert_eq!(
-        graph.wait_records()[0].cancel_reason,
-        Some(WaitCancelReason::Timeout)
-    );
-    assert_eq!(
-        graph.activation_waits()[0].state,
-        ActivationWaitState::Cancelled
-    );
-    assert_eq!(
-        graph.activation_waits()[0].activation_generation_after_cancel,
-        Some(7)
-    );
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Blocked
-    );
+    assert_eq!(graph.wait_records()[0].cancel_reason, Some(WaitCancelReason::Timeout));
+    assert_eq!(graph.activation_waits()[0].state, ActivationWaitState::Cancelled);
+    assert_eq!(graph.activation_waits()[0].activation_generation_after_cancel, Some(7));
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Blocked);
     assert_eq!(graph.runtime_activations()[0].generation, 7);
     assert!(graph.runnable_queues()[0].entries.is_empty());
     assert!(graph.check_invariants().is_ok());
@@ -25305,11 +24257,7 @@ fn preemptive_runtime_p7_rejects_preempt_or_resume_of_waiting_activation() {
         SemanticWaitKind::Timer,
         {
             let mut blockers = Vec::new();
-            blockers.push(ContractObjectRef::new(
-                ContractObjectKind::TimerInterrupt,
-                5,
-                1,
-            ));
+            blockers.push(ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1));
             blockers
         },
         Some(200),
@@ -25339,11 +24287,7 @@ fn preemptive_runtime_p7_rejects_preempt_or_resume_of_waiting_activation() {
     let rejected_enqueue = graph.apply_envelope(CommandEnvelope::new(
         4,
         "p7-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 1,
-            activation: 11,
-            activation_generation: 6,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 1, activation: 11, activation_generation: 6 },
     ));
     assert_eq!(rejected_enqueue.status, CommandStatus::Rejected);
     let mut expected = Vec::new();
@@ -25364,11 +24308,7 @@ fn preemptive_runtime_p7_invariants_reject_waiting_activation_runnable_leak() {
         SemanticWaitKind::Timer,
         {
             let mut blockers = Vec::new();
-            blockers.push(ContractObjectRef::new(
-                ContractObjectKind::TimerInterrupt,
-                5,
-                1,
-            ));
+            blockers.push(ContractObjectRef::new(ContractObjectKind::TimerInterrupt, 5, 1));
             blockers
         },
         Some(200),
@@ -25379,10 +24319,7 @@ fn preemptive_runtime_p7_invariants_reject_waiting_activation_runnable_leak() {
 
     assert_eq!(
         graph.check_invariants(),
-        Err(SemanticInvariantError::PendingTaskHasRunnableActivation {
-            task: 7,
-            activation: 11,
-        })
+        Err(SemanticInvariantError::PendingTaskHasRunnableActivation { task: 7, activation: 11 })
     );
 }
 
@@ -25446,31 +24383,13 @@ fn preemptive_runtime_p8_cleanup_cancels_wait_and_kills_dead_store_activation() 
     ));
     assert_eq!(cleanup.status, CommandStatus::Applied);
     assert_eq!(graph.activation_cleanups().len(), 1);
-    assert_eq!(
-        graph.activation_cleanups()[0].state,
-        ActivationCleanupState::Completed
-    );
-    assert_eq!(
-        graph.activation_cleanups()[0].target_store_generation,
-        store_generation
-    );
-    assert_eq!(
-        graph.activation_cleanups()[0].activation_generation_after,
-        5
-    );
+    assert_eq!(graph.activation_cleanups()[0].state, ActivationCleanupState::Completed);
+    assert_eq!(graph.activation_cleanups()[0].target_store_generation, store_generation);
+    assert_eq!(graph.activation_cleanups()[0].activation_generation_after, 5);
     assert_eq!(graph.wait_records()[0].state, WaitState::Cancelled);
-    assert_eq!(
-        graph.wait_records()[0].cancel_reason,
-        Some(WaitCancelReason::StoreFault)
-    );
-    assert_eq!(
-        graph.activation_waits()[0].state,
-        ActivationWaitState::Cancelled
-    );
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Dead
-    );
+    assert_eq!(graph.wait_records()[0].cancel_reason, Some(WaitCancelReason::StoreFault));
+    assert_eq!(graph.activation_waits()[0].state, ActivationWaitState::Cancelled);
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Dead);
     assert_eq!(graph.tasks()[0].state, TaskState::Faulted);
     assert_eq!(graph.tasks()[0].pending_wait, None);
     assert_eq!(graph.stores()[0].state, StoreState::Dead);
@@ -25536,11 +24455,7 @@ fn preemptive_runtime_p8_cleanup_rejects_stale_store_generation_and_no_resume_le
     let enqueue = graph.apply_envelope(CommandEnvelope::new(
         2,
         "p8-test",
-        SemanticCommand::EnqueueRunnable {
-            queue: 1,
-            activation: 11,
-            activation_generation: 5,
-        },
+        SemanticCommand::EnqueueRunnable { queue: 1, activation: 11, activation_generation: 5 },
     ));
     assert_eq!(enqueue.status, CommandStatus::Rejected);
     let mut expected = Vec::new();
@@ -25575,10 +24490,7 @@ fn preemptive_runtime_p8_cleanup_history_survives_store_restart_generation() {
         graph.runtime_activations()[0].owner_store_generation,
         Some(cleanup_result_generation)
     );
-    assert_eq!(
-        graph.runtime_activations()[0].state,
-        RuntimeActivationState::Dead
-    );
+    assert_eq!(graph.runtime_activations()[0].state, RuntimeActivationState::Dead);
     assert_eq!(graph.check_invariants(), Ok(()));
 }
 
@@ -25681,14 +24593,9 @@ fn smp_runtime_s13_cleanup_quiescence_validates_after_cleanup_rendezvous() {
     assert!(quiescence.no_pending_wait);
     assert!(quiescence.no_live_capability);
     assert!(quiescence.no_live_resource);
-    assert!(
-        quiescence
-            .participants
-            .iter()
-            .all(|participant| participant.quiesced
-                && participant.current_activation.is_none()
-                && participant.current_store.is_none())
-    );
+    assert!(quiescence.participants.iter().all(|participant| participant.quiesced
+        && participant.current_activation.is_none()
+        && participant.current_store.is_none()));
     assert!(graph.hart_event_attributions().iter().any(|record| {
         record.event == quiescence.validated_at_event
             && record.hart == 1
@@ -26470,12 +25377,8 @@ fn x0_integrated_smp_preemption_cleanup_graph() -> SemanticGraph {
         "stress run",
     ));
     graph.ensure_task(88, FrontendKind::LinuxElf, "x0-preempted-thread");
-    let hart_generation = graph
-        .harts()
-        .iter()
-        .find(|hart| hart.id == 1)
-        .map(|hart| hart.generation)
-        .unwrap();
+    let hart_generation =
+        graph.harts().iter().find(|hart| hart.id == 1).map(|hart| hart.generation).unwrap();
     assert!(graph.create_runnable_queue_with_id(88, "x0-preempt-rq"));
     assert!(graph.bind_runnable_queue_owner(
         88,
@@ -26727,11 +25630,7 @@ fn x1_integrated_smp_network_fault_snapshot() -> ContractGraphSnapshot {
             1598,
             1,
         )],
-        cancelled_wait_tokens: vec![ContractObjectRef::new(
-            ContractObjectKind::WaitToken,
-            1597,
-            1,
-        )],
+        cancelled_wait_tokens: vec![ContractObjectRef::new(ContractObjectKind::WaitToken, 1597, 1)],
         revoked_packet_capabilities: vec![ContractObjectRef::new(
             ContractObjectKind::DeviceCapability,
             1570,
@@ -27022,12 +25921,8 @@ fn x2_integrated_disk_preempt_fault_graph() -> SemanticGraph {
     );
     graph.ensure_task(1990, FrontendKind::LinuxElf, "x2-preempted-disk-io-thread");
     assert!(graph.register_hart_with_id(1, 0, "x2-hart0", true, "x2 timer hart"));
-    let hart_generation = graph
-        .harts()
-        .iter()
-        .find(|hart| hart.id == 1)
-        .map(|hart| hart.generation)
-        .unwrap();
+    let hart_generation =
+        graph.harts().iter().find(|hart| hart.id == 1).map(|hart| hart.generation).unwrap();
     assert!(graph.create_runnable_queue_with_id(1990, "x2-disk-preempt-rq"));
     assert!(graph.bind_runnable_queue_owner(
         1990,
@@ -27141,12 +26036,8 @@ fn integrated_runtime_x2_rejects_missing_or_non_fault_evidence() {
     );
     graph.ensure_task(1990, FrontendKind::LinuxElf, "x2-preempted-disk-io-thread");
     assert!(graph.register_hart_with_id(1, 0, "x2-hart0", true, "x2 timer hart"));
-    let hart_generation = graph
-        .harts()
-        .iter()
-        .find(|hart| hart.id == 1)
-        .map(|hart| hart.generation)
-        .unwrap();
+    let hart_generation =
+        graph.harts().iter().find(|hart| hart.id == 1).map(|hart| hart.generation).unwrap();
     assert!(graph.create_runnable_queue_with_id(1990, "x2-disk-preempt-rq"));
     assert!(graph.bind_runnable_queue_owner(
         1990,

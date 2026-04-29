@@ -1,5 +1,4 @@
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use super::*;
 
@@ -22,11 +21,7 @@ impl SemanticGraph {
         if participants.len() < 2 {
             return Err("smp safe point requires at least two harts");
         }
-        if self
-            .smp_safe_points
-            .iter()
-            .any(|record| record.id == safe_point)
-        {
+        if self.smp_safe_points.iter().any(|record| record.id == safe_point) {
             return Err("smp safe point already exists");
         }
         let Some(coordinator) = self.harts.iter().find(|record| {
@@ -178,10 +173,7 @@ impl SemanticGraph {
         safe_point: SmpSafePointId,
         event: EventId,
     ) {
-        if let Some(record) = self
-            .smp_safe_points
-            .iter_mut()
-            .find(|record| record.id == safe_point)
+        if let Some(record) = self.smp_safe_points.iter_mut().find(|record| record.id == safe_point)
         {
             record.recorded_at_event = event;
         }
@@ -227,10 +219,7 @@ impl SemanticGraph {
                         hart: participant.hart,
                     });
                 }
-                let Some(hart) = self
-                    .harts
-                    .iter()
-                    .find(|record| record.id == participant.hart)
+                let Some(hart) = self.harts.iter().find(|record| record.id == participant.hart)
                 else {
                     return Err(SemanticInvariantError::SmpSafePointMissingHart {
                         safe_point: safe_point.id,
@@ -250,10 +239,8 @@ impl SemanticGraph {
                     });
                 }
             }
-            let Some(coordinator) = self
-                .harts
-                .iter()
-                .find(|record| record.id == safe_point.coordinator_hart)
+            let Some(coordinator) =
+                self.harts.iter().find(|record| record.id == safe_point.coordinator_hart)
             else {
                 return Err(SemanticInvariantError::SmpSafePointMissingHart {
                     safe_point: safe_point.id,
@@ -294,12 +281,10 @@ impl SemanticGraph {
                     && attribution.hart_generation == safe_point.coordinator_hart_generation
                     && attribution.event_kind == "SmpSafePointCoordinatorRecorded"
             }) {
-                return Err(
-                    SemanticInvariantError::SmpSafePointMissingHartEventAttribution {
-                        safe_point: safe_point.id,
-                        event: safe_point.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::SmpSafePointMissingHartEventAttribution {
+                    safe_point: safe_point.id,
+                    event: safe_point.recorded_at_event,
+                });
             }
             for participant in &safe_point.participants {
                 let expected_event_kind = if participant.hart == safe_point.coordinator_hart
@@ -318,12 +303,10 @@ impl SemanticGraph {
                         && attribution.activation_generation
                             == participant.current_activation_generation
                 }) {
-                    return Err(
-                        SemanticInvariantError::SmpSafePointMissingHartEventAttribution {
-                            safe_point: safe_point.id,
-                            event: safe_point.recorded_at_event,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SmpSafePointMissingHartEventAttribution {
+                        safe_point: safe_point.id,
+                        event: safe_point.recorded_at_event,
+                    });
                 }
             }
         }

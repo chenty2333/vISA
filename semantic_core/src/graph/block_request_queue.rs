@@ -15,11 +15,7 @@ impl SemanticGraph {
         if queue == 0 {
             return Err("block request queue id=0 is invalid");
         }
-        if self
-            .block_request_queues
-            .iter()
-            .any(|record| record.id == queue)
-        {
+        if self.block_request_queues.iter().any(|record| record.id == queue) {
             return Err("block request queue already exists");
         }
         if backend.generation == 0 || block_device_generation == 0 {
@@ -197,9 +193,8 @@ impl SemanticGraph {
             .count() as u32;
         let first_sequence = entries.first().map(|entry| entry.sequence).unwrap_or(0);
         let last_sequence = entries.last().map(|entry| entry.sequence).unwrap_or(0);
-        self.next_block_request_queue_id = self
-            .next_block_request_queue_id
-            .max(queue.saturating_add(1));
+        self.next_block_request_queue_id =
+            self.next_block_request_queue_id.max(queue.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRequestQueueRecorded {
@@ -259,12 +254,10 @@ impl SemanticGraph {
                 block_device.id == record.block_device
                     && block_device.generation == record.block_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
-                        queue: record.id,
-                        block_device: record.block_device,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
+                    queue: record.id,
+                    block_device: record.block_device,
+                });
             };
             if record.id == 0
                 || record.generation == 0
@@ -421,10 +414,7 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_request_queues
-            .iter_mut()
-            .find(|record| record.id == queue)
+        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.backend.generation = generation;
         }
@@ -436,10 +426,7 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         pending_count: u32,
     ) {
-        if let Some(record) = self
-            .block_request_queues
-            .iter_mut()
-            .find(|record| record.id == queue)
+        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.pending_count = pending_count;
         }
@@ -451,10 +438,7 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_request_queues
-            .iter_mut()
-            .find(|record| record.id == queue)
+        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.block_device_generation = generation;
         }

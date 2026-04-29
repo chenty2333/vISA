@@ -31,11 +31,7 @@ impl SemanticGraph {
             return false;
         }
         let hardware_hart = hart_record.hardware_id;
-        if let Some(previous) = self
-            .timer_interrupts
-            .iter()
-            .map(|record| record.timer_epoch)
-            .max()
+        if let Some(previous) = self.timer_interrupts.iter().map(|record| record.timer_epoch).max()
             && timer_epoch <= previous
         {
             return false;
@@ -51,10 +47,8 @@ impl SemanticGraph {
             else {
                 return false;
             };
-            if matches!(
-                record.state,
-                RuntimeActivationState::Dead | RuntimeActivationState::Exited
-            ) {
+            if matches!(record.state, RuntimeActivationState::Dead | RuntimeActivationState::Exited)
+            {
                 return false;
             }
             (Some(record.owner_task), Some(record.owner_task_generation))
@@ -112,11 +106,7 @@ impl SemanticGraph {
     }
 
     pub fn timer_epoch(&self) -> u64 {
-        self.timer_interrupts
-            .iter()
-            .map(|record| record.timer_epoch)
-            .max()
-            .unwrap_or(0)
+        self.timer_interrupts.iter().map(|record| record.timer_epoch).max().unwrap_or(0)
     }
 
     #[cfg(test)]
@@ -125,10 +115,7 @@ impl SemanticGraph {
         interrupt: TimerInterruptId,
         timer_epoch: u64,
     ) {
-        if let Some(record) = self
-            .timer_interrupts
-            .iter_mut()
-            .find(|record| record.id == interrupt)
+        if let Some(record) = self.timer_interrupts.iter_mut().find(|record| record.id == interrupt)
         {
             record.timer_epoch = timer_epoch;
         }
@@ -171,17 +158,12 @@ impl SemanticGraph {
                     && attribution.hart_generation == interrupt.hart_generation
                     && attribution.event_kind == "TimerInterruptRecorded"
             }) {
-                return Err(
-                    SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
-                        interrupt: interrupt.id,
-                        event: interrupt.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::TimerInterruptMissingHartEventAttribution {
+                    interrupt: interrupt.id,
+                    event: interrupt.recorded_at_event,
+                });
             }
-            match (
-                interrupt.target_activation,
-                interrupt.target_activation_generation,
-            ) {
+            match (interrupt.target_activation, interrupt.target_activation_generation) {
                 (Some(activation), Some(generation)) => {
                     let Some(record) = self
                         .runtime_activations
@@ -205,12 +187,10 @@ impl SemanticGraph {
                         record.state,
                         RuntimeActivationState::Dead | RuntimeActivationState::Exited
                     ) {
-                        return Err(
-                            SemanticInvariantError::TimerInterruptTargetsDeadActivation {
-                                interrupt: interrupt.id,
-                                activation,
-                            },
-                        );
+                        return Err(SemanticInvariantError::TimerInterruptTargetsDeadActivation {
+                            interrupt: interrupt.id,
+                            activation,
+                        });
                     }
                     if interrupt.target_task != Some(record.owner_task)
                         || interrupt.target_task_generation != Some(record.owner_task_generation)

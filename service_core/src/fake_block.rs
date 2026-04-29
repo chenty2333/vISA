@@ -47,10 +47,7 @@ pub struct FakeBlockBackend {
 
 impl FakeBlockBackend {
     pub const fn new(config: FakeBlockBackendConfig) -> Self {
-        Self {
-            config,
-            next_sequence: 1,
-        }
+        Self { config, next_sequence: 1 }
     }
 
     pub const fn config(&self) -> FakeBlockBackendConfig {
@@ -69,9 +66,7 @@ impl FakeBlockBackend {
         if operation == FakeBlockOperation::Write && self.config.read_only {
             return Err(ERR_EIO);
         }
-        let end_sector = start_sector
-            .checked_add(sector_count as u64)
-            .ok_or(ERR_EINVAL)?;
+        let end_sector = start_sector.checked_add(sector_count as u64).ok_or(ERR_EINVAL)?;
         if end_sector > self.config.sector_count {
             return Err(ERR_EINVAL);
         }
@@ -100,15 +95,11 @@ mod tests {
     #[test]
     fn fake_block_backend_accepts_bounded_read_and_write_requests() {
         let mut backend = FakeBlockBackend::default();
-        let read = backend
-            .submit_request(FakeBlockOperation::Read, 64, 8)
-            .unwrap();
+        let read = backend.submit_request(FakeBlockOperation::Read, 64, 8).unwrap();
         assert_eq!(read.sequence, 1);
         assert_eq!(read.byte_len, 4096);
 
-        let write = backend
-            .submit_request(FakeBlockOperation::Write, 72, 8)
-            .unwrap();
+        let write = backend.submit_request(FakeBlockOperation::Write, 72, 8).unwrap();
         assert_eq!(write.sequence, 2);
         assert_eq!(write.byte_len, 4096);
     }
@@ -116,22 +107,13 @@ mod tests {
     #[test]
     fn fake_block_backend_rejects_out_of_bounds_or_read_only_writes() {
         let mut backend = FakeBlockBackend::default();
-        assert_eq!(
-            backend.submit_request(FakeBlockOperation::Read, 4090, 8),
-            Err(ERR_EINVAL)
-        );
-        assert_eq!(
-            backend.submit_request(FakeBlockOperation::Read, 0, 129),
-            Err(ERR_EINVAL)
-        );
+        assert_eq!(backend.submit_request(FakeBlockOperation::Read, 4090, 8), Err(ERR_EINVAL));
+        assert_eq!(backend.submit_request(FakeBlockOperation::Read, 0, 129), Err(ERR_EINVAL));
 
         let mut read_only = FakeBlockBackend::new(FakeBlockBackendConfig {
             read_only: true,
             ..FakeBlockBackendConfig::blk0()
         });
-        assert_eq!(
-            read_only.submit_request(FakeBlockOperation::Write, 0, 1),
-            Err(ERR_EIO)
-        );
+        assert_eq!(read_only.submit_request(FakeBlockOperation::Write, 0, 1), Err(ERR_EIO));
     }
 }

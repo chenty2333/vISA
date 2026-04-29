@@ -18,8 +18,7 @@ impl SemanticGraph {
             generation: 1,
             resources: Vec::new(),
         });
-        self.event_log
-            .push("semantic", EventKind::TaskCreated { task: id, frontend });
+        self.event_log.push("semantic", EventKind::TaskCreated { task: id, frontend });
     }
     pub fn set_task_state(&mut self, id: TaskId, state: TaskState) {
         let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) else {
@@ -34,14 +33,7 @@ impl SemanticGraph {
         if state != TaskState::Pending {
             task.pending_wait = None;
         }
-        self.event_log.push(
-            "scheduler",
-            EventKind::TaskStateChanged {
-                task: id,
-                from,
-                to: state,
-            },
-        );
+        self.event_log.push("scheduler", EventKind::TaskStateChanged { task: id, from, to: state });
     }
     pub fn task_count(&self) -> usize {
         self.tasks.len()

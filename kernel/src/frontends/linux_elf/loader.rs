@@ -2,13 +2,15 @@ use alloc::vec::Vec;
 use core::slice;
 
 use bootloader_api::BootInfo;
-use x86_64::VirtAddr;
-use x86_64::registers::control::Cr3;
-use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB,
+use x86_64::{
+    VirtAddr,
+    registers::control::Cr3,
+    structures::paging::{
+        FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
+        Size4KiB,
+    },
 };
-use xmas_elf::ElfFile;
-use xmas_elf::program::Type as ProgramType;
+use xmas_elf::{ElfFile, program::Type as ProgramType};
 
 use super::context::{LoadedUserImage, UserRegion};
 
@@ -47,18 +49,14 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         }
 
         let virt_start = ph.virtual_addr();
-        let virt_end = virt_start
-            .checked_add(ph.mem_size())
-            .ok_or("user ELF segment overflowed")?;
+        let virt_end =
+            virt_start.checked_add(ph.mem_size()).ok_or("user ELF segment overflowed")?;
         let file_start = usize::try_from(ph.offset()).map_err(|_| "user ELF offset overflowed")?;
         let file_size =
             usize::try_from(ph.file_size()).map_err(|_| "user ELF file size overflowed")?;
-        let file_end = file_start
-            .checked_add(file_size)
-            .ok_or("user ELF file range overflowed")?;
-        let segment_bytes = bytes
-            .get(file_start..file_end)
-            .ok_or("user ELF referenced bytes outside the image")?;
+        let file_end = file_start.checked_add(file_size).ok_or("user ELF file range overflowed")?;
+        let segment_bytes =
+            bytes.get(file_start..file_end).ok_or("user ELF referenced bytes outside the image")?;
 
         let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
         if ph.flags().is_write() {
@@ -86,17 +84,9 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
     }
 
     map_user_stack(&mut mapper, &mut frame_allocator, phys_offset)?;
-    regions.push(UserRegion {
-        start: USER_STACK_BASE,
-        end: USER_STACK_TOP,
-        writable: true,
-    });
+    regions.push(UserRegion { start: USER_STACK_BASE, end: USER_STACK_TOP, writable: true });
 
-    Ok(LoadedUserImage {
-        entry: elf.header.pt2.entry_point(),
-        stack_top: USER_STACK_TOP,
-        regions,
-    })
+    Ok(LoadedUserImage { entry: elf.header.pt2.entry_point(), stack_top: USER_STACK_TOP, regions })
 }
 
 fn map_user_pages(
@@ -112,9 +102,8 @@ fn map_user_pages(
     let page_end = align_up(virt_end as usize, PAGE_SIZE) as u64;
 
     for page_addr in (page_start..page_end).step_by(PAGE_SIZE) {
-        let frame = frame_allocator
-            .allocate_frame()
-            .ok_or("out of usable frames for user image")?;
+        let frame =
+            frame_allocator.allocate_frame().ok_or("out of usable frames for user image")?;
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
         unsafe {
             mapper
@@ -127,10 +116,8 @@ fn map_user_pages(
         dest.fill(0);
 
         let copy_start = core::cmp::max(page_addr, virt_start);
-        let copy_end = core::cmp::min(
-            page_addr + PAGE_SIZE as u64,
-            virt_start + file_bytes.len() as u64,
-        );
+        let copy_end =
+            core::cmp::min(page_addr + PAGE_SIZE as u64, virt_start + file_bytes.len() as u64);
         if copy_start < copy_end {
             let file_offset = (copy_start - virt_start) as usize;
             let page_offset = (copy_start - page_addr) as usize;
@@ -155,9 +142,8 @@ fn map_user_stack(
 
     for index in 0..USER_STACK_PAGES {
         let addr = USER_STACK_BASE + (index * PAGE_SIZE) as u64;
-        let frame = frame_allocator
-            .allocate_frame()
-            .ok_or("out of usable frames for user stack")?;
+        let frame =
+            frame_allocator.allocate_frame().ok_or("out of usable frames for user stack")?;
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(addr));
         unsafe {
             mapper
@@ -189,10 +175,7 @@ struct BootInfoFrameAllocator<'a> {
 
 impl<'a> BootInfoFrameAllocator<'a> {
     fn new(memory_regions: &'a [bootloader_api::info::MemoryRegion]) -> Self {
-        Self {
-            memory_regions,
-            next: 0,
-        }
+        Self { memory_regions, next: 0 }
     }
 
     fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {

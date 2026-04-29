@@ -129,24 +129,15 @@ mod tests {
     fn virtio_block_skeleton_rejects_invalid_geometry_queue_and_features() {
         let mut config = VirtioBlkBackendConfig::blk0();
         config.sector_size = 511;
-        assert_eq!(
-            validate_config(config),
-            Err("virtio block backend sector size is unsupported")
-        );
+        assert_eq!(validate_config(config), Err("virtio block backend sector size is unsupported"));
 
         config = VirtioBlkBackendConfig::blk0();
         config.sector_count = 0;
-        assert_eq!(
-            validate_config(config),
-            Err("virtio block backend sector count is zero")
-        );
+        assert_eq!(validate_config(config), Err("virtio block backend sector count is zero"));
 
         config = VirtioBlkBackendConfig::blk0();
         config.queue_size = 0;
-        assert_eq!(
-            validate_config(config),
-            Err("virtio block backend queue size is zero")
-        );
+        assert_eq!(validate_config(config), Err("virtio block backend queue size is zero"));
 
         config = VirtioBlkBackendConfig::blk0();
         config.negotiated_features = VIRTIO_BLK_F_FLUSH;

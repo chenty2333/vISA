@@ -19,11 +19,7 @@ impl SemanticGraph {
         if buffer_cache_object == 0 {
             return Err("buffer cache object id=0 is invalid");
         }
-        if self
-            .buffer_cache_objects
-            .iter()
-            .any(|record| record.id == buffer_cache_object)
-        {
+        if self.buffer_cache_objects.iter().any(|record| record.id == buffer_cache_object) {
             return Err("buffer cache object already exists");
         }
         if block_page_object_generation == 0
@@ -134,9 +130,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_buffer_cache_object_id = self
-            .next_buffer_cache_object_id
-            .max(buffer_cache_object.saturating_add(1));
+        self.next_buffer_cache_object_id =
+            self.next_buffer_cache_object_id.max(buffer_cache_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BufferCacheObjectRecorded {
@@ -204,12 +199,10 @@ impl SemanticGraph {
                 page.id == record.block_page_object
                     && page.generation == record.block_page_object_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BufferCacheObjectMissingBlockPageObject {
-                        buffer_cache_object: record.id,
-                        block_page_object: record.block_page_object,
-                    },
-                );
+                return Err(SemanticInvariantError::BufferCacheObjectMissingBlockPageObject {
+                    buffer_cache_object: record.id,
+                    block_page_object: record.block_page_object,
+                });
             };
             let Some(block_range) = self.block_range_objects.iter().find(|range| {
                 range.id == record.block_range && range.generation == record.block_range_generation
@@ -272,12 +265,10 @@ impl SemanticGraph {
                     && other.block_offset == record.block_offset
                     && other.byte_len == record.byte_len
             }) {
-                return Err(
-                    SemanticInvariantError::BufferCacheObjectDuplicateBlockRange {
-                        buffer_cache_object: duplicate.id,
-                        block_range: record.block_range,
-                    },
-                );
+                return Err(SemanticInvariantError::BufferCacheObjectDuplicateBlockRange {
+                    buffer_cache_object: duplicate.id,
+                    block_range: record.block_range,
+                });
             }
             if let Some(duplicate) = self.buffer_cache_objects.iter().find(|other| {
                 other.id != record.id
@@ -286,12 +277,10 @@ impl SemanticGraph {
                     && other.page_offset == record.page_offset
                     && other.byte_len == record.byte_len
             }) {
-                return Err(
-                    SemanticInvariantError::BufferCacheObjectDuplicatePageRange {
-                        buffer_cache_object: duplicate.id,
-                        page: record.page,
-                    },
-                );
+                return Err(SemanticInvariantError::BufferCacheObjectDuplicatePageRange {
+                    buffer_cache_object: duplicate.id,
+                    page: record.page,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -354,10 +343,8 @@ impl SemanticGraph {
         buffer_cache_object: BufferCacheObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .buffer_cache_objects
-            .iter_mut()
-            .find(|record| record.id == buffer_cache_object)
+        if let Some(record) =
+            self.buffer_cache_objects.iter_mut().find(|record| record.id == buffer_cache_object)
         {
             record.page.generation = generation;
         }

@@ -1,5 +1,7 @@
-use super::events::{Event, EventQueue};
-use super::types::TaskId;
+use super::{
+    events::{Event, EventQueue},
+    types::TaskId,
+};
 
 const BOOTSTRAP_TASK_ID: TaskId = 1;
 

@@ -10,9 +10,7 @@ pub fn write_str(message: &str) {
 
 pub fn _print(args: fmt::Arguments<'_>) {
     let mut writer = DebugCon;
-    writer
-        .write_fmt(args)
-        .expect("debugcon output should not fail");
+    writer.write_fmt(args).expect("debugcon output should not fail");
 }
 
 struct DebugCon;

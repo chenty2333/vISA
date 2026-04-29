@@ -30,11 +30,7 @@ impl SemanticGraph {
         if sample == 0 {
             return Err("preemption latency sample id=0 is invalid");
         }
-        if self
-            .preemption_latency_samples
-            .iter()
-            .any(|record| record.id == sample)
-        {
+        if self.preemption_latency_samples.iter().any(|record| record.id == sample) {
             return Err("preemption latency sample already exists");
         }
         if measured_nanos == 0 {
@@ -124,45 +120,44 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.preemption_latency_samples
-            .push(PreemptionLatencySampleRecord {
-                id: sample,
-                timer_interrupt,
-                timer_interrupt_generation,
-                preemption,
-                preemption_generation,
-                scheduler_decision,
-                scheduler_decision_generation,
-                activation_resume,
-                activation_resume_generation,
-                activation: chain.activation,
-                activation_generation_before: chain.activation_generation_before,
-                activation_generation_after: chain.activation_generation_after,
-                queue: chain.queue,
-                queue_generation: chain.queue_generation,
-                interrupt_recorded_at_event: chain.interrupt_recorded_at_event,
-                preempted_at_event: chain.preempted_at_event,
-                decided_at_event: chain.decided_at_event,
-                resumed_at_event: chain.resumed_at_event,
-                interrupt_to_preempt_events: chain
-                    .preempted_at_event
-                    .saturating_sub(chain.interrupt_recorded_at_event),
-                preempt_to_decision_events: chain
-                    .decided_at_event
-                    .saturating_sub(chain.preempted_at_event),
-                decision_to_resume_events: chain
-                    .resumed_at_event
-                    .saturating_sub(chain.decided_at_event),
-                interrupt_to_resume_events: chain
-                    .resumed_at_event
-                    .saturating_sub(chain.interrupt_recorded_at_event),
-                measured_nanos,
-                budget_nanos,
-                generation,
-                state: PreemptionLatencySampleState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.preemption_latency_samples.push(PreemptionLatencySampleRecord {
+            id: sample,
+            timer_interrupt,
+            timer_interrupt_generation,
+            preemption,
+            preemption_generation,
+            scheduler_decision,
+            scheduler_decision_generation,
+            activation_resume,
+            activation_resume_generation,
+            activation: chain.activation,
+            activation_generation_before: chain.activation_generation_before,
+            activation_generation_after: chain.activation_generation_after,
+            queue: chain.queue,
+            queue_generation: chain.queue_generation,
+            interrupt_recorded_at_event: chain.interrupt_recorded_at_event,
+            preempted_at_event: chain.preempted_at_event,
+            decided_at_event: chain.decided_at_event,
+            resumed_at_event: chain.resumed_at_event,
+            interrupt_to_preempt_events: chain
+                .preempted_at_event
+                .saturating_sub(chain.interrupt_recorded_at_event),
+            preempt_to_decision_events: chain
+                .decided_at_event
+                .saturating_sub(chain.preempted_at_event),
+            decision_to_resume_events: chain
+                .resumed_at_event
+                .saturating_sub(chain.decided_at_event),
+            interrupt_to_resume_events: chain
+                .resumed_at_event
+                .saturating_sub(chain.interrupt_recorded_at_event),
+            measured_nanos,
+            budget_nanos,
+            generation,
+            state: PreemptionLatencySampleState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -197,21 +192,13 @@ impl SemanticGraph {
                 || sample.decided_at_event != chain.decided_at_event
                 || sample.resumed_at_event != chain.resumed_at_event
                 || sample.interrupt_to_preempt_events
-                    != chain
-                        .preempted_at_event
-                        .saturating_sub(chain.interrupt_recorded_at_event)
+                    != chain.preempted_at_event.saturating_sub(chain.interrupt_recorded_at_event)
                 || sample.preempt_to_decision_events
-                    != chain
-                        .decided_at_event
-                        .saturating_sub(chain.preempted_at_event)
+                    != chain.decided_at_event.saturating_sub(chain.preempted_at_event)
                 || sample.decision_to_resume_events
-                    != chain
-                        .resumed_at_event
-                        .saturating_sub(chain.decided_at_event)
+                    != chain.resumed_at_event.saturating_sub(chain.decided_at_event)
                 || sample.interrupt_to_resume_events
-                    != chain
-                        .resumed_at_event
-                        .saturating_sub(chain.interrupt_recorded_at_event)
+                    != chain.resumed_at_event.saturating_sub(chain.interrupt_recorded_at_event)
                 || sample.measured_nanos == 0
                 || sample.budget_nanos == 0
             {
@@ -238,12 +225,10 @@ impl SemanticGraph {
         let Some(timer) = self.timer_interrupts.iter().find(|record| {
             record.id == timer_interrupt && record.generation == timer_interrupt_generation
         }) else {
-            return Err(
-                SemanticInvariantError::PreemptionLatencyMissingTimerInterrupt {
-                    sample,
-                    interrupt: timer_interrupt,
-                },
-            );
+            return Err(SemanticInvariantError::PreemptionLatencyMissingTimerInterrupt {
+                sample,
+                interrupt: timer_interrupt,
+            });
         };
         let Some(preempt) = self.preemptions.iter().find(|record| {
             record.id == preemption
@@ -320,10 +305,8 @@ impl SemanticGraph {
         sample: PreemptionLatencySampleId,
         value: u64,
     ) {
-        if let Some(record) = self
-            .preemption_latency_samples
-            .iter_mut()
-            .find(|record| record.id == sample)
+        if let Some(record) =
+            self.preemption_latency_samples.iter_mut().find(|record| record.id == sample)
         {
             record.interrupt_to_resume_events = value;
         }

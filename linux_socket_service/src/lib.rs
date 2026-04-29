@@ -7,8 +7,7 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use service_core::linux_socket::LinuxSocketState;
-use service_core::net_contract::NETWORK_CONTRACT_ABI_VERSION;
+use service_core::{linux_socket::LinuxSocketState, net_contract::NETWORK_CONTRACT_ABI_VERSION};
 
 const REQUEST_CAPACITY: usize = 512;
 const RESPONSE_CAPACITY: usize = 512;

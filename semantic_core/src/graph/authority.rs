@@ -14,10 +14,7 @@ impl SemanticGraph {
                 .resources
                 .iter()
                 .find(|candidate| candidate.id == resource && candidate.live)?;
-            (
-                AuthorityKind::from_resource_kind(resource.kind)?,
-                resource.generation,
-            )
+            (AuthorityKind::from_resource_kind(resource.kind)?, resource.generation)
         };
         let id = self.next_authority_id;
         self.next_authority_id += 1;
@@ -35,11 +32,8 @@ impl SemanticGraph {
             "authority-binding",
             true,
         );
-        let capability_generation = self
-            .capabilities
-            .record(capability)
-            .map(|record| record.generation)
-            .unwrap_or(0);
+        let capability_generation =
+            self.capabilities.record(capability).map(|record| record.generation).unwrap_or(0);
         self.authority_bindings.push(AuthorityBindingRecord {
             id,
             resource,
@@ -68,10 +62,7 @@ impl SemanticGraph {
         Some(id)
     }
     pub fn release_authority_binding(&mut self, id: AuthorityId, reason: &str) -> bool {
-        let Some(index) = self
-            .authority_bindings
-            .iter()
-            .position(|authority| authority.id == id)
+        let Some(index) = self.authority_bindings.iter().position(|authority| authority.id == id)
         else {
             return false;
         };
@@ -84,8 +75,7 @@ impl SemanticGraph {
         let generation = self.authority_bindings[index].generation;
         let capability = self.authority_bindings[index].capability;
         let capability_generation = self.authority_bindings[index].capability_generation;
-        self.capabilities
-            .revoke_generation(capability, capability_generation);
+        self.capabilities.revoke_generation(capability, capability_generation);
         self.event_log.push(
             "authority",
             EventKind::AuthorityReleased {
@@ -114,10 +104,7 @@ impl SemanticGraph {
         count
     }
     pub fn revoke_authority_binding(&mut self, id: AuthorityId, reason: &str) -> bool {
-        let Some(index) = self
-            .authority_bindings
-            .iter()
-            .position(|authority| authority.id == id)
+        let Some(index) = self.authority_bindings.iter().position(|authority| authority.id == id)
         else {
             return false;
         };
@@ -130,8 +117,7 @@ impl SemanticGraph {
         let generation = self.authority_bindings[index].generation;
         let capability = self.authority_bindings[index].capability;
         let capability_generation = self.authority_bindings[index].capability_generation;
-        self.capabilities
-            .revoke_generation(capability, capability_generation);
+        self.capabilities.revoke_generation(capability, capability_generation);
         self.event_log.push(
             "authority",
             EventKind::AuthorityRevoked {

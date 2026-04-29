@@ -21,11 +21,7 @@ impl SemanticGraph {
         if vector_state == u64::MAX {
             return Err("vector state id cannot advance generation cursor");
         }
-        if self
-            .vector_states
-            .iter()
-            .any(|record| record.id == vector_state)
-        {
+        if self.vector_states.iter().any(|record| record.id == vector_state) {
             return Err("vector state already exists");
         }
         if owner_activation.kind != ContractObjectKind::Activation
@@ -133,9 +129,7 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_vector_state_id = self
-            .next_vector_state_id
-            .max(vector_state.saturating_add(1));
+        self.next_vector_state_id = self.next_vector_state_id.max(vector_state.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "target",
             EventKind::VectorStateRecorded {
@@ -191,9 +185,7 @@ impl SemanticGraph {
                         * (u32::from(record.vector_register_bits) / 8)
                 || record.recorded_at_event == 0
             {
-                return Err(SemanticInvariantError::VectorStateInvalid {
-                    vector_state: record.id,
-                });
+                return Err(SemanticInvariantError::VectorStateInvalid { vector_state: record.id });
             }
             let feature = self.target_feature_sets.iter().find(|feature| {
                 feature.id == record.target_feature_set.id
@@ -211,9 +203,7 @@ impl SemanticGraph {
                 || record.code_object.kind != ContractObjectKind::CodeObject
                 || feature.simd_abi != record.simd_abi
             {
-                return Err(SemanticInvariantError::VectorStateInvalid {
-                    vector_state: record.id,
-                });
+                return Err(SemanticInvariantError::VectorStateInvalid { vector_state: record.id });
             }
             match record.state {
                 VectorStateState::Reserved => {
@@ -305,10 +295,7 @@ impl SemanticGraph {
         vector_state: VectorStateId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .vector_states
-            .iter_mut()
-            .find(|record| record.id == vector_state)
+        if let Some(record) = self.vector_states.iter_mut().find(|record| record.id == vector_state)
         {
             record.owner_activation.generation = generation;
         }

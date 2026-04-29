@@ -12,11 +12,7 @@ impl SemanticGraph {
         if block_range == 0 {
             return Err("block range object id=0 is invalid");
         }
-        if self
-            .block_range_objects
-            .iter()
-            .any(|record| record.id == block_range)
-        {
+        if self.block_range_objects.iter().any(|record| record.id == block_range) {
             return Err("block range object already exists");
         }
         if block_device_generation == 0 || sector_count == 0 {
@@ -32,11 +28,7 @@ impl SemanticGraph {
         if start_sector >= block_device_record.sector_count {
             return Err("block range object starts outside block device");
         }
-        if sector_count
-            > block_device_record
-                .sector_count
-                .saturating_sub(start_sector)
-        {
+        if sector_count > block_device_record.sector_count.saturating_sub(start_sector) {
             return Err("block range object extends beyond block device");
         }
         if sector_count > u64::from(block_device_record.max_transfer_sectors) {
@@ -73,9 +65,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_range_object_id = self
-            .next_block_range_object_id
-            .max(block_range.saturating_add(1));
+        self.next_block_range_object_id =
+            self.next_block_range_object_id.max(block_range.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRangeObjectRecorded {
@@ -124,21 +115,17 @@ impl SemanticGraph {
                     block_device: record.block_device,
                 });
             };
-            let expected_byte_offset = record
-                .start_sector
-                .checked_mul(u64::from(block_device_record.sector_size));
-            let expected_byte_len = record
-                .sector_count
-                .checked_mul(u64::from(block_device_record.sector_size));
+            let expected_byte_offset =
+                record.start_sector.checked_mul(u64::from(block_device_record.sector_size));
+            let expected_byte_len =
+                record.sector_count.checked_mul(u64::from(block_device_record.sector_size));
             if record.id == 0
                 || record.generation == 0
                 || record.block_device_generation == 0
                 || record.sector_count == 0
                 || record.start_sector >= block_device_record.sector_count
                 || record.sector_count
-                    > block_device_record
-                        .sector_count
-                        .saturating_sub(record.start_sector)
+                    > block_device_record.sector_count.saturating_sub(record.start_sector)
                 || record.sector_count > u64::from(block_device_record.max_transfer_sectors)
                 || expected_byte_offset != Some(record.byte_offset)
                 || expected_byte_len != Some(record.byte_len)
@@ -186,10 +173,8 @@ impl SemanticGraph {
         block_range: BlockRangeObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_range_objects
-            .iter_mut()
-            .find(|record| record.id == block_range)
+        if let Some(record) =
+            self.block_range_objects.iter_mut().find(|record| record.id == block_range)
         {
             record.block_device_generation = generation;
         }

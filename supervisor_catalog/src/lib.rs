@@ -206,27 +206,12 @@ pub fn module_interface_spec(module: &WasmModuleSpec) -> ModuleInterfaceSpec {
     }
 }
 
-const CONSOLE_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
-    name: "console.write",
-    rights: &["write"],
-    lifetime: "activation",
-}];
+const CONSOLE_CAPABILITIES: &[CapabilitySpec] =
+    &[CapabilitySpec { name: "console.write", rights: &["write"], lifetime: "activation" }];
 const LINUX_CAPABILITIES: &[CapabilitySpec] = &[
-    CapabilitySpec {
-        name: "timer.sleep",
-        rights: &["arm", "cancel"],
-        lifetime: "wait-token",
-    },
-    CapabilitySpec {
-        name: "console.write",
-        rights: &["write"],
-        lifetime: "activation",
-    },
-    CapabilitySpec {
-        name: "fd.table",
-        rights: &["close"],
-        lifetime: "task",
-    },
+    CapabilitySpec { name: "timer.sleep", rights: &["arm", "cancel"], lifetime: "wait-token" },
+    CapabilitySpec { name: "console.write", rights: &["write"], lifetime: "activation" },
+    CapabilitySpec { name: "fd.table", rights: &["close"], lifetime: "task" },
     CapabilitySpec {
         name: "linux.socket",
         rights: &[
@@ -246,11 +231,8 @@ const LINUX_CAPABILITIES: &[CapabilitySpec] = &[
         lifetime: "task",
     },
 ];
-const DEVFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
-    name: "device.pulse",
-    rights: &["read", "poll"],
-    lifetime: "store",
-}];
+const DEVFS_CAPABILITIES: &[CapabilitySpec] =
+    &[CapabilitySpec { name: "device.pulse", rights: &["read", "poll"], lifetime: "store" }];
 const EPOLL_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     name: "epoll.instance",
     rights: &["create", "ctl", "wait", "notify", "restart", "cancel"],
@@ -272,11 +254,7 @@ const VFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     lifetime: "store",
 }];
 const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
-    CapabilitySpec {
-        name: "device.virtio-net0",
-        rights: &["probe"],
-        lifetime: "store",
-    },
+    CapabilitySpec { name: "device.virtio-net0", rights: &["probe"], lifetime: "store" },
     CapabilitySpec {
         name: "packet-device.net0",
         rights: &["rx", "tx", "poll", "irq", "dma"],
@@ -287,16 +265,8 @@ const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
         rights: &["submit", "complete", "cancel"],
         lifetime: "store",
     },
-    CapabilitySpec {
-        name: "irq.net0",
-        rights: &["ack", "mask", "unmask"],
-        lifetime: "store",
-    },
-    CapabilitySpec {
-        name: "mmio.virtio-net0",
-        rights: &["read", "write"],
-        lifetime: "store",
-    },
+    CapabilitySpec { name: "irq.net0", rights: &["ack", "mask", "unmask"], lifetime: "store" },
+    CapabilitySpec { name: "mmio.virtio-net0", rights: &["read", "write"], lifetime: "store" },
     CapabilitySpec {
         name: "virtqueue.net0",
         rights: &["read", "write", "kick"],
@@ -304,11 +274,7 @@ const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[
     },
 ];
 const NET_CORE_CAPABILITIES: &[CapabilitySpec] = &[
-    CapabilitySpec {
-        name: "packet-device.net0",
-        rights: &["rx", "tx", "poll"],
-        lifetime: "store",
-    },
+    CapabilitySpec { name: "packet-device.net0", rights: &["rx", "tx", "poll"], lifetime: "store" },
     CapabilitySpec {
         name: "net.interface",
         rights: &["attach", "up", "down", "rx", "tx"],
@@ -619,14 +585,10 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
     },
 ];
 
-pub const USER_BINARIES: &[UserBinarySpec] = &[UserBinarySpec {
-    package: "linux_user_demo",
-}];
+pub const USER_BINARIES: &[UserBinarySpec] = &[UserBinarySpec { package: "linux_user_demo" }];
 
 pub fn find_wasm_module(package: &str) -> Option<&'static WasmModuleSpec> {
-    SUPERVISOR_WASM_MODULES
-        .iter()
-        .find(|module| module.package == package)
+    SUPERVISOR_WASM_MODULES.iter().find(|module| module.package == package)
 }
 
 pub fn module_dependencies(spec: &WasmModuleSpec) -> &'static [&'static str] {
@@ -752,9 +714,7 @@ struct ContractHasher {
 
 impl ContractHasher {
     const fn new() -> Self {
-        Self {
-            value: 0xcbf29ce484222325,
-        }
+        Self { value: 0xcbf29ce484222325 }
     }
 
     fn write_str(&mut self, value: &str) {

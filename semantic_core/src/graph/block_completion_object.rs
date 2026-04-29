@@ -13,11 +13,7 @@ impl SemanticGraph {
         if block_completion == 0 {
             return Err("block completion object id=0 is invalid");
         }
-        if self
-            .block_completion_objects
-            .iter()
-            .any(|record| record.id == block_completion)
-        {
+        if self.block_completion_objects.iter().any(|record| record.id == block_completion) {
             return Err("block completion object already exists");
         }
         if block_request_generation == 0 || sequence == 0 {
@@ -80,9 +76,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_completion_object_id = self
-            .next_block_completion_object_id
-            .max(block_completion.saturating_add(1));
+        self.next_block_completion_object_id =
+            self.next_block_completion_object_id.max(block_completion.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockCompletionObjectRecorded {
@@ -104,23 +99,22 @@ impl SemanticGraph {
         }) {
             request_record.state = BlockRequestObjectState::Completed;
         }
-        self.block_completion_objects
-            .push(BlockCompletionObjectRecord {
-                id: block_completion,
-                block_request,
-                block_request_generation,
-                block_device: request_snapshot.block_device,
-                block_device_generation: request_snapshot.block_device_generation,
-                block_range: request_snapshot.block_range,
-                block_range_generation: request_snapshot.block_range_generation,
-                sequence,
-                completed_bytes,
-                status,
-                generation,
-                state: BlockCompletionObjectState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.block_completion_objects.push(BlockCompletionObjectRecord {
+            id: block_completion,
+            block_request,
+            block_request_generation,
+            block_device: request_snapshot.block_device,
+            block_device_generation: request_snapshot.block_device_generation,
+            block_range: request_snapshot.block_range,
+            block_range_generation: request_snapshot.block_range_generation,
+            sequence,
+            completed_bytes,
+            status,
+            generation,
+            state: BlockCompletionObjectState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -138,12 +132,10 @@ impl SemanticGraph {
                 request.id == record.block_request
                     && request.generation == record.block_request_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockCompletionObjectMissingRequest {
-                        block_completion: record.id,
-                        block_request: record.block_request,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockCompletionObjectMissingRequest {
+                    block_completion: record.id,
+                    block_request: record.block_request,
+                });
             };
             if record.id == 0
                 || record.generation == 0
@@ -174,12 +166,10 @@ impl SemanticGraph {
                     && other.block_request_generation == record.block_request_generation
                     && other.state == BlockCompletionObjectState::Recorded
             }) {
-                return Err(
-                    SemanticInvariantError::BlockCompletionObjectDuplicateRequest {
-                        block_completion: duplicate.id,
-                        block_request: record.block_request,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockCompletionObjectDuplicateRequest {
+                    block_completion: duplicate.id,
+                    block_request: record.block_request,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -224,10 +214,8 @@ impl SemanticGraph {
         block_completion: BlockCompletionObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_completion_objects
-            .iter_mut()
-            .find(|record| record.id == block_completion)
+        if let Some(record) =
+            self.block_completion_objects.iter_mut().find(|record| record.id == block_completion)
         {
             record.block_request_generation = generation;
         }

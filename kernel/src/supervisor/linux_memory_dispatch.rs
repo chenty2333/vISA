@@ -1,7 +1,9 @@
 use vmos_abi::{ERR_ENOSYS, ERR_EOPNOTSUPP};
 
-use super::linux::{LinuxCallResult, LinuxPlan};
-use super::runtime::PrototypeRuntime;
+use super::{
+    linux::{LinuxCallResult, LinuxPlan},
+    runtime::PrototypeRuntime,
+};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_mmap(&mut self, _plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {

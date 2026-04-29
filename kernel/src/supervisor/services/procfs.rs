@@ -2,8 +2,10 @@ use alloc::vec::Vec;
 
 use vmos_abi::NodeKind;
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
-use super::super::types::ServiceCallError;
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::ServiceCallError,
+};
 
 const PROCFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_PROCFS_SERVICE_WASM"));
 
@@ -29,14 +31,7 @@ impl ProcfsService {
         let list_dir = io.bind("list_dir", "missing procfs list_dir export")?;
         let read_link = io.bind("read_link", "missing procfs read_link export")?;
 
-        Ok(Self {
-            io,
-            lookup,
-            node_kind,
-            read_file,
-            list_dir,
-            read_link,
-        })
+        Ok(Self { io, lookup, node_kind, read_file, list_dir, read_link })
     }
 
     pub(crate) fn lookup(
@@ -44,17 +39,10 @@ impl ProcfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<NodeKind, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         expect_ok(
             self.io
-                .call(
-                    &self.lookup,
-                    (path_len, inject_fault as u32),
-                    "procfs_service trapped",
-                )
+                .call(&self.lookup, (path_len, inject_fault as u32), "procfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
         NodeKind::from_raw(
@@ -62,9 +50,7 @@ impl ProcfsService {
                 .call(&self.node_kind, (), "procfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
-        .ok_or(ServiceCallError::Invalid(
-            "procfs_service returned an invalid node kind",
-        ))
+        .ok_or(ServiceCallError::Invalid("procfs_service returned an invalid node kind"))
     }
 
     pub(crate) fn read_file(
@@ -72,22 +58,13 @@ impl ProcfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.read_file,
-                    (path_len, inject_fault as u32),
-                    "procfs_service trapped",
-                )
+                .call(&self.read_file, (path_len, inject_fault as u32), "procfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn list_dir(
@@ -95,22 +72,13 @@ impl ProcfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.list_dir,
-                    (path_len, inject_fault as u32),
-                    "procfs_service trapped",
-                )
+                .call(&self.list_dir, (path_len, inject_fault as u32), "procfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn read_link(
@@ -118,21 +86,12 @@ impl ProcfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.read_link,
-                    (path_len, inject_fault as u32),
-                    "procfs_service trapped",
-                )
+                .call(&self.read_link, (path_len, inject_fault as u32), "procfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 }

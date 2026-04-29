@@ -24,11 +24,7 @@ impl SemanticGraph {
         if block_page_object == 0 {
             return Err("block page object id=0 is invalid");
         }
-        if self
-            .block_page_objects
-            .iter()
-            .any(|record| record.id == block_page_object)
-        {
+        if self.block_page_objects.iter().any(|record| record.id == block_page_object) {
             return Err("block page object already exists");
         }
         if block_dma_buffer_generation == 0
@@ -56,10 +52,7 @@ impl SemanticGraph {
         if page_state != PageObjectState::Live {
             return Err("block page object page must be live");
         }
-        if matches!(
-            page_backing,
-            PageBacking::DeviceMemory | PageBacking::External
-        ) {
+        if matches!(page_backing, PageBacking::DeviceMemory | PageBacking::External) {
             return Err("block page object backing cannot be device or external memory");
         }
         if matches!(cow_state, CowState::Broken) {
@@ -168,9 +161,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_page_object_id = self
-            .next_block_page_object_id
-            .max(block_page_object.saturating_add(1));
+        self.next_block_page_object_id =
+            self.next_block_page_object_id.max(block_page_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockPageObjectIntegrated {
@@ -276,10 +268,7 @@ impl SemanticGraph {
                 || record.page.generation == 0
                 || record.page_dirty_generation == 0
                 || record.page_state != PageObjectState::Live
-                || matches!(
-                    record.page_backing,
-                    PageBacking::DeviceMemory | PageBacking::External
-                )
+                || matches!(record.page_backing, PageBacking::DeviceMemory | PageBacking::External)
                 || matches!(record.cow_state, CowState::Broken)
                 || record.byte_len == 0
                 || record
@@ -398,10 +387,8 @@ impl SemanticGraph {
         block_page_object: BlockPageObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_page_objects
-            .iter_mut()
-            .find(|record| record.id == block_page_object)
+        if let Some(record) =
+            self.block_page_objects.iter_mut().find(|record| record.id == block_page_object)
         {
             record.page.generation = generation;
         }

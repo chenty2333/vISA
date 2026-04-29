@@ -1674,12 +1674,7 @@ pub struct CommandEnvelope {
 
 impl CommandEnvelope {
     pub fn new(command_id: CommandId, issuer: &str, command: SemanticCommand) -> Self {
-        Self {
-            command_id,
-            issuer: issuer.to_string(),
-            expected_epoch: None,
-            command,
-        }
+        Self { command_id, issuer: issuer.to_string(), expected_epoch: None, command }
     }
 
     pub fn with_expected_epoch(mut self, expected_epoch: u64) -> Self {
@@ -1713,10 +1708,7 @@ pub struct CommandEffect {
 
 impl CommandEffect {
     pub fn new(kind: &str, target: Option<ContractObjectRef>) -> Self {
-        Self {
-            kind: kind.to_string(),
-            target,
-        }
+        Self { kind: kind.to_string(), target }
     }
 }
 
@@ -1950,11 +1942,7 @@ impl SemanticGraph {
                 command_id: envelope.command_id,
                 issuer: envelope.issuer,
                 command: outcome.command,
-                status: if outcome.changed {
-                    CommandStatus::Applied
-                } else {
-                    CommandStatus::Noop
-                },
+                status: if outcome.changed { CommandStatus::Applied } else { CommandStatus::Noop },
                 events: event_refs_between(outcome.event_count_before, outcome.event_count_after),
                 effects: command_effects(&outcome),
                 violations: Vec::new(),
@@ -1990,24 +1978,14 @@ impl SemanticGraph {
 
     fn preflight_command(&self, command: &SemanticCommand) -> Result<(), CommandError> {
         match command {
-            SemanticCommand::RegisterHart {
-                hart,
-                hardware_id,
-                label,
-                boot,
-                ..
-            } => {
+            SemanticCommand::RegisterHart { hart, hardware_id, label, boot, .. } => {
                 if *hart == 0 {
                     Err(CommandError::precondition("hart id=0 is invalid"))
                 } else if label.is_empty() {
                     Err(CommandError::precondition("hart label is empty"))
                 } else if self.harts.iter().any(|record| record.id == *hart) {
                     Err(CommandError::precondition("hart already exists"))
-                } else if self
-                    .harts
-                    .iter()
-                    .any(|record| record.hardware_id == *hardware_id)
-                {
+                } else if self.harts.iter().any(|record| record.hardware_id == *hardware_id) {
                     Err(CommandError::precondition("hardware hart already exists"))
                 } else if *boot && self.harts.iter().any(|record| record.boot) {
                     Err(CommandError::precondition("boot hart already exists"))
@@ -2015,12 +1993,7 @@ impl SemanticGraph {
                     Ok(())
                 }
             }
-            SemanticCommand::SetHartState {
-                hart,
-                hart_generation,
-                reason,
-                ..
-            } => {
+            SemanticCommand::SetHartState { hart, hart_generation, reason, .. } => {
                 if reason.is_empty() {
                     Err(CommandError::precondition("hart state reason is empty"))
                 } else if self
@@ -2051,9 +2024,7 @@ impl SemanticGraph {
                     return Err(CommandError::precondition("hart is not idle"));
                 }
                 if hart_record.current_activation.is_some() {
-                    return Err(CommandError::precondition(
-                        "hart already has current activation",
-                    ));
+                    return Err(CommandError::precondition("hart already has current activation"));
                 }
                 if self.harts.iter().any(|record| {
                     record.id != *hart
@@ -2124,9 +2095,7 @@ impl SemanticGraph {
                 {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "hart current activation generation mismatch",
-                    ))
+                    Err(CommandError::precondition("hart current activation generation mismatch"))
                 }
             }
             SemanticCommand::CreateRuntimeActivation {
@@ -2139,20 +2108,14 @@ impl SemanticGraph {
             } => {
                 if *activation == 0 {
                     Err(CommandError::precondition("activation id=0 is invalid"))
-                } else if self
-                    .runtime_activations
-                    .iter()
-                    .any(|record| record.id == *activation)
-                {
+                } else if self.runtime_activations.iter().any(|record| record.id == *activation) {
                     Err(CommandError::precondition("activation already exists"))
                 } else if !self
                     .tasks
                     .iter()
                     .any(|task| task.id == *owner_task && task.generation == *owner_task_generation)
                 {
-                    Err(CommandError::precondition(
-                        "activation owner task generation is missing",
-                    ))
+                    Err(CommandError::precondition("activation owner task generation is missing"))
                 } else if let Some(code) = code_object
                     && code.kind != ContractObjectKind::CodeObject
                 {
@@ -2186,11 +2149,7 @@ impl SemanticGraph {
                     Err(CommandError::precondition("runnable queue id=0 is invalid"))
                 } else if label.is_empty() {
                     Err(CommandError::precondition("runnable queue label is empty"))
-                } else if self
-                    .runnable_queues
-                    .iter()
-                    .any(|record| record.id == *queue)
-                {
+                } else if self.runnable_queues.iter().any(|record| record.id == *queue) {
                     Err(CommandError::precondition("runnable queue already exists"))
                 } else {
                     Ok(())
@@ -2235,15 +2194,9 @@ impl SemanticGraph {
                 };
                 Ok(())
             }
-            SemanticCommand::EnqueueRunnable {
-                queue,
-                activation,
-                activation_generation,
-            } => {
-                let Some(queue_record) = self
-                    .runnable_queues
-                    .iter()
-                    .find(|record| record.id == *queue)
+            SemanticCommand::EnqueueRunnable { queue, activation, activation_generation } => {
+                let Some(queue_record) =
+                    self.runnable_queues.iter().find(|record| record.id == *queue)
                 else {
                     return Err(CommandError::precondition("runnable queue is missing"));
                 };
@@ -2251,17 +2204,12 @@ impl SemanticGraph {
                     return Err(CommandError::precondition("runnable queue is not active"));
                 }
                 if self.runnable_queues.iter().any(|record| {
-                    record
-                        .entries
-                        .iter()
-                        .any(|entry| entry.activation == *activation)
+                    record.entries.iter().any(|entry| entry.activation == *activation)
                 }) {
                     return Err(CommandError::precondition("activation already queued"));
                 }
-                let Some(activation_record) = self
-                    .runtime_activations
-                    .iter()
-                    .find(|record| record.id == *activation)
+                let Some(activation_record) =
+                    self.runtime_activations.iter().find(|record| record.id == *activation)
                 else {
                     return Err(CommandError::precondition("activation is missing"));
                 };
@@ -2286,9 +2234,7 @@ impl SemanticGraph {
                     ));
                 };
                 if owner_task.state == TaskState::Pending {
-                    return Err(CommandError::precondition(
-                        "pending wait task cannot be enqueued",
-                    ));
+                    return Err(CommandError::precondition("pending wait task cannot be enqueued"));
                 }
                 if let Some(store) = activation_record.owner_store {
                     let Some(generation) = activation_record.owner_store_generation else {
@@ -2309,21 +2255,15 @@ impl SemanticGraph {
                 Ok(())
             }
             SemanticCommand::DequeueRunnable { queue, activation } => {
-                let Some(queue_record) = self
-                    .runnable_queues
-                    .iter()
-                    .find(|record| record.id == *queue)
+                let Some(queue_record) =
+                    self.runnable_queues.iter().find(|record| record.id == *queue)
                 else {
                     return Err(CommandError::precondition("runnable queue is missing"));
                 };
                 if queue_record.state != RunnableQueueState::Active {
                     return Err(CommandError::precondition("runnable queue is not active"));
                 }
-                if !queue_record
-                    .entries
-                    .iter()
-                    .any(|entry| entry.activation == *activation)
-                {
+                if !queue_record.entries.iter().any(|entry| entry.activation == *activation) {
                     return Err(CommandError::precondition("activation is not queued"));
                 }
                 Ok(())
@@ -2334,24 +2274,14 @@ impl SemanticGraph {
                 activation_generation,
             } => {
                 if *context == 0 {
-                    Err(CommandError::precondition(
-                        "activation context id=0 is invalid",
-                    ))
-                } else if self
-                    .activation_contexts
-                    .iter()
-                    .any(|record| record.id == *context)
-                {
-                    Err(CommandError::precondition(
-                        "activation context already exists",
-                    ))
+                    Err(CommandError::precondition("activation context id=0 is invalid"))
+                } else if self.activation_contexts.iter().any(|record| record.id == *context) {
+                    Err(CommandError::precondition("activation context already exists"))
                 } else if self.activation_contexts.iter().any(|record| {
                     record.activation == *activation
                         && record.state != ActivationContextState::Dropped
                 }) {
-                    Err(CommandError::precondition(
-                        "activation already has a live context",
-                    ))
+                    Err(CommandError::precondition("activation already has a live context"))
                 } else if self.runtime_activations.iter().any(|record| {
                     record.id == *activation
                         && record.generation == *activation_generation
@@ -2362,9 +2292,7 @@ impl SemanticGraph {
                 }) {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "activation generation is missing or inactive",
-                    ))
+                    Err(CommandError::precondition("activation generation is missing or inactive"))
                 }
             }
             SemanticCommand::UpdateActivationContextVectorState {
@@ -2400,14 +2328,8 @@ impl SemanticGraph {
                 if *saved_context == 0 {
                     Err(CommandError::precondition("saved context id=0 is invalid"))
                 } else if *pc == 0 || *sp == 0 {
-                    Err(CommandError::precondition(
-                        "saved context requires nonzero pc and sp",
-                    ))
-                } else if self
-                    .saved_contexts
-                    .iter()
-                    .any(|record| record.id == *saved_context)
-                {
+                    Err(CommandError::precondition("saved context requires nonzero pc and sp"))
+                } else if self.saved_contexts.iter().any(|record| record.id == *saved_context) {
                     Err(CommandError::precondition("saved context already exists"))
                 } else {
                     let Some(context_record) = self.activation_contexts.iter().find(|record| {
@@ -2442,22 +2364,10 @@ impl SemanticGraph {
                         "preempted context requires nonzero context ids",
                     ))
                 } else if *pc == 0 || *sp == 0 {
-                    Err(CommandError::precondition(
-                        "preempted context requires nonzero pc and sp",
-                    ))
-                } else if self
-                    .activation_contexts
-                    .iter()
-                    .any(|record| record.id == *context)
-                {
-                    Err(CommandError::precondition(
-                        "activation context already exists",
-                    ))
-                } else if self
-                    .saved_contexts
-                    .iter()
-                    .any(|record| record.id == *saved_context)
-                {
+                    Err(CommandError::precondition("preempted context requires nonzero pc and sp"))
+                } else if self.activation_contexts.iter().any(|record| record.id == *context) {
+                    Err(CommandError::precondition("activation context already exists"))
+                } else if self.saved_contexts.iter().any(|record| record.id == *saved_context) {
                     Err(CommandError::precondition("saved context already exists"))
                 } else {
                     let Some(preemption_record) = self.preemptions.iter().find(|record| {
@@ -2465,9 +2375,7 @@ impl SemanticGraph {
                             && record.generation == *preemption_generation
                             && record.state == PreemptionState::Applied
                     }) else {
-                        return Err(CommandError::precondition(
-                            "preemption generation is missing",
-                        ));
+                        return Err(CommandError::precondition("preemption generation is missing"));
                     };
                     let Some(activation) = self.runtime_activations.iter().find(|record| {
                         record.id == preemption_record.activation
@@ -2485,9 +2393,7 @@ impl SemanticGraph {
                         record.activation == activation.id
                             && record.state != ActivationContextState::Dropped
                     }) {
-                        Err(CommandError::precondition(
-                            "activation already has live context",
-                        ))
+                        Err(CommandError::precondition("activation already has live context"))
                     } else if !self.tasks.iter().any(|task| {
                         task.id == activation.owner_task
                             && task.generation == activation.owner_task_generation
@@ -2548,29 +2454,20 @@ impl SemanticGraph {
                 ..
             } => {
                 if *interrupt == 0 {
-                    Err(CommandError::precondition(
-                        "timer interrupt id=0 is invalid",
-                    ))
+                    Err(CommandError::precondition("timer interrupt id=0 is invalid"))
                 } else if *timer_epoch == 0 {
-                    Err(CommandError::precondition(
-                        "timer interrupt epoch=0 is invalid",
-                    ))
+                    Err(CommandError::precondition("timer interrupt epoch=0 is invalid"))
                 } else if self
                     .timer_interrupts
                     .iter()
                     .any(|record| record.id == *interrupt || record.timer_epoch == *timer_epoch)
                 {
                     Err(CommandError::precondition("timer interrupt already exists"))
-                } else if let Some(previous) = self
-                    .timer_interrupts
-                    .iter()
-                    .map(|record| record.timer_epoch)
-                    .max()
+                } else if let Some(previous) =
+                    self.timer_interrupts.iter().map(|record| record.timer_epoch).max()
                     && *timer_epoch <= previous
                 {
-                    Err(CommandError::precondition(
-                        "timer interrupt epoch must be monotonic",
-                    ))
+                    Err(CommandError::precondition("timer interrupt epoch must be monotonic"))
                 } else if !self.harts.iter().any(|record| {
                     record.id == *hart
                         && record.generation == *hart_generation
@@ -2600,9 +2497,7 @@ impl SemanticGraph {
                         ))
                     }
                 } else if target_activation_generation.is_some() {
-                    Err(CommandError::precondition(
-                        "timer interrupt target activation is required",
-                    ))
+                    Err(CommandError::precondition("timer interrupt target activation is required"))
                 } else {
                     Ok(())
                 }
@@ -2621,9 +2516,7 @@ impl SemanticGraph {
                 } else if reason.is_empty() {
                     Err(CommandError::precondition("ipi event reason is empty"))
                 } else if source_hart == target_hart {
-                    Err(CommandError::precondition(
-                        "ipi source and target harts must differ",
-                    ))
+                    Err(CommandError::precondition("ipi source and target harts must differ"))
                 } else if self.ipi_events.iter().any(|record| record.id == *ipi) {
                     Err(CommandError::precondition("ipi event already exists"))
                 } else if !self.harts.iter().any(|record| {
@@ -2703,25 +2596,16 @@ impl SemanticGraph {
             } => {
                 if *preemption == 0 {
                     Err(CommandError::precondition("preemption id=0 is invalid"))
-                } else if self
-                    .preemptions
-                    .iter()
-                    .any(|record| record.id == *preemption)
-                {
+                } else if self.preemptions.iter().any(|record| record.id == *preemption) {
                     Err(CommandError::precondition("preemption already exists"))
                 } else if !self
                     .runnable_queues
                     .iter()
                     .any(|record| record.id == *queue && record.state == RunnableQueueState::Active)
                 {
-                    Err(CommandError::precondition(
-                        "preemption queue is missing or inactive",
-                    ))
+                    Err(CommandError::precondition("preemption queue is missing or inactive"))
                 } else if self.runnable_queues.iter().any(|record| {
-                    record
-                        .entries
-                        .iter()
-                        .any(|entry| entry.activation == *activation)
+                    record.entries.iter().any(|entry| entry.activation == *activation)
                 }) {
                     Err(CommandError::precondition("activation already queued"))
                 } else {
@@ -2799,21 +2683,11 @@ impl SemanticGraph {
                 ..
             } => {
                 if *decision == 0 {
-                    Err(CommandError::precondition(
-                        "scheduler decision id=0 is invalid",
-                    ))
+                    Err(CommandError::precondition("scheduler decision id=0 is invalid"))
                 } else if reason.is_empty() {
-                    Err(CommandError::precondition(
-                        "scheduler decision reason is empty",
-                    ))
-                } else if self
-                    .scheduler_decisions
-                    .iter()
-                    .any(|record| record.id == *decision)
-                {
-                    Err(CommandError::precondition(
-                        "scheduler decision already exists",
-                    ))
+                    Err(CommandError::precondition("scheduler decision reason is empty"))
+                } else if self.scheduler_decisions.iter().any(|record| record.id == *decision) {
+                    Err(CommandError::precondition("scheduler decision already exists"))
                 } else {
                     let Some(queue_record) = self.runnable_queues.iter().find(|record| {
                         record.id == *queue
@@ -3877,11 +3751,7 @@ impl SemanticGraph {
                 )
                 .map(|_| ())
                 .map_err(CommandError::precondition),
-            SemanticCommand::ResolveFsWait {
-                fs_wait,
-                fs_wait_generation,
-                ..
-            } => {
+            SemanticCommand::ResolveFsWait { fs_wait, fs_wait_generation, .. } => {
                 if self.fs_waits.iter().any(|record| {
                     record.id == *fs_wait
                         && record.generation == *fs_wait_generation
@@ -3894,17 +3764,10 @@ impl SemanticGraph {
                 }) {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "fs wait generation is missing or not pending",
-                    ))
+                    Err(CommandError::precondition("fs wait generation is missing or not pending"))
                 }
             }
-            SemanticCommand::CancelFsWait {
-                fs_wait,
-                fs_wait_generation,
-                reason,
-                ..
-            } => {
+            SemanticCommand::CancelFsWait { fs_wait, fs_wait_generation, reason, .. } => {
                 if !matches!(
                     reason,
                     WaitCancelReason::CloseFd
@@ -3929,9 +3792,7 @@ impl SemanticGraph {
                 }) {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "fs wait generation is missing or not pending",
-                    ))
+                    Err(CommandError::precondition("fs wait generation is missing or not pending"))
                 }
             }
             SemanticCommand::CleanupBlockDriver {
@@ -4729,16 +4590,11 @@ impl SemanticGraph {
                 {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "block wait completion attribution mismatch",
-                    ))
+                    Err(CommandError::precondition("block wait completion attribution mismatch"))
                 }
             }
             SemanticCommand::CancelBlockWait {
-                block_wait,
-                block_wait_generation,
-                reason,
-                ..
+                block_wait, block_wait_generation, reason, ..
             } => {
                 if !matches!(
                     reason,
@@ -5014,11 +4870,7 @@ impl SemanticGraph {
                 context_overhead_nanos,
                 ..
             } => {
-                if self
-                    .simd_benchmarks
-                    .iter()
-                    .any(|record| record.id == *benchmark)
-                {
+                if self.simd_benchmarks.iter().any(|record| record.id == *benchmark) {
                     Err(CommandError::precondition("SIMD benchmark already exists"))
                 } else {
                     self.validate_simd_benchmark(
@@ -5055,14 +4907,9 @@ impl SemanticGraph {
                 budget_nanos,
                 ..
             } => {
-                if self
-                    .simd_context_switch_benchmarks
-                    .iter()
-                    .any(|record| record.id == *benchmark)
+                if self.simd_context_switch_benchmarks.iter().any(|record| record.id == *benchmark)
                 {
-                    Err(CommandError::precondition(
-                        "SIMD context switch benchmark already exists",
-                    ))
+                    Err(CommandError::precondition("SIMD context switch benchmark already exists"))
                 } else {
                     self.validate_simd_context_switch_benchmark(
                         *benchmark,
@@ -5737,17 +5584,10 @@ impl SemanticGraph {
                 {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "io wait irq event attribution mismatch",
-                    ))
+                    Err(CommandError::precondition("io wait irq event attribution mismatch"))
                 }
             }
-            SemanticCommand::CancelIoWait {
-                io_wait,
-                io_wait_generation,
-                reason,
-                ..
-            } => {
+            SemanticCommand::CancelIoWait { io_wait, io_wait_generation, reason, .. } => {
                 if !matches!(
                     reason,
                     WaitCancelReason::DeviceFault
@@ -5766,9 +5606,7 @@ impl SemanticGraph {
                 }) {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "io wait generation is missing or not pending",
-                    ))
+                    Err(CommandError::precondition("io wait generation is missing or not pending"))
                 }
             }
             SemanticCommand::CleanupIoDriver {
@@ -5819,9 +5657,9 @@ impl SemanticGraph {
                     *kind,
                 )
                 .map_err(CommandError::precondition),
-            SemanticCommand::ValidateIoRuntime { report, .. } => self
-                .validate_io_validation_report(*report)
-                .map_err(CommandError::precondition),
+            SemanticCommand::ValidateIoRuntime { report, .. } => {
+                self.validate_io_validation_report(*report).map_err(CommandError::precondition)
+            }
             SemanticCommand::ResumeActivation {
                 resume,
                 scheduler_decision,
@@ -5831,17 +5669,9 @@ impl SemanticGraph {
                 ..
             } => {
                 if *resume == 0 {
-                    Err(CommandError::precondition(
-                        "activation resume id=0 is invalid",
-                    ))
-                } else if self
-                    .activation_resumes
-                    .iter()
-                    .any(|record| record.id == *resume)
-                {
-                    Err(CommandError::precondition(
-                        "activation resume already exists",
-                    ))
+                    Err(CommandError::precondition("activation resume id=0 is invalid"))
+                } else if self.activation_resumes.iter().any(|record| record.id == *resume) {
+                    Err(CommandError::precondition("activation resume already exists"))
                 } else {
                     let Some(decision) = self.scheduler_decisions.iter().find(|record| {
                         record.id == *scheduler_decision
@@ -5867,9 +5697,7 @@ impl SemanticGraph {
                         entry.activation == *activation
                             && entry.activation_generation == *activation_generation
                     }) {
-                        return Err(CommandError::precondition(
-                            "resume activation is not queued",
-                        ));
+                        return Err(CommandError::precondition("resume activation is not queued"));
                     }
                     let Some(record) = self.runtime_activations.iter().find(|record| {
                         record.id == *activation
@@ -6004,20 +5832,12 @@ impl SemanticGraph {
                 ..
             } => {
                 if *activation_wait == 0 {
-                    Err(CommandError::precondition(
-                        "activation wait id=0 is invalid",
-                    ))
+                    Err(CommandError::precondition("activation wait id=0 is invalid"))
                 } else if *wait == 0 {
                     Err(CommandError::precondition("wait id=0 is invalid"))
                 } else if blockers.is_empty() && deadline.is_none() {
-                    Err(CommandError::precondition(
-                        "activation wait requires blocker or deadline",
-                    ))
-                } else if self
-                    .activation_waits
-                    .iter()
-                    .any(|record| record.id == *activation_wait)
-                {
+                    Err(CommandError::precondition("activation wait requires blocker or deadline"))
+                } else if self.activation_waits.iter().any(|record| record.id == *activation_wait) {
                     Err(CommandError::precondition("activation wait already exists"))
                 } else if self.waits.iter().any(|record| record.id == *wait) {
                     Err(CommandError::precondition("wait already exists"))
@@ -6101,23 +5921,13 @@ impl SemanticGraph {
                 ..
             } => {
                 if *cleanup == 0 {
-                    return Err(CommandError::precondition(
-                        "activation cleanup id=0 is invalid",
-                    ));
+                    return Err(CommandError::precondition("activation cleanup id=0 is invalid"));
                 }
                 if reason.is_empty() {
-                    return Err(CommandError::precondition(
-                        "activation cleanup reason is empty",
-                    ));
+                    return Err(CommandError::precondition("activation cleanup reason is empty"));
                 }
-                if self
-                    .activation_cleanups
-                    .iter()
-                    .any(|record| record.id == *cleanup)
-                {
-                    return Err(CommandError::precondition(
-                        "activation cleanup already exists",
-                    ));
+                if self.activation_cleanups.iter().any(|record| record.id == *cleanup) {
+                    return Err(CommandError::precondition("activation cleanup already exists"));
                 }
                 if !self.stores.iter().any(|record| {
                     record.id == *store
@@ -6164,9 +5974,9 @@ impl SemanticGraph {
                     (None, None) => Ok(()),
                 }
             }
-            SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => Err(
-                CommandError::precondition("grant-capability requires at least one operation"),
-            ),
+            SemanticCommand::GrantCapability { operations, .. } if operations.is_empty() => {
+                Err(CommandError::precondition("grant-capability requires at least one operation"))
+            }
             SemanticCommand::GrantCapability {
                 owner_store: Some(store),
                 owner_store_generation,
@@ -6180,23 +5990,14 @@ impl SemanticGraph {
                     {
                         Ok(())
                     } else {
-                        Err(CommandError::precondition(
-                            "owner store generation is missing",
-                        ))
+                        Err(CommandError::precondition("owner store generation is missing"))
                     }
                 } else {
-                    Err(CommandError::precondition(
-                        "owner store generation is required",
-                    ))
+                    Err(CommandError::precondition("owner store generation is required"))
                 }
             }
             SemanticCommand::RevokeCapability { cap } => {
-                if self
-                    .capabilities
-                    .records()
-                    .iter()
-                    .any(|record| record.id == *cap)
-                {
+                if self.capabilities.records().iter().any(|record| record.id == *cap) {
                     Ok(())
                 } else {
                     Err(CommandError::precondition("capability does not exist"))
@@ -6215,9 +6016,7 @@ impl SemanticGraph {
                         "create-wait requires owner task or owner store",
                     ))
                 } else if blockers.is_empty() && deadline.is_none() {
-                    Err(CommandError::precondition(
-                        "create-wait requires blocker or deadline",
-                    ))
+                    Err(CommandError::precondition("create-wait requires blocker or deadline"))
                 } else {
                     if let Some(task) = owner_task
                         && !self.tasks.iter().any(|record| record.id == *task)
@@ -6231,14 +6030,10 @@ impl SemanticGraph {
                             }) {
                                 Ok(())
                             } else {
-                                Err(CommandError::precondition(
-                                    "owner store generation is missing",
-                                ))
+                                Err(CommandError::precondition("owner store generation is missing"))
                             }
                         } else {
-                            Err(CommandError::precondition(
-                                "owner store generation is required",
-                            ))
+                            Err(CommandError::precondition("owner store generation is required"))
                         }
                     } else {
                         Ok(())
@@ -6257,16 +6052,9 @@ impl SemanticGraph {
                     Err(CommandError::precondition("wait is not pending"))
                 }
             }
-            SemanticCommand::BeginCleanup {
-                cleanup,
-                store,
-                generation,
-                ..
-            } => {
+            SemanticCommand::BeginCleanup { cleanup, store, generation, .. } => {
                 if self.transactions.iter().any(|record| record.id == *cleanup) {
-                    Err(CommandError::precondition(
-                        "cleanup transaction id already exists",
-                    ))
+                    Err(CommandError::precondition("cleanup transaction id already exists"))
                 } else if self
                     .stores
                     .iter()
@@ -6274,9 +6062,7 @@ impl SemanticGraph {
                 {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "cleanup target store generation is missing",
-                    ))
+                    Err(CommandError::precondition("cleanup target store generation is missing"))
                 }
             }
             SemanticCommand::ApplyCleanupStep { cleanup, .. }
@@ -6288,9 +6074,7 @@ impl SemanticGraph {
                 {
                     Ok(())
                 } else {
-                    Err(CommandError::precondition(
-                        "cleanup transaction is not active",
-                    ))
+                    Err(CommandError::precondition("cleanup transaction is not active"))
                 }
             }
             SemanticCommand::GrantCapability { .. } | SemanticCommand::RecordTrap { .. } => Ok(()),
@@ -6299,20 +6083,12 @@ impl SemanticGraph {
 
     fn apply_prechecked_command(&mut self, command: SemanticCommand) -> bool {
         match command {
-            SemanticCommand::RegisterHart {
-                hart,
-                hardware_id,
-                label,
-                boot,
-                note,
-            } => self.register_hart_with_id(hart, hardware_id, &label, boot, &note),
-            SemanticCommand::SetHartState {
-                hart,
-                hart_generation,
-                state,
-                reason,
-                note,
-            } => self.set_hart_state(hart, hart_generation, state, &reason, &note),
+            SemanticCommand::RegisterHart { hart, hardware_id, label, boot, note } => {
+                self.register_hart_with_id(hart, hardware_id, &label, boot, &note)
+            }
+            SemanticCommand::SetHartState { hart, hart_generation, state, reason, note } => {
+                self.set_hart_state(hart, hart_generation, state, &reason, &note)
+            }
             SemanticCommand::BindHartCurrentActivation {
                 hart,
                 hart_generation,
@@ -6372,11 +6148,9 @@ impl SemanticGraph {
                 hart_generation,
                 &note,
             ),
-            SemanticCommand::EnqueueRunnable {
-                queue,
-                activation,
-                activation_generation,
-            } => self.enqueue_runnable_activation(queue, activation, activation_generation),
+            SemanticCommand::EnqueueRunnable { queue, activation, activation_generation } => {
+                self.enqueue_runnable_activation(queue, activation, activation_generation)
+            }
             SemanticCommand::DequeueRunnable { queue, activation } => {
                 self.dequeue_runnable_activation(queue, activation)
             }
@@ -7572,18 +7346,12 @@ impl SemanticGraph {
                 sequence,
                 &note,
             ),
-            SemanticCommand::ResolveFsWait {
-                fs_wait,
-                fs_wait_generation,
-                note,
-            } => self.resolve_fs_wait(fs_wait, fs_wait_generation, &note),
-            SemanticCommand::CancelFsWait {
-                fs_wait,
-                fs_wait_generation,
-                errno,
-                reason,
-                note,
-            } => self.cancel_fs_wait(fs_wait, fs_wait_generation, errno, reason, &note),
+            SemanticCommand::ResolveFsWait { fs_wait, fs_wait_generation, note } => {
+                self.resolve_fs_wait(fs_wait, fs_wait_generation, &note)
+            }
+            SemanticCommand::CancelFsWait { fs_wait, fs_wait_generation, errno, reason, note } => {
+                self.cancel_fs_wait(fs_wait, fs_wait_generation, errno, reason, &note)
+            }
             SemanticCommand::CleanupBlockDriver {
                 cleanup,
                 io_cleanup,
@@ -9180,13 +8948,9 @@ impl SemanticGraph {
                 irq_event_generation,
                 &note,
             ),
-            SemanticCommand::CancelIoWait {
-                io_wait,
-                io_wait_generation,
-                errno,
-                reason,
-                note,
-            } => self.cancel_io_wait(io_wait, io_wait_generation, errno, reason, &note),
+            SemanticCommand::CancelIoWait { io_wait, io_wait_generation, errno, reason, note } => {
+                self.cancel_io_wait(io_wait, io_wait_generation, errno, reason, &note)
+            }
             SemanticCommand::CleanupIoDriver {
                 cleanup,
                 driver_store,
@@ -9363,15 +9127,13 @@ impl SemanticGraph {
                 let Ok(cap) = cap else {
                     return false;
                 };
-                self.event_log
-                    .push("command", EventKind::CapabilityGranted { cap });
+                self.event_log.push("command", EventKind::CapabilityGranted { cap });
                 true
             }
             SemanticCommand::RevokeCapability { cap } => {
                 let changed = self.capabilities.revoke(cap);
                 if changed {
-                    self.event_log
-                        .push("command", EventKind::CapabilityRevoked { cap });
+                    self.event_log.push("command", EventKind::CapabilityRevoked { cap });
                 }
                 changed
             }
@@ -9405,20 +9167,11 @@ impl SemanticGraph {
                 self.record_wait_resolved(wait, &reason);
                 true
             }
-            SemanticCommand::CancelWait {
-                wait,
-                errno,
-                reason,
-            } => {
+            SemanticCommand::CancelWait { wait, errno, reason } => {
                 self.record_wait_cancelled_with_reason(wait, errno, reason);
                 true
             }
-            SemanticCommand::RecordTrap {
-                store,
-                task,
-                trap,
-                detail,
-            } => {
+            SemanticCommand::RecordTrap { store, task, trap, detail } => {
                 self.event_log.push(
                     "command",
                     EventKind::FaultClassified {
@@ -9431,12 +9184,7 @@ impl SemanticGraph {
                 );
                 true
             }
-            SemanticCommand::BeginCleanup {
-                cleanup,
-                store,
-                generation,
-                reason,
-            } => {
+            SemanticCommand::BeginCleanup { cleanup, store, generation, reason } => {
                 self.next_transaction_id = self.next_transaction_id.max(cleanup + 1);
                 self.transactions.push(SemanticTransactionRecord {
                     id: cleanup,
@@ -9457,12 +9205,7 @@ impl SemanticGraph {
                 );
                 true
             }
-            SemanticCommand::ApplyCleanupStep {
-                cleanup,
-                step,
-                target,
-                observed_generation,
-            } => {
+            SemanticCommand::ApplyCleanupStep { cleanup, step, target, observed_generation } => {
                 self.event_log.push(
                     "command",
                     EventKind::CleanupStepApplied {
@@ -9505,9 +9248,7 @@ fn rejected_command_result(
 }
 
 fn event_refs_between(before: usize, after: usize) -> Vec<EventId> {
-    ((before + 1)..=after)
-        .map(|event| event as EventId)
-        .collect()
+    ((before + 1)..=after).map(|event| event as EventId).collect()
 }
 
 fn command_effects(outcome: &CommandOutcome) -> Vec<CommandEffect> {

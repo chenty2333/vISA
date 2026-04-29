@@ -5,8 +5,7 @@ extern crate std;
 
 #[cfg(target_arch = "wasm32")]
 use core::panic::PanicInfo;
-use core::ptr::addr_of_mut;
-use core::slice;
+use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{ERR_EINVAL, ERR_ENOENT, ERR_ENOTDIR, NodeKind};
 

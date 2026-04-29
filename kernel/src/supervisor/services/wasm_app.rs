@@ -23,7 +23,6 @@ impl WasmApp {
     }
 
     pub(crate) fn read_bytes(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, &'static str> {
-        self.module
-            .read_memory(ptr, len, "failed to read wasm_app memory")
+        self.module.read_memory(ptr, len, "failed to read wasm_app memory")
     }
 }

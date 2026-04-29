@@ -1,5 +1,4 @@
-use std::env;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 fn main() {
     let manifest_dir =
@@ -7,10 +6,7 @@ fn main() {
     let linker_script = manifest_dir.join("linker.ld");
 
     println!("cargo:rerun-if-changed={}", linker_script.display());
-    println!(
-        "cargo:rustc-link-arg-bin=linux_user_demo=-T{}",
-        linker_script.display()
-    );
+    println!("cargo:rustc-link-arg-bin=linux_user_demo=-T{}", linker_script.display());
     println!("cargo:rustc-link-arg-bin=linux_user_demo=-static");
     println!("cargo:rustc-link-arg-bin=linux_user_demo=-no-pie");
 }

@@ -214,11 +214,7 @@ impl SemanticGraph {
         if source_events.iter().any(Option::is_none) {
             return Err("integrated osctl trace replay missing integrated scenario evidence");
         }
-        let max_source_event = source_events
-            .iter()
-            .filter_map(|event| *event)
-            .max()
-            .unwrap_or(0);
+        let max_source_event = source_events.iter().filter_map(|event| *event).max().unwrap_or(0);
         if replay_event_cursor < max_source_event || replay_event_cursor > self.event_log.cursor() {
             return Err("integrated osctl trace replay cursor does not cover source evidence");
         }
@@ -413,9 +409,8 @@ impl SemanticGraph {
             max_source_event,
         );
         let generation = 1;
-        self.next_integrated_osctl_trace_replay_id = self
-            .next_integrated_osctl_trace_replay_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_osctl_trace_replay_id =
+            self.next_integrated_osctl_trace_replay_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedOsctlTraceReplayRecorded {
@@ -435,44 +430,43 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_osctl_trace_replays
-            .push(IntegratedOsctlTraceReplayRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                integrated_smp_preemption_cleanup,
-                integrated_smp_preemption_cleanup_generation,
-                integrated_smp_network_fault,
-                integrated_smp_network_fault_generation,
-                integrated_disk_preempt_fault,
-                integrated_disk_preempt_fault_generation,
-                integrated_simd_migration,
-                integrated_simd_migration_generation,
-                integrated_network_disk_io,
-                integrated_network_disk_io_generation,
-                integrated_display_scheduler_load,
-                integrated_display_scheduler_load_generation,
-                integrated_snapshot_io_lease_barrier,
-                integrated_snapshot_io_lease_barrier_generation,
-                integrated_code_publish_smp_workload,
-                integrated_code_publish_smp_workload_generation,
-                integrated_display_panic,
-                integrated_display_panic_generation,
-                replay_event_cursor,
-                stable_view_count,
-                historical_edge_count,
-                replayed_root_count,
-                integrated_scenario_count,
-                replay_fixture_count,
-                contract_validation_ok: derived.contract_validation_ok,
-                replay_validation_ok: derived.replay_validation_ok,
-                graph_history_ok: derived.graph_history_ok,
-                roots_match_counts: derived.roots_match_counts,
-                invariant_checks,
-                generation,
-                state: IntegratedOsctlTraceReplayState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_osctl_trace_replays.push(IntegratedOsctlTraceReplayRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            integrated_smp_preemption_cleanup,
+            integrated_smp_preemption_cleanup_generation,
+            integrated_smp_network_fault,
+            integrated_smp_network_fault_generation,
+            integrated_disk_preempt_fault,
+            integrated_disk_preempt_fault_generation,
+            integrated_simd_migration,
+            integrated_simd_migration_generation,
+            integrated_network_disk_io,
+            integrated_network_disk_io_generation,
+            integrated_display_scheduler_load,
+            integrated_display_scheduler_load_generation,
+            integrated_snapshot_io_lease_barrier,
+            integrated_snapshot_io_lease_barrier_generation,
+            integrated_code_publish_smp_workload,
+            integrated_code_publish_smp_workload_generation,
+            integrated_display_panic,
+            integrated_display_panic_generation,
+            replay_event_cursor,
+            stable_view_count,
+            historical_edge_count,
+            replayed_root_count,
+            integrated_scenario_count,
+            replay_fixture_count,
+            contract_validation_ok: derived.contract_validation_ok,
+            replay_validation_ok: derived.replay_validation_ok,
+            graph_history_ok: derived.graph_history_ok,
+            roots_match_counts: derived.roots_match_counts,
+            invariant_checks,
+            generation,
+            state: IntegratedOsctlTraceReplayState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -581,11 +575,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedOsctlTraceReplayMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedOsctlTraceReplayMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

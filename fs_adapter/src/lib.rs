@@ -90,14 +90,9 @@ pub fn build_fat_read_write_evidence(
     let volume_label = fat_volume_label(config.volume_label)?;
 
     let mut image = Cursor::new(vec![0u8; config.image_bytes]);
-    fatfs::format_volume(
-        &mut image,
-        fatfs::FormatVolumeOptions::new().volume_label(volume_label),
-    )
-    .map_err(|_| "fat adapter format failed")?;
-    image
-        .seek(SeekFrom::Start(0))
-        .map_err(|_| "fat adapter seek failed")?;
+    fatfs::format_volume(&mut image, fatfs::FormatVolumeOptions::new().volume_label(volume_label))
+        .map_err(|_| "fat adapter format failed")?;
+    image.seek(SeekFrom::Start(0)).map_err(|_| "fat adapter seek failed")?;
 
     let fs = fatfs::FileSystem::new(image, fatfs::FsOptions::new())
         .map_err(|_| "fat adapter mount failed")?;
@@ -110,21 +105,17 @@ pub fn build_fat_read_write_evidence(
     }
     {
         let root = fs.root_dir();
-        let mut file = root
-            .create_file(config.file_path)
-            .map_err(|_| "fat adapter create file failed")?;
-        file.write_all(payload)
-            .map_err(|_| "fat adapter write failed")?;
+        let mut file =
+            root.create_file(config.file_path).map_err(|_| "fat adapter create file failed")?;
+        file.write_all(payload).map_err(|_| "fat adapter write failed")?;
         file.flush().map_err(|_| "fat adapter flush failed")?;
     }
     {
         let root = fs.root_dir();
-        let mut file = root
-            .open_file(config.file_path)
-            .map_err(|_| "fat adapter open file failed")?;
+        let mut file =
+            root.open_file(config.file_path).map_err(|_| "fat adapter open file failed")?;
         let mut read_back = Vec::new();
-        file.read_to_end(&mut read_back)
-            .map_err(|_| "fat adapter read failed")?;
+        file.read_to_end(&mut read_back).map_err(|_| "fat adapter read failed")?;
         let write_digest = stable_digest(payload);
         let read_digest = stable_digest(&read_back);
         return Ok(FatAdapterEvidence {
@@ -164,31 +155,21 @@ pub fn build_ext4_read_only_evidence(
         payload,
     )?;
     let fs = ext4_view::Ext4::load(Box::new(image)).map_err(|_| "ext4 adapter load failed")?;
-    let observed_label = fs
-        .label()
-        .to_str()
-        .map_err(|_| "ext4 adapter label decode failed")?;
+    let observed_label = fs.label().to_str().map_err(|_| "ext4 adapter label decode failed")?;
     if observed_label != config.volume_label {
         return Err("ext4 adapter volume label mismatch");
     }
-    let metadata = fs
-        .metadata(config.file_path)
-        .map_err(|_| "ext4 adapter metadata failed")?;
+    let metadata = fs.metadata(config.file_path).map_err(|_| "ext4 adapter metadata failed")?;
     if !metadata.file_type().is_regular_file() || metadata.len() != payload.len() as u64 {
         return Err("ext4 adapter metadata mismatch");
     }
-    let read_back = fs
-        .read(config.file_path)
-        .map_err(|_| "ext4 adapter read failed")?;
+    let read_back = fs.read(config.file_path).map_err(|_| "ext4 adapter read failed")?;
     if read_back != payload {
         return Err("ext4 adapter read mismatch");
     }
     let mut directory_entries = 0u64;
     let mut found_file = false;
-    for entry in fs
-        .read_dir("/")
-        .map_err(|_| "ext4 adapter readdir failed")?
-    {
+    for entry in fs.read_dir("/").map_err(|_| "ext4 adapter readdir failed")? {
         let entry = entry.map_err(|_| "ext4 adapter readdir entry failed")?;
         directory_entries = directory_entries.saturating_add(1);
         if entry.file_name().as_str().ok() == Some("demo.txt") {
@@ -243,9 +224,7 @@ fn build_minimal_ext4_image(
     file_path: &str,
     payload: &[u8],
 ) -> Result<Vec<u8>, &'static str> {
-    let file_name = file_path
-        .strip_prefix('/')
-        .ok_or("ext4 adapter config is invalid")?;
+    let file_name = file_path.strip_prefix('/').ok_or("ext4 adapter config is invalid")?;
     if file_name.is_empty() || file_name.as_bytes().contains(&b'/') || file_name.len() > 255 {
         return Err("ext4 adapter config is invalid");
     }
@@ -259,23 +238,12 @@ fn build_minimal_ext4_image(
     }
 
     let mut image = vec![0u8; image_bytes];
-    write_superblock(
-        &mut image[block_size..block_size * 2],
-        block_count as u32,
-        volume_label,
-    );
+    write_superblock(&mut image[block_size..block_size * 2], block_count as u32, volume_label);
     write_group_descriptor(&mut image[block_size * 2..block_size * 2 + 32]);
     write_block_bitmap(&mut image[block_size * 3..block_size * 4]);
     write_inode_bitmap(&mut image[block_size * 4..block_size * 5]);
     write_inode(&mut image, 2, 0x4000 | 0o755, block_size as u32, 7, true);
-    write_inode(
-        &mut image,
-        12,
-        0x8000 | 0o644,
-        payload.len() as u32,
-        8,
-        false,
-    );
+    write_inode(&mut image, 12, 0x8000 | 0o644, payload.len() as u32, 8, false);
     write_root_directory(&mut image[block_size * 7..block_size * 8], file_name)?;
     image[block_size * 8..block_size * 8 + payload.len()].copy_from_slice(payload);
     Ok(image)
@@ -350,9 +318,7 @@ fn write_root_directory(block: &mut [u8], file_name: &str) -> Result<(), &'stati
     write_dir_entry(block, 0, 2, 12, 2, ".");
     write_dir_entry(block, 12, 2, 12, 2, "..");
     let name_len = file_name.len();
-    let rec_len = 1024usize
-        .checked_sub(24)
-        .ok_or("ext4 adapter directory overflow")?;
+    let rec_len = 1024usize.checked_sub(24).ok_or("ext4 adapter directory overflow")?;
     if rec_len > u16::MAX as usize || name_len > 255 {
         return Err("ext4 adapter directory entry invalid");
     }
@@ -418,20 +384,14 @@ mod tests {
     fn fat_adapter_rejects_invalid_config_or_empty_payload() {
         assert_eq!(
             build_fat_read_write_evidence(
-                FatAdapterConfig {
-                    image_bytes: 512,
-                    ..FatAdapterConfig::default_vmos()
-                },
+                FatAdapterConfig { image_bytes: 512, ..FatAdapterConfig::default_vmos() },
                 b"x"
             ),
             Err("fat adapter image is too small")
         );
         assert_eq!(
             build_fat_read_write_evidence(
-                FatAdapterConfig {
-                    file_path: "DIR/DEMO.TXT",
-                    ..FatAdapterConfig::default_vmos()
-                },
+                FatAdapterConfig { file_path: "DIR/DEMO.TXT", ..FatAdapterConfig::default_vmos() },
                 b"x"
             ),
             Err("fat adapter config is invalid")
@@ -473,20 +433,14 @@ mod tests {
     fn ext4_adapter_rejects_invalid_config_or_empty_payload() {
         assert_eq!(
             build_ext4_read_only_evidence(
-                Ext4AdapterConfig {
-                    image_bytes: 1024,
-                    ..Ext4AdapterConfig::default_vmos()
-                },
+                Ext4AdapterConfig { image_bytes: 1024, ..Ext4AdapterConfig::default_vmos() },
                 b"x"
             ),
             Err("ext4 adapter config is invalid")
         );
         assert_eq!(
             build_ext4_read_only_evidence(
-                Ext4AdapterConfig {
-                    file_path: "demo.txt",
-                    ..Ext4AdapterConfig::default_vmos()
-                },
+                Ext4AdapterConfig { file_path: "demo.txt", ..Ext4AdapterConfig::default_vmos() },
                 b"x"
             ),
             Err("ext4 adapter config is invalid")

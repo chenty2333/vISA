@@ -14,10 +14,7 @@ impl SemanticGraph {
         note: &str,
     ) -> bool {
         if cleanup == 0
-            || self
-                .activation_cleanups
-                .iter()
-                .any(|record| record.id == cleanup)
+            || self.activation_cleanups.iter().any(|record| record.id == cleanup)
             || reason.is_empty()
         {
             return false;
@@ -105,11 +102,7 @@ impl SemanticGraph {
             self.waits[wait_index].cancel_reason = Some(WaitCancelReason::StoreFault);
             let wait_event = self.event_log.push(
                 "wait",
-                EventKind::WaitCancelled {
-                    wait,
-                    errno: 5,
-                    reason: WaitCancelReason::StoreFault,
-                },
+                EventKind::WaitCancelled { wait, errno: 5, reason: WaitCancelReason::StoreFault },
             );
             steps.push(ActivationCleanupStepRecord {
                 kind: ActivationCleanupStepKind::CancelWait,
@@ -345,10 +338,8 @@ impl SemanticGraph {
                     store: cleanup.store,
                 });
             }
-            let Some(activation) = self
-                .runtime_activations
-                .iter()
-                .find(|record| record.id == cleanup.activation)
+            let Some(activation) =
+                self.runtime_activations.iter().find(|record| record.id == cleanup.activation)
             else {
                 return Err(SemanticInvariantError::ActivationCleanupMissingActivation {
                     cleanup: cleanup.id,
@@ -415,10 +406,8 @@ impl SemanticGraph {
         cleanup: ActivationCleanupId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .activation_cleanups
-            .iter_mut()
-            .find(|record| record.id == cleanup)
+        if let Some(record) =
+            self.activation_cleanups.iter_mut().find(|record| record.id == cleanup)
         {
             record.activation_generation_after = generation;
         }

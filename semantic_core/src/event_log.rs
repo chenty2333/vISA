@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::*;
 
@@ -2263,22 +2265,10 @@ pub enum EventKind {
 impl EventKind {
     pub fn summary(&self) -> String {
         match self {
-            Self::HartRegistered {
-                hart,
-                hardware_id,
-                label,
-                boot,
-                generation,
-            } => format!(
+            Self::HartRegistered { hart, hardware_id, label, boot, generation } => format!(
                 "HartRegistered hart={hart} hardware_id={hardware_id} label={label} boot={boot} generation={generation}"
             ),
-            Self::HartStateChanged {
-                hart,
-                from,
-                to,
-                reason,
-                generation,
-            } => format!(
+            Self::HartStateChanged { hart, from, to, reason, generation } => format!(
                 "HartStateChanged hart={hart} from={} to={} reason={reason} generation={generation}",
                 from.as_str(),
                 to.as_str()
@@ -2306,57 +2296,28 @@ impl EventKind {
                 format!("TaskCreated task={task} frontend={}", frontend.as_str())
             }
             Self::TaskStateChanged { task, from, to } => {
-                format!(
-                    "TaskStateChanged task={task} {}->{}",
-                    from.as_str(),
-                    to.as_str()
-                )
+                format!("TaskStateChanged task={task} {}->{}", from.as_str(), to.as_str())
             }
-            Self::RuntimeActivationCreated {
-                activation,
-                task,
-                generation,
-            } => format!(
+            Self::RuntimeActivationCreated { activation, task, generation } => format!(
                 "RuntimeActivationCreated activation={activation} task={task} generation={generation}"
             ),
-            Self::RuntimeActivationStateChanged {
-                activation,
-                from,
-                to,
-                generation,
-            } => format!(
+            Self::RuntimeActivationStateChanged { activation, from, to, generation } => format!(
                 "RuntimeActivationStateChanged activation={activation} {}->{} generation={generation}",
                 from.as_str(),
                 to.as_str()
             ),
-            Self::RunnableQueueCreated {
-                queue,
-                label,
-                generation,
-            } => {
+            Self::RunnableQueueCreated { queue, label, generation } => {
                 format!("RunnableQueueCreated queue={queue} label={label} generation={generation}")
             }
-            Self::RunnableQueueOwnerBound {
-                queue,
-                hart,
-                hart_generation,
-                generation,
-                note,
-            } => format!(
-                "RunnableQueueOwnerBound queue={queue} hart={hart}@{hart_generation} generation={generation} note={note}"
-            ),
-            Self::RunnableQueued {
-                queue,
-                activation,
-                activation_generation,
-            } => format!(
+            Self::RunnableQueueOwnerBound { queue, hart, hart_generation, generation, note } => {
+                format!(
+                    "RunnableQueueOwnerBound queue={queue} hart={hart}@{hart_generation} generation={generation} note={note}"
+                )
+            }
+            Self::RunnableQueued { queue, activation, activation_generation } => format!(
                 "RunnableQueued queue={queue} activation={activation}@{activation_generation}"
             ),
-            Self::RunnableDequeued {
-                queue,
-                activation,
-                activation_generation,
-            } => format!(
+            Self::RunnableDequeued { queue, activation, activation_generation } => format!(
                 "RunnableDequeued queue={queue} activation={activation}@{activation_generation}"
             ),
             Self::ActivationContextCreated {
@@ -2376,9 +2337,7 @@ impl EventKind {
                 generation,
             } => format!(
                 "ActivationContextVectorStateUpdated context={context}@{context_generation_before}->{context_generation_after} vector_state={} vector_status={} generation={generation}",
-                vector_state
-                    .map(ContractObjectRef::summary)
-                    .unwrap_or_else(|| "none".to_string()),
+                vector_state.map(ContractObjectRef::summary).unwrap_or_else(|| "none".to_string()),
                 vector_status.as_str()
             ),
             Self::LazyVectorStateEnabled {
@@ -3026,16 +2985,12 @@ impl EventKind {
             } => format!(
                 "IoWaitResolved io_wait={io_wait} wait={wait}@{wait_generation} irq_event={irq_event}@{irq_event_generation} generation={generation}"
             ),
-            Self::IoWaitCancelled {
-                io_wait,
-                wait,
-                wait_generation,
-                reason,
-                generation,
-            } => format!(
-                "IoWaitCancelled io_wait={io_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
-                reason.as_str()
-            ),
+            Self::IoWaitCancelled { io_wait, wait, wait_generation, reason, generation } => {
+                format!(
+                    "IoWaitCancelled io_wait={io_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                    reason.as_str()
+                )
+            }
             Self::IoCleanupStarted {
                 cleanup,
                 driver_store,
@@ -3191,16 +3146,12 @@ impl EventKind {
             } => format!(
                 "BlockWaitResolved block_wait={block_wait} wait={wait}@{wait_generation} block_completion={block_completion}@{block_completion_generation} generation={generation}"
             ),
-            Self::BlockWaitCancelled {
-                block_wait,
-                wait,
-                wait_generation,
-                reason,
-                generation,
-            } => format!(
-                "BlockWaitCancelled block_wait={block_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
-                reason.as_str()
-            ),
+            Self::BlockWaitCancelled { block_wait, wait, wait_generation, reason, generation } => {
+                format!(
+                    "BlockWaitCancelled block_wait={block_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                    reason.as_str()
+                )
+            }
             Self::BlockPendingIoPolicyApplied {
                 policy,
                 block_wait,
@@ -3373,9 +3324,7 @@ impl EventKind {
                 code_object.summary(),
                 trap.summary(),
                 target_feature_set.summary(),
-                vector_state
-                    .map(|record| record.summary())
-                    .unwrap_or_else(|| "none".to_string()),
+                vector_state.map(|record| record.summary()).unwrap_or_else(|| "none".to_string()),
                 kind.as_str(),
                 effect.as_str()
             ),
@@ -3682,9 +3631,7 @@ impl EventKind {
                 generation,
             } => format!(
                 "DisplaySnapshotBarrierValidated barrier={barrier} owner_store={owner_store}@{owner_store_generation} display={display}@{display_generation} framebuffer={framebuffer}@{framebuffer_generation} display_cleanup={}:{} active_framebuffer_window_leases={active_framebuffer_window_lease_count} active_framebuffer_mappings={active_framebuffer_mapping_count} dirty_framebuffer_regions={dirty_framebuffer_region_count} generation={generation}",
-                display_cleanup
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "none".to_string()),
+                display_cleanup.map(|id| id.to_string()).unwrap_or_else(|| "none".to_string()),
                 display_cleanup_generation
                     .map(|generation| generation.to_string())
                     .unwrap_or_else(|| "none".to_string())
@@ -4058,24 +4005,15 @@ impl EventKind {
                 "FsWaitCreated fs_wait={fs_wait} wait={wait}@{wait_generation} owner_store={owner_store}@{owner_store_generation} file_object={file_object}@{file_object_generation} directory_object={directory_object}@{directory_object_generation} file_handle_capability={file_handle_capability}@{file_handle_capability_generation} operation={operation} blocker={} sequence={sequence} byte_len={byte_len} generation={generation}",
                 blocker.summary()
             ),
-            Self::FsWaitResolved {
-                fs_wait,
-                wait,
-                wait_generation,
-                generation,
-            } => format!(
+            Self::FsWaitResolved { fs_wait, wait, wait_generation, generation } => format!(
                 "FsWaitResolved fs_wait={fs_wait} wait={wait}@{wait_generation} generation={generation}"
             ),
-            Self::FsWaitCancelled {
-                fs_wait,
-                wait,
-                wait_generation,
-                reason,
-                generation,
-            } => format!(
-                "FsWaitCancelled fs_wait={fs_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
-                reason.as_str()
-            ),
+            Self::FsWaitCancelled { fs_wait, wait, wait_generation, reason, generation } => {
+                format!(
+                    "FsWaitCancelled fs_wait={fs_wait} wait={wait}@{wait_generation} reason={} generation={generation}",
+                    reason.as_str()
+                )
+            }
             Self::PacketBufferObjectRecorded {
                 packet_buffer,
                 packet_device,
@@ -4700,28 +4638,17 @@ impl EventKind {
             } => format!(
                 "RuntimeActivationCleanupCompleted cleanup={cleanup} store={store}@{target_store_generation}->{result_store_generation} activation={activation}@{activation_generation_before}->{activation_generation_after} generation={generation}"
             ),
-            Self::ResourceCreated {
-                resource,
-                kind,
-                generation,
-            } => format!(
+            Self::ResourceCreated { resource, kind, generation } => format!(
                 "ResourceCreated resource={resource} kind={} generation={generation}",
                 kind.as_str()
             ),
-            Self::ResourceClosed {
-                resource,
-                generation,
-            } => format!("ResourceClosed resource={resource} generation={generation}"),
-            Self::ResourceHandleValidated {
-                resource,
-                generation,
-            } => format!("ResourceHandleValidated resource={resource} generation={generation}"),
-            Self::ResourceHandleRejected {
-                resource,
-                expected,
-                actual,
-                reason,
-            } => match actual {
+            Self::ResourceClosed { resource, generation } => {
+                format!("ResourceClosed resource={resource} generation={generation}")
+            }
+            Self::ResourceHandleValidated { resource, generation } => {
+                format!("ResourceHandleValidated resource={resource} generation={generation}")
+            }
+            Self::ResourceHandleRejected { resource, expected, actual, reason } => match actual {
                 Some(actual) => format!(
                     "ResourceHandleRejected resource={resource} expected={expected} actual={actual} reason={}",
                     reason.as_str()
@@ -4731,31 +4658,16 @@ impl EventKind {
                     reason.as_str()
                 ),
             },
-            Self::AuthorityBound {
-                authority,
-                resource,
-                kind,
-                subject,
-                object,
-                generation,
-            } => format!(
-                "AuthorityBound authority={authority} resource={resource} kind={} subject={subject} object={object} generation={generation}",
-                kind.as_str()
-            ),
-            Self::AuthorityReleased {
-                authority,
-                resource,
-                generation,
-                reason,
-            } => format!(
+            Self::AuthorityBound { authority, resource, kind, subject, object, generation } => {
+                format!(
+                    "AuthorityBound authority={authority} resource={resource} kind={} subject={subject} object={object} generation={generation}",
+                    kind.as_str()
+                )
+            }
+            Self::AuthorityReleased { authority, resource, generation, reason } => format!(
                 "AuthorityReleased authority={authority} resource={resource} generation={generation} reason={reason}"
             ),
-            Self::AuthorityRevoked {
-                authority,
-                resource,
-                generation,
-                reason,
-            } => format!(
+            Self::AuthorityRevoked { authority, resource, generation, reason } => format!(
                 "AuthorityRevoked authority={authority} resource={resource} generation={generation} reason={reason}"
             ),
             Self::BoundaryPublished {
@@ -4789,12 +4701,7 @@ impl EventKind {
                     state.as_str()
                 )
             }
-            Self::WaitCreated {
-                wait,
-                task,
-                kind,
-                generation,
-            } => format!(
+            Self::WaitCreated { wait, task, kind, generation } => format!(
                 "WaitCreated wait={wait} task={task} kind={} generation={generation}",
                 kind.as_str()
             ),
@@ -4807,15 +4714,8 @@ impl EventKind {
             Self::WaitConsumed { wait } => {
                 format!("WaitConsumed wait={wait}")
             }
-            Self::WaitCancelled {
-                wait,
-                errno,
-                reason,
-            } => {
-                format!(
-                    "WaitCancelled wait={wait} errno={errno} reason={}",
-                    reason.as_str()
-                )
+            Self::WaitCancelled { wait, errno, reason } => {
+                format!("WaitCancelled wait={wait} errno={errno} reason={}", reason.as_str())
             }
             Self::WaitInterrupted { wait, reason } => {
                 format!("WaitInterrupted wait={wait} reason={}", reason.as_str())
@@ -4826,12 +4726,7 @@ impl EventKind {
             Self::WaitTokenValidated { wait, generation } => {
                 format!("WaitTokenValidated wait={wait} generation={generation}")
             }
-            Self::WaitTokenRejected {
-                wait,
-                expected,
-                actual,
-                reason,
-            } => match actual {
+            Self::WaitTokenRejected { wait, expected, actual, reason } => match actual {
                 Some(actual) => format!(
                     "WaitTokenRejected wait={wait} expected={expected} actual={actual} reason={}",
                     reason.as_str()
@@ -4843,62 +4738,34 @@ impl EventKind {
             },
             Self::CapabilityGranted { cap } => format!("CapabilityGranted cap={cap}"),
             Self::CapabilityRevoked { cap } => format!("CapabilityRevoked cap={cap}"),
-            Self::CapabilityUsed {
-                cap,
-                subject,
-                object,
-                operation,
-                generation,
-            } => format!(
+            Self::CapabilityUsed { cap, subject, object, operation, generation } => format!(
                 "CapabilityUsed cap={cap} subject={subject} object={object} op={operation} generation={generation}"
             ),
-            Self::CapabilityDenied {
-                subject,
-                object,
-                operation,
-                reason,
-            } => format!(
+            Self::CapabilityDenied { subject, object, operation, reason } => format!(
                 "CapabilityDenied subject={subject} object={object} op={operation} reason={}",
                 reason.as_str()
             ),
-            Self::CapabilityGenerationMismatch {
-                subject,
-                object,
-                operation,
-                expected,
-                actual,
-            } => match actual {
-                Some(actual) => format!(
-                    "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual={actual}"
-                ),
-                None => format!(
-                    "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual=missing"
-                ),
-            },
-            Self::HostcallEntered {
-                label,
-                class,
-                subject,
-                object,
-                operation,
-            } => format!(
+            Self::CapabilityGenerationMismatch { subject, object, operation, expected, actual } => {
+                match actual {
+                    Some(actual) => format!(
+                        "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual={actual}"
+                    ),
+                    None => format!(
+                        "CapabilityGenerationMismatch subject={subject} object={object} op={operation} expected={expected} actual=missing"
+                    ),
+                }
+            }
+            Self::HostcallEntered { label, class, subject, object, operation } => format!(
                 "HostcallEntered label={label} class={} subject={subject} object={object} op={operation}",
                 class.as_str()
             ),
-            Self::SubstrateUnsupported {
-                authority,
-                operation,
-                requester,
-                artifact,
-                store,
-            } => {
+            Self::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
                 let requester = requester.as_deref().unwrap_or("none");
                 let artifact = artifact
                     .map(|artifact| artifact.to_string())
                     .unwrap_or_else(|| "none".to_string());
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "SubstrateUnsupported authority={authority} op={operation} requester={requester} artifact={artifact} store={store}"
                 )
@@ -4916,9 +4783,8 @@ impl EventKind {
                 let artifact = artifact
                     .map(|artifact| artifact.to_string())
                     .unwrap_or_else(|| "none".to_string());
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
                 let capability = capability
                     .map(|capability| capability.to_string())
                     .unwrap_or_else(|| "none".to_string());
@@ -4943,9 +4809,8 @@ impl EventKind {
                 let artifact = artifact
                     .map(|artifact| artifact.to_string())
                     .unwrap_or_else(|| "none".to_string());
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "SubstratePanic authority={authority} op={operation} requester={requester} artifact={artifact} store={store} panic_epoch={panic_epoch} panic_cpu={panic_cpu} panic_reason_code={panic_reason_code}"
                 )
@@ -4962,9 +4827,8 @@ impl EventKind {
                 let artifact = artifact
                     .map(|artifact| artifact.to_string())
                     .unwrap_or_else(|| "none".to_string());
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "InterfaceUnsupported kind={interface_kind} interface={interface} op={operation} requester={requester} artifact={artifact} store={store}"
                 )
@@ -4972,68 +4836,37 @@ impl EventKind {
             Self::FaultDomainRegistered { domain } => {
                 format!("FaultDomainRegistered domain={domain}")
             }
-            Self::FaultDomainStateChanged {
-                domain,
-                from,
-                to,
-                generation,
-            } => format!(
+            Self::FaultDomainStateChanged { domain, from, to, generation } => format!(
                 "FaultDomainStateChanged domain={domain} {}->{} generation={generation}",
                 from.as_str(),
                 to.as_str()
             ),
-            Self::FaultClassified {
-                trap,
-                class,
-                store,
-                task,
-                detail,
-            } => {
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let task = task
-                    .map(|task| task.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+            Self::FaultClassified { trap, class, store, task, detail } => {
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
+                let task = task.map(|task| task.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "FaultClassified trap={} class={} store={store} task={task} detail={detail}",
                     trap.as_str(),
                     class.as_str()
                 )
             }
-            Self::DriverTrap {
-                domain,
-                trap,
-                detail,
-            } => match domain {
-                Some(domain) => format!(
-                    "DriverTrap domain={domain} trap={} detail={detail}",
-                    trap.as_str()
-                ),
+            Self::DriverTrap { domain, trap, detail } => match domain {
+                Some(domain) => {
+                    format!("DriverTrap domain={domain} trap={} detail={detail}", trap.as_str())
+                }
                 None => format!("DriverTrap trap={} detail={detail}", trap.as_str()),
             },
-            Self::PacketReceived {
-                interface,
-                socket,
-                ready_key,
-                len,
-            } => {
-                let socket = socket
-                    .map(|socket| socket.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+            Self::PacketReceived { interface, socket, ready_key, len } => {
+                let socket =
+                    socket.map(|socket| socket.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "PacketReceived interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
                 )
             }
-            Self::PacketTransmitted {
-                interface,
-                socket,
-                ready_key,
-                len,
-            } => {
-                let socket = socket
-                    .map(|socket| socket.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+            Self::PacketTransmitted { interface, socket, ready_key, len } => {
+                let socket =
+                    socket.map(|socket| socket.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "PacketTransmitted interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
                 )
@@ -5051,33 +4884,19 @@ impl EventKind {
             Self::DriverCompletion { device, operation } => {
                 format!("DriverCompletion device={device} operation={operation}")
             }
-            Self::DmaSubmitted {
-                buffer,
-                device,
-                len,
-            } => format!("DmaSubmitted buffer={buffer} device={device} len={len}"),
-            Self::DmaCompleted {
-                buffer,
-                device,
-                len,
-            } => format!("DmaCompleted buffer={buffer} device={device} len={len}"),
+            Self::DmaSubmitted { buffer, device, len } => {
+                format!("DmaSubmitted buffer={buffer} device={device} len={len}")
+            }
+            Self::DmaCompleted { buffer, device, len } => {
+                format!("DmaCompleted buffer={buffer} device={device} len={len}")
+            }
             Self::FaultDomainRestarted { domain } => {
                 format!("FaultDomainRestarted domain={domain}")
             }
-            Self::StoreRegistered {
-                store,
-                domain,
-                resource,
-                generation,
-            } => format!(
+            Self::StoreRegistered { store, domain, resource, generation } => format!(
                 "StoreRegistered store={store} domain={domain} resource={resource} generation={generation}"
             ),
-            Self::StoreStateChanged {
-                store,
-                from,
-                to,
-                generation,
-            } => format!(
+            Self::StoreStateChanged { store, from, to, generation } => format!(
                 "StoreStateChanged store={store} {}->{} generation={generation}",
                 from.as_str(),
                 to.as_str()
@@ -5120,12 +4939,8 @@ impl EventKind {
             Self::StoreActivationHandleValidated { store, generation } => {
                 format!("StoreActivationHandleValidated store={store} generation={generation}")
             }
-            Self::StoreActivationHandleRejected {
-                store,
-                expected,
-                actual,
-                reason,
-            } => match actual {
+            Self::StoreActivationHandleRejected { store, expected, actual, reason } => match actual
+            {
                 Some(actual) => format!(
                     "StoreActivationHandleRejected store={store} expected={expected} actual={actual} reason={}",
                     reason.as_str()
@@ -5135,31 +4950,18 @@ impl EventKind {
                     reason.as_str()
                 ),
             },
-            Self::StoreTrap {
-                store,
-                trap,
-                detail,
-            } => {
-                format!(
-                    "StoreTrap store={store} trap={} detail={detail}",
-                    trap.as_str()
-                )
+            Self::StoreTrap { store, trap, detail } => {
+                format!("StoreTrap store={store} trap={} detail={detail}", trap.as_str())
             }
-            Self::StoreDropped {
-                store,
-                generation,
-                resource,
-            } => match resource {
+            Self::StoreDropped { store, generation, resource } => match resource {
                 Some(resource) => format!(
                     "StoreDropped store={store} generation={generation} resource={resource}"
                 ),
                 None => format!("StoreDropped store={store} generation={generation}"),
             },
-            Self::StoreRebound {
-                store,
-                generation,
-                resource,
-            } => format!("StoreRebound store={store} generation={generation} resource={resource}"),
+            Self::StoreRebound { store, generation, resource } => {
+                format!("StoreRebound store={store} generation={generation} resource={resource}")
+            }
             Self::WindowLeaseCreated { lease, generation } => {
                 format!("WindowLeaseCreated lease={lease} generation={generation}")
             }
@@ -5178,43 +4980,23 @@ impl EventKind {
             Self::FastPathPlanInvalidated { plan } => {
                 format!("FastPathPlanInvalidated plan={plan}")
             }
-            Self::TransactionBegan {
-                transaction,
-                store,
-                task,
-                label,
-            } => {
-                let store = store
-                    .map(|store| store.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let task = task
-                    .map(|task| task.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+            Self::TransactionBegan { transaction, store, task, label } => {
+                let store =
+                    store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
+                let task = task.map(|task| task.to_string()).unwrap_or_else(|| "none".to_string());
                 format!(
                     "TransactionBegan transaction={transaction} store={store} task={task} label={label}"
                 )
             }
-            Self::TransactionCommitted {
-                transaction,
-                generation,
-            } => {
+            Self::TransactionCommitted { transaction, generation } => {
                 format!("TransactionCommitted transaction={transaction} generation={generation}")
             }
-            Self::TransactionRolledBack {
-                transaction,
-                reason,
-                generation,
-            } => {
+            Self::TransactionRolledBack { transaction, reason, generation } => {
                 format!(
                     "TransactionRolledBack transaction={transaction} reason={reason} generation={generation}"
                 )
             }
-            Self::CleanupStepApplied {
-                cleanup,
-                step,
-                target,
-                observed_generation,
-            } => {
+            Self::CleanupStepApplied { cleanup, step, target, observed_generation } => {
                 format!(
                     "CleanupStepApplied cleanup={cleanup} step={step} target={target} observed_generation={observed_generation}"
                 )
@@ -5237,13 +5019,7 @@ pub struct EventRecord {
 
 impl EventRecord {
     pub fn summary(&self) -> String {
-        format!(
-            "#{} epoch={} source={} {}",
-            self.id,
-            self.epoch,
-            self.source,
-            self.kind.summary()
-        )
+        format!("#{} epoch={} source={} {}", self.id, self.epoch, self.source, self.kind.summary())
     }
 }
 
@@ -5257,21 +5033,11 @@ pub struct EventLog {
 
 impl EventLog {
     pub const fn new() -> Self {
-        Self {
-            next_id: 1,
-            epoch: 0,
-            runtime_mode: RuntimeMode::Research,
-            events: Vec::new(),
-        }
+        Self { next_id: 1, epoch: 0, runtime_mode: RuntimeMode::Research, events: Vec::new() }
     }
 
     pub const fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
-        Self {
-            next_id: 1,
-            epoch: 0,
-            runtime_mode,
-            events: Vec::new(),
-        }
+        Self { next_id: 1, epoch: 0, runtime_mode, events: Vec::new() }
     }
 
     pub const fn runtime_mode(&self) -> RuntimeMode {

@@ -15,11 +15,7 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated network/disk IO id=0 is invalid");
         }
-        if self
-            .integrated_network_disk_ios
-            .iter()
-            .any(|record| record.id == integrated)
-        {
+        if self.integrated_network_disk_ios.iter().any(|record| record.id == integrated) {
             return Err("integrated network/disk IO evidence already exists");
         }
         if scenario.is_empty() {
@@ -152,9 +148,8 @@ impl SemanticGraph {
         };
         let max_p99_latency_nanos = network.p99_latency_nanos.max(block.p99_latency_nanos);
         let generation = 1;
-        self.next_integrated_network_disk_io_id = self
-            .next_integrated_network_disk_io_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_network_disk_io_id =
+            self.next_integrated_network_disk_io_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedNetworkDiskIoRecorded {
@@ -179,42 +174,41 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_network_disk_ios
-            .push(IntegratedNetworkDiskIoRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                network_benchmark,
-                network_benchmark_generation,
-                block_benchmark,
-                block_benchmark_generation,
-                network_owner_store: network.owner_store,
-                network_owner_store_generation: network.owner_store_generation,
-                network_adapter: network.adapter,
-                network_adapter_generation: network.adapter_generation,
-                packet_device: network.packet_device,
-                packet_device_generation: network.packet_device_generation,
-                socket: network.socket,
-                socket_generation: network.socket_generation,
-                block_backend: block.backend,
-                block_device: block.block_device,
-                block_device_generation: block.block_device_generation,
-                block_request_queue: block.request_queue,
-                block_request_queue_generation: block.request_queue_generation,
-                block_dma_buffer: block.block_dma_buffer,
-                block_dma_buffer_generation: block.block_dma_buffer_generation,
-                network_sample_bytes: network.sample_bytes,
-                block_sample_bytes: block.sample_bytes,
-                network_sample_packets: network.sample_packets,
-                block_sample_requests: block.sample_requests,
-                concurrent_window_nanos,
-                combined_throughput_bytes_per_sec,
-                max_p99_latency_nanos,
-                invariant_checks,
-                generation,
-                state: IntegratedNetworkDiskIoState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_network_disk_ios.push(IntegratedNetworkDiskIoRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            network_benchmark,
+            network_benchmark_generation,
+            block_benchmark,
+            block_benchmark_generation,
+            network_owner_store: network.owner_store,
+            network_owner_store_generation: network.owner_store_generation,
+            network_adapter: network.adapter,
+            network_adapter_generation: network.adapter_generation,
+            packet_device: network.packet_device,
+            packet_device_generation: network.packet_device_generation,
+            socket: network.socket,
+            socket_generation: network.socket_generation,
+            block_backend: block.backend,
+            block_device: block.block_device,
+            block_device_generation: block.block_device_generation,
+            block_request_queue: block.request_queue,
+            block_request_queue_generation: block.request_queue_generation,
+            block_dma_buffer: block.block_dma_buffer,
+            block_dma_buffer_generation: block.block_dma_buffer_generation,
+            network_sample_bytes: network.sample_bytes,
+            block_sample_bytes: block.sample_bytes,
+            network_sample_packets: network.sample_packets,
+            block_sample_requests: block.sample_requests,
+            concurrent_window_nanos,
+            combined_throughput_bytes_per_sec,
+            max_p99_latency_nanos,
+            invariant_checks,
+            generation,
+            state: IntegratedNetworkDiskIoState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -281,12 +275,10 @@ impl SemanticGraph {
                     || generation == 0
                     || !refs.into_iter().any(|item| item == (id, generation))
                 {
-                    return Err(
-                        SemanticInvariantError::IntegratedNetworkDiskIoMissingEvidence {
-                            integrated: record.id,
-                            evidence: label,
-                        },
-                    );
+                    return Err(SemanticInvariantError::IntegratedNetworkDiskIoMissingEvidence {
+                        integrated: record.id,
+                        evidence: label,
+                    });
                 }
             }
             if self
@@ -352,11 +344,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedNetworkDiskIoMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedNetworkDiskIoMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

@@ -5,8 +5,7 @@ extern crate std;
 
 #[cfg(target_arch = "wasm32")]
 use core::panic::PanicInfo;
-use core::ptr::addr_of_mut;
-use core::slice;
+use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind,
@@ -33,11 +32,7 @@ enum PendingOp {
     Empty,
     Sleep,
     FutexWait,
-    EpollWait {
-        epfd: u32,
-        max_events: u32,
-        timeout_ms: u64,
-    },
+    EpollWait { epfd: u32, max_events: u32, timeout_ms: u64 },
 }
 
 #[repr(C)]
@@ -117,13 +112,8 @@ pub extern "C" fn resume_wait(token: u32) -> u64 {
             PackedStep::plan(PlanKind::Write).raw()
         }
         Some(PendingOp::FutexWait) => PackedStep::ready(0).raw(),
-        Some(PendingOp::EpollWait {
-            epfd, max_events, ..
-        }) => {
-            reset_plan(
-                PlanKind::EpollReady,
-                [epfd as u64, max_events as u64, 0, 0, 0, 0],
-            );
+        Some(PendingOp::EpollWait { epfd, max_events, .. }) => {
+            reset_plan(PlanKind::EpollReady, [epfd as u64, max_events as u64, 0, 0, 0, 0]);
             PackedStep::plan(PlanKind::EpollReady).raw()
         }
         _ => PackedStep::error(-ERR_EINVAL).raw(),
@@ -144,11 +134,9 @@ pub extern "C" fn restart_wait(token: u32, class: u32) -> u64 {
         return PackedStep::error(-ERR_EINVAL).raw();
     };
     match peek_pending_op(token) {
-        Some(PendingOp::EpollWait {
-            epfd,
-            max_events,
-            timeout_ms,
-        }) => restart_epoll_wait(token, epfd, max_events, timeout_ms, class).raw(),
+        Some(PendingOp::EpollWait { epfd, max_events, timeout_ms }) => {
+            restart_epoll_wait(token, epfd, max_events, timeout_ms, class).raw()
+        }
         Some(PendingOp::Sleep) | Some(PendingOp::FutexWait) | Some(PendingOp::Empty) | None => {
             PackedStep::error(-ERR_EINVAL).raw()
         }
@@ -251,18 +239,11 @@ fn dispatch_nanosleep(ptr: u64, len: u64) -> PackedStep {
 }
 
 fn plan_sleep(duration_ms: u64) -> PackedStep {
-    let clamped = if duration_ms > u32::MAX as u64 {
-        u32::MAX
-    } else {
-        duration_ms as u32
-    };
+    let clamped = if duration_ms > u32::MAX as u64 { u32::MAX } else { duration_ms as u32 };
     let Some(resume_cookie) = allocate_pending_op(PendingOp::Sleep) else {
         return PackedStep::error(-ERR_EINVAL);
     };
-    reset_plan(
-        PlanKind::Sleep,
-        [resume_cookie as u64, clamped as u64, 0, 0, 0, 0],
-    );
+    reset_plan(PlanKind::Sleep, [resume_cookie as u64, clamped as u64, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Sleep)
 }
 
@@ -301,15 +282,8 @@ fn plan_futex_wait(key: u64, expected: u64, timeout_ms: u64, current_word: u64) 
     let Some(resume_cookie) = allocate_pending_op(PendingOp::FutexWait) else {
         return PackedStep::error(-ERR_EINVAL);
     };
-    let timeout = if timeout_ms == u64::MAX {
-        u64::MAX
-    } else {
-        (timeout_ms as u32) as u64
-    };
-    reset_plan(
-        PlanKind::FutexWait,
-        [key, timeout, resume_cookie as u64, 0, 0, 0],
-    );
+    let timeout = if timeout_ms == u64::MAX { u64::MAX } else { (timeout_ms as u32) as u64 };
+    reset_plan(PlanKind::FutexWait, [key, timeout, resume_cookie as u64, 0, 0, 0]);
     PackedStep::plan(PlanKind::FutexWait)
 }
 
@@ -343,15 +317,8 @@ fn plan_epoll_wait(epfd: u64, max_events: u64, timeout_ms: u64) -> PackedStep {
         return PackedStep::error(-ERR_EINVAL);
     };
 
-    let timeout_ms = if timeout_ms < 0_i64 as u64 {
-        u64::MAX
-    } else {
-        timeout_ms
-    };
-    reset_plan(
-        PlanKind::EpollWait,
-        [epfd, max_events, timeout_ms, resume_cookie as u64, 0, 0],
-    );
+    let timeout_ms = if timeout_ms < 0_i64 as u64 { u64::MAX } else { timeout_ms };
+    reset_plan(PlanKind::EpollWait, [epfd, max_events, timeout_ms, resume_cookie as u64, 0, 0]);
     PackedStep::plan(PlanKind::EpollWait)
 }
 
@@ -391,18 +358,12 @@ fn plan_recvfrom(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u
 }
 
 fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
-    reset_plan(
-        PlanKind::SetSockOpt,
-        [fd, level, optname, optval, optlen, 0],
-    );
+    reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, 0]);
     PackedStep::plan(PlanKind::SetSockOpt)
 }
 
 fn plan_getsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
-    reset_plan(
-        PlanKind::GetSockOpt,
-        [fd, level, optname, optval, optlen, 0],
-    );
+    reset_plan(PlanKind::GetSockOpt, [fd, level, optname, optval, optlen, 0]);
     PackedStep::plan(PlanKind::GetSockOpt)
 }
 
@@ -540,14 +501,7 @@ fn restart_epoll_wait(
     let _ = class;
     reset_plan(
         PlanKind::EpollWait,
-        [
-            epfd as u64,
-            max_events as u64,
-            timeout_ms,
-            resume_cookie as u64,
-            0,
-            0,
-        ],
+        [epfd as u64, max_events as u64, timeout_ms, resume_cookie as u64, 0, 0],
     );
     PackedStep::plan(PlanKind::EpollWait)
 }
@@ -565,9 +519,7 @@ fn parse_timespec_ms(ptr: u32, len: u32) -> Result<u64, i32> {
         return Err(-ERR_EINVAL);
     }
 
-    Ok((tv_sec as u64)
-        .saturating_mul(1000)
-        .saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
+    Ok((tv_sec as u64).saturating_mul(1000).saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
 }
 
 fn arg_bytes(ptr: u32, len: u32) -> Result<&'static [u8], i32> {

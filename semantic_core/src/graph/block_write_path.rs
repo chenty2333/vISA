@@ -46,11 +46,7 @@ impl SemanticGraph {
         if write_path == 0 {
             return Err("block write path id=0 is invalid");
         }
-        if self
-            .block_write_paths
-            .iter()
-            .any(|record| record.id == write_path)
-        {
+        if self.block_write_paths.iter().any(|record| record.id == write_path) {
             return Err("block write path already exists");
         }
         if backend.generation == 0
@@ -172,9 +168,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_write_path_id = self
-            .next_block_write_path_id
-            .max(write_path.saturating_add(1));
+        self.next_block_write_path_id =
+            self.next_block_write_path_id.max(write_path.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockWritePathRecorded {
@@ -372,10 +367,8 @@ impl SemanticGraph {
         write_path: BlockWritePathId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_write_paths
-            .iter_mut()
-            .find(|record| record.id == write_path)
+        if let Some(record) =
+            self.block_write_paths.iter_mut().find(|record| record.id == write_path)
         {
             record.backend.generation = generation;
         }
@@ -387,10 +380,8 @@ impl SemanticGraph {
         write_path: BlockWritePathId,
         payload_digest: u64,
     ) {
-        if let Some(record) = self
-            .block_write_paths
-            .iter_mut()
-            .find(|record| record.id == write_path)
+        if let Some(record) =
+            self.block_write_paths.iter_mut().find(|record| record.id == write_path)
         {
             record.payload_digest = payload_digest;
         }

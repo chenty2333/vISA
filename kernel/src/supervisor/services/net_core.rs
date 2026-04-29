@@ -1,10 +1,13 @@
 use alloc::vec::Vec;
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
-use super::super::types::ServiceCallError;
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
     VIRTIO_NET0_TX_QUEUE_DEPTH,
+};
+
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::ServiceCallError,
 };
 
 const NET_CORE_WASM: &[u8] = include_bytes!(env!("VMOS_NET_CORE_WASM"));
@@ -34,27 +37,19 @@ impl NetCoreService {
         let send_socket = io.bind("send_socket", "missing net_core send_socket export")?;
         let take_tx_frame = io.bind("take_tx_frame", "missing net_core take_tx_frame export")?;
         let recv_socket = io.bind("recv_socket", "missing net_core recv_socket export")?;
-        let deliver_packet_frame = io.bind(
-            "deliver_packet_frame",
-            "missing net_core deliver_packet_frame export",
-        )?;
+        let deliver_packet_frame =
+            io.bind("deliver_packet_frame", "missing net_core deliver_packet_frame export")?;
         let socket_count = io.bind("socket_count", "missing net_core socket_count export")?;
         let queued_rx_bytes =
             io.bind("queued_rx_bytes", "missing net_core queued_rx_bytes export")?;
-        let network_contract_version: WasmFn<(), u32> = io.bind(
-            "network_contract_version",
-            "missing net_core network_contract_version export",
-        )?;
+        let network_contract_version: WasmFn<(), u32> = io
+            .bind("network_contract_version", "missing net_core network_contract_version export")?;
         let packet_mtu: WasmFn<(), u32> =
             io.bind("packet_mtu", "missing net_core packet_mtu export")?;
-        let packet_rx_queue_depth: WasmFn<(), u32> = io.bind(
-            "packet_rx_queue_depth",
-            "missing net_core packet_rx_queue_depth export",
-        )?;
-        let packet_tx_queue_depth: WasmFn<(), u32> = io.bind(
-            "packet_tx_queue_depth",
-            "missing net_core packet_tx_queue_depth export",
-        )?;
+        let packet_rx_queue_depth: WasmFn<(), u32> =
+            io.bind("packet_rx_queue_depth", "missing net_core packet_rx_queue_depth export")?;
+        let packet_tx_queue_depth: WasmFn<(), u32> =
+            io.bind("packet_tx_queue_depth", "missing net_core packet_tx_queue_depth export")?;
 
         let mut service = Self {
             io,
@@ -87,11 +82,7 @@ impl NetCoreService {
     ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.create_socket,
-                    (domain, ty, protocol),
-                    "net_core trapped",
-                )
+                .call(&self.create_socket, (domain, ty, protocol), "net_core trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -109,11 +100,7 @@ impl NetCoreService {
             .io
             .call(&self.ready_key, socket_id, "net_core trapped")
             .map_err(ServiceCallError::Trap)?;
-        if key == 0 {
-            Err(ServiceCallError::Errno(vmos_abi::ERR_EBADF))
-        } else {
-            Ok(key)
-        }
+        if key == 0 { Err(ServiceCallError::Errno(vmos_abi::ERR_EBADF)) } else { Ok(key) }
     }
 
     pub(crate) fn poll_socket(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
@@ -129,10 +116,7 @@ impl NetCoreService {
         socket_id: u32,
         bytes: &[u8],
     ) -> Result<u32, ServiceCallError> {
-        let len = self
-            .io
-            .write_request(bytes)
-            .map_err(ServiceCallError::Invalid)?;
+        let len = self.io.write_request(bytes).map_err(ServiceCallError::Invalid)?;
         expect_len(
             self.io
                 .call(&self.send_socket, (socket_id, len), "net_core trapped")
@@ -150,9 +134,7 @@ impl NetCoreService {
                 .call(&self.recv_socket, (socket_id, count), "net_core trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn take_tx_frame(&mut self, socket_id: u32) -> Result<Vec<u8>, ServiceCallError> {
@@ -161,19 +143,14 @@ impl NetCoreService {
                 .call(&self.take_tx_frame, socket_id, "net_core trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn deliver_packet_frame(
         &mut self,
         frame: &[u8],
     ) -> Result<Option<u64>, ServiceCallError> {
-        let len = self
-            .io
-            .write_request(frame)
-            .map_err(ServiceCallError::Invalid)?;
+        let len = self.io.write_request(frame).map_err(ServiceCallError::Invalid)?;
         let raw = self
             .io
             .call(&self.deliver_packet_frame, len, "net_core trapped")
@@ -181,23 +158,15 @@ impl NetCoreService {
         if raw < 0 {
             return Err(ServiceCallError::Errno((-raw) as i32));
         }
-        if raw == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(raw as u64))
-        }
+        if raw == 0 { Ok(None) } else { Ok(Some(raw as u64)) }
     }
 
     pub(crate) fn socket_count(&mut self) -> Result<u32, ServiceCallError> {
-        self.io
-            .call(&self.socket_count, (), "net_core trapped")
-            .map_err(ServiceCallError::Trap)
+        self.io.call(&self.socket_count, (), "net_core trapped").map_err(ServiceCallError::Trap)
     }
 
     pub(crate) fn queued_rx_bytes(&mut self) -> Result<u32, ServiceCallError> {
-        self.io
-            .call(&self.queued_rx_bytes, (), "net_core trapped")
-            .map_err(ServiceCallError::Trap)
+        self.io.call(&self.queued_rx_bytes, (), "net_core trapped").map_err(ServiceCallError::Trap)
     }
 }
 

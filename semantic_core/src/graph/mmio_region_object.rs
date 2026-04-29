@@ -16,11 +16,7 @@ impl SemanticGraph {
         if mmio_region == 0 {
             return Err("mmio region object id=0 is invalid");
         }
-        if self
-            .mmio_region_objects
-            .iter()
-            .any(|record| record.id == mmio_region)
-        {
+        if self.mmio_region_objects.iter().any(|record| record.id == mmio_region) {
             return Err("mmio region object already exists");
         }
         if length == 0 {
@@ -239,10 +235,8 @@ impl SemanticGraph {
         mmio_region: MmioRegionObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .mmio_region_objects
-            .iter_mut()
-            .find(|record| record.id == mmio_region)
+        if let Some(record) =
+            self.mmio_region_objects.iter_mut().find(|record| record.id == mmio_region)
         {
             record.device_generation = generation;
         }

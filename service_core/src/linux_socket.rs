@@ -1,5 +1,6 @@
-use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
+
+use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 
 pub const MAX_SOCKETS: usize = 16;
 
@@ -16,15 +17,8 @@ struct LinuxSocket {
 }
 
 impl LinuxSocket {
-    const EMPTY: Self = Self {
-        socket_id: 0,
-        domain: 0,
-        ty: 0,
-        protocol: 0,
-        ready_key: 0,
-        state: 0,
-        active: false,
-    };
+    const EMPTY: Self =
+        Self { socket_id: 0, domain: 0, ty: 0, protocol: 0, ready_key: 0, state: 0, active: false };
 }
 
 pub struct LinuxSocketState {
@@ -33,9 +27,7 @@ pub struct LinuxSocketState {
 
 impl LinuxSocketState {
     pub const fn new() -> Self {
-        Self {
-            sockets: [LinuxSocket::EMPTY; MAX_SOCKETS],
-        }
+        Self { sockets: [LinuxSocket::EMPTY; MAX_SOCKETS] }
     }
 
     pub fn register_socket(
@@ -146,25 +138,16 @@ impl Default for LinuxSocketState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use vmos_abi::{AF_INET, SOCK_DGRAM, SOCK_STREAM};
+
+    use super::*;
 
     #[test]
     fn register_socket_enforces_network_contract() {
         let mut state = LinuxSocketState::new();
 
-        assert!(
-            state
-                .register_socket(1, AF_INET, SOCK_STREAM, 0, 42)
-                .is_ok()
-        );
-        assert_eq!(
-            state.register_socket(2, AF_INET, SOCK_DGRAM, 0, 43),
-            Err(ERR_EOPNOTSUPP)
-        );
-        assert_eq!(
-            state.register_socket(3, AF_INET + 1, SOCK_STREAM, 0, 44),
-            Err(ERR_EOPNOTSUPP)
-        );
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.register_socket(2, AF_INET, SOCK_DGRAM, 0, 43), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.register_socket(3, AF_INET + 1, SOCK_STREAM, 0, 44), Err(ERR_EOPNOTSUPP));
     }
 }

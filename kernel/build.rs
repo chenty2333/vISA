@@ -1,7 +1,8 @@
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use contract_core::{manifest_binding_hash, module_abi_fingerprint};
 use sha2::{Digest, Sha256};
@@ -17,16 +18,11 @@ const EMBEDDED_SIGNER: &str = "kernel-buildrs-embedded-manifest";
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
-    let workspace_root = manifest_dir
-        .parent()
-        .expect("kernel crate should live in workspace root");
+    let workspace_root = manifest_dir.parent().expect("kernel crate should live in workspace root");
     let target_dir =
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("wasm-target");
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace_root.join(".cargo/config.toml").display()
-    );
+    println!("cargo:rerun-if-changed={}", workspace_root.join(".cargo/config.toml").display());
 
     for module in SUPERVISOR_WASM_MODULES {
         build_module(&cargo, workspace_root, &target_dir, module.package);
@@ -52,14 +48,7 @@ fn build_module(cargo: &str, workspace_root: &Path, target_dir: &Path, module: &
         .env("CARGO_TARGET_DIR", target_dir)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env("RUSTFLAGS", wasm_rustflags())
-        .args([
-            "build",
-            "-p",
-            module,
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-        ])
+        .args(["build", "-p", module, "--target", "wasm32-unknown-unknown", "--release"])
         .status()
         .unwrap_or_else(|err| panic!("failed to spawn cargo for {module}: {err}"));
 
@@ -73,19 +62,11 @@ fn wasm_rustflags() -> &'static str {
 }
 
 fn expose_artifact_path(workspace_root: &Path, target_dir: &Path, module: &str) {
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace_root.join(module).display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace_root.join("abi").display()
-    );
+    println!("cargo:rerun-if-changed={}", workspace_root.join(module).display());
+    println!("cargo:rerun-if-changed={}", workspace_root.join("abi").display());
 
-    let artifact = target_dir
-        .join("wasm32-unknown-unknown")
-        .join("release")
-        .join(format!("{module}.wasm"));
+    let artifact =
+        target_dir.join("wasm32-unknown-unknown").join("release").join(format!("{module}.wasm"));
     strip_custom_sections(&artifact);
     let env_key = format!("VMOS_{}_WASM", module.to_ascii_uppercase());
     println!("cargo:rustc-env={}={}", env_key, artifact.display());
@@ -103,10 +84,7 @@ fn generate_embedded_manifest_plan(workspace_root: &Path, target_dir: &Path, out
     for module in SUPERVISOR_WASM_MODULES {
         let wasm_path = wasm_artifact_path(target_dir, module.package);
         let wasm_bytes = fs::read(&wasm_path).unwrap_or_else(|err| {
-            panic!(
-                "failed to read embedded wasm artifact {}: {err}",
-                wasm_path.display()
-            )
+            panic!("failed to read embedded wasm artifact {}: {err}", wasm_path.display())
         });
         let wasm_sha256 = sha256_hex(&wasm_bytes);
         let abi_fingerprint = module_abi_fingerprint(module);
@@ -114,28 +92,17 @@ fn generate_embedded_manifest_plan(workspace_root: &Path, target_dir: &Path, out
             manifest_binding_hash(module, &wasm_sha256, EMBEDDED_CWASM_HASH, &abi_fingerprint);
         source.push_str("        EmbeddedArtifactManifestEntry {\n");
         source.push_str(&format!("            package: {:?},\n", module.package));
-        source.push_str(&format!(
-            "            artifact_name: {:?},\n",
-            module.artifact_name
-        ));
+        source.push_str(&format!("            artifact_name: {:?},\n", module.artifact_name));
         source.push_str(&format!("            role: {:?},\n", module.role.as_str()));
-        source.push_str(&format!(
-            "            fault_policy: {:?},\n",
-            module.fault_policy.as_str()
-        ));
+        source
+            .push_str(&format!("            fault_policy: {:?},\n", module.fault_policy.as_str()));
         source.push_str(&format!(
             "            wasm_path: {:?},\n",
             relative_to_workspace(workspace_root, &wasm_path)
         ));
         source.push_str(&format!("            wasm_sha256: {:?},\n", wasm_sha256));
-        source.push_str(&format!(
-            "            cwasm_sha256: {:?},\n",
-            EMBEDDED_CWASM_HASH
-        ));
-        source.push_str(&format!(
-            "            abi_fingerprint: {:?},\n",
-            abi_fingerprint
-        ));
+        source.push_str(&format!("            cwasm_sha256: {:?},\n", EMBEDDED_CWASM_HASH));
+        source.push_str(&format!("            abi_fingerprint: {:?},\n", abi_fingerprint));
         source.push_str(&format!(
             "            manifest_binding_hash: {:?},\n",
             manifest_binding_hash
@@ -162,25 +129,16 @@ fn generate_embedded_manifest_plan(workspace_root: &Path, target_dir: &Path, out
     }
     source.push_str("    ],\n};\n");
     fs::write(&path, source).unwrap_or_else(|err| {
-        panic!(
-            "failed to write embedded manifest plan {}: {err}",
-            path.display()
-        )
+        panic!("failed to write embedded manifest plan {}: {err}", path.display())
     });
 }
 
 fn wasm_artifact_path(target_dir: &Path, module: &str) -> PathBuf {
-    target_dir
-        .join("wasm32-unknown-unknown")
-        .join("release")
-        .join(format!("{module}.wasm"))
+    target_dir.join("wasm32-unknown-unknown").join("release").join(format!("{module}.wasm"))
 }
 
 fn relative_to_workspace(workspace_root: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    path.strip_prefix(workspace_root).unwrap_or(path).display().to_string()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -209,9 +167,8 @@ fn strip_wasm_custom_sections(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
         offset += 1;
         let (section_len, leb_len) = read_leb_u32(&bytes[offset..])?;
         offset += leb_len;
-        let end = offset
-            .checked_add(section_len as usize)
-            .ok_or("wasm section length overflowed")?;
+        let end =
+            offset.checked_add(section_len as usize).ok_or("wasm section length overflowed")?;
         if end > bytes.len() {
             return Err("wasm section exceeded file length");
         }
@@ -266,19 +223,10 @@ fn build_user_binary(cargo: &str, workspace_root: &Path, target_dir: &Path, bina
 }
 
 fn expose_user_binary_path(workspace_root: &Path, target_dir: &Path, binary: &str) {
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace_root.join(binary).display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace_root.join("abi").display()
-    );
+    println!("cargo:rerun-if-changed={}", workspace_root.join(binary).display());
+    println!("cargo:rerun-if-changed={}", workspace_root.join("abi").display());
 
-    let artifact = target_dir
-        .join("x86_64-unknown-none")
-        .join("debug")
-        .join(binary);
+    let artifact = target_dir.join("x86_64-unknown-none").join("debug").join(binary);
     let env_key = format!("VMOS_{}_ELF", binary.to_ascii_uppercase());
     println!("cargo:rustc-env={}={}", env_key, artifact.display());
 }

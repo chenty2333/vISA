@@ -18,12 +18,7 @@ impl SemanticGraph {
         activation: ActivationId,
         activation_generation: Generation,
     ) -> bool {
-        if context == 0
-            || self
-                .activation_contexts
-                .iter()
-                .any(|record| record.id == context)
-        {
+        if context == 0 || self.activation_contexts.iter().any(|record| record.id == context) {
             return false;
         }
         let Some(activation_record) = self
@@ -104,11 +99,7 @@ impl SemanticGraph {
         flags: u64,
         note: &str,
     ) -> bool {
-        if saved_context == 0
-            || self
-                .saved_contexts
-                .iter()
-                .any(|record| record.id == saved_context)
+        if saved_context == 0 || self.saved_contexts.iter().any(|record| record.id == saved_context)
         {
             return false;
         }
@@ -122,10 +113,7 @@ impl SemanticGraph {
         if self.activation_contexts[context_index].state == ActivationContextState::Dropped {
             return false;
         }
-        if self.activation_contexts[context_index]
-            .current_saved_context
-            .is_some()
-        {
+        if self.activation_contexts[context_index].current_saved_context.is_some() {
             return false;
         }
         let activation = self.activation_contexts[context_index].activation;
@@ -204,14 +192,8 @@ impl SemanticGraph {
             || saved_context == 0
             || pc == 0
             || sp == 0
-            || self
-                .activation_contexts
-                .iter()
-                .any(|record| record.id == context)
-            || self
-                .saved_contexts
-                .iter()
-                .any(|record| record.id == saved_context)
+            || self.activation_contexts.iter().any(|record| record.id == context)
+            || self.saved_contexts.iter().any(|record| record.id == saved_context)
         {
             return false;
         }
@@ -708,10 +690,8 @@ impl SemanticGraph {
         &mut self,
         context: ActivationContextId,
     ) {
-        if let Some(record) = self
-            .activation_contexts
-            .iter_mut()
-            .find(|record| record.id == context)
+        if let Some(record) =
+            self.activation_contexts.iter_mut().find(|record| record.id == context)
         {
             record.current_saved_context_generation = None;
         }
@@ -722,10 +702,8 @@ impl SemanticGraph {
         &mut self,
         saved_context: SavedContextId,
     ) {
-        if let Some(record) = self
-            .saved_contexts
-            .iter_mut()
-            .find(|record| record.id == saved_context)
+        if let Some(record) =
+            self.saved_contexts.iter_mut().find(|record| record.id == saved_context)
         {
             record.source_preemption_generation = None;
         }
@@ -737,10 +715,8 @@ impl SemanticGraph {
         context: ActivationContextId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .activation_contexts
-            .iter_mut()
-            .find(|record| record.id == context)
+        if let Some(record) =
+            self.activation_contexts.iter_mut().find(|record| record.id == context)
             && let Some(vector_state) = record.vector_state.as_mut()
         {
             vector_state.generation = generation;
@@ -802,76 +778,59 @@ impl SemanticGraph {
             }
             if let Some(saved) = context.current_saved_context {
                 let Some(saved_generation) = context.current_saved_context_generation else {
-                    return Err(
-                        SemanticInvariantError::ActivationContextSavedGenerationMissing {
-                            context: context.id,
-                            saved_context: saved,
-                        },
-                    );
+                    return Err(SemanticInvariantError::ActivationContextSavedGenerationMissing {
+                        context: context.id,
+                        saved_context: saved,
+                    });
                 };
                 let Some(saved_record) = self
                     .saved_contexts
                     .iter()
                     .find(|record| record.id == saved && record.generation == saved_generation)
                 else {
-                    return Err(
-                        SemanticInvariantError::ActivationContextMissingSavedContext {
-                            context: context.id,
-                            saved_context: saved,
-                        },
-                    );
+                    return Err(SemanticInvariantError::ActivationContextMissingSavedContext {
+                        context: context.id,
+                        saved_context: saved,
+                    });
                 };
                 if saved_record.context != context.id
                     || saved_record.context_generation != context.generation
                     || saved_record.activation != context.activation
                     || saved_record.activation_generation != context.activation_generation
                 {
-                    return Err(
-                        SemanticInvariantError::ActivationContextSavedContextMismatch {
-                            context: context.id,
-                            saved_context: saved,
-                        },
-                    );
+                    return Err(SemanticInvariantError::ActivationContextSavedContextMismatch {
+                        context: context.id,
+                        saved_context: saved,
+                    });
                 }
             }
-            match (
-                context.vector_status.requires_vector_state(),
-                context.vector_state,
-            ) {
+            match (context.vector_status.requires_vector_state(), context.vector_state) {
                 (false, None) => {}
                 (false, Some(_)) => {
-                    return Err(
-                        SemanticInvariantError::ActivationContextVectorStateInvalid {
-                            context: context.id,
-                        },
-                    );
+                    return Err(SemanticInvariantError::ActivationContextVectorStateInvalid {
+                        context: context.id,
+                    });
                 }
                 (true, None) => {
-                    return Err(
-                        SemanticInvariantError::ActivationContextVectorStateMissing {
-                            context: context.id,
-                        },
-                    );
+                    return Err(SemanticInvariantError::ActivationContextVectorStateMissing {
+                        context: context.id,
+                    });
                 }
                 (true, Some(vector_state)) => {
                     if vector_state.kind != ContractObjectKind::VectorState
                         || vector_state.id == 0
                         || vector_state.generation == 0
                     {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateInvalid {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateInvalid {
+                            context: context.id,
+                        });
                     }
                     let Some(vector_record) = self.vector_states.iter().find(|record| {
                         record.id == vector_state.id && record.generation == vector_state.generation
                     }) else {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateMissing {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateMissing {
+                            context: context.id,
+                        });
                     };
                     if !vector_record.state.is_live_owned()
                         || vector_record.owner_activation
@@ -881,11 +840,9 @@ impl SemanticGraph {
                                 context.activation_generation,
                             )
                     {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateInvalid {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateInvalid {
+                            context: context.id,
+                        });
                     }
                     if let Some(store) = context.owner_store {
                         let Some(store_generation) = context.owner_store_generation else {
@@ -912,18 +869,14 @@ impl SemanticGraph {
                     if let Some(code_object) = activation.code_object
                         && vector_record.code_object != code_object
                     {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateInvalid {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateInvalid {
+                            context: context.id,
+                        });
                     }
                     let Some(vector_event) = context.vector_state_event else {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateMissing {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateMissing {
+                            context: context.id,
+                        });
                     };
                     if !self.event_log.events.iter().any(|event| {
                         if event.id != vector_event {
@@ -989,11 +942,9 @@ impl SemanticGraph {
                             _ => false,
                         }
                     }) {
-                        return Err(
-                            SemanticInvariantError::ActivationContextVectorStateMissing {
-                                context: context.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::ActivationContextVectorStateMissing {
+                            context: context.id,
+                        });
                     }
                 }
             }
@@ -1099,17 +1050,12 @@ impl SemanticGraph {
                 }
                 (None, None) => {}
                 _ => {
-                    return Err(
-                        SemanticInvariantError::SavedContextMissingPreemptionGeneration {
-                            saved_context: saved.id,
-                        },
-                    );
+                    return Err(SemanticInvariantError::SavedContextMissingPreemptionGeneration {
+                        saved_context: saved.id,
+                    });
                 }
             }
-            match (
-                saved.vector_status.requires_vector_state(),
-                saved.vector_state,
-            ) {
+            match (saved.vector_status.requires_vector_state(), saved.vector_state) {
                 (false, None) => {}
                 (false, Some(_)) | (true, None) => {
                     return Err(SemanticInvariantError::SavedContextVectorStateInvalid {

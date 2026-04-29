@@ -23,11 +23,7 @@ impl SemanticGraph {
         if fake_net_backend == 0 {
             return Err("fake net backend object id=0 is invalid");
         }
-        if self
-            .fake_net_backends
-            .iter()
-            .any(|record| record.id == fake_net_backend)
-        {
+        if self.fake_net_backends.iter().any(|record| record.id == fake_net_backend) {
             return Err("fake net backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() {
@@ -115,9 +111,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_fake_net_backend_object_id = self
-            .next_fake_net_backend_object_id
-            .max(fake_net_backend + 1);
+        self.next_fake_net_backend_object_id =
+            self.next_fake_net_backend_object_id.max(fake_net_backend + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::FakeNetBackendObjectBound {
@@ -171,12 +166,10 @@ impl SemanticGraph {
                         && packet_device.generation == record.packet_device_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::FakeNetBackendObjectMissingPacketDevice {
-                        fake_net_backend: record.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::FakeNetBackendObjectMissingPacketDevice {
+                    fake_net_backend: record.id,
+                    packet_device: record.packet_device,
+                });
             };
             if record.id == 0
                 || record.generation == 0
@@ -209,12 +202,10 @@ impl SemanticGraph {
                     && other.packet_device_generation == record.packet_device_generation
                     && other.state == FakeNetBackendObjectState::Bound
             }) {
-                return Err(
-                    SemanticInvariantError::FakeNetBackendObjectDuplicateBinding {
-                        fake_net_backend: duplicate.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::FakeNetBackendObjectDuplicateBinding {
+                    fake_net_backend: duplicate.id,
+                    packet_device: record.packet_device,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -257,10 +248,8 @@ impl SemanticGraph {
         fake_net_backend: FakeNetBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .fake_net_backends
-            .iter_mut()
-            .find(|record| record.id == fake_net_backend)
+        if let Some(record) =
+            self.fake_net_backends.iter_mut().find(|record| record.id == fake_net_backend)
         {
             record.packet_device_generation = generation;
         }

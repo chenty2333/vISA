@@ -39,13 +39,8 @@ impl StoreHandle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenerationCheckError {
     Missing,
-    Dead {
-        actual: Generation,
-    },
-    GenerationMismatch {
-        expected: Generation,
-        actual: Option<Generation>,
-    },
+    Dead { actual: Generation },
+    GenerationMismatch { expected: Generation, actual: Option<Generation> },
 }
 
 impl GenerationCheckError {

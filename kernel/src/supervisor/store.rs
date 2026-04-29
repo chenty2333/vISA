@@ -1,8 +1,10 @@
 use semantic_core::{StoreDropReport, StoreId, StoreRebindReport, TrapClass};
 
-use super::authority_rebind::{StoreAuthorityRebindRequest, plan_store_authority_rebind};
-use super::fault::{ClassifiedFault, classify_service_trap};
-use super::runtime::PrototypeRuntime;
+use super::{
+    authority_rebind::{StoreAuthorityRebindRequest, plan_store_authority_rebind},
+    fault::{ClassifiedFault, classify_service_trap},
+    runtime::PrototypeRuntime,
+};
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn store_lifecycle_line(&self, package: &str) -> Option<alloc::string::String> {
@@ -10,9 +12,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn store_id(&self, package: &str) -> Option<StoreId> {
-        self.store_manager
-            .store_id(package)
-            .or_else(|| self.semantic.store_id(package))
+        self.store_manager.store_id(package).or_else(|| self.semantic.store_id(package))
     }
 
     pub(crate) fn drop_store_instance(
@@ -26,8 +26,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         store: StoreId,
     ) -> Result<StoreRebindReport, &'static str> {
-        self.store_manager
-            .rebind_instance(&mut self.semantic, store)
+        self.store_manager.rebind_instance(&mut self.semantic, store)
     }
 
     pub(crate) fn rebind_store_authorities(
@@ -38,16 +37,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(());
         };
         match request {
-            StoreAuthorityRebindRequest::NetworkDriver { store, package } => self
-                .net
-                .bind_driver_resources(&self.authority, &mut self.semantic, store, package),
+            StoreAuthorityRebindRequest::NetworkDriver { store, package } => {
+                self.net.bind_driver_resources(&self.authority, &mut self.semantic, store, package)
+            }
         }
     }
 
     pub(crate) fn try_publish_store_code(&mut self, package: &str) -> Result<(), &'static str> {
-        let store = self
-            .store_id(package)
-            .ok_or("store was not registered in store manager")?;
+        let store = self.store_id(package).ok_or("store was not registered in store manager")?;
         let result = self
             .store_manager
             .try_publish_code(&mut self.semantic, store)
@@ -60,9 +57,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn try_link_store_hostcalls(&mut self, package: &str) -> Result<(), &'static str> {
-        let store = self
-            .store_id(package)
-            .ok_or("store was not registered in store manager")?;
+        let store = self.store_id(package).ok_or("store was not registered in store manager")?;
         let result = self
             .store_manager
             .try_link_hostcalls(&mut self.semantic, store)
@@ -75,9 +70,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn try_mark_store_runnable(&mut self, package: &str) -> Result<(), &'static str> {
-        let store = self
-            .store_id(package)
-            .ok_or("store was not registered in store manager")?;
+        let store = self.store_id(package).ok_or("store was not registered in store manager")?;
         let result = self
             .store_manager
             .try_mark_runnable(&mut self.semantic, store)
@@ -106,7 +99,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         trap: TrapClass,
         detail: &str,
     ) -> Result<(), &'static str> {
-        self.store_manager
-            .record_trap(&mut self.semantic, store, trap, detail)
+        self.store_manager.record_trap(&mut self.semantic, store, trap, detail)
     }
 }

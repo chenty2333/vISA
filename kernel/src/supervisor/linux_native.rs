@@ -1,8 +1,5 @@
 use alloc::vec::Vec;
 
-use super::super::engine::RuntimeOnlyExecutor;
-use super::super::types::WaitRestartClass;
-use super::LinuxPlan;
 use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind,
     RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
@@ -10,6 +7,11 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
     SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
     SYS_WRITE, SyscallContext, is_stdio_fd,
+};
+
+use super::{
+    super::{engine::RuntimeOnlyExecutor, types::WaitRestartClass},
+    LinuxPlan,
 };
 
 const ARG_BUFFER_BASE: u32 = 0x1000;
@@ -24,11 +26,7 @@ enum PendingOp {
     Empty,
     Sleep,
     FutexWait,
-    EpollWait {
-        epfd: u32,
-        max_events: u32,
-        timeout_ms: u64,
-    },
+    EpollWait { epfd: u32, max_events: u32, timeout_ms: u64 },
 }
 
 pub(crate) struct LinuxFrontend {
@@ -94,13 +92,8 @@ impl LinuxFrontend {
                 PackedStep::plan(PlanKind::Write)
             }
             Some(PendingOp::FutexWait) => PackedStep::ready(0),
-            Some(PendingOp::EpollWait {
-                epfd, max_events, ..
-            }) => {
-                self.reset_plan(
-                    PlanKind::EpollReady,
-                    [epfd as u64, max_events as u64, 0, 0, 0, 0],
-                );
+            Some(PendingOp::EpollWait { epfd, max_events, .. }) => {
+                self.reset_plan(PlanKind::EpollReady, [epfd as u64, max_events as u64, 0, 0, 0, 0]);
                 PackedStep::plan(PlanKind::EpollReady)
             }
             _ => PackedStep::error(-ERR_EINVAL),
@@ -123,11 +116,9 @@ impl LinuxFrontend {
         class: WaitRestartClass,
     ) -> Result<u64, &'static str> {
         let step = match self.peek_pending_op(token) {
-            Some(PendingOp::EpollWait {
-                epfd,
-                max_events,
-                timeout_ms,
-            }) => self.restart_epoll_wait(token, epfd, max_events, timeout_ms, class),
+            Some(PendingOp::EpollWait { epfd, max_events, timeout_ms }) => {
+                self.restart_epoll_wait(token, epfd, max_events, timeout_ms, class)
+            }
             _ => PackedStep::error(-ERR_EINVAL),
         };
         Ok(step.raw())
@@ -145,9 +136,7 @@ impl LinuxFrontend {
         timeout_ms: u64,
         current_word: u64,
     ) -> Result<u64, &'static str> {
-        Ok(self
-            .plan_futex(key, op, val, timeout_ms, current_word)
-            .raw())
+        Ok(self.plan_futex(key, op, val, timeout_ms, current_word).raw())
     }
 
     pub(crate) fn write_arg_bytes(&mut self, bytes: &[u8]) -> Result<(u32, u32), &'static str> {
@@ -163,9 +152,7 @@ impl LinuxFrontend {
         let start = ptr
             .checked_sub(ARG_BUFFER_BASE)
             .ok_or("linux native pointer was outside arg buffer")? as usize;
-        let end = start
-            .checked_add(len as usize)
-            .ok_or("linux native read overflowed")?;
+        let end = start.checked_add(len as usize).ok_or("linux native read overflowed")?;
         if end > self.arg_buffer.len() {
             return Err("linux native pointer was outside arg buffer");
         }
@@ -200,10 +187,7 @@ impl LinuxFrontend {
     }
 
     pub(crate) fn current_plan(&mut self, kind: PlanKind) -> Result<LinuxPlan, &'static str> {
-        Ok(LinuxPlan {
-            kind,
-            args: self.plan_args,
-        })
+        Ok(LinuxPlan { kind, args: self.plan_args })
     }
 
     #[allow(dead_code)]
@@ -243,10 +227,7 @@ impl LinuxFrontend {
         let Some(resume_cookie) = self.allocate_pending_op(PendingOp::Sleep) else {
             return PackedStep::error(-ERR_EINVAL);
         };
-        self.reset_plan(
-            PlanKind::Sleep,
-            [resume_cookie as u64, clamped as u64, 0, 0, 0, 0],
-        );
+        self.reset_plan(PlanKind::Sleep, [resume_cookie as u64, clamped as u64, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Sleep)
     }
 
@@ -278,23 +259,14 @@ impl LinuxFrontend {
         let Some(resume_cookie) = self.allocate_pending_op(PendingOp::FutexWait) else {
             return PackedStep::error(-ERR_EINVAL);
         };
-        let timeout = if timeout_ms == u64::MAX {
-            u64::MAX
-        } else {
-            timeout_ms.min(u32::MAX as u64)
-        };
-        self.reset_plan(
-            PlanKind::FutexWait,
-            [key, timeout, resume_cookie as u64, 0, 0, 0],
-        );
+        let timeout =
+            if timeout_ms == u64::MAX { u64::MAX } else { timeout_ms.min(u32::MAX as u64) };
+        self.reset_plan(PlanKind::FutexWait, [key, timeout, resume_cookie as u64, 0, 0, 0]);
         PackedStep::plan(PlanKind::FutexWait)
     }
 
     fn plan_futex_wake(&mut self, key: u64, count: u64) -> PackedStep {
-        self.reset_plan(
-            PlanKind::FutexWake,
-            [key, count.min(u32::MAX as u64), 0, 0, 0, 0],
-        );
+        self.reset_plan(PlanKind::FutexWake, [key, count.min(u32::MAX as u64), 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::FutexWake)
     }
 
@@ -392,10 +364,7 @@ impl LinuxFrontend {
         optval: u64,
         optlen: u64,
     ) -> PackedStep {
-        self.reset_plan(
-            PlanKind::SetSockOpt,
-            [fd, level, optname, optval, optlen, 0],
-        );
+        self.reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, 0]);
         PackedStep::plan(PlanKind::SetSockOpt)
     }
 
@@ -407,10 +376,7 @@ impl LinuxFrontend {
         optval: u64,
         optlen: u64,
     ) -> PackedStep {
-        self.reset_plan(
-            PlanKind::GetSockOpt,
-            [fd, level, optname, optval, optlen, 0],
-        );
+        self.reset_plan(PlanKind::GetSockOpt, [fd, level, optname, optval, optlen, 0]);
         PackedStep::plan(PlanKind::GetSockOpt)
     }
 
@@ -512,11 +478,7 @@ impl LinuxFrontend {
         let slot = &mut self.pending_ops[token as usize - 1];
         let op = *slot;
         *slot = PendingOp::Empty;
-        if matches!(op, PendingOp::Empty) {
-            None
-        } else {
-            Some(op)
-        }
+        if matches!(op, PendingOp::Empty) { None } else { Some(op) }
     }
 
     fn peek_pending_op(&self, token: u32) -> Option<PendingOp> {
@@ -524,11 +486,7 @@ impl LinuxFrontend {
             return None;
         }
         let op = self.pending_ops[token as usize - 1];
-        if matches!(op, PendingOp::Empty) {
-            None
-        } else {
-            Some(op)
-        }
+        if matches!(op, PendingOp::Empty) { None } else { Some(op) }
     }
 
     fn restart_epoll_wait(
@@ -542,14 +500,7 @@ impl LinuxFrontend {
         let _ = class;
         self.reset_plan(
             PlanKind::EpollWait,
-            [
-                epfd as u64,
-                max_events as u64,
-                timeout_ms,
-                resume_cookie as u64,
-                0,
-                0,
-            ],
+            [epfd as u64, max_events as u64, timeout_ms, resume_cookie as u64, 0, 0],
         );
         PackedStep::plan(PlanKind::EpollWait)
     }

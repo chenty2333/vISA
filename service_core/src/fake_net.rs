@@ -1,10 +1,9 @@
-use crate::net_contract::{
-    PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT,
-};
-use crate::packet::{
-    FRAME_HEADER_LEN, PROTO_DEMO_TCP, PacketFrameMeta, decode_frame, encode_frame,
-};
 use vmos_abi::{ERR_EINVAL, ERR_EIO};
+
+use crate::{
+    net_contract::{PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT},
+    packet::{FRAME_HEADER_LEN, PROTO_DEMO_TCP, PacketFrameMeta, decode_frame, encode_frame},
+};
 
 pub const FAKE_NET_BACKEND_PROFILE: &str = "fake-net-v1";
 pub const FAKE_NET_BACKEND_PROVIDER: &str = "service_core";
@@ -56,10 +55,7 @@ pub struct FakeNetBackend {
 
 impl FakeNetBackend {
     pub const fn new(config: FakeNetBackendConfig) -> Self {
-        Self {
-            config,
-            next_sequence: 1,
-        }
+        Self { config, next_sequence: 1 }
     }
 
     pub const fn config(&self) -> FakeNetBackendConfig {
@@ -136,10 +132,7 @@ mod tests {
         let mut backend = FakeNetBackend::default();
         assert_eq!(backend.submit_tx_frame(&[0u8; 4]), Err(ERR_EINVAL));
 
-        let config = FakeNetBackendConfig {
-            max_payload_len: 1,
-            ..FakeNetBackendConfig::net0()
-        };
+        let config = FakeNetBackendConfig { max_payload_len: 1, ..FakeNetBackendConfig::net0() };
         let mut small = FakeNetBackend::new(config);
         let mut rx = [0u8; PACKET_FRAME_CAPACITY];
         assert_eq!(small.synthesize_rx_frame(&mut rx), Err(ERR_EIO));

@@ -176,11 +176,7 @@ impl TrustedArtifact {
         if spec.artifact_name.is_empty() {
             return Err(ArtifactRegistryError::EmptyArtifact);
         }
-        if !spec
-            .expected_exports
-            .iter()
-            .any(|export| *export == "memory")
-        {
+        if !spec.expected_exports.iter().any(|export| *export == "memory") {
             return Err(ArtifactRegistryError::MissingMemoryExport);
         }
         Ok(())
@@ -250,11 +246,7 @@ pub(crate) struct StoreResourceLimits {
 impl StoreResourceLimits {
     #[allow(dead_code)]
     const fn prototype_default() -> Self {
-        Self {
-            max_memory_pages: 16,
-            max_table_elements: 0,
-            max_hostcalls_per_activation: 64,
-        }
+        Self { max_memory_pages: 16, max_table_elements: 0, max_hostcalls_per_activation: 64 }
     }
 }
 
@@ -309,12 +301,7 @@ impl ArtifactRegistry {
         for (spec, entry) in SUPERVISOR_WASM_MODULES.iter().zip(manifest.entries.iter()) {
             artifacts.push(TrustedArtifact::from_manifest_entry(spec, entry)?);
         }
-        Ok(Self {
-            profile,
-            artifact_profile: manifest.artifact_profile,
-            runtime_mode,
-            artifacts,
-        })
+        Ok(Self { profile, artifact_profile: manifest.artifact_profile, runtime_mode, artifacts })
     }
 
     #[allow(dead_code)]
@@ -433,11 +420,6 @@ impl From<&StoreLoadBlueprint> for StoreBlueprint {
             .find(|spec| spec.package == value.package)
             .map(|spec| spec.fault_policy)
             .expect("store load blueprint must originate from supervisor catalog");
-        Self {
-            package: value.package,
-            role,
-            fault_policy,
-            capabilities: value.capabilities,
-        }
+        Self { package: value.package, role, fault_policy, capabilities: value.capabilities }
     }
 }

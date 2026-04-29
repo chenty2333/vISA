@@ -32,10 +32,7 @@ impl SemanticGraph {
         if framebuffer_window_lease == 0 {
             return Err("framebuffer window lease id=0 is invalid");
         }
-        if self
-            .framebuffer_window_leases
-            .iter()
-            .any(|record| record.id == framebuffer_window_lease)
+        if self.framebuffer_window_leases.iter().any(|record| record.id == framebuffer_window_lease)
         {
             return Err("framebuffer window lease already exists");
         }
@@ -76,10 +73,7 @@ impl SemanticGraph {
             || display_capability_record.display_generation != display_generation
             || display_capability_record.framebuffer != framebuffer
             || display_capability_record.framebuffer_generation != framebuffer_generation
-            || !display_capability_record
-                .operations
-                .iter()
-                .any(|operation| operation == "lease")
+            || !display_capability_record.operations.iter().any(|operation| operation == "lease")
         {
             return Err("framebuffer window lease display capability binding mismatch");
         }
@@ -102,10 +96,8 @@ impl SemanticGraph {
         {
             return Err("framebuffer window lease display framebuffer mismatch");
         }
-        if x.checked_add(width)
-            .is_none_or(|right| right > display_record.width)
-            || y.checked_add(height)
-                .is_none_or(|bottom| bottom > display_record.height)
+        if x.checked_add(width).is_none_or(|right| right > display_record.width)
+            || y.checked_add(height).is_none_or(|bottom| bottom > display_record.height)
         {
             return Err("framebuffer window lease window exceeds display mode");
         }
@@ -116,9 +108,8 @@ impl SemanticGraph {
         let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {
             return Err("framebuffer window lease byte geometry overflows");
         };
-        let Some(expected_byte_offset) = u64::from(y)
-            .checked_mul(u64::from(framebuffer_record.stride_bytes))
-            .and_then(|base| {
+        let Some(expected_byte_offset) =
+            u64::from(y).checked_mul(u64::from(framebuffer_record.stride_bytes)).and_then(|base| {
                 u64::from(x)
                     .checked_mul(bytes_per_pixel)
                     .and_then(|x_bytes| base.checked_add(x_bytes))
@@ -136,9 +127,7 @@ impl SemanticGraph {
             return Err("framebuffer window lease byte offset does not match window geometry");
         }
         if byte_len < min_window_bytes
-            || byte_offset
-                .checked_add(byte_len)
-                .is_none_or(|end| end > framebuffer_record.byte_len)
+            || byte_offset.checked_add(byte_len).is_none_or(|end| end > framebuffer_record.byte_len)
         {
             return Err("framebuffer window lease byte range exceeds framebuffer");
         }
@@ -202,9 +191,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_framebuffer_window_lease_id = self
-            .next_framebuffer_window_lease_id
-            .max(framebuffer_window_lease.saturating_add(1));
+        self.next_framebuffer_window_lease_id =
+            self.next_framebuffer_window_lease_id.max(framebuffer_window_lease.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferWindowLeaseRecorded {
@@ -228,29 +216,28 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_window_leases
-            .push(FramebufferWindowLeaseRecord {
-                id: framebuffer_window_lease,
-                owner_store,
-                owner_store_generation,
-                display_capability,
-                display_capability_generation,
-                display,
-                display_generation,
-                framebuffer,
-                framebuffer_generation,
-                x,
-                y,
-                width,
-                height,
-                byte_offset,
-                byte_len,
-                access: access.to_string(),
-                generation,
-                state: FramebufferWindowLeaseState::Active,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.framebuffer_window_leases.push(FramebufferWindowLeaseRecord {
+            id: framebuffer_window_lease,
+            owner_store,
+            owner_store_generation,
+            display_capability,
+            display_capability_generation,
+            display,
+            display_generation,
+            framebuffer,
+            framebuffer_generation,
+            x,
+            y,
+            width,
+            height,
+            byte_offset,
+            byte_len,
+            access: access.to_string(),
+            generation,
+            state: FramebufferWindowLeaseState::Active,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -295,23 +282,19 @@ impl SemanticGraph {
             let Some(display_record) = self.display_objects.iter().find(|display| {
                 display.id == record.display && display.generation == record.display_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FramebufferWindowLeaseMissingDisplay {
-                        framebuffer_window_lease: record.id,
-                        display: record.display,
-                    },
-                );
+                return Err(SemanticInvariantError::FramebufferWindowLeaseMissingDisplay {
+                    framebuffer_window_lease: record.id,
+                    display: record.display,
+                });
             };
             let Some(framebuffer_record) = self.framebuffer_objects.iter().find(|framebuffer| {
                 framebuffer.id == record.framebuffer
                     && framebuffer.generation == record.framebuffer_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FramebufferWindowLeaseMissingFramebuffer {
-                        framebuffer_window_lease: record.id,
-                        framebuffer: record.framebuffer,
-                    },
-                );
+                return Err(SemanticInvariantError::FramebufferWindowLeaseMissingFramebuffer {
+                    framebuffer_window_lease: record.id,
+                    framebuffer: record.framebuffer,
+                });
             };
             let active = record.state == FramebufferWindowLeaseState::Active;
             let released = record.state == FramebufferWindowLeaseState::Released;
@@ -403,12 +386,10 @@ impl SemanticGraph {
                     && other.state == FramebufferWindowLeaseState::Active
                     && record.state == FramebufferWindowLeaseState::Active
             }) {
-                return Err(
-                    SemanticInvariantError::FramebufferWindowLeaseDuplicateActive {
-                        framebuffer_window_lease: duplicate.id,
-                        framebuffer: record.framebuffer,
-                    },
-                );
+                return Err(SemanticInvariantError::FramebufferWindowLeaseDuplicateActive {
+                    framebuffer_window_lease: duplicate.id,
+                    framebuffer: record.framebuffer,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event

@@ -20,11 +20,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("block driver cleanup reason is empty");
         }
-        if self
-            .block_driver_cleanups
-            .iter()
-            .any(|record| record.id == cleanup)
-        {
+        if self.block_driver_cleanups.iter().any(|record| record.id == cleanup) {
             return Err("block driver cleanup already exists");
         }
         if backend.kind != ContractObjectKind::VirtioBlkBackendObject {
@@ -134,9 +130,8 @@ impl SemanticGraph {
         };
 
         let generation = 1;
-        self.next_block_driver_cleanup_id = self
-            .next_block_driver_cleanup_id
-            .max(cleanup.saturating_add(1));
+        self.next_block_driver_cleanup_id =
+            self.next_block_driver_cleanup_id.max(cleanup.saturating_add(1));
         let started_at_event = self.event_log.push(
             "block",
             EventKind::BlockDriverCleanupStarted {
@@ -201,14 +196,7 @@ impl SemanticGraph {
                     && record.block_device_generation == block_device_generation
                     && record.state == BlockWaitState::Pending
             })
-            .map(|record| {
-                (
-                    record.id,
-                    record.generation,
-                    record.wait,
-                    record.wait_generation,
-                )
-            })
+            .map(|record| (record.id, record.generation, record.wait, record.wait_generation))
             .collect::<Vec<_>>();
         let mut cancelled_block_waits = Vec::new();
         let mut cancelled_wait_tokens = Vec::new();
@@ -238,10 +226,7 @@ impl SemanticGraph {
             .iter()
             .find(|record| record.id == io_cleanup && record.generation == generation)
             .map(|record| {
-                (
-                    record.revoked_device_capabilities.clone(),
-                    record.released_dma_buffers.clone(),
-                )
+                (record.revoked_device_capabilities.clone(), record.released_dma_buffers.clone())
             })
             .unwrap_or_default();
 
@@ -333,12 +318,10 @@ impl SemanticGraph {
                 record.id == cleanup.block_device
                     && record.generation == cleanup.block_device_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::BlockDriverCleanupMissingBlockDevice {
-                        cleanup: cleanup.id,
-                        block_device: cleanup.block_device,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockDriverCleanupMissingBlockDevice {
+                    cleanup: cleanup.id,
+                    block_device: cleanup.block_device,
+                });
             };
             let Some(backend) = self.virtio_blk_backends.iter().find(|record| {
                 record.id == cleanup.backend.id && record.generation == cleanup.backend.generation
@@ -369,12 +352,10 @@ impl SemanticGraph {
                 .chain(cleanup.released_dma_buffers.iter())
             {
                 if !self.io_validation_historical_object_exists(*target) {
-                    return Err(
-                        SemanticInvariantError::BlockDriverCleanupMissingEffectTarget {
-                            cleanup: cleanup.id,
-                            target: *target,
-                        },
-                    );
+                    return Err(SemanticInvariantError::BlockDriverCleanupMissingEffectTarget {
+                        cleanup: cleanup.id,
+                        target: *target,
+                    });
                 }
             }
             if cleanup.state == BlockDriverCleanupState::Completed {

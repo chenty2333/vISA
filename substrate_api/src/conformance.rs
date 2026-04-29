@@ -25,14 +25,8 @@ pub fn unsupported_is_reported<T>(
             authority: actual_authority,
             operation: actual_operation,
         }) if actual_authority == authority && actual_operation == operation => Ok(()),
-        Err(_) => Err(ConformanceError::new(
-            check,
-            "operation failed with the wrong error class",
-        )),
-        Ok(_) => Err(ConformanceError::new(
-            check,
-            "operation unexpectedly succeeded",
-        )),
+        Err(_) => Err(ConformanceError::new(check, "operation failed with the wrong error class")),
+        Ok(_) => Err(ConformanceError::new(check, "operation unexpectedly succeeded")),
     }
 }
 
@@ -66,16 +60,10 @@ pub fn event_queue_fifo_or_declared_order<Q: EventQueueAuthority>(
         .map_err(|_| ConformanceError::new("event_queue_fifo", "second push failed"))?;
 
     if queue.pop_event() != Some(first) {
-        return Err(ConformanceError::new(
-            "event_queue_fifo",
-            "first event did not pop first",
-        ));
+        return Err(ConformanceError::new("event_queue_fifo", "first event did not pop first"));
     }
     if queue.pop_event() != Some(second) {
-        return Err(ConformanceError::new(
-            "event_queue_fifo",
-            "second event did not pop second",
-        ));
+        return Err(ConformanceError::new("event_queue_fifo", "second event did not pop second"));
     }
     Ok(())
 }
@@ -94,14 +82,12 @@ pub fn capability_denied_event_is_visible<Q: EventQueueAuthority>(
         .map_err(|_| ConformanceError::new("capability_denied_event", "event push failed"))?;
     match queue.pop_event() {
         Some(actual) if actual == event => Ok(()),
-        Some(_) => Err(ConformanceError::new(
-            "capability_denied_event",
-            "event payload changed in queue",
-        )),
-        None => Err(ConformanceError::new(
-            "capability_denied_event",
-            "event queue returned no event",
-        )),
+        Some(_) => {
+            Err(ConformanceError::new("capability_denied_event", "event payload changed in queue"))
+        }
+        None => {
+            Err(ConformanceError::new("capability_denied_event", "event queue returned no event"))
+        }
     }
 }
 

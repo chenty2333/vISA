@@ -111,10 +111,8 @@ impl FakeAotHeaderV1 {
         let entry_off = Self::WIRE_LEN as u64;
         let hostcall_off = entry_off + FakeAotEntryV1::WIRE_LEN as u64 * 3;
         let trap_off = hostcall_off + FakeHostcallStubV1::WIRE_LEN as u64;
-        let code_off = align_up_u64(
-            trap_off + FakeTrapStubV1::WIRE_LEN as u64,
-            FAKE_AOT_CODE_ALIGN as u64,
-        );
+        let code_off =
+            align_up_u64(trap_off + FakeTrapStubV1::WIRE_LEN as u64, FAKE_AOT_CODE_ALIGN as u64);
         let pc_range_off = code_off + FAKE_AOT_DEFAULT_CODE_LEN as u64;
         let trap_map_off = pc_range_off + FAKE_AOT_DEFAULT_PC_RANGE_TABLE_BYTES as u64;
         let debug_lite_off = trap_map_off + FAKE_AOT_DEFAULT_TRAP_MAP_BYTES as u64;
@@ -200,16 +198,8 @@ impl FakeAotHeaderV1 {
         write_u32(out, FLAGS_OFF, self.flags)?;
         write_u64(out, ENTRY_TABLE_OFF_OFF, self.entry_table_off)?;
         write_u32(out, ENTRY_TABLE_LEN_OFF, self.entry_table_len)?;
-        write_u64(
-            out,
-            HOSTCALL_STUB_TABLE_OFF_OFF,
-            self.hostcall_stub_table_off,
-        )?;
-        write_u32(
-            out,
-            HOSTCALL_STUB_TABLE_LEN_OFF,
-            self.hostcall_stub_table_len,
-        )?;
+        write_u64(out, HOSTCALL_STUB_TABLE_OFF_OFF, self.hostcall_stub_table_off)?;
+        write_u32(out, HOSTCALL_STUB_TABLE_LEN_OFF, self.hostcall_stub_table_len)?;
         write_u64(out, TRAP_STUB_TABLE_OFF_OFF, self.trap_stub_table_off)?;
         write_u32(out, TRAP_STUB_TABLE_LEN_OFF, self.trap_stub_table_len)?;
         write_u64(out, CODE_OFF_OFF, self.code_off)?;
@@ -305,11 +295,7 @@ impl FakeHostcallStubV1 {
         out[..Self::WIRE_LEN].fill(0);
         write_u32(out, HOSTCALL_ID_OFF, self.hostcall_id)?;
         write_u64(out, HOSTCALL_STUB_CODE_OFFSET_OFF, self.stub_code_offset)?;
-        write_u16(
-            out,
-            HOSTCALL_FRAME_LAYOUT_VERSION_OFF,
-            self.frame_layout_version,
-        )?;
+        write_u16(out, HOSTCALL_FRAME_LAYOUT_VERSION_OFF, self.frame_layout_version)?;
         write_u16(out, HOSTCALL_ARG_COUNT_OFF, self.arg_count)?;
         write_u16(out, HOSTCALL_RET_COUNT_OFF, self.ret_count)?;
         Ok(())
@@ -510,18 +496,8 @@ impl<'a> FakeAotBlob<'a> {
             header.pc_range_table_len as usize,
             16,
         )?;
-        validate_table(
-            self.bytes,
-            header.trap_map_off,
-            header.trap_map_len as usize,
-            16,
-        )?;
-        validate_region(
-            self.bytes,
-            header.debug_lite_off,
-            header.debug_lite_len as usize,
-            1,
-        )?;
+        validate_table(self.bytes, header.trap_map_off, header.trap_map_len as usize, 16)?;
+        validate_region(self.bytes, header.debug_lite_off, header.debug_lite_len as usize, 1)?;
         require_entry_table_stub(
             self.bytes,
             header,
@@ -606,9 +582,7 @@ pub fn apply_fake_patch(
                 return Err(FakeAotError::BadPatchWidth);
             }
             let end = checked_add(offset, 8, FakeAotError::PatchOutOfBounds)?;
-            let out = bytes
-                .get_mut(offset..end)
-                .ok_or(FakeAotError::PatchOutOfBounds)?;
+            let out = bytes.get_mut(offset..end).ok_or(FakeAotError::PatchOutOfBounds)?;
             out.copy_from_slice(&value.to_le_bytes());
             Ok(())
         }
@@ -617,9 +591,7 @@ pub fn apply_fake_patch(
                 return Err(FakeAotError::BadPatchWidth);
             }
             let end = checked_add(offset, 4, FakeAotError::PatchOutOfBounds)?;
-            let out = bytes
-                .get_mut(offset..end)
-                .ok_or(FakeAotError::PatchOutOfBounds)?;
+            let out = bytes.get_mut(offset..end).ok_or(FakeAotError::PatchOutOfBounds)?;
             out.copy_from_slice(&(value as u32).to_le_bytes());
             Ok(())
         }
@@ -648,9 +620,9 @@ pub fn validate_real_aot_relocation(relocation: RelocationEntryV1) -> Result<(),
         | RelocationKindV1::RiscvPcrelLo12S
         | RelocationKindV1::RiscvHi20
         | RelocationKindV1::RiscvLo12I
-        | RelocationKindV1::RiscvLo12S => Err(unsupported_relocation(
-            "unsupported real AOT relocation kind",
-        )),
+        | RelocationKindV1::RiscvLo12S => {
+            Err(unsupported_relocation("unsupported real AOT relocation kind"))
+        }
     }
 }
 
@@ -667,11 +639,7 @@ fn require_stub(
     expected: &[u8],
     name: &'static str,
 ) -> Result<(), FakeAotError> {
-    let end = checked_add(
-        offset,
-        expected.len(),
-        FakeAotError::MissingRequiredStub(name),
-    )?;
+    let end = checked_add(offset, expected.len(), FakeAotError::MissingRequiredStub(name))?;
     match code.get(offset..end) {
         Some(actual) if actual == expected => Ok(()),
         _ => Err(FakeAotError::MissingRequiredStub(name)),
@@ -679,19 +647,11 @@ fn require_stub(
 }
 
 fn require_table(count: u32, name: &'static str) -> Result<(), FakeAotError> {
-    if count == 0 {
-        Err(FakeAotError::MissingRequiredTable(name))
-    } else {
-        Ok(())
-    }
+    if count == 0 { Err(FakeAotError::MissingRequiredTable(name)) } else { Ok(()) }
 }
 
 fn require_bytes(len: u32, name: &'static str) -> Result<(), FakeAotError> {
-    if len == 0 {
-        Err(FakeAotError::MissingRequiredTable(name))
-    } else {
-        Ok(())
-    }
+    if len == 0 { Err(FakeAotError::MissingRequiredTable(name)) } else { Ok(()) }
 }
 
 fn validate_table(
@@ -714,9 +674,7 @@ fn validate_region(
         return Err(FakeAotError::TableOutOfBounds);
     }
     let start = usize::try_from(offset).map_err(|_| FakeAotError::TableOutOfBounds)?;
-    let len = count
-        .checked_mul(entry_len)
-        .ok_or(FakeAotError::TableOutOfBounds)?;
+    let len = count.checked_mul(entry_len).ok_or(FakeAotError::TableOutOfBounds)?;
     let end = checked_add(start, len, FakeAotError::TableOutOfBounds)?;
     if end > bytes.len() {
         return Err(FakeAotError::TableOutOfBounds);
@@ -799,15 +757,11 @@ fn parse_table_entry<T>(
     let table_start = usize::try_from(table_off).map_err(|_| FakeAotError::TableOutOfBounds)?;
     let entry_off = checked_add(
         table_start,
-        index
-            .checked_mul(entry_len)
-            .ok_or(FakeAotError::TableOutOfBounds)?,
+        index.checked_mul(entry_len).ok_or(FakeAotError::TableOutOfBounds)?,
         FakeAotError::TableOutOfBounds,
     )?;
     let entry_end = checked_add(entry_off, entry_len, FakeAotError::TableOutOfBounds)?;
-    let entry = bytes
-        .get(entry_off..entry_end)
-        .ok_or(FakeAotError::TableOutOfBounds)?;
+    let entry = bytes.get(entry_off..entry_end).ok_or(FakeAotError::TableOutOfBounds)?;
     parse(entry)
 }
 
@@ -821,11 +775,7 @@ fn debug_name_matches(
         usize::try_from(header.debug_lite_off).map_err(|_| FakeAotError::TableOutOfBounds)?;
     let debug_len = header.debug_lite_len as usize;
     let debug_end = checked_add(debug_start, debug_len, FakeAotError::TableOutOfBounds)?;
-    let name_start = checked_add(
-        debug_start,
-        name_off as usize,
-        FakeAotError::TableOutOfBounds,
-    )?;
+    let name_start = checked_add(debug_start, name_off as usize, FakeAotError::TableOutOfBounds)?;
     let name_end = checked_add(name_start, expected.len(), FakeAotError::TableOutOfBounds)?;
     let nul = checked_add(name_end, 1, FakeAotError::TableOutOfBounds)?;
     if nul > debug_end {
@@ -870,27 +820,21 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, FakeAotError> {
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<(), FakeAotError> {
     let end = checked_add(offset, 2, FakeAotError::BlobTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(FakeAotError::BlobTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(FakeAotError::BlobTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) -> Result<(), FakeAotError> {
     let end = checked_add(offset, 4, FakeAotError::BlobTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(FakeAotError::BlobTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(FakeAotError::BlobTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) -> Result<(), FakeAotError> {
     let end = checked_add(offset, 8, FakeAotError::BlobTooSmall)?;
-    let slice = bytes
-        .get_mut(offset..end)
-        .ok_or(FakeAotError::BlobTooSmall)?;
+    let slice = bytes.get_mut(offset..end).ok_or(FakeAotError::BlobTooSmall)?;
     slice.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
@@ -905,10 +849,7 @@ mod tests {
 
     #[test]
     fn rv64_stub_return_ok_exact_bytes() {
-        assert_eq!(
-            RV64_ENTRY_RETURN_OK_BYTES,
-            [0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00]
-        );
+        assert_eq!(RV64_ENTRY_RETURN_OK_BYTES, [0x13, 0x05, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00]);
     }
 
     #[test]
@@ -927,11 +868,7 @@ mod tests {
         let blob = FakeAotBlob::parse(&bytes).expect("default fake AOT parses");
 
         assert_eq!(blob.header().code_align, FAKE_AOT_CODE_ALIGN);
-        assert!(
-            blob.header()
-                .code_off
-                .is_multiple_of(FAKE_AOT_CODE_ALIGN as u64)
-        );
+        assert!(blob.header().code_off.is_multiple_of(FAKE_AOT_CODE_ALIGN as u64));
     }
 
     #[test]
@@ -986,14 +923,9 @@ mod tests {
     fn fake_aot_rejects_zero_filled_required_tables() {
         let mut bytes = default_blob();
         let header = FakeAotHeaderV1::parse(&bytes).expect("header");
-        table_entry_mut(
-            &mut bytes,
-            header.entry_table_off,
-            0,
-            FakeAotEntryV1::WIRE_LEN,
-        )
-        .expect("entry")
-        .fill(0);
+        table_entry_mut(&mut bytes, header.entry_table_off, 0, FakeAotEntryV1::WIRE_LEN)
+            .expect("entry")
+            .fill(0);
 
         assert_eq!(
             FakeAotBlob::parse(&bytes).err(),
@@ -1024,14 +956,9 @@ mod tests {
     fn fake_aot_rejects_missing_trap_stub_metadata() {
         let mut bytes = default_blob();
         let header = FakeAotHeaderV1::parse(&bytes).expect("header");
-        table_entry_mut(
-            &mut bytes,
-            header.trap_stub_table_off,
-            0,
-            FakeTrapStubV1::WIRE_LEN,
-        )
-        .expect("trap")
-        .fill(0);
+        table_entry_mut(&mut bytes, header.trap_stub_table_off, 0, FakeTrapStubV1::WIRE_LEN)
+            .expect("trap")
+            .fill(0);
 
         assert_eq!(
             FakeAotBlob::parse(&bytes).err(),
@@ -1048,10 +975,7 @@ mod tests {
         assert!(header.entry_table_off < header.hostcall_stub_table_off);
         assert!(header.hostcall_stub_table_off < header.trap_stub_table_off);
         assert!(header.trap_stub_table_off < header.code_off);
-        assert_eq!(
-            header.pc_range_table_off,
-            header.code_off + FAKE_AOT_DEFAULT_CODE_LEN as u64
-        );
+        assert_eq!(header.pc_range_table_off, header.code_off + FAKE_AOT_DEFAULT_CODE_LEN as u64);
         assert_eq!(
             header.trap_map_off,
             header.pc_range_table_off + FAKE_AOT_DEFAULT_PC_RANGE_TABLE_BYTES as u64
@@ -1107,13 +1031,8 @@ mod tests {
             addend: 0,
         };
 
-        apply_fake_patch(
-            FakeAotSectionKindV1::DebugLite,
-            &mut debug,
-            patch,
-            0x1122_3344,
-        )
-        .expect("data patch");
+        apply_fake_patch(FakeAotSectionKindV1::DebugLite, &mut debug, patch, 0x1122_3344)
+            .expect("data patch");
         assert_eq!(&debug[4..8], &[0x44, 0x33, 0x22, 0x11]);
     }
 
@@ -1132,12 +1051,10 @@ mod tests {
 
         assert_eq!(
             validate_real_aot_relocation(relocation),
-            Err(FakeAotError::UnsupportedRelocation(
-                ArtifactRelocationUnsupportedEventV1 {
-                    event_kind: "ArtifactRelocationUnsupported",
-                    reason: "unsupported real AOT relocation kind"
-                }
-            ))
+            Err(FakeAotError::UnsupportedRelocation(ArtifactRelocationUnsupportedEventV1 {
+                event_kind: "ArtifactRelocationUnsupported",
+                reason: "unsupported real AOT relocation kind"
+            }))
         );
     }
 
@@ -1184,13 +1101,8 @@ mod tests {
         for (index, entry) in entries.iter().enumerate() {
             entry
                 .write_to(
-                    table_entry_mut(
-                        blob,
-                        header.entry_table_off,
-                        index,
-                        FakeAotEntryV1::WIRE_LEN,
-                    )
-                    .expect("entry"),
+                    table_entry_mut(blob, header.entry_table_off, index, FakeAotEntryV1::WIRE_LEN)
+                        .expect("entry"),
                 )
                 .expect("entry write");
         }
@@ -1203,13 +1115,8 @@ mod tests {
             ret_count: FAKE_AOT_HOSTCALL_RET_COUNT,
         }
         .write_to(
-            table_entry_mut(
-                blob,
-                header.hostcall_stub_table_off,
-                0,
-                FakeHostcallStubV1::WIRE_LEN,
-            )
-            .expect("hostcall"),
+            table_entry_mut(blob, header.hostcall_stub_table_off, 0, FakeHostcallStubV1::WIRE_LEN)
+                .expect("hostcall"),
         )
         .expect("hostcall write");
 
@@ -1219,13 +1126,8 @@ mod tests {
             expected_trap_offset: RV64_ENTRY_TRAP_EBREAK_OFFSET,
         }
         .write_to(
-            table_entry_mut(
-                blob,
-                header.trap_stub_table_off,
-                0,
-                FakeTrapStubV1::WIRE_LEN,
-            )
-            .expect("trap"),
+            table_entry_mut(blob, header.trap_stub_table_off, 0, FakeTrapStubV1::WIRE_LEN)
+                .expect("trap"),
         )
         .expect("trap write");
 

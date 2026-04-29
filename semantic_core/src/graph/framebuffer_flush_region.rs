@@ -20,10 +20,7 @@ impl SemanticGraph {
         if framebuffer_flush_region == 0 {
             return Err("framebuffer flush region id=0 is invalid");
         }
-        if self
-            .framebuffer_flush_regions
-            .iter()
-            .any(|record| record.id == framebuffer_flush_region)
+        if self.framebuffer_flush_regions.iter().any(|record| record.id == framebuffer_flush_region)
         {
             return Err("framebuffer flush region already exists");
         }
@@ -79,10 +76,7 @@ impl SemanticGraph {
             || display_capability_record.framebuffer != write_record.framebuffer
             || display_capability_record.framebuffer_generation
                 != write_record.framebuffer_generation
-            || !display_capability_record
-                .operations
-                .iter()
-                .any(|operation| operation == "flush")
+            || !display_capability_record.operations.iter().any(|operation| operation == "flush")
         {
             return Err("framebuffer flush region display capability binding mismatch");
         }
@@ -144,9 +138,8 @@ impl SemanticGraph {
             .expect("validated framebuffer flush region write exists")
             .clone();
         let generation = 1;
-        self.next_framebuffer_flush_region_id = self
-            .next_framebuffer_flush_region_id
-            .max(framebuffer_flush_region.saturating_add(1));
+        self.next_framebuffer_flush_region_id =
+            self.next_framebuffer_flush_region_id.max(framebuffer_flush_region.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferFlushRegionRecorded {
@@ -173,32 +166,31 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_flush_regions
-            .push(FramebufferFlushRegionRecord {
-                id: framebuffer_flush_region,
-                owner_store,
-                owner_store_generation,
-                framebuffer_write,
-                framebuffer_write_generation,
-                display_capability: write_record.display_capability,
-                display_capability_generation: write_record.display_capability_generation,
-                display: write_record.display,
-                display_generation: write_record.display_generation,
-                framebuffer: write_record.framebuffer,
-                framebuffer_generation: write_record.framebuffer_generation,
-                x,
-                y,
-                width,
-                height,
-                byte_offset,
-                byte_len,
-                pixel_format: write_record.pixel_format,
-                payload_digest,
-                generation,
-                state: FramebufferFlushRegionState::Applied,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.framebuffer_flush_regions.push(FramebufferFlushRegionRecord {
+            id: framebuffer_flush_region,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            display_capability: write_record.display_capability,
+            display_capability_generation: write_record.display_capability_generation,
+            display: write_record.display,
+            display_generation: write_record.display_generation,
+            framebuffer: write_record.framebuffer,
+            framebuffer_generation: write_record.framebuffer_generation,
+            x,
+            y,
+            width,
+            height,
+            byte_offset,
+            byte_len,
+            pixel_format: write_record.pixel_format,
+            payload_digest,
+            generation,
+            state: FramebufferFlushRegionState::Applied,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 

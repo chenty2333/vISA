@@ -19,22 +19,12 @@ pub struct ObjectRefRaw {
 }
 
 impl ObjectRefRaw {
-    pub const NULL: Self = Self {
-        kind: 0,
-        reserved: 0,
-        id: 0,
-        generation: 0,
-    };
+    pub const NULL: Self = Self { kind: 0, reserved: 0, id: 0, generation: 0 };
 
     pub const WIRE_LEN: usize = core::mem::size_of::<Self>();
 
     pub const fn new(kind: u16, id: u64, generation: u64) -> Self {
-        Self {
-            kind,
-            reserved: 0,
-            id,
-            generation,
-        }
+        Self { kind, reserved: 0, id, generation }
     }
 
     pub const fn is_null(self) -> bool {
@@ -63,14 +53,7 @@ impl CapabilityHandleRaw {
         rights_hint: u64,
         class_hint: u16,
     ) -> Self {
-        Self {
-            slot,
-            generation,
-            tag,
-            rights_hint,
-            class_hint,
-            reserved: [0; 3],
-        }
+        Self { slot, generation, tag, rights_hint, class_hint, reserved: [0; 3] }
     }
 }
 
@@ -295,11 +278,7 @@ pub struct ActivationScratchRegion {
 
 impl ActivationScratchRegion {
     pub const fn new(base: u64, len: u64, alignment: u64) -> Self {
-        Self {
-            base,
-            len,
-            alignment,
-        }
+        Self { base, len, alignment }
     }
 
     pub fn contains_frame(&self, frame_ptr: u64, frame_len: u16) -> bool {
@@ -359,12 +338,7 @@ pub struct FakeHostcallTailInvocation {
 
 impl FakeHostcallTailInvocation {
     pub const fn new(a0_frame_ptr: u64, a1_trampoline_ptr: u64, original_ra: u64) -> Self {
-        Self {
-            a0_frame_ptr,
-            a1_trampoline_ptr,
-            original_ra,
-            returned_ra: original_ra,
-        }
+        Self { a0_frame_ptr, a1_trampoline_ptr, original_ra, returned_ra: original_ra }
     }
 
     pub const fn uses_a0_frame_ptr(self, expected_frame_ptr: u64) -> bool {
@@ -378,25 +352,19 @@ impl FakeHostcallTailInvocation {
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, HostcallFrameError> {
     let end = checked_add(offset, 2)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, HostcallFrameError> {
     let end = checked_add(offset, 4)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, HostcallFrameError> {
     let end = checked_add(offset, 8)?;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let slice = bytes.get(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     Ok(u64::from_le_bytes([
         slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
     ]))
@@ -413,27 +381,21 @@ fn read_object(bytes: &[u8], offset: usize) -> Result<ObjectRefRaw, HostcallFram
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<(), HostcallFrameError> {
     let end = checked_add(offset, 2)?;
-    let out = bytes
-        .get_mut(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let out = bytes.get_mut(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     out.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) -> Result<(), HostcallFrameError> {
     let end = checked_add(offset, 4)?;
-    let out = bytes
-        .get_mut(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let out = bytes.get_mut(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     out.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) -> Result<(), HostcallFrameError> {
     let end = checked_add(offset, 8)?;
-    let out = bytes
-        .get_mut(offset..end)
-        .ok_or(HostcallFrameError::BufferTooSmall)?;
+    let out = bytes.get_mut(offset..end).ok_or(HostcallFrameError::BufferTooSmall)?;
     out.copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
@@ -451,8 +413,7 @@ fn write_object(
 }
 
 fn checked_add(left: usize, right: usize) -> Result<usize, HostcallFrameError> {
-    left.checked_add(right)
-        .ok_or(HostcallFrameError::BufferTooSmall)
+    left.checked_add(right).ok_or(HostcallFrameError::BufferTooSmall)
 }
 
 #[cfg(test)]

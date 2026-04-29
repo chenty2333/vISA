@@ -1,10 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 
-use core::arch::asm;
 #[cfg(not(test))]
 use core::panic::PanicInfo;
-use core::slice;
+use core::{arch::asm, slice};
 
 use vmos_abi::{
     AF_INET, EPOLL_CTL_ADD, EPOLLIN, FUTEX_WAIT, SOCK_STREAM, SYS_CLOSE, SYS_EPOLL_CREATE1,
@@ -188,19 +187,13 @@ fn show_uname() -> Result<(), i32> {
 }
 
 fn do_sleep() -> Result<(), i32> {
-    let req = Timespec {
-        tv_sec: 0,
-        tv_nsec: 25_000_000,
-    };
+    let req = Timespec { tv_sec: 0, tv_nsec: 25_000_000 };
     sys_nanosleep(&req)?;
     write_all(SLEEP_LABEL)
 }
 
 fn check_futex_timeout() -> Result<(), i32> {
-    let timeout = Timespec {
-        tv_sec: 0,
-        tv_nsec: 5_000_000,
-    };
+    let timeout = Timespec { tv_sec: 0, tv_nsec: 5_000_000 };
     let rc = syscall6(
         SYS_FUTEX,
         (&raw const FUTEX_WORD) as u64,
@@ -220,10 +213,7 @@ fn check_futex_timeout() -> Result<(), i32> {
 fn check_epoll_pulse() -> Result<(), i32> {
     let pulse_fd = open_readonly(PULSE_PATH)?;
     let epfd = sys_epoll_create1(0)?;
-    let ctl_event = EpollEvent {
-        events: EPOLLIN,
-        data: pulse_fd as u64,
-    };
+    let ctl_event = EpollEvent { events: EPOLLIN, data: pulse_fd as u64 };
     sys_epoll_ctl(epfd, EPOLL_CTL_ADD as i32, pulse_fd, &ctl_event)?;
 
     let mut events = [EpollEvent { events: 0, data: 0 }; 1];
@@ -253,10 +243,7 @@ fn check_socket_path() -> Result<(), i32> {
     }
 
     let epfd = sys_epoll_create1(0)?;
-    let ctl_event = EpollEvent {
-        events: EPOLLIN,
-        data: fd as u64,
-    };
+    let ctl_event = EpollEvent { events: EPOLLIN, data: fd as u64 };
     sys_epoll_ctl(epfd, EPOLL_CTL_ADD as i32, fd, &ctl_event)?;
 
     let mut events = [EpollEvent { events: 0, data: 0 }; 1];
@@ -281,18 +268,8 @@ fn check_socket_path() -> Result<(), i32> {
 }
 
 fn open_readonly(path: &[u8]) -> Result<i32, i32> {
-    let rc = syscall4(
-        SYS_OPENAT,
-        AT_FDCWD as u64,
-        path.as_ptr() as u64,
-        O_RDONLY as u64,
-        0,
-    );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as i32)
-    }
+    let rc = syscall4(SYS_OPENAT, AT_FDCWD as u64, path.as_ptr() as u64, O_RDONLY as u64, 0);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as i32) }
 }
 
 fn close_fd(fd: i32) -> Result<(), i32> {
@@ -301,49 +278,23 @@ fn close_fd(fd: i32) -> Result<(), i32> {
 }
 
 fn sys_read(fd: i32, buffer: &mut [u8]) -> Result<usize, i32> {
-    let rc = syscall3(
-        SYS_READ,
-        fd as u64,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u64,
-    );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    let rc = syscall3(SYS_READ, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_getdents64(fd: i32, buffer: &mut [u8]) -> Result<usize, i32> {
-    let rc = syscall3(
-        SYS_GETDENTS64,
-        fd as u64,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u64,
-    );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    let rc = syscall3(SYS_GETDENTS64, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_getcwd(buffer: &mut [u8]) -> Result<usize, i32> {
     let rc = syscall2(SYS_GETCWD, buffer.as_mut_ptr() as u64, buffer.len() as u64);
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_epoll_create1(flags: u32) -> Result<i32, i32> {
     let rc = syscall1(SYS_EPOLL_CREATE1, flags as u64);
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as i32)
-    }
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as i32) }
 }
 
 fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event: &EpollEvent) -> Result<(), i32> {
@@ -365,11 +316,7 @@ fn sys_epoll_wait(epfd: i32, events: &mut [EpollEvent], timeout_ms: i32) -> Resu
         events.len() as u64,
         timeout_ms as u64,
     );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_readlinkat(dirfd: i32, path: &[u8], buffer: &mut [u8]) -> Result<usize, i32> {
@@ -380,11 +327,7 @@ fn sys_readlinkat(dirfd: i32, path: &[u8], buffer: &mut [u8]) -> Result<usize, i
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_uname(uts: &mut UtsName) -> Result<(), i32> {
@@ -399,57 +342,22 @@ fn sys_nanosleep(req: &Timespec) -> Result<(), i32> {
 
 fn sys_socket(domain: i32, ty: i32, protocol: i32) -> Result<i32, i32> {
     let rc = syscall3(SYS_SOCKET, domain as u64, ty as u64, protocol as u64);
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as i32)
-    }
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as i32) }
 }
 
 fn sys_sendto(fd: i32, bytes: &[u8]) -> Result<usize, i32> {
-    let rc = syscall6(
-        SYS_SENDTO,
-        fd as u64,
-        bytes.as_ptr() as u64,
-        bytes.len() as u64,
-        0,
-        0,
-        0,
-    );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    let rc = syscall6(SYS_SENDTO, fd as u64, bytes.as_ptr() as u64, bytes.len() as u64, 0, 0, 0);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_recvfrom(fd: i32, buffer: &mut [u8]) -> Result<usize, i32> {
-    let rc = syscall6(
-        SYS_RECVFROM,
-        fd as u64,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u64,
-        0,
-        0,
-        0,
-    );
-    if rc < 0 {
-        Err(rc as i32)
-    } else {
-        Ok(rc as usize)
-    }
+    let rc =
+        syscall6(SYS_RECVFROM, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64, 0, 0, 0);
+    if rc < 0 { Err(rc as i32) } else { Ok(rc as usize) }
 }
 
 fn sys_setsockopt(fd: i32, level: i32, optname: i32, optval: u64, optlen: u64) -> Result<(), i32> {
-    let rc = syscall6(
-        SYS_SETSOCKOPT,
-        fd as u64,
-        level as u64,
-        optname as u64,
-        optval,
-        optlen,
-        0,
-    );
+    let rc = syscall6(SYS_SETSOCKOPT, fd as u64, level as u64, optname as u64, optval, optlen, 0);
     if rc < 0 { Err(rc as i32) } else { Ok(()) }
 }
 
@@ -469,10 +377,7 @@ fn trim_c_string(bytes: &[u8]) -> &[u8] {
 }
 
 fn c_string_len(bytes: &[u8]) -> usize {
-    bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(bytes.len())
+    bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len())
 }
 
 fn exit(code: i32) -> ! {

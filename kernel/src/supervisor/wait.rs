@@ -2,25 +2,16 @@ use alloc::vec::Vec;
 
 use vmos_abi::ERR_ETIMEDOUT;
 
-use super::events::Event;
-use super::types::{TaskId, WaitKind, WaitRestartClass, WaitToken};
+use super::{
+    events::Event,
+    types::{TaskId, WaitKind, WaitRestartClass, WaitToken},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum WaitRegistration {
-    Timer {
-        delay_ms: u32,
-        resume_cookie: u32,
-    },
-    Futex {
-        timeout_ms: Option<u32>,
-        resume_cookie: u32,
-    },
-    Epoll {
-        epoll_id: u32,
-        max_events: u32,
-        timeout_ms: Option<u32>,
-        resume_cookie: u32,
-    },
+    Timer { delay_ms: u32, resume_cookie: u32 },
+    Futex { timeout_ms: Option<u32>, resume_cookie: u32 },
+    Epoll { epoll_id: u32, max_events: u32, timeout_ms: Option<u32>, resume_cookie: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,10 +59,7 @@ pub(crate) struct WaitRegistry {
 
 impl WaitRegistry {
     pub(crate) fn new() -> Self {
-        Self {
-            next_id: 1,
-            records: Vec::new(),
-        }
+        Self { next_id: 1, records: Vec::new() }
     }
 
     pub(crate) fn register(
@@ -82,57 +70,33 @@ impl WaitRegistry {
         timer_hz: u32,
     ) -> WaitToken {
         let (kind, source, resume_cookie, deadline_tick) = match registration {
-            WaitRegistration::Timer {
-                delay_ms,
-                resume_cookie,
-            } => (
+            WaitRegistration::Timer { delay_ms, resume_cookie } => (
                 WaitKind::Timer,
                 WaitSource::Timer,
                 resume_cookie,
                 Some(now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
-            WaitRegistration::Futex {
-                timeout_ms,
-                resume_cookie,
-            } => (
+            WaitRegistration::Futex { timeout_ms, resume_cookie } => (
                 WaitKind::Futex,
                 WaitSource::Futex,
                 resume_cookie,
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
-            WaitRegistration::Epoll {
-                epoll_id,
-                max_events,
-                timeout_ms,
-                resume_cookie,
-            } => (
+            WaitRegistration::Epoll { epoll_id, max_events, timeout_ms, resume_cookie } => (
                 WaitKind::Epoll,
-                WaitSource::Epoll {
-                    epoll_id,
-                    max_events,
-                },
+                WaitSource::Epoll { epoll_id, max_events },
                 resume_cookie,
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
         };
 
-        let token = WaitToken {
-            id: self.next_id,
-            owner_task,
-            kind,
-            generation: self.next_id,
-        };
+        let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
         self.next_id += 1;
 
-        let record = WaitRecord {
-            token,
-            source,
-            resume_cookie,
-            deadline_tick,
-            state: WaitState::Pending,
-        };
+        let record =
+            WaitRecord { token, source, resume_cookie, deadline_tick, state: WaitState::Pending };
 
         for slot in &mut self.records {
             if slot.is_none() {
@@ -224,10 +188,7 @@ impl WaitRegistry {
     }
 
     fn find_mut(&mut self, token_id: u64) -> Option<&mut WaitRecord> {
-        self.records
-            .iter_mut()
-            .flatten()
-            .find(|record| record.token.id == token_id)
+        self.records.iter_mut().flatten().find(|record| record.token.id == token_id)
     }
 }
 
@@ -255,20 +216,14 @@ mod tests {
             100,
         );
 
-        registry.apply_event(Event::WaitRestart(
-            token.id,
-            WaitRestartClass::DriverRestart,
-        ));
+        registry.apply_event(Event::WaitRestart(token.id, WaitRestartClass::DriverRestart));
 
         assert_eq!(
             registry.take_resolution(token),
             Some(WaitResolution {
                 outcome: WaitOutcome::Restart(WaitRestartClass::DriverRestart),
                 resume_cookie: 99,
-                source: WaitSource::Epoll {
-                    epoll_id: 3,
-                    max_events: 4,
-                },
+                source: WaitSource::Epoll { epoll_id: 3, max_events: 4 },
             })
         );
         assert_eq!(registry.take_resolution(token), None);

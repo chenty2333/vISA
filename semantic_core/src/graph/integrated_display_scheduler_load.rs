@@ -15,11 +15,7 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated display/scheduler load id=0 is invalid");
         }
-        if self
-            .integrated_display_scheduler_loads
-            .iter()
-            .any(|record| record.id == integrated)
-        {
+        if self.integrated_display_scheduler_loads.iter().any(|record| record.id == integrated) {
             return Err("integrated display/scheduler load evidence already exists");
         }
         if scenario.is_empty() {
@@ -124,9 +120,8 @@ impl SemanticGraph {
         };
         let scheduler_load_units = 1;
         let generation = 1;
-        self.next_integrated_display_scheduler_load_id = self
-            .next_integrated_display_scheduler_load_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_display_scheduler_load_id =
+            self.next_integrated_display_scheduler_load_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedDisplaySchedulerLoadRecorded {
@@ -154,46 +149,45 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_display_scheduler_loads
-            .push(IntegratedDisplaySchedulerLoadRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                framebuffer_benchmark,
-                framebuffer_benchmark_generation,
-                scheduler_decision,
-                scheduler_decision_generation,
-                owner_store: benchmark.owner_store,
-                owner_store_generation: benchmark.owner_store_generation,
-                owner_task: decision.owner_task,
-                owner_task_generation: decision.owner_task_generation,
-                queue: decision.queue,
-                queue_generation: decision.queue_generation,
-                selected_activation: decision.selected_activation,
-                selected_activation_generation: decision.selected_activation_generation,
-                display: benchmark.display,
-                display_generation: benchmark.display_generation,
-                framebuffer: benchmark.framebuffer,
-                framebuffer_generation: benchmark.framebuffer_generation,
-                display_capability: benchmark.display_capability,
-                display_capability_generation: benchmark.display_capability_generation,
-                framebuffer_write: benchmark.framebuffer_write,
-                framebuffer_write_generation: benchmark.framebuffer_write_generation,
-                framebuffer_flush_region: benchmark.framebuffer_flush_region,
-                framebuffer_flush_region_generation: benchmark.framebuffer_flush_region_generation,
-                display_event_log: benchmark.display_event_log,
-                display_event_log_generation: benchmark.display_event_log_generation,
-                sample_frames: benchmark.sample_frames,
-                sample_bytes: benchmark.sample_bytes,
-                scheduler_load_units,
-                display_measured_nanos: benchmark.measured_nanos,
-                scheduler_decided_at_event: decision.decided_at_event,
-                display_recorded_at_event: benchmark.recorded_at_event,
-                invariant_checks,
-                generation,
-                state: IntegratedDisplaySchedulerLoadState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_display_scheduler_loads.push(IntegratedDisplaySchedulerLoadRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            framebuffer_benchmark,
+            framebuffer_benchmark_generation,
+            scheduler_decision,
+            scheduler_decision_generation,
+            owner_store: benchmark.owner_store,
+            owner_store_generation: benchmark.owner_store_generation,
+            owner_task: decision.owner_task,
+            owner_task_generation: decision.owner_task_generation,
+            queue: decision.queue,
+            queue_generation: decision.queue_generation,
+            selected_activation: decision.selected_activation,
+            selected_activation_generation: decision.selected_activation_generation,
+            display: benchmark.display,
+            display_generation: benchmark.display_generation,
+            framebuffer: benchmark.framebuffer,
+            framebuffer_generation: benchmark.framebuffer_generation,
+            display_capability: benchmark.display_capability,
+            display_capability_generation: benchmark.display_capability_generation,
+            framebuffer_write: benchmark.framebuffer_write,
+            framebuffer_write_generation: benchmark.framebuffer_write_generation,
+            framebuffer_flush_region: benchmark.framebuffer_flush_region,
+            framebuffer_flush_region_generation: benchmark.framebuffer_flush_region_generation,
+            display_event_log: benchmark.display_event_log,
+            display_event_log_generation: benchmark.display_event_log_generation,
+            sample_frames: benchmark.sample_frames,
+            sample_bytes: benchmark.sample_bytes,
+            scheduler_load_units,
+            display_measured_nanos: benchmark.measured_nanos,
+            scheduler_decided_at_event: decision.decided_at_event,
+            display_recorded_at_event: benchmark.recorded_at_event,
+            invariant_checks,
+            generation,
+            state: IntegratedDisplaySchedulerLoadState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -234,11 +228,9 @@ impl SemanticGraph {
                 || record.scheduler_decided_at_event > record.display_recorded_at_event
                 || record.invariant_checks == 0
             {
-                return Err(
-                    SemanticInvariantError::IntegratedDisplaySchedulerLoadInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedDisplaySchedulerLoadInvalid {
+                    integrated: record.id,
+                });
             }
             for (label, id, generation, refs) in [
                 (
@@ -284,11 +276,9 @@ impl SemanticGraph {
                 )
                 .is_err()
             {
-                return Err(
-                    SemanticInvariantError::IntegratedDisplaySchedulerLoadInvalid {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedDisplaySchedulerLoadInvalid {
+                    integrated: record.id,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -344,11 +334,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::IntegratedDisplaySchedulerLoadMissingEvent {
-                        integrated: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::IntegratedDisplaySchedulerLoadMissingEvent {
+                    integrated: record.id,
+                });
             }
         }
         Ok(())

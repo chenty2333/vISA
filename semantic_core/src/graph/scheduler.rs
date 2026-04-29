@@ -32,10 +32,7 @@ impl SemanticGraph {
         code_object: Option<ContractObjectRef>,
     ) -> bool {
         if activation == 0
-            || self
-                .runtime_activations
-                .iter()
-                .any(|record| record.id == activation)
+            || self.runtime_activations.iter().any(|record| record.id == activation)
             || !self
                 .tasks
                 .iter()
@@ -64,11 +61,7 @@ impl SemanticGraph {
         self.next_runtime_activation_id = self.next_runtime_activation_id.max(activation + 1);
         let event = self.event_log.push(
             "scheduler",
-            EventKind::RuntimeActivationCreated {
-                activation,
-                task: owner_task,
-                generation: 1,
-            },
+            EventKind::RuntimeActivationCreated { activation, task: owner_task, generation: 1 },
         );
         self.runtime_activations.push(RuntimeActivationRecord {
             id: activation,
@@ -109,11 +102,7 @@ impl SemanticGraph {
         });
         self.event_log.push(
             "scheduler",
-            EventKind::RunnableQueueCreated {
-                queue,
-                label: label.to_string(),
-                generation: 1,
-            },
+            EventKind::RunnableQueueCreated { queue, label: label.to_string(), generation: 1 },
         );
         true
     }
@@ -189,18 +178,15 @@ impl SemanticGraph {
         {
             return false;
         }
-        if self.runnable_queues.iter().any(|record| {
-            record
-                .entries
-                .iter()
-                .any(|entry| entry.activation == activation)
-        }) {
+        if self
+            .runnable_queues
+            .iter()
+            .any(|record| record.entries.iter().any(|entry| entry.activation == activation))
+        {
             return false;
         }
-        let Some(activation_index) = self
-            .runtime_activations
-            .iter()
-            .position(|record| record.id == activation)
+        let Some(activation_index) =
+            self.runtime_activations.iter().position(|record| record.id == activation)
         else {
             return false;
         };
@@ -213,10 +199,7 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        if self.runtime_activations[activation_index]
-            .runnable_queue
-            .is_some()
-        {
+        if self.runtime_activations[activation_index].runnable_queue.is_some() {
             return false;
         }
         let owner_task = self.runtime_activations[activation_index].owner_task;
@@ -265,20 +248,14 @@ impl SemanticGraph {
         );
         let queued_event = self.event_log.push(
             "scheduler",
-            EventKind::RunnableQueued {
-                queue,
-                activation,
-                activation_generation: generation,
-            },
+            EventKind::RunnableQueued { queue, activation, activation_generation: generation },
         );
         self.runtime_activations[activation_index].last_event = Some(queued_event);
-        self.runnable_queues[queue_index]
-            .entries
-            .push(RunnableQueueEntry {
-                activation,
-                activation_generation: generation,
-                enqueued_at: queued_event,
-            });
+        self.runnable_queues[queue_index].entries.push(RunnableQueueEntry {
+            activation,
+            activation_generation: generation,
+            enqueued_at: queued_event,
+        });
         true
     }
 
@@ -302,10 +279,8 @@ impl SemanticGraph {
             return false;
         };
         let entry = self.runnable_queues[queue_index].entries[entry_index].clone();
-        let Some(activation_index) = self
-            .runtime_activations
-            .iter()
-            .position(|record| record.id == activation)
+        let Some(activation_index) =
+            self.runtime_activations.iter().position(|record| record.id == activation)
         else {
             return false;
         };
@@ -314,9 +289,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        self.runnable_queues[queue_index]
-            .entries
-            .remove(entry_index);
+        self.runnable_queues[queue_index].entries.remove(entry_index);
         let from = self.runtime_activations[activation_index].state;
         self.runtime_activations[activation_index].state = RuntimeActivationState::Running;
         self.runtime_activations[activation_index].generation += 1;
@@ -355,12 +328,7 @@ impl SemanticGraph {
         queue: RunnableQueueId,
         note: &str,
     ) -> bool {
-        if preemption == 0
-            || self
-                .preemptions
-                .iter()
-                .any(|record| record.id == preemption)
-        {
+        if preemption == 0 || self.preemptions.iter().any(|record| record.id == preemption) {
             return false;
         }
         let Some(queue_index) = self
@@ -370,12 +338,11 @@ impl SemanticGraph {
         else {
             return false;
         };
-        if self.runnable_queues.iter().any(|record| {
-            record
-                .entries
-                .iter()
-                .any(|entry| entry.activation == activation)
-        }) {
+        if self
+            .runnable_queues
+            .iter()
+            .any(|record| record.entries.iter().any(|entry| entry.activation == activation))
+        {
             return false;
         }
         let Some(timer) = self.timer_interrupts.iter().find(|record| {
@@ -463,21 +430,15 @@ impl SemanticGraph {
         );
         let queued_event = self.event_log.push(
             "scheduler",
-            EventKind::RunnableQueued {
-                queue,
-                activation,
-                activation_generation: to_generation,
-            },
+            EventKind::RunnableQueued { queue, activation, activation_generation: to_generation },
         );
         self.runtime_activations[activation_index].last_event =
             Some(preempted_event.max(state_event).max(queued_event));
-        self.runnable_queues[queue_index]
-            .entries
-            .push(RunnableQueueEntry {
-                activation,
-                activation_generation: to_generation,
-                enqueued_at: queued_event,
-            });
+        self.runnable_queues[queue_index].entries.push(RunnableQueueEntry {
+            activation,
+            activation_generation: to_generation,
+            enqueued_at: queued_event,
+        });
         self.preemptions.push(PreemptionRecord {
             id: preemption,
             activation,
@@ -507,10 +468,7 @@ impl SemanticGraph {
     ) -> bool {
         if decision == 0
             || reason.is_empty()
-            || self
-                .scheduler_decisions
-                .iter()
-                .any(|record| record.id == decision)
+            || self.scheduler_decisions.iter().any(|record| record.id == decision)
         {
             return false;
         }
@@ -662,12 +620,7 @@ impl SemanticGraph {
         activation_generation: Generation,
         note: &str,
     ) -> bool {
-        if resume == 0
-            || self
-                .activation_resumes
-                .iter()
-                .any(|record| record.id == resume)
-        {
+        if resume == 0 || self.activation_resumes.iter().any(|record| record.id == resume) {
             return false;
         }
         let Some(decision_index) = self.scheduler_decisions.iter().position(|record| {
@@ -691,13 +644,10 @@ impl SemanticGraph {
             return false;
         };
         let Some(entry_index) =
-            self.runnable_queues[queue_index]
-                .entries
-                .iter()
-                .position(|entry| {
-                    entry.activation == activation
-                        && entry.activation_generation == activation_generation
-                })
+            self.runnable_queues[queue_index].entries.iter().position(|entry| {
+                entry.activation == activation
+                    && entry.activation_generation == activation_generation
+            })
         else {
             return false;
         };
@@ -747,10 +697,7 @@ impl SemanticGraph {
             if context.state != ActivationContextState::Saved {
                 return false;
             }
-            match (
-                context.current_saved_context,
-                context.current_saved_context_generation,
-            ) {
+            match (context.current_saved_context, context.current_saved_context_generation) {
                 (Some(saved), Some(saved_generation)) => {
                     let Some(saved_index) = self.saved_contexts.iter().position(|record| {
                         record.id == saved
@@ -797,9 +744,7 @@ impl SemanticGraph {
         };
 
         self.next_activation_resume_id = self.next_activation_resume_id.max(resume + 1);
-        let entry = self.runnable_queues[queue_index]
-            .entries
-            .remove(entry_index);
+        let entry = self.runnable_queues[queue_index].entries.remove(entry_index);
         let from = self.runtime_activations[activation_index].state;
         self.runtime_activations[activation_index].state = RuntimeActivationState::Running;
         self.runtime_activations[activation_index].generation += 1;
@@ -1046,10 +991,8 @@ impl SemanticGraph {
 
     #[cfg(test)]
     pub(crate) fn clear_runtime_activation_queue_for_test(&mut self, activation: ActivationId) {
-        if let Some(record) = self
-            .runtime_activations
-            .iter_mut()
-            .find(|record| record.id == activation)
+        if let Some(record) =
+            self.runtime_activations.iter_mut().find(|record| record.id == activation)
         {
             record.runnable_queue = None;
             record.runnable_queue_generation = None;
@@ -1063,11 +1006,7 @@ impl SemanticGraph {
         owner_hart: Option<HartId>,
         owner_hart_generation: Option<Generation>,
     ) {
-        if let Some(record) = self
-            .runnable_queues
-            .iter_mut()
-            .find(|record| record.id == queue)
-        {
+        if let Some(record) = self.runnable_queues.iter_mut().find(|record| record.id == queue) {
             record.owner_hart = owner_hart;
             record.owner_hart_generation = owner_hart_generation;
         }
@@ -1079,11 +1018,7 @@ impl SemanticGraph {
         preemption: PreemptionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .preemptions
-            .iter_mut()
-            .find(|record| record.id == preemption)
-        {
+        if let Some(record) = self.preemptions.iter_mut().find(|record| record.id == preemption) {
             record.timer_interrupt_generation = generation;
         }
     }
@@ -1094,10 +1029,8 @@ impl SemanticGraph {
         decision: SchedulerDecisionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .scheduler_decisions
-            .iter_mut()
-            .find(|record| record.id == decision)
+        if let Some(record) =
+            self.scheduler_decisions.iter_mut().find(|record| record.id == decision)
         {
             record.selected_activation_generation = generation;
         }
@@ -1109,10 +1042,7 @@ impl SemanticGraph {
         resume: ActivationResumeId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .activation_resumes
-            .iter_mut()
-            .find(|record| record.id == resume)
+        if let Some(record) = self.activation_resumes.iter_mut().find(|record| record.id == resume)
         {
             record.activation_generation_after = generation;
         }
@@ -1124,10 +1054,8 @@ impl SemanticGraph {
         activation: ActivationId,
         state: RuntimeActivationState,
     ) {
-        if let Some(record) = self
-            .runtime_activations
-            .iter_mut()
-            .find(|record| record.id == activation)
+        if let Some(record) =
+            self.runtime_activations.iter_mut().find(|record| record.id == activation)
         {
             record.state = state;
         }
@@ -1232,17 +1160,13 @@ impl SemanticGraph {
                 }
             }
             for entry in &queue.entries {
-                let Some(activation) = self
-                    .runtime_activations
-                    .iter()
-                    .find(|record| record.id == entry.activation)
+                let Some(activation) =
+                    self.runtime_activations.iter().find(|record| record.id == entry.activation)
                 else {
-                    return Err(
-                        SemanticInvariantError::RunnableQueueReferencesMissingActivation {
-                            queue: queue.id,
-                            activation: entry.activation,
-                        },
-                    );
+                    return Err(SemanticInvariantError::RunnableQueueReferencesMissingActivation {
+                        queue: queue.id,
+                        activation: entry.activation,
+                    });
                 };
                 if activation.generation != entry.activation_generation {
                     return Err(
@@ -1280,27 +1204,19 @@ impl SemanticGraph {
                     .runnable_queues
                     .iter()
                     .filter(|queue| {
-                        queue
-                            .entries
-                            .iter()
-                            .any(|entry| entry.activation == activation.id)
+                        queue.entries.iter().any(|entry| entry.activation == activation.id)
                     })
                     .count();
                 if queue_refs != 1 {
-                    return Err(
-                        SemanticInvariantError::RunnableActivationQueueCountMismatch {
-                            activation: activation.id,
-                            queue_refs,
-                        },
-                    );
+                    return Err(SemanticInvariantError::RunnableActivationQueueCountMismatch {
+                        activation: activation.id,
+                        queue_refs,
+                    });
                 }
             }
             if activation.state == RuntimeActivationState::Running
                 && self.runnable_queues.iter().any(|queue| {
-                    queue
-                        .entries
-                        .iter()
-                        .any(|entry| entry.activation == activation.id)
+                    queue.entries.iter().any(|entry| entry.activation == activation.id)
                 })
             {
                 return Err(SemanticInvariantError::RunningActivationStillQueued {
@@ -1378,11 +1294,7 @@ impl SemanticGraph {
                     queue: decision.queue,
                 });
             };
-            let Some(task) = self
-                .tasks
-                .iter()
-                .find(|task| task.id == decision.owner_task)
-            else {
+            let Some(task) = self.tasks.iter().find(|task| task.id == decision.owner_task) else {
                 return Err(SemanticInvariantError::SchedulerDecisionMissingTask {
                     decision: decision.id,
                     task: decision.owner_task,
@@ -1407,12 +1319,10 @@ impl SemanticGraph {
                 )
             });
             if !was_queued_at_decision_generation {
-                return Err(
-                    SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
-                        decision: decision.id,
-                        activation: decision.selected_activation,
-                    },
-                );
+                return Err(SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+                    decision: decision.id,
+                    activation: decision.selected_activation,
+                });
             }
             let Some(activation) = self
                 .runtime_activations
@@ -1448,12 +1358,10 @@ impl SemanticGraph {
                                 == decision.selected_activation_generation
                     }))
             {
-                return Err(
-                    SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
-                        decision: decision.id,
-                        activation: decision.selected_activation,
-                    },
-                );
+                return Err(SemanticInvariantError::SchedulerDecisionQueueEntryMismatch {
+                    decision: decision.id,
+                    activation: decision.selected_activation,
+                });
             }
         }
 
@@ -1520,10 +1428,8 @@ impl SemanticGraph {
                     activation: resume.activation,
                 });
             }
-            let Some(activation) = self
-                .runtime_activations
-                .iter()
-                .find(|record| record.id == resume.activation)
+            let Some(activation) =
+                self.runtime_activations.iter().find(|record| record.id == resume.activation)
             else {
                 return Err(SemanticInvariantError::ActivationResumeMissingActivation {
                     resume: resume.id,

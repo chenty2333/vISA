@@ -24,11 +24,7 @@ impl SemanticGraph {
         if framebuffer_mapping == 0 {
             return Err("framebuffer mapping id=0 is invalid");
         }
-        if self
-            .framebuffer_mappings
-            .iter()
-            .any(|record| record.id == framebuffer_mapping)
-        {
+        if self.framebuffer_mappings.iter().any(|record| record.id == framebuffer_mapping) {
             return Err("framebuffer mapping already exists");
         }
         if owner_store_generation == 0
@@ -146,9 +142,8 @@ impl SemanticGraph {
             .expect("validated framebuffer mapping lease exists")
             .clone();
         let generation = 1;
-        self.next_framebuffer_mapping_id = self
-            .next_framebuffer_mapping_id
-            .max(framebuffer_mapping.saturating_add(1));
+        self.next_framebuffer_mapping_id =
+            self.next_framebuffer_mapping_id.max(framebuffer_mapping.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferMappingRecorded {
@@ -365,10 +360,8 @@ impl SemanticGraph {
         framebuffer_mapping: FramebufferMappingId,
         framebuffer_window_lease_generation: Generation,
     ) {
-        if let Some(record) = self
-            .framebuffer_mappings
-            .iter_mut()
-            .find(|record| record.id == framebuffer_mapping)
+        if let Some(record) =
+            self.framebuffer_mappings.iter_mut().find(|record| record.id == framebuffer_mapping)
         {
             record.framebuffer_window_lease_generation = framebuffer_window_lease_generation;
         }

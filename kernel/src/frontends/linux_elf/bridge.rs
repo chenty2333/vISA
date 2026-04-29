@@ -2,11 +2,6 @@ use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
-
-use crate::qemu;
-use crate::serial_println;
-use crate::substrate::ring3::{self, SyscallFrame};
-use crate::supervisor::{LinuxCallResult, runtime};
 use vmos_abi::{
     ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
     SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
@@ -15,8 +10,15 @@ use vmos_abi::{
     SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext,
 };
 
-use super::context::{ActiveUserContext, active_context, install_active_context};
-use super::loader::load_demo_program;
+use super::{
+    context::{ActiveUserContext, active_context, install_active_context},
+    loader::load_demo_program,
+};
+use crate::{
+    qemu, serial_println,
+    substrate::ring3::{self, SyscallFrame},
+    supervisor::{LinuxCallResult, runtime},
+};
 
 const AT_FDCWD: i64 = -100;
 const PATH_MAX: usize = 256;
@@ -113,9 +115,7 @@ fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
     {
         LinuxCallResult::Bytes(bytes) => {
             let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
-            dest.bytes_mut()
-                .map_err(map_dmw_fault)?
-                .copy_from_slice(&bytes);
+            dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
             Ok(bytes.len() as i64)
         }
         LinuxCallResult::Ret(0) => Ok(0),
@@ -131,22 +131,13 @@ fn sys_openat(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(frame.rdi as i64, &path)?;
 
     let supervisor = &mut active_context().supervisor;
-    let (ptr, len) = supervisor
-        .write_linux_arg_bytes(&resolved)
-        .map_err(|_| ERR_EFAULT)?;
+    let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
     match supervisor
         .dispatch_linux_syscall(
             "ring3_openat",
             SyscallContext::new(
                 SYS_OPENAT,
-                [
-                    frame.rdi,
-                    ptr as u64,
-                    len as u64,
-                    flags as u64,
-                    mode as u64,
-                    0,
-                ],
+                [frame.rdi, ptr as u64, len as u64, flags as u64, mode as u64, 0],
             ),
         )
         .map_err(|_| ERR_EINVAL)?
@@ -232,9 +223,7 @@ fn sys_epoll_wait(frame: &SyscallFrame) -> Result<i64, i32> {
                 return Err(ERR_EFAULT);
             }
             let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
-            dest.bytes_mut()
-                .map_err(map_dmw_fault)?
-                .copy_from_slice(&bytes);
+            dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
             Ok((bytes.len() as u64 / EPOLL_EVENT_SIZE) as i64)
         }
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
@@ -283,14 +272,7 @@ fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {
         "ring3_sendto",
         SyscallContext::new(
             SYS_SENDTO,
-            [
-                fd as u64,
-                ptr as u64,
-                copied_len as u64,
-                frame.r10,
-                frame.r8,
-                frame.r9,
-            ],
+            [fd as u64, ptr as u64, copied_len as u64, frame.r10, frame.r8, frame.r9],
         ),
     )
 }
@@ -311,9 +293,7 @@ fn sys_recvfrom(frame: &SyscallFrame) -> Result<i64, i32> {
     {
         LinuxCallResult::Bytes(bytes) => {
             let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
-            dest.bytes_mut()
-                .map_err(map_dmw_fault)?
-                .copy_from_slice(&bytes);
+            dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
             Ok(bytes.len() as i64)
         }
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
@@ -354,9 +334,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         "ring3_mmap",
         SyscallContext::new(
             SYS_MMAP,
-            [
-                frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9,
-            ],
+            [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
         ),
     )
 }
@@ -370,10 +348,7 @@ fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn dispatch_ret(label: &str, ctx: SyscallContext) -> Result<i64, i32> {
     let supervisor = &mut active_context().supervisor;
-    match supervisor
-        .dispatch_linux_syscall(label, ctx)
-        .map_err(|_| ERR_EINVAL)?
-    {
+    match supervisor.dispatch_linux_syscall(label, ctx).map_err(|_| ERR_EINVAL)? {
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
@@ -384,13 +359,9 @@ fn sys_getdents64(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
     let supervisor = &mut active_context().supervisor;
-    let packed = supervisor
-        .getdents64_abi(fd, count as u32)
-        .map_err(|_| ERR_EINVAL)?;
+    let packed = supervisor.getdents64_abi(fd, count as u32).map_err(|_| ERR_EINVAL)?;
     let mut dest = user_lease(frame.rsi, packed.len() as u64, true)?;
-    dest.bytes_mut()
-        .map_err(map_dmw_fault)?
-        .copy_from_slice(&packed);
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&packed);
     Ok(packed.len() as i64)
 }
 
@@ -424,9 +395,7 @@ fn sys_readlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(frame.rdi as i64, &path)?;
     let count = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
     let supervisor = &mut active_context().supervisor;
-    let (ptr, len) = supervisor
-        .write_linux_arg_bytes(&resolved)
-        .map_err(|_| ERR_EFAULT)?;
+    let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
     let link = match supervisor
         .dispatch_linux_syscall(
             "ring3_readlinkat",
@@ -441,9 +410,7 @@ fn sys_readlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let written = core::cmp::min(link.len(), count);
     let mut dest = user_lease(frame.rdx, written as u64, true)?;
-    dest.bytes_mut()
-        .map_err(map_dmw_fault)?
-        .copy_from_slice(&link[..written]);
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&link[..written]);
     Ok(written as i64)
 }
 
@@ -451,9 +418,7 @@ fn sys_uname(frame: &SyscallFrame) -> Result<i64, i32> {
     let supervisor = &mut active_context().supervisor;
     let encoded = supervisor.uname_abi().map_err(|_| ERR_EINVAL)?;
     let mut dest = user_lease(frame.rdi, encoded.len() as u64, true)?;
-    dest.bytes_mut()
-        .map_err(map_dmw_fault)?
-        .copy_from_slice(&encoded);
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&encoded);
     Ok(0)
 }
 
@@ -501,14 +466,7 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
             "ring3_futex",
             SyscallContext::new(
                 SYS_FUTEX,
-                [
-                    frame.rdi,
-                    frame.rsi,
-                    frame.rdx,
-                    timeout_ptr,
-                    timeout_len,
-                    current_word,
-                ],
+                [frame.rdi, frame.rsi, frame.rdx, timeout_ptr, timeout_len, current_word],
             ),
         )
         .map_err(|_| ERR_EINVAL)?
@@ -581,9 +539,7 @@ impl Drop for UserDmwLease {
         let Some(resource_handle) = self.resource_handle.take() else {
             return;
         };
-        active_context()
-            .supervisor
-            .record_window_lease_destroyed(resource_handle, self.generation);
+        active_context().supervisor.record_window_lease_destroyed(resource_handle, self.generation);
     }
 }
 
@@ -604,11 +560,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
         lease.len(),
         lease.writable(),
     );
-    Ok(UserDmwLease {
-        lease,
-        resource_handle: Some(resource_handle),
-        generation,
-    })
+    Ok(UserDmwLease { lease, resource_handle: Some(resource_handle), generation })
 }
 
 fn read_epoll_event(ptr: u64) -> Result<(u32, u64), i32> {
@@ -661,15 +613,9 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     }
 
     let base = if dirfd == AT_FDCWD {
-        active_context()
-            .supervisor
-            .getcwd()
-            .map_err(|_| ERR_EBADF)?
+        active_context().supervisor.getcwd().map_err(|_| ERR_EBADF)?
     } else if dirfd >= 0 {
-        active_context()
-            .supervisor
-            .fd_path(dirfd as u32)
-            .map_err(|_| ERR_EBADF)?
+        active_context().supervisor.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?
     } else {
         return Err(ERR_EBADF);
     };

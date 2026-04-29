@@ -29,11 +29,7 @@ impl SemanticGraph {
         if injection == 0 {
             return Err("network fault injection id=0 is invalid");
         }
-        if self
-            .network_fault_injections
-            .iter()
-            .any(|record| record.id == injection)
-        {
+        if self.network_fault_injections.iter().any(|record| record.id == injection) {
             return Err("network fault injection already exists");
         }
         if sequence == 0 || injected_packets == 0 {
@@ -105,16 +101,12 @@ impl SemanticGraph {
             return Err("network fault injection packet queue generation is missing or inactive");
         };
         let (expected_queue, expected_queue_generation, expected_role) = match direction {
-            PacketBufferDirection::Rx => (
-                adapter_record.rx_queue,
-                adapter_record.rx_queue_generation,
-                PacketQueueRole::Rx,
-            ),
-            PacketBufferDirection::Tx => (
-                adapter_record.tx_queue,
-                adapter_record.tx_queue_generation,
-                PacketQueueRole::Tx,
-            ),
+            PacketBufferDirection::Rx => {
+                (adapter_record.rx_queue, adapter_record.rx_queue_generation, PacketQueueRole::Rx)
+            }
+            PacketBufferDirection::Tx => {
+                (adapter_record.tx_queue, adapter_record.tx_queue_generation, PacketQueueRole::Tx)
+            }
         };
         if packet_queue_record.id != expected_queue
             || packet_queue_record.generation != expected_queue_generation
@@ -329,38 +321,37 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_fault_injections
-            .push(NetworkFaultInjectionRecord {
-                id: injection,
-                adapter,
-                adapter_generation,
-                packet_device,
-                packet_device_generation,
-                packet_queue,
-                packet_queue_generation,
-                packet_descriptor,
-                packet_descriptor_generation,
-                packet_buffer,
-                packet_buffer_generation,
-                endpoint,
-                endpoint_generation,
-                socket,
-                socket_generation,
-                owner_store,
-                owner_store_generation,
-                direction,
-                kind,
-                effect,
-                injected_packets,
-                dropped_packets,
-                error_packets,
-                error_code: error_code.to_string(),
-                sequence,
-                generation,
-                state: NetworkFaultInjectionState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.network_fault_injections.push(NetworkFaultInjectionRecord {
+            id: injection,
+            adapter,
+            adapter_generation,
+            packet_device,
+            packet_device_generation,
+            packet_queue,
+            packet_queue_generation,
+            packet_descriptor,
+            packet_descriptor_generation,
+            packet_buffer,
+            packet_buffer_generation,
+            endpoint,
+            endpoint_generation,
+            socket,
+            socket_generation,
+            owner_store,
+            owner_store_generation,
+            direction,
+            kind,
+            effect,
+            injected_packets,
+            dropped_packets,
+            error_packets,
+            error_code: error_code.to_string(),
+            sequence,
+            generation,
+            state: NetworkFaultInjectionState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -432,16 +423,12 @@ impl SemanticGraph {
             };
             let (expected_queue, expected_queue_generation, expected_role) =
                 match injection.direction {
-                    PacketBufferDirection::Rx => (
-                        adapter.rx_queue,
-                        adapter.rx_queue_generation,
-                        PacketQueueRole::Rx,
-                    ),
-                    PacketBufferDirection::Tx => (
-                        adapter.tx_queue,
-                        adapter.tx_queue_generation,
-                        PacketQueueRole::Tx,
-                    ),
+                    PacketBufferDirection::Rx => {
+                        (adapter.rx_queue, adapter.rx_queue_generation, PacketQueueRole::Rx)
+                    }
+                    PacketBufferDirection::Tx => {
+                        (adapter.tx_queue, adapter.tx_queue_generation, PacketQueueRole::Tx)
+                    }
                 };
             if adapter.state != NetworkStackAdapterState::Bound
                 || packet_device.state != PacketDeviceObjectState::Registered
@@ -484,10 +471,9 @@ impl SemanticGraph {
                     });
                 }
             }
-            if let (Some(packet_descriptor), Some(packet_descriptor_generation)) = (
-                injection.packet_descriptor,
-                injection.packet_descriptor_generation,
-            ) {
+            if let (Some(packet_descriptor), Some(packet_descriptor_generation)) =
+                (injection.packet_descriptor, injection.packet_descriptor_generation)
+            {
                 let Some(expected_buffer) = injection.packet_buffer else {
                     return Err(SemanticInvariantError::NetworkFaultInjectionInvalid {
                         injection: injection.id,
@@ -602,13 +588,11 @@ impl SemanticGraph {
                     && other.state == NetworkFaultInjectionState::Recorded
                     && injection.state == NetworkFaultInjectionState::Recorded
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkFaultInjectionDuplicateSequence {
-                        injection: duplicate.id,
-                        packet_queue: injection.packet_queue,
-                        sequence: injection.sequence,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkFaultInjectionDuplicateSequence {
+                    injection: duplicate.id,
+                    packet_queue: injection.packet_queue,
+                    sequence: injection.sequence,
+                });
             }
 
             if !self.event_log.events.iter().any(|event| {
@@ -686,10 +670,8 @@ impl SemanticGraph {
         injection: NetworkFaultInjectionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_fault_injections
-            .iter_mut()
-            .find(|record| record.id == injection)
+        if let Some(record) =
+            self.network_fault_injections.iter_mut().find(|record| record.id == injection)
         {
             record.packet_queue_generation = generation;
         }

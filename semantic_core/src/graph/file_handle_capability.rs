@@ -22,11 +22,7 @@ impl SemanticGraph {
         if file_handle_capability == 0 {
             return Err("file handle capability id=0 is invalid");
         }
-        if self
-            .file_handle_capabilities
-            .iter()
-            .any(|record| record.id == file_handle_capability)
-        {
+        if self.file_handle_capabilities.iter().any(|record| record.id == file_handle_capability) {
             return Err("file handle capability already exists");
         }
         if owner_store_generation == 0
@@ -150,9 +146,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_file_handle_capability_id = self
-            .next_file_handle_capability_id
-            .max(file_handle_capability.saturating_add(1));
+        self.next_file_handle_capability_id =
+            self.next_file_handle_capability_id.max(file_handle_capability.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FileHandleCapabilityRecorded {
@@ -176,29 +171,28 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.file_handle_capabilities
-            .push(FileHandleCapabilityRecord {
-                id: file_handle_capability,
-                owner_store,
-                owner_store_generation,
-                file_object,
-                file_object_generation,
-                directory_object,
-                directory_object_generation,
-                capability,
-                capability_generation,
-                handle_slot: handle.slot,
-                handle_generation: handle.generation,
-                handle_tag: handle.tag,
-                operation: operation.to_string(),
-                file_offset,
-                byte_len,
-                content_digest,
-                generation,
-                state: FileHandleCapabilityState::Allowed,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.file_handle_capabilities.push(FileHandleCapabilityRecord {
+            id: file_handle_capability,
+            owner_store,
+            owner_store_generation,
+            file_object,
+            file_object_generation,
+            directory_object,
+            directory_object_generation,
+            capability,
+            capability_generation,
+            handle_slot: handle.slot,
+            handle_generation: handle.generation,
+            handle_tag: handle.tag,
+            operation: operation.to_string(),
+            file_offset,
+            byte_len,
+            content_digest,
+            generation,
+            state: FileHandleCapabilityState::Allowed,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -223,31 +217,25 @@ impl SemanticGraph {
             let Some(file_record) = self.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FileHandleCapabilityMissingFileObject {
-                        file_handle_capability: record.id,
-                        file_object: record.file_object,
-                    },
-                );
+                return Err(SemanticInvariantError::FileHandleCapabilityMissingFileObject {
+                    file_handle_capability: record.id,
+                    file_object: record.file_object,
+                });
             };
             let Some(directory_record) = self.directory_objects.iter().find(|directory| {
                 directory.id == record.directory_object
                     && directory.generation == record.directory_object_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::FileHandleCapabilityMissingDirectoryObject {
-                        file_handle_capability: record.id,
-                        directory_object: record.directory_object,
-                    },
-                );
+                return Err(SemanticInvariantError::FileHandleCapabilityMissingDirectoryObject {
+                    file_handle_capability: record.id,
+                    directory_object: record.directory_object,
+                });
             };
             let Some(capability_record) = self.capabilities.record(record.capability) else {
-                return Err(
-                    SemanticInvariantError::FileHandleCapabilityMissingCapability {
-                        file_handle_capability: record.id,
-                        capability: record.capability,
-                    },
-                );
+                return Err(SemanticInvariantError::FileHandleCapabilityMissingCapability {
+                    file_handle_capability: record.id,
+                    capability: record.capability,
+                });
             };
             let authority =
                 AuthorityObjectRef::internal(CapabilityClass::FileHandle, file_record.object_ref());

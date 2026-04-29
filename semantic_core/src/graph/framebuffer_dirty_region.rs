@@ -23,10 +23,7 @@ impl SemanticGraph {
         if framebuffer_dirty_region == 0 {
             return Err("framebuffer dirty region id=0 is invalid");
         }
-        if self
-            .framebuffer_dirty_regions
-            .iter()
-            .any(|record| record.id == framebuffer_dirty_region)
+        if self.framebuffer_dirty_regions.iter().any(|record| record.id == framebuffer_dirty_region)
         {
             return Err("framebuffer dirty region already exists");
         }
@@ -191,9 +188,8 @@ impl SemanticGraph {
                 .map(|flush| flush.recorded_at_event)
         });
         let generation = 1;
-        self.next_framebuffer_dirty_region_id = self
-            .next_framebuffer_dirty_region_id
-            .max(framebuffer_dirty_region.saturating_add(1));
+        self.next_framebuffer_dirty_region_id =
+            self.next_framebuffer_dirty_region_id.max(framebuffer_dirty_region.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferDirtyRegionTracked {
@@ -222,36 +218,35 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.framebuffer_dirty_regions
-            .push(FramebufferDirtyRegionRecord {
-                id: framebuffer_dirty_region,
-                owner_store,
-                owner_store_generation,
-                framebuffer_write,
-                framebuffer_write_generation,
-                framebuffer_flush_region,
-                framebuffer_flush_region_generation,
-                display_capability: write_record.display_capability,
-                display_capability_generation: write_record.display_capability_generation,
-                display: write_record.display,
-                display_generation: write_record.display_generation,
-                framebuffer: write_record.framebuffer,
-                framebuffer_generation: write_record.framebuffer_generation,
-                x,
-                y,
-                width,
-                height,
-                byte_offset,
-                byte_len,
-                pixel_format: write_record.pixel_format,
-                payload_digest,
-                generation,
-                state,
-                dirty_at_event: write_record.recorded_at_event,
-                cleaned_at_event,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.framebuffer_dirty_regions.push(FramebufferDirtyRegionRecord {
+            id: framebuffer_dirty_region,
+            owner_store,
+            owner_store_generation,
+            framebuffer_write,
+            framebuffer_write_generation,
+            framebuffer_flush_region,
+            framebuffer_flush_region_generation,
+            display_capability: write_record.display_capability,
+            display_capability_generation: write_record.display_capability_generation,
+            display: write_record.display,
+            display_generation: write_record.display_generation,
+            framebuffer: write_record.framebuffer,
+            framebuffer_generation: write_record.framebuffer_generation,
+            x,
+            y,
+            width,
+            height,
+            byte_offset,
+            byte_len,
+            pixel_format: write_record.pixel_format,
+            payload_digest,
+            generation,
+            state,
+            dirty_at_event: write_record.recorded_at_event,
+            cleaned_at_event,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 

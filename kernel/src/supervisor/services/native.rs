@@ -1,13 +1,15 @@
 use alloc::vec::Vec;
 
-use crate::serial;
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLL_CTL_DEL, ERR_EINVAL, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind,
     PackedStep, ServiceRoute,
 };
 
-use super::super::engine::SupervisorEngine;
-use super::super::types::{LookupInfo, ServiceCallError};
+use super::super::{
+    engine::SupervisorEngine,
+    types::{LookupInfo, ServiceCallError},
+};
+use crate::serial;
 
 #[path = "native_network.rs"]
 mod native_network;
@@ -300,12 +302,7 @@ pub(crate) struct EpollService {
 
 impl EpollService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            next_id: 1,
-            instances: Vec::new(),
-            watchers: Vec::new(),
-            waiters: Vec::new(),
-        })
+        Ok(Self { next_id: 1, instances: Vec::new(), watchers: Vec::new(), waiters: Vec::new() })
     }
 
     pub(crate) fn create(&mut self, flags: u32) -> Result<u32, ServiceCallError> {
@@ -350,11 +347,7 @@ impl EpollService {
                 self.watchers.retain(|watcher| {
                     !(watcher.epoll_id == epoll_id && watcher.ready_key == ready_key)
                 });
-                if self.watchers.len() == old_len {
-                    errno(ERR_ENOENT)
-                } else {
-                    Ok(())
-                }
+                if self.watchers.len() == old_len { errno(ERR_ENOENT) } else { Ok(()) }
             }
             _ => errno(ERR_EINVAL),
         }
@@ -398,19 +391,11 @@ impl EpollService {
     pub(crate) fn cancel_wait(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
         let old_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.wait_id != wait_id);
-        if self.waiters.len() == old_len {
-            errno(ERR_EINVAL)
-        } else {
-            Ok(())
-        }
+        if self.waiters.len() == old_len { errno(ERR_EINVAL) } else { Ok(()) }
     }
 
     fn require_instance(&self, epoll_id: u32) -> Result<(), ServiceCallError> {
-        if self.instances.iter().any(|id| *id == epoll_id) {
-            Ok(())
-        } else {
-            errno(ERR_ENOENT)
-        }
+        if self.instances.iter().any(|id| *id == epoll_id) { Ok(()) } else { errno(ERR_ENOENT) }
     }
 
     fn signal_waiters(
@@ -435,10 +420,7 @@ impl EpollService {
 
         let mut wait_ids = Vec::new();
         self.waiters.retain(|waiter| {
-            if ready_epolls
-                .iter()
-                .any(|epoll_id| *epoll_id == waiter.epoll_id)
-            {
+            if ready_epolls.iter().any(|epoll_id| *epoll_id == waiter.epoll_id) {
                 wait_ids.push(waiter.wait_id);
                 false
             } else {
@@ -461,9 +443,7 @@ pub(crate) struct FutexService {
 
 impl FutexService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            waiters: Vec::new(),
-        })
+        Ok(Self { waiters: Vec::new() })
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
@@ -489,11 +469,7 @@ impl FutexService {
     pub(crate) fn cancel_wait(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
         let old_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.wait_id != wait_id);
-        if self.waiters.len() == old_len {
-            errno(ERR_EINVAL)
-        } else {
-            Ok(())
-        }
+        if self.waiters.len() == old_len { errno(ERR_EINVAL) } else { Ok(()) }
     }
 }
 
@@ -503,9 +479,7 @@ pub(crate) struct WasmApp {
 
 impl WasmApp {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            message: WASM_APP_MESSAGE.to_vec(),
-        })
+        Ok(Self { message: WASM_APP_MESSAGE.to_vec() })
     }
 
     pub(crate) fn run(&mut self) -> Result<u64, &'static str> {

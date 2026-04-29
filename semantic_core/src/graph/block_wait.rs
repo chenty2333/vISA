@@ -12,11 +12,7 @@ impl SemanticGraph {
         if block_wait == 0 {
             return Err("block wait id=0 is invalid");
         }
-        if self
-            .block_waits
-            .iter()
-            .any(|record| record.id == block_wait)
-        {
+        if self.block_waits.iter().any(|record| record.id == block_wait) {
             return Err("block wait already exists");
         }
         if wait_generation == 0 || block_request_generation == 0 {
@@ -311,9 +307,7 @@ impl SemanticGraph {
                 || request.sequence != record.sequence
                 || request.byte_len != record.byte_len
             {
-                return Err(SemanticInvariantError::BlockWaitInvalid {
-                    block_wait: record.id,
-                });
+                return Err(SemanticInvariantError::BlockWaitInvalid { block_wait: record.id });
             }
             if record.state == BlockWaitState::Pending
                 && self.block_waits.iter().any(|other| {
@@ -336,9 +330,7 @@ impl SemanticGraph {
                         && other.state == BlockWaitState::Pending
                 })
             {
-                return Err(SemanticInvariantError::BlockWaitInvalid {
-                    block_wait: record.id,
-                });
+                return Err(SemanticInvariantError::BlockWaitInvalid { block_wait: record.id });
             }
             match record.state {
                 BlockWaitState::Pending => {
@@ -362,12 +354,10 @@ impl SemanticGraph {
                         });
                     };
                     let Some(completion_record) =
-                        self.block_completion_objects
-                            .iter()
-                            .find(|completion_record| {
-                                completion_record.id == completion
-                                    && completion_record.generation == completion_generation
-                            })
+                        self.block_completion_objects.iter().find(|completion_record| {
+                            completion_record.id == completion
+                                && completion_record.generation == completion_generation
+                        })
                     else {
                         return Err(SemanticInvariantError::BlockWaitMissingCompletion {
                             block_wait: record.id,
@@ -495,11 +485,7 @@ impl SemanticGraph {
         block_wait: BlockWaitId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_waits
-            .iter_mut()
-            .find(|record| record.id == block_wait)
-        {
+        if let Some(record) = self.block_waits.iter_mut().find(|record| record.id == block_wait) {
             record.block_request_generation = generation;
         }
     }

@@ -1,26 +1,27 @@
-use alloc::boxed::Box;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::ptr::null_mut;
 
-use crate::interrupts;
 use semantic_core::{FrontendKind, ResourceHandle, SemanticGraph, TaskState};
 
-use super::artifacts::ArtifactRegistry;
-use super::authority::AuthorityPlane;
-use super::engine::RuntimeOnlyExecutor;
-use super::linux::LinuxFrontend;
-use super::net::NetworkPlane;
-use super::pulse::PulseDevice;
-use super::scheduler::Scheduler;
-use super::semantic::bootstrap_graph;
-use super::services::{
-    ConsoleService, DevfsService, DriverVirtioNetService, EpollService, FutexService,
-    LinuxSocketService, NetCoreService, ProcfsService, ReplaySnapshotService, VfsService, WasmApp,
+use super::{
+    artifacts::ArtifactRegistry,
+    authority::AuthorityPlane,
+    engine::RuntimeOnlyExecutor,
+    linux::LinuxFrontend,
+    net::NetworkPlane,
+    pulse::PulseDevice,
+    scheduler::Scheduler,
+    semantic::bootstrap_graph,
+    services::{
+        ConsoleService, DevfsService, DriverVirtioNetService, EpollService, FutexService,
+        LinuxSocketService, NetCoreService, ProcfsService, ReplaySnapshotService, VfsService,
+        WasmApp,
+    },
+    store_manager::StoreManager,
+    types::{FdEntry, InjectedFault, TaskId},
+    wait::WaitRegistry,
 };
-use super::store_manager::StoreManager;
-use super::types::{FdEntry, InjectedFault, TaskId};
-use super::wait::WaitRegistry;
+use crate::interrupts;
 
 static mut ACTIVE_RUNTIME: *mut PrototypeRuntime<'static> = null_mut();
 
@@ -74,9 +75,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let artifacts =
             ArtifactRegistry::from_embedded_manifest_plan().map_err(|err| err.message())?;
         let load_plan = artifacts.load_plan();
-        let executor_plan = engine
-            .prepare_load_plan(&load_plan)
-            .map_err(|err| err.message())?;
+        let executor_plan = engine.prepare_load_plan(&load_plan).map_err(|err| err.message())?;
         let plan_profile = load_plan.profile;
         crate::kdebug!(
             "artifact load plan profile={} runtime_mode={} engine={} mode={} runtime={}",
@@ -152,8 +151,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn allocate_task(&mut self) -> TaskId {
         let task = self.scheduler.allocate_task();
-        self.semantic
-            .ensure_task(task, FrontendKind::LinuxElf, "linux-elf-task");
+        self.semantic.ensure_task(task, FrontendKind::LinuxElf, "linux-elf-task");
         task
     }
 

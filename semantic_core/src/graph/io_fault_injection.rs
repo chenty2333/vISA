@@ -317,12 +317,10 @@ impl SemanticGraph {
                 binding.id == fault.driver_binding
                     && binding.generation == fault.driver_binding_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::IoFaultInjectionMissingDriverBinding {
-                        fault: fault.id,
-                        binding: fault.driver_binding,
-                    },
-                );
+                return Err(SemanticInvariantError::IoFaultInjectionMissingDriverBinding {
+                    fault: fault.id,
+                    binding: fault.driver_binding,
+                });
             };
             if binding.driver_store != fault.driver_store
                 || binding.driver_store_generation != fault.driver_store_generation
@@ -404,10 +402,7 @@ impl SemanticGraph {
         fault: IoFaultInjectionId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) = self
-            .io_fault_injections
-            .iter_mut()
-            .find(|record| record.id == fault)
+        if let Some(record) = self.io_fault_injections.iter_mut().find(|record| record.id == fault)
         {
             record.cleanup_generation = cleanup_generation;
         }

@@ -165,11 +165,7 @@ impl SemanticGraph {
         device: DeviceObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .device_objects
-            .iter_mut()
-            .find(|record| record.id == device)
-        {
+        if let Some(record) = self.device_objects.iter_mut().find(|record| record.id == device) {
             record.resource_generation = generation;
         }
     }

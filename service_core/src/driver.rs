@@ -84,17 +84,11 @@ impl DriverVirtioNetState {
     pub fn poll_device(&mut self, now_ticks: u64) -> DriverNetEvent {
         if !self.tx_pending && self.device.pending_rx_frames() == 0 {
             self.last_len = 0;
-            return DriverNetEvent {
-                kind: DriverNetEventKind::None,
-                len: 0,
-            };
+            return DriverNetEvent { kind: DriverNetEventKind::None, len: 0 };
         }
         if self.ready || now_ticks < self.next_tick {
             self.last_len = 0;
-            return DriverNetEvent {
-                kind: DriverNetEventKind::None,
-                len: 0,
-            };
+            return DriverNetEvent { kind: DriverNetEventKind::None, len: 0 };
         }
 
         self.phase = match self.phase {
@@ -111,10 +105,7 @@ impl DriverVirtioNetState {
             if self.device.pending_rx_frames() == 0 {
                 let sequence = self.device.next_sequence();
                 let meta = PacketFrameMeta::demo_http_response(sequence, DEMO_HTTP_RESPONSE.len());
-                self.last_len = self
-                    .device
-                    .enqueue_rx(meta, DEMO_HTTP_RESPONSE)
-                    .unwrap_or(0);
+                self.last_len = self.device.enqueue_rx(meta, DEMO_HTTP_RESPONSE).unwrap_or(0);
             } else {
                 self.last_len = self.device.peek_rx_frame_len();
             }
@@ -125,10 +116,7 @@ impl DriverVirtioNetState {
             self.last_len = 64;
         }
 
-        DriverNetEvent {
-            kind: self.phase,
-            len: self.last_len,
-        }
+        DriverNetEvent { kind: self.phase, len: self.last_len }
     }
 
     pub fn event_len(&self) -> u32 {
@@ -164,26 +152,13 @@ mod tests {
     fn tx_submission_drives_rx_event_sequence() {
         let mut driver = DriverVirtioNetState::new();
         let mut request = [0u8; PACKET_FRAME_CAPACITY];
-        let request_len = encode_frame(
-            PacketFrameMeta::demo_http_request(1, 3),
-            b"GET",
-            &mut request,
-        )
-        .unwrap();
+        let request_len =
+            encode_frame(PacketFrameMeta::demo_http_request(1, 3), b"GET", &mut request).unwrap();
 
-        assert_eq!(
-            driver.poll_device(FIRST_RX_DELAY_TICKS).kind,
-            DriverNetEventKind::None
-        );
-        assert_eq!(
-            driver.submit_tx_frame(10, &request[..request_len]).unwrap(),
-            3
-        );
+        assert_eq!(driver.poll_device(FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
+        assert_eq!(driver.submit_tx_frame(10, &request[..request_len]).unwrap(), 3);
         assert_eq!(driver.poll_device(10).kind, DriverNetEventKind::None);
-        assert_eq!(
-            driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind,
-            DriverNetEventKind::Irq
-        );
+        assert_eq!(driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::Irq);
         assert_eq!(
             driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind,
             DriverNetEventKind::DmaSubmitted
@@ -206,9 +181,6 @@ mod tests {
         let (_meta, payload) =
             crate::packet::decode_frame(&response[..response_len as usize]).unwrap();
         assert_eq!(payload, DEMO_HTTP_RESPONSE);
-        assert_eq!(
-            driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind,
-            DriverNetEventKind::None
-        );
+        assert_eq!(driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
     }
 }

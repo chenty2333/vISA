@@ -14,11 +14,7 @@ impl SemanticGraph {
         if dma_buffer == 0 {
             return Err("dma buffer object id=0 is invalid");
         }
-        if self
-            .dma_buffer_objects
-            .iter()
-            .any(|record| record.id == dma_buffer)
-        {
+        if self.dma_buffer_objects.iter().any(|record| record.id == dma_buffer) {
             return Err("dma buffer object already exists");
         }
         if length == 0 {
@@ -231,14 +227,8 @@ impl SemanticGraph {
         matches!(
             (buffer, descriptor),
             (_, DescriptorObjectAccess::ReadWrite)
-                | (
-                    DmaBufferObjectAccess::ReadOnly,
-                    DescriptorObjectAccess::ReadOnly
-                )
-                | (
-                    DmaBufferObjectAccess::WriteOnly,
-                    DescriptorObjectAccess::WriteOnly
-                )
+                | (DmaBufferObjectAccess::ReadOnly, DescriptorObjectAccess::ReadOnly)
+                | (DmaBufferObjectAccess::WriteOnly, DescriptorObjectAccess::WriteOnly)
         )
     }
 
@@ -248,10 +238,8 @@ impl SemanticGraph {
         dma_buffer: DmaBufferObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .dma_buffer_objects
-            .iter_mut()
-            .find(|record| record.id == dma_buffer)
+        if let Some(record) =
+            self.dma_buffer_objects.iter_mut().find(|record| record.id == dma_buffer)
         {
             record.resource_generation = generation;
         }

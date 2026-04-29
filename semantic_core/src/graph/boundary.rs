@@ -9,11 +9,7 @@ impl SemanticGraph {
         backend: &str,
         blocked_by: Option<&str>,
     ) -> BoundaryId {
-        if let Some(index) = self
-            .boundaries
-            .iter()
-            .position(|boundary| boundary.name == name)
-        {
+        if let Some(index) = self.boundaries.iter().position(|boundary| boundary.name == name) {
             self.boundaries[index].kind = kind;
             self.boundaries[index].status = status;
             self.boundaries[index].backend = backend.to_string();
@@ -81,10 +77,8 @@ impl SemanticGraph {
         state: ArtifactVerificationState,
         blocked_by: Option<&str>,
     ) -> ArtifactId {
-        if let Some(index) = self
-            .artifact_verifications
-            .iter()
-            .position(|record| record.package == package)
+        if let Some(index) =
+            self.artifact_verifications.iter().position(|record| record.package == package)
         {
             self.artifact_verifications[index].artifact_name = artifact_name.to_string();
             self.artifact_verifications[index].manifest_binding_hash =
@@ -163,10 +157,7 @@ impl SemanticGraph {
         entrypoint_state: EntrypointState,
         blocked_by: Option<&str>,
     ) -> StoreActivationId {
-        if let Some(index) = self
-            .store_activations
-            .iter()
-            .position(|record| record.store == store)
+        if let Some(index) = self.store_activations.iter().position(|record| record.store == store)
         {
             self.store_activations[index].package = package.to_string();
             self.store_activations[index].manifest_binding_hash = manifest_binding_hash.to_string();
@@ -249,9 +240,7 @@ impl SemanticGraph {
         &self,
         package: &str,
     ) -> Option<&ArtifactVerificationRecord> {
-        self.artifact_verifications
-            .iter()
-            .find(|record| record.package == package)
+        self.artifact_verifications.iter().find(|record| record.package == package)
     }
     pub fn store_activations(&self) -> &[StoreActivationRecord] {
         &self.store_activations
@@ -266,10 +255,7 @@ impl SemanticGraph {
         &mut self,
         handle: StoreActivationHandle,
     ) -> Result<(), GenerationCheckError> {
-        let activation = self
-            .store_activations
-            .iter()
-            .find(|record| record.store == handle.store);
+        let activation = self.store_activations.iter().find(|record| record.store == handle.store);
         let actual = activation.map(|record| record.generation);
         let result = match activation {
             None => Err(GenerationCheckError::Missing),

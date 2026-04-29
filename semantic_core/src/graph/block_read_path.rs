@@ -46,11 +46,7 @@ impl SemanticGraph {
         if read_path == 0 {
             return Err("block read path id=0 is invalid");
         }
-        if self
-            .block_read_paths
-            .iter()
-            .any(|record| record.id == read_path)
-        {
+        if self.block_read_paths.iter().any(|record| record.id == read_path) {
             return Err("block read path already exists");
         }
         if backend.generation == 0
@@ -169,9 +165,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_read_path_id = self
-            .next_block_read_path_id
-            .max(read_path.saturating_add(1));
+        self.next_block_read_path_id =
+            self.next_block_read_path_id.max(read_path.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockReadPathRecorded {
@@ -254,9 +249,7 @@ impl SemanticGraph {
             let Some(range_record) = self.block_range_objects.iter().find(|range| {
                 range.id == record.block_range && range.generation == record.block_range_generation
             }) else {
-                return Err(SemanticInvariantError::BlockReadPathInvalid {
-                    read_path: record.id,
-                });
+                return Err(SemanticInvariantError::BlockReadPathInvalid { read_path: record.id });
             };
             let expected_digest = Self::expected_block_read_digest_v1(
                 backend_record.deterministic_seed,
@@ -304,9 +297,7 @@ impl SemanticGraph {
                 || completion_record.completed_bytes != request_record.byte_len
                 || record.data_digest != expected_digest
             {
-                return Err(SemanticInvariantError::BlockReadPathInvalid {
-                    read_path: record.id,
-                });
+                return Err(SemanticInvariantError::BlockReadPathInvalid { read_path: record.id });
             }
             if let Some(duplicate) = self.block_read_paths.iter().find(|other| {
                 other.id != record.id
@@ -368,10 +359,7 @@ impl SemanticGraph {
         read_path: BlockReadPathId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_read_paths
-            .iter_mut()
-            .find(|record| record.id == read_path)
+        if let Some(record) = self.block_read_paths.iter_mut().find(|record| record.id == read_path)
         {
             record.backend.generation = generation;
         }
@@ -383,10 +371,7 @@ impl SemanticGraph {
         read_path: BlockReadPathId,
         data_digest: u64,
     ) {
-        if let Some(record) = self
-            .block_read_paths
-            .iter_mut()
-            .find(|record| record.id == read_path)
+        if let Some(record) = self.block_read_paths.iter_mut().find(|record| record.id == read_path)
         {
             record.data_digest = data_digest;
         }

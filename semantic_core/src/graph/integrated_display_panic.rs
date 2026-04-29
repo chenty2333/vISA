@@ -92,9 +92,7 @@ impl SemanticGraph {
             || panic_ring_oldest_seq == 0
             || panic_ring_newest_seq < panic_ring_oldest_seq
             || panic_ring_record_count < 2
-            || panic_ring_newest_seq
-                .saturating_sub(panic_ring_oldest_seq)
-                .saturating_add(1)
+            || panic_ring_newest_seq.saturating_sub(panic_ring_oldest_seq).saturating_add(1)
                 < u64::from(panic_ring_record_count)
             || panic_ring_lost_count != 0
             || jsonl_frame_count < panic_ring_record_count.saturating_add(2)
@@ -198,9 +196,8 @@ impl SemanticGraph {
         let summary_record_bytes = frame.summary_record_bytes;
         let raw_framebuffer_bytes_exported = frame.raw_framebuffer_bytes_exported;
         let panic_path_allocates = false;
-        self.next_integrated_display_panic_id = self
-            .next_integrated_display_panic_id
-            .max(integrated.saturating_add(1));
+        self.next_integrated_display_panic_id =
+            self.next_integrated_display_panic_id.max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedDisplayPanicRecorded {
@@ -220,36 +217,35 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_display_panics
-            .push(IntegratedDisplayPanicRecord {
-                id: integrated,
-                scenario: scenario.to_string(),
-                substrate_panic_event,
-                substrate_panic_epoch,
-                substrate_panic_cpu,
-                substrate_panic_reason_code,
-                display_panic_last_frame,
-                display_panic_last_frame_generation,
-                panic_ring_bytes,
-                panic_record_max_bytes,
-                panic_ring_oldest_seq,
-                panic_ring_newest_seq,
-                panic_ring_record_count,
-                panic_ring_lost_count,
-                jsonl_frame_count,
-                contract_panic_summary_records,
-                last_frame_summary_records,
-                corrupt_record_count,
-                truncated_record_count,
-                summary_record_bytes,
-                raw_framebuffer_bytes_exported,
-                panic_path_allocates,
-                invariant_checks,
-                generation,
-                state: IntegratedDisplayPanicState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.integrated_display_panics.push(IntegratedDisplayPanicRecord {
+            id: integrated,
+            scenario: scenario.to_string(),
+            substrate_panic_event,
+            substrate_panic_epoch,
+            substrate_panic_cpu,
+            substrate_panic_reason_code,
+            display_panic_last_frame,
+            display_panic_last_frame_generation,
+            panic_ring_bytes,
+            panic_record_max_bytes,
+            panic_ring_oldest_seq,
+            panic_ring_newest_seq,
+            panic_ring_record_count,
+            panic_ring_lost_count,
+            jsonl_frame_count,
+            contract_panic_summary_records,
+            last_frame_summary_records,
+            corrupt_record_count,
+            truncated_record_count,
+            summary_record_bytes,
+            raw_framebuffer_bytes_exported,
+            panic_path_allocates,
+            invariant_checks,
+            generation,
+            state: IntegratedDisplayPanicState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 

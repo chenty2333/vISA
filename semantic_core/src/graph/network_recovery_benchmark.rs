@@ -25,11 +25,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("network recovery benchmark id cannot advance generation cursor");
         }
-        if self
-            .network_recovery_benchmarks
-            .iter()
-            .any(|record| record.id == benchmark)
-        {
+        if self.network_recovery_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("network recovery benchmark already exists");
         }
         if scenario.is_empty() {
@@ -163,9 +159,8 @@ impl SemanticGraph {
         let driver_store = cleanup_record.driver_store;
         let driver_store_generation = cleanup_record.driver_store_generation;
         let generation = 1;
-        self.next_network_recovery_benchmark_id = self
-            .next_network_recovery_benchmark_id
-            .max(benchmark.saturating_add(1));
+        self.next_network_recovery_benchmark_id =
+            self.next_network_recovery_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkRecoveryBenchmarkRecorded {
@@ -191,34 +186,33 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_recovery_benchmarks
-            .push(NetworkRecoveryBenchmarkRecord {
-                id: benchmark,
-                scenario: scenario.to_string(),
-                cleanup,
-                cleanup_generation,
-                io_cleanup,
-                io_cleanup_generation,
-                adapter,
-                adapter_generation,
-                packet_device,
-                packet_device_generation,
-                backend,
-                driver_store,
-                driver_store_generation,
-                fault_injection,
-                fault_injection_generation,
-                recovery_start_event,
-                recovery_complete_event,
-                cancelled_socket_waits,
-                revoked_packet_capabilities,
-                recovery_nanos,
-                budget_nanos,
-                generation,
-                state: NetworkRecoveryBenchmarkState::Recorded,
-                recorded_at_event,
-                note: note.to_string(),
-            });
+        self.network_recovery_benchmarks.push(NetworkRecoveryBenchmarkRecord {
+            id: benchmark,
+            scenario: scenario.to_string(),
+            cleanup,
+            cleanup_generation,
+            io_cleanup,
+            io_cleanup_generation,
+            adapter,
+            adapter_generation,
+            packet_device,
+            packet_device_generation,
+            backend,
+            driver_store,
+            driver_store_generation,
+            fault_injection,
+            fault_injection_generation,
+            recovery_start_event,
+            recovery_complete_event,
+            cancelled_socket_waits,
+            revoked_packet_capabilities,
+            recovery_nanos,
+            budget_nanos,
+            generation,
+            state: NetworkRecoveryBenchmarkState::Recorded,
+            recorded_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -262,16 +256,14 @@ impl SemanticGraph {
                     && cleanup.generation == record.cleanup_generation
                     && cleanup.state == NetworkDriverCleanupState::Completed
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
-                        benchmark: record.id,
-                        target: ContractObjectRef::new(
-                            ContractObjectKind::NetworkDriverCleanup,
-                            record.cleanup,
-                            record.cleanup_generation,
-                        ),
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
+                    benchmark: record.id,
+                    target: ContractObjectRef::new(
+                        ContractObjectKind::NetworkDriverCleanup,
+                        record.cleanup,
+                        record.cleanup_generation,
+                    ),
+                });
             };
             let Some(completed_at_event) = cleanup.completed_at_event else {
                 return Err(SemanticInvariantError::NetworkRecoveryBenchmarkInvalid {
@@ -295,11 +287,9 @@ impl SemanticGraph {
                 || cleanup.revoked_packet_capabilities.len() as u32
                     != record.revoked_packet_capabilities
             {
-                return Err(
-                    SemanticInvariantError::NetworkRecoveryBenchmarkMetricMismatch {
-                        benchmark: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMetricMismatch {
+                    benchmark: record.id,
+                });
             }
 
             if let (Some(fault_injection), Some(fault_injection_generation)) =
@@ -310,16 +300,14 @@ impl SemanticGraph {
                         && injection.generation == fault_injection_generation
                         && injection.state == NetworkFaultInjectionState::Recorded
                 }) else {
-                    return Err(
-                        SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
-                            benchmark: record.id,
-                            target: ContractObjectRef::new(
-                                ContractObjectKind::NetworkFaultInjection,
-                                fault_injection,
-                                fault_injection_generation,
-                            ),
-                        },
-                    );
+                    return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
+                        benchmark: record.id,
+                        target: ContractObjectRef::new(
+                            ContractObjectKind::NetworkFaultInjection,
+                            fault_injection,
+                            fault_injection_generation,
+                        ),
+                    });
                 };
                 if injection.adapter != record.adapter
                     || injection.adapter_generation != record.adapter_generation
@@ -380,12 +368,10 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkRecoveryBenchmarkMissingEvent {
-                        benchmark: record.id,
-                        event: record.recorded_at_event,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingEvent {
+                    benchmark: record.id,
+                    event: record.recorded_at_event,
+                });
             }
         }
         Ok(())
@@ -397,10 +383,8 @@ impl SemanticGraph {
         benchmark: NetworkRecoveryBenchmarkId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_recovery_benchmarks
-            .iter_mut()
-            .find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.network_recovery_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.cleanup_generation = cleanup_generation;
         }

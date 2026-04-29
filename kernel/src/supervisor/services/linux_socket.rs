@@ -1,6 +1,9 @@
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok};
-use super::super::types::ServiceCallError;
 use service_core::net_contract::NETWORK_CONTRACT_ABI_VERSION;
+
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::ServiceCallError,
+};
 
 const LINUX_SOCKET_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SOCKET_SERVICE_WASM"));
 
@@ -27,16 +30,12 @@ impl LinuxSocketService {
             LINUX_SOCKET_SERVICE_WASM,
             "failed to instantiate linux_socket_service",
         )?;
-        let register_socket = io.bind(
-            "register_socket",
-            "missing linux_socket register_socket export",
-        )?;
+        let register_socket =
+            io.bind("register_socket", "missing linux_socket register_socket export")?;
         let close_socket = io.bind("close_socket", "missing linux_socket close_socket export")?;
         let bind_socket = io.bind("bind_socket", "missing linux_socket bind_socket export")?;
-        let connect_socket = io.bind(
-            "connect_socket",
-            "missing linux_socket connect_socket export",
-        )?;
+        let connect_socket =
+            io.bind("connect_socket", "missing linux_socket connect_socket export")?;
         let listen_socket =
             io.bind("listen_socket", "missing linux_socket listen_socket export")?;
         let accept_socket =
@@ -100,11 +99,7 @@ impl LinuxSocketService {
     pub(crate) fn close_socket(&mut self, socket_id: u32) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(
-                    &self.close_socket,
-                    socket_id,
-                    "linux_socket_service trapped",
-                )
+                .call(&self.close_socket, socket_id, "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -116,11 +111,7 @@ impl LinuxSocketService {
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(
-                    &self.bind_socket,
-                    (socket_id, addr_len),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.bind_socket, (socket_id, addr_len), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -132,11 +123,7 @@ impl LinuxSocketService {
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(
-                    &self.connect_socket,
-                    (socket_id, addr_len),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.connect_socket, (socket_id, addr_len), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -148,11 +135,7 @@ impl LinuxSocketService {
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(
-                    &self.listen_socket,
-                    (socket_id, backlog),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.listen_socket, (socket_id, backlog), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -160,11 +143,7 @@ impl LinuxSocketService {
     pub(crate) fn accept_socket(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.accept_socket,
-                    socket_id,
-                    "linux_socket_service trapped",
-                )
+                .call(&self.accept_socket, socket_id, "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -176,11 +155,7 @@ impl LinuxSocketService {
     ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.send_socket,
-                    (socket_id, len),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.send_socket, (socket_id, len), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -192,11 +167,7 @@ impl LinuxSocketService {
     ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.recv_socket,
-                    (socket_id, len),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.recv_socket, (socket_id, len), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -227,11 +198,7 @@ impl LinuxSocketService {
     ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.getsockopt,
-                    (socket_id, level, optname),
-                    "linux_socket_service trapped",
-                )
+                .call(&self.getsockopt, (socket_id, level, optname), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }

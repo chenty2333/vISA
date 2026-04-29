@@ -2,9 +2,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use pic8259::ChainedPics;
 use spin::{Lazy, Mutex};
-use x86_64::instructions::interrupts;
-use x86_64::instructions::port::Port;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use x86_64::{
+    instructions::{interrupts, port::Port},
+    structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
+};
 
 const PIC_1_OFFSET: u8 = 32;
 const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
@@ -17,8 +18,7 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
     let mut idt = InterruptDescriptorTable::new();
     idt.breakpoint.set_handler_fn(breakpoint_handler);
     idt.page_fault.set_handler_fn(page_fault_handler);
-    idt.general_protection_fault
-        .set_handler_fn(general_protection_fault_handler);
+    idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
     idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
     idt
 });
@@ -81,10 +81,7 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: x86_64::structures::idt::PageFaultErrorCode,
 ) {
     let accessed = x86_64::registers::control::Cr2::read();
-    panic!(
-        "page fault while accessing {:?}: {:?}\n{stack_frame:#?}",
-        accessed, error_code
-    );
+    panic!("page fault while accessing {:?}: {:?}\n{stack_frame:#?}", accessed, error_code);
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(
@@ -97,7 +94,6 @@ extern "x86-interrupt" fn general_protection_fault_handler(
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Release);
     unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 }

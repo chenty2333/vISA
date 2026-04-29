@@ -12,11 +12,7 @@ impl SemanticGraph {
         if resolution == 0 {
             return Err("network rx wait resolution id=0 is invalid");
         }
-        if self
-            .network_rx_wait_resolutions
-            .iter()
-            .any(|record| record.id == resolution)
-        {
+        if self.network_rx_wait_resolutions.iter().any(|record| record.id == resolution) {
             return Err("network rx wait resolution already exists");
         }
         let Some(rx_record) = self.network_rx_interrupts.iter().find(|record| {
@@ -179,28 +175,27 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_rx_wait_resolutions
-            .push(NetworkRxWaitResolutionRecord {
-                id: resolution,
-                io_wait,
-                io_wait_generation,
-                wait: io_wait_record.wait,
-                wait_generation: io_wait_record.wait_generation,
-                rx_interrupt,
-                rx_interrupt_generation,
-                irq_event: rx_record.irq_event,
-                irq_event_generation: rx_record.irq_event_generation,
-                packet_device: rx_record.packet_device,
-                packet_device_generation: rx_record.packet_device_generation,
-                rx_queue: rx_record.rx_queue,
-                rx_queue_generation: rx_record.rx_queue_generation,
-                ready_descriptors: rx_record.ready_descriptors,
-                sequence: rx_record.sequence,
-                generation,
-                state: NetworkRxWaitResolutionState::Resolved,
-                resolved_at_event,
-                note: note.to_string(),
-            });
+        self.network_rx_wait_resolutions.push(NetworkRxWaitResolutionRecord {
+            id: resolution,
+            io_wait,
+            io_wait_generation,
+            wait: io_wait_record.wait,
+            wait_generation: io_wait_record.wait_generation,
+            rx_interrupt,
+            rx_interrupt_generation,
+            irq_event: rx_record.irq_event,
+            irq_event_generation: rx_record.irq_event_generation,
+            packet_device: rx_record.packet_device,
+            packet_device_generation: rx_record.packet_device_generation,
+            rx_queue: rx_record.rx_queue,
+            rx_queue_generation: rx_record.rx_queue_generation,
+            ready_descriptors: rx_record.ready_descriptors,
+            sequence: rx_record.sequence,
+            generation,
+            state: NetworkRxWaitResolutionState::Resolved,
+            resolved_at_event,
+            note: note.to_string(),
+        });
         true
     }
 
@@ -219,12 +214,10 @@ impl SemanticGraph {
             let Some(io_wait_record) = self.io_waits.iter().find(|io_wait| {
                 io_wait.id == record.io_wait && io_wait.generation == record.io_wait_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkRxWaitResolutionMissingIoWait {
-                        resolution: record.id,
-                        io_wait: record.io_wait,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxWaitResolutionMissingIoWait {
+                    resolution: record.id,
+                    io_wait: record.io_wait,
+                });
             };
             let Some(wait_record) = self
                 .waits
@@ -239,22 +232,18 @@ impl SemanticGraph {
                 rx_interrupt.id == record.rx_interrupt
                     && rx_interrupt.generation == record.rx_interrupt_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkRxWaitResolutionMissingInterrupt {
-                        resolution: record.id,
-                        rx_interrupt: record.rx_interrupt,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxWaitResolutionMissingInterrupt {
+                    resolution: record.id,
+                    rx_interrupt: record.rx_interrupt,
+                });
             };
             let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|rx_queue| {
                 rx_queue.id == record.rx_queue && rx_queue.generation == record.rx_queue_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::NetworkRxWaitResolutionMissingRxQueue {
-                        resolution: record.id,
-                        rx_queue: record.rx_queue,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxWaitResolutionMissingRxQueue {
+                    resolution: record.id,
+                    rx_queue: record.rx_queue,
+                });
             };
             let rx_queue_ref = ContractObjectRef::new(
                 ContractObjectKind::PacketQueueObject,
@@ -302,12 +291,10 @@ impl SemanticGraph {
                     && other.io_wait_generation == record.io_wait_generation
                     && other.state == NetworkRxWaitResolutionState::Resolved
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkRxWaitResolutionDuplicateIoWait {
-                        resolution: duplicate.id,
-                        io_wait: record.io_wait,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxWaitResolutionDuplicateIoWait {
+                    resolution: duplicate.id,
+                    io_wait: record.io_wait,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.resolved_at_event
@@ -338,11 +325,9 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(
-                    SemanticInvariantError::NetworkRxWaitResolutionMissingEvent {
-                        resolution: record.id,
-                    },
-                );
+                return Err(SemanticInvariantError::NetworkRxWaitResolutionMissingEvent {
+                    resolution: record.id,
+                });
             }
         }
         Ok(())
@@ -354,10 +339,8 @@ impl SemanticGraph {
         resolution: NetworkRxWaitResolutionId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .network_rx_wait_resolutions
-            .iter_mut()
-            .find(|record| record.id == resolution)
+        if let Some(record) =
+            self.network_rx_wait_resolutions.iter_mut().find(|record| record.id == resolution)
         {
             record.rx_queue_generation = generation;
         }

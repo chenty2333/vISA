@@ -21,11 +21,7 @@ impl SemanticGraph {
         if directory_object == 0 {
             return Err("directory object id=0 is invalid");
         }
-        if self
-            .directory_objects
-            .iter()
-            .any(|record| record.id == directory_object)
-        {
+        if self.directory_objects.iter().any(|record| record.id == directory_object) {
             return Err("directory object already exists");
         }
         if file_object_generation == 0
@@ -112,9 +108,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_directory_object_id = self
-            .next_directory_object_id
-            .max(directory_object.saturating_add(1));
+        self.next_directory_object_id =
+            self.next_directory_object_id.max(directory_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::DirectoryObjectRecorded {
@@ -257,10 +252,8 @@ impl SemanticGraph {
         directory_object: DirectoryObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .directory_objects
-            .iter_mut()
-            .find(|record| record.id == directory_object)
+        if let Some(record) =
+            self.directory_objects.iter_mut().find(|record| record.id == directory_object)
         {
             record.file_object_generation = generation;
         }

@@ -46,11 +46,7 @@ pub const fn validate_linux_socket_contract(domain: u32, ty: u32, protocol: u32)
 }
 
 pub const fn canonical_socket_protocol(protocol: u32) -> u16 {
-    if protocol == 0 {
-        PROTO_DEMO_TCP
-    } else {
-        protocol as u16
-    }
+    if protocol == 0 { PROTO_DEMO_TCP } else { protocol as u16 }
 }
 
 pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> bool {
@@ -71,8 +67,9 @@ pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use vmos_abi::SOCK_DGRAM;
+
+    use super::*;
 
     #[test]
     fn packet_device_contract_matches_v2_constants() {
@@ -84,11 +81,7 @@ mod tests {
     #[test]
     fn linux_socket_contract_is_narrow_by_default() {
         assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, 0));
-        assert!(validate_linux_socket_contract(
-            AF_INET,
-            SOCK_STREAM,
-            PROTO_TCP as u32
-        ));
+        assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, PROTO_TCP as u32));
         assert!(!validate_linux_socket_contract(AF_INET, SOCK_DGRAM, 0));
         assert!(!validate_linux_socket_contract(AF_INET + 1, SOCK_STREAM, 0));
         assert_eq!(canonical_socket_protocol(0), PROTO_DEMO_TCP);

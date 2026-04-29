@@ -2,14 +2,15 @@ use alloc::vec::Vec;
 use core::ptr::addr_of_mut;
 
 pub(crate) use service_core::driver::DriverNetEventKind;
-use service_core::driver::{DriverVirtioNetState, RESPONSE_CAPACITY};
-use service_core::linux_socket::LinuxSocketState;
-use service_core::net::{NetCoreState, QUEUE_CAPACITY};
-use service_core::packet::decode_frame;
-use service_core::replay::ReplaySnapshotState;
+use service_core::{
+    driver::{DriverVirtioNetState, RESPONSE_CAPACITY},
+    linux_socket::LinuxSocketState,
+    net::{NetCoreState, QUEUE_CAPACITY},
+    packet::decode_frame,
+    replay::ReplaySnapshotState,
+};
 
-use crate::supervisor::engine::SupervisorEngine;
-use crate::supervisor::types::ServiceCallError;
+use crate::supervisor::{engine::SupervisorEngine, types::ServiceCallError};
 
 pub(crate) struct NetCoreService {
     state: &'static mut NetCoreState,
@@ -17,9 +18,7 @@ pub(crate) struct NetCoreService {
 
 impl NetCoreService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            state: unsafe { net_core_state() },
-        })
+        Ok(Self { state: unsafe { net_core_state() } })
     }
 
     pub(crate) fn create_socket(
@@ -94,9 +93,7 @@ pub(crate) struct LinuxSocketService {
 
 impl LinuxSocketService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            state: unsafe { linux_socket_state() },
-        })
+        Ok(Self { state: unsafe { linux_socket_state() } })
     }
 
     pub(crate) fn register_socket(
@@ -107,10 +104,7 @@ impl LinuxSocketService {
         protocol: u32,
         ready_key: u64,
     ) -> Result<(), ServiceCallError> {
-        map_errno(
-            self.state
-                .register_socket(socket_id, domain, ty, protocol, ready_key),
-        )
+        map_errno(self.state.register_socket(socket_id, domain, ty, protocol, ready_key))
     }
 
     pub(crate) fn close_socket(&mut self, socket_id: u32) -> Result<(), ServiceCallError> {
@@ -206,9 +200,7 @@ pub(crate) struct DriverVirtioNetService {
 
 impl DriverVirtioNetService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            state: unsafe { driver_state() },
-        })
+        Ok(Self { state: unsafe { driver_state() } })
     }
 
     pub(crate) fn reset_sequence(&mut self, now_ticks: u64) -> Result<(), ServiceCallError> {
@@ -234,17 +226,12 @@ impl DriverVirtioNetService {
         if event.kind == DriverNetEventKind::PacketRx {
             let frame_len = map_errno(self.state.dequeue_rx_frame(&mut frame))?;
             frame.truncate(frame_len as usize);
-            payload_len = decode_frame(&frame)
-                .map(|(meta, _)| meta.payload_len)
-                .unwrap_or(frame_len);
+            payload_len =
+                decode_frame(&frame).map(|(meta, _)| meta.payload_len).unwrap_or(frame_len);
         } else {
             frame.clear();
         }
-        Ok(DriverNetEvent {
-            kind: event.kind,
-            len: payload_len,
-            frame,
-        })
+        Ok(DriverNetEvent { kind: event.kind, len: payload_len, frame })
     }
 }
 
@@ -254,9 +241,7 @@ pub(crate) struct ReplaySnapshotService {
 
 impl ReplaySnapshotService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self {
-            state: unsafe { replay_snapshot_state() },
-        })
+        Ok(Self { state: unsafe { replay_snapshot_state() } })
     }
 
     pub(crate) fn validate_barrier(

@@ -17,11 +17,7 @@ impl SemanticGraph {
         if framebuffer == 0 {
             return Err("framebuffer object id=0 is invalid");
         }
-        if self
-            .framebuffer_objects
-            .iter()
-            .any(|record| record.id == framebuffer)
-        {
+        if self.framebuffer_objects.iter().any(|record| record.id == framebuffer) {
             return Err("framebuffer object already exists");
         }
         if name.is_empty() {
@@ -93,9 +89,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_framebuffer_object_id = self
-            .next_framebuffer_object_id
-            .max(framebuffer.saturating_add(1));
+        self.next_framebuffer_object_id =
+            self.next_framebuffer_object_id.max(framebuffer.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "display",
             EventKind::FramebufferObjectRecorded {
@@ -202,10 +197,8 @@ impl SemanticGraph {
         framebuffer: FramebufferObjectId,
         resource_generation: Generation,
     ) {
-        if let Some(record) = self
-            .framebuffer_objects
-            .iter_mut()
-            .find(|record| record.id == framebuffer)
+        if let Some(record) =
+            self.framebuffer_objects.iter_mut().find(|record| record.id == framebuffer)
         {
             record.resource_generation = resource_generation;
         }

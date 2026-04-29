@@ -190,9 +190,7 @@ impl SemanticGraph {
                 || store_record.role != "driver"
                 || record.state != IrqEventState::Recorded
             {
-                return Err(SemanticInvariantError::IrqEventInvalid {
-                    irq_event: record.id,
-                });
+                return Err(SemanticInvariantError::IrqEventInvalid { irq_event: record.id });
             }
             if let Some(duplicate) = self.irq_events.iter().find(|other| {
                 other.id != record.id
@@ -234,9 +232,7 @@ impl SemanticGraph {
                             && *generation == record.generation
                     )
             }) {
-                return Err(SemanticInvariantError::IrqEventMissingEvent {
-                    irq_event: record.id,
-                });
+                return Err(SemanticInvariantError::IrqEventMissingEvent { irq_event: record.id });
             }
         }
         Ok(())
@@ -248,11 +244,7 @@ impl SemanticGraph {
         irq_event: IrqEventId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .irq_events
-            .iter_mut()
-            .find(|record| record.id == irq_event)
-        {
+        if let Some(record) = self.irq_events.iter_mut().find(|record| record.id == irq_event) {
             record.driver_store_generation = generation;
         }
     }

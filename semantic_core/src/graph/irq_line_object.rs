@@ -15,11 +15,7 @@ impl SemanticGraph {
         if irq_line == 0 {
             return Err("irq line object id=0 is invalid");
         }
-        if self
-            .irq_line_objects
-            .iter()
-            .any(|record| record.id == irq_line)
-        {
+        if self.irq_line_objects.iter().any(|record| record.id == irq_line) {
             return Err("irq line object already exists");
         }
         if !Self::irq_line_trigger_is_supported(trigger) {
@@ -163,9 +159,7 @@ impl SemanticGraph {
                 || !Self::irq_line_trigger_is_supported(record.trigger)
                 || !Self::irq_line_polarity_is_supported(record.polarity)
             {
-                return Err(SemanticInvariantError::IrqLineObjectInvalid {
-                    irq_line: record.id,
-                });
+                return Err(SemanticInvariantError::IrqLineObjectInvalid { irq_line: record.id });
             }
             if let Some(duplicate) = self.irq_line_objects.iter().find(|other| {
                 other.id != record.id
@@ -218,10 +212,7 @@ impl SemanticGraph {
     }
 
     const fn irq_line_polarity_is_supported(polarity: IrqLinePolarity) -> bool {
-        matches!(
-            polarity,
-            IrqLinePolarity::ActiveHigh | IrqLinePolarity::ActiveLow
-        )
+        matches!(polarity, IrqLinePolarity::ActiveHigh | IrqLinePolarity::ActiveLow)
     }
 
     #[cfg(test)]
@@ -230,10 +221,7 @@ impl SemanticGraph {
         irq_line: IrqLineObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .irq_line_objects
-            .iter_mut()
-            .find(|record| record.id == irq_line)
+        if let Some(record) = self.irq_line_objects.iter_mut().find(|record| record.id == irq_line)
         {
             record.device_generation = generation;
         }

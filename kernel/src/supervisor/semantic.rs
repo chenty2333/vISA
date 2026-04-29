@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use semantic_core::{
     ArtifactProfile, FailureEffect, FrontendKind, GenerationCheckError, GuestStateSnapshot,
@@ -13,11 +15,13 @@ use supervisor_catalog::{
     WASM_FEATURE_PROFILE,
 };
 
-use super::artifacts::ArtifactLoadPlan;
-use super::authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec};
-use super::events::Event;
-use super::runtime::PrototypeRuntime;
-use super::types::{FdResource, WaitKind, WaitRestartClass, WaitToken};
+use super::{
+    artifacts::ArtifactLoadPlan,
+    authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec},
+    events::Event,
+    runtime::PrototypeRuntime,
+    types::{FdResource, WaitKind, WaitRestartClass, WaitToken},
+};
 
 pub(super) fn bootstrap_graph(
     load_plan: &ArtifactLoadPlan,
@@ -39,12 +43,7 @@ pub(super) fn bootstrap_graph(
             owner_store: None,
         },
     )?;
-    graph.grant_capability(
-        "snapshot_manager",
-        "snapshot.barrier",
-        &["enter"],
-        "activation",
-    );
+    graph.grant_capability("snapshot_manager", "snapshot.barrier", &["enter"], "activation");
     graph.grant_capability(
         "fault_manager",
         "fault-domain.procfs_service",
@@ -208,9 +207,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         match event {
             Event::WaitReady(wait) => self.semantic.record_wait_resolved(wait, "ready"),
             Event::WaitCancelled(wait, errno) => self.semantic.record_wait_cancelled(wait, errno),
-            Event::WaitRestart(wait, class) => self
-                .semantic
-                .record_wait_restarted(wait, wait_restart_class_name(class)),
+            Event::WaitRestart(wait, class) => {
+                self.semantic.record_wait_restarted(wait, wait_restart_class_name(class))
+            }
         }
     }
 
@@ -225,8 +224,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         token: WaitToken,
     ) -> Result<(), GenerationCheckError> {
-        self.semantic
-            .validate_wait_handle(WaitHandle::new(token.id, token.generation))
+        self.semantic.validate_wait_handle(WaitHandle::new(token.id, token.generation))
     }
 
     pub(crate) fn record_window_lease_created(
@@ -253,8 +251,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn record_window_lease_destroyed(&mut self, lease: ResourceHandle, generation: u64) {
-        self.semantic
-            .record_window_lease_destroyed(lease.id, generation);
+        self.semantic.record_window_lease_destroyed(lease.id, generation);
     }
 
     pub(crate) fn create_migration_package(&mut self) -> Result<MigrationPackage, &'static str> {
@@ -295,12 +292,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(|_| "net_core queued_rx_bytes failed at snapshot barrier")?;
         let pending_dma = 0;
         self.replay_snapshot
-            .validate_barrier(
-                pending_waits,
-                active_transactions,
-                active_dmw_leases,
-                pending_dma,
-            )
+            .validate_barrier(pending_waits, active_transactions, active_dmw_leases, pending_dma)
             .map_err(|_| "replay_snapshot rejected snapshot barrier")?;
 
         self.semantic.record_snapshot_barrier_exit(barrier);

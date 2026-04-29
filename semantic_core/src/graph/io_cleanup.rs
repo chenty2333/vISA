@@ -213,8 +213,7 @@ impl SemanticGraph {
             capability_targets
         {
             if self.capabilities.revoke_generation(cap, cap_generation) {
-                self.event_log
-                    .push("capability", EventKind::CapabilityRevoked { cap });
+                self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
                 self.device_capabilities[index].state = DeviceCapabilityState::Revoked;
                 revoked_device_capabilities.push(ContractObjectRef::new(
                     ContractObjectKind::DeviceCapability,
@@ -462,9 +461,7 @@ impl SemanticGraph {
                 || cleanup.reason.is_empty()
                 || cleanup.state != IoCleanupState::Completed
             {
-                return Err(SemanticInvariantError::IoCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
             }
             if !self.stores.iter().any(|store| {
                 store.id == cleanup.driver_store
@@ -499,9 +496,7 @@ impl SemanticGraph {
                 || binding.device != cleanup.device
                 || binding.device_generation != cleanup.device_generation
             {
-                return Err(SemanticInvariantError::IoCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
             }
             for io_wait in &cleanup.cancelled_io_waits {
                 let Some(record) = self.io_waits.iter().find(|record| {
@@ -515,9 +510,7 @@ impl SemanticGraph {
                 if record.state != IoWaitState::Cancelled
                     || record.cancel_reason != Some(WaitCancelReason::DeviceFault)
                 {
-                    return Err(SemanticInvariantError::IoCleanupInvalid {
-                        cleanup: cleanup.id,
-                    });
+                    return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
                 }
             }
             for device_capability in &cleanup.revoked_device_capabilities {
@@ -531,9 +524,7 @@ impl SemanticGraph {
                     });
                 };
                 if record.state != DeviceCapabilityState::Revoked {
-                    return Err(SemanticInvariantError::IoCleanupInvalid {
-                        cleanup: cleanup.id,
-                    });
+                    return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
                 }
             }
             for capability in &cleanup.revoked_capabilities {
@@ -544,9 +535,7 @@ impl SemanticGraph {
                     });
                 };
                 if !record.revoked || record.generation <= capability.generation {
-                    return Err(SemanticInvariantError::IoCleanupInvalid {
-                        cleanup: cleanup.id,
-                    });
+                    return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
                 }
             }
             for dma_buffer in &cleanup.released_dma_buffers {
@@ -624,9 +613,7 @@ impl SemanticGraph {
                 ),
             ];
             if cleanup.steps.len() != expected_steps.len() {
-                return Err(SemanticInvariantError::IoCleanupInvalid {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
             }
             for (step, (expected_kind, expected_target_kind, expected_id, expected_generation)) in
                 cleanup.steps.iter().zip(expected_steps)
@@ -638,9 +625,7 @@ impl SemanticGraph {
                     || step.target.generation != expected_generation
                     || step.event.is_none()
                 {
-                    return Err(SemanticInvariantError::IoCleanupInvalid {
-                        cleanup: cleanup.id,
-                    });
+                    return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
                 }
             }
             if self.io_waits.iter().any(|record| {
@@ -681,9 +666,7 @@ impl SemanticGraph {
                     && record.device_generation == cleanup.device_generation
                     && record.state == IrqLineObjectState::Registered
             }) {
-                return Err(SemanticInvariantError::IoCleanupLiveLeak {
-                    cleanup: cleanup.id,
-                });
+                return Err(SemanticInvariantError::IoCleanupLiveLeak { cleanup: cleanup.id });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == cleanup.started_at_event
@@ -758,11 +741,7 @@ impl SemanticGraph {
             record.state = IoWaitState::Pending;
             record.cancel_reason = None;
         }
-        if let Some(cleanup) = self
-            .io_cleanups
-            .iter_mut()
-            .find(|record| record.id == cleanup)
-        {
+        if let Some(cleanup) = self.io_cleanups.iter_mut().find(|record| record.id == cleanup) {
             cleanup.state = IoCleanupState::Completed;
         }
     }

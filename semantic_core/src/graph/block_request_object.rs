@@ -14,11 +14,7 @@ impl SemanticGraph {
         if block_request == 0 {
             return Err("block request object id=0 is invalid");
         }
-        if self
-            .block_request_objects
-            .iter()
-            .any(|record| record.id == block_request)
-        {
+        if self.block_request_objects.iter().any(|record| record.id == block_request) {
             return Err("block request object already exists");
         }
         if block_device_generation == 0 || block_range_generation == 0 || sequence == 0 {
@@ -83,9 +79,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_request_object_id = self
-            .next_block_request_object_id
-            .max(block_request.saturating_add(1));
+        self.next_block_request_object_id =
+            self.next_block_request_object_id.max(block_request.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRequestObjectRecorded {
@@ -178,13 +173,11 @@ impl SemanticGraph {
                     && other.sequence == record.sequence
                     && other.state == BlockRequestObjectState::Submitted
             }) {
-                return Err(
-                    SemanticInvariantError::BlockRequestObjectDuplicateSequence {
-                        block_request: duplicate.id,
-                        block_device: record.block_device,
-                        sequence: record.sequence,
-                    },
-                );
+                return Err(SemanticInvariantError::BlockRequestObjectDuplicateSequence {
+                    block_request: duplicate.id,
+                    block_device: record.block_device,
+                    sequence: record.sequence,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -225,10 +218,8 @@ impl SemanticGraph {
         block_request: BlockRequestObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .block_request_objects
-            .iter_mut()
-            .find(|record| record.id == block_request)
+        if let Some(record) =
+            self.block_request_objects.iter_mut().find(|record| record.id == block_request)
         {
             record.block_range_generation = generation;
         }

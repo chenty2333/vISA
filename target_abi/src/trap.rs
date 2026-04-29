@@ -20,13 +20,7 @@ impl PcRangeEntryV1 {
         code_offset_base: u64,
         flags: u32,
     ) -> Self {
-        Self {
-            code_object,
-            rx_base,
-            rx_len,
-            code_offset_base,
-            flags,
-        }
+        Self { code_object, rx_base, rx_len, code_offset_base, flags }
     }
 
     pub fn contains(self, pc: u64) -> bool {
@@ -37,8 +31,7 @@ impl PcRangeEntryV1 {
     }
 
     pub fn code_offset(self, pc: u64) -> Option<u64> {
-        self.contains(pc)
-            .then_some(pc - self.rx_base + self.code_offset_base)
+        self.contains(pc).then_some(pc - self.rx_base + self.code_offset_base)
     }
 }
 
@@ -138,17 +131,11 @@ pub struct PcRangeRuntimeEntryV1 {
 
 impl PcRangeRuntimeEntryV1 {
     pub const fn live(range: PcRangeEntryV1) -> Self {
-        Self {
-            range,
-            state: CodeRangeStateV1::Live,
-        }
+        Self { range, state: CodeRangeStateV1::Live }
     }
 
     pub const fn retired(range: PcRangeEntryV1) -> Self {
-        Self {
-            range,
-            state: CodeRangeStateV1::Retired,
-        }
+        Self { range, state: CodeRangeStateV1::Retired }
     }
 }
 
@@ -168,11 +155,7 @@ pub fn classify_trap_pc(
     ranges: &[PcRangeRuntimeEntryV1],
     trap_map: &[TrapMapEntryV1],
 ) -> TrapAttributionV1 {
-    let Some(range) = ranges
-        .iter()
-        .find(|entry| entry.range.contains(pc))
-        .copied()
-    else {
+    let Some(range) = ranges.iter().find(|entry| entry.range.contains(pc)).copied() else {
         return TrapAttributionV1 {
             code_object: None,
             pc,
@@ -183,10 +166,7 @@ pub fn classify_trap_pc(
             debug_symbol: None,
         };
     };
-    let code_offset = range
-        .range
-        .code_offset(pc)
-        .expect("contains(pc) already validated offset");
+    let code_offset = range.range.code_offset(pc).expect("contains(pc) already validated offset");
     if range.state == CodeRangeStateV1::Retired {
         return TrapAttributionV1 {
             code_object: Some(range.range.code_object),
@@ -198,10 +178,8 @@ pub fn classify_trap_pc(
             debug_symbol: None,
         };
     }
-    let Some(entry) = trap_map
-        .iter()
-        .find(|entry| entry.covers(range.range.code_object, code_offset))
-        .copied()
+    let Some(entry) =
+        trap_map.iter().find(|entry| entry.covers(range.range.code_object, code_offset)).copied()
     else {
         return TrapAttributionV1 {
             code_object: Some(range.range.code_object),
@@ -295,14 +273,6 @@ mod tests {
     }
 
     fn trap_entry(code: ObjectRefRaw, offset: u64) -> TrapMapEntryV1 {
-        TrapMapEntryV1::new(
-            code,
-            offset,
-            offset + 4,
-            TrapKindV1::WasmUnreachable,
-            2,
-            0x44,
-            3,
-        )
+        TrapMapEntryV1::new(code, offset, offset + 4, TrapKindV1::WasmUnreachable, 2, 0x44, 3)
     }
 }

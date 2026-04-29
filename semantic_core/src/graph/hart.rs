@@ -358,25 +358,18 @@ impl SemanticGraph {
                 }
                 (None, None, None, None, None, None) => {
                     if hart.state == HartState::Running {
-                        return Err(
-                            SemanticInvariantError::HartRunningWithoutCurrentActivation {
-                                hart: hart.id,
-                            },
-                        );
+                        return Err(SemanticInvariantError::HartRunningWithoutCurrentActivation {
+                            hart: hart.id,
+                        });
                     }
                 }
                 _ => {
-                    return Err(
-                        SemanticInvariantError::HartCurrentActivationGenerationMissing {
-                            hart: hart.id,
-                        },
-                    );
+                    return Err(SemanticInvariantError::HartCurrentActivationGenerationMissing {
+                        hart: hart.id,
+                    });
                 }
             }
-            if self.harts[index + 1..]
-                .iter()
-                .any(|other| other.id == hart.id)
-            {
+            if self.harts[index + 1..].iter().any(|other| other.id == hart.id) {
                 return Err(SemanticInvariantError::DuplicateHart { hart: hart.id });
             }
             if let (Some(activation), Some(activation_generation)) =
@@ -393,10 +386,7 @@ impl SemanticGraph {
                     });
                 }
             }
-            if self.harts[index + 1..]
-                .iter()
-                .any(|other| other.hardware_id == hart.hardware_id)
-            {
+            if self.harts[index + 1..].iter().any(|other| other.hardware_id == hart.hardware_id) {
                 return Err(SemanticInvariantError::DuplicateHardwareHart {
                     hardware_id: hart.hardware_id,
                 });

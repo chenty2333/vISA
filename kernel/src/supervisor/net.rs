@@ -74,14 +74,7 @@ impl NetworkPlane {
         let interface = resource_handle(semantic, interface)?;
         semantic.record_net_interface_state_changed(interface.id, true);
 
-        Ok(Self {
-            device,
-            interface,
-            irq,
-            dma_buffer,
-            mmio_region,
-            virtio_queue,
-        })
+        Ok(Self { device, interface, irq, dma_buffer, mmio_region, virtio_queue })
     }
 
     pub(crate) fn bind_driver_resources(
@@ -176,7 +169,5 @@ fn resource_handle(
     semantic: &SemanticGraph,
     resource: ResourceId,
 ) -> Result<ResourceHandle, &'static str> {
-    semantic
-        .resource_handle(resource)
-        .ok_or("fresh network resource did not publish a handle")
+    semantic.resource_handle(resource).ok_or("fresh network resource did not publish a handle")
 }

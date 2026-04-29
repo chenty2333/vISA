@@ -34,11 +34,7 @@ impl SemanticGraph {
         if virtio_net_backend == 0 {
             return Err("virtio net backend object id=0 is invalid");
         }
-        if self
-            .virtio_net_backends
-            .iter()
-            .any(|record| record.id == virtio_net_backend)
-        {
+        if self.virtio_net_backends.iter().any(|record| record.id == virtio_net_backend) {
             return Err("virtio net backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() || model.is_empty() {
@@ -184,9 +180,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_virtio_net_backend_object_id = self
-            .next_virtio_net_backend_object_id
-            .max(virtio_net_backend + 1);
+        self.next_virtio_net_backend_object_id =
+            self.next_virtio_net_backend_object_id.max(virtio_net_backend + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::VirtioNetBackendSkeletonBound {
@@ -253,23 +248,19 @@ impl SemanticGraph {
                         && packet_device.generation == record.packet_device_generation
                 })
             else {
-                return Err(
-                    SemanticInvariantError::VirtioNetBackendObjectMissingPacketDevice {
-                        virtio_net_backend: record.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::VirtioNetBackendObjectMissingPacketDevice {
+                    virtio_net_backend: record.id,
+                    packet_device: record.packet_device,
+                });
             };
             let Some(binding_record) = self.driver_store_bindings.iter().find(|driver_binding| {
                 driver_binding.id == record.driver_binding
                     && driver_binding.generation == record.driver_binding_generation
             }) else {
-                return Err(
-                    SemanticInvariantError::VirtioNetBackendObjectMissingDriverBinding {
-                        virtio_net_backend: record.id,
-                        driver_binding: record.driver_binding,
-                    },
-                );
+                return Err(SemanticInvariantError::VirtioNetBackendObjectMissingDriverBinding {
+                    virtio_net_backend: record.id,
+                    driver_binding: record.driver_binding,
+                });
             };
             let binding_available = binding_record.state == DriverStoreBindingState::Bound
                 || (binding_record.state == DriverStoreBindingState::Released
@@ -320,12 +311,10 @@ impl SemanticGraph {
                     && other.packet_device_generation == record.packet_device_generation
                     && other.state == VirtioNetBackendObjectState::SkeletonReady
             }) {
-                return Err(
-                    SemanticInvariantError::VirtioNetBackendObjectDuplicateBinding {
-                        virtio_net_backend: duplicate.id,
-                        packet_device: record.packet_device,
-                    },
-                );
+                return Err(SemanticInvariantError::VirtioNetBackendObjectDuplicateBinding {
+                    virtio_net_backend: duplicate.id,
+                    packet_device: record.packet_device,
+                });
             }
             if let Some(duplicate) = self.virtio_net_backends.iter().find(|other| {
                 other.id != record.id
@@ -333,12 +322,10 @@ impl SemanticGraph {
                     && other.driver_binding_generation == record.driver_binding_generation
                     && other.state == VirtioNetBackendObjectState::SkeletonReady
             }) {
-                return Err(
-                    SemanticInvariantError::VirtioNetBackendObjectDuplicateDriverBinding {
-                        virtio_net_backend: duplicate.id,
-                        driver_binding: record.driver_binding,
-                    },
-                );
+                return Err(SemanticInvariantError::VirtioNetBackendObjectDuplicateDriverBinding {
+                    virtio_net_backend: duplicate.id,
+                    driver_binding: record.driver_binding,
+                });
             }
             if !self.event_log.events.iter().any(|event| {
                 event.id == record.recorded_at_event
@@ -385,10 +372,8 @@ impl SemanticGraph {
         virtio_net_backend: VirtioNetBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .virtio_net_backends
-            .iter_mut()
-            .find(|record| record.id == virtio_net_backend)
+        if let Some(record) =
+            self.virtio_net_backends.iter_mut().find(|record| record.id == virtio_net_backend)
         {
             record.driver_binding_generation = generation;
         }
@@ -400,10 +385,8 @@ impl SemanticGraph {
         virtio_net_backend: VirtioNetBackendObjectId,
         irq_vector: u16,
     ) {
-        if let Some(record) = self
-            .virtio_net_backends
-            .iter_mut()
-            .find(|record| record.id == virtio_net_backend)
+        if let Some(record) =
+            self.virtio_net_backends.iter_mut().find(|record| record.id == virtio_net_backend)
         {
             record.irq_vector = irq_vector;
         }

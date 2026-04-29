@@ -24,11 +24,7 @@ impl SemanticGraph {
         if sequence == 0 {
             return Err("socket operation sequence is zero");
         }
-        if self
-            .socket_operations
-            .iter()
-            .any(|record| record.id == operation_id)
-        {
+        if self.socket_operations.iter().any(|record| record.id == operation_id) {
             return Err("socket operation already exists");
         }
         let Some(endpoint_record) = self.live_endpoint_record(endpoint, endpoint_generation) else {
@@ -187,9 +183,8 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(endpoint_record) = self
-            .live_endpoint_record(endpoint, endpoint_generation)
-            .cloned()
+        let Some(endpoint_record) =
+            self.live_endpoint_record(endpoint, endpoint_generation).cloned()
         else {
             return false;
         };
@@ -321,13 +316,7 @@ impl SemanticGraph {
                     operation: record.id,
                 });
             }
-            if self
-                .socket_operations
-                .iter()
-                .filter(|other| other.id == record.id)
-                .count()
-                > 1
-            {
+            if self.socket_operations.iter().filter(|other| other.id == record.id).count() > 1 {
                 return Err(SemanticInvariantError::SocketOperationDuplicate {
                     operation: record.id,
                 });
@@ -550,20 +539,13 @@ impl SemanticGraph {
                     endpoint_generation,
                     SocketOperationKind::Bind,
                 );
-                bind.map(|record| {
-                    (
-                        record.local_addr,
-                        record.local_port,
+                bind.map(|record| (record.local_addr, record.local_port, remote_addr, remote_port))
+                    .unwrap_or((
+                        SOCKET_OPERATION_UNSPECIFIED_IPV4,
+                        SOCKET_OPERATION_UNSPECIFIED_PORT,
                         remote_addr,
                         remote_port,
-                    )
-                })
-                .unwrap_or((
-                    SOCKET_OPERATION_UNSPECIFIED_IPV4,
-                    SOCKET_OPERATION_UNSPECIFIED_PORT,
-                    remote_addr,
-                    remote_port,
-                ))
+                    ))
             }
             SocketOperationKind::Send | SocketOperationKind::Recv => {
                 let connect = self.socket_operation_last(
@@ -613,10 +595,8 @@ impl SemanticGraph {
         operation_id: SocketOperationId,
         sequence: u64,
     ) {
-        if let Some(record) = self
-            .socket_operations
-            .iter_mut()
-            .find(|record| record.id == operation_id)
+        if let Some(record) =
+            self.socket_operations.iter_mut().find(|record| record.id == operation_id)
         {
             record.sequence = sequence;
         }

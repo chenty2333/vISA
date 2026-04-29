@@ -15,9 +15,7 @@ pub(crate) struct EventQueue {
 
 impl EventQueue {
     pub(crate) fn new() -> Self {
-        Self {
-            events: VecDeque::new(),
-        }
+        Self { events: VecDeque::new() }
     }
 
     pub(crate) fn push(&mut self, event: Event) {

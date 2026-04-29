@@ -59,15 +59,7 @@ impl SemanticGraph {
         note: &str,
     ) -> bool {
         if self
-            .validate_queue_object(
-                queue,
-                name,
-                role,
-                queue_index,
-                depth,
-                device,
-                device_generation,
-            )
+            .validate_queue_object(queue, name, role, queue_index, depth, device, device_generation)
             .is_err()
         {
             return false;
@@ -187,11 +179,7 @@ impl SemanticGraph {
         queue: QueueObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self
-            .queue_objects
-            .iter_mut()
-            .find(|record| record.id == queue)
-        {
+        if let Some(record) = self.queue_objects.iter_mut().find(|record| record.id == queue) {
             record.device_generation = generation;
         }
     }

@@ -1,6 +1,8 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::*;
 
@@ -50,20 +52,11 @@ impl ContractViolation {
         to: Option<ContractObjectRef>,
         detail: &str,
     ) -> Self {
-        Self {
-            kind,
-            edge: edge.to_string(),
-            from,
-            to,
-            detail: detail.to_string(),
-        }
+        Self { kind, edge: edge.to_string(), from, to, detail: detail.to_string() }
     }
 
     pub fn summary(&self) -> String {
-        let to = self
-            .to
-            .map(ContractObjectRef::summary)
-            .unwrap_or_else(|| "none".to_string());
+        let to = self.to.map(ContractObjectRef::summary).unwrap_or_else(|| "none".to_string());
         format!(
             "contract-violation kind={} edge={} from={} to={} detail={}",
             self.kind.as_str(),
@@ -218,15 +211,7 @@ impl ContractEdgeRecord {
         label: &str,
         epoch: EventId,
     ) -> Self {
-        Self {
-            from,
-            to,
-            mode,
-            label: label.to_string(),
-            epoch,
-            provider: None,
-            class: None,
-        }
+        Self { from, to, mode, label: label.to_string(), epoch, provider: None, class: None }
     }
 
     pub fn with_external_metadata(mut self, provider: &str, class: &str) -> Self {
@@ -283,20 +268,12 @@ impl ContractGraphValidator {
     ) {
         for code in &snapshot.code_objects {
             let from = code.object_ref();
-            if snapshot
-                .artifacts
-                .iter()
-                .all(|artifact| artifact.artifact_id != code.artifact_id)
-            {
+            if snapshot.artifacts.iter().all(|artifact| artifact.artifact_id != code.artifact_id) {
                 violations.push(ContractViolation::new(
                     ContractViolationKind::DanglingEdge,
                     "code->artifact",
                     from,
-                    Some(ContractObjectRef::new(
-                        ContractObjectKind::Artifact,
-                        code.artifact_id,
-                        0,
-                    )),
+                    Some(ContractObjectRef::new(ContractObjectKind::Artifact, code.artifact_id, 0)),
                     "code object references missing artifact",
                 ));
             }
@@ -441,11 +418,7 @@ impl ContractGraphValidator {
                     injection.code_object,
                     ContractObjectKind::CodeObject,
                 ),
-                (
-                    "simd-fault-injection->trap",
-                    injection.trap,
-                    ContractObjectKind::Trap,
-                ),
+                ("simd-fault-injection->trap", injection.trap, ContractObjectKind::Trap),
                 (
                     "simd-fault-injection->target-feature-set",
                     injection.target_feature_set,
@@ -495,11 +468,7 @@ impl ContractGraphValidator {
                     ContractEdgeMode::Historical,
                 );
             }
-            let Some(trap) = snapshot
-                .traps
-                .iter()
-                .find(|trap| trap.id == injection.trap.id)
-            else {
+            let Some(trap) = snapshot.traps.iter().find(|trap| trap.id == injection.trap.id) else {
                 continue;
             };
             if trap.generation != injection.trap.generation {
@@ -868,19 +837,14 @@ impl ContractGraphValidator {
             }
 
             for (label, vector_ref) in [
-                (
-                    "simd-context-switch-benchmark->saved-vector-state",
-                    benchmark.saved_vector_state,
-                ),
+                ("simd-context-switch-benchmark->saved-vector-state", benchmark.saved_vector_state),
                 (
                     "simd-context-switch-benchmark->restored-vector-state",
                     benchmark.restored_vector_state,
                 ),
             ] {
-                let Some(vector) = snapshot
-                    .vector_states
-                    .iter()
-                    .find(|vector| vector.object_ref() == vector_ref)
+                let Some(vector) =
+                    snapshot.vector_states.iter().find(|vector| vector.object_ref() == vector_ref)
                 else {
                     continue;
                 };
@@ -1030,10 +994,7 @@ impl ContractGraphValidator {
                 || capability.framebuffer_generation == 0
                 || capability.capability_generation == 0
                 || capability.operations.is_empty()
-                || capability
-                    .operations
-                    .iter()
-                    .any(|operation| operation.is_empty())
+                || capability.operations.iter().any(|operation| operation.is_empty())
                 || (capability.state != DisplayCapabilityState::Active
                     && capability.state != DisplayCapabilityState::Revoked)
             {
@@ -1047,11 +1008,8 @@ impl ContractGraphValidator {
                 continue;
             }
             let active = capability.state == DisplayCapabilityState::Active;
-            let edge_mode = if active {
-                ContractEdgeMode::Live
-            } else {
-                ContractEdgeMode::Historical
-            };
+            let edge_mode =
+                if active { ContractEdgeMode::Live } else { ContractEdgeMode::Historical };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -1155,16 +1113,10 @@ impl ContractGraphValidator {
                 continue;
             }
             let active = lease.state == FramebufferWindowLeaseState::Active;
-            let owner_mode = if active {
-                ContractEdgeMode::Live
-            } else {
-                ContractEdgeMode::Historical
-            };
-            let capability_mode = if active {
-                ContractEdgeMode::Live
-            } else {
-                ContractEdgeMode::CleanupEffect
-            };
+            let owner_mode =
+                if active { ContractEdgeMode::Live } else { ContractEdgeMode::Historical };
+            let capability_mode =
+                if active { ContractEdgeMode::Live } else { ContractEdgeMode::CleanupEffect };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -1217,10 +1169,7 @@ impl ContractGraphValidator {
                     || capability.display_generation != lease.display_generation
                     || capability.framebuffer != lease.framebuffer
                     || capability.framebuffer_generation != lease.framebuffer_generation
-                    || !capability
-                        .operations
-                        .iter()
-                        .any(|operation| operation == "lease")
+                    || !capability.operations.iter().any(|operation| operation == "lease")
                 {
                     violations.push(ContractViolation::new(
                         ContractViolationKind::GenerationMismatch,
@@ -1236,10 +1185,7 @@ impl ContractGraphValidator {
             }) {
                 if display.framebuffer != lease.framebuffer
                     || display.framebuffer_generation != lease.framebuffer_generation
-                    || lease
-                        .x
-                        .checked_add(lease.width)
-                        .is_none_or(|right| right > display.width)
+                    || lease.x.checked_add(lease.width).is_none_or(|right| right > display.width)
                     || lease
                         .y
                         .checked_add(lease.height)
@@ -1327,16 +1273,10 @@ impl ContractGraphValidator {
                 continue;
             }
             let active = mapping.state == FramebufferMappingState::Active;
-            let owner_mode = if active {
-                ContractEdgeMode::Live
-            } else {
-                ContractEdgeMode::Historical
-            };
-            let cleanup_mode = if active {
-                ContractEdgeMode::Live
-            } else {
-                ContractEdgeMode::CleanupEffect
-            };
+            let owner_mode =
+                if active { ContractEdgeMode::Live } else { ContractEdgeMode::Historical };
+            let cleanup_mode =
+                if active { ContractEdgeMode::Live } else { ContractEdgeMode::CleanupEffect };
             Self::check_generation_edge(
                 snapshot,
                 violations,
@@ -1733,10 +1673,9 @@ impl ContractGraphValidator {
                 dirty.framebuffer_write_generation,
                 ContractEdgeMode::Historical,
             );
-            if let (Some(flush), Some(generation)) = (
-                dirty.framebuffer_flush_region,
-                dirty.framebuffer_flush_region_generation,
-            ) {
+            if let (Some(flush), Some(generation)) =
+                (dirty.framebuffer_flush_region, dirty.framebuffer_flush_region_generation)
+            {
                 Self::check_generation_edge(
                     snapshot,
                     violations,
@@ -1809,13 +1748,12 @@ impl ContractGraphValidator {
                     ));
                 }
             }
-            if let (Some(flush_id), Some(flush_generation)) = (
-                dirty.framebuffer_flush_region,
-                dirty.framebuffer_flush_region_generation,
-            ) && let Some(flush) = snapshot
-                .framebuffer_flush_regions
-                .iter()
-                .find(|flush| flush.id == flush_id && flush.generation == flush_generation)
+            if let (Some(flush_id), Some(flush_generation)) =
+                (dirty.framebuffer_flush_region, dirty.framebuffer_flush_region_generation)
+                && let Some(flush) = snapshot
+                    .framebuffer_flush_regions
+                    .iter()
+                    .find(|flush| flush.id == flush_id && flush.generation == flush_generation)
                 && (flush.owner_store != dirty.owner_store
                     || flush.owner_store_generation != dirty.owner_store_generation
                     || flush.framebuffer_write != dirty.framebuffer_write
@@ -2579,9 +2517,7 @@ impl ContractGraphValidator {
                     || flush.display_generation != benchmark.display_generation
                     || flush.framebuffer != benchmark.framebuffer
                     || flush.framebuffer_generation != benchmark.framebuffer_generation
-                    || flush
-                        .byte_len
-                        .checked_mul(u64::from(benchmark.sample_frames))
+                    || flush.byte_len.checked_mul(u64::from(benchmark.sample_frames))
                         != Some(benchmark.sample_bytes)
                     || u64::from(flush.width).checked_mul(u64::from(flush.height))
                         != Some(benchmark.frame_area_pixels)
@@ -3017,10 +2953,7 @@ impl ContractGraphValidator {
             }) {
                 if quiescence.state != SmpCleanupQuiescenceState::Validated
                     || quiescence.participants.len() < 2
-                    || quiescence
-                        .participants
-                        .iter()
-                        .any(|participant| !participant.quiesced)
+                    || quiescence.participants.iter().any(|participant| !participant.quiesced)
                     || !quiescence.no_running_activation
                     || !quiescence.no_pending_wait
                     || !quiescence.no_live_capability
@@ -3403,14 +3336,8 @@ impl ContractGraphValidator {
                 );
             }
             for (label, object) in [
-                (
-                    "integrated-simd-migration->source-vector-state",
-                    record.source_vector_state,
-                ),
-                (
-                    "integrated-simd-migration->migrated-vector-state",
-                    record.migrated_vector_state,
-                ),
+                ("integrated-simd-migration->source-vector-state", record.source_vector_state),
+                ("integrated-simd-migration->migrated-vector-state", record.migrated_vector_state),
             ] {
                 Self::check_generation_edge(
                     snapshot,
@@ -3687,10 +3614,8 @@ impl ContractGraphValidator {
                     && benchmark.generation == record.block_benchmark_generation
             });
             if let (Some(network), Some(block)) = (network, block) {
-                let total_bytes = network
-                    .sample_bytes
-                    .checked_add(block.sample_bytes)
-                    .unwrap_or_default();
+                let total_bytes =
+                    network.sample_bytes.checked_add(block.sample_bytes).unwrap_or_default();
                 let expected_window = network.measured_nanos.max(block.measured_nanos);
                 let expected_throughput = if expected_window == 0 {
                     0
@@ -4159,13 +4084,10 @@ impl ContractGraphValidator {
                 barrier.id == record.smp_code_publish_barrier
                     && barrier.generation == record.smp_code_publish_barrier_generation
             });
-            let rendezvous = snapshot
-                .stop_the_world_rendezvous
-                .iter()
-                .find(|rendezvous| {
-                    rendezvous.id == record.publish_rendezvous
-                        && rendezvous.generation == record.publish_rendezvous_generation
-                });
+            let rendezvous = snapshot.stop_the_world_rendezvous.iter().find(|rendezvous| {
+                rendezvous.id == record.publish_rendezvous
+                    && rendezvous.generation == record.publish_rendezvous_generation
+            });
             if let (Some(stress), Some(barrier), Some(rendezvous)) = (stress, barrier, rendezvous) {
                 if stress.state != SmpStressRunState::Recorded
                     || stress.property_failures != 0
@@ -4383,11 +4305,8 @@ impl ContractGraphValidator {
                 && record.replay_fixture_count >= record.integrated_scenario_count;
             let graph_history_ok =
                 source_events.iter().all(Option::is_some) && record.historical_edge_count >= 9;
-            let max_source_event = source_events
-                .iter()
-                .filter_map(|event| *event)
-                .max()
-                .unwrap_or(0);
+            let max_source_event =
+                source_events.iter().filter_map(|event| *event).max().unwrap_or(0);
             let replay_validation_ok = graph_history_ok
                 && record.replay_event_cursor >= max_source_event
                 && record.replay_event_cursor != 0;
@@ -4497,11 +4416,7 @@ impl ContractGraphValidator {
     ) {
         for activation in &snapshot.activations {
             let from = activation.object_ref();
-            match snapshot
-                .stores
-                .iter()
-                .find(|store| store.id == activation.store)
-            {
+            match snapshot.stores.iter().find(|store| store.id == activation.store) {
                 Some(store) => {
                     if store.generation != activation.store_generation {
                         violations.push(ContractViolation::new(
@@ -4551,11 +4466,7 @@ impl ContractGraphValidator {
                     "activation references missing store",
                 )),
             }
-            match snapshot
-                .code_objects
-                .iter()
-                .find(|code| code.id == activation.code_object)
-            {
+            match snapshot.code_objects.iter().find(|code| code.id == activation.code_object) {
                 Some(code) => {
                     if code.generation != activation.code_generation {
                         violations.push(ContractViolation::new(
@@ -4686,10 +4597,7 @@ impl ContractGraphValidator {
                 }
             }
             if let Some(artifact_id) = trap.artifact {
-                match snapshot
-                    .artifacts
-                    .iter()
-                    .find(|artifact| artifact.artifact_id == artifact_id)
+                match snapshot.artifacts.iter().find(|artifact| artifact.artifact_id == artifact_id)
                 {
                     Some(artifact) => {
                         if let Some(generation) = trap.artifact_generation {
@@ -4726,10 +4634,7 @@ impl ContractGraphValidator {
         violations: &mut Vec<ContractViolation>,
         trap: &TargetTrapRecord,
     ) {
-        let is_simd_trap = trap
-            .trap_kind
-            .as_deref()
-            .is_some_and(|kind| kind.starts_with("simd-"));
+        let is_simd_trap = trap.trap_kind.as_deref().is_some_and(|kind| kind.starts_with("simd-"));
         if !is_simd_trap && trap.simd_attribution.is_none() {
             return;
         }
@@ -5011,10 +4916,7 @@ impl ContractGraphValidator {
                 cleanup.store_generation,
                 ContractEdgeMode::Historical,
             );
-            let current_store = snapshot
-                .stores
-                .iter()
-                .find(|store| store.id == cleanup.store);
+            let current_store = snapshot.stores.iter().find(|store| store.id == cleanup.store);
             if cleanup.state == CleanupTransactionState::Completed {
                 match cleanup.result_store_generation {
                     Some(generation) => {
@@ -5143,11 +5045,7 @@ impl ContractGraphValidator {
                         ContractViolationKind::DanglingEdge,
                         "cleanup->code",
                         from,
-                        Some(ContractObjectRef::new(
-                            ContractObjectKind::CodeObject,
-                            code_id,
-                            0,
-                        )),
+                        Some(ContractObjectRef::new(ContractObjectKind::CodeObject, code_id, 0)),
                         "cleanup references missing code object",
                     )),
                 }
@@ -5413,10 +5311,8 @@ impl ContractGraphValidator {
             return;
         }
 
-        let declaration = snapshot
-            .external_objects
-            .iter()
-            .find(|declaration| declaration.object == edge.to);
+        let declaration =
+            snapshot.external_objects.iter().find(|declaration| declaration.object == edge.to);
         let Some(declaration) = declaration else {
             violations.push(ContractViolation::new(
                 ContractViolationKind::ExternalEdgeMissingDeclaration,
@@ -6040,11 +5936,7 @@ impl ContractGraphValidator {
         if !live_edge {
             return;
         }
-        if snapshot
-            .tombstones
-            .iter()
-            .any(|tombstone| tombstone.object_ref() == to)
-        {
+        if snapshot.tombstones.iter().any(|tombstone| tombstone.object_ref() == to) {
             violations.push(ContractViolation::new(
                 ContractViolationKind::TombstoneReferencedByLiveEdge,
                 edge,
@@ -6056,10 +5948,7 @@ impl ContractGraphValidator {
     }
 
     fn is_live_activation(activation: &ActivationRecord) -> bool {
-        matches!(
-            activation.state,
-            ActivationState::Running | ActivationState::Pending
-        )
+        matches!(activation.state, ActivationState::Running | ActivationState::Pending)
     }
 
     fn current_object_ref(
@@ -6073,11 +5962,9 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|artifact| artifact.artifact_id == id)
                 .map(VerifiedArtifact::object_ref),
-            ContractObjectKind::CodeObject => snapshot
-                .code_objects
-                .iter()
-                .find(|code| code.id == id)
-                .map(CodeObject::object_ref),
+            ContractObjectKind::CodeObject => {
+                snapshot.code_objects.iter().find(|code| code.id == id).map(CodeObject::object_ref)
+            }
             ContractObjectKind::TargetFeatureSet => snapshot
                 .target_feature_sets
                 .iter()
@@ -6393,11 +6280,9 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|resume| resume.id == id)
                 .map(ActivationResumeRecord::object_ref),
-            ContractObjectKind::Store => snapshot
-                .stores
-                .iter()
-                .find(|store| store.id == id)
-                .map(StoreRecord::object_ref),
+            ContractObjectKind::Store => {
+                snapshot.stores.iter().find(|store| store.id == id).map(StoreRecord::object_ref)
+            }
             ContractObjectKind::Activation => snapshot
                 .runtime_activations
                 .iter()
@@ -6410,11 +6295,9 @@ impl ContractGraphValidator {
                         .find(|activation| activation.id == id)
                         .map(ActivationRecord::object_ref)
                 }),
-            ContractObjectKind::Trap => snapshot
-                .traps
-                .iter()
-                .find(|trap| trap.id == id)
-                .map(TargetTrapRecord::object_ref),
+            ContractObjectKind::Trap => {
+                snapshot.traps.iter().find(|trap| trap.id == id).map(TargetTrapRecord::object_ref)
+            }
             ContractObjectKind::Hostcall => snapshot
                 .hostcalls
                 .iter()
@@ -6425,11 +6308,9 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|capability| capability.id == id)
                 .map(CapabilityRecord::object_ref),
-            ContractObjectKind::WaitToken => snapshot
-                .waits
-                .iter()
-                .find(|wait| wait.id == id)
-                .map(WaitRecord::object_ref),
+            ContractObjectKind::WaitToken => {
+                snapshot.waits.iter().find(|wait| wait.id == id).map(WaitRecord::object_ref)
+            }
             ContractObjectKind::CleanupTransaction => snapshot
                 .cleanup_transactions
                 .iter()
@@ -6563,10 +6444,7 @@ impl ContractGraphValidator {
     }
 
     fn has_tombstone(snapshot: &ContractGraphSnapshot, object: ContractObjectRef) -> bool {
-        snapshot
-            .tombstones
-            .iter()
-            .any(|tombstone| tombstone.object_ref() == object)
+        snapshot.tombstones.iter().any(|tombstone| tombstone.object_ref() == object)
     }
 
     fn inactive_reason(
@@ -6930,11 +6808,7 @@ impl ContractGraphValidator {
 
 impl VerifiedArtifact {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::Artifact,
-            self.artifact_id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::Artifact, self.artifact_id, self.generation)
     }
 }
 
@@ -6976,10 +6850,6 @@ impl CapabilityRecord {
 
 impl FaultCleanupTransaction {
     pub const fn object_ref(&self) -> ContractObjectRef {
-        ContractObjectRef::new(
-            ContractObjectKind::CleanupTransaction,
-            self.id,
-            self.generation,
-        )
+        ContractObjectRef::new(ContractObjectKind::CleanupTransaction, self.id, self.generation)
     }
 }

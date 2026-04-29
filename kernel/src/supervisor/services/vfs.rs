@@ -2,9 +2,10 @@ use alloc::vec::Vec;
 
 use vmos_abi::{NodeKind, ServiceRoute};
 
-use super::super::engine::{BufferedModule, SupervisorEngine, WasmFn};
-use super::super::engine::{expect_len, expect_ok};
-use super::super::types::{LookupInfo, ServiceCallError};
+use super::super::{
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
+    types::{LookupInfo, ServiceCallError},
+};
 
 const VFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_VFS_SERVICE_WASM"));
 
@@ -32,15 +33,7 @@ impl VfsService {
         let list_dir = io.bind("list_dir", "missing vfs list_dir export")?;
         let read_link = io.bind("read_link", "missing vfs read_link export")?;
 
-        Ok(Self {
-            io,
-            lookup,
-            route_kind,
-            node_kind,
-            read_file,
-            list_dir,
-            read_link,
-        })
+        Ok(Self { io, lookup, route_kind, node_kind, read_file, list_dir, read_link })
     }
 
     pub(crate) fn lookup(
@@ -48,17 +41,10 @@ impl VfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<LookupInfo, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         expect_ok(
             self.io
-                .call(
-                    &self.lookup,
-                    (path_len, inject_fault as u32),
-                    "vfs_service trapped",
-                )
+                .call(&self.lookup, (path_len, inject_fault as u32), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
         let route = ServiceRoute::from_raw(
@@ -66,17 +52,13 @@ impl VfsService {
                 .call(&self.route_kind, (), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
-        .ok_or(ServiceCallError::Invalid(
-            "vfs_service returned an invalid route",
-        ))?;
+        .ok_or(ServiceCallError::Invalid("vfs_service returned an invalid route"))?;
         let node = NodeKind::from_raw(
             self.io
                 .call(&self.node_kind, (), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
-        .ok_or(ServiceCallError::Invalid(
-            "vfs_service returned an invalid node kind",
-        ))?;
+        .ok_or(ServiceCallError::Invalid("vfs_service returned an invalid node kind"))?;
 
         Ok(LookupInfo { route, node })
     }
@@ -86,22 +68,13 @@ impl VfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.read_file,
-                    (path_len, inject_fault as u32),
-                    "vfs_service trapped",
-                )
+                .call(&self.read_file, (path_len, inject_fault as u32), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn list_dir(
@@ -109,22 +82,13 @@ impl VfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.list_dir,
-                    (path_len, inject_fault as u32),
-                    "vfs_service trapped",
-                )
+                .call(&self.list_dir, (path_len, inject_fault as u32), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 
     pub(crate) fn read_link(
@@ -132,21 +96,12 @@ impl VfsService {
         path: &[u8],
         inject_fault: bool,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let path_len = self
-            .io
-            .write_request(path)
-            .map_err(ServiceCallError::Invalid)?;
+        let path_len = self.io.write_request(path).map_err(ServiceCallError::Invalid)?;
         let len = expect_len(
             self.io
-                .call(
-                    &self.read_link,
-                    (path_len, inject_fault as u32),
-                    "vfs_service trapped",
-                )
+                .call(&self.read_link, (path_len, inject_fault as u32), "vfs_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
-        self.io
-            .read_response(len)
-            .map_err(ServiceCallError::Invalid)
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
     }
 }

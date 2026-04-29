@@ -27,10 +27,7 @@ struct Instance {
 }
 
 impl Instance {
-    const EMPTY: Self = Self {
-        epoll_id: 0,
-        active: false,
-    };
+    const EMPTY: Self = Self { epoll_id: 0, active: false };
 }
 
 #[derive(Clone, Copy)]
@@ -44,14 +41,8 @@ struct Watcher {
 }
 
 impl Watcher {
-    const EMPTY: Self = Self {
-        epoll_id: 0,
-        ready_key: 0,
-        events: 0,
-        data: 0,
-        ready: false,
-        active: false,
-    };
+    const EMPTY: Self =
+        Self { epoll_id: 0, ready_key: 0, events: 0, data: 0, ready: false, active: false };
 }
 
 #[derive(Clone, Copy)]
@@ -62,11 +53,7 @@ struct Waiter {
 }
 
 impl Waiter {
-    const EMPTY: Self = Self {
-        epoll_id: 0,
-        wait_id: 0,
-        active: false,
-    };
+    const EMPTY: Self = Self { epoll_id: 0, wait_id: 0, active: false };
 }
 
 #[unsafe(no_mangle)]
@@ -104,10 +91,7 @@ pub extern "C" fn create(flags: u32) -> i32 {
             }
 
             let epoll_id = (index + 1) as u32;
-            *slot = Instance {
-                epoll_id,
-                active: true,
-            };
+            *slot = Instance { epoll_id, active: true };
             return epoll_id as i32;
         }
     }
@@ -182,11 +166,7 @@ pub extern "C" fn arm_wait(epoll_id: u32, wait_id: u64) -> i32 {
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
             if !(*slot).active {
-                *slot = Waiter {
-                    epoll_id,
-                    wait_id,
-                    active: true,
-                };
+                *slot = Waiter { epoll_id, wait_id, active: true };
                 return 0;
             }
         }
@@ -234,14 +214,7 @@ fn add_watcher(epoll_id: u32, ready_key: u64, events: u32, data: u64) -> i32 {
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
             if !(*slot).active {
-                *slot = Watcher {
-                    epoll_id,
-                    ready_key,
-                    events,
-                    data,
-                    ready: false,
-                    active: true,
-                };
+                *slot = Watcher { epoll_id, ready_key, events, data, ready: false, active: true };
                 return 0;
             }
         }
