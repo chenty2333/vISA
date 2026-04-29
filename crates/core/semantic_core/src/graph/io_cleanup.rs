@@ -18,7 +18,7 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("io cleanup reason is empty");
         }
-        if self.io_cleanups.iter().any(|record| {
+        if self.domains.io.io_cleanups.iter().any(|record| {
             record.id == cleanup
                 && (record.driver_store != driver_store
                     || record.driver_store_generation != driver_store_generation
@@ -29,7 +29,7 @@ impl SemanticGraph {
         }) {
             return Err("io cleanup id is already used for a different target");
         }
-        if self.io_cleanups.iter().any(|record| {
+        if self.domains.io.io_cleanups.iter().any(|record| {
             record.driver_store == driver_store
                 && record.driver_store_generation == driver_store_generation
                 && record.device == device
@@ -101,7 +101,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        if self.io_cleanups.iter().any(|record| {
+        if self.domains.io.io_cleanups.iter().any(|record| {
             record.id == cleanup
                 && record.driver_store == driver_store
                 && record.driver_store_generation == driver_store_generation
@@ -144,6 +144,8 @@ impl SemanticGraph {
         );
 
         let pending_io_waits = self
+            .domains
+            .io
             .io_waits
             .iter()
             .filter(|record| {
@@ -212,7 +214,7 @@ impl SemanticGraph {
         for (index, device_capability, device_capability_generation, cap, cap_generation) in
             capability_targets
         {
-            if self.capabilities.revoke_generation(cap, cap_generation) {
+            if self.domains.capability.capabilities.revoke_generation(cap, cap_generation) {
                 self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
                 self.device_capabilities[index].state = DeviceCapabilityState::Revoked;
                 revoked_device_capabilities.push(ContractObjectRef::new(
@@ -353,7 +355,7 @@ impl SemanticGraph {
             },
         );
 
-        self.io_cleanups.push(IoCleanupRecord {
+        self.domains.io.io_cleanups.push(IoCleanupRecord {
             id: cleanup,
             driver_store,
             driver_store_generation,
@@ -379,11 +381,11 @@ impl SemanticGraph {
     }
 
     pub fn io_cleanups(&self) -> &[IoCleanupRecord] {
-        &self.io_cleanups
+        &self.domains.io.io_cleanups
     }
 
     pub fn io_cleanup_count(&self) -> usize {
-        self.io_cleanups.len()
+        self.domains.io.io_cleanups.len()
     }
 
     pub(crate) fn io_cleanup_device_capability_belongs_to_device(
@@ -452,7 +454,7 @@ impl SemanticGraph {
     }
 
     pub fn check_io_cleanup_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for cleanup in &self.io_cleanups {
+        for cleanup in &self.domains.io.io_cleanups {
             if cleanup.id == 0
                 || cleanup.generation == 0
                 || cleanup.driver_store_generation == 0
@@ -499,7 +501,7 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
             }
             for io_wait in &cleanup.cancelled_io_waits {
-                let Some(record) = self.io_waits.iter().find(|record| {
+                let Some(record) = self.domains.io.io_waits.iter().find(|record| {
                     record.id == io_wait.id && record.generation == io_wait.generation
                 }) else {
                     return Err(SemanticInvariantError::IoCleanupMissingEffectTarget {
@@ -528,7 +530,8 @@ impl SemanticGraph {
                 }
             }
             for capability in &cleanup.revoked_capabilities {
-                let Some(record) = self.capabilities.record(capability.id) else {
+                let Some(record) = self.domains.capability.capabilities.record(capability.id)
+                else {
                     return Err(SemanticInvariantError::IoCleanupMissingEffectTarget {
                         cleanup: cleanup.id,
                         target: *capability,
@@ -628,7 +631,7 @@ impl SemanticGraph {
                     return Err(SemanticInvariantError::IoCleanupInvalid { cleanup: cleanup.id });
                 }
             }
-            if self.io_waits.iter().any(|record| {
+            if self.domains.io.io_waits.iter().any(|record| {
                 record.driver_store == cleanup.driver_store
                     && record.driver_store_generation == cleanup.driver_store_generation
                     && record.device == cleanup.device
@@ -737,11 +740,15 @@ impl SemanticGraph {
         cleanup: IoCleanupId,
         io_wait: IoWaitId,
     ) {
-        if let Some(record) = self.io_waits.iter_mut().find(|record| record.id == io_wait) {
+        if let Some(record) =
+            self.domains.io.io_waits.iter_mut().find(|record| record.id == io_wait)
+        {
             record.state = IoWaitState::Pending;
             record.cancel_reason = None;
         }
-        if let Some(cleanup) = self.io_cleanups.iter_mut().find(|record| record.id == cleanup) {
+        if let Some(cleanup) =
+            self.domains.io.io_cleanups.iter_mut().find(|record| record.id == cleanup)
+        {
             cleanup.state = IoCleanupState::Completed;
         }
     }

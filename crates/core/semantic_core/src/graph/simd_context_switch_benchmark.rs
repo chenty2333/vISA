@@ -38,7 +38,7 @@ impl SemanticGraph {
         if simd_abi.is_empty()
             || vector_register_count == 0
             || vector_register_bits == 0
-            || vector_register_bits % 8 != 0
+            || !vector_register_bits.is_multiple_of(8)
             || sample_count == 0
             || scalar_context_switch_nanos == 0
             || vector_context_switch_nanos == 0

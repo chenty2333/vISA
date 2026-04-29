@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::interrupts;
 
-const PULSE_READY_KEY: u64 = 0x_7075_6c73_65;
+const PULSE_READY_KEY: u64 = 0x0070_756c_7365;
 const PULSE_READ_BYTES: &[u8] = b"pulse\n";
 const FIRST_RESTART_DELAY_MS: u32 = 15;
 const READY_DELAY_MS: u32 = 8;

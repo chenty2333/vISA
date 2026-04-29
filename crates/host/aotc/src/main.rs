@@ -14,6 +14,8 @@ use artifact_manifest::{
 use contract_core::{
     CODE_PAYLOAD_FORMAT_CWASM, RUNTIME_MODE_RESEARCH, TARGET_ARTIFACT_FORMAT_V1,
     ValidatedArtifactEntry, WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
+};
+use contract_validate::{
     build_validated_artifact_plan, canonical_wasmtime_config_fingerprint,
     expected_supervisor_contract, manifest_binding_hash, module_abi_fingerprint,
 };
@@ -632,19 +634,19 @@ fn run_smoke_checks(
     check_u32_export(instance, store, "arg_buffer_ptr")?;
     check_u32_export(instance, store, "result_buffer_ptr")?;
 
-    if entry.package == "console_service" {
-        if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
-            let rc = func.call(&mut *store, (0, 0))?;
-            if rc != 0 {
-                return Err("console_service commit_write(0, 0) failed in host verification".into());
-            }
+    if entry.package == "console_service"
+        && let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write")
+    {
+        let rc = func.call(&mut *store, (0, 0))?;
+        if rc != 0 {
+            return Err("console_service commit_write(0, 0) failed in host verification".into());
         }
     }
 
-    if entry.package == "wasm_app" {
-        if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
-            let _ = func.call(&mut *store, ())?;
-        }
+    if entry.package == "wasm_app"
+        && let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run")
+    {
+        let _ = func.call(&mut *store, ())?;
     }
     if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core" | "linux_socket_service") {
         check_u32_export_eq(

@@ -547,7 +547,7 @@ impl SemanticGraph {
         target_store_generation: Generation,
         result_store_generation: Generation,
     ) -> bool {
-        self.waits.iter().all(|record| {
+        self.domains.wait.waits.iter().all(|record| {
             record.owner_store != Some(store)
                 || match record.owner_store_generation {
                     Some(generation) => {
@@ -568,7 +568,7 @@ impl SemanticGraph {
         target_store_generation: Generation,
         result_store_generation: Generation,
     ) -> bool {
-        self.capabilities.records().iter().all(|record| {
+        self.domains.capability.capabilities.records().iter().all(|record| {
             record.owner_store != Some(store)
                 || match record.owner_store_generation {
                     Some(generation) => {

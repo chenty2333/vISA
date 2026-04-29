@@ -47,6 +47,8 @@ impl SemanticGraph {
             self.stores.iter().find(|store| store.id == store_id).map(|store| store.generation)
         });
         let cap = self
+            .domains
+            .capability
             .capabilities
             .grant_manifest_binding(
                 subject,
@@ -78,6 +80,8 @@ impl SemanticGraph {
             self.stores.iter().find(|store| store.id == store_id).map(|store| store.generation)
         });
         let cap = self
+            .domains
+            .capability
             .capabilities
             .grant_with_authority_ref(
                 subject,
@@ -96,7 +100,7 @@ impl SemanticGraph {
         cap
     }
     pub fn revoke_capability(&mut self, cap: CapabilityId) -> bool {
-        if !self.capabilities.revoke(cap) {
+        if !self.domains.capability.capabilities.revoke(cap) {
             return false;
         }
         self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
@@ -107,7 +111,7 @@ impl SemanticGraph {
         cap: CapabilityId,
         generation: Generation,
     ) -> bool {
-        if !self.capabilities.revoke_generation(cap, generation) {
+        if !self.domains.capability.capabilities.revoke_generation(cap, generation) {
             return false;
         }
         self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
@@ -119,7 +123,11 @@ impl SemanticGraph {
         object_ref: AuthorityObjectRef,
         generation: Generation,
     ) -> Option<CapabilityId> {
-        let cap = self.capabilities.revoke_by_authority_ref(subject, object_ref, generation)?;
+        let cap = self
+            .domains
+            .capability
+            .capabilities
+            .revoke_by_authority_ref(subject, object_ref, generation)?;
         self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
         Some(cap)
     }
@@ -131,7 +139,8 @@ impl SemanticGraph {
         let object_ref = self.active_authority_object_ref(subject, object).unwrap_or_else(|| {
             AuthorityObjectRef::from_label(CapabilityClass::from_object(object), object)
         });
-        let generation = self.capabilities.generation_of_authority(subject, object_ref)?;
+        let generation =
+            self.domains.capability.capabilities.generation_of_authority(subject, object_ref)?;
         self.revoke_capability_by_authority_ref(subject, object_ref, generation)
     }
     #[cfg(test)]
@@ -140,7 +149,11 @@ impl SemanticGraph {
         subject: &str,
         object: &str,
     ) -> Option<CapabilityId> {
-        let cap = self.capabilities.revoke_debug_label_only_for_test(subject, object)?;
+        let cap = self
+            .domains
+            .capability
+            .capabilities
+            .revoke_debug_label_only_for_test(subject, object)?;
         self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
         Some(cap)
     }
@@ -150,10 +163,13 @@ impl SemanticGraph {
         cap: CapabilityId,
         owner_store_generation: Option<Generation>,
     ) -> bool {
-        self.capabilities.corrupt_owner_store_generation_for_test(cap, owner_store_generation)
+        self.domains
+            .capability
+            .capabilities
+            .corrupt_owner_store_generation_for_test(cap, owner_store_generation)
     }
     pub fn revoke_capabilities_for_subject(&mut self, subject: &str) -> CapabilityRevocationReport {
-        let report = self.capabilities.revoke_subject_report(subject);
+        let report = self.domains.capability.capabilities.revoke_subject_report(subject);
         for cap in &report.revoked {
             self.event_log.push("capability", EventKind::CapabilityRevoked { cap: *cap });
         }
@@ -182,10 +198,12 @@ impl SemanticGraph {
     ) -> Result<CapabilityId, CapabilityDenyReason> {
         let authority_object = self.active_authority_object_ref(subject, object);
         let result = match authority_object {
-            Some(object_ref) => {
-                self.capabilities.check_authority(subject, object_ref, operation, None)
-            }
-            None => self.capabilities.check(subject, object, operation),
+            Some(object_ref) => self
+                .domains
+                .capability
+                .capabilities
+                .check_authority(subject, object_ref, operation, None),
+            None => self.domains.capability.capabilities.check(subject, object, operation),
         };
         match result {
             Ok(record) => {
@@ -226,14 +244,18 @@ impl SemanticGraph {
     ) -> Result<CapabilityId, CapabilityDenyReason> {
         let authority_object = self.active_authority_object_ref(subject, object);
         let actual_generation = match authority_object {
-            Some(object_ref) => self.capabilities.generation_of_authority(subject, object_ref),
-            None => self.capabilities.generation_of(subject, object),
+            Some(object_ref) => {
+                self.domains.capability.capabilities.generation_of_authority(subject, object_ref)
+            }
+            None => self.domains.capability.capabilities.generation_of(subject, object),
         };
         let result = match authority_object {
-            Some(object_ref) => {
-                self.capabilities.check_authority(subject, object_ref, operation, None)
-            }
-            None => self.capabilities.check(subject, object, operation),
+            Some(object_ref) => self
+                .domains
+                .capability
+                .capabilities
+                .check_authority(subject, object_ref, operation, None),
+            None => self.domains.capability.capabilities.check(subject, object, operation),
         };
         let record = match result {
             Ok(record) => record,
@@ -279,12 +301,14 @@ impl SemanticGraph {
     }
     pub fn capability_generation(&self, subject: &str, object: &str) -> Option<Generation> {
         match self.active_authority_object_ref(subject, object) {
-            Some(object_ref) => self.capabilities.generation_of_authority(subject, object_ref),
-            None => self.capabilities.generation_of(subject, object),
+            Some(object_ref) => {
+                self.domains.capability.capabilities.generation_of_authority(subject, object_ref)
+            }
+            None => self.domains.capability.capabilities.generation_of(subject, object),
         }
     }
     pub fn capability_owner_summary(&self, subject: &str) -> CapabilityOwnerSummary {
-        self.capabilities.owner_summary(subject)
+        self.domains.capability.capabilities.owner_summary(subject)
     }
     pub fn record_hostcall(
         &mut self,
@@ -306,9 +330,9 @@ impl SemanticGraph {
         );
     }
     pub fn capability_count(&self) -> usize {
-        self.capabilities.active_count()
+        self.domains.capability.capabilities.active_count()
     }
     pub fn capabilities(&self) -> &CapabilityLedger {
-        &self.capabilities
+        &self.domains.capability.capabilities
     }
 }

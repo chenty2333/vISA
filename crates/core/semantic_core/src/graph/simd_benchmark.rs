@@ -35,7 +35,7 @@ impl SemanticGraph {
         if simd_abi.is_empty()
             || vector_register_count == 0
             || vector_register_bits == 0
-            || vector_register_bits % 8 != 0
+            || !vector_register_bits.is_multiple_of(8)
             || workload_units == 0
             || scalar_nanos == 0
             || vector_nanos == 0

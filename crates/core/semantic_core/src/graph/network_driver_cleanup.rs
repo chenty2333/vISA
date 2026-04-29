@@ -71,7 +71,7 @@ impl SemanticGraph {
         {
             return Err("network driver cleanup driver binding does not target packet device");
         }
-        if self.io_cleanups.iter().any(|record| {
+        if self.domains.io.io_cleanups.iter().any(|record| {
             record.id == io_cleanup
                 || (record.driver_store == binding_record.driver_store
                     && record.driver_store_generation == binding_record.driver_store_generation
@@ -240,6 +240,8 @@ impl SemanticGraph {
         }
 
         let revoked_packet_capabilities = self
+            .domains
+            .io
             .io_cleanups
             .iter()
             .find(|record| record.id == io_cleanup && record.generation == generation)
@@ -344,7 +346,7 @@ impl SemanticGraph {
                     cleanup: cleanup.id,
                 });
             }
-            let io_cleanup = self.io_cleanups.iter().find(|record| {
+            let io_cleanup = self.domains.io.io_cleanups.iter().find(|record| {
                 record.id == cleanup.io_cleanup
                     && record.generation == cleanup.io_cleanup_generation
                     && record.state == IoCleanupState::Completed

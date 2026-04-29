@@ -88,10 +88,10 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault block wait attribution mismatch");
         }
 
-        let Some(wait) = self
-            .waits
-            .iter()
-            .find(|record| record.id == policy.wait && record.generation == policy.wait_generation)
+        let Some(wait) =
+            self.domains.wait.waits.iter().find(|record| {
+                record.id == policy.wait && record.generation == policy.wait_generation
+            })
         else {
             return Err("integrated disk/preempt fault missing wait token evidence");
         };
@@ -183,10 +183,10 @@ impl SemanticGraph {
         }) else {
             return false;
         };
-        let Some(wait) = self
-            .waits
-            .iter()
-            .find(|record| record.id == policy.wait && record.generation == policy.wait_generation)
+        let Some(wait) =
+            self.domains.wait.waits.iter().find(|record| {
+                record.id == policy.wait && record.generation == policy.wait_generation
+            })
         else {
             return false;
         };

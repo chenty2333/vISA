@@ -43,7 +43,7 @@ impl SemanticGraph {
         if required_abi.is_empty()
             || vector_register_count == 0
             || vector_register_bits == 0
-            || vector_register_bits % 8 != 0
+            || !vector_register_bits.is_multiple_of(8)
             || injected_faults == 0
         {
             return Err("SIMD fault injection requires ABI, vector shape, and fault count");

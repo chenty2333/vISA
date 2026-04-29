@@ -118,7 +118,7 @@ pub fn build_fat_read_write_evidence(
         file.read_to_end(&mut read_back).map_err(|_| "fat adapter read failed")?;
         let write_digest = stable_digest(payload);
         let read_digest = stable_digest(&read_back);
-        return Ok(FatAdapterEvidence {
+        Ok(FatAdapterEvidence {
             implementation: FAT_ADAPTER_IMPLEMENTATION,
             version: FAT_ADAPTER_VERSION,
             profile: FAT_ADAPTER_PROFILE,
@@ -130,7 +130,7 @@ pub fn build_fat_read_write_evidence(
             write_digest,
             read_digest,
             roundtrip_ok: payload == read_back.as_slice() && write_digest == read_digest,
-        });
+        })
     }
 }
 
@@ -230,7 +230,7 @@ fn build_minimal_ext4_image(
     }
     let block_size = 1024usize;
     let block_count = image_bytes / block_size;
-    if image_bytes % block_size != 0 || block_count < 32 {
+    if !image_bytes.is_multiple_of(block_size) || block_count < 32 {
         return Err("ext4 adapter image is too small");
     }
     if u32::try_from(block_count).is_err() {

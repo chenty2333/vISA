@@ -17,10 +17,10 @@ impl SemanticGraph {
         if io_wait == 0 {
             return Err("io wait id=0 is invalid");
         }
-        if self.io_waits.iter().any(|record| record.id == io_wait) {
+        if self.domains.io.io_waits.iter().any(|record| record.id == io_wait) {
             return Err("io wait already exists");
         }
-        let Some(wait_record) = self.waits.iter().find(|record| {
+        let Some(wait_record) = self.domains.wait.waits.iter().find(|record| {
             record.id == wait
                 && record.generation == wait_generation
                 && record.state == WaitState::Pending
@@ -72,6 +72,8 @@ impl SemanticGraph {
             return Err("io wait blocker generation is missing or inactive");
         }
         if self
+            .domains
+            .io
             .io_waits
             .iter()
             .any(|record| record.wait == wait && record.state == IoWaitState::Pending)
@@ -133,7 +135,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.io_waits.push(IoWaitRecord {
+        self.domains.io.io_waits.push(IoWaitRecord {
             id: io_wait,
             wait,
             wait_generation,
@@ -164,14 +166,14 @@ impl SemanticGraph {
         irq_event_generation: Generation,
         note: &str,
     ) -> bool {
-        let Some(index) = self.io_waits.iter().position(|record| {
+        let Some(index) = self.domains.io.io_waits.iter().position(|record| {
             record.id == io_wait
                 && record.generation == io_wait_generation
                 && record.state == IoWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.io_waits[index].clone();
+        let record = self.domains.io.io_waits[index].clone();
         let Some(irq_record) = self.irq_events.iter().find(|irq| {
             irq.id == irq_event
                 && irq.generation == irq_event_generation
@@ -192,7 +194,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -211,11 +213,12 @@ impl SemanticGraph {
                 generation: io_wait_generation,
             },
         );
-        self.io_waits[index].state = IoWaitState::Resolved;
-        self.io_waits[index].completed_at_event = Some(completed_at_event);
-        self.io_waits[index].completion_irq_event = Some(irq_event);
-        self.io_waits[index].completion_irq_event_generation = Some(irq_event_generation);
-        self.io_waits[index].note = note.to_string();
+        self.domains.io.io_waits[index].state = IoWaitState::Resolved;
+        self.domains.io.io_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.io.io_waits[index].completion_irq_event = Some(irq_event);
+        self.domains.io.io_waits[index].completion_irq_event_generation =
+            Some(irq_event_generation);
+        self.domains.io.io_waits[index].note = note.to_string();
         true
     }
 
@@ -236,15 +239,15 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        let Some(index) = self.io_waits.iter().position(|record| {
+        let Some(index) = self.domains.io.io_waits.iter().position(|record| {
             record.id == io_wait
                 && record.generation == io_wait_generation
                 && record.state == IoWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.io_waits[index].clone();
-        if !self.waits.iter().any(|wait| {
+        let record = self.domains.io.io_waits[index].clone();
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -262,27 +265,27 @@ impl SemanticGraph {
                 generation: io_wait_generation,
             },
         );
-        self.io_waits[index].state = IoWaitState::Cancelled;
-        self.io_waits[index].completed_at_event = Some(completed_at_event);
-        self.io_waits[index].cancel_reason = Some(reason);
-        self.io_waits[index].note = note.to_string();
+        self.domains.io.io_waits[index].state = IoWaitState::Cancelled;
+        self.domains.io.io_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.io.io_waits[index].cancel_reason = Some(reason);
+        self.domains.io.io_waits[index].note = note.to_string();
         true
     }
 
     pub fn io_waits(&self) -> &[IoWaitRecord] {
-        &self.io_waits
+        &self.domains.io.io_waits
     }
 
     pub fn io_wait_count(&self) -> usize {
-        self.io_waits.len()
+        self.domains.io.io_waits.len()
     }
 
     pub fn check_io_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.io_waits {
-            let Some(wait_record) = self
-                .waits
-                .iter()
-                .find(|wait| wait.id == record.wait && wait.generation == record.wait_generation)
+        for record in &self.domains.io.io_waits {
+            let Some(wait_record) =
+                self.domains.wait.waits.iter().find(|wait| {
+                    wait.id == record.wait && wait.generation == record.wait_generation
+                })
             else {
                 return Err(SemanticInvariantError::IoWaitMissingWait {
                     io_wait: record.id,
@@ -359,7 +362,7 @@ impl SemanticGraph {
             match record.state {
                 IoWaitState::Pending => {
                     if wait_record.state != WaitState::Pending
-                        || self.io_waits.iter().any(|other| {
+                        || self.domains.io.io_waits.iter().any(|other| {
                             other.id != record.id
                                 && other.wait == record.wait
                                 && other.state == IoWaitState::Pending
@@ -613,7 +616,9 @@ impl SemanticGraph {
         io_wait: IoWaitId,
         generation: Generation,
     ) {
-        if let Some(record) = self.io_waits.iter_mut().find(|record| record.id == io_wait) {
+        if let Some(record) =
+            self.domains.io.io_waits.iter_mut().find(|record| record.id == io_wait)
+        {
             record.blocker.generation = generation;
         }
     }

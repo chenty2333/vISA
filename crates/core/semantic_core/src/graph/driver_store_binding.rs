@@ -50,7 +50,8 @@ impl SemanticGraph {
         {
             return Err("driver store binding device capability does not authorize binding");
         }
-        let Some(capability_record) = self.capabilities.record(capability_evidence.capability)
+        let Some(capability_record) =
+            self.domains.capability.capabilities.record(capability_evidence.capability)
         else {
             return Err("driver store binding capability record is missing");
         };

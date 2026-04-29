@@ -22,14 +22,14 @@ impl SemanticGraph {
         }) else {
             return Err("network rx wait interrupt generation is missing or inactive");
         };
-        let Some(io_wait_record) = self.io_waits.iter().find(|record| {
+        let Some(io_wait_record) = self.domains.io.io_waits.iter().find(|record| {
             record.id == io_wait
                 && record.generation == io_wait_generation
                 && record.state == IoWaitState::Pending
         }) else {
             return Err("network rx wait io wait generation is missing or not pending");
         };
-        let Some(wait_record) = self.waits.iter().find(|record| {
+        let Some(wait_record) = self.domains.wait.waits.iter().find(|record| {
             record.id == io_wait_record.wait
                 && record.generation == io_wait_record.wait_generation
                 && record.state == WaitState::Pending
@@ -140,6 +140,8 @@ impl SemanticGraph {
             return false;
         };
         let Some(io_wait_record) = self
+            .domains
+            .io
             .io_waits
             .iter()
             .find(|record| record.id == io_wait && record.generation == io_wait_generation)
@@ -211,7 +213,7 @@ impl SemanticGraph {
         &self,
     ) -> Result<(), SemanticInvariantError> {
         for record in &self.network_rx_wait_resolutions {
-            let Some(io_wait_record) = self.io_waits.iter().find(|io_wait| {
+            let Some(io_wait_record) = self.domains.io.io_waits.iter().find(|io_wait| {
                 io_wait.id == record.io_wait && io_wait.generation == record.io_wait_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkRxWaitResolutionMissingIoWait {
@@ -219,10 +221,10 @@ impl SemanticGraph {
                     io_wait: record.io_wait,
                 });
             };
-            let Some(wait_record) = self
-                .waits
-                .iter()
-                .find(|wait| wait.id == record.wait && wait.generation == record.wait_generation)
+            let Some(wait_record) =
+                self.domains.wait.waits.iter().find(|wait| {
+                    wait.id == record.wait && wait.generation == record.wait_generation
+                })
             else {
                 return Err(SemanticInvariantError::NetworkRxWaitResolutionInvalid {
                     resolution: record.id,

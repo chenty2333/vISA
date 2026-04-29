@@ -79,7 +79,7 @@ impl SemanticGraph {
             return Err("display cleanup display capability binding mismatch");
         }
         let Some(capability_record) =
-            self.capabilities.record(display_capability_record.capability)
+            self.domains.capability.capabilities.record(display_capability_record.capability)
         else {
             return Err("display cleanup capability ledger record is missing");
         };
@@ -241,9 +241,16 @@ impl SemanticGraph {
         }) {
             let capability = self.display_capabilities[index].capability;
             let capability_generation = self.display_capabilities[index].capability_generation;
-            if self.capabilities.revoke_generation(capability, capability_generation) {
+            if self
+                .domains
+                .capability
+                .capabilities
+                .revoke_generation(capability, capability_generation)
+            {
                 self.event_log.push("capability", EventKind::CapabilityRevoked { cap: capability });
                 let revoked_generation = self
+                    .domains
+                    .capability
                     .capabilities
                     .record(capability)
                     .map(|record| record.generation)
@@ -425,7 +432,8 @@ impl SemanticGraph {
                 }
             }
             for capability in &cleanup.revoked_capabilities {
-                let Some(record) = self.capabilities.record(capability.id) else {
+                let Some(record) = self.domains.capability.capabilities.record(capability.id)
+                else {
                     return Err(SemanticInvariantError::DisplayCleanupMissingEffectTarget {
                         cleanup: cleanup.id,
                         target: *capability,

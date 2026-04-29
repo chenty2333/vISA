@@ -3,6 +3,7 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 #![cfg_attr(not(target_os = "none"), allow(dead_code, unused_imports))]
+#![allow(clippy::enum_variant_names, clippy::too_many_arguments, clippy::type_complexity)]
 
 extern crate alloc;
 

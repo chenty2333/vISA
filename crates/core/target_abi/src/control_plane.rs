@@ -218,6 +218,12 @@ impl PanicRingHeaderV1 {
     }
 }
 
+impl Default for PanicRingHeaderV1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PanicRecordHeaderV1 {
@@ -367,9 +373,9 @@ impl PanicRingV1 {
     pub fn dump_jsonl(&self, out: &mut [u8]) -> Result<usize, ControlPlaneError> {
         let mut writer = SliceWriter::new(out);
         let newest = self.header.write_seq;
-        write!(
+        writeln!(
             writer,
-            "{{\"schema\":\"panic-ring-begin-v1\",\"oldest_seq\":{},\"newest_seq\":{},\"lost_count\":{}}}\n",
+            "{{\"schema\":\"panic-ring-begin-v1\",\"oldest_seq\":{},\"newest_seq\":{},\"lost_count\":{}}}",
             self.header.oldest_seq, newest, self.header.lost_count
         )
         .map_err(|_| ControlPlaneError::BufferTooSmall)?;
@@ -385,16 +391,16 @@ impl PanicRingV1 {
                 && valid_len
                 && slot.header.crc32 == crc32(payload);
             if !valid {
-                write!(writer, "{{\"schema\":\"panic-ring-corrupt-record-v1\",\"seq\":{seq}}}\n")
+                writeln!(writer, "{{\"schema\":\"panic-ring-corrupt-record-v1\",\"seq\":{seq}}}")
                     .map_err(|_| ControlPlaneError::BufferTooSmall)?;
                 continue;
             }
             let kind = PanicRecordKindV1::from_u16(slot.header.kind)
                 .ok_or(ControlPlaneError::PanicRecordMissing)?;
             let payload = str::from_utf8(payload).map_err(|_| ControlPlaneError::InvalidUtf8)?;
-            write!(
+            writeln!(
                 writer,
-                "{{\"schema\":\"{}\",\"seq\":{},\"payload\":{}}}\n",
+                "{{\"schema\":\"{}\",\"seq\":{},\"payload\":{}}}",
                 kind.schema(),
                 seq,
                 payload
@@ -447,7 +453,8 @@ fn write_jsonl_frame_inner<W: Write>(writer: &mut W, frame: JsonlFrameRefV1<'_>)
     writer.write_str("],\"payload\":")?;
     let payload = str::from_utf8(frame.payload_json).map_err(|_| fmt::Error)?;
     writer.write_str(payload)?;
-    writer.write_str("}\n")
+    writer.write_char('}')?;
+    writer.write_char('\n')
 }
 
 fn write_truncated_frame<W: Write>(
@@ -457,9 +464,9 @@ fn write_truncated_frame<W: Write>(
     original_estimated_len: usize,
     limit: usize,
 ) -> fmt::Result {
-    write!(
+    writeln!(
         writer,
-        "{{\"schema\":\"{}\",\"seq\":{},\"kind\":\"truncated-frame-v1\",\"reason\":\"line_too_long\",\"original_kind\":\"{}\",\"original_estimated_len\":{},\"limit\":{}}}\n",
+        "{{\"schema\":\"{}\",\"seq\":{},\"kind\":\"truncated-frame-v1\",\"reason\":\"line_too_long\",\"original_kind\":\"{}\",\"original_estimated_len\":{},\"limit\":{}}}",
         OSCTL_JSONL_FRAME_SCHEMA, seq, original_kind, original_estimated_len, limit
     )
 }

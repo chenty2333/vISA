@@ -32,8 +32,13 @@ impl SemanticGraph {
             "authority-binding",
             true,
         );
-        let capability_generation =
-            self.capabilities.record(capability).map(|record| record.generation).unwrap_or(0);
+        let capability_generation = self
+            .domains
+            .capability
+            .capabilities
+            .record(capability)
+            .map(|record| record.generation)
+            .unwrap_or(0);
         self.authority_bindings.push(AuthorityBindingRecord {
             id,
             resource,
@@ -75,7 +80,7 @@ impl SemanticGraph {
         let generation = self.authority_bindings[index].generation;
         let capability = self.authority_bindings[index].capability;
         let capability_generation = self.authority_bindings[index].capability_generation;
-        self.capabilities.revoke_generation(capability, capability_generation);
+        self.domains.capability.capabilities.revoke_generation(capability, capability_generation);
         self.event_log.push(
             "authority",
             EventKind::AuthorityReleased {
@@ -117,7 +122,7 @@ impl SemanticGraph {
         let generation = self.authority_bindings[index].generation;
         let capability = self.authority_bindings[index].capability;
         let capability_generation = self.authority_bindings[index].capability_generation;
-        self.capabilities.revoke_generation(capability, capability_generation);
+        self.domains.capability.capabilities.revoke_generation(capability, capability_generation);
         self.event_log.push(
             "authority",
             EventKind::AuthorityRevoked {

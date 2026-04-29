@@ -39,10 +39,10 @@ impl SemanticGraph {
                 "integrated snapshot/io lease barrier missing smp snapshot barrier evidence",
             );
         };
-        let Some(cleanup) = self
-            .io_cleanups
-            .iter()
-            .find(|record| record.id == io_cleanup && record.generation == io_cleanup_generation)
+        let Some(cleanup) =
+            self.domains.io.io_cleanups.iter().find(|record| {
+                record.id == io_cleanup && record.generation == io_cleanup_generation
+            })
         else {
             return Err("integrated snapshot/io lease barrier missing io cleanup evidence");
         };
@@ -151,10 +151,10 @@ impl SemanticGraph {
         }) else {
             return false;
         };
-        let Some(cleanup) = self
-            .io_cleanups
-            .iter()
-            .find(|record| record.id == io_cleanup && record.generation == io_cleanup_generation)
+        let Some(cleanup) =
+            self.domains.io.io_cleanups.iter().find(|record| {
+                record.id == io_cleanup && record.generation == io_cleanup_generation
+            })
         else {
             return false;
         };
@@ -310,7 +310,9 @@ impl SemanticGraph {
                     "io-cleanup",
                     record.io_cleanup,
                     record.io_cleanup_generation,
-                    self.io_cleanups
+                    self.domains
+                        .io
+                        .io_cleanups
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

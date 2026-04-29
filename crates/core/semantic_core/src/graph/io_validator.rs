@@ -8,7 +8,7 @@ impl SemanticGraph {
         if report == 0 {
             return Err("io validation report id=0 is invalid");
         }
-        if self.io_validation_reports.iter().any(|record| record.id == report) {
+        if self.domains.io.io_validation_reports.iter().any(|record| record.id == report) {
             return Err("io validation report already exists");
         }
         Ok(())
@@ -40,12 +40,12 @@ impl SemanticGraph {
                 device_count: self.device_objects.len(),
                 dma_buffer_count: self.dma_buffer_objects.len(),
                 irq_event_count: self.irq_events.len(),
-                cleanup_count: self.io_cleanups.len(),
-                fault_injection_count: self.io_fault_injections.len(),
+                cleanup_count: self.domains.io.io_cleanups.len(),
+                fault_injection_count: self.domains.io.io_fault_injections.len(),
                 generation,
             },
         );
-        self.io_validation_reports.push(IoValidationReportRecord {
+        self.domains.io.io_validation_reports.push(IoValidationReportRecord {
             id: report,
             generation,
             state,
@@ -60,9 +60,9 @@ impl SemanticGraph {
             observed_irq_event_count: self.irq_events.len(),
             observed_device_capability_count: self.device_capabilities.len(),
             observed_driver_binding_count: self.driver_store_bindings.len(),
-            observed_io_wait_count: self.io_waits.len(),
-            observed_io_cleanup_count: self.io_cleanups.len(),
-            observed_io_fault_injection_count: self.io_fault_injections.len(),
+            observed_io_wait_count: self.domains.io.io_waits.len(),
+            observed_io_cleanup_count: self.domains.io.io_cleanups.len(),
+            observed_io_fault_injection_count: self.domains.io.io_fault_injections.len(),
             violations,
             note: note.to_string(),
         });
@@ -70,11 +70,11 @@ impl SemanticGraph {
     }
 
     pub fn io_validation_reports(&self) -> &[IoValidationReportRecord] {
-        &self.io_validation_reports
+        &self.domains.io.io_validation_reports
     }
 
     pub fn io_validation_report_count(&self) -> usize {
-        self.io_validation_reports.len()
+        self.domains.io.io_validation_reports.len()
     }
 
     pub fn build_io_validation_violations(&self) -> Vec<IoValidationViolationRecord> {
@@ -313,7 +313,9 @@ impl SemanticGraph {
                     "device capability target generation is missing",
                 );
             }
-            let Some(capability) = self.capabilities.record(device_capability.capability) else {
+            let Some(capability) =
+                self.domains.capability.capabilities.record(device_capability.capability)
+            else {
                 Self::push_io_validation_violation(
                     violations,
                     IoValidationViolationCode::MissingCapability,
@@ -397,7 +399,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_wait_records(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for io_wait in &self.io_waits {
+        for io_wait in &self.domains.io.io_waits {
             let subject = io_wait.object_ref();
             if !self.wait_exists(io_wait.wait, io_wait.wait_generation) {
                 Self::push_io_validation_violation(
@@ -468,7 +470,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_cleanup_records(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for cleanup in &self.io_cleanups {
+        for cleanup in &self.domains.io.io_cleanups {
             let subject = cleanup.object_ref();
             if self.io_cleanup_has_live_leak(cleanup) {
                 Self::push_io_validation_violation(
@@ -505,7 +507,7 @@ impl SemanticGraph {
         &self,
         violations: &mut Vec<IoValidationViolationRecord>,
     ) {
-        for fault in &self.io_fault_injections {
+        for fault in &self.domains.io.io_fault_injections {
             let subject = fault.object_ref();
             if !self.io_validation_historical_object_exists(fault.target) {
                 Self::push_io_validation_violation(
@@ -516,7 +518,7 @@ impl SemanticGraph {
                     "fault injection target generation is missing",
                 );
             }
-            let Some(cleanup) = self.io_cleanups.iter().find(|record| {
+            let Some(cleanup) = self.domains.io.io_cleanups.iter().find(|record| {
                 record.id == fault.cleanup && record.generation == fault.cleanup_generation
             }) else {
                 Self::push_io_validation_violation(
@@ -573,7 +575,11 @@ impl SemanticGraph {
     }
 
     fn wait_exists(&self, wait: WaitId, generation: Generation) -> bool {
-        self.waits.iter().any(|record| record.id == wait && record.generation == generation)
+        self.domains
+            .wait
+            .waits
+            .iter()
+            .any(|record| record.id == wait && record.generation == generation)
     }
 
     fn driver_binding_exists(&self, binding: DriverStoreBindingId, generation: Generation) -> bool {
@@ -586,6 +592,8 @@ impl SemanticGraph {
         match object.kind {
             ContractObjectKind::Store => self.store_exists(object.id, object.generation),
             ContractObjectKind::Capability => self
+                .domains
+                .capability
                 .capabilities
                 .record(object.id)
                 .is_some_and(|record| record.generation == object.generation && !record.revoked),
@@ -619,18 +627,26 @@ impl SemanticGraph {
                 self.driver_binding_exists(object.id, object.generation)
             }
             ContractObjectKind::IoWait => self
+                .domains
+                .io
                 .io_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::IoCleanup => self
+                .domains
+                .io
                 .io_cleanups
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::IoFaultInjection => self
+                .domains
+                .io
                 .io_fault_injections
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::IoValidationReport => self
+                .domains
+                .io
                 .io_validation_reports
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
@@ -821,6 +837,8 @@ impl SemanticGraph {
     pub(crate) fn io_validation_historical_object_exists(&self, object: ContractObjectRef) -> bool {
         if object.kind == ContractObjectKind::Capability {
             return self
+                .domains
+                .capability
                 .capabilities
                 .record(object.id)
                 .is_some_and(|record| record.generation >= object.generation);
@@ -895,7 +913,7 @@ impl SemanticGraph {
         driver_binding: DriverStoreBindingId,
         driver_binding_generation: Generation,
     ) -> bool {
-        self.io_cleanups.iter().any(|cleanup| {
+        self.domains.io.io_cleanups.iter().any(|cleanup| {
             cleanup.driver_store == driver_store
                 && cleanup.driver_store_generation == driver_store_generation
                 && cleanup.device == device
@@ -907,7 +925,7 @@ impl SemanticGraph {
     }
 
     fn io_cleanup_has_live_leak(&self, cleanup: &IoCleanupRecord) -> bool {
-        self.io_waits.iter().any(|record| {
+        self.domains.io.io_waits.iter().any(|record| {
             record.driver_store == cleanup.driver_store
                 && record.driver_store_generation == cleanup.driver_store_generation
                 && record.device == cleanup.device
@@ -948,7 +966,7 @@ impl SemanticGraph {
     }
 
     pub fn check_io_validation_report_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for report in &self.io_validation_reports {
+        for report in &self.domains.io.io_validation_reports {
             if report.id == 0
                 || report.generation == 0
                 || (report.state == IoValidationReportState::Passed
@@ -998,7 +1016,9 @@ impl SemanticGraph {
         io_wait: IoWaitId,
         driver_binding_generation: Generation,
     ) {
-        if let Some(record) = self.io_waits.iter_mut().find(|record| record.id == io_wait) {
+        if let Some(record) =
+            self.domains.io.io_waits.iter_mut().find(|record| record.id == io_wait)
+        {
             record.driver_binding_generation = driver_binding_generation;
         }
     }
@@ -1009,7 +1029,9 @@ impl SemanticGraph {
         cleanup: IoCleanupId,
         generation: Generation,
     ) {
-        if let Some(record) = self.io_cleanups.iter_mut().find(|record| record.id == cleanup) {
+        if let Some(record) =
+            self.domains.io.io_cleanups.iter_mut().find(|record| record.id == cleanup)
+        {
             if let Some(capability) = record.revoked_capabilities.first_mut() {
                 capability.generation = generation;
             }

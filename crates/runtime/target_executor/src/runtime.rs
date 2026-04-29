@@ -2,8 +2,9 @@ use std::{error::Error, fs, path::PathBuf};
 
 use contract_core::{
     CODE_PAYLOAD_FORMAT_CWASM, TARGET_ARTIFACT_FORMAT_V1, ValidatedArtifactEntry,
-    WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION, canonical_wasmtime_config_fingerprint,
+    WASMTIME_COMPILATION_STRATEGY, WASMTIME_CRATE_VERSION,
 };
+use contract_validate::canonical_wasmtime_config_fingerprint;
 use service_core::net_contract::{
     NETWORK_CONTRACT_ABI_VERSION, VIRTIO_NET0_MTU, VIRTIO_NET0_RX_QUEUE_DEPTH,
     VIRTIO_NET0_TX_QUEUE_DEPTH,
@@ -142,40 +143,40 @@ fn smoke_instance(
     check_u32_export(instance, store, smoke_trace, "arg_buffer_ptr")?;
     check_u32_export(instance, store, smoke_trace, "result_buffer_ptr")?;
 
-    if entry.package == "console_service" {
-        if let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write") {
-            let rc = match func.call(&mut *store, (0, 0)) {
-                Ok(value) => value,
-                Err(error) => {
-                    record_smoke_trap(smoke_trace, "commit_write", &error);
-                    return Err(error.into());
-                }
-            };
-            smoke_trace.push(HostValidationSmokeTrace {
-                export: "commit_write".to_owned(),
-                result: format!("i32:{rc}"),
-                trap: None,
-            });
-            if rc != 0 {
-                return Err("console_service commit_write(0, 0) failed".into());
+    if entry.package == "console_service"
+        && let Ok(func) = instance.get_typed_func::<(u32, u32), i32>(&mut *store, "commit_write")
+    {
+        let rc = match func.call(&mut *store, (0, 0)) {
+            Ok(value) => value,
+            Err(error) => {
+                record_smoke_trap(smoke_trace, "commit_write", &error);
+                return Err(error.into());
             }
+        };
+        smoke_trace.push(HostValidationSmokeTrace {
+            export: "commit_write".to_owned(),
+            result: format!("i32:{rc}"),
+            trap: None,
+        });
+        if rc != 0 {
+            return Err("console_service commit_write(0, 0) failed".into());
         }
     }
-    if entry.package == "wasm_app" {
-        if let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run") {
-            let value = match func.call(&mut *store, ()) {
-                Ok(value) => value,
-                Err(error) => {
-                    record_smoke_trap(smoke_trace, "run", &error);
-                    return Err(error.into());
-                }
-            };
-            smoke_trace.push(HostValidationSmokeTrace {
-                export: "run".to_owned(),
-                result: format!("u64:{value}"),
-                trap: None,
-            });
-        }
+    if entry.package == "wasm_app"
+        && let Ok(func) = instance.get_typed_func::<(), u64>(&mut *store, "run")
+    {
+        let value = match func.call(&mut *store, ()) {
+            Ok(value) => value,
+            Err(error) => {
+                record_smoke_trap(smoke_trace, "run", &error);
+                return Err(error.into());
+            }
+        };
+        smoke_trace.push(HostValidationSmokeTrace {
+            export: "run".to_owned(),
+            result: format!("u64:{value}"),
+            trap: None,
+        });
     }
     if matches!(entry.package.as_str(), "driver_virtio_net" | "net_core" | "linux_socket_service") {
         check_u32_export_eq(
@@ -395,6 +396,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use artifact_manifest::{InterfaceRequirementManifest, ResourceLimitsManifest};
+    use contract_validate::{
+        ARTIFACT_HASH_STATUS_MANIFEST_BOUND, ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
+        ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+    };
     use target_abi::artifact::{
         ArtifactKindCodeV1, CodeFormatCodeV1, TARGET_ARTIFACT_HEADER_LEN, TARGET_ARTIFACT_MAGIC,
         TARGET_ARTIFACT_SCHEMA_MAJOR, TARGET_SECTION_HEADER_LEN, TargetAbiCodeV1, TargetArchCodeV1,
@@ -491,10 +496,9 @@ mod tests {
             signature_scheme: "unsigned-research".to_owned(),
             signer: "test".to_owned(),
             manifest_binding_hash: "binding".to_owned(),
-            hash_status: contract_core::ARTIFACT_HASH_STATUS_MANIFEST_BOUND.to_owned(),
-            signature_status: contract_core::ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED
-                .to_owned(),
-            signature_verified: contract_core::ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+            hash_status: ARTIFACT_HASH_STATUS_MANIFEST_BOUND.to_owned(),
+            signature_status: ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED.to_owned(),
+            signature_verified: ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
         }
     }
 

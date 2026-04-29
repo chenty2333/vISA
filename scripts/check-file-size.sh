@@ -6,24 +6,9 @@ set -euo pipefail
 WARN_LINES=1500
 FAIL_LINES=5000
 
-# These files are known to be large and are being actively split.
-# They are exempt from the hard fail until their restructuring PRs land.
-# Remove entries here once the corresponding split is done.
-KNOWN_LARGE_FILES=(
-    "crates/host/osctl/src/lib.rs"
-    "crates/host/osctl/src/tests/mod.rs"
-    "crates/core/semantic_core/src/tests/mod.rs"
-    "crates/core/semantic_core/src/target_executor.rs"
-    "crates/core/semantic_core/src/contract_graph.rs"
-    "crates/core/semantic_core/src/event_log.rs"
-    "crates/core/semantic_core/src/records.rs"
-    "crates/core/semantic_core/src/migration.rs"
-    "crates/core/semantic_core/src/taxonomy.rs"
-    "crates/core/semantic_core/src/graph/command.rs"
-    "crates/runtime/target_executor/src/lib.rs"
-    "crates/core/contract_core/src/lib.rs"
-    "crates/core/artifact_manifest/src/lib.rs"
-)
+# No hard-limit exemptions remain. Keep this list empty unless a transitional
+# split must land before the corresponding module can be brought below FAIL_LINES.
+KNOWN_LARGE_FILES=()
 
 is_known() {
     local file="$1"

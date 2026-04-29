@@ -59,6 +59,7 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "contract_core",
+ "contract_validate",
  "hex",
  "serde_json",
  "service_core",
@@ -284,6 +285,14 @@ name = "contract_core"
 version = "0.2.0"
 dependencies = [
  "artifact_manifest",
+]
+
+[[package]]
+name = "contract_validate"
+version = "0.1.0"
+dependencies = [
+ "artifact_manifest",
+ "contract_core",
  "hex",
  "service_core",
  "sha2",
@@ -935,7 +944,7 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "bootloader_api",
- "contract_core",
+ "contract_validate",
  "hex",
  "linked_list_allocator",
  "pic8259",
@@ -1111,6 +1120,7 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "contract_core",
+ "contract_validate",
  "semantic_core",
  "serde_json",
  "service_core",
@@ -1550,6 +1560,7 @@ version = "0.1.0"
 dependencies = [
  "artifact_manifest",
  "contract_core",
+ "contract_validate",
  "fs_adapter",
  "hex",
  "net_stack_adapter",
@@ -2217,9 +2228,9 @@ dependencies = [
 
 [[package]]
 name = "xmas-elf"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42c49817e78342f7f30a181573d82ff55b88a35f86ccaf07fc64b3008f56d1c6"
+checksum = "18245fcbb8b3de8dd198ce7944fdd4096986fd6cd306b0fcfa27df817bd545d6"
 dependencies = [
  "zero",
 ]

@@ -4,6 +4,7 @@ members = [
     "crates/abi/abi",
     "crates/core/artifact_manifest",
     "crates/core/contract_core",
+    "crates/core/contract_validate",
     "crates/core/semantic_core",
     "crates/core/target_abi",
     "crates/host/aotc",
@@ -37,6 +38,7 @@ members = [
 artifact_manifest = { path = "crates/core/artifact_manifest" }
 bootloader_api = "0.11.15"
 contract_core = { path = "crates/core/contract_core" }
+contract_validate = { path = "crates/core/contract_validate" }
 fatfs = "0.3.6"
 ext4-view = "0.9.3"
 hex = "0.4.3"
@@ -60,7 +62,7 @@ uart_16550 = "0.3.2"
 vmos_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.0", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
-xmas-elf = { version = "0.9.1", default-features = false }
+xmas-elf = { version = "0.10.0", default-features = false }
 
 [profile.dev]
 debug = 0

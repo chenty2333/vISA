@@ -1,20 +1,6 @@
 use std::{error::Error, fmt};
 
-use artifact_manifest::{
-    CapabilityManifest, InterfaceRequirementManifest, ResourceLimitsManifest,
-    SupervisorContractManifest,
-};
-use sha2::Digest;
-pub use supervisor_catalog::{
-    ARTIFACT_HASH_STATUS_MANIFEST_BOUND, ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
-    ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
-};
-use supervisor_catalog::{
-    CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, HOSTCALL_ABI_VERSION,
-    SEMANTIC_CONTRACT_SCHEMA_VERSION, SUPERVISOR_CODE_PAYLOAD_FORMAT, SUPERVISOR_CONTRACT_VERSION,
-    SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASI_PROFILE_NONE, catalog_contract_fingerprint,
-    module_interface_spec, package_set_fingerprint,
-};
+use artifact_manifest::{CapabilityManifest, InterfaceRequirementManifest, ResourceLimitsManifest};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContractError {
@@ -659,12 +645,17 @@ pub const RUNTIME_MODE_RESEARCH: &str = "research";
 pub const RUNTIME_MODE_PRODUCTION: &str = "production";
 pub const RUNTIME_MODE_REPLAY: &str = "replay";
 pub const TARGET_ARTIFACT_FORMAT_V1: &str = "target-artifact-image-v1";
-pub const CODE_PAYLOAD_FORMAT_CWASM: &str = SUPERVISOR_CODE_PAYLOAD_FORMAT;
+pub const CODE_PAYLOAD_FORMAT_CWASM: &str = "cwasm";
 pub const WASMTIME_CRATE_VERSION: &str = "43.0.1";
 pub const WASMTIME_COMPILATION_STRATEGY: &str = "cranelift";
 pub const DEFAULT_MAX_MEMORY_PAGES: u32 = 16;
 pub const DEFAULT_MAX_TABLE_ELEMENTS: u32 = 0;
 pub const DEFAULT_MAX_HOSTCALLS_PER_ACTIVATION: u32 = 64;
+pub const DEFAULT_COMPONENT_MODEL_VERSION: &str = "wasm-core-module-v0";
+pub const DEFAULT_WASI_PROFILE: &str = "none";
+pub const DEFAULT_HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
+pub const DEFAULT_CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
+pub const DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedArtifactPlan {
     pub artifact_profile: String,
@@ -769,29 +760,12 @@ impl InterfaceHostCapabilitySet {
         Self {
             wasi_worlds: Vec::new(),
             custom_wit_worlds: Vec::new(),
-            component_model_version: COMPONENT_MODEL_VERSION.to_owned(),
-            wasi_profile: WASI_PROFILE_NONE.to_owned(),
-            hostcall_abi_version: HOSTCALL_ABI_VERSION.to_owned(),
-            capability_abi_version: CAPABILITY_ABI_VERSION.to_owned(),
-            semantic_contract_version: SEMANTIC_CONTRACT_SCHEMA_VERSION.to_owned(),
+            component_model_version: DEFAULT_COMPONENT_MODEL_VERSION.to_owned(),
+            wasi_profile: DEFAULT_WASI_PROFILE.to_owned(),
+            hostcall_abi_version: DEFAULT_HOSTCALL_ABI_VERSION.to_owned(),
+            capability_abi_version: DEFAULT_CAPABILITY_ABI_VERSION.to_owned(),
+            semantic_contract_version: DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION.to_owned(),
         }
-    }
-
-    pub fn host_validation() -> Self {
-        let mut capabilities = Self::empty();
-        for module in SUPERVISOR_WASM_MODULES {
-            let interfaces = module_interface_spec(module);
-            for world in interfaces.required_wasi_worlds {
-                push_unique(&mut capabilities.wasi_worlds, world);
-            }
-            for world in interfaces.optional_wasi_worlds {
-                push_unique(&mut capabilities.wasi_worlds, world);
-            }
-            for world in interfaces.custom_wit_worlds {
-                push_unique(&mut capabilities.custom_wit_worlds, world);
-            }
-        }
-        capabilities
     }
 }
 
@@ -823,23 +797,3 @@ pub struct ArtifactInterfaceCompatibilityReport {
 pub fn contract_hex(value: u64) -> String {
     format!("{value:016x}")
 }
-
-pub fn expected_supervisor_contract() -> SupervisorContractManifest {
-    SupervisorContractManifest {
-        contract_version: SUPERVISOR_CONTRACT_VERSION.to_owned(),
-        supervisor_world: SUPERVISOR_WORLD.to_owned(),
-        catalog_fingerprint: contract_hex(catalog_contract_fingerprint()),
-        package_set_fingerprint: contract_hex(package_set_fingerprint()),
-        module_count: SUPERVISOR_WASM_MODULES.len(),
-        required_packages: SUPERVISOR_WASM_MODULES
-            .iter()
-            .map(|module| module.package.to_owned())
-            .collect(),
-    }
-}
-
-mod validate;
-pub use validate::*;
-
-#[cfg(test)]
-mod tests;

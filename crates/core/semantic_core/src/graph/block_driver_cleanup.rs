@@ -59,7 +59,7 @@ impl SemanticGraph {
         {
             return Err("block driver cleanup driver binding does not target block device");
         }
-        if self.io_cleanups.iter().any(|record| {
+        if self.domains.io.io_cleanups.iter().any(|record| {
             record.id == io_cleanup
                 || (record.driver_store == binding_record.driver_store
                     && record.driver_store_generation == binding_record.driver_store_generation
@@ -222,6 +222,8 @@ impl SemanticGraph {
         }
 
         let (revoked_device_capabilities, released_dma_buffers) = self
+            .domains
+            .io
             .io_cleanups
             .iter()
             .find(|record| record.id == io_cleanup && record.generation == generation)
@@ -290,7 +292,7 @@ impl SemanticGraph {
                     cleanup: cleanup.id,
                 });
             }
-            let Some(io_cleanup) = self.io_cleanups.iter().find(|record| {
+            let Some(io_cleanup) = self.domains.io.io_cleanups.iter().find(|record| {
                 record.id == cleanup.io_cleanup
                     && record.generation == cleanup.io_cleanup_generation
                     && record.state == IoCleanupState::Completed

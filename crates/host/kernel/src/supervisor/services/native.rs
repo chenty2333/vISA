@@ -395,7 +395,7 @@ impl EpollService {
     }
 
     fn require_instance(&self, epoll_id: u32) -> Result<(), ServiceCallError> {
-        if self.instances.iter().any(|id| *id == epoll_id) { Ok(()) } else { errno(ERR_ENOENT) }
+        if self.instances.contains(&epoll_id) { Ok(()) } else { errno(ERR_ENOENT) }
     }
 
     fn signal_waiters(
@@ -420,7 +420,7 @@ impl EpollService {
 
         let mut wait_ids = Vec::new();
         self.waiters.retain(|waiter| {
-            if ready_epolls.iter().any(|epoll_id| *epoll_id == waiter.epoll_id) {
+            if ready_epolls.contains(&waiter.epoll_id) {
                 wait_ids.push(waiter.wait_id);
                 false
             } else {

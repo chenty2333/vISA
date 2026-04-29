@@ -23,7 +23,7 @@ impl SemanticGraph {
             block_request,
             block_request_generation,
         );
-        let Some(wait_record) = self.waits.iter().find(|record| {
+        let Some(wait_record) = self.domains.wait.waits.iter().find(|record| {
             record.id == wait
                 && record.generation == wait_generation
                 && record.state == WaitState::Pending
@@ -178,7 +178,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -230,7 +230,7 @@ impl SemanticGraph {
             return false;
         };
         let record = self.block_waits[index].clone();
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -265,10 +265,10 @@ impl SemanticGraph {
 
     pub fn check_block_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.block_waits {
-            let Some(wait_record) = self
-                .waits
-                .iter()
-                .find(|wait| wait.id == record.wait && wait.generation == record.wait_generation)
+            let Some(wait_record) =
+                self.domains.wait.waits.iter().find(|wait| {
+                    wait.id == record.wait && wait.generation == record.wait_generation
+                })
             else {
                 return Err(SemanticInvariantError::BlockWaitMissingWait {
                     block_wait: record.id,

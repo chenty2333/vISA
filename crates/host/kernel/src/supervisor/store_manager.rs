@@ -616,8 +616,7 @@ impl StoreManager {
             .map(|resource| resource.to_string())
             .unwrap_or_else(|| "none".to_string());
         let executor_blocked = record.executor_runtime.blocked_by.unwrap_or("none");
-        let activation_blocked =
-            record.activation.blocked_by.as_ref().map(String::as_str).unwrap_or("none");
+        let activation_blocked = record.activation.blocked_by.as_deref().unwrap_or("none");
         Some(format!(
             "store {} state={} runtime={} executor={} executor_blocked={} activation=code:{} memory:{} hostcalls:{} traps:{} entry:{} blocked:{} activation_generation={} executor_instance={}@{} generation={} restarts={} resource={} arena={} cap_owner={} cleanup={} last_closed={} revoked_authorities={} dropped={} rebound={} rebind={} artifact={} manifest_source={} wasm={} wasm_hash={} abi={} cwasm={} binding={} signature={} signer={} limits=mem{} table{} hostcalls{} executor_mem=pages{} table{} dmw={} publish={} hostcall_table={} max={} exports={} trap_surface={} traps={}/{}/{} deps={} exports={} last_trap={}",
             record.package,

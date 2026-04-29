@@ -589,7 +589,7 @@ fn pack_dirents64(records: &[u8], max_len: usize) -> i32 {
 }
 
 fn pack_epoll_events(records: &[u8], max_events: usize) -> i32 {
-    if records.len() % 12 != 0 {
+    if !records.len().is_multiple_of(12) {
         return -ERR_EINVAL;
     }
 

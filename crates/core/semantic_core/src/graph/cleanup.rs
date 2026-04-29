@@ -40,7 +40,7 @@ impl SemanticGraph {
         };
         match (wait, wait_generation) {
             (Some(wait), Some(generation)) => {
-                if !self.waits.iter().any(|record| {
+                if !self.domains.wait.waits.iter().any(|record| {
                     record.id == wait
                         && record.generation == generation
                         && record.state == WaitState::Pending
@@ -91,15 +91,15 @@ impl SemanticGraph {
 
         let mut cancelled_wait = None;
         if let (Some(wait), Some(wait_generation)) = (wait, wait_generation) {
-            let Some(wait_index) = self.waits.iter().position(|record| {
+            let Some(wait_index) = self.domains.wait.waits.iter().position(|record| {
                 record.id == wait
                     && record.generation == wait_generation
                     && record.state == WaitState::Pending
             }) else {
                 return false;
             };
-            self.waits[wait_index].state = WaitState::Cancelled;
-            self.waits[wait_index].cancel_reason = Some(WaitCancelReason::StoreFault);
+            self.domains.wait.waits[wait_index].state = WaitState::Cancelled;
+            self.domains.wait.waits[wait_index].cancel_reason = Some(WaitCancelReason::StoreFault);
             let wait_event = self.event_log.push(
                 "wait",
                 EventKind::WaitCancelled { wait, errno: 5, reason: WaitCancelReason::StoreFault },
@@ -361,6 +361,8 @@ impl SemanticGraph {
             }
             if let (Some(wait), Some(wait_generation)) = (cleanup.wait, cleanup.wait_generation) {
                 let Some(wait_record) = self
+                    .domains
+                    .wait
                     .waits
                     .iter()
                     .find(|record| record.id == wait && record.generation == wait_generation)

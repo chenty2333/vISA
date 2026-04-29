@@ -1,6 +1,7 @@
 [package]
 name = "contract_core"
 version = "0.2.0"
+publish = false
 edition = "2024"
 
 [lib]
@@ -8,8 +9,3 @@ path = "src/lib.rs"
 
 [dependencies]
 artifact_manifest.workspace = true
-hex.workspace = true
-service_core.workspace = true
-sha2.workspace = true
-substrate_api.workspace = true
-supervisor_catalog.workspace = true

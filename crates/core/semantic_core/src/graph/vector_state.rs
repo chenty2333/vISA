@@ -51,7 +51,7 @@ impl SemanticGraph {
         if simd_abi.is_empty() || vector_register_count == 0 || vector_register_bits == 0 {
             return Err("vector state requires a SIMD ABI and vector register shape");
         }
-        if vector_register_bits % 8 != 0 {
+        if !vector_register_bits.is_multiple_of(8) {
             return Err("vector state register bits must be byte aligned");
         }
         let expected_bytes =
@@ -179,7 +179,7 @@ impl SemanticGraph {
                 || record.simd_abi.is_empty()
                 || record.vector_register_count == 0
                 || record.vector_register_bits == 0
-                || record.vector_register_bits % 8 != 0
+                || !record.vector_register_bits.is_multiple_of(8)
                 || record.register_bytes
                     != u32::from(record.vector_register_count)
                         * (u32::from(record.vector_register_bits) / 8)

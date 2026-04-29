@@ -1,5 +1,6 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RuntimeMode {
+    #[default]
     Research,
     Production,
     Replay,
@@ -73,11 +74,5 @@ impl RuntimeMode {
             Self::Production => "record-sampled-boundary",
             Self::Replay => "read-from-event-log",
         }
-    }
-}
-
-impl Default for RuntimeMode {
-    fn default() -> Self {
-        Self::Research
     }
 }

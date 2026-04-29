@@ -441,7 +441,7 @@ pub fn canonical_zero_field_image_hash(bytes: &[u8]) -> Result<[u8; 32], TargetA
     {
         let _ = signature_payload;
         let _ = signature_section_hash;
-        return Err(TargetArtifactError::HashUnavailable);
+        Err(TargetArtifactError::HashUnavailable)
     }
 
     #[cfg(feature = "hash")]
@@ -557,7 +557,7 @@ fn verify_section_payload_hash(
     #[cfg(not(feature = "hash"))]
     {
         let _ = payload;
-        return Err(TargetArtifactError::HashUnavailable);
+        Err(TargetArtifactError::HashUnavailable)
     }
 
     #[cfg(feature = "hash")]
@@ -580,7 +580,7 @@ fn verify_manifest_hash(
     {
         let _ = header;
         let _ = payload;
-        return Err(TargetArtifactError::HashUnavailable);
+        Err(TargetArtifactError::HashUnavailable)
     }
 
     #[cfg(feature = "hash")]

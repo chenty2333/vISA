@@ -20,7 +20,7 @@ impl SemanticGraph {
         if cleanup == 0 {
             return Err("io fault injection cleanup id=0 is invalid");
         }
-        if self.io_fault_injections.iter().any(|record| {
+        if self.domains.io.io_fault_injections.iter().any(|record| {
             record.id == fault
                 && (record.driver_store != driver_store
                     || record.driver_store_generation != driver_store_generation
@@ -34,7 +34,7 @@ impl SemanticGraph {
         }) {
             return Err("io fault injection id is already used for a different target");
         }
-        if self.io_fault_injections.iter().any(|record| {
+        if self.domains.io.io_fault_injections.iter().any(|record| {
             record.id == fault
                 && record.driver_store == driver_store
                 && record.driver_store_generation == driver_store_generation
@@ -120,7 +120,7 @@ impl SemanticGraph {
         {
             return false;
         }
-        if self.io_fault_injections.iter().any(|record| {
+        if self.domains.io.io_fault_injections.iter().any(|record| {
             record.id == fault
                 && record.driver_store == driver_store
                 && record.driver_store_generation == driver_store_generation
@@ -149,6 +149,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(cleanup_generation) = self
+            .domains
+            .io
             .io_cleanups
             .iter()
             .find(|record| record.id == cleanup)
@@ -175,7 +177,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.io_fault_injections.push(IoFaultInjectionRecord {
+        self.domains.io.io_fault_injections.push(IoFaultInjectionRecord {
             id: fault,
             driver_store,
             driver_store_generation,
@@ -196,11 +198,11 @@ impl SemanticGraph {
     }
 
     pub fn io_fault_injections(&self) -> &[IoFaultInjectionRecord] {
-        &self.io_fault_injections
+        &self.domains.io.io_fault_injections
     }
 
     pub fn io_fault_injection_count(&self) -> usize {
-        self.io_fault_injections.len()
+        self.domains.io.io_fault_injections.len()
     }
 
     fn io_fault_target_is_active_for_device(
@@ -283,7 +285,7 @@ impl SemanticGraph {
     }
 
     pub fn check_io_fault_injection_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for fault in &self.io_fault_injections {
+        for fault in &self.domains.io.io_fault_injections {
             if fault.id == 0
                 || fault.generation == 0
                 || fault.driver_store_generation == 0
@@ -339,7 +341,7 @@ impl SemanticGraph {
                     target: fault.target,
                 });
             }
-            let Some(cleanup) = self.io_cleanups.iter().find(|cleanup| {
+            let Some(cleanup) = self.domains.io.io_cleanups.iter().find(|cleanup| {
                 cleanup.id == fault.cleanup && cleanup.generation == fault.cleanup_generation
             }) else {
                 return Err(SemanticInvariantError::IoFaultInjectionMissingCleanup {
@@ -402,7 +404,8 @@ impl SemanticGraph {
         fault: IoFaultInjectionId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) = self.io_fault_injections.iter_mut().find(|record| record.id == fault)
+        if let Some(record) =
+            self.domains.io.io_fault_injections.iter_mut().find(|record| record.id == fault)
         {
             record.cleanup_generation = cleanup_generation;
         }

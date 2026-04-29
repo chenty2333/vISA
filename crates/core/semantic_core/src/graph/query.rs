@@ -203,7 +203,9 @@ impl SemanticGraph {
                     authority: authority.id,
                 });
             }
-            let Some(capability) = self.capabilities.active(authority.capability) else {
+            let Some(capability) =
+                self.domains.capability.capabilities.active(authority.capability)
+            else {
                 return Err(SemanticInvariantError::AuthorityCapabilityMissing {
                     authority: authority.id,
                 });

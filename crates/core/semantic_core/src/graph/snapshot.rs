@@ -40,7 +40,7 @@ impl SemanticGraph {
                 tasks: self.tasks.clone(),
                 resources: self.resources.clone(),
                 authority_bindings: self.authority_bindings.clone(),
-                waits: self.waits.clone(),
+                waits: self.domains.wait.waits.clone(),
                 fault_domains: self.fault_domains.clone(),
                 stores: self.stores.clone(),
                 transactions: self.transactions.clone(),
@@ -48,7 +48,7 @@ impl SemanticGraph {
                 boundaries: self.boundaries.clone(),
                 artifact_verifications: self.artifact_verifications.clone(),
                 store_activations: self.store_activations.clone(),
-                capabilities: self.capabilities.records().to_vec(),
+                capabilities: self.domains.capability.capabilities.records().to_vec(),
             },
         }
     }

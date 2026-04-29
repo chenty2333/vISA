@@ -51,7 +51,7 @@ impl EpollService {
             .call(&self.create, flags, "epoll_service trapped")
             .map_err(ServiceCallError::Trap)?;
         if raw < 0 {
-            return Err(ServiceCallError::Errno((-raw) as i32));
+            return Err(ServiceCallError::Errno(-raw));
         }
         Ok(raw as u32)
     }

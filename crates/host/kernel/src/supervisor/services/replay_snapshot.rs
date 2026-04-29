@@ -47,16 +47,14 @@ impl ReplaySnapshotService {
     }
 
     pub(crate) fn replay_until(&mut self, cursor: u64) -> Result<u64, ServiceCallError> {
-        Ok(self
-            .io
+        self.io
             .call(&self.replay_until, cursor, "replay_snapshot trapped")
-            .map_err(ServiceCallError::Trap)?)
+            .map_err(ServiceCallError::Trap)
     }
 
     pub(crate) fn last_replay_cursor(&mut self) -> Result<u64, ServiceCallError> {
-        Ok(self
-            .io
+        self.io
             .call(&self.last_replay_cursor, (), "replay_snapshot trapped")
-            .map_err(ServiceCallError::Trap)?)
+            .map_err(ServiceCallError::Trap)
     }
 }

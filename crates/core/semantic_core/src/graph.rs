@@ -48,10 +48,6 @@ pub struct SemanticGraph {
     irq_events: Vec<IrqEventRecord>,
     device_capabilities: Vec<DeviceCapabilityRecord>,
     driver_store_bindings: Vec<DriverStoreBindingRecord>,
-    io_waits: Vec<IoWaitRecord>,
-    io_cleanups: Vec<IoCleanupRecord>,
-    io_fault_injections: Vec<IoFaultInjectionRecord>,
-    io_validation_reports: Vec<IoValidationReportRecord>,
     packet_device_objects: Vec<PacketDeviceObjectRecord>,
     packet_buffer_objects: Vec<PacketBufferObjectRecord>,
     packet_queue_objects: Vec<PacketQueueObjectRecord>,
@@ -122,7 +118,6 @@ pub struct SemanticGraph {
     hart_event_attributions: Vec<HartEventAttributionRecord>,
     resources: Vec<ResourceRecord>,
     authority_bindings: Vec<AuthorityBindingRecord>,
-    waits: Vec<WaitRecord>,
     fault_domains: Vec<FaultDomainRecord>,
     stores: Vec<StoreRecord>,
     transactions: Vec<SemanticTransactionRecord>,
@@ -131,7 +126,7 @@ pub struct SemanticGraph {
     artifact_verifications: Vec<ArtifactVerificationRecord>,
     store_activations: Vec<StoreActivationRecord>,
     command_results: Vec<CommandResult>,
-    capabilities: CapabilityLedger,
+    domains: SemanticDomains,
     event_log: EventLog,
     next_resource_id: ResourceId,
     next_runtime_activation_id: ActivationId,
@@ -289,6 +284,7 @@ mod display_object;
 mod display_panic_last_frame;
 mod display_snapshot_barrier;
 mod dma_buffer_object;
+mod domains;
 mod driver_store_binding;
 mod endpoint_object;
 mod ext4_adapter_object;
@@ -375,6 +371,7 @@ mod virtio_net_backend_object;
 mod wait;
 
 pub use command::*;
+use domains::SemanticDomains;
 
 impl SemanticGraph {
     pub fn new() -> Self {
@@ -422,10 +419,6 @@ impl SemanticGraph {
             irq_events: Vec::new(),
             device_capabilities: Vec::new(),
             driver_store_bindings: Vec::new(),
-            io_waits: Vec::new(),
-            io_cleanups: Vec::new(),
-            io_fault_injections: Vec::new(),
-            io_validation_reports: Vec::new(),
             packet_device_objects: Vec::new(),
             packet_buffer_objects: Vec::new(),
             packet_queue_objects: Vec::new(),
@@ -496,7 +489,6 @@ impl SemanticGraph {
             hart_event_attributions: Vec::new(),
             resources: Vec::new(),
             authority_bindings: Vec::new(),
-            waits: Vec::new(),
             fault_domains: Vec::new(),
             stores: Vec::new(),
             transactions: Vec::new(),
@@ -505,7 +497,7 @@ impl SemanticGraph {
             artifact_verifications: Vec::new(),
             store_activations: Vec::new(),
             command_results: Vec::new(),
-            capabilities: CapabilityLedger::new(),
+            domains: SemanticDomains::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             next_resource_id: 1,
             next_runtime_activation_id: 1,

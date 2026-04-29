@@ -571,7 +571,7 @@ fn pack_dirents64(records: &[u8], max_len: usize) -> Result<Vec<u8>, &'static st
 }
 
 fn pack_epoll_events(records: &[u8], max_events: usize) -> Result<Vec<u8>, &'static str> {
-    if records.len() % 12 != 0 {
+    if !records.len().is_multiple_of(12) {
         return Err("epoll records were malformed");
     }
     let count = core::cmp::min(records.len() / 12, max_events.max(1));

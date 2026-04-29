@@ -69,6 +69,8 @@ impl SemanticGraph {
         let authority =
             AuthorityObjectRef::internal(CapabilityClass::Display, display_record.object_ref());
         let capability_record = self
+            .domains
+            .capability
             .capabilities
             .check_authority(&store_record.package, authority, &operations[0], Some(handle))
             .map_err(|_| "display capability handle is not authorized")?;
@@ -213,7 +215,9 @@ impl SemanticGraph {
                     framebuffer: record.framebuffer,
                 });
             };
-            let Some(capability_record) = self.capabilities.record(record.capability) else {
+            let Some(capability_record) =
+                self.domains.capability.capabilities.record(record.capability)
+            else {
                 return Err(SemanticInvariantError::DisplayCapabilityMissingCapability {
                     display_capability: record.id,
                     capability: record.capability,

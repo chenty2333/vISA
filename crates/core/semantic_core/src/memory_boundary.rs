@@ -1,6 +1,7 @@
 use alloc::{
     format,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
 
@@ -616,15 +617,12 @@ pub struct PackageReplayValidator;
 
 impl PackageReplayValidator {
     pub fn supported_record_modes_v1() -> Vec<RecordMode> {
-        [
+        vec![
             RecordMode::Deterministic,
             RecordMode::RecordInput,
             RecordMode::RecordOutput,
             RecordMode::RecordInputOutput,
         ]
-        .iter()
-        .copied()
-        .collect()
     }
 
     pub fn validate(state: &ReplayPackageValidationState) -> BoundaryValidationReport {

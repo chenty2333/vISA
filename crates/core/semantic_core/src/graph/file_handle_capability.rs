@@ -81,6 +81,8 @@ impl SemanticGraph {
         let authority =
             AuthorityObjectRef::internal(CapabilityClass::FileHandle, file_record.object_ref());
         let capability_record = self
+            .domains
+            .capability
             .capabilities
             .check_authority(&store_record.package, authority, operation, Some(handle))
             .map_err(|_| "file handle capability handle is not authorized")?;
@@ -231,7 +233,9 @@ impl SemanticGraph {
                     directory_object: record.directory_object,
                 });
             };
-            let Some(capability_record) = self.capabilities.record(record.capability) else {
+            let Some(capability_record) =
+                self.domains.capability.capabilities.record(record.capability)
+            else {
                 return Err(SemanticInvariantError::FileHandleCapabilityMissingCapability {
                     file_handle_capability: record.id,
                     capability: record.capability,

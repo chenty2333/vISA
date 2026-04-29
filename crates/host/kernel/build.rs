@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-use contract_core::{manifest_binding_hash, module_abi_fingerprint};
+use contract_validate::{manifest_binding_hash, module_abi_fingerprint};
 use sha2::{Digest, Sha256};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, SUPERVISOR_WASM_MODULES, USER_BINARIES, module_dependencies,

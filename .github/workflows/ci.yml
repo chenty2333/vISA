@@ -10,6 +10,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown,x86_64-unknown-none
           components: rustfmt,clippy
+      - uses: taiki-e/install-action@cargo-deny
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -19,6 +20,12 @@ jobs:
 
       - name: Check wasm targets
         run: cargo check -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p replay_snapshot -p vfs_service -p wasm_app --target wasm32-unknown-unknown
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Dependency policy
+        run: cargo deny check
 
       - name: Test
         run: cargo test --workspace

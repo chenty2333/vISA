@@ -1,6 +1,7 @@
 [package]
 name = "kernel"
 version = "0.1.0"
+publish = false
 edition = "2024"
 build = "build.rs"
 
@@ -22,7 +23,7 @@ x86_64.workspace = true
 xmas-elf.workspace = true
 
 [build-dependencies]
-contract_core.workspace = true
+contract_validate.workspace = true
 hex.workspace = true
 sha2.workspace = true
 supervisor_catalog.workspace = true

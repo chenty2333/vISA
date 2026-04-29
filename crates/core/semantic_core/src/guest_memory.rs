@@ -452,7 +452,7 @@ impl GuestMemoryManager {
         if self.snapshot_barrier_active {
             return Err(GuestMemoryError::SnapshotBarrierActive);
         }
-        if self.pending_cleanup_stores.iter().any(|store| *store == aspace.owner) {
+        if self.pending_cleanup_stores.contains(&aspace.owner) {
             return Err(GuestMemoryError::PendingCleanup);
         }
         let region = self.region_exact(fast_path.region)?;
@@ -586,7 +586,7 @@ impl GuestMemoryManager {
     }
 
     pub fn begin_cleanup_for_store(&mut self, store: ContractObjectRef) {
-        if !self.pending_cleanup_stores.iter().any(|existing| *existing == store) {
+        if !self.pending_cleanup_stores.contains(&store) {
             self.pending_cleanup_stores.push(store);
         }
     }

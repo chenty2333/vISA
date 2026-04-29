@@ -1,20 +1,58 @@
-use artifact_manifest::{ArtifactBundleManifest, MigrationPackageManifest, ModuleArtifactManifest};
+use artifact_manifest::{
+    ArtifactBundleManifest, MigrationPackageManifest, ModuleArtifactManifest,
+    SupervisorContractManifest,
+};
+use contract_core::*;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
 use sha2::{Digest, Sha256};
 use substrate_api::{
     AuthorityMismatch, AuthorityRequirementSet, SubstrateAuthorityRequirements,
     SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile,
 };
+pub use supervisor_catalog::{
+    ARTIFACT_HASH_STATUS_MANIFEST_BOUND, ARTIFACT_SIGNATURE_STATUS_PROFILE_BOUND_UNVERIFIED,
+    ARTIFACT_SIGNATURE_VERIFIED_DEFAULT,
+};
 use supervisor_catalog::{
     ARTIFACT_SIGNATURE_PROFILE, CAPABILITY_ABI_VERSION, COMPONENT_MODEL_VERSION, CapabilitySpec,
     DMW_LAYOUT, HOSTCALL_ABI_VERSION, LINUX_ABI_PROFILE, MACHINE_ABI_VERSION,
     RUNTIME_ONLY_EXECUTOR_ABI, SEMANTIC_CONTRACT_SCHEMA_VERSION, SUPERVISOR_ABI_VERSION,
-    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE,
-    SUPERVISOR_WASM_MODULES, WASI_PROFILE_NONE, WASM_FEATURE_PROFILE, WIT_PACKAGE_VERSION,
-    WasmModuleSpec, module_dependencies, module_interface_spec,
+    SUPERVISOR_ARTIFACT_FORMAT, SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_CONTRACT_VERSION,
+    SUPERVISOR_EXECUTION_MODE, SUPERVISOR_WASM_MODULES, SUPERVISOR_WORLD, WASI_PROFILE_NONE,
+    WASM_FEATURE_PROFILE, WIT_PACKAGE_VERSION, WasmModuleSpec, catalog_contract_fingerprint,
+    module_dependencies, module_interface_spec, package_set_fingerprint,
 };
 
-use super::*;
+pub fn expected_supervisor_contract() -> SupervisorContractManifest {
+    SupervisorContractManifest {
+        contract_version: SUPERVISOR_CONTRACT_VERSION.to_owned(),
+        supervisor_world: SUPERVISOR_WORLD.to_owned(),
+        catalog_fingerprint: contract_hex(catalog_contract_fingerprint()),
+        package_set_fingerprint: contract_hex(package_set_fingerprint()),
+        module_count: SUPERVISOR_WASM_MODULES.len(),
+        required_packages: SUPERVISOR_WASM_MODULES
+            .iter()
+            .map(|module| module.package.to_owned())
+            .collect(),
+    }
+}
+
+pub fn host_validation_interface_capabilities() -> InterfaceHostCapabilitySet {
+    let mut capabilities = InterfaceHostCapabilitySet::empty();
+    for module in SUPERVISOR_WASM_MODULES {
+        let interfaces = module_interface_spec(module);
+        for world in interfaces.required_wasi_worlds {
+            push_unique(&mut capabilities.wasi_worlds, world);
+        }
+        for world in interfaces.optional_wasi_worlds {
+            push_unique(&mut capabilities.wasi_worlds, world);
+        }
+        for world in interfaces.custom_wit_worlds {
+            push_unique(&mut capabilities.custom_wit_worlds, world);
+        }
+    }
+    capabilities
+}
 
 pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> ContractResult<()> {
     if manifest.schema_version != 1 {
@@ -1780,3 +1818,6 @@ fn validate_capabilities(
 fn rights_vec(capability: &CapabilitySpec) -> Vec<String> {
     capability.rights.iter().map(|right| (*right).to_owned()).collect()
 }
+
+#[cfg(test)]
+mod tests;

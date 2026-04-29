@@ -38,7 +38,7 @@ impl SemanticGraph {
         }) else {
             return Err("block wait generation is missing or not pending");
         };
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == wait_record.wait
                 && wait.generation == wait_record.wait_generation
                 && wait.state == WaitState::Pending

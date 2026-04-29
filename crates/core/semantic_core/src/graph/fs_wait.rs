@@ -41,7 +41,7 @@ impl SemanticGraph {
             "write" => SemanticWaitKind::FdWritable,
             _ => return Err("fs wait operation is unsupported"),
         };
-        let Some(wait_record) = self.waits.iter().find(|record| {
+        let Some(wait_record) = self.domains.wait.waits.iter().find(|record| {
             record.id == wait
                 && record.generation == wait_generation
                 && record.state == WaitState::Pending
@@ -179,7 +179,7 @@ impl SemanticGraph {
             return false;
         };
         let record = self.fs_waits[index].clone();
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -228,7 +228,7 @@ impl SemanticGraph {
             return false;
         };
         let record = self.fs_waits[index].clone();
-        if !self.waits.iter().any(|wait| {
+        if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
                 && wait.state == WaitState::Pending
@@ -263,10 +263,10 @@ impl SemanticGraph {
 
     pub fn check_fs_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
         for record in &self.fs_waits {
-            let Some(wait_record) = self
-                .waits
-                .iter()
-                .find(|wait| wait.id == record.wait && wait.generation == record.wait_generation)
+            let Some(wait_record) =
+                self.domains.wait.waits.iter().find(|wait| {
+                    wait.id == record.wait && wait.generation == record.wait_generation
+                })
             else {
                 return Err(SemanticInvariantError::FsWaitMissingWait {
                     fs_wait: record.id,

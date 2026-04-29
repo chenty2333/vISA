@@ -1,4 +1,11 @@
 #![no_std]
+#![allow(
+    clippy::collapsible_if,
+    clippy::option_as_ref_deref,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::vec_init_then_push
+)]
 
 extern crate alloc;
 #[cfg(test)]

@@ -100,6 +100,8 @@ impl SemanticGraph {
         let authority =
             AuthorityObjectRef::internal(CapabilityClass::PacketDevice, packet_device_ref);
         let capability_record = self
+            .domains
+            .capability
             .capabilities
             .check_authority(&store_record.package, authority, "tx", Some(handle))
             .map_err(|_| "network tx capability gate handle is not authorized")?;
@@ -167,7 +169,8 @@ impl SemanticGraph {
         }) else {
             return false;
         };
-        let Some(capability_record) = self.capabilities.record(capability) else {
+        let Some(capability_record) = self.domains.capability.capabilities.record(capability)
+        else {
             return false;
         };
         let packet_device = tx_queue_record.packet_device;
@@ -298,7 +301,9 @@ impl SemanticGraph {
                     device_capability: record.device_capability,
                 });
             };
-            let Some(capability_record) = self.capabilities.record(record.capability) else {
+            let Some(capability_record) =
+                self.domains.capability.capabilities.record(record.capability)
+            else {
                 return Err(SemanticInvariantError::NetworkTxCapabilityGateMissingCapability {
                     tx_gate: record.id,
                     device_capability: record.device_capability,

@@ -243,7 +243,7 @@ impl SemanticGraph {
                     driver_binding: record.driver_binding,
                 });
             };
-            let cleanup_covers_binding = self.io_cleanups.iter().any(|cleanup| {
+            let cleanup_covers_binding = self.domains.io.io_cleanups.iter().any(|cleanup| {
                 cleanup.driver_binding == record.driver_binding
                     && cleanup.driver_binding_generation == record.driver_binding_generation
                     && cleanup.state == IoCleanupState::Completed

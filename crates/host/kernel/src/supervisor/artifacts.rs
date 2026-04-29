@@ -176,7 +176,7 @@ impl TrustedArtifact {
         if spec.artifact_name.is_empty() {
             return Err(ArtifactRegistryError::EmptyArtifact);
         }
-        if !spec.expected_exports.iter().any(|export| *export == "memory") {
+        if !spec.expected_exports.contains(&"memory") {
             return Err(ArtifactRegistryError::MissingMemoryExport);
         }
         Ok(())
