@@ -12,7 +12,7 @@ FAIL_LINES=10000
 KNOWN_LARGE_FILES=(
     "crates/host/osctl/src/lib.rs"
     "crates/host/osctl/src/tests/mod.rs"
-    "crates/core/semantic_core/src/tests.rs"
+    "crates/core/semantic_core/src/tests/mod.rs"
     "crates/core/semantic_core/src/target_executor.rs"
     "crates/core/semantic_core/src/contract_graph.rs"
     "crates/core/semantic_core/src/event_log.rs"
