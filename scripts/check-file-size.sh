@@ -10,7 +10,8 @@ FAIL_LINES=10000
 # They are exempt from the hard fail until their restructuring PRs land.
 # Remove entries here once the corresponding split is done.
 KNOWN_LARGE_FILES=(
-    "crates/host/osctl/src/main.rs"
+    "crates/host/osctl/src/lib.rs"
+    "crates/host/osctl/src/tests/mod.rs"
     "crates/core/semantic_core/src/tests.rs"
     "crates/core/semantic_core/src/target_executor.rs"
     "crates/core/semantic_core/src/contract_graph.rs"
