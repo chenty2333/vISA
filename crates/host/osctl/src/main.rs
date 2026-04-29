@@ -26616,17 +26616,17 @@ mod tests {
     #[test]
     fn replay_fixtures_replay_to_expected_final_views() {
         let wait = parse_replay_fixture(include_str!(
-            "../../semantic_core/fixtures/replay/wait_pending_resume_v1.json"
+            "../../../core/semantic_core/fixtures/replay/wait_pending_resume_v1.json"
         ));
         replay_wait_fixture(&wait);
 
         let capability = parse_replay_fixture(include_str!(
-            "../../semantic_core/fixtures/replay/capability_revoke_generation_v1.json"
+            "../../../core/semantic_core/fixtures/replay/capability_revoke_generation_v1.json"
         ));
         replay_capability_fixture(&capability);
 
         let cleanup = parse_replay_fixture(include_str!(
-            "../../semantic_core/fixtures/replay/driver_fault_cleanup_generation_safe_v1.json"
+            "../../../core/semantic_core/fixtures/replay/driver_fault_cleanup_generation_safe_v1.json"
         ));
         replay_cleanup_fixture(&cleanup);
     }

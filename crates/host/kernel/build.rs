@@ -18,7 +18,13 @@ const EMBEDDED_SIGNER: &str = "kernel-buildrs-embedded-manifest";
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
-    let workspace_root = manifest_dir.parent().expect("kernel crate should live in workspace root");
+    let workspace_root = manifest_dir
+        .parent()
+        .expect("kernel crate should live in crates/host/kernel")
+        .parent()
+        .expect("expected crates/host")
+        .parent()
+        .expect("expected workspace root");
     let target_dir =
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("wasm-target");
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());

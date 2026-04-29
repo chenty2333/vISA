@@ -1,41 +1,41 @@
 [workspace]
 resolver = "3"
 members = [
-    "aotc",
-    "abi",
-    "artifact_manifest",
-    "console_service",
-    "contract_core",
-    "devfs_service",
-    "epoll_service",
-    "futex_service",
-    "fs_adapter",
-    "kernel",
-    "linux_user_demo",
-    "linux_socket_service",
-    "linux_syscall",
-    "net_core",
-    "net_stack_adapter",
-    "driver_virtio_net",
-    "osctl",
-    "procfs_service",
-    "replay_snapshot",
-    "runner",
-    "semantic_core",
-    "service_core",
-    "substrate_api",
-    "substrate_virtio",
-    "supervisor_catalog",
-    "target_abi",
-    "target_executor",
-    "vfs_service",
-    "wasm_app",
+    "crates/abi/abi",
+    "crates/core/artifact_manifest",
+    "crates/core/contract_core",
+    "crates/core/semantic_core",
+    "crates/core/target_abi",
+    "crates/host/aotc",
+    "crates/host/kernel",
+    "crates/host/osctl",
+    "crates/host/runner",
+    "crates/runtime/service_core",
+    "crates/runtime/supervisor_catalog",
+    "crates/runtime/target_executor",
+    "crates/backend/substrate_api",
+    "crates/backend/substrate_virtio",
+    "crates/services/console_service",
+    "crates/services/devfs_service",
+    "crates/services/driver_virtio_net",
+    "crates/services/epoll_service",
+    "crates/services/fs_adapter",
+    "crates/services/futex_service",
+    "crates/services/linux_socket_service",
+    "crates/services/linux_syscall",
+    "crates/services/linux_user_demo",
+    "crates/services/net_core",
+    "crates/services/net_stack_adapter",
+    "crates/services/procfs_service",
+    "crates/services/replay_snapshot",
+    "crates/services/vfs_service",
+    "crates/services/wasm_app",
 ]
 
 [workspace.dependencies]
-artifact_manifest = { path = "artifact_manifest" }
+artifact_manifest = { path = "crates/core/artifact_manifest" }
 bootloader_api = "0.11.15"
-contract_core = { path = "contract_core" }
+contract_core = { path = "crates/core/contract_core" }
 fatfs = "0.3.6"
 ext4-view = "0.9.3"
 hex = "0.4.3"
@@ -43,19 +43,19 @@ linked_list_allocator = "0.10.6"
 pic8259 = "0.10.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-semantic_core = { path = "semantic_core" }
-service_core = { path = "service_core" }
-fs_adapter = { path = "fs_adapter" }
-net_stack_adapter = { path = "net_stack_adapter" }
+semantic_core = { path = "crates/core/semantic_core" }
+service_core = { path = "crates/runtime/service_core" }
+fs_adapter = { path = "crates/services/fs_adapter" }
+net_stack_adapter = { path = "crates/services/net_stack_adapter" }
 smoltcp = { version = "0.13.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
-substrate_api = { path = "substrate_api" }
-substrate_virtio = { path = "substrate_virtio" }
+substrate_api = { path = "crates/backend/substrate_api" }
+substrate_virtio = { path = "crates/backend/substrate_virtio" }
 sha2 = "0.10"
 spin = "0.9.8"
-supervisor_catalog = { path = "supervisor_catalog" }
-target_abi = { path = "target_abi", default-features = false }
+supervisor_catalog = { path = "crates/runtime/supervisor_catalog" }
+target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
-vmos_abi = { path = "abi" }
+vmos_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.0", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 xmas-elf = { version = "0.9.1", default-features = false }

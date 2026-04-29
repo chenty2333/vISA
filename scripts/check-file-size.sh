@@ -10,18 +10,18 @@ FAIL_LINES=10000
 # They are exempt from the hard fail until their restructuring PRs land.
 # Remove entries here once the corresponding split is done.
 KNOWN_LARGE_FILES=(
-    "osctl/src/main.rs"
-    "semantic_core/src/tests.rs"
-    "semantic_core/src/target_executor.rs"
-    "semantic_core/src/contract_graph.rs"
-    "semantic_core/src/event_log.rs"
-    "semantic_core/src/records.rs"
-    "semantic_core/src/migration.rs"
-    "semantic_core/src/taxonomy.rs"
-    "semantic_core/src/graph/command.rs"
-    "target_executor/src/main.rs"
-    "contract_core/src/lib.rs"
-    "artifact_manifest/src/lib.rs"
+    "crates/host/osctl/src/main.rs"
+    "crates/core/semantic_core/src/tests.rs"
+    "crates/core/semantic_core/src/target_executor.rs"
+    "crates/core/semantic_core/src/contract_graph.rs"
+    "crates/core/semantic_core/src/event_log.rs"
+    "crates/core/semantic_core/src/records.rs"
+    "crates/core/semantic_core/src/migration.rs"
+    "crates/core/semantic_core/src/taxonomy.rs"
+    "crates/core/semantic_core/src/graph/command.rs"
+    "crates/runtime/target_executor/src/main.rs"
+    "crates/core/contract_core/src/lib.rs"
+    "crates/core/artifact_manifest/src/lib.rs"
 )
 
 is_known() {
