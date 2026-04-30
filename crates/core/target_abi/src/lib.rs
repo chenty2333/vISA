@@ -1,3 +1,12 @@
+//! Target runtime ABI for Semantic Virtual ISA artifacts.
+//!
+//! This crate defines the target-loadable artifact envelope, CodeObject support
+//! records, HostcallFrame wire ABI, TrapMap/PcRange attribution, profile
+//! records, signatures, and no_std control-plane extraction types.
+//!
+//! It carries vISA execution; it does not define semantic policy, frontend
+//! personality behavior, or substrate implementation details.
+
 #![cfg_attr(not(test), no_std)]
 
 pub mod artifact;

@@ -1,3 +1,11 @@
+//! Runtime bridge from Semantic Virtual ISA artifacts to contract effects.
+//!
+//! This crate validates artifact/runtime identity, drives HostcallFrame and
+//! TrapMap attribution, records contract-visible vISA effects, and dispatches to
+//! substrate traits only after profile, capability, and generation gates pass.
+//!
+//! It is not a Linux/WASI frontend and not the substrate itself.
+
 use std::{
     env,
     error::Error,

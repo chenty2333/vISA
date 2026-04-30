@@ -1,3 +1,10 @@
+//! Manifest record types for Semantic Virtual ISA artifacts, bundles, views, and
+//! migration packages.
+//!
+//! These structs are the interchange layer for artifact identity, package roots,
+//! profile facts, semantic snapshots, and evidence reports. They are data
+//! schemas, not runtime policy and not substrate authority.
+
 mod artifact_bundle;
 mod boundary;
 mod semantic_snapshot;

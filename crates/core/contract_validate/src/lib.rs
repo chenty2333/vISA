@@ -1,3 +1,10 @@
+//! vISA effect validation and compatibility checks.
+//!
+//! This crate validates stable Semantic Virtual ISA effect encodings, artifact
+//! manifests, package roots, profile compatibility, and catalog/interface facts.
+//! It is a validation layer around `contract_core` records, not a runtime
+//! executor and not a frontend personality implementation.
+
 use artifact_manifest::{
     ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityManifest,
     InterfaceRequirementManifest, MigrationPackageManifest, ModuleArtifactManifest,

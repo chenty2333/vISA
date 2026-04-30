@@ -1,3 +1,12 @@
+//! vISA effect language.
+//!
+//! This crate is the stable encoding layer of the Semantic Virtual ISA. It
+//! defines the ObjectRef, event, command, view, schema, evidence-boundary, and
+//! package records that other crates use to agree on visible vISA effects.
+//!
+//! It is not the vISA itself, not a runtime executor, not a substrate trait
+//! surface, and not a Linux/WASI compatibility layer.
+
 #![no_std]
 
 extern crate alloc;

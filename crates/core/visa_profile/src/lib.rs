@@ -1,3 +1,9 @@
+//! Stable Semantic Virtual ISA profile types and compatibility matrix.
+//!
+//! Profiles describe what a target can enforce before artifacts load and what
+//! an artifact requires, optionally uses, or forbids. They are vISA feature sets,
+//! not OS labels and not frontend interface names.
+
 #![no_std]
 
 extern crate alloc;

@@ -1,3 +1,14 @@
+//! vISA in-memory effect ledger and verifier.
+//!
+//! This crate implements the Semantic Virtual ISA's contract-visible state:
+//! ObjectRefs, generations, capabilities, waits, traps, cleanup, events, stable
+//! views, and domain stores behind the `SemanticGraph` facade.
+//!
+//! It is not a Linux compatibility layer, not a substrate implementation, and
+//! not the target-runtime wire ABI. Frontend personalities and hardware ports
+//! must normalize their behavior into this ledger before it becomes semantic
+//! truth.
+
 #![no_std]
 #![allow(
     clippy::collapsible_if,

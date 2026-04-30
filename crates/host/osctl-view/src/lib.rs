@@ -1,3 +1,10 @@
+//! Read-only Semantic Virtual ISA view renderer.
+//!
+//! This crate turns contract-visible vISA effects, package facts, runtime
+//! attribution, profile records, and graph history into stable view output. It
+//! does not mutate semantic state and does not expose private runtime structs as
+//! API.
+
 #![recursion_limit = "256"]
 
 use std::{error::Error, fs, path::Path};
