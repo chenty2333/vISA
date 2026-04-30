@@ -25,7 +25,8 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("block recovery benchmark id cannot advance generation cursor");
         }
-        if self.block_recovery_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.block.block_recovery_benchmarks.iter().any(|record| record.id == benchmark)
+        {
             return Err("block recovery benchmark already exists");
         }
         if scenario.is_empty() {
@@ -51,7 +52,7 @@ impl SemanticGraph {
             return Err("block recovery benchmark requires cleanup effects");
         }
 
-        let Some(cleanup_record) = self.block_driver_cleanups.iter().find(|record| {
+        let Some(cleanup_record) = self.domains.block.block_driver_cleanups.iter().find(|record| {
             record.id == cleanup
                 && record.generation == cleanup_generation
                 && record.state == BlockDriverCleanupState::Completed
@@ -129,6 +130,8 @@ impl SemanticGraph {
         }
 
         let Some(cleanup_record) = self
+            .domains
+            .block
             .block_driver_cleanups
             .iter()
             .find(|record| record.id == cleanup && record.generation == cleanup_generation)
@@ -145,8 +148,8 @@ impl SemanticGraph {
         let driver_binding = cleanup_record.driver_binding;
         let driver_binding_generation = cleanup_record.driver_binding_generation;
         let generation = 1;
-        self.next_block_recovery_benchmark_id =
-            self.next_block_recovery_benchmark_id.max(benchmark.saturating_add(1));
+        self.domains.block.next_block_recovery_benchmark_id =
+            self.domains.block.next_block_recovery_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRecoveryBenchmarkRecorded {
@@ -175,7 +178,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_recovery_benchmarks.push(BlockRecoveryBenchmarkRecord {
+        self.domains.block.block_recovery_benchmarks.push(BlockRecoveryBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             cleanup,
@@ -208,15 +211,15 @@ impl SemanticGraph {
     }
 
     pub fn block_recovery_benchmarks(&self) -> &[BlockRecoveryBenchmarkRecord] {
-        &self.block_recovery_benchmarks
+        &self.domains.block.block_recovery_benchmarks
     }
 
     pub fn block_recovery_benchmark_count(&self) -> usize {
-        self.block_recovery_benchmarks.len()
+        self.domains.block.block_recovery_benchmarks.len()
     }
 
     pub fn check_block_recovery_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_recovery_benchmarks {
+        for record in &self.domains.block.block_recovery_benchmarks {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()
@@ -244,7 +247,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(cleanup) = self.block_driver_cleanups.iter().find(|cleanup| {
+            let Some(cleanup) = self.domains.block.block_driver_cleanups.iter().find(|cleanup| {
                 cleanup.id == record.cleanup
                     && cleanup.generation == record.cleanup_generation
                     && cleanup.state == BlockDriverCleanupState::Completed
@@ -359,8 +362,12 @@ impl SemanticGraph {
         benchmark: BlockRecoveryBenchmarkId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_recovery_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_recovery_benchmarks
+            .iter_mut()
+            .find(|record| record.id == benchmark)
         {
             record.cleanup_generation = cleanup_generation;
         }

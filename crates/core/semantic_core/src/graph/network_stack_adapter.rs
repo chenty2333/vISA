@@ -32,7 +32,7 @@ impl SemanticGraph {
         if adapter == 0 {
             return Err("network stack adapter id=0 is invalid");
         }
-        if self.network_stack_adapters.iter().any(|record| record.id == adapter) {
+        if self.domains.network.network_stack_adapters.iter().any(|record| record.id == adapter) {
             return Err("network stack adapter already exists");
         }
         if implementation != NETWORK_STACK_ADAPTER_IMPLEMENTATION_SMOLTCP
@@ -51,11 +51,13 @@ impl SemanticGraph {
         if socket_capacity != 0 {
             return Err("network stack adapter must not own sockets before N11");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("network stack adapter packet device generation is missing or inactive");
         };
         if packet_device_record.mac != mac
@@ -66,18 +68,22 @@ impl SemanticGraph {
         {
             return Err("network stack adapter packet device contract mismatch");
         }
-        let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == rx_queue
-                && record.generation == rx_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(rx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == rx_queue
+                    && record.generation == rx_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network stack adapter rx queue generation is missing or inactive");
         };
-        let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == tx_queue
-                && record.generation == tx_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(tx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == tx_queue
+                    && record.generation == tx_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network stack adapter tx queue generation is missing or inactive");
         };
         if rx_queue_record.role != PacketQueueRole::Rx
@@ -99,7 +105,7 @@ impl SemanticGraph {
         {
             return Err("network stack adapter backend packet device mismatch");
         }
-        if self.network_stack_adapters.iter().any(|record| {
+        if self.domains.network.network_stack_adapters.iter().any(|record| {
             record.packet_device == packet_device_record.id
                 && record.packet_device_generation == packet_device_record.generation
                 && record.state == NetworkStackAdapterState::Bound
@@ -164,7 +170,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_network_stack_adapter_id = self.next_network_stack_adapter_id.max(adapter + 1);
+        self.domains.network.next_network_stack_adapter_id =
+            self.domains.network.next_network_stack_adapter_id.max(adapter + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkStackAdapterBound {
@@ -191,7 +198,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_stack_adapters.push(NetworkStackAdapterRecord {
+        self.domains.network.network_stack_adapters.push(NetworkStackAdapterRecord {
             id: adapter,
             implementation: implementation.to_string(),
             implementation_version: implementation_version.to_string(),
@@ -221,17 +228,17 @@ impl SemanticGraph {
     }
 
     pub fn network_stack_adapters(&self) -> &[NetworkStackAdapterRecord] {
-        &self.network_stack_adapters
+        &self.domains.network.network_stack_adapters
     }
 
     pub fn network_stack_adapter_count(&self) -> usize {
-        self.network_stack_adapters.len()
+        self.domains.network.network_stack_adapters.len()
     }
 
     pub fn check_network_stack_adapter_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_stack_adapters {
+        for record in &self.domains.network.network_stack_adapters {
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -241,17 +248,21 @@ impl SemanticGraph {
                     packet_device: record.packet_device,
                 });
             };
-            let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|queue| {
-                queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
-            }) else {
+            let Some(rx_queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|queue| {
+                    queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkStackAdapterMissingQueue {
                     adapter: record.id,
                     packet_queue: record.rx_queue,
                 });
             };
-            let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|queue| {
-                queue.id == record.tx_queue && queue.generation == record.tx_queue_generation
-            }) else {
+            let Some(tx_queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|queue| {
+                    queue.id == record.tx_queue && queue.generation == record.tx_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkStackAdapterMissingQueue {
                     adapter: record.id,
                     packet_queue: record.tx_queue,
@@ -296,12 +307,14 @@ impl SemanticGraph {
                     adapter: record.id,
                 });
             }
-            if let Some(duplicate) = self.network_stack_adapters.iter().find(|other| {
-                other.id != record.id
-                    && other.packet_device == record.packet_device
-                    && other.packet_device_generation == record.packet_device_generation
-                    && other.state == NetworkStackAdapterState::Bound
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_stack_adapters.iter().find(|other| {
+                    other.id != record.id
+                        && other.packet_device == record.packet_device
+                        && other.packet_device_generation == record.packet_device_generation
+                        && other.state == NetworkStackAdapterState::Bound
+                })
+            {
                 return Err(SemanticInvariantError::NetworkStackAdapterDuplicatePacketDevice {
                     adapter: duplicate.id,
                     packet_device: record.packet_device,
@@ -370,6 +383,8 @@ impl SemanticGraph {
     ) -> Option<(PacketDeviceObjectId, Generation)> {
         match backend.kind {
             ContractObjectKind::FakeNetBackendObject => self
+                .domains
+                .network
                 .fake_net_backends
                 .iter()
                 .find(|record| {
@@ -379,6 +394,8 @@ impl SemanticGraph {
                 })
                 .map(|record| (record.packet_device, record.packet_device_generation)),
             ContractObjectKind::VirtioNetBackendObject => self
+                .domains
+                .network
                 .virtio_net_backends
                 .iter()
                 .find(|record| {
@@ -397,8 +414,12 @@ impl SemanticGraph {
         adapter: NetworkStackAdapterId,
         profile: &str,
     ) {
-        if let Some(record) =
-            self.network_stack_adapters.iter_mut().find(|record| record.id == adapter)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_stack_adapters
+            .iter_mut()
+            .find(|record| record.id == adapter)
         {
             record.profile = profile.to_string();
         }

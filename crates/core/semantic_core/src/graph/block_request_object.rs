@@ -14,24 +14,29 @@ impl SemanticGraph {
         if block_request == 0 {
             return Err("block request object id=0 is invalid");
         }
-        if self.block_request_objects.iter().any(|record| record.id == block_request) {
+        if self.domains.block.block_request_objects.iter().any(|record| record.id == block_request)
+        {
             return Err("block request object already exists");
         }
         if block_device_generation == 0 || block_range_generation == 0 || sequence == 0 {
             return Err("block request object identity values must be nonzero");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block request object block device generation is missing or inactive");
         };
-        let Some(block_range_record) = self.block_range_objects.iter().find(|record| {
-            record.id == block_range
-                && record.generation == block_range_generation
-                && record.state == BlockRangeObjectState::Registered
-        }) else {
+        let Some(block_range_record) =
+            self.domains.block.block_range_objects.iter().find(|record| {
+                record.id == block_range
+                    && record.generation == block_range_generation
+                    && record.state == BlockRangeObjectState::Registered
+            })
+        else {
             return Err("block request object block range generation is missing or inactive");
         };
         if block_range_record.block_device != block_device_record.id
@@ -42,7 +47,7 @@ impl SemanticGraph {
         if operation == BlockRequestOperation::Write && block_device_record.read_only {
             return Err("block request object write denied on read-only block device");
         }
-        if self.block_request_objects.iter().any(|record| {
+        if self.domains.block.block_request_objects.iter().any(|record| {
             record.block_device == block_device
                 && record.block_device_generation == block_device_generation
                 && record.sequence == sequence
@@ -79,8 +84,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_request_object_id =
-            self.next_block_request_object_id.max(block_request.saturating_add(1));
+        self.domains.block.next_block_request_object_id =
+            self.domains.block.next_block_request_object_id.max(block_request.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRequestObjectRecorded {
@@ -95,7 +100,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_request_objects.push(BlockRequestObjectRecord {
+        self.domains.block.block_request_objects.push(BlockRequestObjectRecord {
             id: block_request,
             block_device,
             block_device_generation,
@@ -113,38 +118,43 @@ impl SemanticGraph {
     }
 
     pub fn block_request_objects(&self) -> &[BlockRequestObjectRecord] {
-        &self.block_request_objects
+        &self.domains.block.block_request_objects
     }
 
     pub fn block_request_object_count(&self) -> usize {
-        self.block_request_objects.len()
+        self.domains.block.block_request_objects.len()
     }
 
     pub fn check_block_request_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_request_objects {
-            let Some(block_device_record) = self.block_device_objects.iter().find(|block_device| {
-                block_device.id == record.block_device
-                    && block_device.generation == record.block_device_generation
-            }) else {
+        for record in &self.domains.block.block_request_objects {
+            let Some(block_device_record) =
+                self.domains.block.block_device_objects.iter().find(|block_device| {
+                    block_device.id == record.block_device
+                        && block_device.generation == record.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockRequestObjectMissingDevice {
                     block_request: record.id,
                     block_device: record.block_device,
                 });
             };
-            let Some(block_range_record) = self.block_range_objects.iter().find(|block_range| {
-                block_range.id == record.block_range
-                    && block_range.generation == record.block_range_generation
-            }) else {
+            let Some(block_range_record) =
+                self.domains.block.block_range_objects.iter().find(|block_range| {
+                    block_range.id == record.block_range
+                        && block_range.generation == record.block_range_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockRequestObjectMissingRange {
                     block_request: record.id,
                     block_range: record.block_range,
                 });
             };
-            let has_completion = self.block_completion_objects.iter().any(|completion| {
-                completion.block_request == record.id
-                    && completion.block_request_generation == record.generation
-                    && completion.state == BlockCompletionObjectState::Recorded
-            });
+            let has_completion =
+                self.domains.block.block_completion_objects.iter().any(|completion| {
+                    completion.block_request == record.id
+                        && completion.block_request_generation == record.generation
+                        && completion.state == BlockCompletionObjectState::Recorded
+                });
             if record.id == 0
                 || record.generation == 0
                 || record.block_device_generation == 0
@@ -166,7 +176,7 @@ impl SemanticGraph {
                     block_request: record.id,
                 });
             }
-            if let Some(duplicate) = self.block_request_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_request_objects.iter().find(|other| {
                 other.id != record.id
                     && other.block_device == record.block_device
                     && other.block_device_generation == record.block_device_generation
@@ -218,8 +228,12 @@ impl SemanticGraph {
         block_request: BlockRequestObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_request_objects.iter_mut().find(|record| record.id == block_request)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_request_objects
+            .iter_mut()
+            .find(|record| record.id == block_request)
         {
             record.block_range_generation = generation;
         }

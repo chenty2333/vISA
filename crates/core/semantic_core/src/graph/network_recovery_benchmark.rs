@@ -25,7 +25,13 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("network recovery benchmark id cannot advance generation cursor");
         }
-        if self.network_recovery_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self
+            .domains
+            .network
+            .network_recovery_benchmarks
+            .iter()
+            .any(|record| record.id == benchmark)
+        {
             return Err("network recovery benchmark already exists");
         }
         if scenario.is_empty() {
@@ -50,11 +56,13 @@ impl SemanticGraph {
             return Err("network recovery benchmark requires cleanup effects");
         }
 
-        let Some(cleanup_record) = self.network_driver_cleanups.iter().find(|record| {
-            record.id == cleanup
-                && record.generation == cleanup_generation
-                && record.state == NetworkDriverCleanupState::Completed
-        }) else {
+        let Some(cleanup_record) =
+            self.domains.network.network_driver_cleanups.iter().find(|record| {
+                record.id == cleanup
+                    && record.generation == cleanup_generation
+                    && record.state == NetworkDriverCleanupState::Completed
+            })
+        else {
             return Err("network recovery benchmark cleanup generation is missing or incomplete");
         };
         let Some(cleanup_completed_at_event) = cleanup_record.completed_at_event else {
@@ -79,11 +87,13 @@ impl SemanticGraph {
         if let (Some(fault_injection), Some(fault_injection_generation)) =
             (fault_injection, fault_injection_generation)
         {
-            let Some(injection_record) = self.network_fault_injections.iter().find(|record| {
-                record.id == fault_injection
-                    && record.generation == fault_injection_generation
-                    && record.state == NetworkFaultInjectionState::Recorded
-            }) else {
+            let Some(injection_record) =
+                self.domains.network.network_fault_injections.iter().find(|record| {
+                    record.id == fault_injection
+                        && record.generation == fault_injection_generation
+                        && record.state == NetworkFaultInjectionState::Recorded
+                })
+            else {
                 return Err("network recovery benchmark fault injection generation is missing");
             };
             if injection_record.adapter != cleanup_record.adapter
@@ -145,6 +155,8 @@ impl SemanticGraph {
         }
 
         let Some(cleanup_record) = self
+            .domains
+            .network
             .network_driver_cleanups
             .iter()
             .find(|record| record.id == cleanup && record.generation == cleanup_generation)
@@ -159,8 +171,11 @@ impl SemanticGraph {
         let driver_store = cleanup_record.driver_store;
         let driver_store_generation = cleanup_record.driver_store_generation;
         let generation = 1;
-        self.next_network_recovery_benchmark_id =
-            self.next_network_recovery_benchmark_id.max(benchmark.saturating_add(1));
+        self.domains.network.next_network_recovery_benchmark_id = self
+            .domains
+            .network
+            .next_network_recovery_benchmark_id
+            .max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkRecoveryBenchmarkRecorded {
@@ -186,7 +201,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_recovery_benchmarks.push(NetworkRecoveryBenchmarkRecord {
+        self.domains.network.network_recovery_benchmarks.push(NetworkRecoveryBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             cleanup,
@@ -217,17 +232,17 @@ impl SemanticGraph {
     }
 
     pub fn network_recovery_benchmarks(&self) -> &[NetworkRecoveryBenchmarkRecord] {
-        &self.network_recovery_benchmarks
+        &self.domains.network.network_recovery_benchmarks
     }
 
     pub fn network_recovery_benchmark_count(&self) -> usize {
-        self.network_recovery_benchmarks.len()
+        self.domains.network.network_recovery_benchmarks.len()
     }
 
     pub fn check_network_recovery_benchmark_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_recovery_benchmarks {
+        for record in &self.domains.network.network_recovery_benchmarks {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()
@@ -251,11 +266,13 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(cleanup) = self.network_driver_cleanups.iter().find(|cleanup| {
-                cleanup.id == record.cleanup
-                    && cleanup.generation == record.cleanup_generation
-                    && cleanup.state == NetworkDriverCleanupState::Completed
-            }) else {
+            let Some(cleanup) =
+                self.domains.network.network_driver_cleanups.iter().find(|cleanup| {
+                    cleanup.id == record.cleanup
+                        && cleanup.generation == record.cleanup_generation
+                        && cleanup.state == NetworkDriverCleanupState::Completed
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
                     benchmark: record.id,
                     target: ContractObjectRef::new(
@@ -295,11 +312,13 @@ impl SemanticGraph {
             if let (Some(fault_injection), Some(fault_injection_generation)) =
                 (record.fault_injection, record.fault_injection_generation)
             {
-                let Some(injection) = self.network_fault_injections.iter().find(|injection| {
-                    injection.id == fault_injection
-                        && injection.generation == fault_injection_generation
-                        && injection.state == NetworkFaultInjectionState::Recorded
-                }) else {
+                let Some(injection) =
+                    self.domains.network.network_fault_injections.iter().find(|injection| {
+                        injection.id == fault_injection
+                            && injection.generation == fault_injection_generation
+                            && injection.state == NetworkFaultInjectionState::Recorded
+                    })
+                else {
                     return Err(SemanticInvariantError::NetworkRecoveryBenchmarkMissingTarget {
                         benchmark: record.id,
                         target: ContractObjectRef::new(
@@ -383,8 +402,12 @@ impl SemanticGraph {
         benchmark: NetworkRecoveryBenchmarkId,
         cleanup_generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_recovery_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_recovery_benchmarks
+            .iter_mut()
+            .find(|record| record.id == benchmark)
         {
             record.cleanup_generation = cleanup_generation;
         }

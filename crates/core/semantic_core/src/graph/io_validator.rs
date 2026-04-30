@@ -38,9 +38,9 @@ impl SemanticGraph {
                 report,
                 ok: violations.is_empty(),
                 violation_count: violations.len(),
-                device_count: self.device_objects.len(),
-                dma_buffer_count: self.dma_buffer_objects.len(),
-                irq_event_count: self.irq_events.len(),
+                device_count: self.domains.device.device_objects.len(),
+                dma_buffer_count: self.domains.device.dma_buffer_objects.len(),
+                irq_event_count: self.domains.device.irq_events.len(),
                 cleanup_count: self.domains.io.io_cleanups.len(),
                 fault_injection_count: self.domains.io.io_fault_injections.len(),
                 generation,
@@ -52,15 +52,15 @@ impl SemanticGraph {
             state,
             validated_at_event,
             event_log_cursor,
-            observed_device_count: self.device_objects.len(),
-            observed_queue_count: self.queue_objects.len(),
-            observed_descriptor_count: self.descriptor_objects.len(),
-            observed_dma_buffer_count: self.dma_buffer_objects.len(),
-            observed_mmio_region_count: self.mmio_region_objects.len(),
-            observed_irq_line_count: self.irq_line_objects.len(),
-            observed_irq_event_count: self.irq_events.len(),
-            observed_device_capability_count: self.device_capabilities.len(),
-            observed_driver_binding_count: self.driver_store_bindings.len(),
+            observed_device_count: self.domains.device.device_objects.len(),
+            observed_queue_count: self.domains.device.queue_objects.len(),
+            observed_descriptor_count: self.domains.device.descriptor_objects.len(),
+            observed_dma_buffer_count: self.domains.device.dma_buffer_objects.len(),
+            observed_mmio_region_count: self.domains.device.mmio_region_objects.len(),
+            observed_irq_line_count: self.domains.device.irq_line_objects.len(),
+            observed_irq_event_count: self.domains.device.irq_events.len(),
+            observed_device_capability_count: self.domains.device.device_capabilities.len(),
+            observed_driver_binding_count: self.domains.device.driver_store_bindings.len(),
             observed_io_wait_count: self.domains.io.io_waits.len(),
             observed_io_cleanup_count: self.domains.io.io_cleanups.len(),
             observed_io_fault_injection_count: self.domains.io.io_fault_injections.len(),
@@ -111,7 +111,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_devices(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for device in &self.device_objects {
+        for device in &self.domains.device.device_objects {
             if device.id == 0 || device.generation == 0 || device.name.is_empty() {
                 Self::push_io_validation_violation(
                     violations,
@@ -134,7 +134,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_queues(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for queue in &self.queue_objects {
+        for queue in &self.domains.device.queue_objects {
             if !self.device_exists(queue.device, queue.device_generation) {
                 Self::push_io_validation_violation(
                     violations,
@@ -148,7 +148,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_descriptors(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for descriptor in &self.descriptor_objects {
+        for descriptor in &self.domains.device.descriptor_objects {
             if !self.queue_exists(descriptor.queue, descriptor.queue_generation) {
                 Self::push_io_validation_violation(
                     violations,
@@ -171,7 +171,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_dma_buffers(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for dma in &self.dma_buffer_objects {
+        for dma in &self.domains.device.dma_buffer_objects {
             if !self.descriptor_exists(dma.descriptor, dma.descriptor_generation) {
                 Self::push_io_validation_violation(
                     violations,
@@ -205,7 +205,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_mmio_regions(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for mmio in &self.mmio_region_objects {
+        for mmio in &self.domains.device.mmio_region_objects {
             if !self.device_exists(mmio.device, mmio.device_generation) {
                 Self::push_io_validation_violation(
                     violations,
@@ -228,7 +228,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_irq_lines(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for irq in &self.irq_line_objects {
+        for irq in &self.domains.device.irq_line_objects {
             if !self.device_exists(irq.device, irq.device_generation) {
                 Self::push_io_validation_violation(
                     violations,
@@ -251,9 +251,9 @@ impl SemanticGraph {
     }
 
     fn validate_io_irq_events(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for irq_event in &self.irq_events {
+        for irq_event in &self.domains.device.irq_events {
             let subject = irq_event.object_ref();
-            let Some(irq_line) = self.irq_line_objects.iter().find(|record| {
+            let Some(irq_line) = self.domains.device.irq_line_objects.iter().find(|record| {
                 record.id == irq_event.irq_line
                     && record.generation == irq_event.irq_line_generation
             }) else {
@@ -291,7 +291,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_device_capabilities(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for device_capability in &self.device_capabilities {
+        for device_capability in &self.domains.device.device_capabilities {
             let subject = device_capability.object_ref();
             if !self.store_exists(
                 device_capability.driver_store,
@@ -352,7 +352,7 @@ impl SemanticGraph {
     }
 
     fn validate_io_driver_bindings(&self, violations: &mut Vec<IoValidationViolationRecord>) {
-        for binding in &self.driver_store_bindings {
+        for binding in &self.domains.device.driver_store_bindings {
             let subject = binding.object_ref();
             if !self.store_exists(binding.driver_store, binding.driver_store_generation) {
                 Self::push_io_validation_violation(
@@ -372,10 +372,12 @@ impl SemanticGraph {
                     "driver binding device generation is missing",
                 );
             }
-            let Some(device_capability) = self.device_capabilities.iter().find(|record| {
-                record.id == binding.device_capability
-                    && record.generation == binding.device_capability_generation
-            }) else {
+            let Some(device_capability) =
+                self.domains.device.device_capabilities.iter().find(|record| {
+                    record.id == binding.device_capability
+                        && record.generation == binding.device_capability_generation
+                })
+            else {
                 Self::push_io_validation_violation(
                     violations,
                     IoValidationViolationCode::MissingCapability,
@@ -566,19 +568,25 @@ impl SemanticGraph {
     }
 
     fn device_exists(&self, device: DeviceObjectId, generation: Generation) -> bool {
-        self.device_objects
+        self.domains
+            .device
+            .device_objects
             .iter()
             .any(|record| record.id == device && record.generation == generation)
     }
 
     fn queue_exists(&self, queue: QueueObjectId, generation: Generation) -> bool {
-        self.queue_objects
+        self.domains
+            .device
+            .queue_objects
             .iter()
             .any(|record| record.id == queue && record.generation == generation)
     }
 
     fn descriptor_exists(&self, descriptor: DescriptorObjectId, generation: Generation) -> bool {
-        self.descriptor_objects
+        self.domains
+            .device
+            .descriptor_objects
             .iter()
             .any(|record| record.id == descriptor && record.generation == generation)
     }
@@ -592,7 +600,9 @@ impl SemanticGraph {
     }
 
     fn driver_binding_exists(&self, binding: DriverStoreBindingId, generation: Generation) -> bool {
-        self.driver_store_bindings
+        self.domains
+            .device
+            .driver_store_bindings
             .iter()
             .any(|record| record.id == binding && record.generation == generation)
     }
@@ -613,22 +623,32 @@ impl SemanticGraph {
                 self.descriptor_exists(object.id, object.generation)
             }
             ContractObjectKind::DmaBufferObject => self
+                .domains
+                .device
                 .dma_buffer_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::MmioRegionObject => self
+                .domains
+                .device
                 .mmio_region_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::IrqLineObject => self
+                .domains
+                .device
                 .irq_line_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::IrqEvent => self
+                .domains
+                .device
                 .irq_events
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::DeviceCapability => self
+                .domains
+                .device
                 .device_capabilities
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
@@ -660,178 +680,266 @@ impl SemanticGraph {
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::PacketDeviceObject => self
+                .domains
+                .network
                 .packet_device_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::PacketBufferObject => self
+                .domains
+                .network
                 .packet_buffer_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::PacketQueueObject => self
+                .domains
+                .network
                 .packet_queue_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::PacketDescriptorObject => self
+                .domains
+                .network
                 .packet_descriptors
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FakeNetBackendObject => self
+                .domains
+                .network
                 .fake_net_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FakeBlockBackendObject => self
+                .domains
+                .block
                 .fake_block_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::VirtioBlkBackendObject => self
+                .domains
+                .block
                 .virtio_blk_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::VirtioNetBackendObject => self
+                .domains
+                .network
                 .virtio_net_backends
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkRxInterrupt => self
+                .domains
+                .network
                 .network_rx_interrupts
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkRxWaitResolution => self
+                .domains
+                .network
                 .network_rx_wait_resolutions
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkTxCapabilityGate => self
+                .domains
+                .network
                 .network_tx_capability_gates
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkTxCompletion => self
+                .domains
+                .network
                 .network_tx_completions
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkStackAdapter => self
+                .domains
+                .network
                 .network_stack_adapters
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::SocketObject => self
+                .domains
+                .network
                 .socket_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::EndpointObject => self
+                .domains
+                .network
                 .endpoint_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::SocketOperation => self
+                .domains
+                .network
                 .socket_operations
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::SocketWait => self
+                .domains
+                .network
                 .socket_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkBackpressure => self
+                .domains
+                .network
                 .network_backpressures
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkDriverCleanup => self
+                .domains
+                .network
                 .network_driver_cleanups
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkGenerationAudit => self
+                .domains
+                .network
                 .network_generation_audits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkFaultInjection => self
+                .domains
+                .network
                 .network_fault_injections
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkBenchmark => self
+                .domains
+                .network
                 .network_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::NetworkRecoveryBenchmark => self
+                .domains
+                .network
                 .network_recovery_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockDeviceObject => self
+                .domains
+                .block
                 .block_device_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockRangeObject => self
+                .domains
+                .block
                 .block_range_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockRequestObject => self
+                .domains
+                .block
                 .block_request_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockCompletionObject => self
+                .domains
+                .block
                 .block_completion_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockWait => self
+                .domains
+                .block
                 .block_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockReadPath => self
+                .domains
+                .block
                 .block_read_paths
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockWritePath => self
+                .domains
+                .block
                 .block_write_paths
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockRequestQueue => self
+                .domains
+                .block
                 .block_request_queues
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockDmaBuffer => self
+                .domains
+                .block
                 .block_dma_buffers
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockPageObject => self
+                .domains
+                .block
                 .block_page_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BufferCacheObject => self
+                .domains
+                .block
                 .buffer_cache_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FileObject => self
+                .domains
+                .block
                 .file_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::DirectoryObject => self
+                .domains
+                .block
                 .directory_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FatAdapterObject => self
+                .domains
+                .block
                 .fat_adapter_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::Ext4AdapterObject => self
+                .domains
+                .block
                 .ext4_adapter_objects
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FileHandleCapability => self
+                .domains
+                .block
                 .file_handle_capabilities
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::FsWait => self
+                .domains
+                .block
                 .fs_waits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockDriverCleanup => self
+                .domains
+                .block
                 .block_driver_cleanups
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockRequestGenerationAudit => self
+                .domains
+                .block
                 .block_request_generation_audits
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockBenchmark => self
+                .domains
+                .block
                 .block_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
             ContractObjectKind::BlockRecoveryBenchmark => self
+                .domains
+                .block
                 .block_recovery_benchmarks
                 .iter()
                 .any(|record| record.id == object.id && record.generation == object.generation),
@@ -861,10 +969,10 @@ impl SemanticGraph {
         &self,
         dma: &DmaBufferObjectRecord,
     ) -> Option<(DeviceObjectId, Generation)> {
-        let descriptor = self.descriptor_objects.iter().find(|descriptor| {
+        let descriptor = self.domains.device.descriptor_objects.iter().find(|descriptor| {
             descriptor.id == dma.descriptor && descriptor.generation == dma.descriptor_generation
         })?;
-        let queue = self.queue_objects.iter().find(|queue| {
+        let queue = self.domains.device.queue_objects.iter().find(|queue| {
             queue.id == descriptor.queue && queue.generation == descriptor.queue_generation
         })?;
         Some((queue.device, queue.device_generation))
@@ -877,21 +985,29 @@ impl SemanticGraph {
         match target.kind {
             ContractObjectKind::DeviceObject => Some((target.id, target.generation)),
             ContractObjectKind::DmaBufferObject => self
+                .domains
+                .device
                 .dma_buffer_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .and_then(|record| self.device_for_dma_buffer(record)),
             ContractObjectKind::MmioRegionObject => self
+                .domains
+                .device
                 .mmio_region_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(|record| (record.device, record.device_generation)),
             ContractObjectKind::IrqLineObject => self
+                .domains
+                .device
                 .irq_line_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
                 .map(|record| (record.device, record.device_generation)),
             ContractObjectKind::PacketDeviceObject => self
+                .domains
+                .network
                 .packet_device_objects
                 .iter()
                 .find(|record| record.id == target.id && record.generation == target.generation)
@@ -906,7 +1022,7 @@ impl SemanticGraph {
         else {
             return false;
         };
-        self.driver_store_bindings.iter().any(|binding| {
+        self.domains.device.driver_store_bindings.iter().any(|binding| {
             binding.driver_store == capability.driver_store
                 && binding.driver_store_generation == capability.driver_store_generation
                 && binding.device == device
@@ -944,7 +1060,7 @@ impl SemanticGraph {
                 && record.driver_binding == cleanup.driver_binding
                 && record.driver_binding_generation == cleanup.driver_binding_generation
                 && record.state == IoWaitState::Pending
-        }) || self.device_capabilities.iter().any(|record| {
+        }) || self.domains.device.device_capabilities.iter().any(|record| {
             record.driver_store == cleanup.driver_store
                 && record.driver_store_generation == cleanup.driver_store_generation
                 && record.state == DeviceCapabilityState::Active
@@ -953,11 +1069,11 @@ impl SemanticGraph {
                     cleanup.device,
                     cleanup.device_generation,
                 )
-        }) || self.driver_store_bindings.iter().any(|record| {
+        }) || self.domains.device.driver_store_bindings.iter().any(|record| {
             record.id == cleanup.driver_binding
                 && record.generation == cleanup.driver_binding_generation
                 && record.state == DriverStoreBindingState::Bound
-        }) || self.dma_buffer_objects.iter().any(|record| {
+        }) || self.domains.device.dma_buffer_objects.iter().any(|record| {
             record.state == DmaBufferObjectState::Registered
                 && self.io_cleanup_dma_buffer_belongs_to_device(
                     record.id,
@@ -965,11 +1081,11 @@ impl SemanticGraph {
                     cleanup.device,
                     cleanup.device_generation,
                 )
-        }) || self.mmio_region_objects.iter().any(|record| {
+        }) || self.domains.device.mmio_region_objects.iter().any(|record| {
             record.device == cleanup.device
                 && record.device_generation == cleanup.device_generation
                 && record.state == MmioRegionObjectState::Registered
-        }) || self.irq_line_objects.iter().any(|record| {
+        }) || self.domains.device.irq_line_objects.iter().any(|record| {
             record.device == cleanup.device
                 && record.device_generation == cleanup.device_generation
                 && record.state == IrqLineObjectState::Registered

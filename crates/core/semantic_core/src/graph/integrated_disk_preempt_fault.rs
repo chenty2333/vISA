@@ -56,7 +56,7 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault timer attribution mismatch");
         }
 
-        let Some(policy) = self.block_pending_io_policies.iter().find(|record| {
+        let Some(policy) = self.domains.block.block_pending_io_policies.iter().find(|record| {
             record.id == block_pending_io_policy
                 && record.generation == block_pending_io_policy_generation
         }) else {
@@ -69,7 +69,7 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault requires device-fault retry or EIO policy");
         }
 
-        let Some(block_wait) = self.block_waits.iter().find(|record| {
+        let Some(block_wait) = self.domains.block.block_waits.iter().find(|record| {
             record.id == policy.block_wait && record.generation == policy.block_wait_generation
         }) else {
             return Err("integrated disk/preempt fault missing block wait evidence");
@@ -109,18 +109,18 @@ impl SemanticGraph {
             return Err("integrated disk/preempt fault wait token attribution mismatch");
         }
 
-        let Some(request) = self.block_request_objects.iter().find(|record| {
+        let Some(request) = self.domains.block.block_request_objects.iter().find(|record| {
             record.id == policy.block_request
                 && record.generation == policy.block_request_generation
         }) else {
             return Err("integrated disk/preempt fault missing block request evidence");
         };
-        let Some(block_device) = self.block_device_objects.iter().find(|record| {
+        let Some(block_device) = self.domains.block.block_device_objects.iter().find(|record| {
             record.id == policy.block_device && record.generation == policy.block_device_generation
         }) else {
             return Err("integrated disk/preempt fault missing block device evidence");
         };
-        let Some(block_range) = self.block_range_objects.iter().find(|record| {
+        let Some(block_range) = self.domains.block.block_range_objects.iter().find(|record| {
             record.id == policy.block_range && record.generation == policy.block_range_generation
         }) else {
             return Err("integrated disk/preempt fault missing block range evidence");
@@ -131,7 +131,7 @@ impl SemanticGraph {
             || request.block_range_generation != block_range.generation
             || block_range.block_device != block_device.id
             || block_range.block_device_generation != block_device.generation
-            || self.block_waits.iter().any(|record| {
+            || self.domains.block.block_waits.iter().any(|record| {
                 record.block_request == policy.block_request
                     && record.block_request_generation == policy.block_request_generation
                     && record.state == BlockWaitState::Pending
@@ -177,7 +177,7 @@ impl SemanticGraph {
         else {
             return false;
         };
-        let Some(policy) = self.block_pending_io_policies.iter().find(|record| {
+        let Some(policy) = self.domains.block.block_pending_io_policies.iter().find(|record| {
             record.id == block_pending_io_policy
                 && record.generation == block_pending_io_policy_generation
         }) else {
@@ -337,7 +337,9 @@ impl SemanticGraph {
                     "block-pending-io-policy",
                     record.block_pending_io_policy,
                     record.block_pending_io_policy_generation,
-                    self.block_pending_io_policies
+                    self.domains
+                        .block
+                        .block_pending_io_policies
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -346,7 +348,9 @@ impl SemanticGraph {
                     "block-wait",
                     record.block_wait,
                     record.block_wait_generation,
-                    self.block_waits
+                    self.domains
+                        .block
+                        .block_waits
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

@@ -13,7 +13,7 @@ impl SemanticGraph {
         if descriptor == 0 {
             return Err("descriptor object id=0 is invalid");
         }
-        if self.descriptor_objects.iter().any(|record| record.id == descriptor) {
+        if self.domains.device.descriptor_objects.iter().any(|record| record.id == descriptor) {
             return Err("descriptor object already exists");
         }
         if length == 0 {
@@ -22,7 +22,7 @@ impl SemanticGraph {
         if !Self::descriptor_access_is_supported(access) {
             return Err("descriptor object access is unsupported");
         }
-        let Some(queue_record) = self.queue_objects.iter().find(|record| {
+        let Some(queue_record) = self.domains.device.queue_objects.iter().find(|record| {
             record.id == queue
                 && record.generation == queue_generation
                 && record.state == QueueObjectState::Registered
@@ -32,7 +32,7 @@ impl SemanticGraph {
         if u32::from(slot) >= queue_record.depth {
             return Err("descriptor object slot is outside queue depth");
         }
-        if self.descriptor_objects.iter().any(|record| {
+        if self.domains.device.descriptor_objects.iter().any(|record| {
             record.queue == queue_record.id
                 && record.queue_generation == queue_generation
                 && record.slot == slot
@@ -63,7 +63,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_descriptor_object_id = self.next_descriptor_object_id.max(descriptor + 1);
+        self.domains.device.next_descriptor_object_id =
+            self.domains.device.next_descriptor_object_id.max(descriptor + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::DescriptorObjectRecorded {
@@ -76,7 +77,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.descriptor_objects.push(DescriptorObjectRecord {
+        self.domains.device.descriptor_objects.push(DescriptorObjectRecord {
             id: descriptor,
             queue,
             queue_generation,
@@ -92,16 +93,16 @@ impl SemanticGraph {
     }
 
     pub fn descriptor_objects(&self) -> &[DescriptorObjectRecord] {
-        &self.descriptor_objects
+        &self.domains.device.descriptor_objects
     }
 
     pub fn descriptor_object_count(&self) -> usize {
-        self.descriptor_objects.len()
+        self.domains.device.descriptor_objects.len()
     }
 
     pub fn check_descriptor_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.descriptor_objects {
-            let Some(queue_record) = self.queue_objects.iter().find(|queue| {
+        for record in &self.domains.device.descriptor_objects {
+            let Some(queue_record) = self.domains.device.queue_objects.iter().find(|queue| {
                 queue.id == record.queue && queue.generation == record.queue_generation
             }) else {
                 return Err(SemanticInvariantError::DescriptorObjectMissingQueue {
@@ -122,7 +123,7 @@ impl SemanticGraph {
                     descriptor: record.id,
                 });
             }
-            if let Some(duplicate) = self.descriptor_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.descriptor_objects.iter().find(|other| {
                 other.id != record.id
                     && other.queue == record.queue
                     && other.queue_generation == record.queue_generation
@@ -180,7 +181,7 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(record) =
-            self.descriptor_objects.iter_mut().find(|record| record.id == descriptor)
+            self.domains.device.descriptor_objects.iter_mut().find(|record| record.id == descriptor)
         {
             record.queue_generation = generation;
         }

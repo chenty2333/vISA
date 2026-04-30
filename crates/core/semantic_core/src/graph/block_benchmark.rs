@@ -35,7 +35,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("block benchmark id cannot advance generation cursor");
         }
-        if self.block_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.block.block_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("block benchmark already exists");
         }
         if scenario.is_empty() {
@@ -86,7 +86,7 @@ impl SemanticGraph {
             return Err("block benchmark metric overflow");
         }
 
-        let Some(backend_record) = self.fake_block_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.block.fake_block_backends.iter().find(|record| {
             record.id == backend.id
                 && record.generation == backend.generation
                 && record.state == FakeBlockBackendObjectState::Bound
@@ -99,18 +99,22 @@ impl SemanticGraph {
             return Err("block benchmark backend does not match block device");
         }
 
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block benchmark block device generation is missing or inactive");
         };
-        let Some(block_range_record) = self.block_range_objects.iter().find(|record| {
-            record.id == block_range
-                && record.generation == block_range_generation
-                && record.state == BlockRangeObjectState::Registered
-        }) else {
+        let Some(block_range_record) =
+            self.domains.block.block_range_objects.iter().find(|record| {
+                record.id == block_range
+                    && record.generation == block_range_generation
+                    && record.state == BlockRangeObjectState::Registered
+            })
+        else {
             return Err("block benchmark block range generation is missing or inactive");
         };
         if block_range_record.block_device != block_device_record.id
@@ -119,14 +123,14 @@ impl SemanticGraph {
             return Err("block benchmark range does not match block device");
         }
 
-        let Some(read_record) = self.block_read_paths.iter().find(|record| {
+        let Some(read_record) = self.domains.block.block_read_paths.iter().find(|record| {
             record.id == read_path
                 && record.generation == read_path_generation
                 && record.state == BlockReadPathState::Completed
         }) else {
             return Err("block benchmark read path generation is missing or inactive");
         };
-        let Some(write_record) = self.block_write_paths.iter().find(|record| {
+        let Some(write_record) = self.domains.block.block_write_paths.iter().find(|record| {
             record.id == write_path
                 && record.generation == write_path_generation
                 && record.state == BlockWritePathState::Completed
@@ -155,7 +159,7 @@ impl SemanticGraph {
             return Err("block benchmark byte accounting is not closed");
         }
 
-        let Some(queue_record) = self.block_request_queues.iter().find(|record| {
+        let Some(queue_record) = self.domains.block.block_request_queues.iter().find(|record| {
             record.id == request_queue
                 && record.generation == request_queue_generation
                 && record.state == BlockRequestQueueState::Active
@@ -188,7 +192,7 @@ impl SemanticGraph {
             return Err("block benchmark queue is missing read/write completions");
         }
 
-        let Some(dma_record) = self.block_dma_buffers.iter().find(|record| {
+        let Some(dma_record) = self.domains.block.block_dma_buffers.iter().find(|record| {
             record.id == block_dma_buffer
                 && record.generation == block_dma_buffer_generation
                 && record.state == BlockDmaBufferState::Bound
@@ -282,8 +286,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_benchmark_id =
-            self.next_block_benchmark_id.max(benchmark.saturating_add(1));
+        self.domains.block.next_block_benchmark_id =
+            self.domains.block.next_block_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockBenchmarkRecorded {
@@ -315,7 +319,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_benchmarks.push(BlockBenchmarkRecord {
+        self.domains.block.block_benchmarks.push(BlockBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             backend,
@@ -351,11 +355,11 @@ impl SemanticGraph {
     }
 
     pub fn block_benchmarks(&self) -> &[BlockBenchmarkRecord] {
-        &self.block_benchmarks
+        &self.domains.block.block_benchmarks
     }
 
     pub fn block_benchmark_count(&self) -> usize {
-        self.block_benchmarks.len()
+        self.domains.block.block_benchmarks.len()
     }
 
     pub fn derive_block_iops(sample_requests: u32, measured_nanos: u64) -> Option<u64> {
@@ -370,7 +374,7 @@ impl SemanticGraph {
     }
 
     pub fn check_block_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for benchmark in &self.block_benchmarks {
+        for benchmark in &self.domains.block.block_benchmarks {
             let expected_iops =
                 Self::derive_block_iops(benchmark.sample_requests, benchmark.measured_nanos);
             let expected_throughput = Self::derive_block_throughput_bytes_per_sec(
@@ -412,7 +416,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(backend) = self.fake_block_backends.iter().find(|record| {
+            let Some(backend) = self.domains.block.fake_block_backends.iter().find(|record| {
                 benchmark.backend.kind == ContractObjectKind::FakeBlockBackendObject
                     && record.id == benchmark.backend.id
                     && record.generation == benchmark.backend.generation
@@ -422,10 +426,12 @@ impl SemanticGraph {
                     target: benchmark.backend,
                 });
             };
-            let Some(block_device) = self.block_device_objects.iter().find(|record| {
-                record.id == benchmark.block_device
-                    && record.generation == benchmark.block_device_generation
-            }) else {
+            let Some(block_device) =
+                self.domains.block.block_device_objects.iter().find(|record| {
+                    record.id == benchmark.block_device
+                        && record.generation == benchmark.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockBenchmarkMissingTarget {
                     benchmark: benchmark.id,
                     target: ContractObjectRef::new(
@@ -435,7 +441,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(block_range) = self.block_range_objects.iter().find(|record| {
+            let Some(block_range) = self.domains.block.block_range_objects.iter().find(|record| {
                 record.id == benchmark.block_range
                     && record.generation == benchmark.block_range_generation
             }) else {
@@ -461,7 +467,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(read_path) = self.block_read_paths.iter().find(|record| {
+            let Some(read_path) = self.domains.block.block_read_paths.iter().find(|record| {
                 record.id == benchmark.read_path
                     && record.generation == benchmark.read_path_generation
             }) else {
@@ -474,7 +480,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(write_path) = self.block_write_paths.iter().find(|record| {
+            let Some(write_path) = self.domains.block.block_write_paths.iter().find(|record| {
                 record.id == benchmark.write_path
                     && record.generation == benchmark.write_path_generation
             }) else {
@@ -510,7 +516,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(queue) = self.block_request_queues.iter().find(|record| {
+            let Some(queue) = self.domains.block.block_request_queues.iter().find(|record| {
                 record.id == benchmark.request_queue
                     && record.generation == benchmark.request_queue_generation
             }) else {
@@ -551,7 +557,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(dma) = self.block_dma_buffers.iter().find(|record| {
+            let Some(dma) = self.domains.block.block_dma_buffers.iter().find(|record| {
                 record.id == benchmark.block_dma_buffer
                     && record.generation == benchmark.block_dma_buffer_generation
             }) else {
@@ -653,7 +659,8 @@ impl SemanticGraph {
         benchmark: BlockBenchmarkId,
         iops: u64,
     ) {
-        if let Some(record) = self.block_benchmarks.iter_mut().find(|record| record.id == benchmark)
+        if let Some(record) =
+            self.domains.block.block_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.iops = iops;
         }

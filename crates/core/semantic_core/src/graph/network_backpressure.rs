@@ -24,7 +24,8 @@ impl SemanticGraph {
         if backpressure == 0 {
             return Err("network backpressure id=0 is invalid");
         }
-        if self.network_backpressures.iter().any(|record| record.id == backpressure) {
+        if self.domains.network.network_backpressures.iter().any(|record| record.id == backpressure)
+        {
             return Err("network backpressure already exists");
         }
         if sequence == 0 {
@@ -60,11 +61,13 @@ impl SemanticGraph {
         if reason == NetworkBackpressureReason::OversizePacket && !drop_action {
             return Err("network backpressure oversize packet must drop a packet");
         }
-        let Some(adapter_record) = self.network_stack_adapters.iter().find(|record| {
-            record.id == adapter
-                && record.generation == adapter_generation
-                && record.state == NetworkStackAdapterState::Bound
-        }) else {
+        let Some(adapter_record) =
+            self.domains.network.network_stack_adapters.iter().find(|record| {
+                record.id == adapter
+                    && record.generation == adapter_generation
+                    && record.state == NetworkStackAdapterState::Bound
+            })
+        else {
             return Err("network backpressure adapter generation is missing or inactive");
         };
         if adapter_record.packet_device != packet_device
@@ -72,18 +75,22 @@ impl SemanticGraph {
         {
             return Err("network backpressure packet device does not match adapter");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("network backpressure packet device generation is missing or inactive");
         };
-        let Some(packet_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == packet_queue
-                && record.generation == packet_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(packet_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == packet_queue
+                    && record.generation == packet_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network backpressure packet queue generation is missing or inactive");
         };
         let (expected_queue, expected_queue_generation, expected_role, expected_depth) =
@@ -112,11 +119,13 @@ impl SemanticGraph {
             return Err("network backpressure queue does not match adapter direction contract");
         }
         if let (Some(endpoint), Some(endpoint_generation)) = (endpoint, endpoint_generation) {
-            let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
-                record.id == endpoint
-                    && record.generation == endpoint_generation
-                    && record.state == EndpointObjectState::Allocated
-            }) else {
+            let Some(endpoint_record) =
+                self.domains.network.endpoint_objects.iter().find(|record| {
+                    record.id == endpoint
+                        && record.generation == endpoint_generation
+                        && record.state == EndpointObjectState::Allocated
+                })
+            else {
                 return Err("network backpressure endpoint generation is missing or inactive");
             };
             if endpoint_record.adapter != adapter_record.id
@@ -124,7 +133,7 @@ impl SemanticGraph {
             {
                 return Err("network backpressure endpoint adapter does not match");
             }
-            if !self.socket_objects.iter().any(|record| {
+            if !self.domains.network.socket_objects.iter().any(|record| {
                 record.id == endpoint_record.socket
                     && record.generation == endpoint_record.socket_generation
                     && record.state == SocketObjectState::Created
@@ -141,7 +150,7 @@ impl SemanticGraph {
                 return Err("network backpressure owner store is dead");
             }
         }
-        if self.network_backpressures.iter().any(|record| {
+        if self.domains.network.network_backpressures.iter().any(|record| {
             record.packet_queue == packet_queue
                 && record.packet_queue_generation == packet_queue_generation
                 && record.direction == direction
@@ -204,9 +213,11 @@ impl SemanticGraph {
 
         let (socket, socket_generation, owner_store, owner_store_generation) =
             if let (Some(endpoint), Some(endpoint_generation)) = (endpoint, endpoint_generation) {
-                let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
-                    record.id == endpoint && record.generation == endpoint_generation
-                }) else {
+                let Some(endpoint_record) =
+                    self.domains.network.endpoint_objects.iter().find(|record| {
+                        record.id == endpoint && record.generation == endpoint_generation
+                    })
+                else {
                     return false;
                 };
                 (
@@ -220,7 +231,8 @@ impl SemanticGraph {
             };
 
         let generation = 1;
-        self.next_network_backpressure_id = self.next_network_backpressure_id.max(backpressure + 1);
+        self.domains.network.next_network_backpressure_id =
+            self.domains.network.next_network_backpressure_id.max(backpressure + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkBackpressureRecorded {
@@ -248,7 +260,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_backpressures.push(NetworkBackpressureRecord {
+        self.domains.network.network_backpressures.push(NetworkBackpressureRecord {
             id: backpressure,
             adapter,
             adapter_generation,
@@ -279,15 +291,15 @@ impl SemanticGraph {
     }
 
     pub fn network_backpressures(&self) -> &[NetworkBackpressureRecord] {
-        &self.network_backpressures
+        &self.domains.network.network_backpressures
     }
 
     pub fn network_backpressure_count(&self) -> usize {
-        self.network_backpressures.len()
+        self.domains.network.network_backpressures.len()
     }
 
     pub fn check_network_backpressure_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_backpressures {
+        for record in &self.domains.network.network_backpressures {
             if record.id == 0
                 || record.generation == 0
                 || record.adapter_generation == 0
@@ -302,16 +314,18 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(adapter_record) = self.network_stack_adapters.iter().find(|adapter| {
-                adapter.id == record.adapter && adapter.generation == record.adapter_generation
-            }) else {
+            let Some(adapter_record) =
+                self.domains.network.network_stack_adapters.iter().find(|adapter| {
+                    adapter.id == record.adapter && adapter.generation == record.adapter_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBackpressureMissingAdapter {
                     backpressure: record.id,
                     adapter: record.adapter,
                 });
             };
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -321,10 +335,12 @@ impl SemanticGraph {
                     packet_device: record.packet_device,
                 });
             };
-            let Some(packet_queue_record) = self.packet_queue_objects.iter().find(|queue| {
-                queue.id == record.packet_queue
-                    && queue.generation == record.packet_queue_generation
-            }) else {
+            let Some(packet_queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|queue| {
+                    queue.id == record.packet_queue
+                        && queue.generation == record.packet_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBackpressureMissingQueue {
                     backpressure: record.id,
                     packet_queue: record.packet_queue,
@@ -366,9 +382,11 @@ impl SemanticGraph {
             if let (Some(endpoint), Some(endpoint_generation)) =
                 (record.endpoint, record.endpoint_generation)
             {
-                let Some(endpoint_record) = self.endpoint_objects.iter().find(|candidate| {
-                    candidate.id == endpoint && candidate.generation == endpoint_generation
-                }) else {
+                let Some(endpoint_record) =
+                    self.domains.network.endpoint_objects.iter().find(|candidate| {
+                        candidate.id == endpoint && candidate.generation == endpoint_generation
+                    })
+                else {
                     return Err(SemanticInvariantError::NetworkBackpressureMissingEndpoint {
                         backpressure: record.id,
                         endpoint,
@@ -386,7 +404,7 @@ impl SemanticGraph {
                         backpressure: record.id,
                     });
                 }
-                if !self.socket_objects.iter().any(|socket| {
+                if !self.domains.network.socket_objects.iter().any(|socket| {
                     socket.id == endpoint_record.socket
                         && socket.generation == endpoint_record.socket_generation
                         && socket.state == SocketObjectState::Created
@@ -442,15 +460,17 @@ impl SemanticGraph {
                 });
             }
 
-            if let Some(duplicate) = self.network_backpressures.iter().find(|other| {
-                other.id != record.id
-                    && other.packet_queue == record.packet_queue
-                    && other.packet_queue_generation == record.packet_queue_generation
-                    && other.direction == record.direction
-                    && other.sequence == record.sequence
-                    && other.state == NetworkBackpressureState::Recorded
-                    && record.state == NetworkBackpressureState::Recorded
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_backpressures.iter().find(|other| {
+                    other.id != record.id
+                        && other.packet_queue == record.packet_queue
+                        && other.packet_queue_generation == record.packet_queue_generation
+                        && other.direction == record.direction
+                        && other.sequence == record.sequence
+                        && other.state == NetworkBackpressureState::Recorded
+                        && record.state == NetworkBackpressureState::Recorded
+                })
+            {
                 return Err(SemanticInvariantError::NetworkBackpressureDuplicateSequence {
                     backpressure: duplicate.id,
                     packet_queue: record.packet_queue,
@@ -524,8 +544,12 @@ impl SemanticGraph {
         backpressure: NetworkBackpressureId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_backpressures.iter_mut().find(|record| record.id == backpressure)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_backpressures
+            .iter_mut()
+            .find(|record| record.id == backpressure)
         {
             record.packet_queue_generation = generation;
         }

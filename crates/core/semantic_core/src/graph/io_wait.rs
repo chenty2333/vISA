@@ -47,18 +47,20 @@ impl SemanticGraph {
         if store_record.state == StoreState::Dead || store_record.role != "driver" {
             return Err("io wait driver store is not a live driver store");
         }
-        if !self.device_objects.iter().any(|record| {
+        if !self.domains.device.device_objects.iter().any(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
         }) {
             return Err("io wait device generation is missing or inactive");
         }
-        let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-            record.id == driver_binding
-                && record.generation == driver_binding_generation
-                && record.state == DriverStoreBindingState::Bound
-        }) else {
+        let Some(binding_record) =
+            self.domains.device.driver_store_bindings.iter().find(|record| {
+                record.id == driver_binding
+                    && record.generation == driver_binding_generation
+                    && record.state == DriverStoreBindingState::Bound
+            })
+        else {
             return Err("io wait driver binding generation is missing or inactive");
         };
         if binding_record.driver_store != driver_store
@@ -174,7 +176,7 @@ impl SemanticGraph {
             return false;
         };
         let record = self.domains.io.io_waits[index].clone();
-        let Some(irq_record) = self.irq_events.iter().find(|irq| {
+        let Some(irq_record) = self.domains.device.irq_events.iter().find(|irq| {
             irq.id == irq_event
                 && irq.generation == irq_event_generation
                 && irq.state == IrqEventState::Recorded
@@ -301,7 +303,7 @@ impl SemanticGraph {
                     store: record.driver_store,
                 });
             };
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::IoWaitMissingDevice {
@@ -309,10 +311,12 @@ impl SemanticGraph {
                     device: record.device,
                 });
             };
-            let Some(binding_record) = self.driver_store_bindings.iter().find(|binding| {
-                binding.id == record.driver_binding
-                    && binding.generation == record.driver_binding_generation
-            }) else {
+            let Some(binding_record) =
+                self.domains.device.driver_store_bindings.iter().find(|binding| {
+                    binding.id == record.driver_binding
+                        && binding.generation == record.driver_binding_generation
+                })
+            else {
                 return Err(SemanticInvariantError::IoWaitMissingDriverBinding {
                     io_wait: record.id,
                     binding: record.driver_binding,
@@ -485,65 +489,77 @@ impl SemanticGraph {
         device_generation: Generation,
     ) -> bool {
         match blocker.kind {
-            ContractObjectKind::DeviceObject => self.device_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.id == device
-                    && record.generation == device_generation
-                    && record.state == DeviceObjectState::Registered
-            }),
-            ContractObjectKind::QueueObject => self.queue_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-                    && record.state == QueueObjectState::Registered
-            }),
-            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-                    && record.state == IrqLineObjectState::Registered
-            }),
-            ContractObjectKind::DmaBufferObject => self.dma_buffer_objects.iter().any(|record| {
-                if record.id != blocker.id
-                    || record.generation != blocker.generation
-                    || record.state != DmaBufferObjectState::Registered
-                {
-                    return false;
-                }
-                let Some(descriptor) = self.descriptor_objects.iter().find(|descriptor| {
-                    descriptor.id == record.descriptor
-                        && descriptor.generation == record.descriptor_generation
-                        && descriptor.state == DescriptorObjectState::Registered
-                }) else {
-                    return false;
-                };
-                self.queue_objects.iter().any(|queue| {
-                    queue.id == descriptor.queue
-                        && queue.generation == descriptor.queue_generation
-                        && queue.device == device
-                        && queue.device_generation == device_generation
-                        && queue.state == QueueObjectState::Registered
+            ContractObjectKind::DeviceObject => {
+                self.domains.device.device_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.id == device
+                        && record.generation == device_generation
+                        && record.state == DeviceObjectState::Registered
                 })
-            }),
-            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-                    && record.state == MmioRegionObjectState::Registered
-            }),
+            }
+            ContractObjectKind::QueueObject => {
+                self.domains.device.queue_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                        && record.state == QueueObjectState::Registered
+                })
+            }
+            ContractObjectKind::IrqLineObject => {
+                self.domains.device.irq_line_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                        && record.state == IrqLineObjectState::Registered
+                })
+            }
+            ContractObjectKind::DmaBufferObject => {
+                self.domains.device.dma_buffer_objects.iter().any(|record| {
+                    if record.id != blocker.id
+                        || record.generation != blocker.generation
+                        || record.state != DmaBufferObjectState::Registered
+                    {
+                        return false;
+                    }
+                    let Some(descriptor) =
+                        self.domains.device.descriptor_objects.iter().find(|descriptor| {
+                            descriptor.id == record.descriptor
+                                && descriptor.generation == record.descriptor_generation
+                                && descriptor.state == DescriptorObjectState::Registered
+                        })
+                    else {
+                        return false;
+                    };
+                    self.domains.device.queue_objects.iter().any(|queue| {
+                        queue.id == descriptor.queue
+                            && queue.generation == descriptor.queue_generation
+                            && queue.device == device
+                            && queue.device_generation == device_generation
+                            && queue.state == QueueObjectState::Registered
+                    })
+                })
+            }
+            ContractObjectKind::MmioRegionObject => {
+                self.domains.device.mmio_region_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                        && record.state == MmioRegionObjectState::Registered
+                })
+            }
             ContractObjectKind::PacketQueueObject => {
-                self.packet_queue_objects.iter().any(|record| {
+                self.domains.network.packet_queue_objects.iter().any(|record| {
                     if record.id != blocker.id
                         || record.generation != blocker.generation
                         || record.state != PacketQueueObjectState::Registered
                     {
                         return false;
                     }
-                    self.packet_device_objects.iter().any(|packet_device| {
+                    self.domains.network.packet_device_objects.iter().any(|packet_device| {
                         packet_device.id == record.packet_device
                             && packet_device.generation == record.packet_device_generation
                             && packet_device.device == device
@@ -563,42 +579,50 @@ impl SemanticGraph {
         device_generation: Generation,
     ) -> bool {
         match blocker.kind {
-            ContractObjectKind::DeviceObject => self.device_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.id == device
-                    && record.generation == device_generation
-            }),
-            ContractObjectKind::QueueObject => self.queue_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
-            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
+            ContractObjectKind::DeviceObject => {
+                self.domains.device.device_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.id == device
+                        && record.generation == device_generation
+                })
+            }
+            ContractObjectKind::QueueObject => {
+                self.domains.device.queue_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
+            ContractObjectKind::IrqLineObject => {
+                self.domains.device.irq_line_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
             ContractObjectKind::DmaBufferObject => self.io_cleanup_dma_buffer_belongs_to_device(
                 blocker.id,
                 blocker.generation,
                 device,
                 device_generation,
             ),
-            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
-                record.id == blocker.id
-                    && record.generation == blocker.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
+            ContractObjectKind::MmioRegionObject => {
+                self.domains.device.mmio_region_objects.iter().any(|record| {
+                    record.id == blocker.id
+                        && record.generation == blocker.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
             ContractObjectKind::PacketQueueObject => {
-                self.packet_queue_objects.iter().any(|record| {
+                self.domains.network.packet_queue_objects.iter().any(|record| {
                     if record.id != blocker.id || record.generation != blocker.generation {
                         return false;
                     }
-                    self.packet_device_objects.iter().any(|packet_device| {
+                    self.domains.network.packet_device_objects.iter().any(|packet_device| {
                         packet_device.id == record.packet_device
                             && packet_device.generation == record.packet_device_generation
                             && packet_device.device == device

@@ -13,7 +13,7 @@ impl SemanticGraph {
         if device == 0 {
             return Err("device object id=0 is invalid");
         }
-        if self.device_objects.iter().any(|record| record.id == device) {
+        if self.domains.device.device_objects.iter().any(|record| record.id == device) {
             return Err("device object already exists");
         }
         if name.is_empty() {
@@ -65,7 +65,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_device_object_id = self.next_device_object_id.max(device + 1);
+        self.domains.device.next_device_object_id =
+            self.domains.device.next_device_object_id.max(device + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::DeviceObjectRecorded {
@@ -77,7 +78,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.device_objects.push(DeviceObjectRecord {
+        self.domains.device.device_objects.push(DeviceObjectRecord {
             id: device,
             name: name.to_string(),
             class: class.to_string(),
@@ -96,15 +97,15 @@ impl SemanticGraph {
     }
 
     pub fn device_objects(&self) -> &[DeviceObjectRecord] {
-        &self.device_objects
+        &self.domains.device.device_objects
     }
 
     pub fn device_object_count(&self) -> usize {
-        self.device_objects.len()
+        self.domains.device.device_objects.len()
     }
 
     pub fn check_device_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.device_objects {
+        for record in &self.domains.device.device_objects {
             let Some(resource_record) = self.domains.resource.resources.iter().find(|resource| {
                 resource.id == record.resource && resource.generation == record.resource_generation
             }) else {
@@ -166,7 +167,9 @@ impl SemanticGraph {
         device: DeviceObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self.device_objects.iter_mut().find(|record| record.id == device) {
+        if let Some(record) =
+            self.domains.device.device_objects.iter_mut().find(|record| record.id == device)
+        {
             record.resource_generation = generation;
         }
     }

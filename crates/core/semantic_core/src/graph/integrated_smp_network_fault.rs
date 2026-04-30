@@ -34,7 +34,7 @@ impl SemanticGraph {
             return Err("integrated smp/network fault refs must carry generations");
         }
 
-        let Some(cleanup) = self.network_driver_cleanups.iter().find(|record| {
+        let Some(cleanup) = self.domains.network.network_driver_cleanups.iter().find(|record| {
             record.id == network_driver_cleanup
                 && record.generation == network_driver_cleanup_generation
         }) else {
@@ -98,11 +98,11 @@ impl SemanticGraph {
             return Err("integrated smp/network fault quiescence mismatch");
         }
 
-        if self.socket_waits.iter().any(|record| {
+        if self.domains.network.socket_waits.iter().any(|record| {
             record.adapter == cleanup.adapter
                 && record.adapter_generation == cleanup.adapter_generation
                 && record.state == SocketWaitState::Pending
-        }) || self.device_capabilities.iter().any(|record| {
+        }) || self.domains.device.device_capabilities.iter().any(|record| {
             record.driver_store == cleanup.driver_store
                 && record.driver_store_generation == cleanup.driver_store_generation
                 && record.target
@@ -154,7 +154,7 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(cleanup) = self.network_driver_cleanups.iter().find(|record| {
+        let Some(cleanup) = self.domains.network.network_driver_cleanups.iter().find(|record| {
             record.id == network_driver_cleanup
                 && record.generation == network_driver_cleanup_generation
         }) else {
@@ -279,7 +279,9 @@ impl SemanticGraph {
                     "network-driver-cleanup",
                     record.network_driver_cleanup,
                     record.network_driver_cleanup_generation,
-                    self.network_driver_cleanups
+                    self.domains
+                        .network
+                        .network_driver_cleanups
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

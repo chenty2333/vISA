@@ -20,20 +20,22 @@ impl SemanticGraph {
         if reason.is_empty() {
             return Err("block driver cleanup reason is empty");
         }
-        if self.block_driver_cleanups.iter().any(|record| record.id == cleanup) {
+        if self.domains.block.block_driver_cleanups.iter().any(|record| record.id == cleanup) {
             return Err("block driver cleanup already exists");
         }
         if backend.kind != ContractObjectKind::VirtioBlkBackendObject {
             return Err("block driver cleanup backend kind is unsupported");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block driver cleanup block device generation is missing or inactive");
         };
-        let Some(backend_record) = self.virtio_blk_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.block.virtio_blk_backends.iter().find(|record| {
             record.id == backend.id
                 && record.generation == backend.generation
                 && record.state == VirtioBlkBackendObjectState::SkeletonReady
@@ -47,11 +49,13 @@ impl SemanticGraph {
         {
             return Err("block driver cleanup backend does not match block device");
         }
-        let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-            record.id == backend_record.driver_binding
-                && record.generation == backend_record.driver_binding_generation
-                && record.state == DriverStoreBindingState::Bound
-        }) else {
+        let Some(binding_record) =
+            self.domains.device.driver_store_bindings.iter().find(|record| {
+                record.id == backend_record.driver_binding
+                    && record.generation == backend_record.driver_binding_generation
+                    && record.state == DriverStoreBindingState::Bound
+            })
+        else {
             return Err("block driver cleanup backend driver binding is missing or inactive");
         };
         if binding_record.device != block_device_record.device
@@ -71,7 +75,7 @@ impl SemanticGraph {
         }) {
             return Err("block driver cleanup io cleanup target already exists");
         }
-        if self.block_driver_cleanups.iter().any(|record| {
+        if self.domains.block.block_driver_cleanups.iter().any(|record| {
             record.driver_binding == binding_record.id
                 && record.driver_binding_generation == binding_record.generation
                 && record.state != BlockDriverCleanupState::Retired
@@ -110,6 +114,8 @@ impl SemanticGraph {
         }
 
         let Some(backend_record) = self
+            .domains
+            .block
             .virtio_blk_backends
             .iter()
             .find(|record| record.id == backend.id && record.generation == backend.generation)
@@ -118,6 +124,8 @@ impl SemanticGraph {
             return false;
         };
         let Some(binding_record) = self
+            .domains
+            .device
             .driver_store_bindings
             .iter()
             .find(|record| {
@@ -130,8 +138,8 @@ impl SemanticGraph {
         };
 
         let generation = 1;
-        self.next_block_driver_cleanup_id =
-            self.next_block_driver_cleanup_id.max(cleanup.saturating_add(1));
+        self.domains.block.next_block_driver_cleanup_id =
+            self.domains.block.next_block_driver_cleanup_id.max(cleanup.saturating_add(1));
         let started_at_event = self.event_log.push(
             "block",
             EventKind::BlockDriverCleanupStarted {
@@ -149,7 +157,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_driver_cleanups.push(BlockDriverCleanupRecord {
+        self.domains.block.block_driver_cleanups.push(BlockDriverCleanupRecord {
             id: cleanup,
             io_cleanup,
             io_cleanup_generation: generation,
@@ -189,6 +197,8 @@ impl SemanticGraph {
         }
 
         let pending_block_waits = self
+            .domains
+            .block
             .block_waits
             .iter()
             .filter(|record| {
@@ -233,6 +243,8 @@ impl SemanticGraph {
             .unwrap_or_default();
 
         if let Some(backend_record) = self
+            .domains
+            .block
             .virtio_blk_backends
             .iter_mut()
             .find(|record| record.id == backend.id && record.generation == backend.generation)
@@ -253,6 +265,8 @@ impl SemanticGraph {
             },
         );
         if let Some(record) = self
+            .domains
+            .block
             .block_driver_cleanups
             .iter_mut()
             .find(|record| record.id == cleanup && record.generation == generation)
@@ -268,15 +282,15 @@ impl SemanticGraph {
     }
 
     pub fn block_driver_cleanups(&self) -> &[BlockDriverCleanupRecord] {
-        &self.block_driver_cleanups
+        &self.domains.block.block_driver_cleanups
     }
 
     pub fn block_driver_cleanup_count(&self) -> usize {
-        self.block_driver_cleanups.len()
+        self.domains.block.block_driver_cleanups.len()
     }
 
     pub fn check_block_driver_cleanup_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for cleanup in &self.block_driver_cleanups {
+        for cleanup in &self.domains.block.block_driver_cleanups {
             if cleanup.id == 0
                 || cleanup.generation == 0
                 || cleanup.io_cleanup == 0
@@ -316,16 +330,18 @@ impl SemanticGraph {
                     cleanup: cleanup.id,
                 });
             }
-            let Some(block_device) = self.block_device_objects.iter().find(|record| {
-                record.id == cleanup.block_device
-                    && record.generation == cleanup.block_device_generation
-            }) else {
+            let Some(block_device) =
+                self.domains.block.block_device_objects.iter().find(|record| {
+                    record.id == cleanup.block_device
+                        && record.generation == cleanup.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockDriverCleanupMissingBlockDevice {
                     cleanup: cleanup.id,
                     block_device: cleanup.block_device,
                 });
             };
-            let Some(backend) = self.virtio_blk_backends.iter().find(|record| {
+            let Some(backend) = self.domains.block.virtio_blk_backends.iter().find(|record| {
                 record.id == cleanup.backend.id && record.generation == cleanup.backend.generation
             }) else {
                 return Err(SemanticInvariantError::BlockDriverCleanupMissingBackend {
@@ -368,12 +384,12 @@ impl SemanticGraph {
                     });
                 };
                 if backend.state != VirtioBlkBackendObjectState::Retired
-                    || self.block_waits.iter().any(|record| {
+                    || self.domains.block.block_waits.iter().any(|record| {
                         record.block_device == cleanup.block_device
                             && record.block_device_generation == cleanup.block_device_generation
                             && record.state == BlockWaitState::Pending
                     })
-                    || self.device_capabilities.iter().any(|record| {
+                    || self.domains.device.device_capabilities.iter().any(|record| {
                         record.driver_store == cleanup.driver_store
                             && record.driver_store_generation == cleanup.driver_store_generation
                             && self.io_cleanup_device_capability_belongs_to_device(
@@ -463,6 +479,8 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(target) = self
+            .domains
+            .block
             .block_driver_cleanups
             .iter_mut()
             .find(|record| record.id == cleanup)

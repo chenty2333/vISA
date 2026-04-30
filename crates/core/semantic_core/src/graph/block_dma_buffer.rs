@@ -80,7 +80,7 @@ impl SemanticGraph {
         if block_dma_buffer == 0 {
             return Err("block dma buffer id=0 is invalid");
         }
-        if self.block_dma_buffers.iter().any(|record| record.id == block_dma_buffer) {
+        if self.domains.block.block_dma_buffers.iter().any(|record| record.id == block_dma_buffer) {
             return Err("block dma buffer already exists");
         }
         if backend.generation == 0
@@ -93,14 +93,14 @@ impl SemanticGraph {
         if backend.kind != ContractObjectKind::FakeBlockBackendObject {
             return Err("block dma buffer backend kind is unsupported for B10");
         }
-        let Some(backend_record) = self.fake_block_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.block.fake_block_backends.iter().find(|record| {
             record.id == backend.id
                 && record.generation == backend.generation
                 && record.state == FakeBlockBackendObjectState::Bound
         }) else {
             return Err("block dma buffer backend generation is missing or inactive");
         };
-        let Some(request_record) = self.block_request_objects.iter().find(|record| {
+        let Some(request_record) = self.domains.block.block_request_objects.iter().find(|record| {
             record.id == block_request && record.generation == block_request_generation
         }) else {
             return Err("block dma buffer request generation is missing");
@@ -108,11 +108,13 @@ impl SemanticGraph {
         if request_record.state == BlockRequestObjectState::Cancelled {
             return Err("block dma buffer request is cancelled");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == request_record.block_device
-                && record.generation == request_record.block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == request_record.block_device
+                    && record.generation == request_record.block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block dma buffer block device generation is missing or inactive");
         };
         if backend_record.block_device != request_record.block_device
@@ -120,7 +122,7 @@ impl SemanticGraph {
         {
             return Err("block dma buffer backend does not target request block device");
         }
-        let Some(dma_record) = self.dma_buffer_objects.iter().find(|record| {
+        let Some(dma_record) = self.domains.device.dma_buffer_objects.iter().find(|record| {
             record.id == dma_buffer
                 && record.generation == dma_buffer_generation
                 && record.state == DmaBufferObjectState::Registered
@@ -133,14 +135,16 @@ impl SemanticGraph {
         if !Self::block_dma_access_matches_request(request_record.operation, dma_record.access) {
             return Err("block dma buffer access does not match request operation");
         }
-        let Some(descriptor_record) = self.descriptor_objects.iter().find(|descriptor| {
-            descriptor.id == dma_record.descriptor
-                && descriptor.generation == dma_record.descriptor_generation
-                && descriptor.state == DescriptorObjectState::Registered
-        }) else {
+        let Some(descriptor_record) =
+            self.domains.device.descriptor_objects.iter().find(|descriptor| {
+                descriptor.id == dma_record.descriptor
+                    && descriptor.generation == dma_record.descriptor_generation
+                    && descriptor.state == DescriptorObjectState::Registered
+            })
+        else {
             return Err("block dma buffer descriptor generation is missing or inactive");
         };
-        let Some(queue_record) = self.queue_objects.iter().find(|queue| {
+        let Some(queue_record) = self.domains.device.queue_objects.iter().find(|queue| {
             queue.id == descriptor_record.queue
                 && queue.generation == descriptor_record.queue_generation
                 && queue.state == QueueObjectState::Registered
@@ -181,14 +185,14 @@ impl SemanticGraph {
         if buffer_digest != expected_digest {
             return Err("block dma buffer digest mismatch");
         }
-        if self.block_dma_buffers.iter().any(|record| {
+        if self.domains.block.block_dma_buffers.iter().any(|record| {
             record.state == BlockDmaBufferState::Bound
                 && record.block_request == request_record.id
                 && record.block_request_generation == request_record.generation
         }) {
             return Err("block dma buffer request already has a bound dma buffer");
         }
-        if self.block_dma_buffers.iter().any(|record| {
+        if self.domains.block.block_dma_buffers.iter().any(|record| {
             record.state == BlockDmaBufferState::Bound
                 && record.dma_buffer == dma_record.id
                 && record.dma_buffer_generation == dma_record.generation
@@ -227,33 +231,39 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(request_record) = self.block_request_objects.iter().find(|request| {
-            request.id == block_request && request.generation == block_request_generation
-        }) else {
+        let Some(request_record) =
+            self.domains.block.block_request_objects.iter().find(|request| {
+                request.id == block_request && request.generation == block_request_generation
+            })
+        else {
             return false;
         };
         let Some(dma_record) = self
+            .domains
+            .device
             .dma_buffer_objects
             .iter()
             .find(|dma| dma.id == dma_buffer && dma.generation == dma_buffer_generation)
         else {
             return false;
         };
-        let Some(descriptor_record) = self.descriptor_objects.iter().find(|descriptor| {
-            descriptor.id == dma_record.descriptor
-                && descriptor.generation == dma_record.descriptor_generation
-        }) else {
+        let Some(descriptor_record) =
+            self.domains.device.descriptor_objects.iter().find(|descriptor| {
+                descriptor.id == dma_record.descriptor
+                    && descriptor.generation == dma_record.descriptor_generation
+            })
+        else {
             return false;
         };
-        let Some(queue_record) = self.queue_objects.iter().find(|queue| {
+        let Some(queue_record) = self.domains.device.queue_objects.iter().find(|queue| {
             queue.id == descriptor_record.queue
                 && queue.generation == descriptor_record.queue_generation
         }) else {
             return false;
         };
         let generation = 1;
-        self.next_block_dma_buffer_id =
-            self.next_block_dma_buffer_id.max(block_dma_buffer.saturating_add(1));
+        self.domains.block.next_block_dma_buffer_id =
+            self.domains.block.next_block_dma_buffer_id.max(block_dma_buffer.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockDmaBufferBound {
@@ -279,7 +289,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_dma_buffers.push(BlockDmaBufferRecord {
+        self.domains.block.block_dma_buffers.push(BlockDmaBufferRecord {
             id: block_dma_buffer,
             backend,
             block_request,
@@ -308,35 +318,39 @@ impl SemanticGraph {
     }
 
     pub fn block_dma_buffers(&self) -> &[BlockDmaBufferRecord] {
-        &self.block_dma_buffers
+        &self.domains.block.block_dma_buffers
     }
 
     pub fn block_dma_buffer_count(&self) -> usize {
-        self.block_dma_buffers.len()
+        self.domains.block.block_dma_buffers.len()
     }
 
     pub fn check_block_dma_buffer_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_dma_buffers {
-            let Some(backend_record) = self.fake_block_backends.iter().find(|backend| {
-                record.backend.kind == ContractObjectKind::FakeBlockBackendObject
-                    && backend.id == record.backend.id
-                    && backend.generation == record.backend.generation
-            }) else {
+        for record in &self.domains.block.block_dma_buffers {
+            let Some(backend_record) =
+                self.domains.block.fake_block_backends.iter().find(|backend| {
+                    record.backend.kind == ContractObjectKind::FakeBlockBackendObject
+                        && backend.id == record.backend.id
+                        && backend.generation == record.backend.generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockDmaBufferMissingBackend {
                     block_dma_buffer: record.id,
                     backend: record.backend,
                 });
             };
-            let Some(request_record) = self.block_request_objects.iter().find(|request| {
-                request.id == record.block_request
-                    && request.generation == record.block_request_generation
-            }) else {
+            let Some(request_record) =
+                self.domains.block.block_request_objects.iter().find(|request| {
+                    request.id == record.block_request
+                        && request.generation == record.block_request_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockDmaBufferMissingRequest {
                     block_dma_buffer: record.id,
                     block_request: record.block_request,
                 });
             };
-            let Some(dma_record) = self.dma_buffer_objects.iter().find(|dma| {
+            let Some(dma_record) = self.domains.device.dma_buffer_objects.iter().find(|dma| {
                 dma.id == record.dma_buffer && dma.generation == record.dma_buffer_generation
             }) else {
                 return Err(SemanticInvariantError::BlockDmaBufferMissingDmaBuffer {
@@ -344,25 +358,29 @@ impl SemanticGraph {
                     dma_buffer: record.dma_buffer,
                 });
             };
-            let Some(descriptor_record) = self.descriptor_objects.iter().find(|descriptor| {
-                descriptor.id == record.descriptor
-                    && descriptor.generation == record.descriptor_generation
-            }) else {
+            let Some(descriptor_record) =
+                self.domains.device.descriptor_objects.iter().find(|descriptor| {
+                    descriptor.id == record.descriptor
+                        && descriptor.generation == record.descriptor_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockDmaBufferInvalid {
                     block_dma_buffer: record.id,
                 });
             };
-            let Some(queue_record) = self.queue_objects.iter().find(|queue| {
+            let Some(queue_record) = self.domains.device.queue_objects.iter().find(|queue| {
                 queue.id == record.queue && queue.generation == record.queue_generation
             }) else {
                 return Err(SemanticInvariantError::BlockDmaBufferInvalid {
                     block_dma_buffer: record.id,
                 });
             };
-            let Some(block_device_record) = self.block_device_objects.iter().find(|block_device| {
-                block_device.id == record.block_device
-                    && block_device.generation == record.block_device_generation
-            }) else {
+            let Some(block_device_record) =
+                self.domains.block.block_device_objects.iter().find(|block_device| {
+                    block_device.id == record.block_device
+                        && block_device.generation == record.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockDmaBufferInvalid {
                     block_dma_buffer: record.id,
                 });
@@ -431,7 +449,7 @@ impl SemanticGraph {
                     block_dma_buffer: record.id,
                 });
             }
-            if let Some(duplicate) = self.block_dma_buffers.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_dma_buffers.iter().find(|other| {
                 other.id != record.id
                     && other.state == BlockDmaBufferState::Bound
                     && other.block_request == record.block_request
@@ -442,7 +460,7 @@ impl SemanticGraph {
                     block_request: record.block_request,
                 });
             }
-            if let Some(duplicate) = self.block_dma_buffers.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_dma_buffers.iter().find(|other| {
                 other.id != record.id
                     && other.state == BlockDmaBufferState::Bound
                     && other.dma_buffer == record.dma_buffer
@@ -527,8 +545,12 @@ impl SemanticGraph {
         block_dma_buffer: BlockDmaBufferId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_dma_buffers.iter_mut().find(|record| record.id == block_dma_buffer)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_dma_buffers
+            .iter_mut()
+            .find(|record| record.id == block_dma_buffer)
         {
             record.dma_buffer_generation = generation;
         }
@@ -540,8 +562,12 @@ impl SemanticGraph {
         block_dma_buffer: BlockDmaBufferId,
         digest: u64,
     ) {
-        if let Some(record) =
-            self.block_dma_buffers.iter_mut().find(|record| record.id == block_dma_buffer)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_dma_buffers
+            .iter_mut()
+            .find(|record| record.id == block_dma_buffer)
         {
             record.buffer_digest = digest;
         }

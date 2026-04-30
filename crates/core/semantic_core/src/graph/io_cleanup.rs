@@ -48,14 +48,14 @@ impl SemanticGraph {
         if store.role != "driver" {
             return Err("io cleanup store role is not driver");
         }
-        if !self.device_objects.iter().any(|record| {
+        if !self.domains.device.device_objects.iter().any(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
         }) {
             return Err("io cleanup device generation is missing or inactive");
         }
-        let Some(binding) = self.driver_store_bindings.iter().find(|record| {
+        let Some(binding) = self.domains.device.driver_store_bindings.iter().find(|record| {
             record.id == driver_binding && record.generation == driver_binding_generation
         }) else {
             return Err("io cleanup driver binding generation is missing");
@@ -186,6 +186,8 @@ impl SemanticGraph {
         });
 
         let capability_targets = self
+            .domains
+            .device
             .device_capabilities
             .iter()
             .enumerate()
@@ -216,7 +218,8 @@ impl SemanticGraph {
         {
             if self.domains.capability.capabilities.revoke_generation(cap, cap_generation) {
                 self.event_log.push("capability", EventKind::CapabilityRevoked { cap });
-                self.device_capabilities[index].state = DeviceCapabilityState::Revoked;
+                self.domains.device.device_capabilities[index].state =
+                    DeviceCapabilityState::Revoked;
                 revoked_device_capabilities.push(ContractObjectRef::new(
                     ContractObjectKind::DeviceCapability,
                     device_capability,
@@ -243,7 +246,7 @@ impl SemanticGraph {
         });
 
         let released_binding = if let Some(record) =
-            self.driver_store_bindings.iter_mut().find(|record| {
+            self.domains.device.driver_store_bindings.iter_mut().find(|record| {
                 record.id == driver_binding
                     && record.generation == driver_binding_generation
                     && record.state == DriverStoreBindingState::Bound
@@ -266,17 +269,19 @@ impl SemanticGraph {
         });
 
         let mut released_dma_buffers = Vec::new();
-        for index in 0..self.dma_buffer_objects.len() {
-            let dma_ref = self.dma_buffer_objects[index].object_ref();
-            if self.dma_buffer_objects[index].state == DmaBufferObjectState::Registered
+        for index in 0..self.domains.device.dma_buffer_objects.len() {
+            let dma_ref = self.domains.device.dma_buffer_objects[index].object_ref();
+            if self.domains.device.dma_buffer_objects[index].state
+                == DmaBufferObjectState::Registered
                 && self.io_cleanup_dma_buffer_belongs_to_device(
-                    self.dma_buffer_objects[index].id,
-                    self.dma_buffer_objects[index].generation,
+                    self.domains.device.dma_buffer_objects[index].id,
+                    self.domains.device.dma_buffer_objects[index].generation,
                     device,
                     device_generation,
                 )
             {
-                self.dma_buffer_objects[index].state = DmaBufferObjectState::Released;
+                self.domains.device.dma_buffer_objects[index].state =
+                    DmaBufferObjectState::Released;
                 released_dma_buffers.push(dma_ref);
             }
         }
@@ -293,7 +298,7 @@ impl SemanticGraph {
         });
 
         let mut released_mmio_regions = Vec::new();
-        for record in &mut self.mmio_region_objects {
+        for record in &mut self.domains.device.mmio_region_objects {
             if record.device == device
                 && record.device_generation == device_generation
                 && record.state == MmioRegionObjectState::Registered
@@ -315,7 +320,7 @@ impl SemanticGraph {
         });
 
         let mut released_irq_lines = Vec::new();
-        for record in &mut self.irq_line_objects {
+        for record in &mut self.domains.device.irq_line_objects {
             if record.device == device
                 && record.device_generation == device_generation
                 && record.state == IrqLineObjectState::Registered
@@ -398,16 +403,20 @@ impl SemanticGraph {
             ContractObjectKind::DeviceObject => {
                 capability.target.id == device && capability.target.generation == device_generation
             }
-            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
-                record.object_ref() == capability.target
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
-            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
-                record.object_ref() == capability.target
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
+            ContractObjectKind::MmioRegionObject => {
+                self.domains.device.mmio_region_objects.iter().any(|record| {
+                    record.object_ref() == capability.target
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
+            ContractObjectKind::IrqLineObject => {
+                self.domains.device.irq_line_objects.iter().any(|record| {
+                    record.object_ref() == capability.target
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
             ContractObjectKind::DmaBufferObject => self.io_cleanup_dma_buffer_belongs_to_device(
                 capability.target.id,
                 capability.target.generation,
@@ -415,7 +424,7 @@ impl SemanticGraph {
                 device_generation,
             ),
             ContractObjectKind::PacketDeviceObject => {
-                self.packet_device_objects.iter().any(|record| {
+                self.domains.network.packet_device_objects.iter().any(|record| {
                     record.object_ref() == capability.target
                         && record.device == device
                         && record.device_generation == device_generation
@@ -432,20 +441,20 @@ impl SemanticGraph {
         device: DeviceObjectId,
         device_generation: Generation,
     ) -> bool {
-        let Some(dma_buffer) = self
-            .dma_buffer_objects
-            .iter()
-            .find(|record| record.id == dma_buffer && record.generation == dma_buffer_generation)
+        let Some(dma_buffer) =
+            self.domains.device.dma_buffer_objects.iter().find(|record| {
+                record.id == dma_buffer && record.generation == dma_buffer_generation
+            })
         else {
             return false;
         };
-        let Some(descriptor) = self.descriptor_objects.iter().find(|descriptor| {
+        let Some(descriptor) = self.domains.device.descriptor_objects.iter().find(|descriptor| {
             descriptor.id == dma_buffer.descriptor
                 && descriptor.generation == dma_buffer.descriptor_generation
         }) else {
             return false;
         };
-        self.queue_objects.iter().any(|queue| {
+        self.domains.device.queue_objects.iter().any(|queue| {
             queue.id == descriptor.queue
                 && queue.generation == descriptor.queue_generation
                 && queue.device == device
@@ -475,7 +484,7 @@ impl SemanticGraph {
                     store: cleanup.driver_store,
                 });
             }
-            if !self.device_objects.iter().any(|device| {
+            if !self.domains.device.device_objects.iter().any(|device| {
                 device.id == cleanup.device && device.generation == cleanup.device_generation
             }) {
                 return Err(SemanticInvariantError::IoCleanupMissingDevice {
@@ -483,7 +492,7 @@ impl SemanticGraph {
                     device: cleanup.device,
                 });
             }
-            let Some(binding) = self.driver_store_bindings.iter().find(|binding| {
+            let Some(binding) = self.domains.device.driver_store_bindings.iter().find(|binding| {
                 binding.id == cleanup.driver_binding
                     && binding.generation == cleanup.driver_binding_generation
             }) else {
@@ -516,7 +525,7 @@ impl SemanticGraph {
                 }
             }
             for device_capability in &cleanup.revoked_device_capabilities {
-                let Some(record) = self.device_capabilities.iter().find(|record| {
+                let Some(record) = self.domains.device.device_capabilities.iter().find(|record| {
                     record.id == device_capability.id
                         && record.generation == device_capability.generation
                 }) else {
@@ -542,7 +551,7 @@ impl SemanticGraph {
                 }
             }
             for dma_buffer in &cleanup.released_dma_buffers {
-                if !self.dma_buffer_objects.iter().any(|record| {
+                if !self.domains.device.dma_buffer_objects.iter().any(|record| {
                     record.id == dma_buffer.id
                         && record.generation == dma_buffer.generation
                         && record.state == DmaBufferObjectState::Released
@@ -554,7 +563,7 @@ impl SemanticGraph {
                 }
             }
             for mmio_region in &cleanup.released_mmio_regions {
-                if !self.mmio_region_objects.iter().any(|record| {
+                if !self.domains.device.mmio_region_objects.iter().any(|record| {
                     record.id == mmio_region.id
                         && record.generation == mmio_region.generation
                         && record.state == MmioRegionObjectState::Released
@@ -566,7 +575,7 @@ impl SemanticGraph {
                 }
             }
             for irq_line in &cleanup.released_irq_lines {
-                if !self.irq_line_objects.iter().any(|record| {
+                if !self.domains.device.irq_line_objects.iter().any(|record| {
                     record.id == irq_line.id
                         && record.generation == irq_line.generation
                         && record.state == IrqLineObjectState::Released
@@ -639,7 +648,7 @@ impl SemanticGraph {
                     && record.driver_binding == cleanup.driver_binding
                     && record.driver_binding_generation == cleanup.driver_binding_generation
                     && record.state == IoWaitState::Pending
-            }) || self.device_capabilities.iter().any(|record| {
+            }) || self.domains.device.device_capabilities.iter().any(|record| {
                 record.driver_store == cleanup.driver_store
                     && record.driver_store_generation == cleanup.driver_store_generation
                     && record.state == DeviceCapabilityState::Active
@@ -648,11 +657,11 @@ impl SemanticGraph {
                         cleanup.device,
                         cleanup.device_generation,
                     )
-            }) || self.driver_store_bindings.iter().any(|record| {
+            }) || self.domains.device.driver_store_bindings.iter().any(|record| {
                 record.id == cleanup.driver_binding
                     && record.generation == cleanup.driver_binding_generation
                     && record.state == DriverStoreBindingState::Bound
-            }) || self.dma_buffer_objects.iter().any(|record| {
+            }) || self.domains.device.dma_buffer_objects.iter().any(|record| {
                 record.state == DmaBufferObjectState::Registered
                     && self.io_cleanup_dma_buffer_belongs_to_device(
                         record.id,
@@ -660,11 +669,11 @@ impl SemanticGraph {
                         cleanup.device,
                         cleanup.device_generation,
                     )
-            }) || self.mmio_region_objects.iter().any(|record| {
+            }) || self.domains.device.mmio_region_objects.iter().any(|record| {
                 record.device == cleanup.device
                     && record.device_generation == cleanup.device_generation
                     && record.state == MmioRegionObjectState::Registered
-            }) || self.irq_line_objects.iter().any(|record| {
+            }) || self.domains.device.irq_line_objects.iter().any(|record| {
                 record.device == cleanup.device
                     && record.device_generation == cleanup.device_generation
                     && record.state == IrqLineObjectState::Registered

@@ -28,7 +28,13 @@ impl SemanticGraph {
         if ext4_adapter_object == 0 {
             return Err("ext4 adapter object id=0 is invalid");
         }
-        if self.ext4_adapter_objects.iter().any(|record| record.id == ext4_adapter_object) {
+        if self
+            .domains
+            .block
+            .ext4_adapter_objects
+            .iter()
+            .any(|record| record.id == ext4_adapter_object)
+        {
             return Err("ext4 adapter object already exists");
         }
         if directory_object_generation == 0
@@ -51,14 +57,14 @@ impl SemanticGraph {
         if state != Ext4AdapterObjectState::Verified || !read_only_enforced {
             return Err("ext4 adapter object must be verified read-only evidence");
         }
-        let Some(directory) = self.directory_objects.iter().find(|record| {
+        let Some(directory) = self.domains.block.directory_objects.iter().find(|record| {
             record.id == directory_object
                 && record.generation == directory_object_generation
                 && record.state != DirectoryObjectState::Invalidated
         }) else {
             return Err("ext4 adapter directory generation is missing");
         };
-        let Some(file) = self.file_objects.iter().find(|record| {
+        let Some(file) = self.domains.block.file_objects.iter().find(|record| {
             record.id == file_object
                 && record.generation == file_object_generation
                 && record.state != FileObjectState::Invalidated
@@ -74,7 +80,7 @@ impl SemanticGraph {
         {
             return Err("ext4 adapter semantic binding mismatch");
         }
-        if self.ext4_adapter_objects.iter().any(|record| {
+        if self.domains.block.ext4_adapter_objects.iter().any(|record| {
             record.state == Ext4AdapterObjectState::Verified
                 && record.directory_object == directory_object
                 && record.directory_object_generation == directory_object_generation
@@ -141,8 +147,11 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_ext4_adapter_object_id =
-            self.next_ext4_adapter_object_id.max(ext4_adapter_object.saturating_add(1));
+        self.domains.block.next_ext4_adapter_object_id = self
+            .domains
+            .block
+            .next_ext4_adapter_object_id
+            .max(ext4_adapter_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::Ext4AdapterObjectRecorded {
@@ -169,7 +178,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.ext4_adapter_objects.push(Ext4AdapterObjectRecord {
+        self.domains.block.ext4_adapter_objects.push(Ext4AdapterObjectRecord {
             id: ext4_adapter_object,
             directory_object,
             directory_object_generation,
@@ -198,16 +207,16 @@ impl SemanticGraph {
     }
 
     pub fn ext4_adapter_objects(&self) -> &[Ext4AdapterObjectRecord] {
-        &self.ext4_adapter_objects
+        &self.domains.block.ext4_adapter_objects
     }
 
     pub fn ext4_adapter_object_count(&self) -> usize {
-        self.ext4_adapter_objects.len()
+        self.domains.block.ext4_adapter_objects.len()
     }
 
     pub fn check_ext4_adapter_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.ext4_adapter_objects {
-            let Some(directory) = self.directory_objects.iter().find(|directory| {
+        for record in &self.domains.block.ext4_adapter_objects {
+            let Some(directory) = self.domains.block.directory_objects.iter().find(|directory| {
                 directory.id == record.directory_object
                     && directory.generation == record.directory_object_generation
             }) else {
@@ -216,7 +225,7 @@ impl SemanticGraph {
                     directory_object: record.directory_object,
                 });
             };
-            let Some(file) = self.file_objects.iter().find(|file| {
+            let Some(file) = self.domains.block.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
             }) else {
                 return Err(SemanticInvariantError::Ext4AdapterObjectMissingFileObject {
@@ -255,7 +264,7 @@ impl SemanticGraph {
                     ext4_adapter_object: record.id,
                 });
             }
-            if let Some(duplicate) = self.ext4_adapter_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.ext4_adapter_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state == Ext4AdapterObjectState::Verified
                     && other.directory_object == record.directory_object
@@ -329,8 +338,12 @@ impl SemanticGraph {
         ext4_adapter_object: Ext4AdapterObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.ext4_adapter_objects.iter_mut().find(|record| record.id == ext4_adapter_object)
+        if let Some(record) = self
+            .domains
+            .block
+            .ext4_adapter_objects
+            .iter_mut()
+            .find(|record| record.id == ext4_adapter_object)
         {
             record.file_object_generation = generation;
         }

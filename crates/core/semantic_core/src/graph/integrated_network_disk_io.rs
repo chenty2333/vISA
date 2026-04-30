@@ -28,12 +28,12 @@ impl SemanticGraph {
             return Err("integrated network/disk IO refs must carry generations");
         }
 
-        let Some(network) = self.network_benchmarks.iter().find(|record| {
+        let Some(network) = self.domains.network.network_benchmarks.iter().find(|record| {
             record.id == network_benchmark && record.generation == network_benchmark_generation
         }) else {
             return Err("integrated network/disk IO missing network benchmark evidence");
         };
-        let Some(block) = self.block_benchmarks.iter().find(|record| {
+        let Some(block) = self.domains.block.block_benchmarks.iter().find(|record| {
             record.id == block_benchmark && record.generation == block_benchmark_generation
         }) else {
             return Err("integrated network/disk IO missing block benchmark evidence");
@@ -124,12 +124,12 @@ impl SemanticGraph {
             return false;
         }
 
-        let Some(network) = self.network_benchmarks.iter().find(|record| {
+        let Some(network) = self.domains.network.network_benchmarks.iter().find(|record| {
             record.id == network_benchmark && record.generation == network_benchmark_generation
         }) else {
             return false;
         };
-        let Some(block) = self.block_benchmarks.iter().find(|record| {
+        let Some(block) = self.domains.block.block_benchmarks.iter().find(|record| {
             record.id == block_benchmark && record.generation == block_benchmark_generation
         }) else {
             return false;
@@ -256,7 +256,9 @@ impl SemanticGraph {
                     "network-benchmark",
                     record.network_benchmark,
                     record.network_benchmark_generation,
-                    self.network_benchmarks
+                    self.domains
+                        .network
+                        .network_benchmarks
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),
@@ -265,7 +267,9 @@ impl SemanticGraph {
                     "block-benchmark",
                     record.block_benchmark,
                     record.block_benchmark_generation,
-                    self.block_benchmarks
+                    self.domains
+                        .block
+                        .block_benchmarks
                         .iter()
                         .map(|item| (item.id, item.generation))
                         .collect::<Vec<_>>(),

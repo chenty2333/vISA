@@ -15,7 +15,13 @@ impl SemanticGraph {
         if tx_gate == 0 {
             return Err("network tx capability gate id=0 is invalid");
         }
-        if self.network_tx_capability_gates.iter().any(|record| record.id == tx_gate) {
+        if self
+            .domains
+            .network
+            .network_tx_capability_gates
+            .iter()
+            .any(|record| record.id == tx_gate)
+        {
             return Err("network tx capability gate already exists");
         }
         let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
@@ -26,28 +32,34 @@ impl SemanticGraph {
         if store_record.role != "driver" || store_record.state == StoreState::Dead {
             return Err("network tx capability gate driver store is not live driver");
         }
-        let Some(descriptor_record) = self.packet_descriptors.iter().find(|record| {
-            record.id == packet_descriptor
-                && record.generation == packet_descriptor_generation
-                && record.state == PacketDescriptorObjectState::Registered
-        }) else {
+        let Some(descriptor_record) =
+            self.domains.network.packet_descriptors.iter().find(|record| {
+                record.id == packet_descriptor
+                    && record.generation == packet_descriptor_generation
+                    && record.state == PacketDescriptorObjectState::Registered
+            })
+        else {
             return Err("network tx capability gate descriptor generation is missing or inactive");
         };
-        let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == descriptor_record.packet_queue
-                && record.generation == descriptor_record.packet_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(tx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == descriptor_record.packet_queue
+                    && record.generation == descriptor_record.packet_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network tx capability gate queue generation is missing or inactive");
         };
         if tx_queue_record.role != PacketQueueRole::Tx {
             return Err("network tx capability gate requires tx packet queue");
         }
-        let Some(buffer_record) = self.packet_buffer_objects.iter().find(|record| {
-            record.id == descriptor_record.packet_buffer
-                && record.generation == descriptor_record.packet_buffer_generation
-                && record.state == PacketBufferObjectState::Filled
-        }) else {
+        let Some(buffer_record) =
+            self.domains.network.packet_buffer_objects.iter().find(|record| {
+                record.id == descriptor_record.packet_buffer
+                    && record.generation == descriptor_record.packet_buffer_generation
+                    && record.state == PacketBufferObjectState::Filled
+            })
+        else {
             return Err("network tx capability gate buffer generation is missing or not filled");
         };
         if buffer_record.direction != PacketBufferDirection::Tx
@@ -57,11 +69,13 @@ impl SemanticGraph {
                 "network tx capability gate descriptor does not reference a valid tx buffer",
             );
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == tx_queue_record.packet_device
-                && record.generation == tx_queue_record.packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == tx_queue_record.packet_device
+                    && record.generation == tx_queue_record.packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err(
                 "network tx capability gate packet device generation is missing or inactive",
             );
@@ -72,11 +86,13 @@ impl SemanticGraph {
             return Err("network tx capability gate queue and buffer packet device mismatch");
         }
         let packet_device_ref = packet_device_record.object_ref();
-        let Some(device_capability_record) = self.device_capabilities.iter().find(|record| {
-            record.id == device_capability
-                && record.generation == device_capability_generation
-                && record.state == DeviceCapabilityState::Active
-        }) else {
+        let Some(device_capability_record) =
+            self.domains.device.device_capabilities.iter().find(|record| {
+                record.id == device_capability
+                    && record.generation == device_capability_generation
+                    && record.state == DeviceCapabilityState::Active
+            })
+        else {
             return Err("network tx capability gate device capability generation is missing");
         };
         if device_capability_record.driver_store != driver_store
@@ -110,7 +126,7 @@ impl SemanticGraph {
         {
             return Err("network tx capability gate capability attribution mismatch");
         }
-        if self.network_tx_capability_gates.iter().any(|record| {
+        if self.domains.network.network_tx_capability_gates.iter().any(|record| {
             record.packet_descriptor == descriptor_record.id
                 && record.packet_descriptor_generation == descriptor_record.generation
                 && record.state == NetworkTxCapabilityGateState::Allowed
@@ -147,26 +163,34 @@ impl SemanticGraph {
         ) else {
             return false;
         };
-        let Some(descriptor_record) = self.packet_descriptors.iter().find(|record| {
-            record.id == packet_descriptor && record.generation == packet_descriptor_generation
-        }) else {
+        let Some(descriptor_record) =
+            self.domains.network.packet_descriptors.iter().find(|record| {
+                record.id == packet_descriptor && record.generation == packet_descriptor_generation
+            })
+        else {
             return false;
         };
-        let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == descriptor_record.packet_queue
-                && record.generation == descriptor_record.packet_queue_generation
-        }) else {
+        let Some(tx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == descriptor_record.packet_queue
+                    && record.generation == descriptor_record.packet_queue_generation
+            })
+        else {
             return false;
         };
-        let Some(buffer_record) = self.packet_buffer_objects.iter().find(|record| {
-            record.id == descriptor_record.packet_buffer
-                && record.generation == descriptor_record.packet_buffer_generation
-        }) else {
+        let Some(buffer_record) =
+            self.domains.network.packet_buffer_objects.iter().find(|record| {
+                record.id == descriptor_record.packet_buffer
+                    && record.generation == descriptor_record.packet_buffer_generation
+            })
+        else {
             return false;
         };
-        let Some(device_capability_record) = self.device_capabilities.iter().find(|record| {
-            record.id == device_capability && record.generation == device_capability_generation
-        }) else {
+        let Some(device_capability_record) =
+            self.domains.device.device_capabilities.iter().find(|record| {
+                record.id == device_capability && record.generation == device_capability_generation
+            })
+        else {
             return false;
         };
         let Some(capability_record) = self.domains.capability.capabilities.record(capability)
@@ -184,8 +208,8 @@ impl SemanticGraph {
         let capability_generation = capability_record.generation;
         let operation = device_capability_record.operation.clone();
         let generation = 1;
-        self.next_network_tx_capability_gate_id =
-            self.next_network_tx_capability_gate_id.max(tx_gate + 1);
+        self.domains.network.next_network_tx_capability_gate_id =
+            self.domains.network.next_network_tx_capability_gate_id.max(tx_gate + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkTxCapabilityGateRecorded {
@@ -212,7 +236,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_tx_capability_gates.push(NetworkTxCapabilityGateRecord {
+        self.domains.network.network_tx_capability_gates.push(NetworkTxCapabilityGateRecord {
             id: tx_gate,
             driver_store,
             driver_store_generation,
@@ -243,19 +267,19 @@ impl SemanticGraph {
     }
 
     pub fn network_tx_capability_gates(&self) -> &[NetworkTxCapabilityGateRecord] {
-        &self.network_tx_capability_gates
+        &self.domains.network.network_tx_capability_gates
     }
 
     pub fn network_tx_capability_gate_count(&self) -> usize {
-        self.network_tx_capability_gates.len()
+        self.domains.network.network_tx_capability_gates.len()
     }
 
     pub fn check_network_tx_capability_gate_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_tx_capability_gates {
+        for record in &self.domains.network.network_tx_capability_gates {
             let Some(descriptor_record) =
-                self.packet_descriptors.iter().find(|packet_descriptor| {
+                self.domains.network.packet_descriptors.iter().find(|packet_descriptor| {
                     packet_descriptor.id == record.packet_descriptor
                         && packet_descriptor.generation == record.packet_descriptor_generation
                 })
@@ -265,23 +289,28 @@ impl SemanticGraph {
                     packet_descriptor: record.packet_descriptor,
                 });
             };
-            let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|tx_queue| {
-                tx_queue.id == record.tx_queue && tx_queue.generation == record.tx_queue_generation
-            }) else {
+            let Some(tx_queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|tx_queue| {
+                    tx_queue.id == record.tx_queue
+                        && tx_queue.generation == record.tx_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkTxCapabilityGateInvalid {
                     tx_gate: record.id,
                 });
             };
-            let Some(buffer_record) = self.packet_buffer_objects.iter().find(|packet_buffer| {
-                packet_buffer.id == record.packet_buffer
-                    && packet_buffer.generation == record.packet_buffer_generation
-            }) else {
+            let Some(buffer_record) =
+                self.domains.network.packet_buffer_objects.iter().find(|packet_buffer| {
+                    packet_buffer.id == record.packet_buffer
+                        && packet_buffer.generation == record.packet_buffer_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkTxCapabilityGateInvalid {
                     tx_gate: record.id,
                 });
             };
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -291,7 +320,7 @@ impl SemanticGraph {
                 });
             };
             let Some(device_capability_record) =
-                self.device_capabilities.iter().find(|device_capability| {
+                self.domains.device.device_capabilities.iter().find(|device_capability| {
                     device_capability.id == record.device_capability
                         && device_capability.generation == record.device_capability_generation
                 })
@@ -394,12 +423,14 @@ impl SemanticGraph {
                     tx_gate: record.id,
                 });
             }
-            if let Some(duplicate) = self.network_tx_capability_gates.iter().find(|other| {
-                other.id != record.id
-                    && other.packet_descriptor == record.packet_descriptor
-                    && other.packet_descriptor_generation == record.packet_descriptor_generation
-                    && other.state == NetworkTxCapabilityGateState::Allowed
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_tx_capability_gates.iter().find(|other| {
+                    other.id != record.id
+                        && other.packet_descriptor == record.packet_descriptor
+                        && other.packet_descriptor_generation == record.packet_descriptor_generation
+                        && other.state == NetworkTxCapabilityGateState::Allowed
+                })
+            {
                 return Err(SemanticInvariantError::NetworkTxCapabilityGateDuplicateDescriptor {
                     tx_gate: duplicate.id,
                     packet_descriptor: record.packet_descriptor,
@@ -468,8 +499,12 @@ impl SemanticGraph {
         tx_gate: NetworkTxCapabilityGateId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_tx_capability_gates.iter_mut().find(|record| record.id == tx_gate)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_tx_capability_gates
+            .iter_mut()
+            .find(|record| record.id == tx_gate)
         {
             record.capability_generation = generation;
         }

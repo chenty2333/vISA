@@ -15,7 +15,7 @@ impl SemanticGraph {
         if block_device == 0 {
             return Err("block device object id=0 is invalid");
         }
-        if self.block_device_objects.iter().any(|record| record.id == block_device) {
+        if self.domains.block.block_device_objects.iter().any(|record| record.id == block_device) {
             return Err("block device object already exists");
         }
         if name.is_empty() {
@@ -28,6 +28,8 @@ impl SemanticGraph {
             return Err("block device object sector size is unsupported");
         }
         let Some(device_record) = self
+            .domains
+            .device
             .device_objects
             .iter()
             .find(|record| record.id == device && record.generation == device_generation)
@@ -82,8 +84,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_block_device_object_id =
-            self.next_block_device_object_id.max(block_device.saturating_add(1));
+        self.domains.block.next_block_device_object_id =
+            self.domains.block.next_block_device_object_id.max(block_device.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockDeviceObjectRecorded {
@@ -97,7 +99,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_device_objects.push(BlockDeviceObjectRecord {
+        self.domains.block.block_device_objects.push(BlockDeviceObjectRecord {
             id: block_device,
             name: name.to_string(),
             device,
@@ -115,16 +117,16 @@ impl SemanticGraph {
     }
 
     pub fn block_device_objects(&self) -> &[BlockDeviceObjectRecord] {
-        &self.block_device_objects
+        &self.domains.block.block_device_objects
     }
 
     pub fn block_device_object_count(&self) -> usize {
-        self.block_device_objects.len()
+        self.domains.block.block_device_objects.len()
     }
 
     pub fn check_block_device_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_device_objects {
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+        for record in &self.domains.block.block_device_objects {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::BlockDeviceObjectMissingDevice {
@@ -191,8 +193,12 @@ impl SemanticGraph {
         block_device: BlockDeviceObjectId,
         device_generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_device_objects.iter_mut().find(|record| record.id == block_device)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_device_objects
+            .iter_mut()
+            .find(|record| record.id == block_device)
         {
             record.device_generation = device_generation;
         }

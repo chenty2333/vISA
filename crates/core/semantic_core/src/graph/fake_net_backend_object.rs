@@ -23,7 +23,8 @@ impl SemanticGraph {
         if fake_net_backend == 0 {
             return Err("fake net backend object id=0 is invalid");
         }
-        if self.fake_net_backends.iter().any(|record| record.id == fake_net_backend) {
+        if self.domains.network.fake_net_backends.iter().any(|record| record.id == fake_net_backend)
+        {
             return Err("fake net backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() {
@@ -44,11 +45,13 @@ impl SemanticGraph {
         {
             return Err("fake net backend object contract values must be nonzero");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("fake net backend object packet device generation is missing or inactive");
         };
         if mtu != packet_device_record.mtu
@@ -60,7 +63,7 @@ impl SemanticGraph {
         {
             return Err("fake net backend object contract does not match packet device");
         }
-        if self.fake_net_backends.iter().any(|record| {
+        if self.domains.network.fake_net_backends.iter().any(|record| {
             record.packet_device == packet_device_record.id
                 && record.packet_device_generation == packet_device_generation
                 && record.state == FakeNetBackendObjectState::Bound
@@ -111,8 +114,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_fake_net_backend_object_id =
-            self.next_fake_net_backend_object_id.max(fake_net_backend + 1);
+        self.domains.network.next_fake_net_backend_object_id =
+            self.domains.network.next_fake_net_backend_object_id.max(fake_net_backend + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::FakeNetBackendObjectBound {
@@ -128,7 +131,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.fake_net_backends.push(FakeNetBackendObjectRecord {
+        self.domains.network.fake_net_backends.push(FakeNetBackendObjectRecord {
             id: fake_net_backend,
             name: name.to_string(),
             packet_device,
@@ -151,17 +154,17 @@ impl SemanticGraph {
     }
 
     pub fn fake_net_backends(&self) -> &[FakeNetBackendObjectRecord] {
-        &self.fake_net_backends
+        &self.domains.network.fake_net_backends
     }
 
     pub fn fake_net_backend_object_count(&self) -> usize {
-        self.fake_net_backends.len()
+        self.domains.network.fake_net_backends.len()
     }
 
     pub fn check_fake_net_backend_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.fake_net_backends {
+        for record in &self.domains.network.fake_net_backends {
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -196,7 +199,7 @@ impl SemanticGraph {
                     fake_net_backend: record.id,
                 });
             }
-            if let Some(duplicate) = self.fake_net_backends.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.fake_net_backends.iter().find(|other| {
                 other.id != record.id
                     && other.packet_device == record.packet_device
                     && other.packet_device_generation == record.packet_device_generation
@@ -248,8 +251,12 @@ impl SemanticGraph {
         fake_net_backend: FakeNetBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.fake_net_backends.iter_mut().find(|record| record.id == fake_net_backend)
+        if let Some(record) = self
+            .domains
+            .network
+            .fake_net_backends
+            .iter_mut()
+            .find(|record| record.id == fake_net_backend)
         {
             record.packet_device_generation = generation;
         }

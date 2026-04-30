@@ -12,7 +12,7 @@ impl SemanticGraph {
         if block_wait == 0 {
             return Err("block wait id=0 is invalid");
         }
-        if self.block_waits.iter().any(|record| record.id == block_wait) {
+        if self.domains.block.block_waits.iter().any(|record| record.id == block_wait) {
             return Err("block wait already exists");
         }
         if wait_generation == 0 || block_request_generation == 0 {
@@ -52,21 +52,21 @@ impl SemanticGraph {
                 return Err("block wait owner store is dead");
             }
         }
-        let Some(request_record) = self.block_request_objects.iter().find(|record| {
+        let Some(request_record) = self.domains.block.block_request_objects.iter().find(|record| {
             record.id == block_request
                 && record.generation == block_request_generation
                 && record.state == BlockRequestObjectState::Submitted
         }) else {
             return Err("block wait request generation is missing or not submitted");
         };
-        if self.block_waits.iter().any(|record| {
+        if self.domains.block.block_waits.iter().any(|record| {
             record.wait == wait
                 && record.wait_generation == wait_generation
                 && record.state == BlockWaitState::Pending
         }) {
             return Err("block wait token already has a pending block wait");
         }
-        if self.block_waits.iter().any(|record| {
+        if self.domains.block.block_waits.iter().any(|record| {
             record.block_request == block_request
                 && record.block_request_generation == block_request_generation
                 && record.state == BlockWaitState::Pending
@@ -101,7 +101,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_wait_id = self.next_block_wait_id.max(block_wait.saturating_add(1));
+        self.domains.block.next_block_wait_id =
+            self.domains.block.next_block_wait_id.max(block_wait.saturating_add(1));
         let created_at_event = self.event_log.push(
             "block",
             EventKind::BlockWaitCreated {
@@ -120,7 +121,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_waits.push(BlockWaitRecord {
+        self.domains.block.block_waits.push(BlockWaitRecord {
             id: block_wait,
             wait,
             wait_generation,
@@ -153,19 +154,21 @@ impl SemanticGraph {
         block_completion_generation: Generation,
         note: &str,
     ) -> bool {
-        let Some(index) = self.block_waits.iter().position(|record| {
+        let Some(index) = self.domains.block.block_waits.iter().position(|record| {
             record.id == block_wait
                 && record.generation == block_wait_generation
                 && record.state == BlockWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.block_waits[index].clone();
-        let Some(completion) = self.block_completion_objects.iter().find(|completion| {
-            completion.id == block_completion
-                && completion.generation == block_completion_generation
-                && completion.state == BlockCompletionObjectState::Recorded
-        }) else {
+        let record = self.domains.block.block_waits[index].clone();
+        let Some(completion) =
+            self.domains.block.block_completion_objects.iter().find(|completion| {
+                completion.id == block_completion
+                    && completion.generation == block_completion_generation
+                    && completion.state == BlockCompletionObjectState::Recorded
+            })
+        else {
             return false;
         };
         if completion.block_request != record.block_request
@@ -199,11 +202,12 @@ impl SemanticGraph {
                 generation: block_wait_generation,
             },
         );
-        self.block_waits[index].state = BlockWaitState::Resolved;
-        self.block_waits[index].completed_at_event = Some(completed_at_event);
-        self.block_waits[index].completion = Some(block_completion);
-        self.block_waits[index].completion_generation = Some(block_completion_generation);
-        self.block_waits[index].note = note.to_string();
+        self.domains.block.block_waits[index].state = BlockWaitState::Resolved;
+        self.domains.block.block_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.block.block_waits[index].completion = Some(block_completion);
+        self.domains.block.block_waits[index].completion_generation =
+            Some(block_completion_generation);
+        self.domains.block.block_waits[index].note = note.to_string();
         true
     }
 
@@ -224,14 +228,14 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        let Some(index) = self.block_waits.iter().position(|record| {
+        let Some(index) = self.domains.block.block_waits.iter().position(|record| {
             record.id == block_wait
                 && record.generation == block_wait_generation
                 && record.state == BlockWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.block_waits[index].clone();
+        let record = self.domains.block.block_waits[index].clone();
         if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
@@ -250,23 +254,23 @@ impl SemanticGraph {
                 generation: block_wait_generation,
             },
         );
-        self.block_waits[index].state = BlockWaitState::Cancelled;
-        self.block_waits[index].completed_at_event = Some(completed_at_event);
-        self.block_waits[index].cancel_reason = Some(reason);
-        self.block_waits[index].note = note.to_string();
+        self.domains.block.block_waits[index].state = BlockWaitState::Cancelled;
+        self.domains.block.block_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.block.block_waits[index].cancel_reason = Some(reason);
+        self.domains.block.block_waits[index].note = note.to_string();
         true
     }
 
     pub fn block_waits(&self) -> &[BlockWaitRecord] {
-        &self.block_waits
+        &self.domains.block.block_waits
     }
 
     pub fn block_wait_count(&self) -> usize {
-        self.block_waits.len()
+        self.domains.block.block_waits.len()
     }
 
     pub fn check_block_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_waits {
+        for record in &self.domains.block.block_waits {
             let Some(wait_record) =
                 self.domains.wait.waits.iter().find(|wait| {
                     wait.id == record.wait && wait.generation == record.wait_generation
@@ -277,7 +281,7 @@ impl SemanticGraph {
                     wait: record.wait,
                 });
             };
-            let Some(request) = self.block_request_objects.iter().find(|request| {
+            let Some(request) = self.domains.block.block_request_objects.iter().find(|request| {
                 request.id == record.block_request
                     && request.generation == record.block_request_generation
             }) else {
@@ -312,7 +316,7 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::BlockWaitInvalid { block_wait: record.id });
             }
             if record.state == BlockWaitState::Pending
-                && self.block_waits.iter().any(|other| {
+                && self.domains.block.block_waits.iter().any(|other| {
                     other.id != record.id
                         && other.wait == record.wait
                         && other.wait_generation == record.wait_generation
@@ -325,7 +329,7 @@ impl SemanticGraph {
                 });
             }
             if record.state == BlockWaitState::Pending
-                && self.block_waits.iter().any(|other| {
+                && self.domains.block.block_waits.iter().any(|other| {
                     other.id != record.id
                         && other.block_request == record.block_request
                         && other.block_request_generation == record.block_request_generation
@@ -356,10 +360,12 @@ impl SemanticGraph {
                         });
                     };
                     let Some(completion_record) =
-                        self.block_completion_objects.iter().find(|completion_record| {
-                            completion_record.id == completion
-                                && completion_record.generation == completion_generation
-                        })
+                        self.domains.block.block_completion_objects.iter().find(
+                            |completion_record| {
+                                completion_record.id == completion
+                                    && completion_record.generation == completion_generation
+                            },
+                        )
                     else {
                         return Err(SemanticInvariantError::BlockWaitMissingCompletion {
                             block_wait: record.id,
@@ -487,7 +493,9 @@ impl SemanticGraph {
         block_wait: BlockWaitId,
         generation: Generation,
     ) {
-        if let Some(record) = self.block_waits.iter_mut().find(|record| record.id == block_wait) {
+        if let Some(record) =
+            self.domains.block.block_waits.iter_mut().find(|record| record.id == block_wait)
+        {
             record.block_request_generation = generation;
         }
     }

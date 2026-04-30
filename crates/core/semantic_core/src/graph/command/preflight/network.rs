@@ -366,7 +366,7 @@ impl SemanticGraph {
                 byte_len,
                 ..
             } => {
-                if self.socket_waits.iter().any(|record| {
+                if self.domains.network.socket_waits.iter().any(|record| {
                     record.id == *socket_wait
                         && record.generation == *socket_wait_generation
                         && record.state == SocketWaitState::Pending
@@ -387,7 +387,7 @@ impl SemanticGraph {
                 reason,
                 ..
             } => {
-                if self.socket_waits.iter().any(|record| {
+                if self.domains.network.socket_waits.iter().any(|record| {
                     record.id == *socket_wait
                         && record.generation == *socket_wait_generation
                         && record.state == SocketWaitState::Pending

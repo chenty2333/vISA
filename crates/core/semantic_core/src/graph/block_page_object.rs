@@ -24,7 +24,8 @@ impl SemanticGraph {
         if block_page_object == 0 {
             return Err("block page object id=0 is invalid");
         }
-        if self.block_page_objects.iter().any(|record| record.id == block_page_object) {
+        if self.domains.block.block_page_objects.iter().any(|record| record.id == block_page_object)
+        {
             return Err("block page object already exists");
         }
         if block_dma_buffer_generation == 0
@@ -64,18 +65,20 @@ impl SemanticGraph {
         if page_end > BLOCK_PAGE_OBJECT_PAGE_SIZE_V1 {
             return Err("block page object byte range exceeds page");
         }
-        let Some(buffer_record) = self.block_dma_buffers.iter().find(|record| {
+        let Some(buffer_record) = self.domains.block.block_dma_buffers.iter().find(|record| {
             record.id == block_dma_buffer
                 && record.generation == block_dma_buffer_generation
                 && record.state == BlockDmaBufferState::Bound
         }) else {
             return Err("block page object dma buffer generation is missing or inactive");
         };
-        let Some(completion_record) = self.block_completion_objects.iter().find(|completion| {
-            completion.id == block_completion
-                && completion.generation == block_completion_generation
-                && completion.state == BlockCompletionObjectState::Recorded
-        }) else {
+        let Some(completion_record) =
+            self.domains.block.block_completion_objects.iter().find(|completion| {
+                completion.id == block_completion
+                    && completion.generation == block_completion_generation
+                    && completion.state == BlockCompletionObjectState::Recorded
+            })
+        else {
             return Err("block page object completion generation is missing");
         };
         if completion_record.status != BlockCompletionStatus::Success {
@@ -94,14 +97,14 @@ impl SemanticGraph {
         if byte_len != buffer_record.byte_len {
             return Err("block page object byte length must match dma buffer");
         }
-        if self.block_page_objects.iter().any(|record| {
+        if self.domains.block.block_page_objects.iter().any(|record| {
             record.state == BlockPageObjectState::Integrated
                 && record.block_dma_buffer == buffer_record.id
                 && record.block_dma_buffer_generation == buffer_record.generation
         }) {
             return Err("block page object dma buffer already integrated");
         }
-        if self.block_page_objects.iter().any(|record| {
+        if self.domains.block.block_page_objects.iter().any(|record| {
             record.state == BlockPageObjectState::Integrated
                 && record.page == page
                 && record.page_offset == page_offset
@@ -155,14 +158,14 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(buffer_record) = self.block_dma_buffers.iter().find(|buffer| {
+        let Some(buffer_record) = self.domains.block.block_dma_buffers.iter().find(|buffer| {
             buffer.id == block_dma_buffer && buffer.generation == block_dma_buffer_generation
         }) else {
             return false;
         };
         let generation = 1;
-        self.next_block_page_object_id =
-            self.next_block_page_object_id.max(block_page_object.saturating_add(1));
+        self.domains.block.next_block_page_object_id =
+            self.domains.block.next_block_page_object_id.max(block_page_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockPageObjectIntegrated {
@@ -189,7 +192,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_page_objects.push(BlockPageObjectRecord {
+        self.domains.block.block_page_objects.push(BlockPageObjectRecord {
             id: block_page_object,
             block_dma_buffer,
             block_dma_buffer_generation,
@@ -222,16 +225,16 @@ impl SemanticGraph {
     }
 
     pub fn block_page_objects(&self) -> &[BlockPageObjectRecord] {
-        &self.block_page_objects
+        &self.domains.block.block_page_objects
     }
 
     pub fn block_page_object_count(&self) -> usize {
-        self.block_page_objects.len()
+        self.domains.block.block_page_objects.len()
     }
 
     pub fn check_block_page_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_page_objects {
-            let Some(buffer_record) = self.block_dma_buffers.iter().find(|buffer| {
+        for record in &self.domains.block.block_page_objects {
+            let Some(buffer_record) = self.domains.block.block_dma_buffers.iter().find(|buffer| {
                 buffer.id == record.block_dma_buffer
                     && buffer.generation == record.block_dma_buffer_generation
             }) else {
@@ -240,10 +243,12 @@ impl SemanticGraph {
                     block_dma_buffer: record.block_dma_buffer,
                 });
             };
-            let Some(completion_record) = self.block_completion_objects.iter().find(|completion| {
-                completion.id == record.block_completion
-                    && completion.generation == record.block_completion_generation
-            }) else {
+            let Some(completion_record) =
+                self.domains.block.block_completion_objects.iter().find(|completion| {
+                    completion.id == record.block_completion
+                        && completion.generation == record.block_completion_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockPageObjectMissingCompletion {
                     block_page_object: record.id,
                     block_completion: record.block_completion,
@@ -301,7 +306,7 @@ impl SemanticGraph {
                     block_page_object: record.id,
                 });
             }
-            if let Some(duplicate) = self.block_page_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_page_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state == BlockPageObjectState::Integrated
                     && other.block_dma_buffer == record.block_dma_buffer
@@ -312,7 +317,7 @@ impl SemanticGraph {
                     block_dma_buffer: record.block_dma_buffer,
                 });
             }
-            if let Some(duplicate) = self.block_page_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_page_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state == BlockPageObjectState::Integrated
                     && other.page == record.page
@@ -387,8 +392,12 @@ impl SemanticGraph {
         block_page_object: BlockPageObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_page_objects.iter_mut().find(|record| record.id == block_page_object)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_page_objects
+            .iter_mut()
+            .find(|record| record.id == block_page_object)
         {
             record.page.generation = generation;
         }

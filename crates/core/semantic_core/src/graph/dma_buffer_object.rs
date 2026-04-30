@@ -14,7 +14,7 @@ impl SemanticGraph {
         if dma_buffer == 0 {
             return Err("dma buffer object id=0 is invalid");
         }
-        if self.dma_buffer_objects.iter().any(|record| record.id == dma_buffer) {
+        if self.domains.device.dma_buffer_objects.iter().any(|record| record.id == dma_buffer) {
             return Err("dma buffer object already exists");
         }
         if length == 0 {
@@ -23,11 +23,13 @@ impl SemanticGraph {
         if !Self::dma_buffer_access_is_supported(access) {
             return Err("dma buffer object access is unsupported");
         }
-        let Some(descriptor_record) = self.descriptor_objects.iter().find(|record| {
-            record.id == descriptor
-                && record.generation == descriptor_generation
-                && record.state == DescriptorObjectState::Registered
-        }) else {
+        let Some(descriptor_record) =
+            self.domains.device.descriptor_objects.iter().find(|record| {
+                record.id == descriptor
+                    && record.generation == descriptor_generation
+                    && record.state == DescriptorObjectState::Registered
+            })
+        else {
             return Err("dma buffer object descriptor generation is missing or inactive");
         };
         if length > descriptor_record.length {
@@ -50,7 +52,7 @@ impl SemanticGraph {
         if resource_record.kind != ResourceKind::DmaBuffer {
             return Err("dma buffer object resource kind is not dma-buffer");
         }
-        if self.dma_buffer_objects.iter().any(|record| {
+        if self.domains.device.dma_buffer_objects.iter().any(|record| {
             record.descriptor == descriptor_record.id
                 && record.descriptor_generation == descriptor_generation
                 && record.state == DmaBufferObjectState::Registered
@@ -89,7 +91,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_dma_buffer_object_id = self.next_dma_buffer_object_id.max(dma_buffer + 1);
+        self.domains.device.next_dma_buffer_object_id =
+            self.domains.device.next_dma_buffer_object_id.max(dma_buffer + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::DmaBufferObjectRecorded {
@@ -103,7 +106,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.dma_buffer_objects.push(DmaBufferObjectRecord {
+        self.domains.device.dma_buffer_objects.push(DmaBufferObjectRecord {
             id: dma_buffer,
             descriptor,
             descriptor_generation,
@@ -120,19 +123,21 @@ impl SemanticGraph {
     }
 
     pub fn dma_buffer_objects(&self) -> &[DmaBufferObjectRecord] {
-        &self.dma_buffer_objects
+        &self.domains.device.dma_buffer_objects
     }
 
     pub fn dma_buffer_object_count(&self) -> usize {
-        self.dma_buffer_objects.len()
+        self.domains.device.dma_buffer_objects.len()
     }
 
     pub fn check_dma_buffer_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.dma_buffer_objects {
-            let Some(descriptor_record) = self.descriptor_objects.iter().find(|descriptor| {
-                descriptor.id == record.descriptor
-                    && descriptor.generation == record.descriptor_generation
-            }) else {
+        for record in &self.domains.device.dma_buffer_objects {
+            let Some(descriptor_record) =
+                self.domains.device.descriptor_objects.iter().find(|descriptor| {
+                    descriptor.id == record.descriptor
+                        && descriptor.generation == record.descriptor_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DmaBufferObjectMissingDescriptor {
                     dma_buffer: record.id,
                     descriptor: record.descriptor,
@@ -170,7 +175,7 @@ impl SemanticGraph {
                     dma_buffer: record.id,
                 });
             }
-            if let Some(duplicate) = self.dma_buffer_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.dma_buffer_objects.iter().find(|other| {
                 other.id != record.id
                     && other.descriptor == record.descriptor
                     && other.descriptor_generation == record.descriptor_generation
@@ -240,7 +245,7 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(record) =
-            self.dma_buffer_objects.iter_mut().find(|record| record.id == dma_buffer)
+            self.domains.device.dma_buffer_objects.iter_mut().find(|record| record.id == dma_buffer)
         {
             record.resource_generation = generation;
         }

@@ -29,7 +29,7 @@ impl SemanticGraph {
         if file_object == 0 {
             return Err("file object id=0 is invalid");
         }
-        if self.file_objects.iter().any(|record| record.id == file_object) {
+        if self.domains.block.file_objects.iter().any(|record| record.id == file_object) {
             return Err("file object already exists");
         }
         if buffer_cache_object_generation == 0
@@ -44,7 +44,7 @@ impl SemanticGraph {
         if state == FileObjectState::Invalidated {
             return Err("file object cannot be recorded as invalidated");
         }
-        let Some(source) = self.buffer_cache_objects.iter().find(|record| {
+        let Some(source) = self.domains.block.buffer_cache_objects.iter().find(|record| {
             record.id == buffer_cache_object
                 && record.generation == buffer_cache_object_generation
                 && record.state != BufferCacheObjectState::Invalidated
@@ -57,7 +57,7 @@ impl SemanticGraph {
         if file_end > file_size || byte_len > source.byte_len {
             return Err("file object byte range exceeds file or cache");
         }
-        if self.file_objects.iter().any(|record| {
+        if self.domains.block.file_objects.iter().any(|record| {
             record.state != FileObjectState::Invalidated
                 && record.namespace == namespace
                 && record.file_key == file_key
@@ -65,7 +65,7 @@ impl SemanticGraph {
         }) {
             return Err("file object range already materialized");
         }
-        if self.file_objects.iter().any(|record| {
+        if self.domains.block.file_objects.iter().any(|record| {
             record.state != FileObjectState::Invalidated
                 && record.buffer_cache_object == buffer_cache_object
                 && record.buffer_cache_object_generation == buffer_cache_object_generation
@@ -112,13 +112,14 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(source) = self.buffer_cache_objects.iter().find(|record| {
+        let Some(source) = self.domains.block.buffer_cache_objects.iter().find(|record| {
             record.id == buffer_cache_object && record.generation == buffer_cache_object_generation
         }) else {
             return false;
         };
         let generation = 1;
-        self.next_file_object_id = self.next_file_object_id.max(file_object.saturating_add(1));
+        self.domains.block.next_file_object_id =
+            self.domains.block.next_file_object_id.max(file_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FileObjectRecorded {
@@ -143,7 +144,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.file_objects.push(FileObjectRecord {
+        self.domains.block.file_objects.push(FileObjectRecord {
             id: file_object,
             buffer_cache_object,
             buffer_cache_object_generation,
@@ -170,16 +171,16 @@ impl SemanticGraph {
     }
 
     pub fn file_objects(&self) -> &[FileObjectRecord] {
-        &self.file_objects
+        &self.domains.block.file_objects
     }
 
     pub fn file_object_count(&self) -> usize {
-        self.file_objects.len()
+        self.domains.block.file_objects.len()
     }
 
     pub fn check_file_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.file_objects {
-            let Some(source) = self.buffer_cache_objects.iter().find(|cache| {
+        for record in &self.domains.block.file_objects {
+            let Some(source) = self.domains.block.buffer_cache_objects.iter().find(|cache| {
                 cache.id == record.buffer_cache_object
                     && cache.generation == record.buffer_cache_object_generation
             }) else {
@@ -219,7 +220,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::FileObjectInvalid { file_object: record.id });
             }
-            if let Some(duplicate) = self.file_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.file_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state != FileObjectState::Invalidated
                     && other.namespace == record.namespace
@@ -294,7 +295,9 @@ impl SemanticGraph {
         file_object: FileObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self.file_objects.iter_mut().find(|record| record.id == file_object) {
+        if let Some(record) =
+            self.domains.block.file_objects.iter_mut().find(|record| record.id == file_object)
+        {
             record.page.generation = generation;
         }
     }

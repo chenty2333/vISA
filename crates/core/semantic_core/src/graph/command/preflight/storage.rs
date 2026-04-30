@@ -561,7 +561,7 @@ impl SemanticGraph {
                 .map(|_| ())
                 .map_err(CommandError::precondition),
             SemanticCommand::ResolveFsWait { fs_wait, fs_wait_generation, .. } => {
-                if self.fs_waits.iter().any(|record| {
+                if self.domains.block.fs_waits.iter().any(|record| {
                     record.id == *fs_wait
                         && record.generation == *fs_wait_generation
                         && record.state == FsWaitState::Pending
@@ -589,7 +589,7 @@ impl SemanticGraph {
                         "fs wait cancellation reason is not a filesystem reason",
                     ));
                 }
-                if self.fs_waits.iter().any(|record| {
+                if self.domains.block.fs_waits.iter().any(|record| {
                     record.id == *fs_wait
                         && record.generation == *fs_wait_generation
                         && record.state == FsWaitState::Pending

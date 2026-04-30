@@ -19,45 +19,52 @@ impl SemanticGraph {
         if rx_interrupt == 0 {
             return Err("network rx interrupt id=0 is invalid");
         }
-        if self.network_rx_interrupts.iter().any(|record| record.id == rx_interrupt) {
+        if self.domains.network.network_rx_interrupts.iter().any(|record| record.id == rx_interrupt)
+        {
             return Err("network rx interrupt already exists");
         }
         if ready_descriptors == 0 || sequence == 0 {
             return Err("network rx interrupt readiness values are invalid");
         }
-        let Some(backend_record) = self.virtio_net_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.network.virtio_net_backends.iter().find(|record| {
             record.id == virtio_net_backend
                 && record.generation == virtio_net_backend_generation
                 && record.state == VirtioNetBackendObjectState::SkeletonReady
         }) else {
             return Err("network rx interrupt backend generation is missing or inactive");
         };
-        let Some(irq_record) = self.irq_events.iter().find(|record| {
+        let Some(irq_record) = self.domains.device.irq_events.iter().find(|record| {
             record.id == irq_event
                 && record.generation == irq_event_generation
                 && record.state == IrqEventState::Recorded
         }) else {
             return Err("network rx interrupt irq event generation is missing or inactive");
         };
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("network rx interrupt packet device generation is missing or inactive");
         };
-        let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == rx_queue
-                && record.generation == rx_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(rx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == rx_queue
+                    && record.generation == rx_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network rx interrupt rx queue generation is missing or inactive");
         };
-        let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-            record.id == backend_record.driver_binding
-                && record.generation == backend_record.driver_binding_generation
-                && record.state == DriverStoreBindingState::Bound
-        }) else {
+        let Some(binding_record) =
+            self.domains.device.driver_store_bindings.iter().find(|record| {
+                record.id == backend_record.driver_binding
+                    && record.generation == backend_record.driver_binding_generation
+                    && record.state == DriverStoreBindingState::Bound
+            })
+        else {
             return Err("network rx interrupt backend driver binding is missing or inactive");
         };
         let irq_capability_target = ContractObjectRef::new(
@@ -65,7 +72,7 @@ impl SemanticGraph {
             irq_record.irq_line,
             irq_record.irq_line_generation,
         );
-        let irq_capability_active = self.device_capabilities.iter().any(|record| {
+        let irq_capability_active = self.domains.device.device_capabilities.iter().any(|record| {
             record.driver_store == binding_record.driver_store
                 && record.driver_store_generation == binding_record.driver_store_generation
                 && record.target == irq_capability_target
@@ -94,7 +101,7 @@ impl SemanticGraph {
         if ready_descriptors as u32 > rx_queue_record.depth {
             return Err("network rx interrupt ready descriptors exceed rx queue depth");
         }
-        if self.network_rx_interrupts.iter().any(|record| {
+        if self.domains.network.network_rx_interrupts.iter().any(|record| {
             record.irq_event == irq_event
                 && record.irq_event_generation == irq_event_generation
                 && record.state == NetworkRxInterruptState::Recorded
@@ -142,7 +149,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_network_rx_interrupt_id = self.next_network_rx_interrupt_id.max(rx_interrupt + 1);
+        self.domains.network.next_network_rx_interrupt_id =
+            self.domains.network.next_network_rx_interrupt_id.max(rx_interrupt + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkRxInterruptRecorded {
@@ -160,7 +168,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_rx_interrupts.push(NetworkRxInterruptRecord {
+        self.domains.network.network_rx_interrupts.push(NetworkRxInterruptRecord {
             id: rx_interrupt,
             virtio_net_backend,
             virtio_net_backend_generation,
@@ -181,25 +189,27 @@ impl SemanticGraph {
     }
 
     pub fn network_rx_interrupts(&self) -> &[NetworkRxInterruptRecord] {
-        &self.network_rx_interrupts
+        &self.domains.network.network_rx_interrupts
     }
 
     pub fn network_rx_interrupt_count(&self) -> usize {
-        self.network_rx_interrupts.len()
+        self.domains.network.network_rx_interrupts.len()
     }
 
     pub fn check_network_rx_interrupt_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_rx_interrupts {
-            let Some(backend_record) = self.virtio_net_backends.iter().find(|backend| {
-                backend.id == record.virtio_net_backend
-                    && backend.generation == record.virtio_net_backend_generation
-            }) else {
+        for record in &self.domains.network.network_rx_interrupts {
+            let Some(backend_record) =
+                self.domains.network.virtio_net_backends.iter().find(|backend| {
+                    backend.id == record.virtio_net_backend
+                        && backend.generation == record.virtio_net_backend_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkRxInterruptMissingBackend {
                     rx_interrupt: record.id,
                     virtio_net_backend: record.virtio_net_backend,
                 });
             };
-            let Some(irq_record) = self.irq_events.iter().find(|irq| {
+            let Some(irq_record) = self.domains.device.irq_events.iter().find(|irq| {
                 irq.id == record.irq_event && irq.generation == record.irq_event_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkRxInterruptMissingIrqEvent {
@@ -208,7 +218,7 @@ impl SemanticGraph {
                 });
             };
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -218,18 +228,22 @@ impl SemanticGraph {
                     packet_device: record.packet_device,
                 });
             };
-            let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|queue| {
-                queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
-            }) else {
+            let Some(rx_queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|queue| {
+                    queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkRxInterruptMissingRxQueue {
                     rx_interrupt: record.id,
                     rx_queue: record.rx_queue,
                 });
             };
-            let Some(binding_record) = self.driver_store_bindings.iter().find(|binding| {
-                binding.id == backend_record.driver_binding
-                    && binding.generation == backend_record.driver_binding_generation
-            }) else {
+            let Some(binding_record) =
+                self.domains.device.driver_store_bindings.iter().find(|binding| {
+                    binding.id == backend_record.driver_binding
+                        && binding.generation == backend_record.driver_binding_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkRxInterruptInvalid {
                     rx_interrupt: record.id,
                 });
@@ -246,14 +260,16 @@ impl SemanticGraph {
                 irq_record.irq_line,
                 irq_record.irq_line_generation,
             );
-            let irq_capability_active = self.device_capabilities.iter().any(|capability| {
-                capability.driver_store == binding_record.driver_store
-                    && capability.driver_store_generation == binding_record.driver_store_generation
-                    && capability.target == irq_capability_target
-                    && capability.class == CapabilityClass::IrqLine
-                    && capability.operation == "ack"
-                    && capability.state == DeviceCapabilityState::Active
-            });
+            let irq_capability_active =
+                self.domains.device.device_capabilities.iter().any(|capability| {
+                    capability.driver_store == binding_record.driver_store
+                        && capability.driver_store_generation
+                            == binding_record.driver_store_generation
+                        && capability.target == irq_capability_target
+                        && capability.class == CapabilityClass::IrqLine
+                        && capability.operation == "ack"
+                        && capability.state == DeviceCapabilityState::Active
+                });
             if !irq_capability_active && !cleanup_covers_binding {
                 return Err(SemanticInvariantError::NetworkRxInterruptMissingIrqCapability {
                     rx_interrupt: record.id,
@@ -289,12 +305,14 @@ impl SemanticGraph {
                     rx_interrupt: record.id,
                 });
             }
-            if let Some(duplicate) = self.network_rx_interrupts.iter().find(|other| {
-                other.id != record.id
-                    && other.irq_event == record.irq_event
-                    && other.irq_event_generation == record.irq_event_generation
-                    && other.state == NetworkRxInterruptState::Recorded
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_rx_interrupts.iter().find(|other| {
+                    other.id != record.id
+                        && other.irq_event == record.irq_event
+                        && other.irq_event_generation == record.irq_event_generation
+                        && other.state == NetworkRxInterruptState::Recorded
+                })
+            {
                 return Err(SemanticInvariantError::NetworkRxInterruptDuplicateIrqEvent {
                     rx_interrupt: duplicate.id,
                     irq_event: record.irq_event,
@@ -345,8 +363,12 @@ impl SemanticGraph {
         rx_interrupt: NetworkRxInterruptId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_rx_interrupts.iter_mut().find(|record| record.id == rx_interrupt)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_rx_interrupts
+            .iter_mut()
+            .find(|record| record.id == rx_interrupt)
         {
             record.rx_queue_generation = generation;
         }

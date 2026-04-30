@@ -24,13 +24,13 @@ impl SemanticGraph {
         if sequence == 0 {
             return Err("socket operation sequence is zero");
         }
-        if self.socket_operations.iter().any(|record| record.id == operation_id) {
+        if self.domains.network.socket_operations.iter().any(|record| record.id == operation_id) {
             return Err("socket operation already exists");
         }
         let Some(endpoint_record) = self.live_endpoint_record(endpoint, endpoint_generation) else {
             return Err("socket operation endpoint generation is missing or inactive");
         };
-        if self.socket_operations.iter().any(|record| {
+        if self.domains.network.socket_operations.iter().any(|record| {
             record.endpoint == endpoint_record.id
                 && record.endpoint_generation == endpoint_record.generation
                 && record.sequence == sequence
@@ -199,7 +199,8 @@ impl SemanticGraph {
                 remote_port,
             );
         let generation = 1;
-        self.next_socket_operation_id = self.next_socket_operation_id.max(operation_id + 1);
+        self.domains.network.next_socket_operation_id =
+            self.domains.network.next_socket_operation_id.max(operation_id + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::SocketOperationRecorded {
@@ -223,7 +224,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.socket_operations.push(SocketOperationRecord {
+        self.domains.network.socket_operations.push(SocketOperationRecord {
             id: operation_id,
             endpoint,
             endpoint_generation,
@@ -250,15 +251,15 @@ impl SemanticGraph {
     }
 
     pub fn socket_operations(&self) -> &[SocketOperationRecord] {
-        &self.socket_operations
+        &self.domains.network.socket_operations
     }
 
     pub fn socket_operation_count(&self) -> usize {
-        self.socket_operations.len()
+        self.domains.network.socket_operations.len()
     }
 
     pub fn check_socket_operation_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.socket_operations {
+        for record in &self.domains.network.socket_operations {
             let Some(endpoint) =
                 self.live_endpoint_record(record.endpoint, record.endpoint_generation)
             else {
@@ -267,7 +268,7 @@ impl SemanticGraph {
                     endpoint: record.endpoint,
                 });
             };
-            let Some(socket) = self.socket_objects.iter().find(|socket| {
+            let Some(socket) = self.domains.network.socket_objects.iter().find(|socket| {
                 socket.id == record.socket && socket.generation == record.socket_generation
             }) else {
                 return Err(SemanticInvariantError::SocketOperationMissingSocket {
@@ -275,9 +276,11 @@ impl SemanticGraph {
                     socket: record.socket,
                 });
             };
-            let Some(adapter) = self.network_stack_adapters.iter().find(|adapter| {
-                adapter.id == record.adapter && adapter.generation == record.adapter_generation
-            }) else {
+            let Some(adapter) =
+                self.domains.network.network_stack_adapters.iter().find(|adapter| {
+                    adapter.id == record.adapter && adapter.generation == record.adapter_generation
+                })
+            else {
                 return Err(SemanticInvariantError::SocketOperationMissingAdapter {
                     operation: record.id,
                     adapter: record.adapter,
@@ -316,12 +319,22 @@ impl SemanticGraph {
                     operation: record.id,
                 });
             }
-            if self.socket_operations.iter().filter(|other| other.id == record.id).count() > 1 {
+            if self
+                .domains
+                .network
+                .socket_operations
+                .iter()
+                .filter(|other| other.id == record.id)
+                .count()
+                > 1
+            {
                 return Err(SemanticInvariantError::SocketOperationDuplicate {
                     operation: record.id,
                 });
             }
             if let Some(duplicate) = self
+                .domains
+                .network
                 .socket_operations
                 .iter()
                 .filter(|other| {
@@ -398,7 +411,7 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         endpoint_generation: Generation,
     ) -> Option<&EndpointObjectRecord> {
-        self.endpoint_objects.iter().find(|record| {
+        self.domains.network.endpoint_objects.iter().find(|record| {
             record.id == endpoint
                 && record.generation == endpoint_generation
                 && record.state == EndpointObjectState::Allocated
@@ -411,7 +424,7 @@ impl SemanticGraph {
         endpoint_generation: Generation,
         operation: SocketOperationKind,
     ) -> bool {
-        self.socket_operations.iter().any(|record| {
+        self.domains.network.socket_operations.iter().any(|record| {
             record.endpoint == endpoint
                 && record.endpoint_generation == endpoint_generation
                 && record.operation == operation
@@ -424,7 +437,9 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         endpoint_generation: Generation,
     ) -> u64 {
-        self.socket_operations
+        self.domains
+            .network
+            .socket_operations
             .iter()
             .filter(|record| {
                 record.endpoint == endpoint
@@ -445,6 +460,8 @@ impl SemanticGraph {
                     && record.backlog == 0
                     && record.byte_len == 0
                     && self
+                        .domains
+                        .network
                         .socket_operations
                         .iter()
                         .filter(|other| {
@@ -486,7 +503,7 @@ impl SemanticGraph {
         record: &SocketOperationRecord,
         operation: SocketOperationKind,
     ) -> bool {
-        self.socket_operations.iter().any(|other| {
+        self.domains.network.socket_operations.iter().any(|other| {
             other.endpoint == record.endpoint
                 && other.endpoint_generation == record.endpoint_generation
                 && other.operation == operation
@@ -578,7 +595,9 @@ impl SemanticGraph {
         endpoint_generation: Generation,
         operation: SocketOperationKind,
     ) -> Option<&SocketOperationRecord> {
-        self.socket_operations
+        self.domains
+            .network
+            .socket_operations
             .iter()
             .filter(|record| {
                 record.endpoint == endpoint
@@ -595,8 +614,12 @@ impl SemanticGraph {
         operation_id: SocketOperationId,
         sequence: u64,
     ) {
-        if let Some(record) =
-            self.socket_operations.iter_mut().find(|record| record.id == operation_id)
+        if let Some(record) = self
+            .domains
+            .network
+            .socket_operations
+            .iter_mut()
+            .find(|record| record.id == operation_id)
         {
             record.sequence = sequence;
         }

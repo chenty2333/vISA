@@ -16,7 +16,7 @@ impl SemanticGraph {
         if mmio_region == 0 {
             return Err("mmio region object id=0 is invalid");
         }
-        if self.mmio_region_objects.iter().any(|record| record.id == mmio_region) {
+        if self.domains.device.mmio_region_objects.iter().any(|record| record.id == mmio_region) {
             return Err("mmio region object already exists");
         }
         if length == 0 {
@@ -28,7 +28,7 @@ impl SemanticGraph {
         if !Self::mmio_region_access_is_supported(access) {
             return Err("mmio region object access is unsupported");
         }
-        let Some(device_record) = self.device_objects.iter().find(|record| {
+        let Some(device_record) = self.domains.device.device_objects.iter().find(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
@@ -49,7 +49,7 @@ impl SemanticGraph {
         if resource_record.kind != ResourceKind::MmioRegion {
             return Err("mmio region object resource kind is not mmio-region");
         }
-        if self.mmio_region_objects.iter().any(|record| {
+        if self.domains.device.mmio_region_objects.iter().any(|record| {
             record.device == device_record.id
                 && record.device_generation == device_generation
                 && record.region_index == region_index
@@ -93,7 +93,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_mmio_region_object_id = self.next_mmio_region_object_id.max(mmio_region + 1);
+        self.domains.device.next_mmio_region_object_id =
+            self.domains.device.next_mmio_region_object_id.max(mmio_region + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::MmioRegionObjectRecorded {
@@ -109,7 +110,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.mmio_region_objects.push(MmioRegionObjectRecord {
+        self.domains.device.mmio_region_objects.push(MmioRegionObjectRecord {
             id: mmio_region,
             device,
             device_generation,
@@ -128,16 +129,16 @@ impl SemanticGraph {
     }
 
     pub fn mmio_region_objects(&self) -> &[MmioRegionObjectRecord] {
-        &self.mmio_region_objects
+        &self.domains.device.mmio_region_objects
     }
 
     pub fn mmio_region_object_count(&self) -> usize {
-        self.mmio_region_objects.len()
+        self.domains.device.mmio_region_objects.len()
     }
 
     pub fn check_mmio_region_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.mmio_region_objects {
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+        for record in &self.domains.device.mmio_region_objects {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::MmioRegionObjectMissingDevice {
@@ -173,7 +174,7 @@ impl SemanticGraph {
                     mmio_region: record.id,
                 });
             }
-            if let Some(duplicate) = self.mmio_region_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.mmio_region_objects.iter().find(|other| {
                 other.id != record.id
                     && other.device == record.device
                     && other.device_generation == record.device_generation
@@ -236,8 +237,12 @@ impl SemanticGraph {
         mmio_region: MmioRegionObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.mmio_region_objects.iter_mut().find(|record| record.id == mmio_region)
+        if let Some(record) = self
+            .domains
+            .device
+            .mmio_region_objects
+            .iter_mut()
+            .find(|record| record.id == mmio_region)
         {
             record.device_generation = generation;
         }

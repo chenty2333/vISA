@@ -16,7 +16,13 @@ impl SemanticGraph {
         if packet_buffer == 0 {
             return Err("packet buffer object id=0 is invalid");
         }
-        if self.packet_buffer_objects.iter().any(|record| record.id == packet_buffer) {
+        if self
+            .domains
+            .network
+            .packet_buffer_objects
+            .iter()
+            .any(|record| record.id == packet_buffer)
+        {
             return Err("packet buffer object already exists");
         }
         if frame_format_version == 0 || capacity == 0 || sequence == 0 {
@@ -34,11 +40,13 @@ impl SemanticGraph {
         if state == PacketBufferObjectState::Filled && payload_len == 0 {
             return Err("filled packet buffer object must carry payload");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("packet buffer object packet device generation is missing or inactive");
         };
         if frame_format_version != packet_device_record.frame_format_version {
@@ -83,8 +91,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_packet_buffer_object_id =
-            self.next_packet_buffer_object_id.max(packet_buffer + 1);
+        self.domains.network.next_packet_buffer_object_id =
+            self.domains.network.next_packet_buffer_object_id.max(packet_buffer + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::PacketBufferObjectRecorded {
@@ -100,7 +108,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.packet_buffer_objects.push(PacketBufferObjectRecord {
+        self.domains.network.packet_buffer_objects.push(PacketBufferObjectRecord {
             id: packet_buffer,
             packet_device,
             packet_device_generation,
@@ -118,17 +126,17 @@ impl SemanticGraph {
     }
 
     pub fn packet_buffer_objects(&self) -> &[PacketBufferObjectRecord] {
-        &self.packet_buffer_objects
+        &self.domains.network.packet_buffer_objects
     }
 
     pub fn packet_buffer_object_count(&self) -> usize {
-        self.packet_buffer_objects.len()
+        self.domains.network.packet_buffer_objects.len()
     }
 
     pub fn check_packet_buffer_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.packet_buffer_objects {
+        for record in &self.domains.network.packet_buffer_objects {
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -205,8 +213,12 @@ impl SemanticGraph {
         packet_buffer: PacketBufferObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.packet_buffer_objects.iter_mut().find(|record| record.id == packet_buffer)
+        if let Some(record) = self
+            .domains
+            .network
+            .packet_buffer_objects
+            .iter_mut()
+            .find(|record| record.id == packet_buffer)
         {
             record.packet_device_generation = generation;
         }

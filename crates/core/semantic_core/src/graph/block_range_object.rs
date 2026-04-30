@@ -12,17 +12,19 @@ impl SemanticGraph {
         if block_range == 0 {
             return Err("block range object id=0 is invalid");
         }
-        if self.block_range_objects.iter().any(|record| record.id == block_range) {
+        if self.domains.block.block_range_objects.iter().any(|record| record.id == block_range) {
             return Err("block range object already exists");
         }
         if block_device_generation == 0 || sector_count == 0 {
             return Err("block range object identity values must be nonzero");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block range object block device generation is missing or inactive");
         };
         if start_sector >= block_device_record.sector_count {
@@ -65,8 +67,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_block_range_object_id =
-            self.next_block_range_object_id.max(block_range.saturating_add(1));
+        self.domains.block.next_block_range_object_id =
+            self.domains.block.next_block_range_object_id.max(block_range.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRangeObjectRecorded {
@@ -80,7 +82,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_range_objects.push(BlockRangeObjectRecord {
+        self.domains.block.block_range_objects.push(BlockRangeObjectRecord {
             id: block_range,
             block_device,
             block_device_generation,
@@ -97,19 +99,21 @@ impl SemanticGraph {
     }
 
     pub fn block_range_objects(&self) -> &[BlockRangeObjectRecord] {
-        &self.block_range_objects
+        &self.domains.block.block_range_objects
     }
 
     pub fn block_range_object_count(&self) -> usize {
-        self.block_range_objects.len()
+        self.domains.block.block_range_objects.len()
     }
 
     pub fn check_block_range_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_range_objects {
-            let Some(block_device_record) = self.block_device_objects.iter().find(|block_device| {
-                block_device.id == record.block_device
-                    && block_device.generation == record.block_device_generation
-            }) else {
+        for record in &self.domains.block.block_range_objects {
+            let Some(block_device_record) =
+                self.domains.block.block_device_objects.iter().find(|block_device| {
+                    block_device.id == record.block_device
+                        && block_device.generation == record.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockRangeObjectMissingDevice {
                     block_range: record.id,
                     block_device: record.block_device,
@@ -173,8 +177,12 @@ impl SemanticGraph {
         block_range: BlockRangeObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_range_objects.iter_mut().find(|record| record.id == block_range)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_range_objects
+            .iter_mut()
+            .find(|record| record.id == block_range)
         {
             record.block_device_generation = generation;
         }

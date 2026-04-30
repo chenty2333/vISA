@@ -57,14 +57,14 @@ impl SemanticGraph {
         if store.role != "driver" || store.state == StoreState::Dead {
             return Err("io fault injection store is not a live driver");
         }
-        if !self.device_objects.iter().any(|record| {
+        if !self.domains.device.device_objects.iter().any(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
         }) {
             return Err("io fault injection device generation is missing or inactive");
         }
-        let Some(binding) = self.driver_store_bindings.iter().find(|record| {
+        let Some(binding) = self.domains.device.driver_store_bindings.iter().find(|record| {
             record.id == driver_binding && record.generation == driver_binding_generation
         }) else {
             return Err("io fault injection driver binding generation is missing");
@@ -213,15 +213,17 @@ impl SemanticGraph {
         device_generation: Generation,
     ) -> bool {
         match target.kind {
-            ContractObjectKind::DeviceObject => self.device_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.id == device
-                    && record.generation == device_generation
-                    && record.state == DeviceObjectState::Registered
-            }),
+            ContractObjectKind::DeviceObject => {
+                self.domains.device.device_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.id == device
+                        && record.generation == device_generation
+                        && record.state == DeviceObjectState::Registered
+                })
+            }
             ContractObjectKind::DmaBufferObject => {
-                self.dma_buffer_objects.iter().any(|record| {
+                self.domains.device.dma_buffer_objects.iter().any(|record| {
                     record.id == target.id
                         && record.generation == target.generation
                         && record.state == DmaBufferObjectState::Registered
@@ -232,20 +234,24 @@ impl SemanticGraph {
                     device_generation,
                 )
             }
-            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-                    && record.state == MmioRegionObjectState::Registered
-            }),
-            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-                    && record.state == IrqLineObjectState::Registered
-            }),
+            ContractObjectKind::MmioRegionObject => {
+                self.domains.device.mmio_region_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                        && record.state == MmioRegionObjectState::Registered
+                })
+            }
+            ContractObjectKind::IrqLineObject => {
+                self.domains.device.irq_line_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                        && record.state == IrqLineObjectState::Registered
+                })
+            }
             _ => false,
         }
     }
@@ -257,30 +263,36 @@ impl SemanticGraph {
         device_generation: Generation,
     ) -> bool {
         match target.kind {
-            ContractObjectKind::DeviceObject => self.device_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.id == device
-                    && record.generation == device_generation
-            }),
+            ContractObjectKind::DeviceObject => {
+                self.domains.device.device_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.id == device
+                        && record.generation == device_generation
+                })
+            }
             ContractObjectKind::DmaBufferObject => self.io_cleanup_dma_buffer_belongs_to_device(
                 target.id,
                 target.generation,
                 device,
                 device_generation,
             ),
-            ContractObjectKind::MmioRegionObject => self.mmio_region_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
-            ContractObjectKind::IrqLineObject => self.irq_line_objects.iter().any(|record| {
-                record.id == target.id
-                    && record.generation == target.generation
-                    && record.device == device
-                    && record.device_generation == device_generation
-            }),
+            ContractObjectKind::MmioRegionObject => {
+                self.domains.device.mmio_region_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
+            ContractObjectKind::IrqLineObject => {
+                self.domains.device.irq_line_objects.iter().any(|record| {
+                    record.id == target.id
+                        && record.generation == target.generation
+                        && record.device == device
+                        && record.device_generation == device_generation
+                })
+            }
             _ => false,
         }
     }
@@ -308,7 +320,7 @@ impl SemanticGraph {
                     store: fault.driver_store,
                 });
             }
-            if !self.device_objects.iter().any(|device| {
+            if !self.domains.device.device_objects.iter().any(|device| {
                 device.id == fault.device && device.generation == fault.device_generation
             }) {
                 return Err(SemanticInvariantError::IoFaultInjectionMissingDevice {
@@ -316,7 +328,7 @@ impl SemanticGraph {
                     device: fault.device,
                 });
             }
-            let Some(binding) = self.driver_store_bindings.iter().find(|binding| {
+            let Some(binding) = self.domains.device.driver_store_bindings.iter().find(|binding| {
                 binding.id == fault.driver_binding
                     && binding.generation == fault.driver_binding_generation
             }) else {

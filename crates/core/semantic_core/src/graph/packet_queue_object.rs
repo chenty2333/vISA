@@ -14,7 +14,8 @@ impl SemanticGraph {
         if packet_queue == 0 {
             return Err("packet queue object id=0 is invalid");
         }
-        if self.packet_queue_objects.iter().any(|record| record.id == packet_queue) {
+        if self.domains.network.packet_queue_objects.iter().any(|record| record.id == packet_queue)
+        {
             return Err("packet queue object already exists");
         }
         if name.is_empty() {
@@ -26,11 +27,13 @@ impl SemanticGraph {
         if !Self::packet_queue_role_is_supported(role) {
             return Err("packet queue object role is unsupported");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("packet queue object packet device generation is missing or inactive");
         };
         let max_depth = match role {
@@ -40,7 +43,7 @@ impl SemanticGraph {
         if depth > max_depth {
             return Err("packet queue object depth exceeds packet device queue contract");
         }
-        if self.packet_queue_objects.iter().any(|record| {
+        if self.domains.network.packet_queue_objects.iter().any(|record| {
             record.packet_device == packet_device_record.id
                 && record.packet_device_generation == packet_device_generation
                 && record.role == role
@@ -81,7 +84,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_packet_queue_object_id = self.next_packet_queue_object_id.max(packet_queue + 1);
+        self.domains.network.next_packet_queue_object_id =
+            self.domains.network.next_packet_queue_object_id.max(packet_queue + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::PacketQueueObjectRecorded {
@@ -94,7 +98,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.packet_queue_objects.push(PacketQueueObjectRecord {
+        self.domains.network.packet_queue_objects.push(PacketQueueObjectRecord {
             id: packet_queue,
             name: name.to_string(),
             packet_device,
@@ -111,17 +115,17 @@ impl SemanticGraph {
     }
 
     pub fn packet_queue_objects(&self) -> &[PacketQueueObjectRecord] {
-        &self.packet_queue_objects
+        &self.domains.network.packet_queue_objects
     }
 
     pub fn packet_queue_object_count(&self) -> usize {
-        self.packet_queue_objects.len()
+        self.domains.network.packet_queue_objects.len()
     }
 
     pub fn check_packet_queue_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.packet_queue_objects {
+        for record in &self.domains.network.packet_queue_objects {
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -149,14 +153,16 @@ impl SemanticGraph {
                     packet_queue: record.id,
                 });
             }
-            if let Some(duplicate) = self.packet_queue_objects.iter().find(|other| {
-                other.id != record.id
-                    && other.packet_device == record.packet_device
-                    && other.packet_device_generation == record.packet_device_generation
-                    && other.role == record.role
-                    && other.queue_index == record.queue_index
-                    && other.state == PacketQueueObjectState::Registered
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.packet_queue_objects.iter().find(|other| {
+                    other.id != record.id
+                        && other.packet_device == record.packet_device
+                        && other.packet_device_generation == record.packet_device_generation
+                        && other.role == record.role
+                        && other.queue_index == record.queue_index
+                        && other.state == PacketQueueObjectState::Registered
+                })
+            {
                 return Err(SemanticInvariantError::PacketQueueObjectDuplicateIndex {
                     packet_queue: duplicate.id,
                     packet_device: record.packet_device,
@@ -203,8 +209,12 @@ impl SemanticGraph {
         packet_queue: PacketQueueObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.packet_queue_objects.iter_mut().find(|record| record.id == packet_queue)
+        if let Some(record) = self
+            .domains
+            .network
+            .packet_queue_objects
+            .iter_mut()
+            .find(|record| record.id == packet_queue)
         {
             record.packet_device_generation = generation;
         }

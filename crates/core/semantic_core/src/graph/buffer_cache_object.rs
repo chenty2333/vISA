@@ -19,7 +19,13 @@ impl SemanticGraph {
         if buffer_cache_object == 0 {
             return Err("buffer cache object id=0 is invalid");
         }
-        if self.buffer_cache_objects.iter().any(|record| record.id == buffer_cache_object) {
+        if self
+            .domains
+            .block
+            .buffer_cache_objects
+            .iter()
+            .any(|record| record.id == buffer_cache_object)
+        {
             return Err("buffer cache object already exists");
         }
         if block_page_object_generation == 0
@@ -37,7 +43,7 @@ impl SemanticGraph {
         if cache_state == BufferCacheObjectState::Invalidated {
             return Err("buffer cache object cannot be recorded as invalidated");
         }
-        let Some(source) = self.block_page_objects.iter().find(|record| {
+        let Some(source) = self.domains.block.block_page_objects.iter().find(|record| {
             record.id == block_page_object
                 && record.generation == block_page_object_generation
                 && record.state == BlockPageObjectState::Integrated
@@ -56,7 +62,7 @@ impl SemanticGraph {
         let Some(range_end) = block_offset.checked_add(byte_len) else {
             return Err("buffer cache object block byte range overflow");
         };
-        let Some(block_range) = self.block_range_objects.iter().find(|range| {
+        let Some(block_range) = self.domains.block.block_range_objects.iter().find(|range| {
             range.id == source.block_range
                 && range.generation == source.block_range_generation
                 && range.state == BlockRangeObjectState::Registered
@@ -69,7 +75,7 @@ impl SemanticGraph {
         {
             return Err("buffer cache object block range does not match integration");
         }
-        if self.buffer_cache_objects.iter().any(|record| {
+        if self.domains.block.buffer_cache_objects.iter().any(|record| {
             record.state != BufferCacheObjectState::Invalidated
                 && record.block_device == source.block_device
                 && record.block_device_generation == source.block_device_generation
@@ -80,7 +86,7 @@ impl SemanticGraph {
         }) {
             return Err("buffer cache object block range already cached");
         }
-        if self.buffer_cache_objects.iter().any(|record| {
+        if self.domains.block.buffer_cache_objects.iter().any(|record| {
             record.state != BufferCacheObjectState::Invalidated
                 && record.page == source.page
                 && record.page_offset == source.page_offset
@@ -124,14 +130,17 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(source) = self.block_page_objects.iter().find(|record| {
+        let Some(source) = self.domains.block.block_page_objects.iter().find(|record| {
             record.id == block_page_object && record.generation == block_page_object_generation
         }) else {
             return false;
         };
         let generation = 1;
-        self.next_buffer_cache_object_id =
-            self.next_buffer_cache_object_id.max(buffer_cache_object.saturating_add(1));
+        self.domains.block.next_buffer_cache_object_id = self
+            .domains
+            .block
+            .next_buffer_cache_object_id
+            .max(buffer_cache_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BufferCacheObjectRecorded {
@@ -157,7 +166,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.buffer_cache_objects.push(BufferCacheObjectRecord {
+        self.domains.block.buffer_cache_objects.push(BufferCacheObjectRecord {
             id: buffer_cache_object,
             block_page_object,
             block_page_object_generation,
@@ -186,16 +195,16 @@ impl SemanticGraph {
     }
 
     pub fn buffer_cache_objects(&self) -> &[BufferCacheObjectRecord] {
-        &self.buffer_cache_objects
+        &self.domains.block.buffer_cache_objects
     }
 
     pub fn buffer_cache_object_count(&self) -> usize {
-        self.buffer_cache_objects.len()
+        self.domains.block.buffer_cache_objects.len()
     }
 
     pub fn check_buffer_cache_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.buffer_cache_objects {
-            let Some(source) = self.block_page_objects.iter().find(|page| {
+        for record in &self.domains.block.buffer_cache_objects {
+            let Some(source) = self.domains.block.block_page_objects.iter().find(|page| {
                 page.id == record.block_page_object
                     && page.generation == record.block_page_object_generation
             }) else {
@@ -204,7 +213,7 @@ impl SemanticGraph {
                     block_page_object: record.block_page_object,
                 });
             };
-            let Some(block_range) = self.block_range_objects.iter().find(|range| {
+            let Some(block_range) = self.domains.block.block_range_objects.iter().find(|range| {
                 range.id == record.block_range && range.generation == record.block_range_generation
             }) else {
                 return Err(SemanticInvariantError::BufferCacheObjectInvalid {
@@ -255,7 +264,7 @@ impl SemanticGraph {
                     buffer_cache_object: record.id,
                 });
             }
-            if let Some(duplicate) = self.buffer_cache_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.buffer_cache_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state != BufferCacheObjectState::Invalidated
                     && other.block_device == record.block_device
@@ -270,7 +279,7 @@ impl SemanticGraph {
                     block_range: record.block_range,
                 });
             }
-            if let Some(duplicate) = self.buffer_cache_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.buffer_cache_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state != BufferCacheObjectState::Invalidated
                     && other.page == record.page
@@ -343,8 +352,12 @@ impl SemanticGraph {
         buffer_cache_object: BufferCacheObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.buffer_cache_objects.iter_mut().find(|record| record.id == buffer_cache_object)
+        if let Some(record) = self
+            .domains
+            .block
+            .buffer_cache_objects
+            .iter_mut()
+            .find(|record| record.id == buffer_cache_object)
         {
             record.page.generation = generation;
         }

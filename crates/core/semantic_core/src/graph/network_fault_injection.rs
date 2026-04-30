@@ -29,7 +29,8 @@ impl SemanticGraph {
         if injection == 0 {
             return Err("network fault injection id=0 is invalid");
         }
-        if self.network_fault_injections.iter().any(|record| record.id == injection) {
+        if self.domains.network.network_fault_injections.iter().any(|record| record.id == injection)
+        {
             return Err("network fault injection already exists");
         }
         if sequence == 0 || injected_packets == 0 {
@@ -73,11 +74,13 @@ impl SemanticGraph {
             }
         }
 
-        let Some(adapter_record) = self.network_stack_adapters.iter().find(|record| {
-            record.id == adapter
-                && record.generation == adapter_generation
-                && record.state == NetworkStackAdapterState::Bound
-        }) else {
+        let Some(adapter_record) =
+            self.domains.network.network_stack_adapters.iter().find(|record| {
+                record.id == adapter
+                    && record.generation == adapter_generation
+                    && record.state == NetworkStackAdapterState::Bound
+            })
+        else {
             return Err("network fault injection adapter generation is missing or inactive");
         };
         if adapter_record.packet_device != packet_device
@@ -86,18 +89,22 @@ impl SemanticGraph {
             return Err("network fault injection packet device does not match adapter");
         }
 
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("network fault injection packet device generation is missing or inactive");
         };
-        let Some(packet_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == packet_queue
-                && record.generation == packet_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(packet_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == packet_queue
+                    && record.generation == packet_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network fault injection packet queue generation is missing or inactive");
         };
         let (expected_queue, expected_queue_generation, expected_role) = match direction {
@@ -120,11 +127,13 @@ impl SemanticGraph {
         if let (Some(packet_buffer), Some(packet_buffer_generation)) =
             (packet_buffer, packet_buffer_generation)
         {
-            let Some(packet_buffer_record) = self.packet_buffer_objects.iter().find(|record| {
-                record.id == packet_buffer
-                    && record.generation == packet_buffer_generation
-                    && record.state == PacketBufferObjectState::Filled
-            }) else {
+            let Some(packet_buffer_record) =
+                self.domains.network.packet_buffer_objects.iter().find(|record| {
+                    record.id == packet_buffer
+                        && record.generation == packet_buffer_generation
+                        && record.state == PacketBufferObjectState::Filled
+                })
+            else {
                 return Err(
                     "network fault injection packet buffer generation is missing or inactive",
                 );
@@ -150,11 +159,13 @@ impl SemanticGraph {
                     "network fault injection descriptor requires packet buffer attribution",
                 );
             };
-            let Some(packet_descriptor_record) = self.packet_descriptors.iter().find(|record| {
-                record.id == packet_descriptor
-                    && record.generation == packet_descriptor_generation
-                    && record.state == PacketDescriptorObjectState::Registered
-            }) else {
+            let Some(packet_descriptor_record) =
+                self.domains.network.packet_descriptors.iter().find(|record| {
+                    record.id == packet_descriptor
+                        && record.generation == packet_descriptor_generation
+                        && record.state == PacketDescriptorObjectState::Registered
+                })
+            else {
                 return Err(
                     "network fault injection packet descriptor generation is missing or inactive",
                 );
@@ -170,11 +181,13 @@ impl SemanticGraph {
         }
 
         if let (Some(endpoint), Some(endpoint_generation)) = (endpoint, endpoint_generation) {
-            let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
-                record.id == endpoint
-                    && record.generation == endpoint_generation
-                    && record.state == EndpointObjectState::Allocated
-            }) else {
+            let Some(endpoint_record) =
+                self.domains.network.endpoint_objects.iter().find(|record| {
+                    record.id == endpoint
+                        && record.generation == endpoint_generation
+                        && record.state == EndpointObjectState::Allocated
+                })
+            else {
                 return Err("network fault injection endpoint generation is missing or inactive");
             };
             if endpoint_record.adapter != adapter_record.id
@@ -182,7 +195,7 @@ impl SemanticGraph {
             {
                 return Err("network fault injection endpoint adapter does not match");
             }
-            if !self.socket_objects.iter().any(|record| {
+            if !self.domains.network.socket_objects.iter().any(|record| {
                 record.id == endpoint_record.socket
                     && record.generation == endpoint_record.socket_generation
                     && record.state == SocketObjectState::Created
@@ -200,7 +213,7 @@ impl SemanticGraph {
             }
         }
 
-        if self.network_fault_injections.iter().any(|record| {
+        if self.domains.network.network_fault_injections.iter().any(|record| {
             record.packet_queue == packet_queue
                 && record.packet_queue_generation == packet_queue_generation
                 && record.direction == direction
@@ -272,9 +285,11 @@ impl SemanticGraph {
 
         let (socket, socket_generation, owner_store, owner_store_generation) =
             if let (Some(endpoint), Some(endpoint_generation)) = (endpoint, endpoint_generation) {
-                let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
-                    record.id == endpoint && record.generation == endpoint_generation
-                }) else {
+                let Some(endpoint_record) =
+                    self.domains.network.endpoint_objects.iter().find(|record| {
+                        record.id == endpoint && record.generation == endpoint_generation
+                    })
+                else {
                     return false;
                 };
                 (
@@ -288,8 +303,8 @@ impl SemanticGraph {
             };
 
         let generation = 1;
-        self.next_network_fault_injection_id =
-            self.next_network_fault_injection_id.max(injection + 1);
+        self.domains.network.next_network_fault_injection_id =
+            self.domains.network.next_network_fault_injection_id.max(injection + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkFaultInjectionRecorded {
@@ -321,7 +336,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_fault_injections.push(NetworkFaultInjectionRecord {
+        self.domains.network.network_fault_injections.push(NetworkFaultInjectionRecord {
             id: injection,
             adapter,
             adapter_generation,
@@ -356,15 +371,15 @@ impl SemanticGraph {
     }
 
     pub fn network_fault_injections(&self) -> &[NetworkFaultInjectionRecord] {
-        &self.network_fault_injections
+        &self.domains.network.network_fault_injections
     }
 
     pub fn network_fault_injection_count(&self) -> usize {
-        self.network_fault_injections.len()
+        self.domains.network.network_fault_injections.len()
     }
 
     pub fn check_network_fault_injection_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for injection in &self.network_fault_injections {
+        for injection in &self.domains.network.network_fault_injections {
             if injection.id == 0
                 || injection.generation == 0
                 || injection.adapter_generation == 0
@@ -383,7 +398,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(adapter) = self.network_stack_adapters.iter().find(|record| {
+            let Some(adapter) = self.domains.network.network_stack_adapters.iter().find(|record| {
                 record.id == injection.adapter && record.generation == injection.adapter_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
@@ -395,10 +410,12 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(packet_device) = self.packet_device_objects.iter().find(|record| {
-                record.id == injection.packet_device
-                    && record.generation == injection.packet_device_generation
-            }) else {
+            let Some(packet_device) =
+                self.domains.network.packet_device_objects.iter().find(|record| {
+                    record.id == injection.packet_device
+                        && record.generation == injection.packet_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
                     injection: injection.id,
                     target: ContractObjectRef::new(
@@ -408,10 +425,12 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(packet_queue) = self.packet_queue_objects.iter().find(|record| {
-                record.id == injection.packet_queue
-                    && record.generation == injection.packet_queue_generation
-            }) else {
+            let Some(packet_queue) =
+                self.domains.network.packet_queue_objects.iter().find(|record| {
+                    record.id == injection.packet_queue
+                        && record.generation == injection.packet_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
                     injection: injection.id,
                     target: ContractObjectRef::new(
@@ -449,9 +468,11 @@ impl SemanticGraph {
             if let (Some(packet_buffer), Some(packet_buffer_generation)) =
                 (injection.packet_buffer, injection.packet_buffer_generation)
             {
-                let Some(buffer) = self.packet_buffer_objects.iter().find(|record| {
-                    record.id == packet_buffer && record.generation == packet_buffer_generation
-                }) else {
+                let Some(buffer) =
+                    self.domains.network.packet_buffer_objects.iter().find(|record| {
+                        record.id == packet_buffer && record.generation == packet_buffer_generation
+                    })
+                else {
                     return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
                         injection: injection.id,
                         target: ContractObjectRef::new(
@@ -484,10 +505,12 @@ impl SemanticGraph {
                         injection: injection.id,
                     });
                 };
-                let Some(descriptor) = self.packet_descriptors.iter().find(|record| {
-                    record.id == packet_descriptor
-                        && record.generation == packet_descriptor_generation
-                }) else {
+                let Some(descriptor) =
+                    self.domains.network.packet_descriptors.iter().find(|record| {
+                        record.id == packet_descriptor
+                            && record.generation == packet_descriptor_generation
+                    })
+                else {
                     return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
                         injection: injection.id,
                         target: ContractObjectRef::new(
@@ -511,9 +534,11 @@ impl SemanticGraph {
             if let (Some(endpoint), Some(endpoint_generation)) =
                 (injection.endpoint, injection.endpoint_generation)
             {
-                let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
-                    record.id == endpoint && record.generation == endpoint_generation
-                }) else {
+                let Some(endpoint_record) =
+                    self.domains.network.endpoint_objects.iter().find(|record| {
+                        record.id == endpoint && record.generation == endpoint_generation
+                    })
+                else {
                     return Err(SemanticInvariantError::NetworkFaultInjectionMissingTarget {
                         injection: injection.id,
                         target: ContractObjectRef::new(
@@ -536,7 +561,7 @@ impl SemanticGraph {
                         injection: injection.id,
                     });
                 }
-                if !self.socket_objects.iter().any(|socket| {
+                if !self.domains.network.socket_objects.iter().any(|socket| {
                     socket.id == endpoint_record.socket
                         && socket.generation == endpoint_record.socket_generation
                         && socket.state == SocketObjectState::Created
@@ -579,15 +604,17 @@ impl SemanticGraph {
                 });
             }
 
-            if let Some(duplicate) = self.network_fault_injections.iter().find(|other| {
-                other.id != injection.id
-                    && other.packet_queue == injection.packet_queue
-                    && other.packet_queue_generation == injection.packet_queue_generation
-                    && other.direction == injection.direction
-                    && other.sequence == injection.sequence
-                    && other.state == NetworkFaultInjectionState::Recorded
-                    && injection.state == NetworkFaultInjectionState::Recorded
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_fault_injections.iter().find(|other| {
+                    other.id != injection.id
+                        && other.packet_queue == injection.packet_queue
+                        && other.packet_queue_generation == injection.packet_queue_generation
+                        && other.direction == injection.direction
+                        && other.sequence == injection.sequence
+                        && other.state == NetworkFaultInjectionState::Recorded
+                        && injection.state == NetworkFaultInjectionState::Recorded
+                })
+            {
                 return Err(SemanticInvariantError::NetworkFaultInjectionDuplicateSequence {
                     injection: duplicate.id,
                     packet_queue: injection.packet_queue,
@@ -670,8 +697,12 @@ impl SemanticGraph {
         injection: NetworkFaultInjectionId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_fault_injections.iter_mut().find(|record| record.id == injection)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_fault_injections
+            .iter_mut()
+            .find(|record| record.id == injection)
         {
             record.packet_queue_generation = generation;
         }

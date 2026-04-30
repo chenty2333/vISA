@@ -34,7 +34,13 @@ impl SemanticGraph {
         if virtio_net_backend == 0 {
             return Err("virtio net backend object id=0 is invalid");
         }
-        if self.virtio_net_backends.iter().any(|record| record.id == virtio_net_backend) {
+        if self
+            .domains
+            .network
+            .virtio_net_backends
+            .iter()
+            .any(|record| record.id == virtio_net_backend)
+        {
             return Err("virtio net backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() || model.is_empty() {
@@ -66,11 +72,13 @@ impl SemanticGraph {
         if negotiated_features & !driver_features != 0 {
             return Err("virtio net backend negotiated features exceed driver features");
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err(
                 "virtio net backend object packet device generation is missing or inactive",
             );
@@ -84,11 +92,13 @@ impl SemanticGraph {
         {
             return Err("virtio net backend object contract does not match packet device");
         }
-        let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-            record.id == driver_binding
-                && record.generation == driver_binding_generation
-                && record.state == DriverStoreBindingState::Bound
-        }) else {
+        let Some(binding_record) =
+            self.domains.device.driver_store_bindings.iter().find(|record| {
+                record.id == driver_binding
+                    && record.generation == driver_binding_generation
+                    && record.state == DriverStoreBindingState::Bound
+            })
+        else {
             return Err(
                 "virtio net backend object driver binding generation is missing or inactive",
             );
@@ -98,14 +108,14 @@ impl SemanticGraph {
         {
             return Err("virtio net backend object driver binding does not target packet device");
         }
-        if self.virtio_net_backends.iter().any(|record| {
+        if self.domains.network.virtio_net_backends.iter().any(|record| {
             record.packet_device == packet_device_record.id
                 && record.packet_device_generation == packet_device_generation
                 && record.state == VirtioNetBackendObjectState::SkeletonReady
         }) {
             return Err("virtio net backend object already bound to packet device generation");
         }
-        if self.virtio_net_backends.iter().any(|record| {
+        if self.domains.network.virtio_net_backends.iter().any(|record| {
             record.driver_binding == binding_record.id
                 && record.driver_binding_generation == driver_binding_generation
                 && record.state == VirtioNetBackendObjectState::SkeletonReady
@@ -174,14 +184,16 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device && record.generation == packet_device_generation
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device && record.generation == packet_device_generation
+            })
+        else {
             return false;
         };
         let generation = 1;
-        self.next_virtio_net_backend_object_id =
-            self.next_virtio_net_backend_object_id.max(virtio_net_backend + 1);
+        self.domains.network.next_virtio_net_backend_object_id =
+            self.domains.network.next_virtio_net_backend_object_id.max(virtio_net_backend + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::VirtioNetBackendSkeletonBound {
@@ -199,7 +211,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.virtio_net_backends.push(VirtioNetBackendObjectRecord {
+        self.domains.network.virtio_net_backends.push(VirtioNetBackendObjectRecord {
             id: virtio_net_backend,
             name: name.to_string(),
             packet_device,
@@ -233,17 +245,17 @@ impl SemanticGraph {
     }
 
     pub fn virtio_net_backends(&self) -> &[VirtioNetBackendObjectRecord] {
-        &self.virtio_net_backends
+        &self.domains.network.virtio_net_backends
     }
 
     pub fn virtio_net_backend_object_count(&self) -> usize {
-        self.virtio_net_backends.len()
+        self.domains.network.virtio_net_backends.len()
     }
 
     pub fn check_virtio_net_backend_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.virtio_net_backends {
+        for record in &self.domains.network.virtio_net_backends {
             let Some(packet_device_record) =
-                self.packet_device_objects.iter().find(|packet_device| {
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
                     packet_device.id == record.packet_device
                         && packet_device.generation == record.packet_device_generation
                 })
@@ -253,10 +265,12 @@ impl SemanticGraph {
                     packet_device: record.packet_device,
                 });
             };
-            let Some(binding_record) = self.driver_store_bindings.iter().find(|driver_binding| {
-                driver_binding.id == record.driver_binding
-                    && driver_binding.generation == record.driver_binding_generation
-            }) else {
+            let Some(binding_record) =
+                self.domains.device.driver_store_bindings.iter().find(|driver_binding| {
+                    driver_binding.id == record.driver_binding
+                        && driver_binding.generation == record.driver_binding_generation
+                })
+            else {
                 return Err(SemanticInvariantError::VirtioNetBackendObjectMissingDriverBinding {
                     virtio_net_backend: record.id,
                     driver_binding: record.driver_binding,
@@ -305,7 +319,7 @@ impl SemanticGraph {
                     virtio_net_backend: record.id,
                 });
             }
-            if let Some(duplicate) = self.virtio_net_backends.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.virtio_net_backends.iter().find(|other| {
                 other.id != record.id
                     && other.packet_device == record.packet_device
                     && other.packet_device_generation == record.packet_device_generation
@@ -316,7 +330,7 @@ impl SemanticGraph {
                     packet_device: record.packet_device,
                 });
             }
-            if let Some(duplicate) = self.virtio_net_backends.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.virtio_net_backends.iter().find(|other| {
                 other.id != record.id
                     && other.driver_binding == record.driver_binding
                     && other.driver_binding_generation == record.driver_binding_generation
@@ -372,8 +386,12 @@ impl SemanticGraph {
         virtio_net_backend: VirtioNetBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.virtio_net_backends.iter_mut().find(|record| record.id == virtio_net_backend)
+        if let Some(record) = self
+            .domains
+            .network
+            .virtio_net_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_net_backend)
         {
             record.driver_binding_generation = generation;
         }
@@ -385,8 +403,12 @@ impl SemanticGraph {
         virtio_net_backend: VirtioNetBackendObjectId,
         irq_vector: u16,
     ) {
-        if let Some(record) =
-            self.virtio_net_backends.iter_mut().find(|record| record.id == virtio_net_backend)
+        if let Some(record) = self
+            .domains
+            .network
+            .virtio_net_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_net_backend)
         {
             record.irq_vector = irq_vector;
         }

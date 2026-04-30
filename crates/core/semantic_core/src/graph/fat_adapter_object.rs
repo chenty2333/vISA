@@ -28,7 +28,13 @@ impl SemanticGraph {
         if fat_adapter_object == 0 {
             return Err("fat adapter object id=0 is invalid");
         }
-        if self.fat_adapter_objects.iter().any(|record| record.id == fat_adapter_object) {
+        if self
+            .domains
+            .block
+            .fat_adapter_objects
+            .iter()
+            .any(|record| record.id == fat_adapter_object)
+        {
             return Err("fat adapter object already exists");
         }
         if directory_object_generation == 0
@@ -55,14 +61,14 @@ impl SemanticGraph {
         if bytes_written != bytes_read || write_digest != read_digest {
             return Err("fat adapter read/write roundtrip mismatch");
         }
-        let Some(directory) = self.directory_objects.iter().find(|record| {
+        let Some(directory) = self.domains.block.directory_objects.iter().find(|record| {
             record.id == directory_object
                 && record.generation == directory_object_generation
                 && record.state != DirectoryObjectState::Invalidated
         }) else {
             return Err("fat adapter directory generation is missing");
         };
-        let Some(file) = self.file_objects.iter().find(|record| {
+        let Some(file) = self.domains.block.file_objects.iter().find(|record| {
             record.id == file_object
                 && record.generation == file_object_generation
                 && record.state != FileObjectState::Invalidated
@@ -78,7 +84,7 @@ impl SemanticGraph {
         {
             return Err("fat adapter semantic binding mismatch");
         }
-        if self.fat_adapter_objects.iter().any(|record| {
+        if self.domains.block.fat_adapter_objects.iter().any(|record| {
             record.state == FatAdapterObjectState::Verified
                 && record.directory_object == directory_object
                 && record.directory_object_generation == directory_object_generation
@@ -145,8 +151,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_fat_adapter_object_id =
-            self.next_fat_adapter_object_id.max(fat_adapter_object.saturating_add(1));
+        self.domains.block.next_fat_adapter_object_id =
+            self.domains.block.next_fat_adapter_object_id.max(fat_adapter_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FatAdapterObjectRecorded {
@@ -173,7 +179,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.fat_adapter_objects.push(FatAdapterObjectRecord {
+        self.domains.block.fat_adapter_objects.push(FatAdapterObjectRecord {
             id: fat_adapter_object,
             directory_object,
             directory_object_generation,
@@ -202,16 +208,16 @@ impl SemanticGraph {
     }
 
     pub fn fat_adapter_objects(&self) -> &[FatAdapterObjectRecord] {
-        &self.fat_adapter_objects
+        &self.domains.block.fat_adapter_objects
     }
 
     pub fn fat_adapter_object_count(&self) -> usize {
-        self.fat_adapter_objects.len()
+        self.domains.block.fat_adapter_objects.len()
     }
 
     pub fn check_fat_adapter_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.fat_adapter_objects {
-            let Some(directory) = self.directory_objects.iter().find(|directory| {
+        for record in &self.domains.block.fat_adapter_objects {
+            let Some(directory) = self.domains.block.directory_objects.iter().find(|directory| {
                 directory.id == record.directory_object
                     && directory.generation == record.directory_object_generation
             }) else {
@@ -220,7 +226,7 @@ impl SemanticGraph {
                     directory_object: record.directory_object,
                 });
             };
-            let Some(file) = self.file_objects.iter().find(|file| {
+            let Some(file) = self.domains.block.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
             }) else {
                 return Err(SemanticInvariantError::FatAdapterObjectMissingFileObject {
@@ -261,7 +267,7 @@ impl SemanticGraph {
                     fat_adapter_object: record.id,
                 });
             }
-            if let Some(duplicate) = self.fat_adapter_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.fat_adapter_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state == FatAdapterObjectState::Verified
                     && other.directory_object == record.directory_object
@@ -335,8 +341,12 @@ impl SemanticGraph {
         fat_adapter_object: FatAdapterObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.fat_adapter_objects.iter_mut().find(|record| record.id == fat_adapter_object)
+        if let Some(record) = self
+            .domains
+            .block
+            .fat_adapter_objects
+            .iter_mut()
+            .find(|record| record.id == fat_adapter_object)
         {
             record.file_object_generation = generation;
         }

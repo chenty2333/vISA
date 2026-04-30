@@ -14,7 +14,7 @@ impl SemanticGraph {
         if socket_wait == 0 {
             return Err("socket wait id=0 is invalid");
         }
-        if self.socket_waits.iter().any(|record| record.id == socket_wait) {
+        if self.domains.network.socket_waits.iter().any(|record| record.id == socket_wait) {
             return Err("socket wait already exists");
         }
         if !matches!(
@@ -43,7 +43,7 @@ impl SemanticGraph {
         if wait_record.kind != wait_kind || !wait_record.blockers.contains(&blocker) {
             return Err("socket wait token does not reference the requested endpoint blocker");
         }
-        let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
+        let Some(endpoint_record) = self.domains.network.endpoint_objects.iter().find(|record| {
             record.id == endpoint
                 && record.generation == endpoint_generation
                 && record.state == EndpointObjectState::Allocated
@@ -64,7 +64,7 @@ impl SemanticGraph {
         if store_record.state == StoreState::Dead {
             return Err("socket wait owner store is dead");
         }
-        if !self.socket_objects.iter().any(|record| {
+        if !self.domains.network.socket_objects.iter().any(|record| {
             record.id == endpoint_record.socket
                 && record.generation == endpoint_record.socket_generation
                 && record.state == SocketObjectState::Created
@@ -95,6 +95,8 @@ impl SemanticGraph {
             _ => unreachable!(),
         }
         if self
+            .domains
+            .network
             .socket_waits
             .iter()
             .any(|record| record.wait == wait && record.state == SocketWaitState::Pending)
@@ -133,6 +135,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(endpoint_record) = self
+            .domains
+            .network
             .endpoint_objects
             .iter()
             .find(|record| record.id == endpoint && record.generation == endpoint_generation)
@@ -141,7 +145,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_socket_wait_id = self.next_socket_wait_id.max(socket_wait + 1);
+        self.domains.network.next_socket_wait_id =
+            self.domains.network.next_socket_wait_id.max(socket_wait + 1);
         let created_at_event = self.event_log.push(
             "network",
             EventKind::SocketWaitCreated {
@@ -161,7 +166,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.socket_waits.push(SocketWaitRecord {
+        self.domains.network.socket_waits.push(SocketWaitRecord {
             id: socket_wait,
             wait,
             wait_generation,
@@ -198,14 +203,14 @@ impl SemanticGraph {
         if ready_sequence == 0 {
             return false;
         }
-        let Some(index) = self.socket_waits.iter().position(|record| {
+        let Some(index) = self.domains.network.socket_waits.iter().position(|record| {
             record.id == socket_wait
                 && record.generation == socket_wait_generation
                 && record.state == SocketWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.socket_waits[index].clone();
+        let record = self.domains.network.socket_waits[index].clone();
         if matches!(record.wait_kind, SemanticWaitKind::SocketReadable) && byte_len == 0 {
             return false;
         }
@@ -228,11 +233,11 @@ impl SemanticGraph {
                 generation: socket_wait_generation,
             },
         );
-        self.socket_waits[index].state = SocketWaitState::Resolved;
-        self.socket_waits[index].completed_at_event = Some(completed_at_event);
-        self.socket_waits[index].ready_sequence = Some(ready_sequence);
-        self.socket_waits[index].byte_len = Some(byte_len);
-        self.socket_waits[index].note = note.to_string();
+        self.domains.network.socket_waits[index].state = SocketWaitState::Resolved;
+        self.domains.network.socket_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.network.socket_waits[index].ready_sequence = Some(ready_sequence);
+        self.domains.network.socket_waits[index].byte_len = Some(byte_len);
+        self.domains.network.socket_waits[index].note = note.to_string();
         true
     }
 
@@ -255,14 +260,14 @@ impl SemanticGraph {
         ) {
             return false;
         }
-        let Some(index) = self.socket_waits.iter().position(|record| {
+        let Some(index) = self.domains.network.socket_waits.iter().position(|record| {
             record.id == socket_wait
                 && record.generation == socket_wait_generation
                 && record.state == SocketWaitState::Pending
         }) else {
             return false;
         };
-        let record = self.socket_waits[index].clone();
+        let record = self.domains.network.socket_waits[index].clone();
         if !self.domains.wait.waits.iter().any(|wait| {
             wait.id == record.wait
                 && wait.generation == record.wait_generation
@@ -281,23 +286,23 @@ impl SemanticGraph {
                 generation: socket_wait_generation,
             },
         );
-        self.socket_waits[index].state = SocketWaitState::Cancelled;
-        self.socket_waits[index].completed_at_event = Some(completed_at_event);
-        self.socket_waits[index].cancel_reason = Some(reason);
-        self.socket_waits[index].note = note.to_string();
+        self.domains.network.socket_waits[index].state = SocketWaitState::Cancelled;
+        self.domains.network.socket_waits[index].completed_at_event = Some(completed_at_event);
+        self.domains.network.socket_waits[index].cancel_reason = Some(reason);
+        self.domains.network.socket_waits[index].note = note.to_string();
         true
     }
 
     pub fn socket_waits(&self) -> &[SocketWaitRecord] {
-        &self.socket_waits
+        &self.domains.network.socket_waits
     }
 
     pub fn socket_wait_count(&self) -> usize {
-        self.socket_waits.len()
+        self.domains.network.socket_waits.len()
     }
 
     pub fn check_socket_wait_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.socket_waits {
+        for record in &self.domains.network.socket_waits {
             let Some(wait_record) =
                 self.domains.wait.waits.iter().find(|wait| {
                     wait.id == record.wait && wait.generation == record.wait_generation
@@ -308,7 +313,7 @@ impl SemanticGraph {
                     wait: record.wait,
                 });
             };
-            let Some(endpoint) = self.endpoint_objects.iter().find(|endpoint| {
+            let Some(endpoint) = self.domains.network.endpoint_objects.iter().find(|endpoint| {
                 endpoint.id == record.endpoint && endpoint.generation == record.endpoint_generation
             }) else {
                 return Err(SemanticInvariantError::SocketWaitMissingEndpoint {
@@ -316,7 +321,7 @@ impl SemanticGraph {
                     endpoint: record.endpoint,
                 });
             };
-            if !self.socket_objects.iter().any(|socket| {
+            if !self.domains.network.socket_objects.iter().any(|socket| {
                 socket.id == record.socket && socket.generation == record.socket_generation
             }) {
                 return Err(SemanticInvariantError::SocketWaitMissingSocket {
@@ -324,7 +329,7 @@ impl SemanticGraph {
                     socket: record.socket,
                 });
             }
-            if !self.network_stack_adapters.iter().any(|adapter| {
+            if !self.domains.network.network_stack_adapters.iter().any(|adapter| {
                 adapter.id == record.adapter && adapter.generation == record.adapter_generation
             }) {
                 return Err(SemanticInvariantError::SocketWaitMissingAdapter {
@@ -368,7 +373,7 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::SocketWaitInvalid { socket_wait: record.id });
             }
             if record.state == SocketWaitState::Pending
-                && self.socket_waits.iter().any(|other| {
+                && self.domains.network.socket_waits.iter().any(|other| {
                     other.id != record.id
                         && other.wait == record.wait
                         && other.state == SocketWaitState::Pending
@@ -505,7 +510,7 @@ impl SemanticGraph {
         endpoint_generation: Generation,
         operation: SocketOperationKind,
     ) -> bool {
-        self.socket_operations.iter().any(|record| {
+        self.domains.network.socket_operations.iter().any(|record| {
             record.endpoint == endpoint
                 && record.endpoint_generation == endpoint_generation
                 && record.operation == operation
@@ -519,7 +524,9 @@ impl SemanticGraph {
         socket_wait: SocketWaitId,
         generation: Generation,
     ) {
-        if let Some(record) = self.socket_waits.iter_mut().find(|record| record.id == socket_wait) {
+        if let Some(record) =
+            self.domains.network.socket_waits.iter_mut().find(|record| record.id == socket_wait)
+        {
             record.endpoint_generation = generation;
         }
     }

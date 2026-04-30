@@ -14,7 +14,7 @@ impl SemanticGraph {
         if binding == 0 {
             return Err("driver store binding id=0 is invalid");
         }
-        if self.driver_store_bindings.iter().any(|record| record.id == binding) {
+        if self.domains.device.driver_store_bindings.iter().any(|record| record.id == binding) {
             return Err("driver store binding already exists");
         }
         let Some(store_record) = self.domains.lifecycle.stores.iter().find(|record| {
@@ -30,16 +30,18 @@ impl SemanticGraph {
         }
         let device_ref =
             ContractObjectRef::new(ContractObjectKind::DeviceObject, device, device_generation);
-        if !self.device_objects.iter().any(|record| {
+        if !self.domains.device.device_objects.iter().any(|record| {
             record.object_ref() == device_ref && record.state == DeviceObjectState::Registered
         }) {
             return Err("driver store binding device generation is missing or inactive");
         }
-        let Some(capability_evidence) = self.device_capabilities.iter().find(|record| {
-            record.id == device_capability
-                && record.generation == device_capability_generation
-                && record.state == DeviceCapabilityState::Active
-        }) else {
+        let Some(capability_evidence) =
+            self.domains.device.device_capabilities.iter().find(|record| {
+                record.id == device_capability
+                    && record.generation == device_capability_generation
+                    && record.state == DeviceCapabilityState::Active
+            })
+        else {
             return Err("driver store binding device capability generation is missing or inactive");
         };
         if capability_evidence.driver_store != driver_store
@@ -66,7 +68,7 @@ impl SemanticGraph {
         {
             return Err("driver store binding capability record is not active for device");
         }
-        if self.driver_store_bindings.iter().any(|record| {
+        if self.domains.device.driver_store_bindings.iter().any(|record| {
             record.device == device
                 && record.device_generation == device_generation
                 && record.state == DriverStoreBindingState::Bound
@@ -104,13 +106,16 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(capability_evidence) = self.device_capabilities.iter().find(|record| {
-            record.id == device_capability && record.generation == device_capability_generation
-        }) else {
+        let Some(capability_evidence) =
+            self.domains.device.device_capabilities.iter().find(|record| {
+                record.id == device_capability && record.generation == device_capability_generation
+            })
+        else {
             return false;
         };
         let generation = 1;
-        self.next_driver_store_binding_id = self.next_driver_store_binding_id.max(binding + 1);
+        self.domains.device.next_driver_store_binding_id =
+            self.domains.device.next_driver_store_binding_id.max(binding + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::DriverStoreBound {
@@ -126,7 +131,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.driver_store_bindings.push(DriverStoreBindingRecord {
+        self.domains.device.driver_store_bindings.push(DriverStoreBindingRecord {
             id: binding,
             driver_store,
             driver_store_generation,
@@ -145,15 +150,15 @@ impl SemanticGraph {
     }
 
     pub fn driver_store_bindings(&self) -> &[DriverStoreBindingRecord] {
-        &self.driver_store_bindings
+        &self.domains.device.driver_store_bindings
     }
 
     pub fn driver_store_binding_count(&self) -> usize {
-        self.driver_store_bindings.len()
+        self.domains.device.driver_store_bindings.len()
     }
 
     pub fn check_driver_store_binding_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.driver_store_bindings {
+        for record in &self.domains.device.driver_store_bindings {
             let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.driver_store
                     && store.generation == record.driver_store_generation
@@ -168,18 +173,24 @@ impl SemanticGraph {
                 record.device,
                 record.device_generation,
             );
-            let Some(device_record) =
-                self.device_objects.iter().find(|device| device.object_ref() == device_ref)
+            let Some(device_record) = self
+                .domains
+                .device
+                .device_objects
+                .iter()
+                .find(|device| device.object_ref() == device_ref)
             else {
                 return Err(SemanticInvariantError::DriverStoreBindingMissingDevice {
                     binding: record.id,
                     device: record.device,
                 });
             };
-            let Some(device_capability) = self.device_capabilities.iter().find(|capability| {
-                capability.id == record.device_capability
-                    && capability.generation == record.device_capability_generation
-            }) else {
+            let Some(device_capability) =
+                self.domains.device.device_capabilities.iter().find(|capability| {
+                    capability.id == record.device_capability
+                        && capability.generation == record.device_capability_generation
+                })
+            else {
                 return Err(SemanticInvariantError::DriverStoreBindingMissingCapabilityEvidence {
                     binding: record.id,
                     device_capability: record.device_capability,
@@ -211,12 +222,14 @@ impl SemanticGraph {
                     binding: record.id,
                 });
             }
-            if let Some(duplicate) = self.driver_store_bindings.iter().find(|other| {
-                other.id != record.id
-                    && other.device == record.device
-                    && other.device_generation == record.device_generation
-                    && other.state == DriverStoreBindingState::Bound
-            }) {
+            if let Some(duplicate) =
+                self.domains.device.driver_store_bindings.iter().find(|other| {
+                    other.id != record.id
+                        && other.device == record.device
+                        && other.device_generation == record.device_generation
+                        && other.state == DriverStoreBindingState::Bound
+                })
+            {
                 return Err(SemanticInvariantError::DriverStoreBindingDuplicateDevice {
                     binding: duplicate.id,
                     device: record.device,
@@ -264,7 +277,7 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(record) =
-            self.driver_store_bindings.iter_mut().find(|record| record.id == binding)
+            self.domains.device.driver_store_bindings.iter_mut().find(|record| record.id == binding)
         {
             record.device_generation = generation;
         }

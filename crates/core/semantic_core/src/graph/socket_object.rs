@@ -22,10 +22,10 @@ impl SemanticGraph {
         if socket == 0 {
             return Err("socket object id=0 is invalid");
         }
-        if self.socket_objects.iter().any(|record| record.id == socket) {
+        if self.domains.network.socket_objects.iter().any(|record| record.id == socket) {
             return Err("socket object already exists");
         }
-        if self.network_stack_adapters.iter().all(|record| {
+        if self.domains.network.network_stack_adapters.iter().all(|record| {
             record.id != adapter
                 || record.generation != adapter_generation
                 || record.state != NetworkStackAdapterState::Bound
@@ -84,7 +84,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_socket_object_id = self.next_socket_object_id.max(socket + 1);
+        self.domains.network.next_socket_object_id =
+            self.domains.network.next_socket_object_id.max(socket + 1);
         let created_at_event = self.event_log.push(
             "network",
             EventKind::SocketObjectCreated {
@@ -102,7 +103,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.socket_objects.push(SocketObjectRecord {
+        self.domains.network.socket_objects.push(SocketObjectRecord {
             id: socket,
             adapter,
             adapter_generation,
@@ -123,18 +124,20 @@ impl SemanticGraph {
     }
 
     pub fn socket_objects(&self) -> &[SocketObjectRecord] {
-        &self.socket_objects
+        &self.domains.network.socket_objects
     }
 
     pub fn socket_object_count(&self) -> usize {
-        self.socket_objects.len()
+        self.domains.network.socket_objects.len()
     }
 
     pub fn check_socket_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.socket_objects {
-            let Some(adapter) = self.network_stack_adapters.iter().find(|adapter| {
-                adapter.id == record.adapter && adapter.generation == record.adapter_generation
-            }) else {
+        for record in &self.domains.network.socket_objects {
+            let Some(adapter) =
+                self.domains.network.network_stack_adapters.iter().find(|adapter| {
+                    adapter.id == record.adapter && adapter.generation == record.adapter_generation
+                })
+            else {
                 return Err(SemanticInvariantError::SocketObjectMissingAdapter {
                     socket: record.id,
                     adapter: record.adapter,
@@ -165,7 +168,15 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::SocketObjectInvalid { socket: record.id });
             }
-            if self.socket_objects.iter().filter(|other| other.id == record.id).count() > 1 {
+            if self
+                .domains
+                .network
+                .socket_objects
+                .iter()
+                .filter(|other| other.id == record.id)
+                .count()
+                > 1
+            {
                 return Err(SemanticInvariantError::SocketObjectDuplicate { socket: record.id });
             }
             if !self.event_log.events.iter().any(|event| {
@@ -211,7 +222,9 @@ impl SemanticGraph {
         socket: SocketObjectId,
         adapter_generation: Generation,
     ) {
-        if let Some(record) = self.socket_objects.iter_mut().find(|record| record.id == socket) {
+        if let Some(record) =
+            self.domains.network.socket_objects.iter_mut().find(|record| record.id == socket)
+        {
             record.adapter_generation = adapter_generation;
         }
     }

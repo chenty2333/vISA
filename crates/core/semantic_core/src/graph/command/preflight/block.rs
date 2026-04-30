@@ -107,7 +107,7 @@ impl SemanticGraph {
                 block_completion_generation,
                 ..
             } => {
-                let Some(record) = self.block_waits.iter().find(|record| {
+                let Some(record) = self.domains.block.block_waits.iter().find(|record| {
                     record.id == *block_wait
                         && record.generation == *block_wait_generation
                         && record.state == BlockWaitState::Pending
@@ -116,11 +116,13 @@ impl SemanticGraph {
                         "block wait generation is missing or not pending",
                     ));
                 };
-                let Some(completion) = self.block_completion_objects.iter().find(|completion| {
-                    completion.id == *block_completion
-                        && completion.generation == *block_completion_generation
-                        && completion.state == BlockCompletionObjectState::Recorded
-                }) else {
+                let Some(completion) =
+                    self.domains.block.block_completion_objects.iter().find(|completion| {
+                        completion.id == *block_completion
+                            && completion.generation == *block_completion_generation
+                            && completion.state == BlockCompletionObjectState::Recorded
+                    })
+                else {
                     return Err(CommandError::precondition(
                         "block wait completion generation is missing",
                     ));
@@ -159,7 +161,7 @@ impl SemanticGraph {
                         "block wait cancellation reason is not a block io reason",
                     ));
                 }
-                if self.block_waits.iter().any(|record| {
+                if self.domains.block.block_waits.iter().any(|record| {
                     record.id == *block_wait
                         && record.generation == *block_wait_generation
                         && record.state == BlockWaitState::Pending

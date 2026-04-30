@@ -22,7 +22,13 @@ impl SemanticGraph {
         if file_handle_capability == 0 {
             return Err("file handle capability id=0 is invalid");
         }
-        if self.file_handle_capabilities.iter().any(|record| record.id == file_handle_capability) {
+        if self
+            .domains
+            .block
+            .file_handle_capabilities
+            .iter()
+            .any(|record| record.id == file_handle_capability)
+        {
             return Err("file handle capability already exists");
         }
         if owner_store_generation == 0
@@ -48,14 +54,14 @@ impl SemanticGraph {
         if store_record.state == StoreState::Dead {
             return Err("file handle capability owner store is dead");
         }
-        let Some(file_record) = self.file_objects.iter().find(|record| {
+        let Some(file_record) = self.domains.block.file_objects.iter().find(|record| {
             record.id == file_object
                 && record.generation == file_object_generation
                 && record.state != FileObjectState::Invalidated
         }) else {
             return Err("file handle capability file generation is missing");
         };
-        let Some(directory_record) = self.directory_objects.iter().find(|record| {
+        let Some(directory_record) = self.domains.block.directory_objects.iter().find(|record| {
             record.id == directory_object
                 && record.generation == directory_object_generation
                 && record.state != DirectoryObjectState::Invalidated
@@ -91,7 +97,7 @@ impl SemanticGraph {
         {
             return Err("file handle capability attribution mismatch");
         }
-        if self.file_handle_capabilities.iter().any(|record| {
+        if self.domains.block.file_handle_capabilities.iter().any(|record| {
             record.owner_store == owner_store
                 && record.owner_store_generation == owner_store_generation
                 && record.file_object == file_object
@@ -148,8 +154,11 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_file_handle_capability_id =
-            self.next_file_handle_capability_id.max(file_handle_capability.saturating_add(1));
+        self.domains.block.next_file_handle_capability_id = self
+            .domains
+            .block
+            .next_file_handle_capability_id
+            .max(file_handle_capability.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::FileHandleCapabilityRecorded {
@@ -173,7 +182,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.file_handle_capabilities.push(FileHandleCapabilityRecord {
+        self.domains.block.file_handle_capabilities.push(FileHandleCapabilityRecord {
             id: file_handle_capability,
             owner_store,
             owner_store_generation,
@@ -199,15 +208,15 @@ impl SemanticGraph {
     }
 
     pub fn file_handle_capabilities(&self) -> &[FileHandleCapabilityRecord] {
-        &self.file_handle_capabilities
+        &self.domains.block.file_handle_capabilities
     }
 
     pub fn file_handle_capability_count(&self) -> usize {
-        self.file_handle_capabilities.len()
+        self.domains.block.file_handle_capabilities.len()
     }
 
     pub fn check_file_handle_capability_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.file_handle_capabilities {
+        for record in &self.domains.block.file_handle_capabilities {
             let Some(store_record) = self.domains.lifecycle.stores.iter().find(|store| {
                 store.id == record.owner_store && store.generation == record.owner_store_generation
             }) else {
@@ -216,7 +225,7 @@ impl SemanticGraph {
                     store: record.owner_store,
                 });
             };
-            let Some(file_record) = self.file_objects.iter().find(|file| {
+            let Some(file_record) = self.domains.block.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
             }) else {
                 return Err(SemanticInvariantError::FileHandleCapabilityMissingFileObject {
@@ -224,10 +233,12 @@ impl SemanticGraph {
                     file_object: record.file_object,
                 });
             };
-            let Some(directory_record) = self.directory_objects.iter().find(|directory| {
-                directory.id == record.directory_object
-                    && directory.generation == record.directory_object_generation
-            }) else {
+            let Some(directory_record) =
+                self.domains.block.directory_objects.iter().find(|directory| {
+                    directory.id == record.directory_object
+                        && directory.generation == record.directory_object_generation
+                })
+            else {
                 return Err(SemanticInvariantError::FileHandleCapabilityMissingDirectoryObject {
                     file_handle_capability: record.id,
                     directory_object: record.directory_object,
@@ -280,15 +291,17 @@ impl SemanticGraph {
                     file_handle_capability: record.id,
                 });
             }
-            if let Some(duplicate) = self.file_handle_capabilities.iter().find(|other| {
-                other.id != record.id
-                    && other.owner_store == record.owner_store
-                    && other.owner_store_generation == record.owner_store_generation
-                    && other.file_object == record.file_object
-                    && other.file_object_generation == record.file_object_generation
-                    && other.operation == record.operation
-                    && other.state == FileHandleCapabilityState::Allowed
-            }) {
+            if let Some(duplicate) =
+                self.domains.block.file_handle_capabilities.iter().find(|other| {
+                    other.id != record.id
+                        && other.owner_store == record.owner_store
+                        && other.owner_store_generation == record.owner_store_generation
+                        && other.file_object == record.file_object
+                        && other.file_object_generation == record.file_object_generation
+                        && other.operation == record.operation
+                        && other.state == FileHandleCapabilityState::Allowed
+                })
+            {
                 return Err(SemanticInvariantError::FileHandleCapabilityDuplicateGrant {
                     file_handle_capability: duplicate.id,
                     file_object: duplicate.file_object,
@@ -352,6 +365,8 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(record) = self
+            .domains
+            .block
             .file_handle_capabilities
             .iter_mut()
             .find(|record| record.id == file_handle_capability)

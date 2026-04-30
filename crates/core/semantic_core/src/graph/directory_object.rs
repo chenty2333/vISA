@@ -21,7 +21,7 @@ impl SemanticGraph {
         if directory_object == 0 {
             return Err("directory object id=0 is invalid");
         }
-        if self.directory_objects.iter().any(|record| record.id == directory_object) {
+        if self.domains.block.directory_objects.iter().any(|record| record.id == directory_object) {
             return Err("directory object already exists");
         }
         if file_object_generation == 0
@@ -39,7 +39,7 @@ impl SemanticGraph {
         if state == DirectoryObjectState::Invalidated {
             return Err("directory object cannot be recorded as invalidated");
         }
-        let Some(source) = self.file_objects.iter().find(|record| {
+        let Some(source) = self.domains.block.file_objects.iter().find(|record| {
             record.id == file_object
                 && record.generation == file_object_generation
                 && record.state != FileObjectState::Invalidated
@@ -55,7 +55,7 @@ impl SemanticGraph {
         {
             return Err("directory object file identity mismatch");
         }
-        if self.directory_objects.iter().any(|record| {
+        if self.domains.block.directory_objects.iter().any(|record| {
             record.state != DirectoryObjectState::Invalidated
                 && record.namespace == namespace
                 && record.directory_key == directory_key
@@ -108,8 +108,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_directory_object_id =
-            self.next_directory_object_id.max(directory_object.saturating_add(1));
+        self.domains.block.next_directory_object_id =
+            self.domains.block.next_directory_object_id.max(directory_object.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::DirectoryObjectRecorded {
@@ -129,7 +129,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.directory_objects.push(DirectoryObjectRecord {
+        self.domains.block.directory_objects.push(DirectoryObjectRecord {
             id: directory_object,
             file_object,
             file_object_generation,
@@ -151,16 +151,16 @@ impl SemanticGraph {
     }
 
     pub fn directory_objects(&self) -> &[DirectoryObjectRecord] {
-        &self.directory_objects
+        &self.domains.block.directory_objects
     }
 
     pub fn directory_object_count(&self) -> usize {
-        self.directory_objects.len()
+        self.domains.block.directory_objects.len()
     }
 
     pub fn check_directory_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.directory_objects {
-            let Some(source) = self.file_objects.iter().find(|file| {
+        for record in &self.domains.block.directory_objects {
+            let Some(source) = self.domains.block.file_objects.iter().find(|file| {
                 file.id == record.file_object && file.generation == record.file_object_generation
             }) else {
                 return Err(SemanticInvariantError::DirectoryObjectMissingFileObject {
@@ -192,7 +192,7 @@ impl SemanticGraph {
                     directory_object: record.id,
                 });
             }
-            if let Some(duplicate) = self.directory_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.directory_objects.iter().find(|other| {
                 other.id != record.id
                     && other.state != DirectoryObjectState::Invalidated
                     && other.namespace == record.namespace
@@ -252,8 +252,12 @@ impl SemanticGraph {
         directory_object: DirectoryObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.directory_objects.iter_mut().find(|record| record.id == directory_object)
+        if let Some(record) = self
+            .domains
+            .block
+            .directory_objects
+            .iter_mut()
+            .find(|record| record.id == directory_object)
         {
             record.file_object_generation = generation;
         }

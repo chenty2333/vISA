@@ -38,7 +38,7 @@ impl SemanticGraph {
         if benchmark == u64::MAX {
             return Err("network benchmark id cannot advance generation cursor");
         }
-        if self.network_benchmarks.iter().any(|record| record.id == benchmark) {
+        if self.domains.network.network_benchmarks.iter().any(|record| record.id == benchmark) {
             return Err("network benchmark already exists");
         }
         if scenario.is_empty() {
@@ -78,11 +78,13 @@ impl SemanticGraph {
             return Err("network benchmark throughput overflow");
         }
 
-        let Some(adapter_record) = self.network_stack_adapters.iter().find(|record| {
-            record.id == adapter
-                && record.generation == adapter_generation
-                && record.state == NetworkStackAdapterState::Bound
-        }) else {
+        let Some(adapter_record) =
+            self.domains.network.network_stack_adapters.iter().find(|record| {
+                record.id == adapter
+                    && record.generation == adapter_generation
+                    && record.state == NetworkStackAdapterState::Bound
+            })
+        else {
             return Err("network benchmark adapter generation is missing or inactive");
         };
         if adapter_record.packet_device != packet_device
@@ -95,25 +97,31 @@ impl SemanticGraph {
             return Err("network benchmark adapter references do not match");
         }
 
-        let Some(packet_device_record) = self.packet_device_objects.iter().find(|record| {
-            record.id == packet_device
-                && record.generation == packet_device_generation
-                && record.state == PacketDeviceObjectState::Registered
-        }) else {
+        let Some(packet_device_record) =
+            self.domains.network.packet_device_objects.iter().find(|record| {
+                record.id == packet_device
+                    && record.generation == packet_device_generation
+                    && record.state == PacketDeviceObjectState::Registered
+            })
+        else {
             return Err("network benchmark packet device generation is missing or inactive");
         };
-        let Some(tx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == tx_queue
-                && record.generation == tx_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(tx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == tx_queue
+                    && record.generation == tx_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network benchmark tx queue generation is missing or inactive");
         };
-        let Some(rx_queue_record) = self.packet_queue_objects.iter().find(|record| {
-            record.id == rx_queue
-                && record.generation == rx_queue_generation
-                && record.state == PacketQueueObjectState::Registered
-        }) else {
+        let Some(rx_queue_record) =
+            self.domains.network.packet_queue_objects.iter().find(|record| {
+                record.id == rx_queue
+                    && record.generation == rx_queue_generation
+                    && record.state == PacketQueueObjectState::Registered
+            })
+        else {
             return Err("network benchmark rx queue generation is missing or inactive");
         };
         if tx_queue_record.role != PacketQueueRole::Tx
@@ -126,11 +134,13 @@ impl SemanticGraph {
             return Err("network benchmark queues do not match packet device roles");
         }
 
-        let Some(tx_completion_record) = self.network_tx_completions.iter().find(|record| {
-            record.id == tx_completion
-                && record.generation == tx_completion_generation
-                && record.state == NetworkTxCompletionState::Completed
-        }) else {
+        let Some(tx_completion_record) =
+            self.domains.network.network_tx_completions.iter().find(|record| {
+                record.id == tx_completion
+                    && record.generation == tx_completion_generation
+                    && record.state == NetworkTxCompletionState::Completed
+            })
+        else {
             return Err("network benchmark tx completion generation is missing or inactive");
         };
         if tx_completion_record.packet_device != packet_device
@@ -142,11 +152,13 @@ impl SemanticGraph {
             return Err("network benchmark tx completion does not match packet evidence");
         }
 
-        let Some(rx_resolution_record) = self.network_rx_wait_resolutions.iter().find(|record| {
-            record.id == rx_wait_resolution
-                && record.generation == rx_wait_resolution_generation
-                && record.state == NetworkRxWaitResolutionState::Resolved
-        }) else {
+        let Some(rx_resolution_record) =
+            self.domains.network.network_rx_wait_resolutions.iter().find(|record| {
+                record.id == rx_wait_resolution
+                    && record.generation == rx_wait_resolution_generation
+                    && record.state == NetworkRxWaitResolutionState::Resolved
+            })
+        else {
             return Err("network benchmark rx wait resolution generation is missing or inactive");
         };
         if rx_resolution_record.packet_device != packet_device
@@ -158,7 +170,7 @@ impl SemanticGraph {
             return Err("network benchmark rx resolution does not match packet evidence");
         }
 
-        let Some(endpoint_record) = self.endpoint_objects.iter().find(|record| {
+        let Some(endpoint_record) = self.domains.network.endpoint_objects.iter().find(|record| {
             record.id == endpoint
                 && record.generation == endpoint_generation
                 && record.state == EndpointObjectState::Allocated
@@ -170,7 +182,7 @@ impl SemanticGraph {
         {
             return Err("network benchmark endpoint adapter does not match");
         }
-        let Some(socket_record) = self.socket_objects.iter().find(|record| {
+        let Some(socket_record) = self.domains.network.socket_objects.iter().find(|record| {
             record.id == endpoint_record.socket
                 && record.generation == endpoint_record.socket_generation
                 && record.state == SocketObjectState::Created
@@ -197,11 +209,13 @@ impl SemanticGraph {
         if let (Some(backpressure), Some(backpressure_generation)) =
             (backpressure, backpressure_generation)
         {
-            let Some(backpressure_record) = self.network_backpressures.iter().find(|record| {
-                record.id == backpressure
-                    && record.generation == backpressure_generation
-                    && record.state == NetworkBackpressureState::Recorded
-            }) else {
+            let Some(backpressure_record) =
+                self.domains.network.network_backpressures.iter().find(|record| {
+                    record.id == backpressure
+                        && record.generation == backpressure_generation
+                        && record.state == NetworkBackpressureState::Recorded
+                })
+            else {
                 return Err("network benchmark backpressure generation is missing or inactive");
             };
             if backpressure_record.adapter != adapter
@@ -290,6 +304,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(endpoint_record) = self
+            .domains
+            .network
             .endpoint_objects
             .iter()
             .find(|record| record.id == endpoint && record.generation == endpoint_generation)
@@ -306,8 +322,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_network_benchmark_id =
-            self.next_network_benchmark_id.max(benchmark.saturating_add(1));
+        self.domains.network.next_network_benchmark_id =
+            self.domains.network.next_network_benchmark_id.max(benchmark.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::NetworkBenchmarkRecorded {
@@ -339,7 +355,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_benchmarks.push(NetworkBenchmarkRecord {
+        self.domains.network.network_benchmarks.push(NetworkBenchmarkRecord {
             id: benchmark,
             scenario: scenario.to_string(),
             adapter,
@@ -381,11 +397,11 @@ impl SemanticGraph {
     }
 
     pub fn network_benchmarks(&self) -> &[NetworkBenchmarkRecord] {
-        &self.network_benchmarks
+        &self.domains.network.network_benchmarks
     }
 
     pub fn network_benchmark_count(&self) -> usize {
-        self.network_benchmarks.len()
+        self.domains.network.network_benchmarks.len()
     }
 
     pub fn derive_network_throughput_bytes_per_sec(
@@ -396,7 +412,7 @@ impl SemanticGraph {
     }
 
     pub fn check_network_benchmark_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_benchmarks {
+        for record in &self.domains.network.network_benchmarks {
             let expected_throughput = Self::derive_network_throughput_bytes_per_sec(
                 record.sample_bytes,
                 record.measured_nanos,
@@ -437,9 +453,11 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(adapter) = self.network_stack_adapters.iter().find(|adapter| {
-                adapter.id == record.adapter && adapter.generation == record.adapter_generation
-            }) else {
+            let Some(adapter) =
+                self.domains.network.network_stack_adapters.iter().find(|adapter| {
+                    adapter.id == record.adapter && adapter.generation == record.adapter_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
                     benchmark: record.id,
                     target: ContractObjectRef::new(
@@ -449,10 +467,12 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(packet_device) = self.packet_device_objects.iter().find(|packet_device| {
-                packet_device.id == record.packet_device
-                    && packet_device.generation == record.packet_device_generation
-            }) else {
+            let Some(packet_device) =
+                self.domains.network.packet_device_objects.iter().find(|packet_device| {
+                    packet_device.id == record.packet_device
+                        && packet_device.generation == record.packet_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
                     benchmark: record.id,
                     target: ContractObjectRef::new(
@@ -462,7 +482,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(tx_queue) = self.packet_queue_objects.iter().find(|queue| {
+            let Some(tx_queue) = self.domains.network.packet_queue_objects.iter().find(|queue| {
                 queue.id == record.tx_queue && queue.generation == record.tx_queue_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
@@ -474,7 +494,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(rx_queue) = self.packet_queue_objects.iter().find(|queue| {
+            let Some(rx_queue) = self.domains.network.packet_queue_objects.iter().find(|queue| {
                 queue.id == record.rx_queue && queue.generation == record.rx_queue_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
@@ -508,10 +528,12 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(tx_completion) = self.network_tx_completions.iter().find(|completion| {
-                completion.id == record.tx_completion
-                    && completion.generation == record.tx_completion_generation
-            }) else {
+            let Some(tx_completion) =
+                self.domains.network.network_tx_completions.iter().find(|completion| {
+                    completion.id == record.tx_completion
+                        && completion.generation == record.tx_completion_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
                     benchmark: record.id,
                     target: ContractObjectRef::new(
@@ -533,10 +555,12 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(rx_resolution) = self.network_rx_wait_resolutions.iter().find(|resolution| {
-                resolution.id == record.rx_wait_resolution
-                    && resolution.generation == record.rx_wait_resolution_generation
-            }) else {
+            let Some(rx_resolution) =
+                self.domains.network.network_rx_wait_resolutions.iter().find(|resolution| {
+                    resolution.id == record.rx_wait_resolution
+                        && resolution.generation == record.rx_wait_resolution_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
                     benchmark: record.id,
                     target: ContractObjectRef::new(
@@ -558,7 +582,7 @@ impl SemanticGraph {
                 });
             }
 
-            let Some(endpoint) = self.endpoint_objects.iter().find(|endpoint| {
+            let Some(endpoint) = self.domains.network.endpoint_objects.iter().find(|endpoint| {
                 endpoint.id == record.endpoint && endpoint.generation == record.endpoint_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
@@ -570,7 +594,7 @@ impl SemanticGraph {
                     ),
                 });
             };
-            let Some(socket) = self.socket_objects.iter().find(|socket| {
+            let Some(socket) = self.domains.network.socket_objects.iter().find(|socket| {
                 socket.id == record.socket && socket.generation == record.socket_generation
             }) else {
                 return Err(SemanticInvariantError::NetworkBenchmarkMissingTarget {
@@ -617,7 +641,7 @@ impl SemanticGraph {
                 (record.backpressure, record.backpressure_generation)
             {
                 let Some(backpressure_record) =
-                    self.network_backpressures.iter().find(|backpressure_record| {
+                    self.domains.network.network_backpressures.iter().find(|backpressure_record| {
                         backpressure_record.id == backpressure
                             && backpressure_record.generation == backpressure_generation
                     })
@@ -721,7 +745,7 @@ impl SemanticGraph {
         throughput_bytes_per_sec: u64,
     ) {
         if let Some(record) =
-            self.network_benchmarks.iter_mut().find(|record| record.id == benchmark)
+            self.domains.network.network_benchmarks.iter_mut().find(|record| record.id == benchmark)
         {
             record.throughput_bytes_per_sec = throughput_bytes_per_sec;
         }

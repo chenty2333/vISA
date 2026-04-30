@@ -15,13 +15,13 @@ impl SemanticGraph {
         if irq_event == 0 {
             return Err("irq event id=0 is invalid");
         }
-        if self.irq_events.iter().any(|record| record.id == irq_event) {
+        if self.domains.device.irq_events.iter().any(|record| record.id == irq_event) {
             return Err("irq event already exists");
         }
         if sequence == 0 {
             return Err("irq event sequence is zero");
         }
-        let Some(line_record) = self.irq_line_objects.iter().find(|record| {
+        let Some(line_record) = self.domains.device.irq_line_objects.iter().find(|record| {
             record.id == irq_line
                 && record.generation == irq_line_generation
                 && record.state == IrqLineObjectState::Registered
@@ -31,7 +31,7 @@ impl SemanticGraph {
         if line_record.device != device || line_record.device_generation != device_generation {
             return Err("irq event device does not match irq line");
         }
-        let Some(device_record) = self.device_objects.iter().find(|record| {
+        let Some(device_record) = self.domains.device.device_objects.iter().find(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
@@ -52,7 +52,7 @@ impl SemanticGraph {
         if store_record.role != "driver" {
             return Err("irq event driver store role is not driver");
         }
-        if self.irq_events.iter().any(|record| {
+        if self.domains.device.irq_events.iter().any(|record| {
             record.irq_line == line_record.id
                 && record.irq_line_generation == irq_line_generation
                 && record.sequence == sequence
@@ -98,6 +98,8 @@ impl SemanticGraph {
         }
         let generation = 1;
         let Some(irq_number) = self
+            .domains
+            .device
             .irq_line_objects
             .iter()
             .find(|record| record.id == irq_line && record.generation == irq_line_generation)
@@ -105,7 +107,8 @@ impl SemanticGraph {
         else {
             return false;
         };
-        self.next_irq_event_id = self.next_irq_event_id.max(irq_event + 1);
+        self.domains.device.next_irq_event_id =
+            self.domains.device.next_irq_event_id.max(irq_event + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::IrqEventRecorded {
@@ -121,7 +124,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.irq_events.push(IrqEventRecord {
+        self.domains.device.irq_events.push(IrqEventRecord {
             id: irq_event,
             irq_line,
             irq_line_generation,
@@ -140,16 +143,16 @@ impl SemanticGraph {
     }
 
     pub fn irq_events(&self) -> &[IrqEventRecord] {
-        &self.irq_events
+        &self.domains.device.irq_events
     }
 
     pub fn irq_event_count(&self) -> usize {
-        self.irq_events.len()
+        self.domains.device.irq_events.len()
     }
 
     pub fn check_irq_event_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.irq_events {
-            let Some(line_record) = self.irq_line_objects.iter().find(|line| {
+        for record in &self.domains.device.irq_events {
+            let Some(line_record) = self.domains.device.irq_line_objects.iter().find(|line| {
                 line.id == record.irq_line && line.generation == record.irq_line_generation
             }) else {
                 return Err(SemanticInvariantError::IrqEventMissingLine {
@@ -157,7 +160,7 @@ impl SemanticGraph {
                     irq_line: record.irq_line,
                 });
             };
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::IrqEventMissingDevice {
@@ -194,7 +197,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IrqEventInvalid { irq_event: record.id });
             }
-            if let Some(duplicate) = self.irq_events.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.irq_events.iter().find(|other| {
                 other.id != record.id
                     && other.irq_line == record.irq_line
                     && other.irq_line_generation == record.irq_line_generation
@@ -246,7 +249,9 @@ impl SemanticGraph {
         irq_event: IrqEventId,
         generation: Generation,
     ) {
-        if let Some(record) = self.irq_events.iter_mut().find(|record| record.id == irq_event) {
+        if let Some(record) =
+            self.domains.device.irq_events.iter_mut().find(|record| record.id == irq_event)
+        {
             record.driver_store_generation = generation;
         }
     }

@@ -15,7 +15,7 @@ impl SemanticGraph {
         if irq_line == 0 {
             return Err("irq line object id=0 is invalid");
         }
-        if self.irq_line_objects.iter().any(|record| record.id == irq_line) {
+        if self.domains.device.irq_line_objects.iter().any(|record| record.id == irq_line) {
             return Err("irq line object already exists");
         }
         if !Self::irq_line_trigger_is_supported(trigger) {
@@ -24,7 +24,7 @@ impl SemanticGraph {
         if !Self::irq_line_polarity_is_supported(polarity) {
             return Err("irq line object polarity is unsupported");
         }
-        let Some(device_record) = self.device_objects.iter().find(|record| {
+        let Some(device_record) = self.domains.device.device_objects.iter().find(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
@@ -45,7 +45,7 @@ impl SemanticGraph {
         if resource_record.kind != ResourceKind::IrqLine {
             return Err("irq line object resource kind is not irq-line");
         }
-        if self.irq_line_objects.iter().any(|record| {
+        if self.domains.device.irq_line_objects.iter().any(|record| {
             record.device == device_record.id
                 && record.device_generation == device_generation
                 && record.irq_number == irq_number
@@ -87,7 +87,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_irq_line_object_id = self.next_irq_line_object_id.max(irq_line + 1);
+        self.domains.device.next_irq_line_object_id =
+            self.domains.device.next_irq_line_object_id.max(irq_line + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::IrqLineObjectRecorded {
@@ -102,7 +103,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.irq_line_objects.push(IrqLineObjectRecord {
+        self.domains.device.irq_line_objects.push(IrqLineObjectRecord {
             id: irq_line,
             device,
             device_generation,
@@ -120,16 +121,16 @@ impl SemanticGraph {
     }
 
     pub fn irq_line_objects(&self) -> &[IrqLineObjectRecord] {
-        &self.irq_line_objects
+        &self.domains.device.irq_line_objects
     }
 
     pub fn irq_line_object_count(&self) -> usize {
-        self.irq_line_objects.len()
+        self.domains.device.irq_line_objects.len()
     }
 
     pub fn check_irq_line_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.irq_line_objects {
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+        for record in &self.domains.device.irq_line_objects {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::IrqLineObjectMissingDevice {
@@ -162,7 +163,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::IrqLineObjectInvalid { irq_line: record.id });
             }
-            if let Some(duplicate) = self.irq_line_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.irq_line_objects.iter().find(|other| {
                 other.id != record.id
                     && other.device == record.device
                     && other.device_generation == record.device_generation
@@ -222,7 +223,8 @@ impl SemanticGraph {
         irq_line: IrqLineObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self.irq_line_objects.iter_mut().find(|record| record.id == irq_line)
+        if let Some(record) =
+            self.domains.device.irq_line_objects.iter_mut().find(|record| record.id == irq_line)
         {
             record.device_generation = generation;
         }

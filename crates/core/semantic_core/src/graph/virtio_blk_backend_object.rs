@@ -31,7 +31,13 @@ impl SemanticGraph {
         if virtio_blk_backend == 0 {
             return Err("virtio block backend object id=0 is invalid");
         }
-        if self.virtio_blk_backends.iter().any(|record| record.id == virtio_blk_backend) {
+        if self
+            .domains
+            .block
+            .virtio_blk_backends
+            .iter()
+            .any(|record| record.id == virtio_blk_backend)
+        {
             return Err("virtio block backend object already exists");
         }
         if name.is_empty() || provider.is_empty() || profile.is_empty() || model.is_empty() {
@@ -61,11 +67,13 @@ impl SemanticGraph {
         if negotiated_features & !driver_features != 0 {
             return Err("virtio block backend negotiated features exceed driver features");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err(
                 "virtio block backend object block device generation is missing or inactive",
             );
@@ -77,11 +85,13 @@ impl SemanticGraph {
         {
             return Err("virtio block backend object contract does not match block device");
         }
-        let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-            record.id == driver_binding
-                && record.generation == driver_binding_generation
-                && record.state == DriverStoreBindingState::Bound
-        }) else {
+        let Some(binding_record) =
+            self.domains.device.driver_store_bindings.iter().find(|record| {
+                record.id == driver_binding
+                    && record.generation == driver_binding_generation
+                    && record.state == DriverStoreBindingState::Bound
+            })
+        else {
             return Err(
                 "virtio block backend object driver binding generation is missing or inactive",
             );
@@ -91,14 +101,14 @@ impl SemanticGraph {
         {
             return Err("virtio block backend object driver binding does not target block device");
         }
-        if self.virtio_blk_backends.iter().any(|record| {
+        if self.domains.block.virtio_blk_backends.iter().any(|record| {
             record.block_device == block_device_record.id
                 && record.block_device_generation == block_device_generation
                 && record.state == VirtioBlkBackendObjectState::SkeletonReady
         }) {
             return Err("virtio block backend object already bound to block device generation");
         }
-        if self.virtio_blk_backends.iter().any(|record| {
+        if self.domains.block.virtio_blk_backends.iter().any(|record| {
             record.driver_binding == binding_record.id
                 && record.driver_binding_generation == driver_binding_generation
                 && record.state == VirtioBlkBackendObjectState::SkeletonReady
@@ -161,14 +171,16 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device && record.generation == block_device_generation
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device && record.generation == block_device_generation
+            })
+        else {
             return false;
         };
         let generation = 1;
-        self.next_virtio_blk_backend_object_id =
-            self.next_virtio_blk_backend_object_id.max(virtio_blk_backend + 1);
+        self.domains.block.next_virtio_blk_backend_object_id =
+            self.domains.block.next_virtio_blk_backend_object_id.max(virtio_blk_backend + 1);
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::VirtioBlkBackendSkeletonBound {
@@ -185,7 +197,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.virtio_blk_backends.push(VirtioBlkBackendObjectRecord {
+        self.domains.block.virtio_blk_backends.push(VirtioBlkBackendObjectRecord {
             id: virtio_blk_backend,
             name: name.to_string(),
             block_device,
@@ -216,28 +228,32 @@ impl SemanticGraph {
     }
 
     pub fn virtio_blk_backends(&self) -> &[VirtioBlkBackendObjectRecord] {
-        &self.virtio_blk_backends
+        &self.domains.block.virtio_blk_backends
     }
 
     pub fn virtio_blk_backend_object_count(&self) -> usize {
-        self.virtio_blk_backends.len()
+        self.domains.block.virtio_blk_backends.len()
     }
 
     pub fn check_virtio_blk_backend_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.virtio_blk_backends {
-            let Some(block_device_record) = self.block_device_objects.iter().find(|block_device| {
-                block_device.id == record.block_device
-                    && block_device.generation == record.block_device_generation
-            }) else {
+        for record in &self.domains.block.virtio_blk_backends {
+            let Some(block_device_record) =
+                self.domains.block.block_device_objects.iter().find(|block_device| {
+                    block_device.id == record.block_device
+                        && block_device.generation == record.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::VirtioBlkBackendObjectMissingBlockDevice {
                     virtio_blk_backend: record.id,
                     block_device: record.block_device,
                 });
             };
-            let Some(binding_record) = self.driver_store_bindings.iter().find(|driver_binding| {
-                driver_binding.id == record.driver_binding
-                    && driver_binding.generation == record.driver_binding_generation
-            }) else {
+            let Some(binding_record) =
+                self.domains.device.driver_store_bindings.iter().find(|driver_binding| {
+                    driver_binding.id == record.driver_binding
+                        && driver_binding.generation == record.driver_binding_generation
+                })
+            else {
                 return Err(SemanticInvariantError::VirtioBlkBackendObjectMissingDriverBinding {
                     virtio_blk_backend: record.id,
                     driver_binding: record.driver_binding,
@@ -247,7 +263,7 @@ impl SemanticGraph {
                 cleanup.driver_binding == record.driver_binding
                     && cleanup.driver_binding_generation == record.driver_binding_generation
                     && cleanup.state == IoCleanupState::Completed
-                    && self.block_driver_cleanups.iter().any(|block_cleanup| {
+                    && self.domains.block.block_driver_cleanups.iter().any(|block_cleanup| {
                         block_cleanup.io_cleanup == cleanup.id
                             && block_cleanup.io_cleanup_generation == cleanup.generation
                             && block_cleanup.driver_binding == record.driver_binding
@@ -297,7 +313,7 @@ impl SemanticGraph {
                     virtio_blk_backend: record.id,
                 });
             }
-            if let Some(duplicate) = self.virtio_blk_backends.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.virtio_blk_backends.iter().find(|other| {
                 other.id != record.id
                     && other.block_device == record.block_device
                     && other.block_device_generation == record.block_device_generation
@@ -308,7 +324,7 @@ impl SemanticGraph {
                     block_device: record.block_device,
                 });
             }
-            if let Some(duplicate) = self.virtio_blk_backends.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.virtio_blk_backends.iter().find(|other| {
                 other.id != record.id
                     && other.driver_binding == record.driver_binding
                     && other.driver_binding_generation == record.driver_binding_generation
@@ -362,8 +378,12 @@ impl SemanticGraph {
         virtio_blk_backend: VirtioBlkBackendObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.virtio_blk_backends.iter_mut().find(|record| record.id == virtio_blk_backend)
+        if let Some(record) = self
+            .domains
+            .block
+            .virtio_blk_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_blk_backend)
         {
             record.driver_binding_generation = generation;
         }
@@ -375,8 +395,12 @@ impl SemanticGraph {
         virtio_blk_backend: VirtioBlkBackendObjectId,
         irq_vector: u16,
     ) {
-        if let Some(record) =
-            self.virtio_blk_backends.iter_mut().find(|record| record.id == virtio_blk_backend)
+        if let Some(record) = self
+            .domains
+            .block
+            .virtio_blk_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_blk_backend)
         {
             record.irq_vector = irq_vector;
         }

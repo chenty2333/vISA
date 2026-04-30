@@ -14,13 +14,19 @@ impl SemanticGraph {
         if packet_descriptor == 0 {
             return Err("packet descriptor object id=0 is invalid");
         }
-        if self.packet_descriptors.iter().any(|record| record.id == packet_descriptor) {
+        if self
+            .domains
+            .network
+            .packet_descriptors
+            .iter()
+            .any(|record| record.id == packet_descriptor)
+        {
             return Err("packet descriptor object already exists");
         }
         if length == 0 {
             return Err("packet descriptor object length is zero");
         }
-        let Some(queue_record) = self.packet_queue_objects.iter().find(|record| {
+        let Some(queue_record) = self.domains.network.packet_queue_objects.iter().find(|record| {
             record.id == packet_queue
                 && record.generation == packet_queue_generation
                 && record.state == PacketQueueObjectState::Registered
@@ -30,14 +36,16 @@ impl SemanticGraph {
         if u32::from(slot) >= queue_record.depth {
             return Err("packet descriptor object slot is outside queue depth");
         }
-        let Some(buffer_record) = self.packet_buffer_objects.iter().find(|record| {
-            record.id == packet_buffer
-                && record.generation == packet_buffer_generation
-                && matches!(
-                    record.state,
-                    PacketBufferObjectState::Allocated | PacketBufferObjectState::Filled
-                )
-        }) else {
+        let Some(buffer_record) =
+            self.domains.network.packet_buffer_objects.iter().find(|record| {
+                record.id == packet_buffer
+                    && record.generation == packet_buffer_generation
+                    && matches!(
+                        record.state,
+                        PacketBufferObjectState::Allocated | PacketBufferObjectState::Filled
+                    )
+            })
+        else {
             return Err("packet descriptor object buffer generation is missing or inactive");
         };
         if queue_record.packet_device != buffer_record.packet_device
@@ -64,7 +72,7 @@ impl SemanticGraph {
                 }
             }
         }
-        if self.packet_descriptors.iter().any(|record| {
+        if self.domains.network.packet_descriptors.iter().any(|record| {
             record.packet_queue == queue_record.id
                 && record.packet_queue_generation == packet_queue_generation
                 && record.slot == slot
@@ -72,7 +80,7 @@ impl SemanticGraph {
         }) {
             return Err("packet descriptor object slot already exists for packet queue generation");
         }
-        if self.packet_descriptors.iter().any(|record| {
+        if self.domains.network.packet_descriptors.iter().any(|record| {
             record.packet_buffer == buffer_record.id
                 && record.packet_buffer_generation == packet_buffer_generation
                 && record.state == PacketDescriptorObjectState::Registered
@@ -111,8 +119,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_packet_descriptor_object_id =
-            self.next_packet_descriptor_object_id.max(packet_descriptor + 1);
+        self.domains.network.next_packet_descriptor_object_id =
+            self.domains.network.next_packet_descriptor_object_id.max(packet_descriptor + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::PacketDescriptorObjectRecorded {
@@ -126,7 +134,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.packet_descriptors.push(PacketDescriptorObjectRecord {
+        self.domains.network.packet_descriptors.push(PacketDescriptorObjectRecord {
             id: packet_descriptor,
             packet_queue,
             packet_queue_generation,
@@ -143,28 +151,32 @@ impl SemanticGraph {
     }
 
     pub fn packet_descriptors(&self) -> &[PacketDescriptorObjectRecord] {
-        &self.packet_descriptors
+        &self.domains.network.packet_descriptors
     }
 
     pub fn packet_descriptor_object_count(&self) -> usize {
-        self.packet_descriptors.len()
+        self.domains.network.packet_descriptors.len()
     }
 
     pub fn check_packet_descriptor_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.packet_descriptors {
-            let Some(queue_record) = self.packet_queue_objects.iter().find(|packet_queue| {
-                packet_queue.id == record.packet_queue
-                    && packet_queue.generation == record.packet_queue_generation
-            }) else {
+        for record in &self.domains.network.packet_descriptors {
+            let Some(queue_record) =
+                self.domains.network.packet_queue_objects.iter().find(|packet_queue| {
+                    packet_queue.id == record.packet_queue
+                        && packet_queue.generation == record.packet_queue_generation
+                })
+            else {
                 return Err(SemanticInvariantError::PacketDescriptorObjectMissingQueue {
                     packet_descriptor: record.id,
                     packet_queue: record.packet_queue,
                 });
             };
-            let Some(buffer_record) = self.packet_buffer_objects.iter().find(|packet_buffer| {
-                packet_buffer.id == record.packet_buffer
-                    && packet_buffer.generation == record.packet_buffer_generation
-            }) else {
+            let Some(buffer_record) =
+                self.domains.network.packet_buffer_objects.iter().find(|packet_buffer| {
+                    packet_buffer.id == record.packet_buffer
+                        && packet_buffer.generation == record.packet_buffer_generation
+                })
+            else {
                 return Err(SemanticInvariantError::PacketDescriptorObjectMissingBuffer {
                     packet_descriptor: record.id,
                     packet_buffer: record.packet_buffer,
@@ -198,7 +210,7 @@ impl SemanticGraph {
                     packet_descriptor: record.id,
                 });
             }
-            if let Some(duplicate) = self.packet_descriptors.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.packet_descriptors.iter().find(|other| {
                 other.id != record.id
                     && other.packet_queue == record.packet_queue
                     && other.packet_queue_generation == record.packet_queue_generation
@@ -211,7 +223,7 @@ impl SemanticGraph {
                     slot: record.slot,
                 });
             }
-            if let Some(duplicate) = self.packet_descriptors.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.packet_descriptors.iter().find(|other| {
                 other.id != record.id
                     && other.packet_buffer == record.packet_buffer
                     && other.packet_buffer_generation == record.packet_buffer_generation
@@ -270,8 +282,12 @@ impl SemanticGraph {
         packet_descriptor: PacketDescriptorObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.packet_descriptors.iter_mut().find(|record| record.id == packet_descriptor)
+        if let Some(record) = self
+            .domains
+            .network
+            .packet_descriptors
+            .iter_mut()
+            .find(|record| record.id == packet_descriptor)
         {
             record.packet_queue_generation = generation;
         }
@@ -283,8 +299,12 @@ impl SemanticGraph {
         packet_descriptor: PacketDescriptorObjectId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.packet_descriptors.iter_mut().find(|record| record.id == packet_descriptor)
+        if let Some(record) = self
+            .domains
+            .network
+            .packet_descriptors
+            .iter_mut()
+            .find(|record| record.id == packet_descriptor)
         {
             record.packet_buffer_generation = generation;
         }

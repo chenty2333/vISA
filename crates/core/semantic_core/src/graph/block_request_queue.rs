@@ -15,7 +15,7 @@ impl SemanticGraph {
         if queue == 0 {
             return Err("block request queue id=0 is invalid");
         }
-        if self.block_request_queues.iter().any(|record| record.id == queue) {
+        if self.domains.block.block_request_queues.iter().any(|record| record.id == queue) {
             return Err("block request queue already exists");
         }
         if backend.generation == 0 || block_device_generation == 0 {
@@ -33,7 +33,7 @@ impl SemanticGraph {
         if entries.len() > depth as usize {
             return Err("block request queue depth exceeded");
         }
-        let Some(backend_record) = self.fake_block_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.block.fake_block_backends.iter().find(|record| {
             record.id == backend.id
                 && record.generation == backend.generation
                 && record.state == FakeBlockBackendObjectState::Bound
@@ -45,11 +45,13 @@ impl SemanticGraph {
         {
             return Err("block request queue backend does not target block device generation");
         }
-        let Some(block_device_record) = self.block_device_objects.iter().find(|record| {
-            record.id == block_device
-                && record.generation == block_device_generation
-                && record.state == BlockDeviceObjectState::Registered
-        }) else {
+        let Some(block_device_record) =
+            self.domains.block.block_device_objects.iter().find(|record| {
+                record.id == block_device
+                    && record.generation == block_device_generation
+                    && record.state == BlockDeviceObjectState::Registered
+            })
+        else {
             return Err("block request queue block device generation is missing or inactive");
         };
         if block_device_record.id != backend_record.block_device {
@@ -61,7 +63,7 @@ impl SemanticGraph {
             if entry.request == 0 || entry.request_generation == 0 {
                 return Err("block request queue entry identity values must be nonzero");
             }
-            if self.block_request_queues.iter().any(|record| {
+            if self.domains.block.block_request_queues.iter().any(|record| {
                 record.state == BlockRequestQueueState::Active
                     && record.entries.iter().any(|existing| {
                         existing.request == entry.request
@@ -70,9 +72,11 @@ impl SemanticGraph {
             }) {
                 return Err("block request queue request already belongs to an active queue");
             }
-            let Some(request_record) = self.block_request_objects.iter().find(|record| {
-                record.id == entry.request && record.generation == entry.request_generation
-            }) else {
+            let Some(request_record) =
+                self.domains.block.block_request_objects.iter().find(|record| {
+                    record.id == entry.request && record.generation == entry.request_generation
+                })
+            else {
                 return Err("block request queue request generation is missing");
             };
             if request_record.block_device != block_device
@@ -111,7 +115,7 @@ impl SemanticGraph {
                             return Err("block request queue completed request is not completed");
                         }
                         let Some(completion_record) =
-                            self.block_completion_objects.iter().find(|record| {
+                            self.domains.block.block_completion_objects.iter().find(|record| {
                                 record.id == completion
                                     && record.generation == completion_generation
                             })
@@ -193,8 +197,8 @@ impl SemanticGraph {
             .count() as u32;
         let first_sequence = entries.first().map(|entry| entry.sequence).unwrap_or(0);
         let last_sequence = entries.last().map(|entry| entry.sequence).unwrap_or(0);
-        self.next_block_request_queue_id =
-            self.next_block_request_queue_id.max(queue.saturating_add(1));
+        self.domains.block.next_block_request_queue_id =
+            self.domains.block.next_block_request_queue_id.max(queue.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockRequestQueueRecorded {
@@ -211,7 +215,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_request_queues.push(BlockRequestQueueRecord {
+        self.domains.block.block_request_queues.push(BlockRequestQueueRecord {
             id: queue,
             backend,
             block_device,
@@ -231,29 +235,33 @@ impl SemanticGraph {
     }
 
     pub fn block_request_queues(&self) -> &[BlockRequestQueueRecord] {
-        &self.block_request_queues
+        &self.domains.block.block_request_queues
     }
 
     pub fn block_request_queue_count(&self) -> usize {
-        self.block_request_queues.len()
+        self.domains.block.block_request_queues.len()
     }
 
     pub fn check_block_request_queue_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_request_queues {
-            let Some(backend_record) = self.fake_block_backends.iter().find(|backend| {
-                record.backend.kind == ContractObjectKind::FakeBlockBackendObject
-                    && backend.id == record.backend.id
-                    && backend.generation == record.backend.generation
-            }) else {
+        for record in &self.domains.block.block_request_queues {
+            let Some(backend_record) =
+                self.domains.block.fake_block_backends.iter().find(|backend| {
+                    record.backend.kind == ContractObjectKind::FakeBlockBackendObject
+                        && backend.id == record.backend.id
+                        && backend.generation == record.backend.generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockRequestQueueMissingBackend {
                     queue: record.id,
                     backend: record.backend,
                 });
             };
-            let Some(block_device_record) = self.block_device_objects.iter().find(|block_device| {
-                block_device.id == record.block_device
-                    && block_device.generation == record.block_device_generation
-            }) else {
+            let Some(block_device_record) =
+                self.domains.block.block_device_objects.iter().find(|block_device| {
+                    block_device.id == record.block_device
+                        && block_device.generation == record.block_device_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockRequestQueueMissingBlockDevice {
                     queue: record.id,
                     block_device: record.block_device,
@@ -291,9 +299,12 @@ impl SemanticGraph {
                 return Err(SemanticInvariantError::BlockRequestQueueInvalid { queue: record.id });
             }
             for (index, entry) in record.entries.iter().enumerate() {
-                let Some(request_record) = self.block_request_objects.iter().find(|request| {
-                    request.id == entry.request && request.generation == entry.request_generation
-                }) else {
+                let Some(request_record) =
+                    self.domains.block.block_request_objects.iter().find(|request| {
+                        request.id == entry.request
+                            && request.generation == entry.request_generation
+                    })
+                else {
                     return Err(SemanticInvariantError::BlockRequestQueueMissingRequest {
                         queue: record.id,
                         block_request: entry.request,
@@ -328,7 +339,7 @@ impl SemanticGraph {
                         });
                     };
                     let Some(completion_record) =
-                        self.block_completion_objects.iter().find(|record| {
+                        self.domains.block.block_completion_objects.iter().find(|record| {
                             record.id == completion && record.generation == completion_generation
                         })
                     else {
@@ -414,7 +425,8 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         generation: Generation,
     ) {
-        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
+        if let Some(record) =
+            self.domains.block.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.backend.generation = generation;
         }
@@ -426,7 +438,8 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         pending_count: u32,
     ) {
-        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
+        if let Some(record) =
+            self.domains.block.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.pending_count = pending_count;
         }
@@ -438,7 +451,8 @@ impl SemanticGraph {
         queue: BlockRequestQueueId,
         generation: Generation,
     ) {
-        if let Some(record) = self.block_request_queues.iter_mut().find(|record| record.id == queue)
+        if let Some(record) =
+            self.domains.block.block_request_queues.iter_mut().find(|record| record.id == queue)
         {
             record.block_device_generation = generation;
         }

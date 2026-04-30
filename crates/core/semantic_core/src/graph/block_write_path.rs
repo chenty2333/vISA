@@ -46,7 +46,7 @@ impl SemanticGraph {
         if write_path == 0 {
             return Err("block write path id=0 is invalid");
         }
-        if self.block_write_paths.iter().any(|record| record.id == write_path) {
+        if self.domains.block.block_write_paths.iter().any(|record| record.id == write_path) {
             return Err("block write path already exists");
         }
         if backend.generation == 0
@@ -59,7 +59,7 @@ impl SemanticGraph {
         if backend.kind != ContractObjectKind::FakeBlockBackendObject {
             return Err("block write path backend kind is unsupported for B8");
         }
-        let Some(backend_record) = self.fake_block_backends.iter().find(|record| {
+        let Some(backend_record) = self.domains.block.fake_block_backends.iter().find(|record| {
             record.id == backend.id
                 && record.generation == backend.generation
                 && record.state == FakeBlockBackendObjectState::Bound
@@ -69,7 +69,7 @@ impl SemanticGraph {
         if backend_record.read_only {
             return Err("block write path backend is read-only");
         }
-        let Some(request_record) = self.block_request_objects.iter().find(|record| {
+        let Some(request_record) = self.domains.block.block_request_objects.iter().find(|record| {
             record.id == block_request && record.generation == block_request_generation
         }) else {
             return Err("block write path request generation is missing");
@@ -80,9 +80,11 @@ impl SemanticGraph {
         if request_record.state != BlockRequestObjectState::Completed {
             return Err("block write path request is not completed");
         }
-        let Some(completion_record) = self.block_completion_objects.iter().find(|record| {
-            record.id == block_completion && record.generation == block_completion_generation
-        }) else {
+        let Some(completion_record) =
+            self.domains.block.block_completion_objects.iter().find(|record| {
+                record.id == block_completion && record.generation == block_completion_generation
+            })
+        else {
             return Err("block write path completion generation is missing");
         };
         if completion_record.block_request != request_record.id
@@ -103,7 +105,7 @@ impl SemanticGraph {
         {
             return Err("block write path backend does not target request block device");
         }
-        let Some(range_record) = self.block_range_objects.iter().find(|range| {
+        let Some(range_record) = self.domains.block.block_range_objects.iter().find(|range| {
             range.id == request_record.block_range
                 && range.generation == request_record.block_range_generation
         }) else {
@@ -123,7 +125,7 @@ impl SemanticGraph {
         if payload_digest != expected_digest {
             return Err("block write path payload digest mismatch");
         }
-        if self.block_write_paths.iter().any(|record| {
+        if self.domains.block.block_write_paths.iter().any(|record| {
             record.block_request == request_record.id
                 && record.block_request_generation == request_record.generation
                 && record.state == BlockWritePathState::Completed
@@ -161,15 +163,17 @@ impl SemanticGraph {
         {
             return false;
         }
-        let Some(completion_record) = self.block_completion_objects.iter().find(|completion| {
-            completion.id == block_completion
-                && completion.generation == block_completion_generation
-        }) else {
+        let Some(completion_record) =
+            self.domains.block.block_completion_objects.iter().find(|completion| {
+                completion.id == block_completion
+                    && completion.generation == block_completion_generation
+            })
+        else {
             return false;
         };
         let generation = 1;
-        self.next_block_write_path_id =
-            self.next_block_write_path_id.max(write_path.saturating_add(1));
+        self.domains.block.next_block_write_path_id =
+            self.domains.block.next_block_write_path_id.max(write_path.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockWritePathRecorded {
@@ -189,7 +193,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.block_write_paths.push(BlockWritePathRecord {
+        self.domains.block.block_write_paths.push(BlockWritePathRecord {
             id: write_path,
             backend,
             block_request,
@@ -212,44 +216,50 @@ impl SemanticGraph {
     }
 
     pub fn block_write_paths(&self) -> &[BlockWritePathRecord] {
-        &self.block_write_paths
+        &self.domains.block.block_write_paths
     }
 
     pub fn block_write_path_count(&self) -> usize {
-        self.block_write_paths.len()
+        self.domains.block.block_write_paths.len()
     }
 
     pub fn check_block_write_path_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.block_write_paths {
-            let Some(backend_record) = self.fake_block_backends.iter().find(|backend| {
-                record.backend.kind == ContractObjectKind::FakeBlockBackendObject
-                    && backend.id == record.backend.id
-                    && backend.generation == record.backend.generation
-            }) else {
+        for record in &self.domains.block.block_write_paths {
+            let Some(backend_record) =
+                self.domains.block.fake_block_backends.iter().find(|backend| {
+                    record.backend.kind == ContractObjectKind::FakeBlockBackendObject
+                        && backend.id == record.backend.id
+                        && backend.generation == record.backend.generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockWritePathMissingBackend {
                     write_path: record.id,
                     backend: record.backend,
                 });
             };
-            let Some(request_record) = self.block_request_objects.iter().find(|request| {
-                request.id == record.block_request
-                    && request.generation == record.block_request_generation
-            }) else {
+            let Some(request_record) =
+                self.domains.block.block_request_objects.iter().find(|request| {
+                    request.id == record.block_request
+                        && request.generation == record.block_request_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockWritePathMissingRequest {
                     write_path: record.id,
                     block_request: record.block_request,
                 });
             };
-            let Some(completion_record) = self.block_completion_objects.iter().find(|completion| {
-                completion.id == record.block_completion
-                    && completion.generation == record.block_completion_generation
-            }) else {
+            let Some(completion_record) =
+                self.domains.block.block_completion_objects.iter().find(|completion| {
+                    completion.id == record.block_completion
+                        && completion.generation == record.block_completion_generation
+                })
+            else {
                 return Err(SemanticInvariantError::BlockWritePathMissingCompletion {
                     write_path: record.id,
                     block_completion: record.block_completion,
                 });
             };
-            let Some(range_record) = self.block_range_objects.iter().find(|range| {
+            let Some(range_record) = self.domains.block.block_range_objects.iter().find(|range| {
                 range.id == record.block_range && range.generation == record.block_range_generation
             }) else {
                 return Err(SemanticInvariantError::BlockWritePathInvalid {
@@ -307,7 +317,7 @@ impl SemanticGraph {
                     write_path: record.id,
                 });
             }
-            if let Some(duplicate) = self.block_write_paths.iter().find(|other| {
+            if let Some(duplicate) = self.domains.block.block_write_paths.iter().find(|other| {
                 other.id != record.id
                     && other.block_request == record.block_request
                     && other.block_request_generation == record.block_request_generation
@@ -368,7 +378,7 @@ impl SemanticGraph {
         generation: Generation,
     ) {
         if let Some(record) =
-            self.block_write_paths.iter_mut().find(|record| record.id == write_path)
+            self.domains.block.block_write_paths.iter_mut().find(|record| record.id == write_path)
         {
             record.backend.generation = generation;
         }
@@ -381,7 +391,7 @@ impl SemanticGraph {
         payload_digest: u64,
     ) {
         if let Some(record) =
-            self.block_write_paths.iter_mut().find(|record| record.id == write_path)
+            self.domains.block.block_write_paths.iter_mut().find(|record| record.id == write_path)
         {
             record.payload_digest = payload_digest;
         }

@@ -215,7 +215,7 @@ impl SemanticGraph {
                         "io wait generation is missing or not pending",
                     ));
                 };
-                let Some(irq_record) = self.irq_events.iter().find(|irq| {
+                let Some(irq_record) = self.domains.device.irq_events.iter().find(|irq| {
                     irq.id == *irq_event
                         && irq.generation == *irq_event_generation
                         && irq.state == IrqEventState::Recorded

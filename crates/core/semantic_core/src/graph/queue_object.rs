@@ -14,7 +14,7 @@ impl SemanticGraph {
         if queue == 0 {
             return Err("queue object id=0 is invalid");
         }
-        if self.queue_objects.iter().any(|record| record.id == queue) {
+        if self.domains.device.queue_objects.iter().any(|record| record.id == queue) {
             return Err("queue object already exists");
         }
         if name.is_empty() {
@@ -26,14 +26,14 @@ impl SemanticGraph {
         if !Self::queue_role_is_supported(role) {
             return Err("queue object role is unsupported");
         }
-        let Some(device_record) = self.device_objects.iter().find(|record| {
+        let Some(device_record) = self.domains.device.device_objects.iter().find(|record| {
             record.id == device
                 && record.generation == device_generation
                 && record.state == DeviceObjectState::Registered
         }) else {
             return Err("queue object device generation is missing or inactive");
         };
-        if self.queue_objects.iter().any(|record| {
+        if self.domains.device.queue_objects.iter().any(|record| {
             record.device == device_record.id
                 && record.device_generation == device_generation
                 && record.queue_index == queue_index
@@ -65,7 +65,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_queue_object_id = self.next_queue_object_id.max(queue + 1);
+        self.domains.device.next_queue_object_id =
+            self.domains.device.next_queue_object_id.max(queue + 1);
         let recorded_at_event = self.event_log.push(
             "io",
             EventKind::QueueObjectRecorded {
@@ -78,7 +79,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.queue_objects.push(QueueObjectRecord {
+        self.domains.device.queue_objects.push(QueueObjectRecord {
             id: queue,
             name: name.to_string(),
             role,
@@ -95,16 +96,16 @@ impl SemanticGraph {
     }
 
     pub fn queue_objects(&self) -> &[QueueObjectRecord] {
-        &self.queue_objects
+        &self.domains.device.queue_objects
     }
 
     pub fn queue_object_count(&self) -> usize {
-        self.queue_objects.len()
+        self.domains.device.queue_objects.len()
     }
 
     pub fn check_queue_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.queue_objects {
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+        for record in &self.domains.device.queue_objects {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::QueueObjectMissingDevice {
@@ -122,7 +123,7 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::QueueObjectInvalid { queue: record.id });
             }
-            if let Some(duplicate) = self.queue_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.device.queue_objects.iter().find(|other| {
                 other.id != record.id
                     && other.device == record.device
                     && other.device_generation == record.device_generation
@@ -179,7 +180,9 @@ impl SemanticGraph {
         queue: QueueObjectId,
         generation: Generation,
     ) {
-        if let Some(record) = self.queue_objects.iter_mut().find(|record| record.id == queue) {
+        if let Some(record) =
+            self.domains.device.queue_objects.iter_mut().find(|record| record.id == queue)
+        {
             record.device_generation = generation;
         }
     }

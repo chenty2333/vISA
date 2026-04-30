@@ -17,17 +17,17 @@ impl SemanticGraph {
         if endpoint == 0 {
             return Err("endpoint object id=0 is invalid");
         }
-        if self.endpoint_objects.iter().any(|record| record.id == endpoint) {
+        if self.domains.network.endpoint_objects.iter().any(|record| record.id == endpoint) {
             return Err("endpoint object already exists");
         }
-        let Some(socket_record) = self.socket_objects.iter().find(|record| {
+        let Some(socket_record) = self.domains.network.socket_objects.iter().find(|record| {
             record.id == socket
                 && record.generation == socket_generation
                 && record.state == SocketObjectState::Created
         }) else {
             return Err("endpoint object socket generation is missing or inactive");
         };
-        if self.network_stack_adapters.iter().all(|record| {
+        if self.domains.network.network_stack_adapters.iter().all(|record| {
             record.id != socket_record.adapter
                 || record.generation != socket_record.adapter_generation
                 || record.state != NetworkStackAdapterState::Bound
@@ -50,7 +50,7 @@ impl SemanticGraph {
         {
             return Err("endpoint object must remain unbound before N13");
         }
-        if self.endpoint_objects.iter().any(|record| {
+        if self.domains.network.endpoint_objects.iter().any(|record| {
             record.socket == socket_record.id
                 && record.socket_generation == socket_record.generation
                 && record.state == EndpointObjectState::Allocated
@@ -89,6 +89,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(socket_record) = self
+            .domains
+            .network
             .socket_objects
             .iter()
             .find(|record| record.id == socket && record.generation == socket_generation)
@@ -97,7 +99,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_endpoint_object_id = self.next_endpoint_object_id.max(endpoint + 1);
+        self.domains.network.next_endpoint_object_id =
+            self.domains.network.next_endpoint_object_id.max(endpoint + 1);
         let created_at_event = self.event_log.push(
             "network",
             EventKind::EndpointObjectCreated {
@@ -117,7 +120,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.endpoint_objects.push(EndpointObjectRecord {
+        self.domains.network.endpoint_objects.push(EndpointObjectRecord {
             id: endpoint,
             socket,
             socket_generation,
@@ -140,16 +143,16 @@ impl SemanticGraph {
     }
 
     pub fn endpoint_objects(&self) -> &[EndpointObjectRecord] {
-        &self.endpoint_objects
+        &self.domains.network.endpoint_objects
     }
 
     pub fn endpoint_object_count(&self) -> usize {
-        self.endpoint_objects.len()
+        self.domains.network.endpoint_objects.len()
     }
 
     pub fn check_endpoint_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.endpoint_objects {
-            let Some(socket_record) = self.socket_objects.iter().find(|socket| {
+        for record in &self.domains.network.endpoint_objects {
+            let Some(socket_record) = self.domains.network.socket_objects.iter().find(|socket| {
                 socket.id == record.socket && socket.generation == record.socket_generation
             }) else {
                 return Err(SemanticInvariantError::EndpointObjectMissingSocket {
@@ -157,9 +160,11 @@ impl SemanticGraph {
                     socket: record.socket,
                 });
             };
-            let Some(adapter) = self.network_stack_adapters.iter().find(|adapter| {
-                adapter.id == record.adapter && adapter.generation == record.adapter_generation
-            }) else {
+            let Some(adapter) =
+                self.domains.network.network_stack_adapters.iter().find(|adapter| {
+                    adapter.id == record.adapter && adapter.generation == record.adapter_generation
+                })
+            else {
                 return Err(SemanticInvariantError::EndpointObjectMissingAdapter {
                     endpoint: record.id,
                     adapter: record.adapter,
@@ -198,12 +203,20 @@ impl SemanticGraph {
             {
                 return Err(SemanticInvariantError::EndpointObjectInvalid { endpoint: record.id });
             }
-            if self.endpoint_objects.iter().filter(|other| other.id == record.id).count() > 1 {
+            if self
+                .domains
+                .network
+                .endpoint_objects
+                .iter()
+                .filter(|other| other.id == record.id)
+                .count()
+                > 1
+            {
                 return Err(SemanticInvariantError::EndpointObjectDuplicate {
                     endpoint: record.id,
                 });
             }
-            if let Some(duplicate) = self.endpoint_objects.iter().find(|other| {
+            if let Some(duplicate) = self.domains.network.endpoint_objects.iter().find(|other| {
                 other.id != record.id
                     && other.socket == record.socket
                     && other.socket_generation == record.socket_generation
@@ -263,7 +276,8 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         socket_generation: Generation,
     ) {
-        if let Some(record) = self.endpoint_objects.iter_mut().find(|record| record.id == endpoint)
+        if let Some(record) =
+            self.domains.network.endpoint_objects.iter_mut().find(|record| record.id == endpoint)
         {
             record.socket_generation = socket_generation;
         }
@@ -275,11 +289,16 @@ impl SemanticGraph {
         endpoint: EndpointObjectId,
         socket_generation: Generation,
     ) {
-        if let Some(mut duplicate) =
-            self.endpoint_objects.iter().find(|record| record.id == endpoint).cloned()
+        if let Some(mut duplicate) = self
+            .domains
+            .network
+            .endpoint_objects
+            .iter()
+            .find(|record| record.id == endpoint)
+            .cloned()
         {
             duplicate.socket_generation = socket_generation;
-            self.endpoint_objects.push(duplicate);
+            self.domains.network.endpoint_objects.push(duplicate);
         }
     }
 }

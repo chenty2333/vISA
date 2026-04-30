@@ -18,24 +18,27 @@ impl SemanticGraph {
         if backend.id == 0 || backend.generation == 0 {
             return Err("network tx completion backend ref is invalid");
         }
-        if self.network_tx_completions.iter().any(|record| record.id == completion) {
+        if self.domains.network.network_tx_completions.iter().any(|record| record.id == completion)
+        {
             return Err("network tx completion already exists");
         }
-        let Some(gate_record) = self.network_tx_capability_gates.iter().find(|record| {
-            record.id == tx_gate
-                && record.generation == tx_gate_generation
-                && record.state == NetworkTxCapabilityGateState::Allowed
-        }) else {
+        let Some(gate_record) =
+            self.domains.network.network_tx_capability_gates.iter().find(|record| {
+                record.id == tx_gate
+                    && record.generation == tx_gate_generation
+                    && record.state == NetworkTxCapabilityGateState::Allowed
+            })
+        else {
             return Err("network tx completion gate generation is missing or inactive");
         };
-        if self.network_tx_completions.iter().any(|record| {
+        if self.domains.network.network_tx_completions.iter().any(|record| {
             record.tx_gate == gate_record.id
                 && record.tx_gate_generation == gate_record.generation
                 && record.state == NetworkTxCompletionState::Completed
         }) {
             return Err("network tx completion gate already completed");
         }
-        if self.network_tx_completions.iter().any(|record| {
+        if self.domains.network.network_tx_completions.iter().any(|record| {
             record.tx_queue == gate_record.tx_queue
                 && record.tx_queue_generation == gate_record.tx_queue_generation
                 && record.completion_sequence == completion_sequence
@@ -54,17 +57,19 @@ impl SemanticGraph {
             return Err("network tx completion backend packet device mismatch");
         }
         if backend.kind == ContractObjectKind::VirtioNetBackendObject {
-            let Some(backend_record) = self
-                .virtio_net_backends
-                .iter()
-                .find(|record| record.id == backend.id && record.generation == backend.generation)
+            let Some(backend_record) =
+                self.domains.network.virtio_net_backends.iter().find(|record| {
+                    record.id == backend.id && record.generation == backend.generation
+                })
             else {
                 return Err("network tx completion backend generation is missing or inactive");
             };
-            let Some(binding_record) = self.driver_store_bindings.iter().find(|record| {
-                record.id == backend_record.driver_binding
-                    && record.generation == backend_record.driver_binding_generation
-            }) else {
+            let Some(binding_record) =
+                self.domains.device.driver_store_bindings.iter().find(|record| {
+                    record.id == backend_record.driver_binding
+                        && record.generation == backend_record.driver_binding_generation
+                })
+            else {
                 return Err("network tx completion driver binding generation is missing");
             };
             if binding_record.driver_store != gate_record.driver_store
@@ -101,6 +106,8 @@ impl SemanticGraph {
             return false;
         }
         let Some(gate_record) = self
+            .domains
+            .network
             .network_tx_capability_gates
             .iter()
             .find(|record| record.id == tx_gate && record.generation == tx_gate_generation)
@@ -109,7 +116,8 @@ impl SemanticGraph {
             return false;
         };
         let generation = 1;
-        self.next_network_tx_completion_id = self.next_network_tx_completion_id.max(completion + 1);
+        self.domains.network.next_network_tx_completion_id =
+            self.domains.network.next_network_tx_completion_id.max(completion + 1);
         let completed_at_event = self.event_log.push(
             "network",
             EventKind::NetworkTxCompleted {
@@ -133,7 +141,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.network_tx_completions.push(NetworkTxCompletionRecord {
+        self.domains.network.network_tx_completions.push(NetworkTxCompletionRecord {
             id: completion,
             tx_gate,
             tx_gate_generation,
@@ -160,18 +168,20 @@ impl SemanticGraph {
     }
 
     pub fn network_tx_completions(&self) -> &[NetworkTxCompletionRecord] {
-        &self.network_tx_completions
+        &self.domains.network.network_tx_completions
     }
 
     pub fn network_tx_completion_count(&self) -> usize {
-        self.network_tx_completions.len()
+        self.domains.network.network_tx_completions.len()
     }
 
     pub fn check_network_tx_completion_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.network_tx_completions {
-            let Some(gate_record) = self.network_tx_capability_gates.iter().find(|gate| {
-                gate.id == record.tx_gate && gate.generation == record.tx_gate_generation
-            }) else {
+        for record in &self.domains.network.network_tx_completions {
+            let Some(gate_record) =
+                self.domains.network.network_tx_capability_gates.iter().find(|gate| {
+                    gate.id == record.tx_gate && gate.generation == record.tx_gate_generation
+                })
+            else {
                 return Err(SemanticInvariantError::NetworkTxCompletionMissingGate {
                     completion: record.id,
                     tx_gate: record.tx_gate,
@@ -217,24 +227,28 @@ impl SemanticGraph {
                     completion: record.id,
                 });
             }
-            if let Some(duplicate) = self.network_tx_completions.iter().find(|other| {
-                other.id != record.id
-                    && other.tx_gate == record.tx_gate
-                    && other.tx_gate_generation == record.tx_gate_generation
-                    && other.state == NetworkTxCompletionState::Completed
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_tx_completions.iter().find(|other| {
+                    other.id != record.id
+                        && other.tx_gate == record.tx_gate
+                        && other.tx_gate_generation == record.tx_gate_generation
+                        && other.state == NetworkTxCompletionState::Completed
+                })
+            {
                 return Err(SemanticInvariantError::NetworkTxCompletionDuplicateGate {
                     completion: duplicate.id,
                     tx_gate: record.tx_gate,
                 });
             }
-            if let Some(duplicate) = self.network_tx_completions.iter().find(|other| {
-                other.id != record.id
-                    && other.tx_queue == record.tx_queue
-                    && other.tx_queue_generation == record.tx_queue_generation
-                    && other.completion_sequence == record.completion_sequence
-                    && other.state == NetworkTxCompletionState::Completed
-            }) {
+            if let Some(duplicate) =
+                self.domains.network.network_tx_completions.iter().find(|other| {
+                    other.id != record.id
+                        && other.tx_queue == record.tx_queue
+                        && other.tx_queue_generation == record.tx_queue_generation
+                        && other.completion_sequence == record.completion_sequence
+                        && other.state == NetworkTxCompletionState::Completed
+                })
+            {
                 return Err(SemanticInvariantError::NetworkTxCompletionDuplicateSequence {
                     completion: duplicate.id,
                     tx_queue: record.tx_queue,
@@ -298,11 +312,15 @@ impl SemanticGraph {
     ) -> Option<(PacketDeviceObjectId, Generation)> {
         match backend.kind {
             ContractObjectKind::FakeNetBackendObject => self
+                .domains
+                .network
                 .fake_net_backends
                 .iter()
                 .find(|record| record.id == backend.id && record.generation == backend.generation)
                 .map(|record| (record.packet_device, record.packet_device_generation)),
             ContractObjectKind::VirtioNetBackendObject => self
+                .domains
+                .network
                 .virtio_net_backends
                 .iter()
                 .find(|record| record.id == backend.id && record.generation == backend.generation)
@@ -317,6 +335,8 @@ impl SemanticGraph {
     ) -> Option<(PacketDeviceObjectId, Generation)> {
         match backend.kind {
             ContractObjectKind::FakeNetBackendObject => self
+                .domains
+                .network
                 .fake_net_backends
                 .iter()
                 .find(|record| {
@@ -326,6 +346,8 @@ impl SemanticGraph {
                 })
                 .map(|record| (record.packet_device, record.packet_device_generation)),
             ContractObjectKind::VirtioNetBackendObject => self
+                .domains
+                .network
                 .virtio_net_backends
                 .iter()
                 .find(|record| {
@@ -344,8 +366,12 @@ impl SemanticGraph {
         completion: NetworkTxCompletionId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.network_tx_completions.iter_mut().find(|record| record.id == completion)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_tx_completions
+            .iter_mut()
+            .find(|record| record.id == completion)
         {
             record.tx_gate_generation = generation;
         }
@@ -357,8 +383,12 @@ impl SemanticGraph {
         completion: NetworkTxCompletionId,
         completion_sequence: u64,
     ) {
-        if let Some(record) =
-            self.network_tx_completions.iter_mut().find(|record| record.id == completion)
+        if let Some(record) = self
+            .domains
+            .network
+            .network_tx_completions
+            .iter_mut()
+            .find(|record| record.id == completion)
         {
             record.completion_sequence = completion_sequence;
         }

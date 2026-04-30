@@ -23,15 +23,15 @@ impl SemanticGraph {
         if errno <= 0 {
             return Err("block pending io policy errno must be positive");
         }
-        if self.block_pending_io_policies.iter().any(|record| record.id == policy) {
+        if self.domains.block.block_pending_io_policies.iter().any(|record| record.id == policy) {
             return Err("block pending io policy already exists");
         }
-        if self.block_pending_io_policies.iter().any(|record| {
+        if self.domains.block.block_pending_io_policies.iter().any(|record| {
             record.block_wait == block_wait && record.block_wait_generation == block_wait_generation
         }) {
             return Err("block wait already has a pending io policy");
         }
-        let Some(wait_record) = self.block_waits.iter().find(|record| {
+        let Some(wait_record) = self.domains.block.block_waits.iter().find(|record| {
             record.id == block_wait
                 && record.generation == block_wait_generation
                 && record.state == BlockWaitState::Pending
@@ -45,11 +45,13 @@ impl SemanticGraph {
         }) {
             return Err("block pending io wait token is missing or not pending");
         }
-        let Some(request_record) = self.block_request_objects.iter().find(|request| {
-            request.id == wait_record.block_request
-                && request.generation == wait_record.block_request_generation
-                && request.state == BlockRequestObjectState::Submitted
-        }) else {
+        let Some(request_record) =
+            self.domains.block.block_request_objects.iter().find(|request| {
+                request.id == wait_record.block_request
+                    && request.generation == wait_record.block_request_generation
+                    && request.state == BlockRequestObjectState::Submitted
+            })
+        else {
             return Err("block pending io request generation is missing or not submitted");
         };
         match action {
@@ -76,11 +78,13 @@ impl SemanticGraph {
                 let Some(retry_generation) = retry_request_generation else {
                     return Err("retry policy missing retry request generation");
                 };
-                let Some(retry_record) = self.block_request_objects.iter().find(|request| {
-                    request.id == retry_request
-                        && request.generation == retry_generation
-                        && request.state == BlockRequestObjectState::Submitted
-                }) else {
+                let Some(retry_record) =
+                    self.domains.block.block_request_objects.iter().find(|request| {
+                        request.id == retry_request
+                            && request.generation == retry_generation
+                            && request.state == BlockRequestObjectState::Submitted
+                    })
+                else {
                     return Err(
                         "retry policy retry request generation is missing or not submitted",
                     );
@@ -148,8 +152,8 @@ impl SemanticGraph {
         }
 
         let generation = 1;
-        self.next_block_pending_io_policy_id =
-            self.next_block_pending_io_policy_id.max(policy.saturating_add(1));
+        self.domains.block.next_block_pending_io_policy_id =
+            self.domains.block.next_block_pending_io_policy_id.max(policy.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "block",
             EventKind::BlockPendingIoPolicyApplied {
@@ -178,7 +182,7 @@ impl SemanticGraph {
             BlockPendingIoAction::Retry => BlockPendingIoPolicyState::RetryScheduled,
             BlockPendingIoAction::Eio => BlockPendingIoPolicyState::EioReturned,
         };
-        self.block_pending_io_policies.push(BlockPendingIoPolicyRecord {
+        self.domains.block.block_pending_io_policies.push(BlockPendingIoPolicyRecord {
             id: policy,
             block_wait,
             block_wait_generation,
@@ -208,15 +212,15 @@ impl SemanticGraph {
     }
 
     pub fn block_pending_io_policies(&self) -> &[BlockPendingIoPolicyRecord] {
-        &self.block_pending_io_policies
+        &self.domains.block.block_pending_io_policies
     }
 
     pub fn block_pending_io_policy_count(&self) -> usize {
-        self.block_pending_io_policies.len()
+        self.domains.block.block_pending_io_policies.len()
     }
 
     pub fn check_block_pending_io_policy_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for policy in &self.block_pending_io_policies {
+        for policy in &self.domains.block.block_pending_io_policies {
             if policy.id == 0
                 || policy.generation == 0
                 || policy.block_wait_generation == 0
@@ -232,7 +236,7 @@ impl SemanticGraph {
                     policy: policy.id,
                 });
             }
-            let Some(block_wait) = self.block_waits.iter().find(|record| {
+            let Some(block_wait) = self.domains.block.block_waits.iter().find(|record| {
                 record.id == policy.block_wait && record.generation == policy.block_wait_generation
             }) else {
                 return Err(SemanticInvariantError::BlockPendingIoPolicyMissingBlockWait {
@@ -240,7 +244,7 @@ impl SemanticGraph {
                     block_wait: policy.block_wait,
                 });
             };
-            let Some(request) = self.block_request_objects.iter().find(|record| {
+            let Some(request) = self.domains.block.block_request_objects.iter().find(|record| {
                 record.id == policy.block_request
                     && record.generation == policy.block_request_generation
             }) else {
@@ -326,9 +330,11 @@ impl SemanticGraph {
                             policy: policy.id,
                         });
                     };
-                    let Some(retry_record) = self.block_request_objects.iter().find(|record| {
-                        record.id == retry_request && record.generation == retry_generation
-                    }) else {
+                    let Some(retry_record) =
+                        self.domains.block.block_request_objects.iter().find(|record| {
+                            record.id == retry_request && record.generation == retry_generation
+                        })
+                    else {
                         return Err(
                             SemanticInvariantError::BlockPendingIoPolicyMissingRetryRequest {
                                 policy: policy.id,
@@ -410,8 +416,12 @@ impl SemanticGraph {
         policy: BlockPendingIoPolicyId,
         generation: Generation,
     ) {
-        if let Some(record) =
-            self.block_pending_io_policies.iter_mut().find(|record| record.id == policy)
+        if let Some(record) = self
+            .domains
+            .block
+            .block_pending_io_policies
+            .iter_mut()
+            .find(|record| record.id == policy)
         {
             record.retry_request_generation = Some(generation);
         }

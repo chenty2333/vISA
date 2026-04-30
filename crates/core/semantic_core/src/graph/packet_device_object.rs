@@ -16,7 +16,13 @@ impl SemanticGraph {
         if packet_device == 0 {
             return Err("packet device object id=0 is invalid");
         }
-        if self.packet_device_objects.iter().any(|record| record.id == packet_device) {
+        if self
+            .domains
+            .network
+            .packet_device_objects
+            .iter()
+            .any(|record| record.id == packet_device)
+        {
             return Err("packet device object already exists");
         }
         if name.is_empty() {
@@ -31,6 +37,8 @@ impl SemanticGraph {
             return Err("packet device object contract values must be nonzero");
         }
         let Some(device_record) = self
+            .domains
+            .device
             .device_objects
             .iter()
             .find(|record| record.id == device && record.generation == device_generation)
@@ -88,8 +96,8 @@ impl SemanticGraph {
             return false;
         }
         let generation = 1;
-        self.next_packet_device_object_id =
-            self.next_packet_device_object_id.max(packet_device + 1);
+        self.domains.network.next_packet_device_object_id =
+            self.domains.network.next_packet_device_object_id.max(packet_device + 1);
         let recorded_at_event = self.event_log.push(
             "network",
             EventKind::PacketDeviceObjectRecorded {
@@ -104,7 +112,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.packet_device_objects.push(PacketDeviceObjectRecord {
+        self.domains.network.packet_device_objects.push(PacketDeviceObjectRecord {
             id: packet_device,
             name: name.to_string(),
             device,
@@ -124,16 +132,16 @@ impl SemanticGraph {
     }
 
     pub fn packet_device_objects(&self) -> &[PacketDeviceObjectRecord] {
-        &self.packet_device_objects
+        &self.domains.network.packet_device_objects
     }
 
     pub fn packet_device_object_count(&self) -> usize {
-        self.packet_device_objects.len()
+        self.domains.network.packet_device_objects.len()
     }
 
     pub fn check_packet_device_object_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.packet_device_objects {
-            let Some(device_record) = self.device_objects.iter().find(|device| {
+        for record in &self.domains.network.packet_device_objects {
+            let Some(device_record) = self.domains.device.device_objects.iter().find(|device| {
                 device.id == record.device && device.generation == record.device_generation
             }) else {
                 return Err(SemanticInvariantError::PacketDeviceObjectMissingDevice {
@@ -202,8 +210,12 @@ impl SemanticGraph {
         packet_device: PacketDeviceObjectId,
         device_generation: Generation,
     ) {
-        if let Some(record) =
-            self.packet_device_objects.iter_mut().find(|record| record.id == packet_device)
+        if let Some(record) = self
+            .domains
+            .network
+            .packet_device_objects
+            .iter_mut()
+            .find(|record| record.id == packet_device)
         {
             record.device_generation = device_generation;
         }
