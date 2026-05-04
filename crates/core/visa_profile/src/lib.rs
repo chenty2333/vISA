@@ -230,6 +230,14 @@ pub enum SubstrateProfile {
 }
 
 impl SubstrateProfile {
+    pub const ALL_ASCENDING: [Self; 5] = [
+        Self::SemanticHarness,
+        Self::MinimalBareMetal,
+        Self::GuestFrontend,
+        Self::DeviceCapable,
+        Self::SnapshotReplayCapable,
+    ];
+
     pub const fn parse(value: &str) -> Option<Self> {
         match value.as_bytes() {
             b"semantic-harness" => Some(Self::SemanticHarness),
@@ -276,6 +284,14 @@ impl SubstrateProfile {
 
     pub const fn satisfies(self, required: Self) -> bool {
         self.profile_number() >= required.profile_number()
+    }
+
+    pub fn strongest_satisfied_by(capabilities: SubstrateCapabilitySet) -> Option<Self> {
+        Self::ALL_ASCENDING
+            .iter()
+            .rev()
+            .copied()
+            .find(|profile| capabilities.supports_profile(*profile))
     }
 
     pub const fn requirements(self) -> AuthorityRequirementSet {

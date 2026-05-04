@@ -19,7 +19,13 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated smp/network fault id=0 is invalid");
         }
-        if self.integrated_smp_network_faults.iter().any(|record| record.id == integrated) {
+        if self
+            .domains
+            .integrated
+            .integrated_smp_network_faults
+            .iter()
+            .any(|record| record.id == integrated)
+        {
             return Err("integrated smp/network fault evidence already exists");
         }
         if scenario.is_empty() {
@@ -180,8 +186,11 @@ impl SemanticGraph {
         let revoked_packet_capability_count = cleanup.revoked_packet_capabilities.len() as u32;
         let hart_count = stress.hart_count;
         let generation = 1;
-        self.next_integrated_smp_network_fault_id =
-            self.next_integrated_smp_network_fault_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_smp_network_fault_id = self
+            .domains
+            .integrated
+            .next_integrated_smp_network_fault_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSmpNetworkFaultRecorded {
@@ -206,51 +215,53 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_smp_network_faults.push(IntegratedSmpNetworkFaultRecord {
-            id: integrated,
-            scenario: scenario.to_string(),
-            network_driver_cleanup,
-            network_driver_cleanup_generation,
-            smp_stress_run,
-            smp_stress_run_generation,
-            remote_preempt,
-            remote_preempt_generation,
-            smp_cleanup_quiescence,
-            smp_cleanup_quiescence_generation,
-            driver_store,
-            driver_store_generation,
-            packet_device,
-            packet_device_generation,
-            adapter,
-            adapter_generation,
-            backend,
-            io_cleanup,
-            io_cleanup_generation,
-            cancelled_socket_wait_count,
-            cancelled_wait_token_count,
-            revoked_packet_capability_count,
-            hart_count,
-            invariant_checks,
-            generation,
-            state: IntegratedSmpNetworkFaultState::Recorded,
-            recorded_at_event,
-            note: note.to_string(),
-        });
+        self.domains.integrated.integrated_smp_network_faults.push(
+            IntegratedSmpNetworkFaultRecord {
+                id: integrated,
+                scenario: scenario.to_string(),
+                network_driver_cleanup,
+                network_driver_cleanup_generation,
+                smp_stress_run,
+                smp_stress_run_generation,
+                remote_preempt,
+                remote_preempt_generation,
+                smp_cleanup_quiescence,
+                smp_cleanup_quiescence_generation,
+                driver_store,
+                driver_store_generation,
+                packet_device,
+                packet_device_generation,
+                adapter,
+                adapter_generation,
+                backend,
+                io_cleanup,
+                io_cleanup_generation,
+                cancelled_socket_wait_count,
+                cancelled_wait_token_count,
+                revoked_packet_capability_count,
+                hart_count,
+                invariant_checks,
+                generation,
+                state: IntegratedSmpNetworkFaultState::Recorded,
+                recorded_at_event,
+                note: note.to_string(),
+            },
+        );
         true
     }
 
     pub fn integrated_smp_network_faults(&self) -> &[IntegratedSmpNetworkFaultRecord] {
-        &self.integrated_smp_network_faults
+        &self.domains.integrated.integrated_smp_network_faults
     }
 
     pub fn integrated_smp_network_fault_count(&self) -> usize {
-        self.integrated_smp_network_faults.len()
+        self.domains.integrated.integrated_smp_network_faults.len()
     }
 
     pub fn check_integrated_smp_network_fault_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_smp_network_faults {
+        for record in &self.domains.integrated.integrated_smp_network_faults {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

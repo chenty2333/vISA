@@ -25,7 +25,13 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated smp/preemption/cleanup id=0 is invalid");
         }
-        if self.integrated_smp_preemption_cleanups.iter().any(|record| record.id == integrated) {
+        if self
+            .domains
+            .integrated
+            .integrated_smp_preemption_cleanups
+            .iter()
+            .any(|record| record.id == integrated)
+        {
             return Err("integrated smp/preemption/cleanup evidence already exists");
         }
         if scenario.is_empty() {
@@ -232,8 +238,11 @@ impl SemanticGraph {
         let cleanup_activation = cleanup.activation;
         let cleanup_activation_generation_after = cleanup.activation_generation_after;
         let generation = 1;
-        self.next_integrated_smp_preemption_cleanup_id =
-            self.next_integrated_smp_preemption_cleanup_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_smp_preemption_cleanup_id = self
+            .domains
+            .integrated
+            .next_integrated_smp_preemption_cleanup_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSmpPreemptionCleanupRecorded {
@@ -257,50 +266,52 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_smp_preemption_cleanups.push(IntegratedSmpPreemptionCleanupRecord {
-            id: integrated,
-            scenario: scenario.to_string(),
-            stress_run,
-            stress_run_generation,
-            preemption,
-            preemption_generation,
-            timer_interrupt,
-            timer_interrupt_generation,
-            saved_context,
-            saved_context_generation,
-            remote_preempt,
-            remote_preempt_generation,
-            activation_cleanup,
-            activation_cleanup_generation,
-            smp_cleanup_quiescence,
-            smp_cleanup_quiescence_generation,
-            cleanup_store,
-            target_store_generation,
-            result_store_generation,
-            cleanup_activation,
-            cleanup_activation_generation_after,
-            hart_count,
-            invariant_checks,
-            generation,
-            state: IntegratedSmpPreemptionCleanupState::Recorded,
-            recorded_at_event,
-            note: note.to_string(),
-        });
+        self.domains.integrated.integrated_smp_preemption_cleanups.push(
+            IntegratedSmpPreemptionCleanupRecord {
+                id: integrated,
+                scenario: scenario.to_string(),
+                stress_run,
+                stress_run_generation,
+                preemption,
+                preemption_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                saved_context,
+                saved_context_generation,
+                remote_preempt,
+                remote_preempt_generation,
+                activation_cleanup,
+                activation_cleanup_generation,
+                smp_cleanup_quiescence,
+                smp_cleanup_quiescence_generation,
+                cleanup_store,
+                target_store_generation,
+                result_store_generation,
+                cleanup_activation,
+                cleanup_activation_generation_after,
+                hart_count,
+                invariant_checks,
+                generation,
+                state: IntegratedSmpPreemptionCleanupState::Recorded,
+                recorded_at_event,
+                note: note.to_string(),
+            },
+        );
         true
     }
 
     pub fn integrated_smp_preemption_cleanups(&self) -> &[IntegratedSmpPreemptionCleanupRecord] {
-        &self.integrated_smp_preemption_cleanups
+        &self.domains.integrated.integrated_smp_preemption_cleanups
     }
 
     pub fn integrated_smp_preemption_cleanup_count(&self) -> usize {
-        self.integrated_smp_preemption_cleanups.len()
+        self.domains.integrated.integrated_smp_preemption_cleanups.len()
     }
 
     pub fn check_integrated_smp_preemption_cleanup_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_smp_preemption_cleanups {
+        for record in &self.domains.integrated.integrated_smp_preemption_cleanups {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()
@@ -497,6 +508,8 @@ impl SemanticGraph {
         hart_count: u32,
     ) {
         if let Some(record) = self
+            .domains
+            .integrated
             .integrated_smp_preemption_cleanups
             .iter_mut()
             .find(|record| record.id == integrated)

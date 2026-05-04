@@ -1377,6 +1377,7 @@ pub(super) fn integrated_runtime_x0_contract_graph_rejects_generation_drift() {
     let mut integrated = graph.integrated_smp_preemption_cleanups().to_vec();
     integrated[0].remote_preempt_generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_smp_preemption_cleanups: integrated,
         saved_contexts: graph.saved_contexts().to_vec(),
         timer_interrupts: graph.timer_interrupts().to_vec(),
@@ -1462,6 +1463,7 @@ pub(super) fn x1_integrated_smp_network_fault_snapshot() -> ContractGraphSnapsho
         note: "network cleanup".to_string(),
     };
     ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_smp_network_faults: vec![integrated],
         network_driver_cleanups: vec![network_cleanup],
         packet_device_objects: vec![PacketDeviceObjectRecord {
@@ -1922,6 +1924,7 @@ pub(super) fn integrated_runtime_x2_contract_graph_rejects_generation_drift() {
     let mut integrated = graph.integrated_disk_preempt_faults().to_vec();
     integrated[0].block_pending_io_policy_generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_disk_preempt_faults: integrated,
         preemptions: graph.preemptions().to_vec(),
         timer_interrupts: graph.timer_interrupts().to_vec(),
@@ -2066,6 +2069,7 @@ pub(super) fn integrated_runtime_x3_contract_graph_rejects_vector_generation_dri
     let mut integrated = graph.integrated_simd_migrations().to_vec();
     integrated[0].migrated_vector_state.generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_simd_migrations: integrated,
         target_feature_sets: graph.target_feature_sets().to_vec(),
         vector_states: graph.vector_states().to_vec(),
@@ -2104,6 +2108,7 @@ pub(super) fn integrated_runtime_x3_contract_graph_rejects_context_binding_drift
         .expect("x3 context")
         .vector_status = ActivationVectorState::Dirty;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_simd_migrations: graph.integrated_simd_migrations().to_vec(),
         target_feature_sets: graph.target_feature_sets().to_vec(),
         vector_states: graph.vector_states().to_vec(),
@@ -2456,6 +2461,7 @@ pub(super) fn integrated_runtime_x4_contract_graph_rejects_block_dma_generation_
     let mut integrated = graph.integrated_network_disk_ios().to_vec();
     integrated[0].block_dma_buffer_generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_network_disk_ios: integrated,
         network_benchmarks: graph.network_benchmarks().to_vec(),
         block_benchmarks: graph.block_benchmarks().to_vec(),
@@ -2635,6 +2641,7 @@ pub(super) fn integrated_runtime_x5_contract_graph_rejects_scheduler_generation_
     let mut integrated = graph.integrated_display_scheduler_loads().to_vec();
     integrated[0].scheduler_decision_generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_display_scheduler_loads: integrated,
         framebuffer_benchmarks: graph.framebuffer_benchmarks().to_vec(),
         scheduler_decisions: graph.scheduler_decisions().to_vec(),
@@ -3081,6 +3088,7 @@ pub(super) fn integrated_runtime_x6_contract_graph_rejects_cleanup_count_drift()
     let mut integrated = graph.integrated_snapshot_io_lease_barriers().to_vec();
     integrated[0].released_dma_buffers = 2;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_snapshot_io_lease_barriers: integrated,
         smp_snapshot_barriers: graph.smp_snapshot_barriers().to_vec(),
         io_cleanups: graph.io_cleanups().to_vec(),
@@ -3218,6 +3226,7 @@ pub(super) fn integrated_runtime_x7_contract_graph_rejects_epoch_drift() {
     let mut integrated = graph.integrated_code_publish_smp_workloads().to_vec();
     integrated[0].code_publish_epoch_after = 2;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_code_publish_smp_workloads: integrated,
         smp_stress_runs: graph.smp_stress_runs().to_vec(),
         smp_code_publish_barriers: graph.smp_code_publish_barriers().to_vec(),
@@ -3412,6 +3421,7 @@ pub(super) fn integrated_runtime_x8_contract_graph_rejects_last_frame_drift() {
     let mut frames = graph.display_panic_last_frames().to_vec();
     frames[0].raw_framebuffer_bytes_exported = true;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         display_panic_last_frames: frames,
         integrated_display_panics: graph.integrated_display_panics().to_vec(),
         ..ContractGraphSnapshot::default()
@@ -3510,6 +3520,7 @@ pub(super) fn integrated_runtime_x9_rejects_missing_or_incomplete_replay_evidenc
 #[test]
 pub(super) fn integrated_runtime_x9_contract_graph_rejects_dangling_integrated_history() {
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         integrated_osctl_trace_replays: vec![IntegratedOsctlTraceReplayRecord {
             id: 904,
             scenario: "x9-full-osctl-trace-replay".to_string(),

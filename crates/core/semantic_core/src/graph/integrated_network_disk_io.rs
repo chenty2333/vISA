@@ -15,7 +15,13 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated network/disk IO id=0 is invalid");
         }
-        if self.integrated_network_disk_ios.iter().any(|record| record.id == integrated) {
+        if self
+            .domains
+            .integrated
+            .integrated_network_disk_ios
+            .iter()
+            .any(|record| record.id == integrated)
+        {
             return Err("integrated network/disk IO evidence already exists");
         }
         if scenario.is_empty() {
@@ -148,8 +154,11 @@ impl SemanticGraph {
         };
         let max_p99_latency_nanos = network.p99_latency_nanos.max(block.p99_latency_nanos);
         let generation = 1;
-        self.next_integrated_network_disk_io_id =
-            self.next_integrated_network_disk_io_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_network_disk_io_id = self
+            .domains
+            .integrated
+            .next_integrated_network_disk_io_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedNetworkDiskIoRecorded {
@@ -174,7 +183,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_network_disk_ios.push(IntegratedNetworkDiskIoRecord {
+        self.domains.integrated.integrated_network_disk_ios.push(IntegratedNetworkDiskIoRecord {
             id: integrated,
             scenario: scenario.to_string(),
             network_benchmark,
@@ -213,17 +222,17 @@ impl SemanticGraph {
     }
 
     pub fn integrated_network_disk_ios(&self) -> &[IntegratedNetworkDiskIoRecord] {
-        &self.integrated_network_disk_ios
+        &self.domains.integrated.integrated_network_disk_ios
     }
 
     pub fn integrated_network_disk_io_count(&self) -> usize {
-        self.integrated_network_disk_ios.len()
+        self.domains.integrated.integrated_network_disk_ios.len()
     }
 
     pub fn check_integrated_network_disk_io_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_network_disk_ios {
+        for record in &self.domains.integrated.integrated_network_disk_ios {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

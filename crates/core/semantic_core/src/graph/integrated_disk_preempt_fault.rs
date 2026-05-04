@@ -15,7 +15,13 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated disk/preempt fault id=0 is invalid");
         }
-        if self.integrated_disk_preempt_faults.iter().any(|record| record.id == integrated) {
+        if self
+            .domains
+            .integrated
+            .integrated_disk_preempt_faults
+            .iter()
+            .any(|record| record.id == integrated)
+        {
             return Err("integrated disk/preempt fault evidence already exists");
         }
         if scenario.is_empty() {
@@ -212,8 +218,11 @@ impl SemanticGraph {
         let preempted_activation = preemption_record.activation;
         let preempted_activation_generation_after = preemption_record.activation_generation_after;
         let generation = 1;
-        self.next_integrated_disk_preempt_fault_id =
-            self.next_integrated_disk_preempt_fault_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_disk_preempt_fault_id = self
+            .domains
+            .integrated
+            .next_integrated_disk_preempt_fault_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedDiskPreemptFaultRecorded {
@@ -241,54 +250,56 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_disk_preempt_faults.push(IntegratedDiskPreemptFaultRecord {
-            id: integrated,
-            scenario: scenario.to_string(),
-            preemption,
-            preemption_generation,
-            timer_interrupt,
-            timer_interrupt_generation,
-            block_pending_io_policy,
-            block_pending_io_policy_generation,
-            block_wait,
-            block_wait_generation,
-            wait: wait_id,
-            wait_generation,
-            block_request,
-            block_request_generation,
-            retry_request,
-            retry_request_generation,
-            block_device,
-            block_device_generation,
-            block_range,
-            block_range_generation,
-            driver_store,
-            driver_store_generation,
-            action,
-            errno,
-            preempted_activation,
-            preempted_activation_generation_after,
-            invariant_checks,
-            generation,
-            state: IntegratedDiskPreemptFaultState::Recorded,
-            recorded_at_event,
-            note: note.to_string(),
-        });
+        self.domains.integrated.integrated_disk_preempt_faults.push(
+            IntegratedDiskPreemptFaultRecord {
+                id: integrated,
+                scenario: scenario.to_string(),
+                preemption,
+                preemption_generation,
+                timer_interrupt,
+                timer_interrupt_generation,
+                block_pending_io_policy,
+                block_pending_io_policy_generation,
+                block_wait,
+                block_wait_generation,
+                wait: wait_id,
+                wait_generation,
+                block_request,
+                block_request_generation,
+                retry_request,
+                retry_request_generation,
+                block_device,
+                block_device_generation,
+                block_range,
+                block_range_generation,
+                driver_store,
+                driver_store_generation,
+                action,
+                errno,
+                preempted_activation,
+                preempted_activation_generation_after,
+                invariant_checks,
+                generation,
+                state: IntegratedDiskPreemptFaultState::Recorded,
+                recorded_at_event,
+                note: note.to_string(),
+            },
+        );
         true
     }
 
     pub fn integrated_disk_preempt_faults(&self) -> &[IntegratedDiskPreemptFaultRecord] {
-        &self.integrated_disk_preempt_faults
+        &self.domains.integrated.integrated_disk_preempt_faults
     }
 
     pub fn integrated_disk_preempt_fault_count(&self) -> usize {
-        self.integrated_disk_preempt_faults.len()
+        self.domains.integrated.integrated_disk_preempt_faults.len()
     }
 
     pub fn check_integrated_disk_preempt_fault_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_disk_preempt_faults {
+        for record in &self.domains.integrated.integrated_disk_preempt_faults {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

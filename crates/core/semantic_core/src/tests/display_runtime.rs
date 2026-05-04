@@ -152,6 +152,7 @@ pub(super) fn display_runtime_g0_contract_graph_rejects_bad_framebuffer_geometry
         note: "g0 bad geometry".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: Vec::from([framebuffer]),
         ..ContractGraphSnapshot::default()
     };
@@ -301,6 +302,7 @@ pub(super) fn display_runtime_g1_contract_graph_rejects_missing_framebuffer_edge
         note: "g1 bad framebuffer edge".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         display_objects: Vec::from([display]),
         ..ContractGraphSnapshot::default()
     };
@@ -486,6 +488,7 @@ pub(super) fn display_runtime_g2_contract_graph_rejects_missing_capability_edge(
         note: "g2 missing capability edge".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         display_capabilities: Vec::from([display_capability]),
         ..ContractGraphSnapshot::default()
     };
@@ -522,6 +525,7 @@ pub(super) fn display_runtime_g2_contract_graph_uses_exact_store_generation() {
     same_id_wrong_generation.generation = owner_store_generation + 1;
     stores.insert(0, same_id_wrong_generation);
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -766,6 +770,7 @@ pub(super) fn display_runtime_g3_contract_graph_rejects_missing_display_capabili
         note: "g3 missing display capability".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_window_leases: Vec::from([lease]),
         ..ContractGraphSnapshot::default()
     };
@@ -808,6 +813,7 @@ pub(super) fn display_runtime_g3_contract_graph_rejects_mismatched_byte_window()
     let mut framebuffer_window_leases = graph.framebuffer_window_leases().to_vec();
     framebuffer_window_leases[0].x = 1;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -1052,6 +1058,7 @@ pub(super) fn display_runtime_g4_contract_graph_rejects_missing_lease_edge() {
         note: "g4 missing lease".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_mappings: Vec::from([mapping]),
         ..ContractGraphSnapshot::default()
     };
@@ -1089,6 +1096,7 @@ pub(super) fn display_runtime_g4_contract_graph_rejects_mapping_lease_binding_dr
     let mut framebuffer_mappings = graph.framebuffer_mappings().to_vec();
     framebuffer_mappings[0].width = 799;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -1345,6 +1353,7 @@ pub(super) fn display_runtime_g5_contract_graph_rejects_missing_mapping_edge() {
         note: "g5 missing mapping".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_writes: Vec::from([write]),
         ..ContractGraphSnapshot::default()
     };
@@ -1390,6 +1399,7 @@ pub(super) fn display_runtime_g5_contract_graph_rejects_write_mapping_binding_dr
     let mut framebuffer_writes = graph.framebuffer_writes().to_vec();
     framebuffer_writes[0].map_handle_generation = 2;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -1634,6 +1644,7 @@ pub(super) fn display_runtime_g6_contract_graph_rejects_missing_write_edge() {
         note: "g6 missing write".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_flush_regions: Vec::from([flush]),
         ..ContractGraphSnapshot::default()
     };
@@ -1673,6 +1684,7 @@ pub(super) fn display_runtime_g6_contract_graph_rejects_flush_write_binding_drif
     let mut framebuffer_flush_regions = graph.framebuffer_flush_regions().to_vec();
     framebuffer_flush_regions[0].byte_len = 3_196;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -1955,6 +1967,7 @@ pub(super) fn display_runtime_g7_contract_graph_rejects_missing_flush_edge_for_c
         note: "g7 missing flush".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_dirty_regions: Vec::from([dirty]),
         ..ContractGraphSnapshot::default()
     };
@@ -1999,6 +2012,7 @@ pub(super) fn display_runtime_g7_contract_graph_rejects_dirty_region_flush_bindi
     let mut framebuffer_dirty_regions = graph.framebuffer_dirty_regions().to_vec();
     framebuffer_dirty_regions[0].byte_len = 3_196;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -2289,6 +2303,7 @@ pub(super) fn display_runtime_g8_contract_graph_rejects_missing_dirty_region_edg
         note: "g8 missing dirty region".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         display_event_logs: Vec::from([log]),
         ..ContractGraphSnapshot::default()
     };
@@ -2330,6 +2345,7 @@ pub(super) fn display_runtime_g8_contract_graph_rejects_dirty_region_binding_dri
     let mut display_event_logs = graph.display_event_logs().to_vec();
     display_event_logs[0].last_event = first_event;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -2577,6 +2593,7 @@ pub(super) fn display_runtime_g9_contract_graph_rejects_missing_cleanup_effect()
     let mut display_cleanups = graph.display_cleanups().to_vec();
     display_cleanups[0].released_framebuffer_window_leases[0].generation = 99;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),
@@ -2846,6 +2863,7 @@ pub(super) fn display_runtime_g10_contract_graph_rejects_stale_cleanup_ref() {
     let mut barriers = graph.display_snapshot_barriers().to_vec();
     barriers[0].display_cleanup_generation = Some(99);
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_cleanups: graph.display_cleanups().to_vec(),
@@ -3083,6 +3101,7 @@ pub(super) fn display_runtime_g11_contract_graph_rejects_raw_bytes() {
     let mut frames = graph.display_panic_last_frames().to_vec();
     frames[0].raw_framebuffer_bytes_exported = true;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         framebuffer_writes: graph.framebuffer_writes().to_vec(),
@@ -3128,6 +3147,7 @@ pub(super) fn display_runtime_g11_contract_graph_rejects_write_and_flush_binding
     let mut frames = graph.display_panic_last_frames().to_vec();
     frames[0].payload_digest ^= 1;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         framebuffer_writes: graph.framebuffer_writes().to_vec(),
@@ -3355,6 +3375,7 @@ pub(super) fn display_runtime_g12_contract_graph_rejects_metric_drift() {
     let mut benchmarks = graph.framebuffer_benchmarks().to_vec();
     benchmarks[0].throughput_bytes_per_sec = 1;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         framebuffer_objects: graph.framebuffer_objects().to_vec(),
         display_objects: graph.display_objects().to_vec(),
         display_capabilities: graph.display_capabilities().to_vec(),

@@ -309,6 +309,7 @@ fn schema_versions_are_referenced_by_views_edges_events_and_traces() {
     assert_eq!(CONTRACT_SCHEMA, CONTRACT_SCHEMA_VERSION.name);
     assert_eq!(view.schema, VIEW_SCHEMA_V1);
     assert_eq!(edge.mode, RefMode::Live);
+    assert_eq!(edge.evidence_level, EvidenceBoundaryLevel::SemanticModel);
     assert_eq!(EDGE_SCHEMA_V1, 1);
     assert_eq!(EVENT_SCHEMA_V1, 1);
     assert_eq!(TRACE_SCHEMA_V1, 1);

@@ -1,0 +1,1491 @@
+//! vISA artifact execution loop.
+//!
+//! This crate is the runtime bridge for the Semantic Virtual ISA primary path:
+//! `TargetArtifactImage -> CodeObject -> Activation -> HostcallFrame -> TrapMap
+//! -> substrate trait dispatch -> event`.
+//!
+//! It is not a Linux compatibility layer and not an evidence scenario
+//! generator. Frontend personalities produce typed vISA hostcall requests, and
+//! substrate ports implement the authority traits consumed here.
+
+#![no_std]
+
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
+use contract_core::EvidenceBoundaryLevel;
+use semantic_core::{
+    ActivationId, ArtifactVerificationState, BoundaryKind, BoundaryStatus, CapabilityLedger,
+    CodeObjectId, CodePublishState, CommandEnvelope, EntrypointState, FrontendKind, HostcallClass,
+    HostcallLinkState, MemoryLayoutState, RuntimeMode, SemanticCommand, SemanticGraph, StoreState,
+    TargetArtifactId, TrapSurfaceState,
+    target_executor::{
+        ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
+        ContractObjectKind, ContractObjectRef, HostcallFrame, HostcallSpec, ManagedStoreRecord,
+        TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetExecutorError,
+        TargetMemoryPlan, TargetStoreManager, VerifiedArtifact,
+    },
+};
+use substrate_api::{
+    ArtifactAuthority, ArtifactImageRef, CodeObjectRef, CodePublisherAuthority, ConsoleAuthority,
+    DmaAllocRequest, DmaAuthority, DmaBufferCapability, DmwAuthority, EventQueueAuthority,
+    GuestBytes, GuestMemoryAuthority, IrqAuthority, IrqLine, MmioAuthority, MmioRegionRef,
+    PublishedCodeRef, SnapshotAuthority, SnapshotBarrierRef, StoreRef, SubstrateError,
+    SubstrateEvent, SubstrateRequester, TimerAuthority, UserMemoryHandle, VirtualTime,
+    WaitTokenRef, WindowLeaseRef, WindowPerms,
+};
+use target_abi::{SectionKindV1, TargetArtifactError, TargetArtifactImage as WireArtifactImage};
+use visa_profile::{SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile};
+
+pub trait VisaSubstrate:
+    ArtifactAuthority
+    + CodePublisherAuthority
+    + ConsoleAuthority
+    + TimerAuthority
+    + EventQueueAuthority
+    + GuestMemoryAuthority
+    + DmwAuthority
+    + MmioAuthority
+    + DmaAuthority
+    + IrqAuthority
+    + SnapshotAuthority
+{
+}
+
+impl<T> VisaSubstrate for T where
+    T: ArtifactAuthority
+        + CodePublisherAuthority
+        + ConsoleAuthority
+        + TimerAuthority
+        + EventQueueAuthority
+        + GuestMemoryAuthority
+        + DmwAuthority
+        + MmioAuthority
+        + DmaAuthority
+        + IrqAuthority
+        + SnapshotAuthority
+{
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaRuntimeConfig {
+    pub required_profile: SubstrateProfile,
+    pub reported_profile: SubstrateProfile,
+    pub enforced_capabilities: SubstrateCapabilitySet,
+    pub evidence_level: EvidenceBoundaryLevel,
+    pub runtime_mode: RuntimeMode,
+}
+
+impl VisaRuntimeConfig {
+    pub const fn for_profile(profile: SubstrateProfile) -> Self {
+        Self {
+            required_profile: profile,
+            reported_profile: profile,
+            enforced_capabilities: SubstrateCapabilitySet::for_profile(profile),
+            evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+            runtime_mode: RuntimeMode::Production,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaArtifactDescriptor {
+    pub id: TargetArtifactId,
+    pub package: String,
+    pub artifact_name: String,
+    pub role: String,
+    pub target_profile: SubstrateProfile,
+    pub artifact_hash: String,
+    pub hash_status: String,
+    pub abi_fingerprint: String,
+    pub manifest_binding_hash: String,
+    pub code_hash: String,
+    pub signature_scheme: String,
+    pub signature_status: String,
+    pub signature_verified: bool,
+    pub signer: String,
+    pub imports: Vec<String>,
+    pub exports: Vec<String>,
+    pub memory_plan: TargetMemoryPlan,
+    pub capabilities: Vec<TargetCapabilitySpec>,
+    pub hostcalls: Vec<HostcallSpec>,
+}
+
+impl VisaArtifactDescriptor {
+    pub fn new(
+        id: TargetArtifactId,
+        package: &str,
+        artifact_name: &str,
+        target_profile: SubstrateProfile,
+    ) -> Self {
+        Self {
+            id,
+            package: package.to_string(),
+            artifact_name: artifact_name.to_string(),
+            role: "service".to_string(),
+            target_profile,
+            artifact_hash: format!("{package}-artifact-hash"),
+            hash_status: "verified".to_string(),
+            abi_fingerprint: format!("{package}-abi"),
+            manifest_binding_hash: format!("{package}-manifest-binding"),
+            code_hash: format!("{package}-code-hash"),
+            signature_scheme: "dev".to_string(),
+            signature_status: "verified".to_string(),
+            signature_verified: true,
+            signer: "dev-key".to_string(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+            memory_plan: TargetMemoryPlan::new(16, 16, 128),
+            capabilities: Vec::new(),
+            hostcalls: Vec::new(),
+        }
+    }
+
+    pub fn with_role(mut self, role: &str) -> Self {
+        self.role = role.to_string();
+        self
+    }
+
+    pub fn with_capability(mut self, object: &str, operations: &[&str], lifetime: &str) -> Self {
+        self.capabilities.push(TargetCapabilitySpec::new(object, operations, lifetime));
+        self
+    }
+
+    pub fn with_hostcall(mut self, hostcall: HostcallSpec) -> Self {
+        self.hostcalls.push(hostcall);
+        self
+    }
+}
+
+pub struct VisaArtifactInput<'a> {
+    pub bytes: &'a [u8],
+    pub descriptor: VisaArtifactDescriptor,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedVisaArtifact {
+    pub artifact_id: TargetArtifactId,
+    pub package: String,
+    pub store_id: u64,
+    pub code_object_id: CodeObjectId,
+    pub evidence_level: EvidenceBoundaryLevel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationHandle {
+    pub artifact_id: TargetArtifactId,
+    pub store_id: u64,
+    pub code_object_id: CodeObjectId,
+    pub activation_id: ActivationId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VisaHostcallPayload {
+    None,
+    ConsoleWrite { bytes: Vec<u8> },
+    TimerNow,
+    TimerArm { deadline_ticks: u64, token: WaitTokenRef },
+    GuestMemoryCopyIn { memory: UserMemoryHandle, ptr: u64, len: usize },
+    GuestMemoryCopyOut { memory: UserMemoryHandle, ptr: u64, bytes: Vec<u8> },
+    DmwMap { memory: UserMemoryHandle, ptr: u64, len: usize, perms: WindowPerms },
+    DmwUnmap { lease: WindowLeaseRef },
+    MmioRead32 { region: MmioRegionRef, offset: u64 },
+    MmioWrite32 { region: MmioRegionRef, offset: u64, value: u32 },
+    DmaAlloc { request: DmaAllocRequest },
+    DmaFree { capability: DmaBufferCapability },
+    IrqAck { irq: IrqLine },
+    IrqMask { irq: IrqLine },
+    IrqUnmask { irq: IrqLine },
+    SnapshotEnter,
+    SnapshotExit { barrier: SnapshotBarrierRef },
+}
+
+impl VisaHostcallPayload {
+    fn args(&self) -> [u64; 6] {
+        match self {
+            Self::None | Self::TimerNow | Self::SnapshotEnter => [0; 6],
+            Self::ConsoleWrite { bytes } => [bytes.len() as u64, 0, 0, 0, 0, 0],
+            Self::TimerArm { deadline_ticks, token } => {
+                [*deadline_ticks, token.id, token.generation, 0, 0, 0]
+            }
+            Self::GuestMemoryCopyIn { memory, ptr, len } => {
+                [memory.id, memory.generation, *ptr, *len as u64, 0, 0]
+            }
+            Self::GuestMemoryCopyOut { memory, ptr, bytes } => {
+                [memory.id, memory.generation, *ptr, bytes.len() as u64, 0, 0]
+            }
+            Self::DmwMap { memory, ptr, len, perms } => [
+                memory.id,
+                memory.generation,
+                *ptr,
+                *len as u64,
+                (perms.read as u64) | ((perms.write as u64) << 1) | ((perms.execute as u64) << 2),
+                0,
+            ],
+            Self::DmwUnmap { lease } => [lease.id, lease.generation, 0, 0, 0, 0],
+            Self::MmioRead32 { region, offset } => [region.id, region.generation, *offset, 0, 0, 0],
+            Self::MmioWrite32 { region, offset, value } => {
+                [region.id, region.generation, *offset, *value as u64, 0, 0]
+            }
+            Self::DmaAlloc { request } => {
+                [request.device, request.bytes as u64, request.alignment as u64, 0, 0, 0]
+            }
+            Self::DmaFree { capability } => [capability.id, capability.generation, 0, 0, 0, 0],
+            Self::IrqAck { irq } | Self::IrqMask { irq } | Self::IrqUnmask { irq } => {
+                [irq.id, irq.generation, 0, 0, 0, 0]
+            }
+            Self::SnapshotExit { barrier } => [barrier.id, barrier.generation, 0, 0, 0, 0],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VisaHostcallValue {
+    None,
+    Bytes(GuestBytes),
+    U32(u32),
+    U64(u64),
+    WindowLease(WindowLeaseRef),
+    DmaBuffer(DmaBufferCapability),
+    SnapshotBarrier(SnapshotBarrierRef),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostcallDispatchReport {
+    pub hostcall_number: u32,
+    pub object: String,
+    pub operation: String,
+    pub value: VisaHostcallValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaExecutionStep {
+    pub hostcall_number: u32,
+    pub payload: VisaHostcallPayload,
+}
+
+impl VisaExecutionStep {
+    pub const fn new(hostcall_number: u32, payload: VisaHostcallPayload) -> Self {
+        Self { hostcall_number, payload }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaExecutionReport {
+    pub loaded: LoadedVisaArtifact,
+    pub activation: ActivationHandle,
+    pub hostcalls: Vec<HostcallDispatchReport>,
+    pub events: Vec<VisaRuntimeEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VisaRuntimeEvent {
+    BoundaryPublished {
+        name: String,
+        level: EvidenceBoundaryLevel,
+    },
+    ArtifactParsed {
+        artifact_id: TargetArtifactId,
+        package: String,
+    },
+    ArtifactLoaded {
+        artifact_id: TargetArtifactId,
+        store_id: u64,
+    },
+    CodePublished {
+        artifact_id: TargetArtifactId,
+        code_object_id: CodeObjectId,
+    },
+    ActivationStarted {
+        activation_id: ActivationId,
+        store_id: u64,
+        code_object_id: CodeObjectId,
+    },
+    HostcallDispatched {
+        activation_id: ActivationId,
+        hostcall_number: u32,
+        object: String,
+        operation: String,
+    },
+    SubstrateUnsupported {
+        authority: &'static str,
+        operation: &'static str,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VisaRuntimeError {
+    Artifact(TargetArtifactError),
+    MissingCodeObjectSection,
+    ProfileGateRejected {
+        required: SubstrateProfile,
+        reported: SubstrateProfile,
+        report: SubstrateCompatibilityReport,
+    },
+    Registry(&'static str),
+    Store(&'static str),
+    CodePublisher(&'static str),
+    Executor(TargetExecutorError),
+    SemanticCommandRejected(Vec<String>),
+    MissingLoadedArtifact(TargetArtifactId),
+    MissingStore(u64),
+    MissingCodeObject(CodeObjectId),
+    MissingHostcall(u32),
+    MissingActivation(ActivationId),
+    CapabilityGrant(&'static str),
+    SubstrateDispatch {
+        authority: &'static str,
+        operation: &'static str,
+        error: SubstrateError,
+    },
+}
+
+impl From<TargetArtifactError> for VisaRuntimeError {
+    fn from(error: TargetArtifactError) -> Self {
+        Self::Artifact(error)
+    }
+}
+
+pub struct VisaRuntime {
+    config: VisaRuntimeConfig,
+    semantic: SemanticGraph,
+    registry: ArtifactRegistry,
+    publisher: CodePublisher,
+    store_manager: TargetStoreManager,
+    executor: TargetExecutor,
+    ledger: CapabilityLedger,
+    events: Vec<VisaRuntimeEvent>,
+    next_command_id: u64,
+}
+
+impl VisaRuntime {
+    pub fn new(config: VisaRuntimeConfig) -> Self {
+        let mut semantic = SemanticGraph::with_runtime_mode(config.runtime_mode);
+        semantic.ensure_task(1, FrontendKind::Supervisor, "vms-runtime");
+        semantic.set_task_state(1, semantic_core::TaskState::Running);
+
+        let mut runtime = Self {
+            config,
+            semantic,
+            registry: ArtifactRegistry::new(),
+            publisher: CodePublisher::new(),
+            store_manager: TargetStoreManager::new(),
+            executor: TargetExecutor::new(),
+            ledger: CapabilityLedger::new(),
+            events: Vec::new(),
+            next_command_id: 1,
+        };
+        runtime.publish_runtime_boundaries();
+        runtime
+    }
+
+    pub fn config(&self) -> &VisaRuntimeConfig {
+        &self.config
+    }
+
+    pub fn semantic(&self) -> &SemanticGraph {
+        &self.semantic
+    }
+
+    pub fn executor(&self) -> &TargetExecutor {
+        &self.executor
+    }
+
+    pub fn events(&self) -> &[VisaRuntimeEvent] {
+        &self.events
+    }
+
+    pub fn load_artifact<B: VisaSubstrate>(
+        &mut self,
+        input: VisaArtifactInput<'_>,
+        backend: &mut B,
+    ) -> Result<LoadedVisaArtifact, VisaRuntimeError> {
+        let parsed = WireArtifactImage::parse(input.bytes)?;
+        let code_payload = parsed
+            .section_payload(SectionKindV1::CodeObject)?
+            .ok_or(VisaRuntimeError::MissingCodeObjectSection)?;
+        let profile_report = self.profile_gate_report(input.descriptor.target_profile);
+        let required_profile =
+            stronger_profile(self.config.required_profile, input.descriptor.target_profile);
+        if !profile_report.ok || !self.config.reported_profile.satisfies(required_profile) {
+            return Err(VisaRuntimeError::ProfileGateRejected {
+                required: required_profile,
+                reported: self.config.reported_profile,
+                report: profile_report,
+            });
+        }
+
+        let image = semantic_image_from_descriptor(input.descriptor, code_payload.len());
+        self.semantic.record_artifact_verification(
+            &image.package,
+            &image.artifact_name,
+            &image.manifest_binding_hash,
+            &image.artifact_hash,
+            &image.hash_status,
+            &image.abi_fingerprint,
+            &image.signature_scheme,
+            &image.signature_status,
+            image.signature_verified,
+            &image.signer,
+            ArtifactVerificationState::HostValidated,
+            Some("vms-runtime-target-artifact-image"),
+        );
+        let verified = self
+            .registry
+            .verify(image)
+            .map_err(|error| VisaRuntimeError::Registry(error.message()))?;
+        self.dispatch_artifact_load(backend, &verified)?;
+
+        let store_id = self.semantic.register_store(
+            &verified.package,
+            &verified.artifact_name,
+            &verified.role,
+            "restartable",
+        );
+        self.semantic.set_store_state(store_id, StoreState::Instantiating);
+        self.semantic.set_store_state(store_id, StoreState::Running);
+        self.semantic.record_store_activation(
+            store_id,
+            &verified.package,
+            &verified.manifest_binding_hash,
+            &verified.code_hash,
+            CodePublishState::Published,
+            MemoryLayoutState::Verified,
+            HostcallLinkState::Linked,
+            TrapSurfaceState::ContractDeclared,
+            EntrypointState::Runnable,
+            Some("vms-runtime-loop"),
+        );
+
+        let store_id = self.store_manager.register_verified_artifact_with_id(
+            store_id,
+            &verified,
+            "restartable",
+            "vms-runtime",
+        );
+        self.store_manager
+            .set_running(store_id)
+            .map_err(|error| VisaRuntimeError::Store(error.message()))?;
+
+        let store_generation = self.store_generation(store_id)?;
+        grant_verified_capabilities(&mut self.ledger, &verified, store_id, store_generation)?;
+
+        let code_id = self
+            .publisher
+            .allocate(&verified)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        self.publisher
+            .fill(code_id)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        self.publisher
+            .seal(code_id)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        self.publisher
+            .publish_rx(code_id)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        let store = self.store_record(store_id)?.store.clone();
+        self.publisher
+            .bind_to_store(code_id, &store)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        let code = self.code_object(code_id)?.clone();
+        self.dispatch_code_publish(backend, &verified, &code)?;
+
+        self.events.push(VisaRuntimeEvent::ArtifactParsed {
+            artifact_id: verified.artifact_id,
+            package: verified.package.clone(),
+        });
+        self.events
+            .push(VisaRuntimeEvent::ArtifactLoaded { artifact_id: verified.artifact_id, store_id });
+        self.events.push(VisaRuntimeEvent::CodePublished {
+            artifact_id: verified.artifact_id,
+            code_object_id: code_id,
+        });
+
+        Ok(LoadedVisaArtifact {
+            artifact_id: verified.artifact_id,
+            package: verified.package,
+            store_id,
+            code_object_id: code_id,
+            evidence_level: self.config.evidence_level,
+        })
+    }
+
+    pub fn run<B: VisaSubstrate>(
+        &mut self,
+        input: VisaArtifactInput<'_>,
+        entry: ActivationEntry,
+        steps: impl IntoIterator<Item = VisaExecutionStep>,
+        backend: &mut B,
+    ) -> Result<VisaExecutionReport, VisaRuntimeError> {
+        let event_start = self.events.len();
+        let loaded = self.load_artifact(input, backend)?;
+        let activation = self.start_activation(&loaded, entry)?;
+        let mut hostcalls = Vec::new();
+        for step in steps {
+            hostcalls.push(self.invoke_hostcall(
+                &activation,
+                step.hostcall_number,
+                step.payload,
+                backend,
+            )?);
+        }
+        Ok(VisaExecutionReport {
+            loaded,
+            activation,
+            hostcalls,
+            events: self.events[event_start..].to_vec(),
+        })
+    }
+
+    pub fn start_activation(
+        &mut self,
+        loaded: &LoadedVisaArtifact,
+        entry: ActivationEntry,
+    ) -> Result<ActivationHandle, VisaRuntimeError> {
+        let store = self.store_record(loaded.store_id)?.store.clone();
+        let code = self.code_object(loaded.code_object_id)?.clone();
+        let activation_id = self
+            .executor
+            .start_activation(&store, &code, entry)
+            .map_err(VisaRuntimeError::Executor)?;
+        let semantic_store_generation = self
+            .semantic
+            .stores()
+            .iter()
+            .find(|record| record.id == loaded.store_id)
+            .map(|record| record.generation);
+        let command_id = self.next_command_id();
+        let result = self.semantic.apply_envelope(CommandEnvelope::new(
+            command_id,
+            "vms-runtime",
+            SemanticCommand::CreateRuntimeActivation {
+                activation: activation_id,
+                owner_task: 1,
+                owner_task_generation: 2,
+                owner_store: Some(loaded.store_id),
+                owner_store_generation: semantic_store_generation,
+                code_object: Some(ContractObjectRef::new(
+                    ContractObjectKind::CodeObject,
+                    loaded.code_object_id,
+                    code.generation,
+                )),
+            },
+        ));
+        if !result.violations.is_empty() {
+            return Err(VisaRuntimeError::SemanticCommandRejected(result.violations));
+        }
+        self.events.push(VisaRuntimeEvent::ActivationStarted {
+            activation_id,
+            store_id: loaded.store_id,
+            code_object_id: loaded.code_object_id,
+        });
+        Ok(ActivationHandle {
+            artifact_id: loaded.artifact_id,
+            store_id: loaded.store_id,
+            code_object_id: loaded.code_object_id,
+            activation_id,
+        })
+    }
+
+    pub fn invoke_hostcall<B: VisaSubstrate>(
+        &mut self,
+        activation: &ActivationHandle,
+        hostcall_number: u32,
+        payload: VisaHostcallPayload,
+        backend: &mut B,
+    ) -> Result<HostcallDispatchReport, VisaRuntimeError> {
+        let store = self.store_record(activation.store_id)?.store.clone();
+        let code = self.code_object(activation.code_object_id)?.clone();
+        let spec = code
+            .hostcalls
+            .iter()
+            .find(|spec| spec.number == hostcall_number)
+            .cloned()
+            .ok_or(VisaRuntimeError::MissingHostcall(hostcall_number))?;
+        let current_activation_generation = self
+            .executor
+            .activations()
+            .iter()
+            .find(|record| record.id == activation.activation_id)
+            .map(|record| record.generation)
+            .ok_or(VisaRuntimeError::MissingActivation(activation.activation_id))?;
+        let mut frame = HostcallFrame::new_bound(
+            activation.activation_id,
+            &store,
+            &code,
+            spec.number,
+            &spec.object,
+            &spec.operation,
+            self.capability_generation(&code.package, &spec),
+        )
+        .with_args(payload.args());
+        frame.activation_generation = current_activation_generation;
+        if spec.requires_capability()
+            && let Some(cap_arg) = capability_handle_arg_for(&self.ledger, &code.package, &spec)
+        {
+            frame = frame.with_cap_args(vec![cap_arg]);
+        }
+        self.semantic.record_hostcall(
+            &spec.name,
+            HostcallClass::ImmediatePrivilegedOp,
+            &code.package,
+            &spec.object,
+            &spec.operation,
+        );
+        self.executor
+            .invoke_hostcall(&code, frame.to_wire_frame(), &self.ledger)
+            .map_err(VisaRuntimeError::Executor)?;
+        let value = self.dispatch_hostcall_payload(backend, &code, &spec, payload)?;
+        self.events.push(VisaRuntimeEvent::HostcallDispatched {
+            activation_id: activation.activation_id,
+            hostcall_number,
+            object: spec.object.clone(),
+            operation: spec.operation.clone(),
+        });
+        Ok(HostcallDispatchReport {
+            hostcall_number,
+            object: spec.object,
+            operation: spec.operation,
+            value,
+        })
+    }
+
+    fn publish_runtime_boundaries(&mut self) {
+        for (name, kind, status) in [
+            ("artifact-loader", BoundaryKind::ArtifactLoader, BoundaryStatus::RuntimeContract),
+            ("runtime-executor", BoundaryKind::RuntimeExecutor, BoundaryStatus::Runnable),
+            ("hostcall-table", BoundaryKind::HostcallTable, BoundaryStatus::HostcallsLinked),
+            ("target-executor", BoundaryKind::TargetExecutor, BoundaryStatus::Runnable),
+        ] {
+            self.semantic.publish_boundary(
+                name,
+                kind,
+                status,
+                self.config.evidence_level,
+                self.config.reported_profile.as_str(),
+                None,
+            );
+            self.events.push(VisaRuntimeEvent::BoundaryPublished {
+                name: name.to_string(),
+                level: self.config.evidence_level,
+            });
+        }
+    }
+
+    fn profile_gate_report(
+        &self,
+        artifact_profile: SubstrateProfile,
+    ) -> SubstrateCompatibilityReport {
+        let required_profile = stronger_profile(self.config.required_profile, artifact_profile);
+        self.config.enforced_capabilities.check_profile(required_profile)
+    }
+
+    fn dispatch_artifact_load<B: VisaSubstrate>(
+        &mut self,
+        backend: &mut B,
+        artifact: &VerifiedArtifact,
+    ) -> Result<(), VisaRuntimeError> {
+        let artifact_ref = ArtifactImageRef::new(artifact.artifact_id, artifact.generation);
+        match backend.load_artifact_image(artifact_ref) {
+            Ok(()) => Ok(()),
+            Err(error) => self.substrate_error(
+                backend,
+                "ArtifactAuthority",
+                "load_artifact_image",
+                requester_for(artifact).with_artifact(artifact_ref),
+                error,
+            ),
+        }
+    }
+
+    fn dispatch_code_publish<B: VisaSubstrate>(
+        &mut self,
+        backend: &mut B,
+        artifact: &VerifiedArtifact,
+        code: &CodeObject,
+    ) -> Result<PublishedCodeRef, VisaRuntimeError> {
+        let artifact_ref = ArtifactImageRef::new(artifact.artifact_id, artifact.generation);
+        let code_ref = CodeObjectRef::new(code.id, code.generation);
+        match backend.publish_code(artifact_ref, code_ref) {
+            Ok(published) => Ok(published),
+            Err(error) => {
+                self.substrate_error(
+                    backend,
+                    "CodePublisherAuthority",
+                    "publish_code",
+                    requester_for(artifact).with_artifact(artifact_ref).with_store(StoreRef::new(
+                        code.bound_store.unwrap_or(0),
+                        code.bound_store_generation.unwrap_or(0),
+                    )),
+                    error,
+                )?;
+                unreachable!("substrate_error always returns Err")
+            }
+        }
+    }
+
+    fn dispatch_hostcall_payload<B: VisaSubstrate>(
+        &mut self,
+        backend: &mut B,
+        code: &CodeObject,
+        spec: &HostcallSpec,
+        payload: VisaHostcallPayload,
+    ) -> Result<VisaHostcallValue, VisaRuntimeError> {
+        match payload {
+            VisaHostcallPayload::None => Ok(VisaHostcallValue::None),
+            VisaHostcallPayload::ConsoleWrite { bytes } => {
+                let written = backend.console_write(&bytes).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "ConsoleAuthority",
+                        "console_write",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::U64(written as u64))
+            }
+            VisaHostcallPayload::TimerNow => {
+                let now = backend.now().map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "TimerAuthority",
+                        "now",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::U64(now.ticks))
+            }
+            VisaHostcallPayload::TimerArm { deadline_ticks, token } => {
+                backend.arm_timer(VirtualTime::from_ticks(deadline_ticks), token).map_err(
+                    |error| {
+                        self.map_hostcall_substrate_error(
+                            backend,
+                            code,
+                            spec,
+                            "TimerAuthority",
+                            "arm_timer",
+                            error,
+                        )
+                    },
+                )?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len } => {
+                let bytes = backend.copyin(memory, ptr, len).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "GuestMemoryAuthority",
+                        "copyin",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::Bytes(bytes))
+            }
+            VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes } => {
+                backend.copyout(memory, ptr, &bytes).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "GuestMemoryAuthority",
+                        "copyout",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::DmwMap { memory, ptr, len, perms } => {
+                let lease = backend.map_user_window(memory, ptr, len, perms).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "DmwAuthority",
+                        "map_user_window",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::WindowLease(lease))
+            }
+            VisaHostcallPayload::DmwUnmap { lease } => {
+                backend.unmap_user_window(lease).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "DmwAuthority",
+                        "unmap_user_window",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::MmioRead32 { region, offset } => {
+                let value = backend.mmio_read32(region, offset).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "MmioAuthority",
+                        "mmio_read32",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::U32(value))
+            }
+            VisaHostcallPayload::MmioWrite32 { region, offset, value } => {
+                backend.mmio_write32(region, offset, value).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "MmioAuthority",
+                        "mmio_write32",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::DmaAlloc { request } => {
+                let buffer = backend.dma_alloc(request).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "DmaAuthority",
+                        "dma_alloc",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::DmaBuffer(buffer))
+            }
+            VisaHostcallPayload::DmaFree { capability } => {
+                backend.dma_free(capability).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "DmaAuthority",
+                        "dma_free",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::IrqAck { irq } => {
+                backend.irq_ack(irq).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "IrqAuthority",
+                        "irq_ack",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::IrqMask { irq } => {
+                backend.irq_mask(irq).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "IrqAuthority",
+                        "irq_mask",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::IrqUnmask { irq } => {
+                backend.irq_unmask(irq).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "IrqAuthority",
+                        "irq_unmask",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::SnapshotEnter => {
+                let barrier = backend.enter_snapshot_barrier().map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "SnapshotAuthority",
+                        "enter_snapshot_barrier",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::SnapshotBarrier(barrier))
+            }
+            VisaHostcallPayload::SnapshotExit { barrier } => {
+                backend.exit_snapshot_barrier(barrier).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "SnapshotAuthority",
+                        "exit_snapshot_barrier",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+        }
+    }
+
+    fn map_hostcall_substrate_error<B: VisaSubstrate>(
+        &mut self,
+        backend: &mut B,
+        code: &CodeObject,
+        spec: &HostcallSpec,
+        authority: &'static str,
+        operation: &'static str,
+        error: SubstrateError,
+    ) -> VisaRuntimeError {
+        let requester = SubstrateRequester::new(code.package.clone())
+            .with_artifact(ArtifactImageRef::new(code.artifact_id, 1))
+            .with_store(StoreRef::new(
+                code.bound_store.unwrap_or(0),
+                code.bound_store_generation.unwrap_or(0),
+            ));
+        let _ = self.substrate_error(backend, authority, operation, requester, error.clone());
+        VisaRuntimeError::SubstrateDispatch {
+            authority,
+            operation: if operation.is_empty() {
+                static_operation(&spec.operation)
+            } else {
+                operation
+            },
+            error,
+        }
+    }
+
+    fn substrate_error<B: VisaSubstrate>(
+        &mut self,
+        backend: &mut B,
+        authority: &'static str,
+        operation: &'static str,
+        requester: SubstrateRequester,
+        error: SubstrateError,
+    ) -> Result<(), VisaRuntimeError> {
+        if let SubstrateError::Unsupported { authority, operation } = error {
+            let event = SubstrateEvent::unsupported(authority, operation, Some(requester));
+            let _ = backend.push_event(event);
+            self.events.push(VisaRuntimeEvent::SubstrateUnsupported { authority, operation });
+            return Err(VisaRuntimeError::SubstrateDispatch { authority, operation, error });
+        }
+        Err(VisaRuntimeError::SubstrateDispatch { authority, operation, error })
+    }
+
+    fn store_record(&self, store: u64) -> Result<&ManagedStoreRecord, VisaRuntimeError> {
+        self.store_manager.record(store).ok_or(VisaRuntimeError::MissingStore(store))
+    }
+
+    fn store_generation(&self, store: u64) -> Result<u64, VisaRuntimeError> {
+        Ok(self.store_record(store)?.store.generation)
+    }
+
+    fn code_object(&self, code: CodeObjectId) -> Result<&CodeObject, VisaRuntimeError> {
+        self.publisher.object(code).ok_or(VisaRuntimeError::MissingCodeObject(code))
+    }
+
+    fn capability_generation(&self, subject: &str, spec: &HostcallSpec) -> u64 {
+        self.ledger
+            .check(subject, &spec.object, &spec.operation)
+            .map(|record| record.generation)
+            .unwrap_or(0)
+    }
+
+    fn next_command_id(&mut self) -> u64 {
+        let id = self.next_command_id;
+        self.next_command_id += 1;
+        id
+    }
+}
+
+fn semantic_image_from_descriptor(
+    descriptor: VisaArtifactDescriptor,
+    payload_len: usize,
+) -> TargetArtifactImage {
+    let mut image = TargetArtifactImage::new(
+        descriptor.id,
+        &descriptor.package,
+        &descriptor.artifact_name,
+        &descriptor.role,
+        descriptor.target_profile.as_str(),
+        &descriptor.artifact_hash,
+        &descriptor.abi_fingerprint,
+        &descriptor.manifest_binding_hash,
+        &descriptor.code_hash,
+        descriptor.memory_plan,
+    );
+    image.hash_status = descriptor.hash_status;
+    image.signature_scheme = descriptor.signature_scheme;
+    image.signature_status = descriptor.signature_status;
+    image.signature_verified = descriptor.signature_verified;
+    image.signer = descriptor.signer;
+    image.imports = descriptor.imports;
+    image.exports = descriptor.exports;
+    image.capabilities = descriptor.capabilities;
+    image.hostcalls = descriptor.hostcalls;
+    image.payload_len = payload_len;
+    image
+}
+
+fn grant_verified_capabilities(
+    ledger: &mut CapabilityLedger,
+    verified: &VerifiedArtifact,
+    store_id: u64,
+    store_generation: u64,
+) -> Result<(), VisaRuntimeError> {
+    for capability in &verified.capabilities {
+        let operations = capability.operations.iter().map(String::as_str).collect::<Vec<_>>();
+        ledger
+            .grant_manifest_binding(
+                &verified.package,
+                &capability.object,
+                &operations,
+                &capability.lifetime,
+                capability.class,
+                Some(store_id),
+                Some(store_generation),
+                None,
+                "vms-runtime",
+            )
+            .map_err(|error| VisaRuntimeError::CapabilityGrant(error.message()))?;
+    }
+    Ok(())
+}
+
+fn capability_handle_arg_for(
+    ledger: &CapabilityLedger,
+    subject: &str,
+    spec: &HostcallSpec,
+) -> Option<CapabilityHandleArg> {
+    let capability = ledger.check(subject, &spec.object, &spec.operation).ok()?;
+    let index =
+        capability.operations.as_slice().iter().position(|right| right == &spec.operation)?;
+    Some(CapabilityHandleArg::from_record(capability, 1u64 << index, &[spec.operation.as_str()]))
+}
+
+fn requester_for(artifact: &VerifiedArtifact) -> SubstrateRequester {
+    SubstrateRequester::new(artifact.package.clone())
+}
+
+fn stronger_profile(left: SubstrateProfile, right: SubstrateProfile) -> SubstrateProfile {
+    if left.satisfies(right) { left } else { right }
+}
+
+fn static_operation(operation: &str) -> &'static str {
+    match operation {
+        "console_write" => "console_write",
+        "now" => "now",
+        "arm_timer" => "arm_timer",
+        "copyin" => "copyin",
+        "copyout" => "copyout",
+        "map_user_window" => "map_user_window",
+        "unmap_user_window" => "unmap_user_window",
+        "mmio_read32" => "mmio_read32",
+        "mmio_write32" => "mmio_write32",
+        "dma_alloc" => "dma_alloc",
+        "dma_free" => "dma_free",
+        "irq_ack" => "irq_ack",
+        "irq_mask" => "irq_mask",
+        "irq_unmask" => "irq_unmask",
+        "enter_snapshot_barrier" => "enter_snapshot_barrier",
+        "exit_snapshot_barrier" => "exit_snapshot_barrier",
+        _ => "hostcall",
+    }
+}
+
+pub mod personality {
+    pub mod wasi {
+        use alloc::{string::String, vec::Vec};
+
+        use semantic_core::target_executor::{
+            HostcallCategory, HostcallSpec, TargetCapabilitySpec,
+        };
+        use substrate_api::WaitTokenRef;
+        use visa_profile::SubstrateProfile;
+
+        use crate::{VisaArtifactDescriptor, VisaHostcallPayload};
+
+        pub const WASI_FD_WRITE: u32 = 1;
+        pub const WASI_CLOCK_TIME_GET: u32 = 2;
+        pub const WASI_TIMER_ARM: u32 = 3;
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct WasiPersonality {
+            pub package: String,
+            pub profile: SubstrateProfile,
+        }
+
+        impl WasiPersonality {
+            pub fn new(package: &str, profile: SubstrateProfile) -> Self {
+                Self { package: package.into(), profile }
+            }
+
+            pub fn descriptor(&self, artifact_id: u64) -> VisaArtifactDescriptor {
+                let mut descriptor = VisaArtifactDescriptor::new(
+                    artifact_id,
+                    &self.package,
+                    "wasi-personality",
+                    self.profile,
+                )
+                .with_role("frontend-personality")
+                .with_hostcall(HostcallSpec::new(
+                    WASI_FD_WRITE,
+                    "wasi.fd_write",
+                    HostcallCategory::Service,
+                    "wasi.fd",
+                    "write",
+                    false,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    WASI_CLOCK_TIME_GET,
+                    "wasi.clock_time_get",
+                    HostcallCategory::Timer,
+                    "timer.wasi",
+                    "read",
+                    false,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    WASI_TIMER_ARM,
+                    "wasi.timer_arm",
+                    HostcallCategory::Timer,
+                    "timer.wasi",
+                    "arm",
+                    true,
+                ));
+                descriptor.capabilities.push(TargetCapabilitySpec::new(
+                    "timer.wasi",
+                    &["read", "arm"],
+                    "activation",
+                ));
+                descriptor.exports.push("wasi_start".into());
+                descriptor
+            }
+
+            pub fn fd_write(&self, bytes: &[u8]) -> VisaHostcallPayload {
+                VisaHostcallPayload::ConsoleWrite { bytes: Vec::from(bytes) }
+            }
+
+            pub const fn clock_time_get(&self) -> VisaHostcallPayload {
+                VisaHostcallPayload::TimerNow
+            }
+
+            pub const fn timer_arm(
+                &self,
+                deadline_ticks: u64,
+                token: WaitTokenRef,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::TimerArm { deadline_ticks, token }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec;
+
+    use semantic_core::target_executor::HostcallCategory;
+    use sha2::{Digest, Sha256};
+    use substrate_api::SubstrateResult;
+    use target_abi::{
+        TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
+    };
+
+    use super::*;
+
+    const REQUIRED_SECTIONS: [SectionKindV1; 7] = [
+        SectionKindV1::Manifest,
+        SectionKindV1::CodeObject,
+        SectionKindV1::HostcallImportTable,
+        SectionKindV1::TrapMap,
+        SectionKindV1::PcRangeTable,
+        SectionKindV1::ProfileRequirements,
+        SectionKindV1::Signature,
+    ];
+
+    #[derive(Default)]
+    struct MockSubstrate {
+        loaded: Vec<ArtifactImageRef>,
+        published: Vec<(ArtifactImageRef, CodeObjectRef)>,
+        console: Vec<u8>,
+        timers: Vec<(VirtualTime, WaitTokenRef)>,
+        events: Vec<SubstrateEvent>,
+        now: u64,
+    }
+
+    impl ArtifactAuthority for MockSubstrate {
+        fn load_artifact_image(&mut self, artifact: ArtifactImageRef) -> SubstrateResult<()> {
+            self.loaded.push(artifact);
+            Ok(())
+        }
+    }
+
+    impl CodePublisherAuthority for MockSubstrate {
+        fn publish_code(
+            &mut self,
+            artifact: ArtifactImageRef,
+            code: CodeObjectRef,
+        ) -> SubstrateResult<PublishedCodeRef> {
+            self.published.push((artifact, code));
+            Ok(PublishedCodeRef::new(code.id, code.generation))
+        }
+    }
+
+    impl ConsoleAuthority for MockSubstrate {
+        fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+            self.console.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+    }
+
+    impl TimerAuthority for MockSubstrate {
+        fn now(&self) -> SubstrateResult<VirtualTime> {
+            Ok(VirtualTime::from_ticks(self.now))
+        }
+
+        fn arm_timer(&mut self, deadline: VirtualTime, token: WaitTokenRef) -> SubstrateResult<()> {
+            self.timers.push((deadline, token));
+            Ok(())
+        }
+    }
+
+    impl EventQueueAuthority for MockSubstrate {
+        fn push_event(&mut self, event: SubstrateEvent) -> SubstrateResult<()> {
+            self.events.push(event);
+            Ok(())
+        }
+
+        fn pop_event(&mut self) -> Option<SubstrateEvent> {
+            if self.events.is_empty() { None } else { Some(self.events.remove(0)) }
+        }
+    }
+
+    impl GuestMemoryAuthority for MockSubstrate {}
+    impl DmwAuthority for MockSubstrate {}
+    impl MmioAuthority for MockSubstrate {}
+    impl DmaAuthority for MockSubstrate {}
+    impl IrqAuthority for MockSubstrate {}
+    impl SnapshotAuthority for MockSubstrate {}
+
+    #[test]
+    fn runtime_loads_artifact_publishes_code_and_starts_activation() {
+        let mut runtime = VisaRuntime::new(VisaRuntimeConfig::for_profile(
+            SubstrateProfile::SnapshotReplayCapable,
+        ));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            7,
+            "demo",
+            "demo-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "demo.write",
+            HostcallCategory::Service,
+            "demo.console",
+            "write",
+            false,
+        ));
+
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        assert_eq!(substrate.loaded, vec![ArtifactImageRef::new(7, 1)]);
+        assert_eq!(substrate.published.len(), 1);
+        assert_eq!(activation.artifact_id, 7);
+        assert_eq!(runtime.semantic().runtime_activation_count(), 1);
+        assert!(runtime.events().iter().any(|event| {
+            matches!(event, VisaRuntimeEvent::ActivationStarted { activation_id: 1, .. })
+        }));
+    }
+
+    #[test]
+    fn runtime_rejects_profile_before_substrate_dispatch() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::SemanticHarness));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            8,
+            "device-driver",
+            "device-driver-artifact",
+            SubstrateProfile::DeviceCapable,
+        );
+
+        let err = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect_err("profile gate rejects");
+
+        assert!(matches!(err, VisaRuntimeError::ProfileGateRejected { .. }));
+        assert!(substrate.loaded.is_empty());
+        assert!(substrate.published.is_empty());
+    }
+
+    #[test]
+    fn run_loop_loads_activates_and_repeats_hostcalls() {
+        let personality =
+            personality::wasi::WasiPersonality::new("wasi-app", SubstrateProfile::GuestFrontend);
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate { now: 42, ..MockSubstrate::default() };
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let token = WaitTokenRef::new(31, 1);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(9) },
+                ActivationEntry::Symbol("wasi_start".into()),
+                [
+                    VisaExecutionStep::new(
+                        personality::wasi::WASI_FD_WRITE,
+                        personality.fd_write(b"hello"),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::wasi::WASI_CLOCK_TIME_GET,
+                        personality.clock_time_get(),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::wasi::WASI_TIMER_ARM,
+                        personality.timer_arm(75, token),
+                    ),
+                ],
+                &mut substrate,
+            )
+            .expect("run wasi");
+
+        assert_eq!(report.loaded.artifact_id, 9);
+        assert_eq!(report.activation.activation_id, 1);
+        assert_eq!(report.hostcalls.len(), 3);
+        assert_eq!(report.hostcalls[0].value, VisaHostcallValue::U64(5));
+        assert_eq!(report.hostcalls[1].value, VisaHostcallValue::U64(42));
+        assert_eq!(report.hostcalls[2].value, VisaHostcallValue::None);
+        assert_eq!(substrate.console, b"hello");
+        assert_eq!(substrate.timers, vec![(VirtualTime::from_ticks(75), token)]);
+        assert_eq!(runtime.executor().hostcall_trace().len(), 3);
+        assert!(report.events.iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::HostcallDispatched {
+                    hostcall_number: personality::wasi::WASI_TIMER_ARM,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn runtime_rejects_reported_profile_below_required_even_if_capabilities_exist() {
+        let mut runtime = VisaRuntime::new(VisaRuntimeConfig {
+            required_profile: SubstrateProfile::GuestFrontend,
+            reported_profile: SubstrateProfile::SemanticHarness,
+            enforced_capabilities: SubstrateCapabilitySet::for_profile(
+                SubstrateProfile::GuestFrontend,
+            ),
+            evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+            runtime_mode: RuntimeMode::Production,
+        });
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            10,
+            "profile-underclaim",
+            "profile-underclaim-artifact",
+            SubstrateProfile::GuestFrontend,
+        );
+
+        let err = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect_err("reported profile gate rejects");
+
+        assert!(matches!(err, VisaRuntimeError::ProfileGateRejected { .. }));
+        assert!(substrate.loaded.is_empty());
+    }
+
+    fn fake_image(kinds: &[SectionKindV1]) -> Vec<u8> {
+        let header_len = core::mem::size_of::<TargetArtifactHeaderV1>();
+        let section_len = core::mem::size_of::<TargetSectionHeaderV1>();
+        let payload_len = 16;
+        let section_table_len = kinds.len() * section_len;
+        let payload_base = header_len + section_table_len;
+        let image_len = payload_base + kinds.len() * payload_len;
+        let mut image = vec![0; image_len];
+
+        let header = TargetArtifactHeaderV1::fake_riscv64(kinds.len() as u32, image_len as u64);
+        header.write_to(&mut image).expect("header");
+
+        for (index, kind) in kinds.iter().copied().enumerate() {
+            let offset = payload_base + index * payload_len;
+            image[offset..offset + payload_len].fill(kind as u32 as u8);
+            let mut section =
+                TargetSectionHeaderV1::new(kind, offset as u64, payload_len as u64, 1);
+            section.hash = Sha256::digest(&image[offset..offset + payload_len]).into();
+            let section_off = header_len + index * section_len;
+            section.write_to(&mut image[section_off..section_off + section_len]).expect("section");
+        }
+
+        let mut header = TargetArtifactHeaderV1::parse(&image).expect("parse header");
+        let (manifest_start, manifest_end) = section_payload_range(&image, SectionKindV1::Manifest);
+        header.manifest_hash = Sha256::digest(&image[manifest_start..manifest_end]).into();
+        header.write_to(&mut image).expect("manifest hash");
+        refresh_image_hash(&mut image);
+        image
+    }
+
+    fn section_payload_range(image: &[u8], kind: SectionKindV1) -> (usize, usize) {
+        let header = TargetArtifactHeaderV1::parse(image).expect("header");
+        let section_len = core::mem::size_of::<TargetSectionHeaderV1>();
+        for index in 0..header.section_count as usize {
+            let section_off = core::mem::size_of::<TargetArtifactHeaderV1>() + index * section_len;
+            let section =
+                TargetSectionHeaderV1::parse(&image[section_off..section_off + section_len])
+                    .expect("section");
+            if section.kind == kind {
+                let start = section.offset as usize;
+                return (start, start + section.len as usize);
+            }
+        }
+        panic!("missing section")
+    }
+
+    fn refresh_image_hash(image: &mut [u8]) {
+        let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
+        header.image_hash = [0; 32];
+        header.write_to(image).expect("zero image hash");
+        let hash = canonical_zero_field_image_hash(image).expect("canonical hash");
+        let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
+        header.image_hash = hash;
+        header.write_to(image).expect("image hash");
+    }
+}

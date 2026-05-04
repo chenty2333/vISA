@@ -16,6 +16,7 @@ pub(crate) struct SemanticDomains {
     pub(crate) display: DisplayDomain,
     pub(crate) scheduler: SchedulerDomain,
     pub(crate) simd: SimdDomain,
+    pub(crate) integrated: IntegratedDomain,
     #[allow(dead_code)]
     pub(crate) memory: MemoryDomain,
 }
@@ -35,6 +36,7 @@ impl SemanticDomains {
             display: DisplayDomain::new(),
             scheduler: SchedulerDomain::new(),
             simd: SimdDomain::new(),
+            integrated: IntegratedDomain::new(),
             memory: MemoryDomain::new(),
         }
     }
@@ -585,6 +587,57 @@ impl SimdDomain {
             next_simd_fault_injection_id: 1,
             next_simd_benchmark_id: 1,
             next_simd_context_switch_benchmark_id: 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct IntegratedDomain {
+    pub(crate) integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
+    pub(crate) integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
+    pub(crate) integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
+    pub(crate) integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
+    pub(crate) integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoRecord>,
+    pub(crate) integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
+    pub(crate) integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
+    pub(crate) integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
+    pub(crate) integrated_display_panics: Vec<IntegratedDisplayPanicRecord>,
+    pub(crate) integrated_osctl_trace_replays: Vec<IntegratedOsctlTraceReplayRecord>,
+    pub(crate) next_integrated_smp_preemption_cleanup_id: IntegratedSmpPreemptionCleanupId,
+    pub(crate) next_integrated_smp_network_fault_id: IntegratedSmpNetworkFaultId,
+    pub(crate) next_integrated_disk_preempt_fault_id: IntegratedDiskPreemptFaultId,
+    pub(crate) next_integrated_simd_migration_id: IntegratedSimdMigrationId,
+    pub(crate) next_integrated_network_disk_io_id: IntegratedNetworkDiskIoId,
+    pub(crate) next_integrated_display_scheduler_load_id: IntegratedDisplaySchedulerLoadId,
+    pub(crate) next_integrated_snapshot_io_lease_barrier_id: IntegratedSnapshotIoLeaseBarrierId,
+    pub(crate) next_integrated_code_publish_smp_workload_id: IntegratedCodePublishSmpWorkloadId,
+    pub(crate) next_integrated_display_panic_id: IntegratedDisplayPanicId,
+    pub(crate) next_integrated_osctl_trace_replay_id: IntegratedOsctlTraceReplayId,
+}
+
+impl IntegratedDomain {
+    fn new() -> Self {
+        Self {
+            integrated_smp_preemption_cleanups: Vec::new(),
+            integrated_smp_network_faults: Vec::new(),
+            integrated_disk_preempt_faults: Vec::new(),
+            integrated_simd_migrations: Vec::new(),
+            integrated_network_disk_ios: Vec::new(),
+            integrated_display_scheduler_loads: Vec::new(),
+            integrated_snapshot_io_lease_barriers: Vec::new(),
+            integrated_code_publish_smp_workloads: Vec::new(),
+            integrated_display_panics: Vec::new(),
+            integrated_osctl_trace_replays: Vec::new(),
+            next_integrated_smp_preemption_cleanup_id: 1,
+            next_integrated_smp_network_fault_id: 1,
+            next_integrated_disk_preempt_fault_id: 1,
+            next_integrated_simd_migration_id: 1,
+            next_integrated_network_disk_io_id: 1,
+            next_integrated_display_scheduler_load_id: 1,
+            next_integrated_snapshot_io_lease_barrier_id: 1,
+            next_integrated_code_publish_smp_workload_id: 1,
+            next_integrated_display_panic_id: 1,
+            next_integrated_osctl_trace_replay_id: 1,
         }
     }
 }

@@ -13,7 +13,13 @@ impl SemanticGraph {
         if integrated == 0 {
             return Err("integrated SIMD migration id=0 is invalid");
         }
-        if self.integrated_simd_migrations.iter().any(|record| record.id == integrated) {
+        if self
+            .domains
+            .integrated
+            .integrated_simd_migrations
+            .iter()
+            .any(|record| record.id == integrated)
+        {
             return Err("integrated SIMD migration evidence already exists");
         }
         if scenario.is_empty() {
@@ -191,8 +197,11 @@ impl SemanticGraph {
         let target_queue = migration.target_queue;
         let target_queue_generation = migration.target_queue_generation;
         let generation = 1;
-        self.next_integrated_simd_migration_id =
-            self.next_integrated_simd_migration_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_simd_migration_id = self
+            .domains
+            .integrated
+            .next_integrated_simd_migration_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedSimdMigrationRecorded {
@@ -216,7 +225,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_simd_migrations.push(IntegratedSimdMigrationRecord {
+        self.domains.integrated.integrated_simd_migrations.push(IntegratedSimdMigrationRecord {
             id: integrated,
             scenario: scenario.to_string(),
             activation_migration,
@@ -251,15 +260,15 @@ impl SemanticGraph {
     }
 
     pub fn integrated_simd_migrations(&self) -> &[IntegratedSimdMigrationRecord] {
-        &self.integrated_simd_migrations
+        &self.domains.integrated.integrated_simd_migrations
     }
 
     pub fn integrated_simd_migration_count(&self) -> usize {
-        self.integrated_simd_migrations.len()
+        self.domains.integrated.integrated_simd_migrations.len()
     }
 
     pub fn check_integrated_simd_migration_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_simd_migrations {
+        for record in &self.domains.integrated.integrated_simd_migrations {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

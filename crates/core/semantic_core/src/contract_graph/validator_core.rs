@@ -39,8 +39,26 @@ impl ContractGraphValidator {
         Self::validate_capabilities(snapshot, &mut violations);
         Self::validate_waits(snapshot, &mut violations);
         Self::validate_cleanups(snapshot, &mut violations);
+        Self::validate_evidence_boundary_claims(snapshot, &mut violations);
         Self::validate_explicit_edges(snapshot, &mut violations);
         violations
+    }
+
+    pub(super) fn validate_evidence_boundary_claims(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for edge in &snapshot.explicit_edges {
+            if !edge.evidence_level.can_claim(snapshot.claimed_evidence_level) {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::EvidenceBoundaryOverclaim,
+                    &edge.label,
+                    edge.from,
+                    Some(edge.to),
+                    "edge evidence boundary is weaker than the snapshot claim",
+                ));
+            }
+        }
     }
 
     pub(super) fn validate_code_objects(

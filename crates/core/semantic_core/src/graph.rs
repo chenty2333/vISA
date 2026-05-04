@@ -8,29 +8,9 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub struct SemanticGraph {
-    integrated_smp_preemption_cleanups: Vec<IntegratedSmpPreemptionCleanupRecord>,
-    integrated_smp_network_faults: Vec<IntegratedSmpNetworkFaultRecord>,
-    integrated_disk_preempt_faults: Vec<IntegratedDiskPreemptFaultRecord>,
-    integrated_simd_migrations: Vec<IntegratedSimdMigrationRecord>,
-    integrated_network_disk_ios: Vec<IntegratedNetworkDiskIoRecord>,
-    integrated_display_scheduler_loads: Vec<IntegratedDisplaySchedulerLoadRecord>,
-    integrated_snapshot_io_lease_barriers: Vec<IntegratedSnapshotIoLeaseBarrierRecord>,
-    integrated_code_publish_smp_workloads: Vec<IntegratedCodePublishSmpWorkloadRecord>,
-    integrated_display_panics: Vec<IntegratedDisplayPanicRecord>,
-    integrated_osctl_trace_replays: Vec<IntegratedOsctlTraceReplayRecord>,
-    command_results: Vec<CommandResult>,
     domains: SemanticDomains,
     event_log: EventLog,
-    next_integrated_smp_preemption_cleanup_id: IntegratedSmpPreemptionCleanupId,
-    next_integrated_smp_network_fault_id: IntegratedSmpNetworkFaultId,
-    next_integrated_disk_preempt_fault_id: IntegratedDiskPreemptFaultId,
-    next_integrated_simd_migration_id: IntegratedSimdMigrationId,
-    next_integrated_network_disk_io_id: IntegratedNetworkDiskIoId,
-    next_integrated_display_scheduler_load_id: IntegratedDisplaySchedulerLoadId,
-    next_integrated_snapshot_io_lease_barrier_id: IntegratedSnapshotIoLeaseBarrierId,
-    next_integrated_code_publish_smp_workload_id: IntegratedCodePublishSmpWorkloadId,
-    next_integrated_display_panic_id: IntegratedDisplayPanicId,
-    next_integrated_osctl_trace_replay_id: IntegratedOsctlTraceReplayId,
+    command_results: Vec<CommandResult>,
 }
 
 mod activation_migration;
@@ -163,29 +143,9 @@ impl SemanticGraph {
     }
     pub fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
         Self {
-            integrated_smp_preemption_cleanups: Vec::new(),
-            integrated_smp_network_faults: Vec::new(),
-            integrated_disk_preempt_faults: Vec::new(),
-            integrated_simd_migrations: Vec::new(),
-            integrated_network_disk_ios: Vec::new(),
-            integrated_display_scheduler_loads: Vec::new(),
-            integrated_snapshot_io_lease_barriers: Vec::new(),
-            integrated_code_publish_smp_workloads: Vec::new(),
-            integrated_display_panics: Vec::new(),
-            integrated_osctl_trace_replays: Vec::new(),
-            command_results: Vec::new(),
             domains: SemanticDomains::new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
-            next_integrated_smp_preemption_cleanup_id: 1,
-            next_integrated_smp_network_fault_id: 1,
-            next_integrated_disk_preempt_fault_id: 1,
-            next_integrated_simd_migration_id: 1,
-            next_integrated_network_disk_io_id: 1,
-            next_integrated_display_scheduler_load_id: 1,
-            next_integrated_snapshot_io_lease_barrier_id: 1,
-            next_integrated_code_publish_smp_workload_id: 1,
-            next_integrated_display_panic_id: 1,
-            next_integrated_osctl_trace_replay_id: 1,
+            command_results: Vec::new(),
         }
     }
     pub fn runtime_mode(&self) -> RuntimeMode {

@@ -27,7 +27,7 @@ fn c1_manifest_stub() -> ArtifactBundleManifest {
         },
         compiler: artifact_manifest::CompilerManifest {
             engine: "wasmtime".to_owned(),
-            engine_version: "43.0.1".to_owned(),
+            engine_version: "43.0.2".to_owned(),
             execution_mode: "precompiled-core-module".to_owned(),
             artifact_format: "target-artifact-image-v1".to_owned(),
             target_artifact_format: "target-artifact-image-v1".to_owned(),

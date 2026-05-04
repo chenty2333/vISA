@@ -44,8 +44,9 @@ pub const EDGE_SCHEMA_V1: u16 = 1;
 pub const EVENT_SCHEMA_V1: u16 = 1;
 pub const TRACE_SCHEMA_V1: u16 = 1;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EvidenceBoundaryLevel {
+    #[default]
     SemanticModel,
     ReferenceService,
     ReferenceAotHarness,
@@ -443,13 +444,26 @@ pub struct ContractEdge {
     pub from: ObjectRef,
     pub to: ObjectRef,
     pub mode: RefMode,
+    pub evidence_level: EvidenceBoundaryLevel,
     pub label: String,
     pub epoch: u64,
 }
 
 impl ContractEdge {
     pub fn new(from: ObjectRef, to: ObjectRef, mode: RefMode, label: &str, epoch: u64) -> Self {
-        Self { from, to, mode, label: label.to_owned(), epoch }
+        Self {
+            from,
+            to,
+            mode,
+            evidence_level: EvidenceBoundaryLevel::SemanticModel,
+            label: label.to_owned(),
+            epoch,
+        }
+    }
+
+    pub fn with_evidence_level(mut self, evidence_level: EvidenceBoundaryLevel) -> Self {
+        self.evidence_level = evidence_level;
+        self
     }
 }
 
@@ -718,7 +732,7 @@ pub const RUNTIME_MODE_PRODUCTION: &str = "production";
 pub const RUNTIME_MODE_REPLAY: &str = "replay";
 pub const TARGET_ARTIFACT_FORMAT_V1: &str = "target-artifact-image-v1";
 pub const CODE_PAYLOAD_FORMAT_CWASM: &str = "cwasm";
-pub const WASMTIME_CRATE_VERSION: &str = "43.0.1";
+pub const WASMTIME_CRATE_VERSION: &str = "43.0.2";
 pub const WASMTIME_COMPILATION_STRATEGY: &str = "cranelift";
 pub const DEFAULT_MAX_MEMORY_PAGES: u32 = 16;
 pub const DEFAULT_MAX_TABLE_ELEMENTS: u32 = 0;

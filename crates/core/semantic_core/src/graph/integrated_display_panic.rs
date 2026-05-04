@@ -72,6 +72,8 @@ impl SemanticGraph {
             return Err("integrated display panic id=0 is invalid");
         }
         if self
+            .domains
+            .integrated
             .integrated_display_panics
             .iter()
             .any(|record| record.id == integrated && Some(record.id) != allow_existing_integrated)
@@ -196,8 +198,11 @@ impl SemanticGraph {
         let summary_record_bytes = frame.summary_record_bytes;
         let raw_framebuffer_bytes_exported = frame.raw_framebuffer_bytes_exported;
         let panic_path_allocates = false;
-        self.next_integrated_display_panic_id =
-            self.next_integrated_display_panic_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_display_panic_id = self
+            .domains
+            .integrated
+            .next_integrated_display_panic_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedDisplayPanicRecorded {
@@ -217,7 +222,7 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_display_panics.push(IntegratedDisplayPanicRecord {
+        self.domains.integrated.integrated_display_panics.push(IntegratedDisplayPanicRecord {
             id: integrated,
             scenario: scenario.to_string(),
             substrate_panic_event,
@@ -250,15 +255,15 @@ impl SemanticGraph {
     }
 
     pub fn integrated_display_panics(&self) -> &[IntegratedDisplayPanicRecord] {
-        &self.integrated_display_panics
+        &self.domains.integrated.integrated_display_panics
     }
 
     pub fn integrated_display_panic_count(&self) -> usize {
-        self.integrated_display_panics.len()
+        self.domains.integrated.integrated_display_panics.len()
     }
 
     pub fn check_integrated_display_panic_invariants(&self) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_display_panics {
+        for record in &self.domains.integrated.integrated_display_panics {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

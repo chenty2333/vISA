@@ -694,6 +694,7 @@ fn build_target_executor_v1(
     let contract_stores = contract_graph_store_records(semantic, &store_manager);
     let contract_capabilities = contract_graph_capability_records(semantic, &ledger);
     let contract_snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::ReferenceService,
         artifacts: verified_artifacts,
         code_objects: publisher.objects().to_vec(),
         target_feature_sets: semantic.target_feature_sets().to_vec(),

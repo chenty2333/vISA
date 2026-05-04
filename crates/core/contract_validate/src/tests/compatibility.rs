@@ -11,7 +11,10 @@ fn substrate_compatibility_accepts_host_validation_capabilities() {
 
     assert!(report.ok);
     assert_eq!(report.module_count, SUPERVISOR_WASM_MODULES.len());
+    assert_eq!(report.reported_profile, "unspecified");
+    assert_eq!(report.enforced_profile, "snapshot-replay-capable");
     assert!(report.modules.iter().all(|module| module.ok));
+    assert!(report.modules.iter().all(|module| module.enforced_profile == report.enforced_profile));
 }
 
 #[test]
@@ -81,6 +84,8 @@ fn substrate_compatibility_reports_missing_required_authority() {
 
     assert!(!report.ok);
     assert!(!driver.ok);
+    assert_eq!(driver.reported_profile, "unspecified");
+    assert_eq!(driver.enforced_profile, "semantic-harness");
     assert!(driver.missing_required.iter().any(|item| item.authority == "dma"));
     assert!(driver.missing_required.iter().any(|item| item.authority == "mmio"));
     assert!(driver.forbidden_requested.is_empty());

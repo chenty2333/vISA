@@ -380,6 +380,7 @@ pub(super) fn wait_contract_graph_rejects_hidden_or_stale_live_waits() {
         saved_context: None,
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         stores: {
             let mut stores = Vec::new();
             stores.push(dead_store.clone());
@@ -481,6 +482,7 @@ pub(super) fn contract_graph_rejects_active_capability_and_wait_owned_by_old_sto
     };
     store.state = StoreState::Running;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         stores: {
             let mut stores = Vec::new();
             stores.push(store);

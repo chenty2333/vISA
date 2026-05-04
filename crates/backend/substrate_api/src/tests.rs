@@ -13,6 +13,168 @@ impl ConsoleAuthority for BufferConsole {
     }
 }
 
+#[derive(Default)]
+struct FullConformanceBackend {
+    console: Vec<u8>,
+    events: Vec<SubstrateEvent>,
+    memory: Vec<u8>,
+    loaded: Vec<ArtifactImageRef>,
+    published: Vec<(ArtifactImageRef, CodeObjectRef)>,
+    mmio: u32,
+    dma_live: bool,
+    snapshot_live: bool,
+}
+
+impl ConsoleAuthority for FullConformanceBackend {
+    fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+        self.console.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+}
+
+impl TimerAuthority for FullConformanceBackend {
+    fn now(&self) -> SubstrateResult<VirtualTime> {
+        Ok(VirtualTime::from_ticks(42))
+    }
+}
+
+impl EventQueueAuthority for FullConformanceBackend {
+    fn push_event(&mut self, event: SubstrateEvent) -> SubstrateResult<()> {
+        self.events.push(event);
+        Ok(())
+    }
+
+    fn pop_event(&mut self) -> Option<SubstrateEvent> {
+        if self.events.is_empty() { None } else { Some(self.events.remove(0)) }
+    }
+}
+
+impl GuestMemoryAuthority for FullConformanceBackend {
+    fn copyin(&self, _mem: UserMemoryHandle, _ptr: u64, len: usize) -> SubstrateResult<GuestBytes> {
+        Ok(self.memory.iter().copied().take(len).collect())
+    }
+
+    fn copyout(&mut self, _mem: UserMemoryHandle, _ptr: u64, data: &[u8]) -> SubstrateResult<()> {
+        self.memory.clear();
+        self.memory.extend_from_slice(data);
+        Ok(())
+    }
+}
+
+impl DmwAuthority for FullConformanceBackend {
+    fn map_user_window(
+        &mut self,
+        _mem: UserMemoryHandle,
+        _ptr: u64,
+        _len: usize,
+        _perms: WindowPerms,
+    ) -> SubstrateResult<WindowLeaseRef> {
+        Ok(WindowLeaseRef::new(1, 1))
+    }
+
+    fn unmap_user_window(&mut self, lease: WindowLeaseRef) -> SubstrateResult<()> {
+        if lease.is_valid() {
+            Ok(())
+        } else {
+            Err(SubstrateError::InvalidObject { object: "window-lease" })
+        }
+    }
+}
+
+impl ArtifactAuthority for FullConformanceBackend {
+    fn load_artifact_image(&mut self, artifact: ArtifactImageRef) -> SubstrateResult<()> {
+        self.loaded.push(artifact);
+        Ok(())
+    }
+}
+
+impl CodePublisherAuthority for FullConformanceBackend {
+    fn publish_code(
+        &mut self,
+        artifact: ArtifactImageRef,
+        code: CodeObjectRef,
+    ) -> SubstrateResult<PublishedCodeRef> {
+        self.published.push((artifact, code));
+        Ok(PublishedCodeRef::new(code.id, code.generation))
+    }
+}
+
+impl MmioAuthority for FullConformanceBackend {
+    fn mmio_read32(&self, _region: MmioRegionRef, _offset: u64) -> SubstrateResult<u32> {
+        Ok(self.mmio)
+    }
+
+    fn mmio_write32(
+        &mut self,
+        _region: MmioRegionRef,
+        _offset: u64,
+        value: u32,
+    ) -> SubstrateResult<()> {
+        self.mmio = value;
+        Ok(())
+    }
+}
+
+impl DmaAuthority for FullConformanceBackend {
+    fn dma_alloc(&mut self, _req: DmaAllocRequest) -> SubstrateResult<DmaBufferCapability> {
+        self.dma_live = true;
+        Ok(DmaBufferCapability::new(1, 1))
+    }
+
+    fn dma_free(&mut self, cap: DmaBufferCapability) -> SubstrateResult<()> {
+        if cap.is_valid() && self.dma_live {
+            self.dma_live = false;
+            Ok(())
+        } else {
+            Err(SubstrateError::InvalidObject { object: "dma-buffer" })
+        }
+    }
+}
+
+impl IrqAuthority for FullConformanceBackend {
+    fn irq_ack(&mut self, irq: IrqLine) -> SubstrateResult<()> {
+        if irq.is_valid() { Ok(()) } else { Err(SubstrateError::InvalidObject { object: "irq" }) }
+    }
+
+    fn irq_mask(&mut self, irq: IrqLine) -> SubstrateResult<()> {
+        if irq.is_valid() { Ok(()) } else { Err(SubstrateError::InvalidObject { object: "irq" }) }
+    }
+
+    fn irq_unmask(&mut self, irq: IrqLine) -> SubstrateResult<()> {
+        if irq.is_valid() { Ok(()) } else { Err(SubstrateError::InvalidObject { object: "irq" }) }
+    }
+}
+
+impl SnapshotAuthority for FullConformanceBackend {
+    fn enter_snapshot_barrier(&mut self) -> SubstrateResult<SnapshotBarrierRef> {
+        self.snapshot_live = true;
+        Ok(SnapshotBarrierRef::new(1, 1))
+    }
+
+    fn exit_snapshot_barrier(&mut self, barrier: SnapshotBarrierRef) -> SubstrateResult<()> {
+        if barrier.is_valid() && self.snapshot_live {
+            self.snapshot_live = false;
+            Ok(())
+        } else {
+            Err(SubstrateError::InvalidObject { object: "snapshot-barrier" })
+        }
+    }
+}
+
+struct UnsupportedConformanceBackend;
+
+impl ConsoleAuthority for UnsupportedConformanceBackend {}
+impl TimerAuthority for UnsupportedConformanceBackend {}
+impl EventQueueAuthority for UnsupportedConformanceBackend {}
+impl GuestMemoryAuthority for UnsupportedConformanceBackend {}
+impl DmwAuthority for UnsupportedConformanceBackend {}
+impl ArtifactAuthority for UnsupportedConformanceBackend {}
+impl CodePublisherAuthority for UnsupportedConformanceBackend {}
+impl MmioAuthority for UnsupportedConformanceBackend {}
+impl DmaAuthority for UnsupportedConformanceBackend {}
+impl IrqAuthority for UnsupportedConformanceBackend {}
+impl SnapshotAuthority for UnsupportedConformanceBackend {}
+
 #[test]
 fn semantic_harness_profile_is_precise() {
     let capabilities = SubstrateCapabilitySet::semantic_harness();
@@ -125,6 +287,55 @@ fn console_conformance_requires_full_write() {
 
     conformance::console_write_smoke(&mut console, b"vmos").unwrap();
     assert_eq!(console.bytes, b"vmos");
+}
+
+#[test]
+fn profile_conformance_suite_passes_snapshot_replay_backend() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+
+    let report = conformance::check_substrate_profile(
+        &mut backend,
+        SubstrateProfile::SnapshotReplayCapable,
+        SubstrateCapabilitySet::for_profile(SubstrateProfile::SnapshotReplayCapable),
+        &fixtures,
+    );
+
+    assert!(report.ok);
+    assert!(report.failures().next().is_none());
+    assert!(
+        report.checks.iter().all(|check| check.status != conformance::ConformanceStatus::Skipped)
+    );
+    assert_eq!(backend.loaded, vec![fixtures.artifact]);
+    assert_eq!(backend.published, vec![(fixtures.artifact, fixtures.code)]);
+    assert!(!backend.dma_live);
+    assert!(!backend.snapshot_live);
+}
+
+#[test]
+fn profile_conformance_suite_reports_backend_failures() {
+    let mut backend = UnsupportedConformanceBackend;
+    let fixtures = conformance::ConformanceFixtures::default();
+
+    let report = conformance::check_substrate_profile(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::semantic_harness(),
+        &fixtures,
+    );
+    let failures = report.failures().map(|check| check.check).collect::<Vec<_>>();
+
+    assert!(!report.ok);
+    assert_eq!(
+        failures,
+        vec![
+            "console_write_smoke",
+            "timer_now_smoke",
+            "event_queue_fifo",
+            "capability_denied_event"
+        ]
+    );
+    assert!(report.compatibility.ok);
 }
 
 #[test]

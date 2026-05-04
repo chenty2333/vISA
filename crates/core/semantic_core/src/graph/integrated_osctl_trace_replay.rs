@@ -119,6 +119,8 @@ impl SemanticGraph {
             return Err("integrated osctl trace replay id=0 is invalid");
         }
         if self
+            .domains
+            .integrated
             .integrated_osctl_trace_replays
             .iter()
             .any(|record| record.id == integrated && Some(record.id) != allow_existing_integrated)
@@ -138,7 +140,9 @@ impl SemanticGraph {
         }
 
         let source_events = [
-            self.integrated_smp_preemption_cleanups
+            self.domains
+                .integrated
+                .integrated_smp_preemption_cleanups
                 .iter()
                 .find(|record| {
                     record.id == integrated_smp_preemption_cleanup
@@ -146,7 +150,9 @@ impl SemanticGraph {
                         && record.state == IntegratedSmpPreemptionCleanupState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_smp_network_faults
+            self.domains
+                .integrated
+                .integrated_smp_network_faults
                 .iter()
                 .find(|record| {
                     record.id == integrated_smp_network_fault
@@ -154,7 +160,9 @@ impl SemanticGraph {
                         && record.state == IntegratedSmpNetworkFaultState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_disk_preempt_faults
+            self.domains
+                .integrated
+                .integrated_disk_preempt_faults
                 .iter()
                 .find(|record| {
                     record.id == integrated_disk_preempt_fault
@@ -162,7 +170,9 @@ impl SemanticGraph {
                         && record.state == IntegratedDiskPreemptFaultState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_simd_migrations
+            self.domains
+                .integrated
+                .integrated_simd_migrations
                 .iter()
                 .find(|record| {
                     record.id == integrated_simd_migration
@@ -170,7 +180,9 @@ impl SemanticGraph {
                         && record.state == IntegratedSimdMigrationState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_network_disk_ios
+            self.domains
+                .integrated
+                .integrated_network_disk_ios
                 .iter()
                 .find(|record| {
                     record.id == integrated_network_disk_io
@@ -178,7 +190,9 @@ impl SemanticGraph {
                         && record.state == IntegratedNetworkDiskIoState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_display_scheduler_loads
+            self.domains
+                .integrated
+                .integrated_display_scheduler_loads
                 .iter()
                 .find(|record| {
                     record.id == integrated_display_scheduler_load
@@ -186,7 +200,9 @@ impl SemanticGraph {
                         && record.state == IntegratedDisplaySchedulerLoadState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_snapshot_io_lease_barriers
+            self.domains
+                .integrated
+                .integrated_snapshot_io_lease_barriers
                 .iter()
                 .find(|record| {
                     record.id == integrated_snapshot_io_lease_barrier
@@ -194,7 +210,9 @@ impl SemanticGraph {
                         && record.state == IntegratedSnapshotIoLeaseBarrierState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_code_publish_smp_workloads
+            self.domains
+                .integrated
+                .integrated_code_publish_smp_workloads
                 .iter()
                 .find(|record| {
                     record.id == integrated_code_publish_smp_workload
@@ -202,7 +220,9 @@ impl SemanticGraph {
                         && record.state == IntegratedCodePublishSmpWorkloadState::Recorded
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_display_panics
+            self.domains
+                .integrated
+                .integrated_display_panics
                 .iter()
                 .find(|record| {
                     record.id == integrated_display_panic
@@ -331,63 +351,81 @@ impl SemanticGraph {
             return false;
         }
         let max_source_event = [
-            self.integrated_smp_preemption_cleanups
+            self.domains
+                .integrated
+                .integrated_smp_preemption_cleanups
                 .iter()
                 .find(|record| {
                     record.id == integrated_smp_preemption_cleanup
                         && record.generation == integrated_smp_preemption_cleanup_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_smp_network_faults
+            self.domains
+                .integrated
+                .integrated_smp_network_faults
                 .iter()
                 .find(|record| {
                     record.id == integrated_smp_network_fault
                         && record.generation == integrated_smp_network_fault_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_disk_preempt_faults
+            self.domains
+                .integrated
+                .integrated_disk_preempt_faults
                 .iter()
                 .find(|record| {
                     record.id == integrated_disk_preempt_fault
                         && record.generation == integrated_disk_preempt_fault_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_simd_migrations
+            self.domains
+                .integrated
+                .integrated_simd_migrations
                 .iter()
                 .find(|record| {
                     record.id == integrated_simd_migration
                         && record.generation == integrated_simd_migration_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_network_disk_ios
+            self.domains
+                .integrated
+                .integrated_network_disk_ios
                 .iter()
                 .find(|record| {
                     record.id == integrated_network_disk_io
                         && record.generation == integrated_network_disk_io_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_display_scheduler_loads
+            self.domains
+                .integrated
+                .integrated_display_scheduler_loads
                 .iter()
                 .find(|record| {
                     record.id == integrated_display_scheduler_load
                         && record.generation == integrated_display_scheduler_load_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_snapshot_io_lease_barriers
+            self.domains
+                .integrated
+                .integrated_snapshot_io_lease_barriers
                 .iter()
                 .find(|record| {
                     record.id == integrated_snapshot_io_lease_barrier
                         && record.generation == integrated_snapshot_io_lease_barrier_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_code_publish_smp_workloads
+            self.domains
+                .integrated
+                .integrated_code_publish_smp_workloads
                 .iter()
                 .find(|record| {
                     record.id == integrated_code_publish_smp_workload
                         && record.generation == integrated_code_publish_smp_workload_generation
                 })
                 .map(|record| record.recorded_at_event),
-            self.integrated_display_panics
+            self.domains
+                .integrated
+                .integrated_display_panics
                 .iter()
                 .find(|record| {
                     record.id == integrated_display_panic
@@ -409,8 +447,11 @@ impl SemanticGraph {
             max_source_event,
         );
         let generation = 1;
-        self.next_integrated_osctl_trace_replay_id =
-            self.next_integrated_osctl_trace_replay_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_osctl_trace_replay_id = self
+            .domains
+            .integrated
+            .next_integrated_osctl_trace_replay_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedOsctlTraceReplayRecorded {
@@ -430,58 +471,60 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_osctl_trace_replays.push(IntegratedOsctlTraceReplayRecord {
-            id: integrated,
-            scenario: scenario.to_string(),
-            integrated_smp_preemption_cleanup,
-            integrated_smp_preemption_cleanup_generation,
-            integrated_smp_network_fault,
-            integrated_smp_network_fault_generation,
-            integrated_disk_preempt_fault,
-            integrated_disk_preempt_fault_generation,
-            integrated_simd_migration,
-            integrated_simd_migration_generation,
-            integrated_network_disk_io,
-            integrated_network_disk_io_generation,
-            integrated_display_scheduler_load,
-            integrated_display_scheduler_load_generation,
-            integrated_snapshot_io_lease_barrier,
-            integrated_snapshot_io_lease_barrier_generation,
-            integrated_code_publish_smp_workload,
-            integrated_code_publish_smp_workload_generation,
-            integrated_display_panic,
-            integrated_display_panic_generation,
-            replay_event_cursor,
-            stable_view_count,
-            historical_edge_count,
-            replayed_root_count,
-            integrated_scenario_count,
-            replay_fixture_count,
-            contract_validation_ok: derived.contract_validation_ok,
-            replay_validation_ok: derived.replay_validation_ok,
-            graph_history_ok: derived.graph_history_ok,
-            roots_match_counts: derived.roots_match_counts,
-            invariant_checks,
-            generation,
-            state: IntegratedOsctlTraceReplayState::Recorded,
-            recorded_at_event,
-            note: note.to_string(),
-        });
+        self.domains.integrated.integrated_osctl_trace_replays.push(
+            IntegratedOsctlTraceReplayRecord {
+                id: integrated,
+                scenario: scenario.to_string(),
+                integrated_smp_preemption_cleanup,
+                integrated_smp_preemption_cleanup_generation,
+                integrated_smp_network_fault,
+                integrated_smp_network_fault_generation,
+                integrated_disk_preempt_fault,
+                integrated_disk_preempt_fault_generation,
+                integrated_simd_migration,
+                integrated_simd_migration_generation,
+                integrated_network_disk_io,
+                integrated_network_disk_io_generation,
+                integrated_display_scheduler_load,
+                integrated_display_scheduler_load_generation,
+                integrated_snapshot_io_lease_barrier,
+                integrated_snapshot_io_lease_barrier_generation,
+                integrated_code_publish_smp_workload,
+                integrated_code_publish_smp_workload_generation,
+                integrated_display_panic,
+                integrated_display_panic_generation,
+                replay_event_cursor,
+                stable_view_count,
+                historical_edge_count,
+                replayed_root_count,
+                integrated_scenario_count,
+                replay_fixture_count,
+                contract_validation_ok: derived.contract_validation_ok,
+                replay_validation_ok: derived.replay_validation_ok,
+                graph_history_ok: derived.graph_history_ok,
+                roots_match_counts: derived.roots_match_counts,
+                invariant_checks,
+                generation,
+                state: IntegratedOsctlTraceReplayState::Recorded,
+                recorded_at_event,
+                note: note.to_string(),
+            },
+        );
         true
     }
 
     pub fn integrated_osctl_trace_replays(&self) -> &[IntegratedOsctlTraceReplayRecord] {
-        &self.integrated_osctl_trace_replays
+        &self.domains.integrated.integrated_osctl_trace_replays
     }
 
     pub fn integrated_osctl_trace_replay_count(&self) -> usize {
-        self.integrated_osctl_trace_replays.len()
+        self.domains.integrated.integrated_osctl_trace_replays.len()
     }
 
     pub fn check_integrated_osctl_trace_replay_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_osctl_trace_replays {
+        for record in &self.domains.integrated.integrated_osctl_trace_replays {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

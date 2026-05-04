@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[lib]
+name = "vmos_bench"
+path = "src/lib.rs"
+
 [[bench]]
 name = "block_iops"
 harness = false

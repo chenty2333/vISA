@@ -1220,6 +1220,41 @@ fn substrate_profile_selection_is_stable_for_json_checks() {
 }
 
 #[test]
+fn substrate_compatibility_json_exposes_canonical_profile_gate() {
+    let report = contract_validate::ArtifactSubstrateCompatibilityReport {
+        artifact_profile: "host-validation".to_owned(),
+        reported_profile: "host-validation".to_owned(),
+        enforced_profile: "snapshot-replay-capable".to_owned(),
+        module_count: 1,
+        ok: true,
+        modules: vec![contract_validate::ModuleSubstrateCompatibilityReport {
+            package: "driver_virtio_net".to_owned(),
+            substrate_profile_required: "device-capable".to_owned(),
+            reported_profile: "host-validation".to_owned(),
+            enforced_profile: "snapshot-replay-capable".to_owned(),
+            ok: true,
+            profile_ok: true,
+            authority_ok: true,
+            missing_required: Vec::new(),
+            degraded_optional: Vec::new(),
+            forbidden_requested: Vec::new(),
+            forbidden_authorities: Vec::new(),
+        }],
+    };
+    let value = substrate_compatibility_json(
+        "host-validation",
+        SubstrateCapabilitySet::host_validation(),
+        &report,
+    );
+
+    assert_eq!(value["reported_profile"], "host-validation");
+    assert_eq!(value["enforced_profile"], "snapshot-replay-capable");
+    assert_eq!(value["modules"][0]["required_profile"], "device-capable");
+    assert_eq!(value["modules"][0]["reported_profile"], "host-validation");
+    assert_eq!(value["modules"][0]["enforced_profile"], "snapshot-replay-capable");
+}
+
+#[test]
 fn interface_profile_selection_is_stable_for_json_checks() {
     let host = interface_capabilities_for_profile("host-validation").expect("host profile");
     let none = interface_capabilities_for_profile("none").expect("none profile");

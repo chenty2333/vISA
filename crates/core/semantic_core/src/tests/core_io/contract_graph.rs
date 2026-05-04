@@ -88,6 +88,7 @@ pub(super) fn contract_graph_b3_accepts_valid_validator_boundary_snapshot() {
         saved_context: None,
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         stores: vec![store.clone()],
         capabilities: vec![capability.clone()],
         waits: vec![wait],
@@ -108,6 +109,53 @@ pub(super) fn contract_graph_b3_accepts_valid_validator_boundary_snapshot() {
     };
 
     assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+}
+
+#[test]
+pub(super) fn contract_graph_rejects_evidence_boundary_overclaim() {
+    let store = b3_store_record(1, 1, StoreState::Running);
+    let task = TaskRecord {
+        id: 2,
+        label: "worker".to_string(),
+        frontend: FrontendKind::WasmApp,
+        state: TaskState::Runnable,
+        fault_domain: None,
+        pending_wait: None,
+        generation: 1,
+        resources: Vec::new(),
+    };
+    let weak_edge = ContractEdgeRecord::new(
+        store.object_ref(),
+        task.object_ref(),
+        ContractEdgeMode::Live,
+        "store->task-evidence",
+        1,
+    )
+    .with_evidence_level(EvidenceBoundaryLevel::ReferenceService);
+    let strong_edge =
+        weak_edge.clone().with_evidence_level(EvidenceBoundaryLevel::PortableArtifactExecution);
+
+    let overclaimed = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+        stores: vec![store.clone()],
+        tasks: vec![task.clone()],
+        explicit_edges: vec![weak_edge],
+        ..ContractGraphSnapshot::default()
+    };
+    assert_contract_violation(
+        &validate_contract_graph(&overclaimed),
+        ContractViolationKind::EvidenceBoundaryOverclaim,
+        "store->task-evidence",
+    );
+
+    let matched_claim = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+        stores: vec![store],
+        tasks: vec![task],
+        explicit_edges: vec![strong_edge],
+        ..ContractGraphSnapshot::default()
+    };
+    assert_eq!(validate_contract_graph(&matched_claim), Vec::new());
 }
 
 #[test]
@@ -172,6 +220,7 @@ pub(super) fn contract_graph_b3_reports_validator_completeness_matrix() {
 
     let cleanup_source = ContractObjectRef::new(ContractObjectKind::CleanupTransaction, 42, 1);
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         stores: vec![running_store.clone(), dead_store],
         activations: vec![active_lease_activation],
         capabilities: vec![stale_handle_capability.clone(), overclaimed_provenance_capability],

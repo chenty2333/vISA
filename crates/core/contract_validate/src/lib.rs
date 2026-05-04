@@ -102,6 +102,8 @@ pub struct SubstrateCompatibilityItem {
 pub struct ModuleSubstrateCompatibilityReport {
     pub package: String,
     pub substrate_profile_required: String,
+    pub reported_profile: String,
+    pub enforced_profile: String,
     pub ok: bool,
     pub profile_ok: bool,
     pub authority_ok: bool,
@@ -114,6 +116,8 @@ pub struct ModuleSubstrateCompatibilityReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactSubstrateCompatibilityReport {
     pub artifact_profile: String,
+    pub reported_profile: String,
+    pub enforced_profile: String,
     pub module_count: usize,
     pub ok: bool,
     pub modules: Vec<ModuleSubstrateCompatibilityReport>,
@@ -312,15 +316,33 @@ pub fn check_artifact_manifest_substrate_compatibility(
     manifest: &ArtifactBundleManifest,
     capabilities: SubstrateCapabilitySet,
 ) -> ContractResult<ArtifactSubstrateCompatibilityReport> {
+    check_artifact_manifest_profile_gate(manifest, "unspecified", capabilities)
+}
+
+pub fn check_artifact_manifest_profile_gate(
+    manifest: &ArtifactBundleManifest,
+    reported_profile: &str,
+    capabilities: SubstrateCapabilitySet,
+) -> ContractResult<ArtifactSubstrateCompatibilityReport> {
     let plan = build_validated_artifact_plan(manifest)?;
+    let enforced_profile = strongest_enforced_profile(capabilities);
     let modules = plan
         .modules
         .iter()
-        .map(|module| check_module_substrate_compatibility(module, capabilities))
+        .map(|module| {
+            check_module_substrate_profile_gate(
+                module,
+                reported_profile,
+                &enforced_profile,
+                capabilities,
+            )
+        })
         .collect::<ContractResult<Vec<_>>>()?;
     let ok = modules.iter().all(|module| module.ok);
     Ok(ArtifactSubstrateCompatibilityReport {
         artifact_profile: plan.artifact_profile,
+        reported_profile: reported_profile.to_owned(),
+        enforced_profile,
         module_count: modules.len(),
         ok,
         modules,
@@ -374,6 +396,16 @@ pub fn check_module_substrate_compatibility(
     module: &ValidatedArtifactEntry,
     capabilities: SubstrateCapabilitySet,
 ) -> ContractResult<ModuleSubstrateCompatibilityReport> {
+    let enforced_profile = strongest_enforced_profile(capabilities);
+    check_module_substrate_profile_gate(module, "unspecified", &enforced_profile, capabilities)
+}
+
+pub fn check_module_substrate_profile_gate(
+    module: &ValidatedArtifactEntry,
+    reported_profile: &str,
+    enforced_profile: &str,
+    capabilities: SubstrateCapabilitySet,
+) -> ContractResult<ModuleSubstrateCompatibilityReport> {
     let Some(profile) = SubstrateProfile::parse(&module.interfaces.substrate_profile_required)
     else {
         return Err(ContractError::new(format!(
@@ -407,6 +439,8 @@ pub fn check_module_substrate_compatibility(
     Ok(ModuleSubstrateCompatibilityReport {
         package: module.package.clone(),
         substrate_profile_required: module.interfaces.substrate_profile_required.clone(),
+        reported_profile: reported_profile.to_owned(),
+        enforced_profile: enforced_profile.to_owned(),
         ok: profile_ok && authority_ok && forbidden_requested.is_empty(),
         profile_ok,
         authority_ok,
@@ -415,6 +449,13 @@ pub fn check_module_substrate_compatibility(
         forbidden_requested,
         forbidden_authorities: module.interfaces.substrate_authorities.forbidden.clone(),
     })
+}
+
+fn strongest_enforced_profile(capabilities: SubstrateCapabilitySet) -> String {
+    SubstrateProfile::strongest_satisfied_by(capabilities)
+        .map(SubstrateProfile::as_str)
+        .unwrap_or("none")
+        .to_owned()
 }
 
 fn parse_authority_requirements(

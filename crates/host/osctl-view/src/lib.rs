@@ -60,7 +60,7 @@ use contract_validate::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
     InterfaceHostCapabilitySet, ValidatedArtifactEntry, ValidatedArtifactPlan,
     build_validated_artifact_plan, check_artifact_manifest_interface_compatibility,
-    check_artifact_manifest_substrate_compatibility, host_validation_interface_capabilities,
+    check_artifact_manifest_profile_gate, host_validation_interface_capabilities,
     validate_migration_against_manifest, validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
@@ -292,7 +292,7 @@ pub fn check_substrate_compatibility(
     let manifest = serde_json::from_slice::<ArtifactBundleManifest>(&fs::read(path)?)?;
     let capabilities = substrate_capabilities_for_profile(profile)
         .ok_or_else(|| format!("unknown substrate profile `{profile}`"))?;
-    let report = check_artifact_manifest_substrate_compatibility(&manifest, capabilities)?;
+    let report = check_artifact_manifest_profile_gate(&manifest, profile, capabilities)?;
     if json {
         print_substrate_compatibility_json(profile, capabilities, &report)?;
     } else {
@@ -316,11 +316,17 @@ fn print_substrate_compatibility_text(
         "substrate check profile={} artifact_profile={} ok={} modules={}",
         profile, report.artifact_profile, report.ok, report.module_count
     );
+    println!(
+        "profile gate required=per-module reported={} enforced={} ok={}",
+        report.reported_profile, report.enforced_profile, report.ok
+    );
     for module in &report.modules {
         println!(
-            "module {} required_profile={} ok={} missing_required={} degraded_optional={} forbidden_requested={}",
+            "module {} required_profile={} reported_profile={} enforced_profile={} ok={} missing_required={} degraded_optional={} forbidden_requested={}",
             module.package,
             module.substrate_profile_required,
+            module.reported_profile,
+            module.enforced_profile,
             module.ok,
             module.missing_required.len(),
             module.degraded_optional.len(),
@@ -346,12 +352,28 @@ fn print_substrate_compatibility_json(
     capabilities: SubstrateCapabilitySet,
     report: &ArtifactSubstrateCompatibilityReport,
 ) -> Result<(), Box<dyn Error>> {
-    let value = serde_json::json!({
+    println!(
+        "{}",
+        serde_json::to_string_pretty(
+            &substrate_compatibility_json(profile, capabilities, report,)
+        )?
+    );
+    Ok(())
+}
+
+fn substrate_compatibility_json(
+    profile: &str,
+    capabilities: SubstrateCapabilitySet,
+    report: &ArtifactSubstrateCompatibilityReport,
+) -> serde_json::Value {
+    serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
         "schema_version": OSCTL_JSON_SCHEMA_VERSION,
         "kind": "substrate-compatibility",
         "command": "substrate.check",
         "profile": profile,
+        "reported_profile": &report.reported_profile,
+        "enforced_profile": &report.enforced_profile,
         "capabilities": substrate_capabilities_json(capabilities),
         "artifact_profile": &report.artifact_profile,
         "ok": report.ok,
@@ -359,6 +381,9 @@ fn print_substrate_compatibility_json(
         "modules": report.modules.iter().map(|module| serde_json::json!({
             "package": &module.package,
             "substrate_profile_required": &module.substrate_profile_required,
+            "required_profile": &module.substrate_profile_required,
+            "reported_profile": &module.reported_profile,
+            "enforced_profile": &module.enforced_profile,
             "ok": module.ok,
             "profile_ok": module.profile_ok,
             "authority_ok": module.authority_ok,
@@ -375,9 +400,7 @@ fn print_substrate_compatibility_json(
             "forbidden_authorities": &module.forbidden_authorities,
             "forbidden_requested": &module.forbidden_requested
         })).collect::<Vec<_>>()
-    });
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+    })
 }
 
 fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_json::Value {

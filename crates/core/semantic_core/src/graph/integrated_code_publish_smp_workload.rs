@@ -40,6 +40,8 @@ impl SemanticGraph {
             return Err("integrated code-publish/SMP workload id=0 is invalid");
         }
         if self
+            .domains
+            .integrated
             .integrated_code_publish_smp_workloads
             .iter()
             .any(|record| record.id == integrated && Some(record.id) != allow_existing_integrated)
@@ -188,8 +190,11 @@ impl SemanticGraph {
         let stress_recorded_at_event = stress.recorded_at_event;
         let generation = 1;
 
-        self.next_integrated_code_publish_smp_workload_id =
-            self.next_integrated_code_publish_smp_workload_id.max(integrated.saturating_add(1));
+        self.domains.integrated.next_integrated_code_publish_smp_workload_id = self
+            .domains
+            .integrated
+            .next_integrated_code_publish_smp_workload_id
+            .max(integrated.saturating_add(1));
         let recorded_at_event = self.event_log.push(
             "integrated-runtime",
             EventKind::IntegratedCodePublishSmpWorkloadRecorded {
@@ -211,53 +216,55 @@ impl SemanticGraph {
                 generation,
             },
         );
-        self.integrated_code_publish_smp_workloads.push(IntegratedCodePublishSmpWorkloadRecord {
-            id: integrated,
-            scenario: scenario.to_string(),
-            smp_stress_run,
-            smp_stress_run_generation,
-            smp_code_publish_barrier,
-            smp_code_publish_barrier_generation,
-            publish_rendezvous,
-            publish_rendezvous_generation,
-            publish_safe_point,
-            publish_safe_point_generation,
-            hart_count,
-            workload_iterations,
-            observed_safe_point_count,
-            observed_rendezvous_count,
-            observed_code_publish_barrier_count,
-            code_publish_epoch_before,
-            code_publish_epoch_after,
-            remote_icache_sync_required,
-            code_publish_executed,
-            participant_count,
-            stress_event_log_cursor,
-            barrier_event,
-            stress_recorded_at_event,
-            invariant_checks,
-            generation,
-            state: IntegratedCodePublishSmpWorkloadState::Recorded,
-            recorded_at_event,
-            note: note.to_string(),
-        });
+        self.domains.integrated.integrated_code_publish_smp_workloads.push(
+            IntegratedCodePublishSmpWorkloadRecord {
+                id: integrated,
+                scenario: scenario.to_string(),
+                smp_stress_run,
+                smp_stress_run_generation,
+                smp_code_publish_barrier,
+                smp_code_publish_barrier_generation,
+                publish_rendezvous,
+                publish_rendezvous_generation,
+                publish_safe_point,
+                publish_safe_point_generation,
+                hart_count,
+                workload_iterations,
+                observed_safe_point_count,
+                observed_rendezvous_count,
+                observed_code_publish_barrier_count,
+                code_publish_epoch_before,
+                code_publish_epoch_after,
+                remote_icache_sync_required,
+                code_publish_executed,
+                participant_count,
+                stress_event_log_cursor,
+                barrier_event,
+                stress_recorded_at_event,
+                invariant_checks,
+                generation,
+                state: IntegratedCodePublishSmpWorkloadState::Recorded,
+                recorded_at_event,
+                note: note.to_string(),
+            },
+        );
         true
     }
 
     pub fn integrated_code_publish_smp_workloads(
         &self,
     ) -> &[IntegratedCodePublishSmpWorkloadRecord] {
-        &self.integrated_code_publish_smp_workloads
+        &self.domains.integrated.integrated_code_publish_smp_workloads
     }
 
     pub fn integrated_code_publish_smp_workload_count(&self) -> usize {
-        self.integrated_code_publish_smp_workloads.len()
+        self.domains.integrated.integrated_code_publish_smp_workloads.len()
     }
 
     pub fn check_integrated_code_publish_smp_workload_invariants(
         &self,
     ) -> Result<(), SemanticInvariantError> {
-        for record in &self.integrated_code_publish_smp_workloads {
+        for record in &self.domains.integrated.integrated_code_publish_smp_workloads {
             if record.id == 0
                 || record.generation == 0
                 || record.scenario.is_empty()

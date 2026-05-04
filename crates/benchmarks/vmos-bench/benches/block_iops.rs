@@ -1,12 +1,10 @@
-// Block IOPS and latency benchmarks.
-// Ported from semantic_core::graph::block_benchmark.
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use vmos_bench::block_iops_sample;
 
 fn bench_block_iops(c: &mut Criterion) {
     c.bench_function("block_read_iops", |b| {
         b.iter(|| {
-            // TODO: extract from semantic_core block_benchmark logic
-            black_box(());
+            black_box(block_iops_sample());
         });
     });
 }

@@ -17,6 +17,7 @@ pub enum ContractViolationKind {
     CleanupEffectCreatesLiveOwnership,
     ExternalEdgeMissingDeclaration,
     ExternalEdgeMetadataMismatch,
+    EvidenceBoundaryOverclaim,
 }
 
 impl ContractViolationKind {
@@ -31,6 +32,7 @@ impl ContractViolationKind {
             Self::CleanupEffectCreatesLiveOwnership => "cleanup-effect-creates-live-ownership",
             Self::ExternalEdgeMissingDeclaration => "external-edge-missing-declaration",
             Self::ExternalEdgeMetadataMismatch => "external-edge-metadata-mismatch",
+            Self::EvidenceBoundaryOverclaim => "evidence-boundary-overclaim",
         }
     }
 }
@@ -70,6 +72,7 @@ impl ContractViolation {
 
 #[derive(Clone, Debug, Default)]
 pub struct ContractGraphSnapshot {
+    pub claimed_evidence_level: EvidenceBoundaryLevel,
     pub artifacts: Vec<VerifiedArtifact>,
     pub code_objects: Vec<CodeObject>,
     pub target_feature_sets: Vec<TargetFeatureSetRecord>,
@@ -197,6 +200,7 @@ pub struct ContractEdgeRecord {
     pub from: ContractObjectRef,
     pub to: ContractObjectRef,
     pub mode: ContractEdgeMode,
+    pub evidence_level: EvidenceBoundaryLevel,
     pub label: String,
     pub epoch: EventId,
     pub provider: Option<String>,
@@ -211,7 +215,21 @@ impl ContractEdgeRecord {
         label: &str,
         epoch: EventId,
     ) -> Self {
-        Self { from, to, mode, label: label.to_string(), epoch, provider: None, class: None }
+        Self {
+            from,
+            to,
+            mode,
+            evidence_level: EvidenceBoundaryLevel::SemanticModel,
+            label: label.to_string(),
+            epoch,
+            provider: None,
+            class: None,
+        }
+    }
+
+    pub fn with_evidence_level(mut self, evidence_level: EvidenceBoundaryLevel) -> Self {
+        self.evidence_level = evidence_level;
+        self
     }
 
     pub fn with_external_metadata(mut self, provider: &str, class: &str) -> Self {

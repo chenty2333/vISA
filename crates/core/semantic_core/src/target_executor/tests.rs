@@ -229,6 +229,7 @@ fn simd_runtime_v1_code_object_declares_requirement() {
     assert_eq!(code.simd_requirement.status, CodeObjectSimdRequirementStatus::Declared);
     assert_eq!(code.generation, 2);
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([verified]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -267,6 +268,7 @@ fn simd_runtime_v1_rejects_missing_or_bad_requirement() {
         note: "malformed test object".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([verified]),
         code_objects: Vec::from([code]),
         ..ContractGraphSnapshot::default()
@@ -936,6 +938,7 @@ fn contract_graph_validator_reports_generation_dead_and_tombstone_edges() {
         detail: "dangling activation".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -1094,6 +1097,7 @@ fn contract_graph_validator_rejects_cleanup_effect_mismatch() {
         effect: FailureEffect::CompleteWithErrno(5),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -1235,6 +1239,7 @@ fn completed_cleanup_detects_code_still_bound_to_target_generation() {
         effect: FailureEffect::CompleteWithErrno(5),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -1309,6 +1314,7 @@ fn completed_cleanup_result_allows_rebound_store_with_result_tombstone() {
         effect: FailureEffect::CompleteWithErrno(5),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         stores: {
             let mut stores = Vec::new();
             stores.push(rebound_store);
@@ -1378,6 +1384,7 @@ fn contract_graph_validator_allows_historical_hostcall_to_tombstoned_generation(
     assert_eq!(activation_record.generation, 2);
     trace.code_generation = historical_generation;
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -1539,6 +1546,7 @@ fn contract_graph_validator_enforces_live_cleanup_and_external_edges() {
         saved_context: None,
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -1789,6 +1797,7 @@ fn contract_graph_validator_allows_historical_cleanup_and_declared_external_edge
         "virtio-net",
     );
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: {
             let mut artifacts = Vec::new();
             artifacts.push(artifact);
@@ -2395,6 +2404,7 @@ fn simd_runtime_v3_trap_records_requirement_attribution() {
     assert_eq!(simd.target_feature_set, Some(feature_set.object_ref()));
 
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2430,6 +2440,7 @@ fn simd_runtime_v3_rejects_simd_trap_without_requirement() {
     executor.trap_exit_by_pc(activation, &code, code.text.start + offset, &trap_map).unwrap();
 
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         stores: Vec::from([store.store]),
@@ -2504,6 +2515,7 @@ fn simd_runtime_v10_fault_injection_validates_exact_trap_attribution() {
         note: "v10 SIMD fault injection".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2576,6 +2588,7 @@ fn simd_runtime_v10_rejects_fault_injection_trap_kind_mismatch() {
         note: "bad V10 SIMD fault injection".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2624,6 +2637,7 @@ fn simd_runtime_v10_rejects_fault_injection_wrong_ref_kind() {
         note: "bad V10 SIMD fault injection ref kind".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2672,6 +2686,7 @@ fn simd_runtime_v11_benchmark_validates_scalar_and_vector_code_requirements() {
         note: "v11 scalar/vector benchmark".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([scalar_code, vector_code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2717,6 +2732,7 @@ fn simd_runtime_v11_rejects_benchmark_scalar_code_that_declares_simd() {
         note: "bad v11 scalar/vector benchmark".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([scalar_code, vector_code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2851,6 +2867,7 @@ fn simd_runtime_v12_context_switch_benchmark_validates_preempt_resume_vector_ref
         note: "v12 context switch benchmark".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -2985,6 +3002,7 @@ fn simd_runtime_v12_rejects_benchmark_resume_vector_mismatch() {
         note: "bad v12 context switch benchmark".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -3041,6 +3059,7 @@ fn simd_runtime_v4_vector_state_edges_validate_exact_generations() {
         note: "v4 vector state object".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
@@ -3090,6 +3109,7 @@ fn simd_runtime_v4_rejects_live_vector_state_owned_by_dead_activation() {
         note: "v4 vector state object".to_string(),
     };
     let snapshot = ContractGraphSnapshot {
+        claimed_evidence_level: EvidenceBoundaryLevel::SemanticModel,
         artifacts: Vec::from([artifact]),
         code_objects: Vec::from([code]),
         target_feature_sets: Vec::from([feature_set]),
