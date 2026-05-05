@@ -120,9 +120,10 @@ impl WasmVisaExecutor {
         &self.store.data().hostcall_reports
     }
 
-    /// Parse artifact bytes, extract the CodeObject section, pass through
-    /// VisaRuntime for profile gate + store/activation, compile the wasm
-    /// module, bind hostcalls from the descriptor, and instantiate.
+    /// Pass the artifact through VisaRuntime for profile gate + store +
+    /// activation. Saves hostcall specs for later binding.
+    /// Call `run()` (which compiles, binds, and instantiates) or manually
+    /// compile + link_hostcalls + instantiate after calling this.
     pub fn load_and_activate(
         &mut self,
         input: VisaArtifactInput<'_>,
@@ -167,7 +168,8 @@ impl WasmVisaExecutor {
         let func = instance
             .get_func(&mut self.store, func_name)
             .ok_or_else(|| WasmVisaError::MissingExport(func_name.into()))?;
-        let mut results = vec![Val::I32(0)];
+        let result_count = func.ty(&self.store).results().len();
+        let mut results = vec![Val::I32(0); result_count];
         func.call(&mut self.store, params, &mut results).map_err(|e| {
             let msg = format!("{e}");
             if e.downcast_ref::<Trap>().is_some() {
@@ -268,8 +270,8 @@ impl WasmVisaExecutor {
             .map_err(|e| WasmVisaError::Wasmtime(format!("instantiate: {e}")))?;
         self.instance = Some(instance);
 
-        // Call the wasm entry point
-        let _ = self.call_export(entry, &[]);
+        // Call the wasm entry point — propagate errors (missing export, trap, etc.)
+        self.call_export(entry, &[])?;
 
         let data = self.store.data();
         Ok(VisaExecutionReport {
@@ -602,5 +604,55 @@ mod tests {
         assert!(report.loaded.store_id > 0);
         // Hostcall should have been dispatched
         assert!(!report.hostcalls.is_empty(), "must have at least one hostcall dispatch");
+    }
+
+    #[test]
+    fn run_returns_error_for_missing_export() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality");
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "nonexistent")
+            .expect_err("run with missing entry must fail");
+        assert!(
+            matches!(
+                err,
+                WasmVisaError::MissingExport(_)
+                    | WasmVisaError::Trap(_)
+                    | WasmVisaError::Wasmtime(_)
+            ),
+            "expected error, got: {err}"
+        );
+    }
+
+    fn trapping_wasm() -> Vec<u8> {
+        wat::parse_str(r#"(module (func (export "entry") unreachable))"#).expect("parse wat")
+    }
+
+    #[test]
+    fn run_returns_error_for_wasm_trap() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &trapping_wasm());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality");
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("run with trapping wasm must fail");
+        assert!(matches!(err, WasmVisaError::Trap(_)), "expected Trap, got: {err}");
     }
 }
