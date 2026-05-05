@@ -399,10 +399,6 @@ impl VisaRuntime {
         &self.executor
     }
 
-    pub(crate) fn executor_mut(&mut self) -> &mut TargetExecutor {
-        &mut self.executor
-    }
-
     pub fn events(&self) -> &[VisaRuntimeEvent] {
         &self.events
     }
