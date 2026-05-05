@@ -260,11 +260,125 @@ impl SemanticGraph {
             activations: inputs.activations.to_vec(),
             traps: inputs.traps.to_vec(),
             hostcalls: inputs.hostcalls.to_vec(),
-            capabilities: inputs.capabilities.to_vec(),
+            capabilities: {
+                let mut caps = self.capabilities().records().to_vec();
+                for cap in inputs.capabilities {
+                    if !caps.iter().any(|existing| {
+                        existing.id == cap.id && existing.generation == cap.generation
+                    }) {
+                        caps.push(cap.clone());
+                    }
+                }
+                caps
+            },
             cleanup_transactions: inputs.cleanup_transactions.to_vec(),
             tombstones: inputs.tombstones.to_vec(),
             external_objects: inputs.external_objects.to_vec(),
             explicit_edges: inputs.explicit_edges.to_vec(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    #[test]
+    fn snapshot_preserves_graph_own_capabilities() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "test");
+        let store = graph.register_store("pkg", "art", "role", "restartable");
+        graph
+            .domains
+            .capability
+            .capabilities
+            .grant_manifest_binding(
+                "pkg",
+                "test.console",
+                &["write"],
+                "activation",
+                CapabilityClass::ServiceImport,
+                Some(store),
+                Some(1),
+                None,
+                "test",
+            )
+            .unwrap();
+
+        let snapshot = graph.snapshot();
+        assert!(
+            !snapshot.capabilities.is_empty(),
+            "snapshot must include graph-owned capability records"
+        );
+    }
+
+    #[test]
+    fn snapshot_with_merges_inputs_into_graph_capabilities() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "test");
+        let store = graph.register_store("pkg", "art", "role", "restartable");
+        graph
+            .domains
+            .capability
+            .capabilities
+            .grant_manifest_binding(
+                "pkg",
+                "g.obj",
+                &["use"],
+                "activation",
+                CapabilityClass::ServiceImport,
+                Some(store),
+                Some(1),
+                None,
+                "test",
+            )
+            .unwrap();
+        let graph_cap = graph.capabilities().records().first().cloned().unwrap();
+
+        let mut extra = graph_cap.clone();
+        extra.id = 99;
+        extra.generation = 99;
+        extra.object = "extra.obj".into();
+        let inputs =
+            ContractGraphSnapshotInputs { capabilities: &[extra.clone()], ..Default::default() };
+
+        let snapshot = graph.snapshot_with(inputs);
+        assert_eq!(snapshot.capabilities.len(), 2);
+        assert!(snapshot.capabilities.contains(&graph_cap));
+        assert!(snapshot.capabilities.contains(&extra));
+    }
+
+    #[test]
+    fn snapshot_does_not_duplicate_capabilities_by_id_and_generation() {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "test");
+        let store = graph.register_store("pkg", "art", "role", "restartable");
+        graph
+            .domains
+            .capability
+            .capabilities
+            .grant_manifest_binding(
+                "pkg",
+                "g.obj",
+                &["use"],
+                "activation",
+                CapabilityClass::ServiceImport,
+                Some(store),
+                Some(1),
+                None,
+                "test",
+            )
+            .unwrap();
+        let graph_cap = graph.capabilities().records().first().cloned().unwrap();
+
+        let inputs = ContractGraphSnapshotInputs {
+            capabilities: &[graph_cap.clone()],
+            ..Default::default()
+        };
+
+        let snapshot = graph.snapshot_with(inputs);
+        assert_eq!(snapshot.capabilities.len(), 1);
     }
 }
