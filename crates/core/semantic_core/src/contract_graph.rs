@@ -202,11 +202,13 @@ impl ContractGraphSnapshot {
             saved_contexts: Vec::new(),
             // Non-portable: packet/block backend state
             packet_device_objects: Vec::new(),
+            // Non-portable: records that reference cleared packet_device
+            network_stack_adapters: Vec::new(),
+            socket_objects: Vec::new(),
+            // Non-portable: block root objects
             block_device_objects: Vec::new(),
             block_range_objects: Vec::new(),
-            // Non-portable: records that reference cleared objects above
-            // (block requests/waits/queues reference block_device/range;
-            //  packet descriptors/queues reference packet_device)
+            // Non-portable: records that reference cleared block objects
             block_request_objects: Vec::new(),
             block_waits: Vec::new(),
             block_request_queues: Vec::new(),
@@ -237,8 +239,12 @@ impl ContractGraphSnapshot {
             || !self.block_range_objects.is_empty()
             || !self.block_request_objects.is_empty()
             || !self.block_waits.is_empty()
+            || !self.block_request_queues.is_empty()
         {
             out.push(NonPortableStateKind::BlockDeviceBackendBindings);
+        }
+        if !self.network_stack_adapters.is_empty() || !self.socket_objects.is_empty() {
+            out.push(NonPortableStateKind::PacketDeviceBindings);
         }
         out
     }

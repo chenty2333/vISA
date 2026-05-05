@@ -345,16 +345,7 @@ fn hostcall_payload_for_object(
         ("dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
             lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
         }),
-        _ => {
-            // Unknown hostcall: produce a payload so the runtime records an
-            // unsupported trace; the dispatch_hostcall path will fail with
-            // a substrate Unsupported error.
-            let mut bytes = Vec::new();
-            for val in [a, b, c, d] {
-                bytes.extend_from_slice(&val.to_le_bytes());
-            }
-            Some(VisaHostcallPayload::ConsoleWrite { bytes })
-        }
+        _ => None, // link-time would reject; runtime returns HostcallNotBound
     }
 }
 
@@ -615,12 +606,17 @@ mod tests {
         assert!(!report.hostcalls.is_empty(), "must have at least one hostcall dispatch");
     }
 
+    fn no_import_wasm() -> Vec<u8> {
+        wat::parse_str(r#"(module (func (export "start") (result i64) i64.const 1))"#)
+            .expect("parse wat")
+    }
+
     #[test]
-    fn run_returns_error_for_missing_export() {
+    fn run_returns_missing_export_for_wrong_entry_name() {
         let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
         let substrate = TestSubstrate::default();
         let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
-        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &no_import_wasm());
         let desc = VisaArtifactDescriptor::new(
             9,
             "test",
@@ -632,8 +628,8 @@ mod tests {
             .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "nonexistent")
             .expect_err("run with missing entry must fail");
         assert!(
-            matches!(err, WasmVisaError::MissingExport(_) | WasmVisaError::Wasmtime(_)),
-            "expected MissingExport or Wasmtime, got: {err}"
+            matches!(err, WasmVisaError::MissingExport(_)),
+            "expected MissingExport, got: {err}"
         );
     }
 
