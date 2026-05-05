@@ -345,7 +345,16 @@ fn hostcall_payload_for_object(
         ("dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
             lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
         }),
-        _ => None,
+        _ => {
+            // Unknown hostcall: produce a payload so the runtime records an
+            // unsupported trace; the dispatch_hostcall path will fail with
+            // a substrate Unsupported error.
+            let mut bytes = Vec::new();
+            for val in [a, b, c, d] {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+        }
     }
 }
 
@@ -623,13 +632,8 @@ mod tests {
             .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "nonexistent")
             .expect_err("run with missing entry must fail");
         assert!(
-            matches!(
-                err,
-                WasmVisaError::MissingExport(_)
-                    | WasmVisaError::Trap(_)
-                    | WasmVisaError::Wasmtime(_)
-            ),
-            "expected error, got: {err}"
+            matches!(err, WasmVisaError::MissingExport(_) | WasmVisaError::Wasmtime(_)),
+            "expected MissingExport or Wasmtime, got: {err}"
         );
     }
 

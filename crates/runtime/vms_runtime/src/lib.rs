@@ -399,7 +399,7 @@ impl VisaRuntime {
         &self.executor
     }
 
-    pub fn executor_mut(&mut self) -> &mut TargetExecutor {
+    pub(crate) fn executor_mut(&mut self) -> &mut TargetExecutor {
         &mut self.executor
     }
 
