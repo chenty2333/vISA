@@ -183,6 +183,8 @@ impl NonPortableStateKind {
 impl ContractGraphSnapshot {
     /// Return a new snapshot containing only portable records.
     /// Non-portable hardware binding records are cleared.
+    /// Artifacts and code_objects are kept — identity and manifest metadata
+    /// are portable per the vISA spec.
     pub fn portable_subset(&self) -> Self {
         Self {
             // Non-portable: device/IO/backend bindings
@@ -196,14 +198,13 @@ impl ContractGraphSnapshot {
             // Non-portable: window leases/mappings
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
-            // Non-portable: native code
-            code_objects: Vec::new(),
-            artifacts: Vec::new(),
+            // Non-portable: native frames and host-specific state
+            saved_contexts: Vec::new(),
             // Non-portable: packet/block backend state
             packet_device_objects: Vec::new(),
             block_device_objects: Vec::new(),
             block_range_objects: Vec::new(),
-            // Portable: keep everything else
+            // Portable: keep everything else (incl. artifacts, code_objects, stores, capabilities)
             ..self.clone()
         }
     }
@@ -216,9 +217,6 @@ impl ContractGraphSnapshot {
         }
         if !self.block_dma_buffers.is_empty() {
             out.push(NonPortableStateKind::DmaPages);
-        }
-        if !self.code_objects.is_empty() || !self.artifacts.is_empty() {
-            out.push(NonPortableStateKind::TranslatedCodeCache);
         }
         if !self.saved_contexts.is_empty() {
             out.push(NonPortableStateKind::NativeStackFrames);
@@ -298,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_subset_preserves_stores() {
+    fn portable_subset_preserves_stores_and_capabilities() {
         let graph = fixture_with_devices_and_stores();
         let snapshot = graph.snapshot();
         assert!(!snapshot.stores.is_empty());
@@ -312,12 +310,33 @@ mod tests {
         let graph = fixture_with_devices_and_stores();
         let snapshot = graph.snapshot();
         assert!(!snapshot.device_objects.is_empty());
-        assert!(!snapshot.block_device_objects.is_empty());
 
         let portable = snapshot.portable_subset();
         assert!(portable.device_objects.is_empty());
         assert!(portable.block_device_objects.is_empty());
+        assert!(portable.fake_block_backends.is_empty());
         assert!(!portable.stores.is_empty());
+    }
+
+    #[test]
+    fn portable_subset_is_self_consistent() {
+        let graph = fixture_with_devices_and_stores();
+        let snapshot = graph.snapshot();
+        let portable = snapshot.portable_subset();
+        assert!(
+            portable.non_portable_summary().is_empty(),
+            "portable subset must self-report zero non-portable state: {:?}",
+            portable.non_portable_summary()
+        );
+    }
+
+    #[test]
+    fn portable_subset_passes_contract_graph_validation() {
+        let graph = fixture_with_devices_and_stores();
+        let snapshot = graph.snapshot();
+        let portable = snapshot.portable_subset();
+        let violations = validate_contract_graph(&portable);
+        assert!(violations.is_empty(), "portable subset must be contract-valid: {violations:?}");
     }
 
     #[test]
