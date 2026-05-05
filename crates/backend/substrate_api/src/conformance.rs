@@ -166,8 +166,12 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
     fixtures: &ConformanceFixtures,
 ) -> SubstrateConformanceReport {
     let compatibility = SubstrateAuthorityRequirements {
-        required: profile.requirements().merged_with(policy.required),
-        optional: policy.optional,
+        required: if policy.strict {
+            profile.requirements().merged_with(policy.required).merged_with(policy.optional)
+        } else {
+            profile.requirements().merged_with(policy.required)
+        },
+        optional: if policy.strict { AuthorityRequirementSet::default() } else { policy.optional },
         forbidden: policy.forbidden,
     }
     .check(capabilities);

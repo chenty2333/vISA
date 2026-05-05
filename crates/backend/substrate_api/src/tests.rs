@@ -1,6 +1,9 @@
 use alloc::{vec, vec::Vec};
 
-use crate::{conformance, *};
+use crate::{
+    conformance::{self, ConformancePolicy},
+    *,
+};
 
 struct BufferConsole {
     bytes: Vec<u8>,
@@ -372,4 +375,94 @@ fn handles_reject_zero_identity_or_generation() {
     assert!(StoreRef::new(1, 1).is_valid());
     assert!(!StoreRef::new(0, 1).is_valid());
     assert!(!StoreRef::new(1, 0).is_valid());
+}
+
+// ── ConformancePolicy regression tests ──────────────────────────────────────
+
+#[test]
+fn policy_required_missing_capability_is_rejected() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+    let mut policy = ConformancePolicy::for_profile(SubstrateProfile::SemanticHarness);
+    // SemanticHarness does NOT require mmio, but policy addition does.
+    policy.required.mmio = true;
+
+    let report = conformance::check_substrate_profile_with_policy(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::semantic_harness(), // no mmio capability
+        &policy,
+        &fixtures,
+    );
+
+    assert!(!report.ok, "must reject when policy-required authority is missing");
+    assert!(report.compatibility.missing_required.iter().any(|m| m.authority == "mmio"));
+}
+
+#[test]
+fn policy_forbidden_present_capability_is_rejected() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+    let mut policy = ConformancePolicy::for_profile(SubstrateProfile::SemanticHarness);
+    policy.forbidden.mmio = true;
+
+    let report = conformance::check_substrate_profile_with_policy(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::host_validation(), // mmio capability present
+        &policy,
+        &fixtures,
+    );
+
+    assert!(!report.ok, "must reject when forbidden authority is present");
+    assert!(report.compatibility.forbidden_present.iter().any(|p| p.authority == "mmio"));
+}
+
+#[test]
+fn optional_authority_degradation_not_fatal_without_strict() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+    let mut policy = ConformancePolicy::for_profile(SubstrateProfile::SemanticHarness);
+    policy.optional.snapshot = SnapshotRequirement::DeterministicReplay;
+    policy.strict = false;
+
+    let report = conformance::check_substrate_profile_with_policy(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::semantic_harness(), // no snapshot capability
+        &policy,
+        &fixtures,
+    );
+
+    // Compatibility should be ok (missing optional should not reject)
+    assert!(report.compatibility.ok);
+    // Report should not fail: optional + non-strict means degraded, not failed
+    assert!(report.ok);
+    assert!(
+        report.compatibility.degraded_optional.iter().any(|m| m.authority == "snapshot"),
+        "must report snapshot as degraded optional"
+    );
+}
+
+#[test]
+fn optional_authority_fails_when_strict() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+    let mut policy = ConformancePolicy::for_profile(SubstrateProfile::SemanticHarness);
+    policy.optional.snapshot = SnapshotRequirement::DeterministicReplay;
+    policy.strict = true;
+
+    let report = conformance::check_substrate_profile_with_policy(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::semantic_harness(),
+        &policy,
+        &fixtures,
+    );
+
+    assert!(!report.ok, "must fail when optional+strict capability is missing");
+    assert!(
+        report.compatibility.missing_required.iter().any(|m| m.authority == "snapshot"),
+        "strict optional missing must be treated as missing_required"
+    );
 }
