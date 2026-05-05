@@ -24,6 +24,14 @@ harness = false
 name = "preemption_latency"
 harness = false
 
+[[bench]]
+name = "simd_speedup"
+harness = false
+
+[[bench]]
+name = "framebuffer_throughput"
+harness = false
+
 [dependencies]
 semantic_core.workspace = true
 
