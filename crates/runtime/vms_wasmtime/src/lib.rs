@@ -171,7 +171,14 @@ impl WasmVisaExecutor {
         func.call(&mut self.store, params, &mut results).map_err(|e| {
             let msg = format!("{e}");
             if e.downcast_ref::<Trap>().is_some() {
-                // TODO: record trap attribution through VisaRuntime facade
+                let (activation_id, store_id) = {
+                    let state = self.store.data();
+                    match (&state.activation, &state.loaded) {
+                        (Some(act), Some(loaded)) => (act.activation_id, loaded.store_id),
+                        _ => return WasmVisaError::Trap(msg),
+                    }
+                };
+                self.store.data_mut().runtime.record_trap(activation_id, store_id, &msg);
                 WasmVisaError::Trap(msg)
             } else {
                 WasmVisaError::Wasmtime(msg)
@@ -310,16 +317,33 @@ fn hostcall_payload_for_object(
             deadline_ticks: a as u64,
             token: substrate_api::WaitTokenRef::new(b as u64, c as u64),
         }),
-        _ => {
-            // Default fallback: treat as console write with argument bytes
-            let mut bytes = Vec::new();
-            for val in [a, b, c, d] {
-                if val != 0 {
-                    bytes.push(val as u8);
-                }
-            }
-            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+        ("guest-memory", "read") | ("guest-memory", "copyin") => {
+            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
+            let ptr = c as u64;
+            let len = d.max(0) as usize;
+            Some(VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len })
         }
+        ("guest-memory", "write") | ("guest-memory", "copyout") => {
+            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
+            let ptr = c as u64;
+            let bytes = Vec::new();
+            Some(VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes })
+        }
+        ("dmw", "map") => {
+            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
+            let ptr = c as u64;
+            let len = d.max(0) as usize;
+            Some(VisaHostcallPayload::DmwMap {
+                memory,
+                ptr,
+                len,
+                perms: substrate_api::WindowPerms::READ_WRITE,
+            })
+        }
+        ("dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
+            lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
+        }),
+        _ => None,
     }
 }
 

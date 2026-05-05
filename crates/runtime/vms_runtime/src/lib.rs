@@ -399,6 +399,10 @@ impl VisaRuntime {
         &self.executor
     }
 
+    pub fn executor_mut(&mut self) -> &mut TargetExecutor {
+        &mut self.executor
+    }
+
     pub fn events(&self) -> &[VisaRuntimeEvent] {
         &self.events
     }
@@ -1015,6 +1019,20 @@ impl VisaRuntime {
             .check(subject, &spec.object, &spec.operation)
             .map(|record| record.generation)
             .unwrap_or(0)
+    }
+
+    pub fn record_trap(&mut self, activation_id: ActivationId, store_id: u64, detail: &str) {
+        let activation = self.executor.activations().iter().find(|a| a.id == activation_id);
+        let code_object = activation.and_then(|a| self.publisher.object(a.code_object));
+
+        self.executor.synthetic_trap(
+            semantic_core::target_executor::TargetTrapClass::GuestTrap,
+            store_id,
+            Some(activation_id),
+            code_object,
+            None,
+            detail,
+        );
     }
 
     fn next_command_id(&mut self) -> u64 {
