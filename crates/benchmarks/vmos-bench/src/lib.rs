@@ -109,25 +109,11 @@ pub fn network_packet_fixture() -> SemanticGraph {
     assert!(graph.record_packet_device_object_with_id(
         1, "pkt0", 1, 1, 1500, 64, 64, mac, 1, 65536, "criterion",
     ));
-    // rx queue (id=1, role=Rx)
     assert!(graph.record_packet_queue_object_with_id(
         1, "rxq", 1, 1, PacketQueueRole::Rx, 0, 64, "criterion rx",
     ));
-    // tx queue (id=2, role=Tx)
     assert!(graph.record_packet_queue_object_with_id(
         2, "txq", 1, 1, PacketQueueRole::Tx, 0, 64, "criterion tx",
-    ));
-    assert!(graph.record_fake_net_backend_object_with_id(
-        1, "fake-net", 1, 1, "service_core", "fake-net-v1",
-        1500, 64, 64, mac, 1, 65536, 42, "criterion fake net",
-    ));
-    let backend_ref = ContractObjectRef::new(ContractObjectKind::FakeNetBackendObject, 1, 1);
-    assert!(graph.record_network_stack_adapter_with_id(
-        1, backend_ref, 1, 1, 1, 1, 2, 1,
-        "smoltcp", "0.13.0", "smoltcp-0.13.0-ethernet-ipv4-tcp-v1", "ethernet",
-        mac, [10, 0, 0, 1], 24, 1500,
-        64, 64, 65536, 0,
-        "criterion adapter",
     ));
     graph
 }
@@ -139,9 +125,6 @@ pub fn display_framebuffer_fixture() -> SemanticGraph {
     let fb_res = graph.register_resource(ResourceKind::Framebuffer, Some(7), "fb-res");
     assert!(graph.record_framebuffer_object_with_id(
         1, "fb0", fb_res, 1, 1920, 1080, 7680, "bgra8888", 8_294_400, "criterion",
-    ));
-    assert!(graph.record_display_object_with_id(
-        1, "disp0", 1, 1, "1920x1080", 1920, 1080, 60_000, "criterion display",
     ));
     graph
 }

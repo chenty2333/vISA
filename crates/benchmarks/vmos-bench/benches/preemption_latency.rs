@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use semantic_core::{CommandEnvelope, SemanticCommand};
+use semantic_core::{CommandEnvelope, CommandStatus, SemanticCommand};
 use vmos_bench::scheduler_2hart_fixture;
 
 fn bench_preemption_latency_mutation(c: &mut Criterion) {
@@ -30,8 +30,8 @@ fn bench_preemption_latency_mutation(c: &mut Criterion) {
                         note: "criterion preemption latency".to_owned(),
                     },
                 ));
+                assert_eq!(result.status, CommandStatus::Applied, "{:?}", result.violations);
                 black_box((
-                    result.status,
                     graph.preemption_latency_samples().len(),
                     graph.event_count(),
                 ))
