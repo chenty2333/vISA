@@ -15,6 +15,7 @@ extern crate alloc;
 extern crate std;
 
 use alloc::{
+    collections::BTreeMap,
     format,
     string::{String, ToString},
     vec,
@@ -24,9 +25,10 @@ use alloc::{
 use contract_core::EvidenceBoundaryLevel;
 use semantic_core::{
     ActivationId, ArtifactVerificationState, BoundaryKind, BoundaryStatus, CapabilityLedger,
-    CodeObjectId, CodePublishState, CommandEnvelope, EntrypointState, FrontendKind, HostcallClass,
-    HostcallLinkState, MemoryLayoutState, RuntimeMode, SemanticCommand, SemanticGraph, StoreState,
-    TargetArtifactId, TrapSurfaceState,
+    CodeObjectId, CodePublishState, CommandEnvelope, ContractGraphSnapshot,
+    ContractGraphSnapshotInputs, EntrypointState, FrontendKind, HostcallClass, HostcallLinkState,
+    MemoryLayoutState, RuntimeMode, SemanticCommand, SemanticGraph, StoreState, TargetArtifactId,
+    TrapSurfaceState,
     target_executor::{
         ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
         ContractObjectKind, ContractObjectRef, HostcallFrame, HostcallSpec, ManagedStoreRecord,
@@ -1017,6 +1019,68 @@ impl VisaRuntime {
             .unwrap_or(0)
     }
 
+    /// Restore portable vISA state from a contract graph snapshot.
+    /// Only stores, tasks, and capabilities are restored;
+    /// device bindings and host-specific records are silently ignored.
+    pub fn restore_portable_subset(
+        &mut self,
+        snapshot: &ContractGraphSnapshot,
+    ) -> Result<(), VisaRuntimeError> {
+        // 1. Clear current state
+        self.semantic = SemanticGraph::with_runtime_mode(self.config.runtime_mode);
+        self.ledger = CapabilityLedger::new();
+        self.events.clear();
+
+        // 2. Restore tasks
+        for task in &snapshot.tasks {
+            self.semantic.ensure_task(task.id, task.frontend, &task.label);
+            self.semantic.set_task_state(task.id, task.state);
+        }
+
+        // 3. Restore stores
+        let mut store_map = BTreeMap::new();
+        for store_record in &snapshot.stores {
+            let new_id = self.semantic.register_store(
+                &store_record.package,
+                &store_record.artifact,
+                &store_record.role,
+                &store_record.fault_policy,
+            );
+            store_map.insert(store_record.id, new_id);
+            self.semantic.set_store_state(new_id, store_record.state);
+        }
+
+        // 4. Restore capabilities into the ledger
+        for cap in &snapshot.capabilities {
+            let store_id = cap.owner_store.and_then(|orig| store_map.get(&orig)).copied();
+            let store_gen = if store_id.is_some() { Some(1u64) } else { None };
+            let ops: Vec<&str> = cap.operations.as_slice().iter().map(|s| s.as_str()).collect();
+            self.ledger
+                .grant_manifest_binding(
+                    &cap.subject,
+                    &cap.object,
+                    &ops,
+                    &cap.lifetime,
+                    cap.class,
+                    store_id,
+                    store_gen,
+                    None,
+                    "restore",
+                )
+                .map_err(|_| VisaRuntimeError::CapabilityGrant("restore capability failed"))?;
+        }
+
+        // 5. Restore complete — contract validation is callerʼs responsibility
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> ContractGraphSnapshot {
+        let cap_records = self.ledger.records().to_vec();
+        let inputs =
+            ContractGraphSnapshotInputs { capabilities: &cap_records, ..Default::default() };
+        self.semantic.snapshot_with(inputs)
+    }
+
     pub fn record_trap(&mut self, activation_id: ActivationId, store_id: u64, detail: &str) {
         let activation = self.executor.activations().iter().find(|a| a.id == activation_id);
         let code_object = activation.and_then(|a| self.publisher.object(a.code_object));
@@ -1501,5 +1565,61 @@ mod tests {
         let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
         header.image_hash = hash;
         header.write_to(image).expect("image hash");
+    }
+
+    #[test]
+    fn portable_state_survives_profile_change() {
+        // Step 1: Run on DeviceCapable profile
+        let mut rt_a =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::DeviceCapable));
+        let mut substrate_a = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            1,
+            "driver.fake_net",
+            "fake-net-driver",
+            SubstrateProfile::DeviceCapable,
+        )
+        .with_role("driver")
+        .with_capability("mmio.virtio-net", &["map"], "store")
+        .with_capability("irq.virtio-net", &["ack", "mask", "unmask"], "store");
+
+        let loaded = rt_a
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate_a)
+            .expect("load device driver");
+        rt_a.start_activation(&loaded, ActivationEntry::Symbol("init".into())).expect("activate");
+
+        let snapshot_a = rt_a.snapshot();
+        assert!(!snapshot_a.stores.is_empty());
+        assert!(!snapshot_a.capabilities.is_empty());
+
+        let portable = snapshot_a.portable_subset();
+        // Portable state must be self-consistent
+        assert!(
+            portable.non_portable_summary().is_empty(),
+            "portable subset must have no non-portable state: {:?}",
+            portable.non_portable_summary()
+        );
+        // Core portable records present
+        assert!(!portable.stores.is_empty(), "portable must preserve stores");
+        assert!(!portable.capabilities.is_empty(), "portable must preserve capabilities");
+
+        // Step 2: Restore into SnapshotReplayCapable runtime
+        let mut rt_b = VisaRuntime::new(VisaRuntimeConfig::for_profile(
+            SubstrateProfile::SnapshotReplayCapable,
+        ));
+        rt_b.restore_portable_subset(&portable).expect("restore");
+
+        // Step 3: Portable state preserved
+        let snapshot_b = rt_b.snapshot();
+        assert_eq!(
+            snapshot_b.stores.len(),
+            portable.stores.len(),
+            "store count must survive profile change"
+        );
+        assert!(
+            snapshot_b.capabilities.len() >= portable.capabilities.len(),
+            "capabilities must survive profile change"
+        );
     }
 }
