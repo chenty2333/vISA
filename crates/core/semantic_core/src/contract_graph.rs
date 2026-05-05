@@ -151,6 +151,91 @@ pub struct ContractGraphSnapshot {
     pub explicit_edges: Vec<ContractEdgeRecord>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NonPortableStateKind {
+    MmioBindings,
+    DmaPages,
+    IrqLines,
+    TranslatedCodeCache,
+    NativeStackFrames,
+    DmwWindowState,
+    PacketDeviceBindings,
+    BlockDeviceBackendBindings,
+    DriverDeviceBindings,
+}
+
+impl NonPortableStateKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MmioBindings => "mmio-bindings",
+            Self::DmaPages => "dma-pages",
+            Self::IrqLines => "irq-lines",
+            Self::TranslatedCodeCache => "translated-code-cache",
+            Self::NativeStackFrames => "native-stack-frames",
+            Self::DmwWindowState => "dmw-window-state",
+            Self::PacketDeviceBindings => "packet-device-bindings",
+            Self::BlockDeviceBackendBindings => "block-device-backend-bindings",
+            Self::DriverDeviceBindings => "driver-device-bindings",
+        }
+    }
+}
+
+impl ContractGraphSnapshot {
+    /// Return a new snapshot containing only portable records.
+    /// Non-portable hardware binding records are cleared.
+    pub fn portable_subset(&self) -> Self {
+        Self {
+            // Non-portable: device/IO/backend bindings
+            device_objects: Vec::new(),
+            io_cleanups: Vec::new(),
+            // Non-portable: device-backed objects
+            virtio_net_backends: Vec::new(),
+            fake_block_backends: Vec::new(),
+            // Non-portable: DMA pages
+            block_dma_buffers: Vec::new(),
+            // Non-portable: window leases/mappings
+            framebuffer_window_leases: Vec::new(),
+            framebuffer_mappings: Vec::new(),
+            // Non-portable: native code
+            code_objects: Vec::new(),
+            artifacts: Vec::new(),
+            // Non-portable: packet/block backend state
+            packet_device_objects: Vec::new(),
+            block_device_objects: Vec::new(),
+            block_range_objects: Vec::new(),
+            // Portable: keep everything else
+            ..self.clone()
+        }
+    }
+
+    /// List non-portable record categories present in this snapshot.
+    pub fn non_portable_summary(&self) -> Vec<NonPortableStateKind> {
+        let mut out = Vec::new();
+        if !self.device_objects.is_empty() {
+            out.push(NonPortableStateKind::MmioBindings);
+        }
+        if !self.block_dma_buffers.is_empty() {
+            out.push(NonPortableStateKind::DmaPages);
+        }
+        if !self.code_objects.is_empty() || !self.artifacts.is_empty() {
+            out.push(NonPortableStateKind::TranslatedCodeCache);
+        }
+        if !self.saved_contexts.is_empty() {
+            out.push(NonPortableStateKind::NativeStackFrames);
+        }
+        if !self.framebuffer_window_leases.is_empty() || !self.framebuffer_mappings.is_empty() {
+            out.push(NonPortableStateKind::DmwWindowState);
+        }
+        if !self.packet_device_objects.is_empty() {
+            out.push(NonPortableStateKind::PacketDeviceBindings);
+        }
+        if !self.block_device_objects.is_empty() || !self.block_range_objects.is_empty() {
+            out.push(NonPortableStateKind::BlockDeviceBackendBindings);
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ContractGraphSnapshotInputs<'a> {
     pub claimed_evidence_level: EvidenceBoundaryLevel,
@@ -168,6 +253,81 @@ pub struct ContractGraphSnapshotInputs<'a> {
 
 pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<ContractViolation> {
     ContractGraphValidator::validate(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FrontendKind, SemanticGraph};
+
+    fn fixture_with_devices_and_stores() -> SemanticGraph {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "test");
+        let store = graph.register_store("test", "art", "role", "restartable");
+        let dev_res = graph.register_resource(crate::ResourceKind::BlockDevice, Some(1), "blk-dev");
+        graph.record_device_object_with_id(
+            1,
+            "dev0",
+            "block-device",
+            dev_res,
+            1,
+            "virtio-blk",
+            "pci",
+            "vmos",
+            "bench",
+            "test",
+        );
+        graph.record_block_device_object_with_id(1, "blk0", 1, 1, 512, 1024, false, 256, "test");
+        graph.record_block_range_object_with_id(1, 1, 1, 0, 256, "test");
+        graph.record_fake_block_backend_object_with_id(
+            1,
+            "fake-blk",
+            1,
+            1,
+            "service_core",
+            "fake-block-v1",
+            512,
+            1024,
+            false,
+            256,
+            42,
+            "test",
+        );
+        let _ = store;
+        graph
+    }
+
+    #[test]
+    fn portable_subset_preserves_stores() {
+        let graph = fixture_with_devices_and_stores();
+        let snapshot = graph.snapshot();
+        assert!(!snapshot.stores.is_empty());
+
+        let portable = snapshot.portable_subset();
+        assert_eq!(portable.stores.len(), snapshot.stores.len());
+    }
+
+    #[test]
+    fn portable_subset_strips_device_bindings() {
+        let graph = fixture_with_devices_and_stores();
+        let snapshot = graph.snapshot();
+        assert!(!snapshot.device_objects.is_empty());
+        assert!(!snapshot.block_device_objects.is_empty());
+
+        let portable = snapshot.portable_subset();
+        assert!(portable.device_objects.is_empty());
+        assert!(portable.block_device_objects.is_empty());
+        assert!(!portable.stores.is_empty());
+    }
+
+    #[test]
+    fn non_portable_summary_reports_present_categories() {
+        let graph = fixture_with_devices_and_stores();
+        let snapshot = graph.snapshot();
+        let summary = snapshot.non_portable_summary();
+        assert!(summary.contains(&NonPortableStateKind::MmioBindings));
+        assert!(summary.contains(&NonPortableStateKind::BlockDeviceBackendBindings));
+    }
 }
 
 pub struct ContractGraphValidator;
