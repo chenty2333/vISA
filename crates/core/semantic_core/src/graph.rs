@@ -281,8 +281,6 @@ impl SemanticGraph {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-
     use super::*;
 
     #[test]
@@ -374,7 +372,7 @@ mod tests {
         let graph_cap = graph.capabilities().records().first().cloned().unwrap();
 
         let inputs = ContractGraphSnapshotInputs {
-            capabilities: &[graph_cap.clone()],
+            capabilities: core::slice::from_ref(&graph_cap),
             ..Default::default()
         };
 

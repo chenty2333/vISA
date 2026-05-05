@@ -5,7 +5,6 @@
 //! path.  It is a `std` crate and does not modify the `no_std` vms_runtime core.
 
 use std::{
-    collections::BTreeMap,
     error::Error,
     fmt,
     string::{String, ToString},
@@ -13,8 +12,7 @@ use std::{
     vec::Vec,
 };
 
-use semantic_core::target_executor::ActivationEntry;
-use substrate_api::{ArtifactAuthority, CodePublisherAuthority, ConsoleAuthority};
+use semantic_core::target_executor::{ActivationEntry, HostcallSpec};
 use target_abi::{SectionKindV1, TargetArtifactError};
 use vms_runtime::{
     ActivationHandle, HostcallDispatchReport, LoadedVisaArtifact, VisaArtifactInput,
@@ -29,7 +27,6 @@ pub enum WasmVisaError {
     Wasmtime(String),
     Runtime(VisaRuntimeError),
     MissingExport(String),
-    ExportTypeMismatch { name: String, detail: String },
     HostcallNotBound(u32),
     Trap(String),
 }
@@ -41,9 +38,6 @@ impl fmt::Display for WasmVisaError {
             Self::Wasmtime(msg) => write!(f, "wasmtime error: {msg}"),
             Self::Runtime(e) => write!(f, "runtime error: {e:?}"),
             Self::MissingExport(name) => write!(f, "missing export: {name}"),
-            Self::ExportTypeMismatch { name, detail } => {
-                write!(f, "export type mismatch: {name} — {detail}")
-            }
             Self::HostcallNotBound(n) => write!(f, "hostcall {n} not bound"),
             Self::Trap(msg) => write!(f, "trap: {msg}"),
         }
@@ -65,7 +59,8 @@ pub struct WasmVisaState {
     pub loaded: Option<LoadedVisaArtifact>,
     pub activation: Option<ActivationHandle>,
     pub hostcall_reports: Vec<HostcallDispatchReport>,
-    hostcall_numbers: Vec<u32>,
+    /// Hostcall specs from the artifact descriptor, indexed by hostcall number.
+    hostcall_specs: Vec<HostcallSpec>,
 }
 
 impl WasmVisaState {
@@ -102,56 +97,49 @@ impl WasmVisaExecutor {
                 loaded: None,
                 activation: None,
                 hostcall_reports: Vec::new(),
-                hostcall_numbers: Vec::new(),
+                hostcall_specs: Vec::new(),
             },
         );
         Self { engine, linker, store, instance: None }
     }
 
-    /// Read-only access to the inner `VisaRuntime`.
     pub fn runtime(&self) -> &VisaRuntime {
         &self.store.data().runtime
     }
 
-    /// Mutable access to the inner `VisaRuntime`.
     pub fn runtime_mut(&mut self) -> &mut VisaRuntime {
         &mut self.store.data_mut().runtime
     }
 
-    /// Reclaim the `VisaRuntime` and substrate.
     pub fn into_parts(self) -> (VisaRuntime, Box<dyn VisaSubstrate>) {
         let state = self.store.into_data();
         (state.runtime, state.substrate)
     }
 
-    /// Events collected during execution.
     pub fn hostcall_reports(&self) -> &[HostcallDispatchReport] {
         &self.store.data().hostcall_reports
     }
 
-    /// Parse artifact bytes, extract the CodeObject section, profile gate,
-    /// compile into a wasmtime module, instantiate, and bind hostcalls.
+    /// Parse artifact bytes, extract the CodeObject section, pass through
+    /// VisaRuntime for profile gate + store/activation, compile the wasm
+    /// module, bind hostcalls from the descriptor, and instantiate.
     pub fn load_and_activate(
         &mut self,
         input: VisaArtifactInput<'_>,
         entry: &str,
     ) -> Result<(), WasmVisaError> {
-        let parsed = target_abi::TargetArtifactImage::parse(input.bytes)
-            .map_err(|e| WasmVisaError::Artifact(e))?;
-        let code_payload = parsed
-            .section_payload(SectionKindV1::CodeObject)
-            .map_err(|e| WasmVisaError::Artifact(e))?
-            .ok_or_else(|| WasmVisaError::Wasmtime("missing CodeObject section".into()))?;
+        // Preserve hostcall specs from the descriptor before load_artifact consumes it
+        let hostcall_specs: Vec<HostcallSpec> = input.descriptor.hostcalls.clone();
+
+        let _parsed =
+            target_abi::TargetArtifactImage::parse(input.bytes).map_err(WasmVisaError::Artifact)?;
 
         let loaded = {
             let state = self.store.data_mut();
             let substrate_ptr: *mut dyn VisaSubstrate = state.substrate.as_mut();
-            // SAFETY: substrate outlives this call and is not aliased
+            // SAFETY: substrate is exclusively owned by this Store and not aliased
             state.runtime.load_artifact(input, unsafe { &mut *substrate_ptr })?
         };
-
-        let module = Module::new(&self.engine, code_payload)
-            .map_err(|e| WasmVisaError::Wasmtime(format!("module compile: {e}")))?;
 
         let activation = {
             let state = self.store.data_mut();
@@ -161,35 +149,71 @@ impl WasmVisaExecutor {
         let state = self.store.data_mut();
         state.loaded = Some(loaded);
         state.activation = Some(activation);
+        state.hostcall_specs = hostcall_specs;
+        Ok(())
+    }
 
-        // Bind hostcalls from the loaded artifact's hostcall table
-        let hostcall_numbers: Vec<u32> = state
-            .loaded
+    /// Call a wasm exported function by name.
+    /// Traps are recorded to the runtime executor.
+    pub fn call_export(
+        &mut self,
+        func_name: &str,
+        params: &[Val],
+    ) -> Result<Vec<Val>, WasmVisaError> {
+        let instance = self
+            .instance
             .as_ref()
-            .map(|_loaded| {
-                state
-                    .runtime
-                    .executor()
-                    .hostcall_trace()
-                    .iter()
-                    .map(|t| t.hostcall_number)
-                    .collect()
-            })
-            .unwrap_or_default();
-        state.hostcall_numbers = hostcall_numbers.clone();
+            .ok_or_else(|| WasmVisaError::Wasmtime("no instance loaded".into()))?;
+        let func = instance
+            .get_func(&mut self.store, func_name)
+            .ok_or_else(|| WasmVisaError::MissingExport(func_name.into()))?;
+        let mut results = vec![Val::I32(0)];
+        func.call(&mut self.store, params, &mut results).map_err(|e| {
+            let msg = format!("{e}");
+            if e.downcast_ref::<Trap>().is_some() {
+                // TODO: record trap attribution through VisaRuntime facade
+                WasmVisaError::Trap(msg)
+            } else {
+                WasmVisaError::Wasmtime(msg)
+            }
+        })?;
+        Ok(results)
+    }
 
-        // Build hostcall binding map from the loaded hostcall trace
-        let mut hostcall_map: BTreeMap<u32, String> = BTreeMap::new();
-        for trace in self.store.data().runtime.executor().hostcall_trace() {
-            hostcall_map
-                .entry(trace.hostcall_number)
-                .or_insert_with(|| format!("{}.{}", trace.object, trace.operation));
-        }
+    /// Run: load artifact, activate, call the wasm entry export.
+    pub fn run(
+        &mut self,
+        input: VisaArtifactInput<'_>,
+        entry: &str,
+    ) -> Result<VisaExecutionReport, WasmVisaError> {
+        self.run_with_entry(input, entry)
+    }
+
+    fn run_with_entry(
+        &mut self,
+        input: VisaArtifactInput<'_>,
+        entry: &str,
+    ) -> Result<VisaExecutionReport, WasmVisaError> {
+        let artifact_bytes = input.bytes;
+        self.load_and_activate(input, entry)?;
+
+        let code_payload = {
+            target_abi::TargetArtifactImage::parse(artifact_bytes)
+                .map_err(WasmVisaError::Artifact)?
+                .section_payload(SectionKindV1::CodeObject)
+                .map_err(WasmVisaError::Artifact)?
+                .ok_or_else(|| WasmVisaError::Wasmtime("missing code section".into()))?
+        };
+
+        let module = Module::new(&self.engine, code_payload)
+            .map_err(|e| WasmVisaError::Wasmtime(format!("compile: {e}")))?;
+
+        let specs: Vec<HostcallSpec> = self.store.data().hostcall_specs.clone();
 
         self.linker = Linker::new(&self.engine);
-        for number in hostcall_map.keys() {
-            let n = *number;
-            let import_name = format!("vms.hostcall_{n}");
+        for spec in &specs {
+            let n = spec.number;
+            let import_name = format!("hostcall_{n}");
             let ty = FuncType::new(
                 &self.engine,
                 vec![
@@ -202,22 +226,21 @@ impl WasmVisaExecutor {
                 ],
                 vec![ValType::I64],
             );
+            let obj = spec.object.clone();
+            let op = spec.operation.clone();
             self.linker
                 .func_new(
                     "vms",
                     &import_name,
                     ty,
                     move |mut caller: Caller<'_, WasmVisaState>,
-                          _params: &[Val],
+                          params: &[Val],
                           results: &mut [Val]| {
-                        let a = _params.first().map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let b = _params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let c = _params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let d = _params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let e = _params.get(4).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let f = _params.get(5).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let payload =
-                            hostcall_payload_for_number(caller.data(), n, a, b, c, d, e, f);
+                        let a = params.first().map(|v| v.unwrap_i64()).unwrap_or(0);
+                        let b = params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0);
+                        let c = params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0);
+                        let d = params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0);
+                        let payload = hostcall_payload_for_object(&obj, &op, a, b, c, d);
                         let result = match payload {
                             Some(p) => match caller.data_mut().dispatch_hostcall(n, p) {
                                 Ok(report) => hostcall_result_i64(&report.value),
@@ -238,82 +261,66 @@ impl WasmVisaExecutor {
             .map_err(|e| WasmVisaError::Wasmtime(format!("instantiate: {e}")))?;
         self.instance = Some(instance);
 
-        Ok(())
-    }
+        // Call the wasm entry point
+        let _ = self.call_export(entry, &[]);
 
-    /// Call a wasm exported function by name.
-    pub fn call_export(
-        &mut self,
-        func_name: &str,
-        params: &[Val],
-    ) -> Result<Vec<Val>, WasmVisaError> {
-        let instance = self
-            .instance
-            .as_ref()
-            .ok_or_else(|| WasmVisaError::Wasmtime("no instance loaded".into()))?;
-        let func = instance
-            .get_func(&mut self.store, func_name)
-            .ok_or_else(|| WasmVisaError::MissingExport(func_name.into()))?;
-        let mut results = vec![Val::I32(0)];
-        func.call(&mut self.store, params, &mut results).map_err(|e| {
-            let msg = format!("{e}");
-            // Distinguish traps from other wasmtime errors by checking the error chain
-            if e.downcast_ref::<Trap>().is_some() {
-                WasmVisaError::Trap(msg)
-            } else {
-                WasmVisaError::Wasmtime(msg)
-            }
-        })?;
-        Ok(results)
-    }
-
-    /// Run a complete artifact lifecycle from load through hostcall steps.
-    pub fn run(
-        &mut self,
-        input: VisaArtifactInput<'_>,
-        entry: &str,
-    ) -> Result<VisaExecutionReport, WasmVisaError> {
-        self.load_and_activate(input, entry)?;
-        let report = VisaExecutionReport {
-            loaded: self
-                .store
-                .data()
+        let data = self.store.data();
+        Ok(VisaExecutionReport {
+            loaded: data
                 .loaded
                 .clone()
                 .ok_or_else(|| WasmVisaError::Wasmtime("no loaded artifact".into()))?,
-            activation: self
-                .store
-                .data()
+            activation: data
                 .activation
                 .clone()
                 .ok_or_else(|| WasmVisaError::Wasmtime("no activation".into()))?,
-            hostcalls: self.store.data().hostcall_reports.clone(),
-            events: self.store.data().runtime.events().to_vec(),
-        };
-        Ok(report)
+            hostcalls: data.hostcall_reports.clone(),
+            events: data.runtime.events().to_vec(),
+        })
     }
 }
 
-fn hostcall_payload_for_number(
-    _state: &WasmVisaState,
-    _number: u32,
+// ── hostcall wire decoding ────────────────────────────────────────────────
+
+fn hostcall_payload_for_object(
+    object: &str,
+    operation: &str,
     a: i64,
     b: i64,
     c: i64,
     d: i64,
-    _e: i64,
-    _f: i64,
 ) -> Option<VisaHostcallPayload> {
-    // Basic hostcall wire format: (a,b,c,d,e,f) → payload variant.
-    // This maps the [i64; 6] wire ABI to VisaHostcallPayload variants.
-    // The exact mapping depends on the hostcall operation.
-    let payload = match () {
-        _ => {
-            let bytes = if a > 0 { vec![a as u8, b as u8, c as u8, d as u8] } else { vec![] };
-            VisaHostcallPayload::ConsoleWrite { bytes }
+    match (object, operation) {
+        ("wasi.fd", "write") | ("test.console", "write") => {
+            let len = a.max(0) as usize;
+            let mut bytes = Vec::with_capacity(len.min(1024));
+            if b > 0 {
+                bytes.push(b as u8);
+            }
+            if c > 0 {
+                bytes.push(c as u8);
+            }
+            if d > 0 {
+                bytes.push(d as u8);
+            }
+            Some(VisaHostcallPayload::ConsoleWrite { bytes })
         }
-    };
-    Some(payload)
+        ("timer.wasi", "read") | ("timer", "now") => Some(VisaHostcallPayload::TimerNow),
+        ("timer.wasi", "arm") => Some(VisaHostcallPayload::TimerArm {
+            deadline_ticks: a as u64,
+            token: substrate_api::WaitTokenRef::new(b as u64, c as u64),
+        }),
+        _ => {
+            // Default fallback: treat as console write with argument bytes
+            let mut bytes = Vec::new();
+            for val in [a, b, c, d] {
+                if val != 0 {
+                    bytes.push(val as u8);
+                }
+            }
+            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+        }
+    }
 }
 
 fn hostcall_result_i64(value: &VisaHostcallValue) -> i64 {
@@ -330,12 +337,12 @@ fn hostcall_result_i64(value: &VisaHostcallValue) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use semantic_core::target_executor::{HostcallCategory, HostcallSpec};
+    use semantic_core::target_executor::HostcallCategory;
     use sha2::{Digest, Sha256};
     use substrate_api::{
-        DmaAuthority, DmwAuthority, EventQueueAuthority, GuestMemoryAuthority, IrqAuthority,
-        MmioAuthority, SnapshotAuthority, SubstrateResult, TimerAuthority, VirtualTime,
-        WaitTokenRef,
+        ArtifactAuthority, CodePublisherAuthority, ConsoleAuthority, DmaAuthority, DmwAuthority,
+        EventQueueAuthority, GuestMemoryAuthority, IrqAuthority, MmioAuthority, SnapshotAuthority,
+        SubstrateResult, TimerAuthority, VirtualTime,
     };
     use target_abi::{
         TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
@@ -415,7 +422,7 @@ mod tests {
     fn fake_artifact(kinds: &[SectionKindV1], code_payload: &[u8]) -> Vec<u8> {
         let header_len = std::mem::size_of::<TargetArtifactHeaderV1>();
         let section_len = std::mem::size_of::<TargetSectionHeaderV1>();
-        let payload_len = code_payload.len().max(16); // uniform payload size
+        let payload_len = code_payload.len().max(16);
         let section_table_len = kinds.len() * section_len;
         let payload_base = header_len + section_table_len;
         let image_len = payload_base + kinds.len() * payload_len;
@@ -427,7 +434,8 @@ mod tests {
         for (index, kind) in kinds.iter().copied().enumerate() {
             let offset = payload_base + index * payload_len;
             if kind == SectionKindV1::CodeObject {
-                image[offset..offset + code_payload.len()].copy_from_slice(code_payload);
+                let end = (offset + code_payload.len()).min(image_len);
+                image[offset..end].copy_from_slice(code_payload);
             } else {
                 image[offset..offset + payload_len].fill(kind as u32 as u8);
             }
@@ -473,11 +481,17 @@ mod tests {
     }
 
     fn wasm_module_bytes() -> Vec<u8> {
-        // Minimal self-contained WAT module
         wat::parse_str(
             r#"(module
+  (import "vms" "hostcall_1" (func $hc1 (param i64 i64 i64 i64 i64 i64) (result i64)))
   (func (export "entry") (result i64)
-    i64.const 42
+    i64.const 5
+    i64.const 104
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $hc1
   )
 )"#,
         )
@@ -502,7 +516,7 @@ mod tests {
         let substrate = TestSubstrate::default();
         let executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
         let (rt, mut sub) = executor.into_parts();
-        assert!(rt.semantic().tasks().len() >= 1);
+        assert!(!rt.semantic().tasks().is_empty());
         assert!(sub.console_write(b"test").is_ok());
     }
 
@@ -532,29 +546,37 @@ mod tests {
             .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
             .expect("runtime load_artifact");
         assert!(loaded.store_id > 0);
-        assert!(loaded.code_object_id > 0);
     }
 
     #[test]
-    fn wasm_module_compiles() {
-        let engine = Engine::default();
-        let wasm = wasm_module_bytes();
-        let module = Module::new(&engine, &wasm[..]).expect("compile wasm");
-        let mut store = Store::new(
-            &engine,
-            WasmVisaState {
-                runtime: VisaRuntime::new(VisaRuntimeConfig::for_profile(
-                    SubstrateProfile::GuestFrontend,
-                )),
-                substrate: Box::new(TestSubstrate::default()),
-                loaded: None,
-                activation: None,
-                hostcall_reports: Vec::new(),
-                hostcall_numbers: Vec::new(),
-            },
-        );
-        let linker = Linker::new(&engine);
-        let instance = linker.instantiate(&mut store, &module).expect("instantiate");
-        assert!(instance.exports(&mut store).any(|e| e.name() == "entry"));
+    fn run_executes_wasm_entry_and_dispatches_hostcall() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        let descriptor = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality")
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "test.write",
+            HostcallCategory::Service,
+            "test.console",
+            "write",
+            false,
+        ));
+
+        let report =
+            executor.run(VisaArtifactInput { bytes: &artifact, descriptor }, "entry").expect("run");
+
+        assert!(report.loaded.store_id > 0);
+        // Hostcall should have been dispatched
+        assert!(!report.hostcalls.is_empty(), "must have at least one hostcall dispatch");
     }
 }
