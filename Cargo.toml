@@ -17,6 +17,7 @@ members = [
     "crates/runtime/supervisor_catalog",
     "crates/runtime/target_executor",
     "crates/runtime/vms_runtime",
+    "crates/runtime/vms_wasmtime",
     "crates/backend/substrate_api",
     "crates/backend/substrate_virtio",
     "crates/services/console_service",
@@ -65,6 +66,7 @@ target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
 visa_profile = { path = "crates/core/visa_profile" }
 vms_runtime = { path = "crates/runtime/vms_runtime" }
+vms_wasmtime = { path = "crates/runtime/vms_wasmtime" }
 vmos_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.2", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }

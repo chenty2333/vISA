@@ -403,7 +403,7 @@ impl VisaRuntime {
         &self.events
     }
 
-    pub fn load_artifact<B: VisaSubstrate>(
+    pub fn load_artifact<B: VisaSubstrate + ?Sized>(
         &mut self,
         input: VisaArtifactInput<'_>,
         backend: &mut B,
@@ -518,7 +518,7 @@ impl VisaRuntime {
         })
     }
 
-    pub fn run<B: VisaSubstrate>(
+    pub fn run<B: VisaSubstrate + ?Sized>(
         &mut self,
         input: VisaArtifactInput<'_>,
         entry: ActivationEntry,
@@ -595,7 +595,7 @@ impl VisaRuntime {
         })
     }
 
-    pub fn invoke_hostcall<B: VisaSubstrate>(
+    pub fn invoke_hostcall<B: VisaSubstrate + ?Sized>(
         &mut self,
         activation: &ActivationHandle,
         hostcall_number: u32,
@@ -688,7 +688,7 @@ impl VisaRuntime {
         self.config.enforced_capabilities.check_profile(required_profile)
     }
 
-    fn dispatch_artifact_load<B: VisaSubstrate>(
+    fn dispatch_artifact_load<B: VisaSubstrate + ?Sized>(
         &mut self,
         backend: &mut B,
         artifact: &VerifiedArtifact,
@@ -706,7 +706,7 @@ impl VisaRuntime {
         }
     }
 
-    fn dispatch_code_publish<B: VisaSubstrate>(
+    fn dispatch_code_publish<B: VisaSubstrate + ?Sized>(
         &mut self,
         backend: &mut B,
         artifact: &VerifiedArtifact,
@@ -732,7 +732,7 @@ impl VisaRuntime {
         }
     }
 
-    fn dispatch_hostcall_payload<B: VisaSubstrate>(
+    fn dispatch_hostcall_payload<B: VisaSubstrate + ?Sized>(
         &mut self,
         backend: &mut B,
         code: &CodeObject,
@@ -954,7 +954,7 @@ impl VisaRuntime {
         }
     }
 
-    fn map_hostcall_substrate_error<B: VisaSubstrate>(
+    fn map_hostcall_substrate_error<B: VisaSubstrate + ?Sized>(
         &mut self,
         backend: &mut B,
         code: &CodeObject,
@@ -981,7 +981,7 @@ impl VisaRuntime {
         }
     }
 
-    fn substrate_error<B: VisaSubstrate>(
+    fn substrate_error<B: VisaSubstrate + ?Sized>(
         &mut self,
         backend: &mut B,
         authority: &'static str,
