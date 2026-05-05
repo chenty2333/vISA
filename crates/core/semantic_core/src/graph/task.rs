@@ -20,6 +20,16 @@ impl SemanticGraph {
         });
         self.event_log.push("semantic", EventKind::TaskCreated { task: id, frontend });
     }
+    pub fn restore_task_record(&mut self, task: TaskRecord) -> bool {
+        if task.id == 0
+            || task.generation == 0
+            || self.domains.scheduler.tasks.iter().any(|record| record.id == task.id)
+        {
+            return false;
+        }
+        self.domains.scheduler.tasks.push(task);
+        true
+    }
     pub fn set_task_state(&mut self, id: TaskId, state: TaskState) {
         let Some(task) = self.domains.scheduler.tasks.iter_mut().find(|task| task.id == id) else {
             return;

@@ -726,6 +726,25 @@ impl ArtifactRegistry {
     pub fn verified(&self) -> &[VerifiedArtifact] {
         &self.verified
     }
+
+    pub fn restore_verified_records(&mut self, verified: &[VerifiedArtifact]) -> bool {
+        let mut restored = Vec::new();
+        for record in verified {
+            if record.artifact_id == 0
+                || record.generation == 0
+                || record.package.is_empty()
+                || record.artifact_name.is_empty()
+                || restored
+                    .iter()
+                    .any(|existing: &VerifiedArtifact| existing.artifact_id == record.artifact_id)
+            {
+                return false;
+            }
+            restored.push(record.clone());
+        }
+        self.verified = restored;
+        true
+    }
 }
 
 impl Default for ArtifactRegistry {
@@ -1099,6 +1118,46 @@ impl CodePublisher {
 
     pub fn tombstones(&self) -> &[TombstoneRecord] {
         &self.tombstones
+    }
+
+    pub fn restore_records(
+        &mut self,
+        objects: &[CodeObject],
+        tombstones: &[TombstoneRecord],
+    ) -> bool {
+        let mut restored_objects = Vec::new();
+        for object in objects {
+            if object.id == 0
+                || object.generation == 0
+                || object.artifact_id == 0
+                || restored_objects.iter().any(|existing: &CodeObject| existing.id == object.id)
+            {
+                return false;
+            }
+            restored_objects.push(object.clone());
+        }
+        let mut restored_tombstones = Vec::new();
+        for tombstone in tombstones {
+            if tombstone.kind != ContractObjectKind::CodeObject
+                || tombstone.id == 0
+                || tombstone.generation == 0
+                || restored_tombstones.iter().any(|existing: &TombstoneRecord| {
+                    existing.object_ref() == tombstone.object_ref()
+                })
+            {
+                return false;
+            }
+            restored_tombstones.push(tombstone.clone());
+        }
+        let object_next = restored_objects.iter().map(|object| object.id + 1).max().unwrap_or(1);
+        let tombstone_next =
+            restored_tombstones.iter().map(|tombstone| tombstone.id + 1).max().unwrap_or(1);
+        self.next_code_id = object_next.max(tombstone_next);
+        self.next_tombstone_event =
+            restored_tombstones.iter().map(|tombstone| tombstone.died_at + 1).max().unwrap_or(1);
+        self.objects = restored_objects;
+        self.tombstones = restored_tombstones;
+        true
     }
 
     fn transition(

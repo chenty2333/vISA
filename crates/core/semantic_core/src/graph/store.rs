@@ -94,6 +94,60 @@ impl SemanticGraph {
             .find(|store| store.package == package)
             .map(|store| store.id)
     }
+    pub fn restore_store_record(&mut self, store: StoreRecord) -> bool {
+        if store.id == 0
+            || store.fault_domain == 0
+            || store.generation == 0
+            || self.domains.lifecycle.stores.iter().any(|record| record.id == store.id)
+            || self.domains.lifecycle.stores.iter().any(|record| record.package == store.package)
+            || (store.state != StoreState::Dead && store.resource.is_none())
+        {
+            return false;
+        }
+        let fault_domain = store.fault_domain;
+        let resource = store.resource;
+        let package = store.package.clone();
+        let artifact = store.artifact.clone();
+        let role = store.role.clone();
+        let fault_domain_state = store.state.fault_domain_state();
+        if self.domains.resource.resources.iter().any(|record| Some(record.id) == resource) {
+            return false;
+        }
+        if let Some(existing) =
+            self.domains.lifecycle.fault_domains.iter().find(|record| record.id == fault_domain)
+            && (existing.name != package || existing.role != role)
+        {
+            return false;
+        }
+        self.domains.lifecycle.next_store_id =
+            self.domains.lifecycle.next_store_id.max(store.id + 1);
+        self.domains.lifecycle.next_fault_domain_id =
+            self.domains.lifecycle.next_fault_domain_id.max(fault_domain + 1);
+        if !self.domains.lifecycle.fault_domains.iter().any(|record| record.id == fault_domain) {
+            self.domains.lifecycle.fault_domains.push(FaultDomainRecord {
+                id: fault_domain,
+                name: package.clone(),
+                role: role.clone(),
+                state: fault_domain_state,
+                generation: store.generation,
+            });
+        }
+        if let Some(resource) = resource {
+            self.domains.resource.next_resource_id =
+                self.domains.resource.next_resource_id.max(resource + 1);
+            self.domains.resource.resources.push(ResourceRecord {
+                id: resource,
+                label: format!("store:{package}:{artifact}"),
+                kind: ResourceKind::ServiceStore,
+                owner_task: None,
+                owner_store: Some(store.id),
+                generation: 1,
+                live: store.state != StoreState::Dead,
+            });
+        }
+        self.domains.lifecycle.stores.push(store);
+        true
+    }
     pub fn store_handle(&self, id: StoreId) -> Option<StoreHandle> {
         self.domains
             .lifecycle

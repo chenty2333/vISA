@@ -87,6 +87,45 @@ impl SemanticGraph {
         true
     }
 
+    pub fn restore_runtime_activation_record(&mut self, record: RuntimeActivationRecord) -> bool {
+        if record.id == 0
+            || record.generation == 0
+            || self
+                .domains
+                .scheduler
+                .runtime_activations
+                .iter()
+                .any(|existing| existing.id == record.id)
+            || !self.domains.scheduler.tasks.iter().any(|task| {
+                task.id == record.owner_task && task.generation == record.owner_task_generation
+            })
+        {
+            return false;
+        }
+        if let Some(code) = record.code_object
+            && code.kind != ContractObjectKind::CodeObject
+        {
+            return false;
+        }
+        match (record.owner_store, record.owner_store_generation) {
+            (Some(store), Some(generation)) => {
+                if !self.domains.lifecycle.stores.iter().any(|store_record| {
+                    store_record.id == store
+                        && store_record.generation == generation
+                        && store_record.state != StoreState::Dead
+                }) {
+                    return false;
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+        self.domains.scheduler.next_runtime_activation_id =
+            self.domains.scheduler.next_runtime_activation_id.max(record.id + 1);
+        self.domains.scheduler.runtime_activations.push(record);
+        true
+    }
+
     pub fn create_runnable_queue(&mut self, label: &str) -> RunnableQueueId {
         let queue = self.domains.scheduler.next_runnable_queue_id;
         self.domains.scheduler.next_runnable_queue_id += 1;

@@ -15,7 +15,6 @@ extern crate alloc;
 extern crate std;
 
 use alloc::{
-    collections::BTreeMap,
     format,
     string::{String, ToString},
     vec,
@@ -27,13 +26,13 @@ use semantic_core::{
     ActivationId, ArtifactVerificationState, BoundaryKind, BoundaryStatus, CapabilityLedger,
     CodeObjectId, CodePublishState, CommandEnvelope, ContractGraphSnapshot,
     ContractGraphSnapshotInputs, EntrypointState, FrontendKind, HostcallClass, HostcallLinkState,
-    MemoryLayoutState, RuntimeMode, SemanticCommand, SemanticGraph, StoreState, TargetArtifactId,
-    TrapSurfaceState,
+    MemoryLayoutState, NonPortableStateKind, RuntimeMode, SemanticCommand, SemanticGraph,
+    StoreState, TargetArtifactId, TrapSurfaceState,
     target_executor::{
         ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
         ContractObjectKind, ContractObjectRef, HostcallFrame, HostcallSpec, ManagedStoreRecord,
         TargetArtifactImage, TargetCapabilitySpec, TargetExecutor, TargetExecutorError,
-        TargetMemoryPlan, TargetStoreManager, VerifiedArtifact,
+        TargetMemoryPlan, TargetStoreManager, TombstoneRecord, VerifiedArtifact,
     },
 };
 use substrate_api::{
@@ -337,6 +336,8 @@ pub enum VisaRuntimeError {
     CodePublisher(&'static str),
     Executor(TargetExecutorError),
     SemanticCommandRejected(Vec<String>),
+    NonPortableSnapshot(Vec<NonPortableStateKind>),
+    InvalidPortableSnapshot(&'static str),
     MissingLoadedArtifact(TargetArtifactId),
     MissingStore(u64),
     MissingCodeObject(CodeObjectId),
@@ -1020,64 +1021,128 @@ impl VisaRuntime {
     }
 
     /// Restore portable vISA state from a contract graph snapshot.
-    /// Only stores, tasks, and capabilities are restored;
-    /// device bindings and host-specific records are silently ignored.
+    /// The input must already be a portable subset; full snapshots with
+    /// host-specific records are rejected so migration cannot silently drop
+    /// substrate state.
     pub fn restore_portable_subset(
         &mut self,
         snapshot: &ContractGraphSnapshot,
     ) -> Result<(), VisaRuntimeError> {
-        // 1. Clear current state
-        self.semantic = SemanticGraph::with_runtime_mode(self.config.runtime_mode);
-        self.ledger = CapabilityLedger::new();
-        self.events.clear();
+        let non_portable = snapshot.non_portable_summary();
+        if !non_portable.is_empty() {
+            return Err(VisaRuntimeError::NonPortableSnapshot(non_portable));
+        }
+        if let Some(field) = unsupported_portable_record(snapshot) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot(field));
+        }
 
-        // 2. Restore tasks
+        let mut semantic = SemanticGraph::with_runtime_mode(self.config.runtime_mode);
         for task in &snapshot.tasks {
-            self.semantic.ensure_task(task.id, task.frontend, &task.label);
-            self.semantic.set_task_state(task.id, task.state);
+            if !semantic.restore_task_record(task.clone()) {
+                return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid task record"));
+            }
         }
 
-        // 3. Restore stores
-        let mut store_map = BTreeMap::new();
         for store_record in &snapshot.stores {
-            let new_id = self.semantic.register_store(
-                &store_record.package,
-                &store_record.artifact,
-                &store_record.role,
-                &store_record.fault_policy,
-            );
-            store_map.insert(store_record.id, new_id);
-            self.semantic.set_store_state(new_id, store_record.state);
+            if !semantic.restore_store_record(store_record.clone()) {
+                return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid store record"));
+            }
         }
 
-        // 4. Restore capabilities into the ledger
+        for activation in &snapshot.runtime_activations {
+            if !semantic.restore_runtime_activation_record(activation.clone()) {
+                return Err(VisaRuntimeError::InvalidPortableSnapshot(
+                    "invalid runtime activation record",
+                ));
+            }
+        }
+
+        let mut ledger = CapabilityLedger::new();
         for cap in &snapshot.capabilities {
-            let store_id = cap.owner_store.and_then(|orig| store_map.get(&orig)).copied();
-            let store_gen = if store_id.is_some() { Some(1u64) } else { None };
-            let ops: Vec<&str> = cap.operations.as_slice().iter().map(|s| s.as_str()).collect();
-            self.ledger
-                .grant_manifest_binding(
-                    &cap.subject,
-                    &cap.object,
-                    &ops,
-                    &cap.lifetime,
-                    cap.class,
-                    store_id,
-                    store_gen,
-                    None,
-                    "restore",
-                )
-                .map_err(|_| VisaRuntimeError::CapabilityGrant("restore capability failed"))?;
+            if !ledger.restore_record(cap.clone()) {
+                return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid capability record"));
+            }
         }
 
-        // 5. Restore complete — contract validation is callerʼs responsibility
+        let mut registry = ArtifactRegistry::new();
+        if !registry.restore_verified_records(&snapshot.artifacts) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid artifact record"));
+        }
+
+        let code_tombstones = tombstones_for_kind(snapshot, ContractObjectKind::CodeObject);
+        let mut publisher = CodePublisher::new();
+        if !publisher.restore_records(&snapshot.code_objects, &code_tombstones) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid code object record"));
+        }
+
+        let managed_store_records: Vec<ManagedStoreRecord> = snapshot
+            .stores
+            .iter()
+            .cloned()
+            .map(|store| ManagedStoreRecord {
+                resource_arena: format!("store-arena:{}", store.package),
+                rebind_policy: "restore".to_string(),
+                store,
+            })
+            .collect();
+        let store_tombstones = tombstones_for_kind(snapshot, ContractObjectKind::Store);
+        let mut store_manager = TargetStoreManager::new();
+        if !store_manager.restore_records(&managed_store_records, &store_tombstones) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid managed store record"));
+        }
+
+        let executor_tombstones: Vec<TombstoneRecord> = snapshot
+            .tombstones
+            .iter()
+            .filter(|tombstone| {
+                !matches!(
+                    tombstone.kind,
+                    ContractObjectKind::CodeObject | ContractObjectKind::Store
+                )
+            })
+            .cloned()
+            .collect();
+        let mut executor = TargetExecutor::new();
+        if !executor.restore_records(
+            &snapshot.activations,
+            &snapshot.traps,
+            &snapshot.hostcalls,
+            &snapshot.cleanup_transactions,
+            &executor_tombstones,
+        ) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid executor record"));
+        }
+
+        self.semantic = semantic;
+        self.registry = registry;
+        self.publisher = publisher;
+        self.store_manager = store_manager;
+        self.executor = executor;
+        self.ledger = ledger;
+        self.events.clear();
+        self.next_command_id = 1;
+        self.publish_runtime_boundaries();
         Ok(())
     }
 
     pub fn snapshot(&self) -> ContractGraphSnapshot {
         let cap_records = self.ledger.records().to_vec();
-        let inputs =
-            ContractGraphSnapshotInputs { capabilities: &cap_records, ..Default::default() };
+        let mut tombstones = Vec::new();
+        tombstones.extend_from_slice(self.publisher.tombstones());
+        tombstones.extend_from_slice(self.store_manager.tombstones());
+        tombstones.extend_from_slice(self.executor.tombstones());
+        let inputs = ContractGraphSnapshotInputs {
+            claimed_evidence_level: self.config.evidence_level,
+            artifacts: self.registry.verified(),
+            code_objects: self.publisher.objects(),
+            activations: self.executor.activations(),
+            traps: self.executor.traps(),
+            hostcalls: self.executor.hostcall_trace(),
+            capabilities: &cap_records,
+            cleanup_transactions: self.executor.cleanup_transactions(),
+            tombstones: &tombstones,
+            ..Default::default()
+        };
         self.semantic.snapshot_with(inputs)
     }
 
@@ -1100,6 +1165,90 @@ impl VisaRuntime {
         self.next_command_id += 1;
         id
     }
+}
+
+fn tombstones_for_kind(
+    snapshot: &ContractGraphSnapshot,
+    kind: ContractObjectKind,
+) -> Vec<TombstoneRecord> {
+    snapshot.tombstones.iter().filter(|tombstone| tombstone.kind == kind).cloned().collect()
+}
+
+fn unsupported_portable_record(snapshot: &ContractGraphSnapshot) -> Option<&'static str> {
+    macro_rules! reject {
+        ($field:ident) => {
+            if !snapshot.$field.is_empty() {
+                return Some(concat!("unsupported portable record: ", stringify!($field)));
+            }
+        };
+    }
+
+    reject!(target_feature_sets);
+    reject!(vector_states);
+    reject!(simd_fault_injections);
+    reject!(simd_benchmarks);
+    reject!(simd_context_switch_benchmarks);
+    reject!(framebuffer_objects);
+    reject!(display_objects);
+    reject!(display_capabilities);
+    reject!(framebuffer_window_leases);
+    reject!(framebuffer_mappings);
+    reject!(framebuffer_writes);
+    reject!(framebuffer_flush_regions);
+    reject!(framebuffer_dirty_regions);
+    reject!(display_event_logs);
+    reject!(display_cleanups);
+    reject!(display_snapshot_barriers);
+    reject!(display_panic_last_frames);
+    reject!(framebuffer_benchmarks);
+    reject!(integrated_display_scheduler_loads);
+    reject!(integrated_snapshot_io_lease_barriers);
+    reject!(integrated_code_publish_smp_workloads);
+    reject!(integrated_display_panics);
+    reject!(integrated_osctl_trace_replays);
+    reject!(integrated_smp_preemption_cleanups);
+    reject!(integrated_smp_network_faults);
+    reject!(integrated_disk_preempt_faults);
+    reject!(integrated_simd_migrations);
+    reject!(integrated_network_disk_ios);
+    reject!(network_benchmarks);
+    reject!(block_benchmarks);
+    reject!(fake_block_backends);
+    reject!(network_driver_cleanups);
+    reject!(device_objects);
+    reject!(packet_device_objects);
+    reject!(network_stack_adapters);
+    reject!(socket_objects);
+    reject!(virtio_net_backends);
+    reject!(io_cleanups);
+    reject!(block_pending_io_policies);
+    reject!(block_waits);
+    reject!(block_request_objects);
+    reject!(block_device_objects);
+    reject!(block_range_objects);
+    reject!(block_request_queues);
+    reject!(block_dma_buffers);
+    reject!(harts);
+    reject!(runnable_queues);
+    reject!(scheduler_decisions);
+    reject!(activation_contexts);
+    reject!(activation_migrations);
+    reject!(smp_safe_points);
+    reject!(stop_the_world_rendezvous);
+    reject!(smp_code_publish_barriers);
+    reject!(saved_contexts);
+    reject!(timer_interrupts);
+    reject!(remote_preempts);
+    reject!(activation_cleanups);
+    reject!(smp_cleanup_quiescence);
+    reject!(smp_snapshot_barriers);
+    reject!(smp_stress_runs);
+    reject!(preemptions);
+    reject!(activation_resumes);
+    reject!(waits);
+    reject!(external_objects);
+    reject!(explicit_edges);
+    None
 }
 
 fn semantic_image_from_descriptor(
@@ -1590,6 +1739,13 @@ mod tests {
         rt_a.start_activation(&loaded, ActivationEntry::Symbol("init".into())).expect("activate");
 
         let snapshot_a = rt_a.snapshot();
+        assert_eq!(
+            snapshot_a.claimed_evidence_level,
+            EvidenceBoundaryLevel::PortableArtifactExecution
+        );
+        assert!(!snapshot_a.artifacts.is_empty());
+        assert!(!snapshot_a.code_objects.is_empty());
+        assert!(!snapshot_a.activations.is_empty());
         assert!(!snapshot_a.stores.is_empty());
         assert!(!snapshot_a.capabilities.is_empty());
 
@@ -1609,17 +1765,214 @@ mod tests {
             SubstrateProfile::SnapshotReplayCapable,
         ));
         rt_b.restore_portable_subset(&portable).expect("restore");
+        assert!(
+            rt_b.semantic().check_invariants().is_ok(),
+            "restored semantic graph must remain invariant-clean"
+        );
 
         // Step 3: Portable state preserved
         let snapshot_b = rt_b.snapshot();
+        assert_eq!(snapshot_b.tasks, portable.tasks, "task identity must survive profile change");
         assert_eq!(
-            snapshot_b.stores.len(),
-            portable.stores.len(),
-            "store count must survive profile change"
+            snapshot_b.stores, portable.stores,
+            "store identity must survive profile change"
         );
+        assert_eq!(
+            snapshot_b.runtime_activations, portable.runtime_activations,
+            "semantic runtime activation identity must survive profile change"
+        );
+        assert_eq!(
+            snapshot_b.capabilities, portable.capabilities,
+            "capability identity must survive profile change"
+        );
+        assert_eq!(
+            snapshot_b.artifacts, portable.artifacts,
+            "artifact identity must survive profile change"
+        );
+        assert_eq!(
+            snapshot_b.code_objects, portable.code_objects,
+            "code object identity must survive profile change"
+        );
+        assert_eq!(
+            snapshot_b.activations, portable.activations,
+            "activation identity must survive profile change"
+        );
+    }
+
+    #[test]
+    fn restore_rejects_non_portable_snapshot_without_mutating_runtime() {
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::DeviceCapable));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            99,
+            "old.pkg",
+            "old-artifact",
+            SubstrateProfile::MinimalBareMetal,
+        );
+        rt.load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load old artifact");
+        let before = rt.snapshot();
+
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::Supervisor, "non-portable");
+        let resource =
+            graph.register_resource(semantic_core::ResourceKind::BlockDevice, Some(1), "blk0");
+        assert!(graph.record_device_object_with_id(
+            1,
+            "dev0",
+            "block-device",
+            resource,
+            1,
+            "virtio-blk",
+            "pci",
+            "vmos",
+            "bench",
+            "test",
+        ));
+        let non_portable = graph.snapshot();
+
+        let error = rt
+            .restore_portable_subset(&non_portable)
+            .expect_err("non-portable snapshot must be rejected");
+        assert!(matches!(error, VisaRuntimeError::NonPortableSnapshot(kinds) if !kinds.is_empty()));
+        let after = rt.snapshot();
+        assert_eq!(after.artifacts, before.artifacts);
+        assert_eq!(after.code_objects, before.code_objects);
+        assert_eq!(after.stores, before.stores);
+        assert_eq!(after.capabilities, before.capabilities);
+    }
+
+    #[test]
+    fn restore_rejects_unsupported_portable_records_without_mutating_runtime() {
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let before = rt.snapshot();
+
+        let mut snapshot = ContractGraphSnapshot::default();
+        snapshot.external_objects.push(semantic_core::ExternalObjectDeclaration::new(
+            ContractObjectRef::new(ContractObjectKind::EventLog, 1, 1),
+            "debugger",
+            "external-event-log",
+            "event-log",
+        ));
+
+        let error = rt
+            .restore_portable_subset(&snapshot)
+            .expect_err("unsupported portable fields must be rejected");
+        assert_eq!(
+            error,
+            VisaRuntimeError::InvalidPortableSnapshot(
+                "unsupported portable record: external_objects"
+            )
+        );
+        assert_eq!(rt.snapshot().artifacts, before.artifacts);
+        assert_eq!(rt.snapshot().code_objects, before.code_objects);
+        assert_eq!(rt.snapshot().stores, before.stores);
+    }
+
+    #[test]
+    fn restore_rejects_unsupported_tombstone_kind_without_mutating_runtime() {
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let before = rt.snapshot();
+        let mut snapshot = before.portable_subset();
+        snapshot.tombstones.push(TombstoneRecord::new(
+            ContractObjectKind::DeviceObject,
+            7,
+            1,
+            1,
+            "device tombstone is not runtime-portable",
+        ));
+
+        let error = rt
+            .restore_portable_subset(&snapshot)
+            .expect_err("unsupported tombstone kind must be rejected");
+        assert!(matches!(
+            error,
+            VisaRuntimeError::InvalidPortableSnapshot("invalid executor record")
+        ));
+        assert_eq!(rt.snapshot().artifacts, before.artifacts);
+        assert_eq!(rt.snapshot().code_objects, before.code_objects);
+        assert_eq!(rt.snapshot().stores, before.stores);
+    }
+
+    #[test]
+    fn restore_clears_previous_runtime_owned_state() {
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let mut substrate_a = MockSubstrate::default();
+        let mut rt_a =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let loaded_a = rt_a
+            .load_artifact(
+                VisaArtifactInput {
+                    bytes: &artifact,
+                    descriptor: VisaArtifactDescriptor::new(
+                        1,
+                        "portable.pkg",
+                        "portable-artifact",
+                        SubstrateProfile::MinimalBareMetal,
+                    ),
+                },
+                &mut substrate_a,
+            )
+            .expect("load portable artifact");
+        rt_a.start_activation(&loaded_a, ActivationEntry::Symbol("main".into()))
+            .expect("activate portable artifact");
+        let portable = rt_a.snapshot().portable_subset();
+
+        let mut substrate_b = MockSubstrate::default();
+        let mut rt_b =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        rt_b.load_artifact(
+            VisaArtifactInput {
+                bytes: &artifact,
+                descriptor: VisaArtifactDescriptor::new(
+                    99,
+                    "stale.pkg",
+                    "stale-artifact",
+                    SubstrateProfile::MinimalBareMetal,
+                ),
+            },
+            &mut substrate_b,
+        )
+        .expect("load stale artifact");
+
+        rt_b.restore_portable_subset(&portable).expect("restore portable state");
         assert!(
-            snapshot_b.capabilities.len() >= portable.capabilities.len(),
-            "capabilities must survive profile change"
+            rt_b.semantic().check_invariants().is_ok(),
+            "restore must rebuild graph-internal resource and fault-domain records"
+        );
+        let restored = rt_b.snapshot();
+        assert_eq!(restored.artifacts, portable.artifacts);
+        assert!(restored.artifacts.iter().all(|artifact| artifact.artifact_id != 99));
+
+        let loaded_after_restore = rt_b
+            .load_artifact(
+                VisaArtifactInput {
+                    bytes: &artifact,
+                    descriptor: VisaArtifactDescriptor::new(
+                        99,
+                        "stale.pkg",
+                        "stale-artifact",
+                        SubstrateProfile::MinimalBareMetal,
+                    ),
+                },
+                &mut substrate_b,
+            )
+            .expect("stale artifact id must be reusable after restore reset");
+        let activation_after_restore = rt_b
+            .start_activation(&loaded_after_restore, ActivationEntry::Symbol("main".into()))
+            .expect("activation ids must continue after restored high watermark");
+        let restored_activation_max =
+            portable.activations.iter().map(|activation| activation.id).max().unwrap_or(0);
+        assert!(activation_after_restore.activation_id > restored_activation_max);
+        assert!(
+            rt_b.snapshot()
+                .runtime_activations
+                .iter()
+                .any(|activation| activation.id == activation_after_restore.activation_id)
         );
     }
 }

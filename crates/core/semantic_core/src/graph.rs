@@ -379,4 +379,45 @@ mod tests {
         let snapshot = graph.snapshot_with(inputs);
         assert_eq!(snapshot.capabilities.len(), 1);
     }
+
+    #[test]
+    fn restore_store_record_failure_is_atomic() {
+        let mut graph = SemanticGraph::new();
+        let existing = graph.register_store("pkg", "art", "role", "restartable");
+        let existing_resource = graph.store_resource(existing).unwrap();
+        let fault_domains_before = graph.fault_domain_count();
+        let stores_before = graph.store_count();
+
+        let invalid = StoreRecord {
+            id: 99,
+            package: "other".into(),
+            artifact: "other-art".into(),
+            role: "role".into(),
+            fault_policy: "restartable".into(),
+            fault_domain: 99,
+            resource: Some(existing_resource),
+            state: StoreState::Running,
+            generation: 1,
+            restart_count: 0,
+        };
+
+        assert!(!graph.restore_store_record(invalid));
+        assert_eq!(graph.fault_domain_count(), fault_domains_before);
+        assert_eq!(graph.store_count(), stores_before);
+    }
+
+    #[test]
+    fn restore_records_reject_zero_generation() {
+        let mut source = SemanticGraph::new();
+        source.ensure_task(1, FrontendKind::Supervisor, "source");
+        let mut task = source.tasks().first().cloned().unwrap();
+        task.generation = 0;
+        assert!(!SemanticGraph::new().restore_task_record(task));
+
+        let store = source.register_store("pkg", "art", "role", "restartable");
+        let mut store_record =
+            source.stores().iter().find(|record| record.id == store).cloned().unwrap();
+        store_record.generation = 0;
+        assert!(!SemanticGraph::new().restore_store_record(store_record));
+    }
 }

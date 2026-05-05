@@ -1355,6 +1355,120 @@ impl TargetExecutor {
         &self.tombstones
     }
 
+    pub fn restore_records(
+        &mut self,
+        activations: &[ActivationRecord],
+        traps: &[TargetTrapRecord],
+        hostcall_trace: &[HostcallTraceRecord],
+        cleanup_transactions: &[FaultCleanupTransaction],
+        tombstones: &[TombstoneRecord],
+    ) -> bool {
+        let mut restored_activations = Vec::new();
+        for activation in activations {
+            if activation.id == 0
+                || activation.generation == 0
+                || restored_activations
+                    .iter()
+                    .any(|existing: &ActivationRecord| existing.id == activation.id)
+            {
+                return false;
+            }
+            restored_activations.push(activation.clone());
+        }
+
+        let mut restored_traps = Vec::new();
+        for trap in traps {
+            if trap.id == 0
+                || trap.generation == 0
+                || restored_traps.iter().any(|existing: &TargetTrapRecord| existing.id == trap.id)
+            {
+                return false;
+            }
+            restored_traps.push(trap.clone());
+        }
+
+        let mut restored_hostcalls = Vec::new();
+        for hostcall in hostcall_trace {
+            if hostcall.id == 0
+                || hostcall.generation == 0
+                || restored_hostcalls
+                    .iter()
+                    .any(|existing: &HostcallTraceRecord| existing.id == hostcall.id)
+            {
+                return false;
+            }
+            restored_hostcalls.push(hostcall.clone());
+        }
+
+        let mut restored_cleanups = Vec::new();
+        for cleanup in cleanup_transactions {
+            if cleanup.id == 0
+                || cleanup.generation == 0
+                || restored_cleanups
+                    .iter()
+                    .any(|existing: &FaultCleanupTransaction| existing.id == cleanup.id)
+            {
+                return false;
+            }
+            restored_cleanups.push(cleanup.clone());
+        }
+
+        let mut restored_tombstones = Vec::new();
+        for tombstone in tombstones {
+            if tombstone.kind != ContractObjectKind::Activation
+                || tombstone.id == 0
+                || tombstone.generation == 0
+                || restored_tombstones.iter().any(|existing: &TombstoneRecord| {
+                    existing.object_ref() == tombstone.object_ref()
+                })
+            {
+                return false;
+            }
+            restored_tombstones.push(tombstone.clone());
+        }
+
+        let activation_event_max = restored_activations
+            .iter()
+            .flat_map(|activation| [Some(activation.start_event), activation.exit_event])
+            .flatten()
+            .max()
+            .unwrap_or(0);
+        let cleanup_event_max = restored_cleanups
+            .iter()
+            .flat_map(|cleanup| [Some(cleanup.started_at), cleanup.finished_at])
+            .flatten()
+            .max()
+            .unwrap_or(0);
+        let tombstone_event_max =
+            restored_tombstones.iter().map(|tombstone| tombstone.died_at).max().unwrap_or(0);
+
+        let activation_record_next =
+            restored_activations.iter().map(|activation| activation.id + 1).max().unwrap_or(1);
+        let activation_tombstone_next = restored_tombstones
+            .iter()
+            .filter(|tombstone| tombstone.kind == ContractObjectKind::Activation)
+            .map(|tombstone| tombstone.id + 1)
+            .max()
+            .unwrap_or(1);
+        self.next_activation_id = activation_record_next.max(activation_tombstone_next);
+        self.next_trap_id = restored_traps.iter().map(|trap| trap.id + 1).max().unwrap_or(1);
+        self.next_hostcall_trace_id =
+            restored_hostcalls.iter().map(|hostcall| hostcall.id + 1).max().unwrap_or(1);
+        self.next_cleanup_id =
+            restored_cleanups.iter().map(|cleanup| cleanup.id + 1).max().unwrap_or(1);
+        self.next_lease_id = 1;
+        self.next_event_id =
+            activation_event_max.max(cleanup_event_max).max(tombstone_event_max) + 1;
+        self.activations = restored_activations;
+        self.traps = restored_traps;
+        self.dmw_leases.clear();
+        self.hostcall_trace = restored_hostcalls;
+        self.cleanup_transactions = restored_cleanups;
+        self.tombstones = restored_tombstones;
+        self.event_log.clear();
+        true
+    }
+
     pub fn cleanup_state_digest(
         &self,
         store: &StoreRecord,

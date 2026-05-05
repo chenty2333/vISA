@@ -132,6 +132,48 @@ impl TargetStoreManager {
         &self.tombstones
     }
 
+    pub fn restore_records(
+        &mut self,
+        records: &[ManagedStoreRecord],
+        tombstones: &[TombstoneRecord],
+    ) -> bool {
+        let mut restored_records = Vec::new();
+        for record in records {
+            if record.store.id == 0
+                || record.store.generation == 0
+                || restored_records
+                    .iter()
+                    .any(|existing: &ManagedStoreRecord| existing.store.id == record.store.id)
+            {
+                return false;
+            }
+            restored_records.push(record.clone());
+        }
+        let mut restored_tombstones = Vec::new();
+        for tombstone in tombstones {
+            if tombstone.kind != ContractObjectKind::Store
+                || tombstone.id == 0
+                || tombstone.generation == 0
+                || restored_tombstones.iter().any(|existing: &TombstoneRecord| {
+                    existing.object_ref() == tombstone.object_ref()
+                })
+            {
+                return false;
+            }
+            restored_tombstones.push(tombstone.clone());
+        }
+        let record_next =
+            restored_records.iter().map(|record| record.store.id + 1).max().unwrap_or(1);
+        let tombstone_next =
+            restored_tombstones.iter().map(|tombstone| tombstone.id + 1).max().unwrap_or(1);
+        self.next_store_id = record_next.max(tombstone_next);
+        self.next_tombstone_event =
+            restored_tombstones.iter().map(|tombstone| tombstone.died_at + 1).max().unwrap_or(1);
+        self.records = restored_records;
+        self.tombstones = restored_tombstones;
+        true
+    }
+
     fn set_state(
         &mut self,
         store: StoreId,

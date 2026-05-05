@@ -945,6 +945,21 @@ impl CapabilityLedger {
         &self.records
     }
 
+    pub fn restore_record(&mut self, record: CapabilityRecord) -> bool {
+        if record.id == 0
+            || record.generation == 0
+            || self.records.iter().any(|existing| existing.id == record.id)
+        {
+            return false;
+        }
+        if record.owner_store.is_some() != record.owner_store_generation.is_some() {
+            return false;
+        }
+        self.next_id = self.next_id.max(record.id + 1);
+        self.records.push(record);
+        true
+    }
+
     pub fn active_count(&self) -> usize {
         self.records.iter().filter(|record| !record.revoked).count()
     }
