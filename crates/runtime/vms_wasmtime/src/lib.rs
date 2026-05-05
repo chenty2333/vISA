@@ -19,7 +19,9 @@ use vms_runtime::{
     VisaExecutionReport, VisaHostcallPayload, VisaHostcallValue, VisaRuntime, VisaRuntimeError,
     VisaSubstrate,
 };
-use wasmtime::{Caller, Engine, FuncType, Instance, Linker, Module, Store, Trap, Val, ValType};
+use wasmtime::{
+    Caller, Engine, ExternType, FuncType, Instance, Linker, Module, Store, Trap, Val, ValType,
+};
 
 #[derive(Debug)]
 pub enum WasmVisaError {
@@ -28,6 +30,8 @@ pub enum WasmVisaError {
     Runtime(VisaRuntimeError),
     MissingExport(String),
     HostcallNotBound(u32),
+    DuplicateHostcallNumber(u32),
+    InvalidHostcallImport(String),
     Trap(String),
 }
 
@@ -39,6 +43,8 @@ impl fmt::Display for WasmVisaError {
             Self::Runtime(e) => write!(f, "runtime error: {e:?}"),
             Self::MissingExport(name) => write!(f, "missing export: {name}"),
             Self::HostcallNotBound(n) => write!(f, "hostcall {n} not bound"),
+            Self::DuplicateHostcallNumber(n) => write!(f, "duplicate hostcall number: {n}"),
+            Self::InvalidHostcallImport(name) => write!(f, "invalid hostcall import: {name}"),
             Self::Trap(msg) => write!(f, "trap: {msg}"),
         }
     }
@@ -64,6 +70,13 @@ pub struct WasmVisaState {
 }
 
 impl WasmVisaState {
+    fn clear_execution_state(&mut self) {
+        self.loaded = None;
+        self.activation = None;
+        self.hostcall_specs.clear();
+        self.hostcall_reports.clear();
+    }
+
     fn dispatch_hostcall(
         &mut self,
         number: u32,
@@ -131,15 +144,17 @@ impl WasmVisaExecutor {
     ) -> Result<(), WasmVisaError> {
         // Preserve hostcall specs from the descriptor before load_artifact consumes it
         let hostcall_specs: Vec<HostcallSpec> = input.descriptor.hostcalls.clone();
+        self.store.data_mut().clear_execution_state();
+        validate_adapter_hostcalls(&hostcall_specs)?;
 
         let _parsed =
             target_abi::TargetArtifactImage::parse(input.bytes).map_err(WasmVisaError::Artifact)?;
 
         let loaded = {
             let state = self.store.data_mut();
-            let substrate_ptr: *mut dyn VisaSubstrate = state.substrate.as_mut();
-            // SAFETY: substrate is exclusively owned by this Store and not aliased
-            state.runtime.load_artifact(input, unsafe { &mut *substrate_ptr })?
+            let runtime = &mut state.runtime;
+            let substrate = state.substrate.as_mut();
+            runtime.load_artifact(input, substrate)?
         };
 
         let activation = {
@@ -203,8 +218,10 @@ impl WasmVisaExecutor {
         input: VisaArtifactInput<'_>,
         entry: &str,
     ) -> Result<VisaExecutionReport, WasmVisaError> {
+        self.store.data_mut().clear_execution_state();
         let artifact_bytes = input.bytes;
-        self.load_and_activate(input, entry)?;
+        let specs: Vec<HostcallSpec> = input.descriptor.hostcalls.clone();
+        validate_adapter_hostcalls(&specs)?;
 
         let code_payload = {
             target_abi::TargetArtifactImage::parse(artifact_bytes)
@@ -216,8 +233,9 @@ impl WasmVisaExecutor {
 
         let module = Module::new(&self.engine, code_payload)
             .map_err(|e| WasmVisaError::Wasmtime(format!("compile: {e}")))?;
+        validate_module_hostcall_imports(&module, &specs)?;
 
-        let specs: Vec<HostcallSpec> = self.store.data().hostcall_specs.clone();
+        self.load_and_activate(input, entry)?;
 
         self.linker = Linker::new(&self.engine);
         for spec in &specs {
@@ -249,13 +267,13 @@ impl WasmVisaExecutor {
                         let b = params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0);
                         let c = params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0);
                         let d = params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let payload = hostcall_payload_for_object(&obj, &op, a, b, c, d);
-                        let result = match payload {
-                            Some(p) => match caller.data_mut().dispatch_hostcall(n, p) {
-                                Ok(report) => hostcall_result_i64(&report.value),
-                                Err(_e) => -1,
-                            },
-                            None => -1,
+                        let Some(payload) = hostcall_payload_for_object(&obj, &op, a, b, c, d)
+                        else {
+                            return Err(wasmtime::format_err!("hostcall {n} is not bound"));
+                        };
+                        let result = match caller.data_mut().dispatch_hostcall(n, payload) {
+                            Ok(report) => hostcall_result_i64(&report.value),
+                            Err(_e) => -1,
                         };
                         results[0] = Val::I64(result);
                         Ok(())
@@ -290,6 +308,81 @@ impl WasmVisaExecutor {
 }
 
 // ── hostcall wire decoding ────────────────────────────────────────────────
+
+fn validate_adapter_hostcalls(specs: &[HostcallSpec]) -> Result<(), WasmVisaError> {
+    let mut numbers = Vec::new();
+    for spec in specs {
+        if numbers.contains(&spec.number) {
+            return Err(WasmVisaError::DuplicateHostcallNumber(spec.number));
+        }
+        numbers.push(spec.number);
+        if !adapter_supports_hostcall(&spec.object, &spec.operation) {
+            return Err(WasmVisaError::HostcallNotBound(spec.number));
+        }
+    }
+    Ok(())
+}
+
+fn validate_module_hostcall_imports(
+    module: &Module,
+    specs: &[HostcallSpec],
+) -> Result<(), WasmVisaError> {
+    for import in module.imports() {
+        let module_name = import.module();
+        let name = import.name();
+        if module_name != "vms" {
+            return Err(WasmVisaError::InvalidHostcallImport(format!("{module_name}::{name}")));
+        }
+        let Some(number) = name.strip_prefix("hostcall_") else {
+            return Err(WasmVisaError::InvalidHostcallImport(format!("vms::{name}")));
+        };
+        let number = number
+            .parse::<u32>()
+            .map_err(|_| WasmVisaError::InvalidHostcallImport(format!("vms::{name}")))?;
+        if !specs.iter().any(|spec| spec.number == number) {
+            return Err(WasmVisaError::HostcallNotBound(number));
+        }
+        let ExternType::Func(func_ty) = import.ty() else {
+            return Err(WasmVisaError::InvalidHostcallImport(format!("vms::{name}")));
+        };
+        if !is_hostcall_import_type(&func_ty) {
+            return Err(WasmVisaError::InvalidHostcallImport(format!("vms::{name}")));
+        }
+    }
+    Ok(())
+}
+
+fn is_hostcall_import_type(func_ty: &FuncType) -> bool {
+    let mut params = func_ty.params();
+    for _ in 0..6 {
+        if !matches!(params.next(), Some(ValType::I64)) {
+            return false;
+        }
+    }
+    if params.next().is_some() {
+        return false;
+    }
+
+    let mut results = func_ty.results();
+    matches!(results.next(), Some(ValType::I64)) && results.next().is_none()
+}
+
+fn adapter_supports_hostcall(object: &str, operation: &str) -> bool {
+    matches!(
+        (object, operation),
+        ("wasi.fd", "write")
+            | ("test.console", "write")
+            | ("timer.wasi", "read")
+            | ("timer", "now")
+            | ("timer.wasi", "arm")
+            | ("guest-memory", "read")
+            | ("guest-memory", "copyin")
+            | ("guest-memory", "write")
+            | ("guest-memory", "copyout")
+            | ("dmw", "map")
+            | ("dmw", "unmap")
+    )
+}
 
 fn hostcall_payload_for_object(
     object: &str,
@@ -345,7 +438,7 @@ fn hostcall_payload_for_object(
         ("dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
             lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
         }),
-        _ => None, // link-time would reject; runtime returns HostcallNotBound
+        _ => None,
     }
 }
 
@@ -524,6 +617,19 @@ mod tests {
         .expect("parse wat")
     }
 
+    fn console_descriptor(id: u64) -> VisaArtifactDescriptor {
+        VisaArtifactDescriptor::new(id, "test", "test-artifact", SubstrateProfile::GuestFrontend)
+            .with_role("frontend-personality")
+            .with_hostcall(HostcallSpec::new(
+                1,
+                "test.write",
+                HostcallCategory::Service,
+                "test.console",
+                "write",
+                false,
+            ))
+    }
+
     // ── tests ─────────────────────────────────────────────────────────────
 
     #[test]
@@ -552,21 +658,7 @@ mod tests {
             VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
         let mut substrate = TestSubstrate::default();
         let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
-        let descriptor = VisaArtifactDescriptor::new(
-            9,
-            "test",
-            "test-artifact",
-            SubstrateProfile::GuestFrontend,
-        )
-        .with_role("frontend-personality")
-        .with_hostcall(HostcallSpec::new(
-            1,
-            "test.write",
-            HostcallCategory::Service,
-            "test.console",
-            "write",
-            false,
-        ));
+        let descriptor = console_descriptor(9);
 
         let loaded = runtime
             .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
@@ -582,21 +674,7 @@ mod tests {
         let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
 
         let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
-        let descriptor = VisaArtifactDescriptor::new(
-            9,
-            "test",
-            "test-artifact",
-            SubstrateProfile::GuestFrontend,
-        )
-        .with_role("frontend-personality")
-        .with_hostcall(HostcallSpec::new(
-            1,
-            "test.write",
-            HostcallCategory::Service,
-            "test.console",
-            "write",
-            false,
-        ));
+        let descriptor = console_descriptor(9);
 
         let report =
             executor.run(VisaArtifactInput { bytes: &artifact, descriptor }, "entry").expect("run");
@@ -606,9 +684,118 @@ mod tests {
         assert!(!report.hostcalls.is_empty(), "must have at least one hostcall dispatch");
     }
 
+    #[test]
+    fn repeated_runs_report_only_current_hostcalls() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+
+        let first = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: console_descriptor(9) }, "entry")
+            .expect("first run");
+        assert_eq!(first.hostcalls.len(), 1);
+        assert_eq!(executor.hostcall_reports().len(), 1);
+
+        let second = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: console_descriptor(10) },
+                "entry",
+            )
+            .expect("second run");
+        assert_eq!(second.hostcalls.len(), 1);
+        assert_eq!(
+            executor.hostcall_reports().len(),
+            1,
+            "adapter-local hostcall reports must be scoped to the latest run"
+        );
+    }
+
+    #[test]
+    fn failed_pre_activation_run_clears_previous_adapter_state() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let good_artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        executor
+            .run(
+                VisaArtifactInput { bytes: &good_artifact, descriptor: console_descriptor(9) },
+                "entry",
+            )
+            .expect("good run");
+        assert_eq!(executor.hostcall_reports().len(), 1);
+        let store_count_before_failure = executor.runtime().semantic().store_count();
+
+        let bad_artifact = fake_artifact(&REQUIRED_SECTIONS, &foreign_import_wasm());
+        let bad_desc = VisaArtifactDescriptor::new(
+            10,
+            "test",
+            "bad-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality");
+        let err = executor
+            .run(VisaArtifactInput { bytes: &bad_artifact, descriptor: bad_desc }, "entry")
+            .expect_err("bad import must fail before activation");
+        assert!(
+            matches!(err, WasmVisaError::InvalidHostcallImport(_)),
+            "expected InvalidHostcallImport, got: {err}"
+        );
+        assert!(
+            executor.hostcall_reports().is_empty(),
+            "failed pre-activation run must not expose stale hostcall reports"
+        );
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before_failure);
+    }
+
     fn no_import_wasm() -> Vec<u8> {
         wat::parse_str(r#"(module (func (export "start") (result i64) i64.const 1))"#)
             .expect("parse wat")
+    }
+
+    fn unknown_hostcall_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $hc1 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (func (export "entry") (result i64)
+    i64.const 1
+    i64.const 2
+    i64.const 3
+    i64.const 4
+    i64.const 0
+    i64.const 0
+    call $hc1
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
+    fn foreign_import_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "env" "foo" (func $foo))
+  (func (export "entry")
+    call $foo
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
+    fn wrong_hostcall_signature_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $hc1 (param i32) (result i32)))
+  (func (export "entry") (result i32)
+    i32.const 1
+    call $hc1
+  )
+)"#,
+        )
+        .expect("parse wat")
     }
 
     #[test]
@@ -631,6 +818,145 @@ mod tests {
             matches!(err, WasmVisaError::MissingExport(_)),
             "expected MissingExport, got: {err}"
         );
+    }
+
+    #[test]
+    fn run_rejects_unknown_declared_hostcall_before_dispatch() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &unknown_hostcall_wasm());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality")
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "test.unknown",
+            HostcallCategory::Service,
+            "test.unknown",
+            "doit",
+            false,
+        ));
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("unknown hostcall must not be bound");
+        assert!(
+            matches!(err, WasmVisaError::HostcallNotBound(1)),
+            "expected HostcallNotBound, got: {err}"
+        );
+        assert!(
+            executor.hostcall_reports().is_empty(),
+            "unsupported binding rejection must not emit a successful hostcall report"
+        );
+        assert_eq!(
+            executor.runtime().semantic().store_count(),
+            store_count_before,
+            "unsupported hostcall descriptors must fail before load/activation mutates runtime state"
+        );
+    }
+
+    #[test]
+    fn run_rejects_undeclared_wasm_hostcall_before_activation() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &unknown_hostcall_wasm());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality");
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("wasm imports must be declared by descriptor hostcall table");
+        assert!(
+            matches!(err, WasmVisaError::HostcallNotBound(1)),
+            "expected HostcallNotBound, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
+    }
+
+    #[test]
+    fn run_rejects_duplicate_hostcall_numbers_before_activation() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        let desc = console_descriptor(9).with_hostcall(HostcallSpec::new(
+            1,
+            "timer.now",
+            HostcallCategory::Service,
+            "timer",
+            "now",
+            false,
+        ));
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("duplicate hostcall numbers must fail descriptor validation");
+        assert!(
+            matches!(err, WasmVisaError::DuplicateHostcallNumber(1)),
+            "expected DuplicateHostcallNumber, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
+    }
+
+    #[test]
+    fn run_rejects_foreign_imports_before_activation() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &foreign_import_wasm());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality");
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("foreign imports must be rejected before runtime activation");
+        assert!(
+            matches!(err, WasmVisaError::InvalidHostcallImport(_)),
+            "expected InvalidHostcallImport, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
+    }
+
+    #[test]
+    fn run_rejects_bad_hostcall_signature_before_activation() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wrong_hostcall_signature_wasm());
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: console_descriptor(9) }, "entry")
+            .expect_err("hostcall ABI mismatches must be rejected before runtime activation");
+        assert!(
+            matches!(err, WasmVisaError::InvalidHostcallImport(_)),
+            "expected InvalidHostcallImport, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
     }
 
     fn trapping_wasm() -> Vec<u8> {

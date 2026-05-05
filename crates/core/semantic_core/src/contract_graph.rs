@@ -198,20 +198,41 @@ impl ContractGraphSnapshot {
             // Non-portable: window leases/mappings
             framebuffer_window_leases: Vec::new(),
             framebuffer_mappings: Vec::new(),
+            framebuffer_writes: Vec::new(),
+            framebuffer_flush_regions: Vec::new(),
+            framebuffer_dirty_regions: Vec::new(),
+            display_event_logs: Vec::new(),
+            display_cleanups: Vec::new(),
+            display_snapshot_barriers: Vec::new(),
+            display_panic_last_frames: Vec::new(),
+            framebuffer_benchmarks: Vec::new(),
             // Non-portable: native frames and host-specific state
             saved_contexts: Vec::new(),
+            integrated_smp_preemption_cleanups: Vec::new(),
             // Non-portable: packet/block backend state
             packet_device_objects: Vec::new(),
             // Non-portable: records that reference cleared packet_device
             network_stack_adapters: Vec::new(),
             socket_objects: Vec::new(),
+            network_benchmarks: Vec::new(),
+            network_driver_cleanups: Vec::new(),
+            integrated_smp_network_faults: Vec::new(),
             // Non-portable: block root objects
             block_device_objects: Vec::new(),
             block_range_objects: Vec::new(),
             // Non-portable: records that reference cleared block objects
+            block_pending_io_policies: Vec::new(),
             block_request_objects: Vec::new(),
             block_waits: Vec::new(),
             block_request_queues: Vec::new(),
+            block_benchmarks: Vec::new(),
+            integrated_disk_preempt_faults: Vec::new(),
+            integrated_network_disk_ios: Vec::new(),
+            // Non-portable: integrated views that aggregate removed IO/display evidence.
+            integrated_display_scheduler_loads: Vec::new(),
+            integrated_snapshot_io_lease_barriers: Vec::new(),
+            integrated_display_panics: Vec::new(),
+            integrated_osctl_trace_replays: Vec::new(),
             // Portable: keep everything else (incl. artifacts, code_objects, stores, capabilities)
             ..self.clone()
         }
@@ -221,32 +242,84 @@ impl ContractGraphSnapshot {
     pub fn non_portable_summary(&self) -> Vec<NonPortableStateKind> {
         let mut out = Vec::new();
         if !self.device_objects.is_empty() {
-            out.push(NonPortableStateKind::MmioBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::MmioBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::DriverDeviceBindings);
         }
-        if !self.block_dma_buffers.is_empty() {
-            out.push(NonPortableStateKind::DmaPages);
+        if !self.block_dma_buffers.is_empty()
+            || self.io_cleanups.iter().any(|cleanup| !cleanup.released_dma_buffers.is_empty())
+        {
+            push_non_portable_kind(&mut out, NonPortableStateKind::DmaPages);
         }
-        if !self.saved_contexts.is_empty() {
-            out.push(NonPortableStateKind::NativeStackFrames);
+        if self.io_cleanups.iter().any(|cleanup| !cleanup.released_irq_lines.is_empty())
+            || !self.virtio_net_backends.is_empty()
+        {
+            push_non_portable_kind(&mut out, NonPortableStateKind::IrqLines);
         }
-        if !self.framebuffer_window_leases.is_empty() || !self.framebuffer_mappings.is_empty() {
-            out.push(NonPortableStateKind::DmwWindowState);
+        if !self.saved_contexts.is_empty() || !self.integrated_smp_preemption_cleanups.is_empty() {
+            push_non_portable_kind(&mut out, NonPortableStateKind::NativeStackFrames);
         }
-        if !self.packet_device_objects.is_empty() {
-            out.push(NonPortableStateKind::PacketDeviceBindings);
+        if !self.framebuffer_window_leases.is_empty()
+            || !self.framebuffer_mappings.is_empty()
+            || !self.framebuffer_writes.is_empty()
+            || !self.framebuffer_flush_regions.is_empty()
+            || !self.framebuffer_dirty_regions.is_empty()
+            || !self.display_event_logs.is_empty()
+            || !self.display_cleanups.is_empty()
+            || !self.display_snapshot_barriers.is_empty()
+            || !self.display_panic_last_frames.is_empty()
+            || !self.framebuffer_benchmarks.is_empty()
+            || !self.integrated_display_scheduler_loads.is_empty()
+            || !self.integrated_snapshot_io_lease_barriers.is_empty()
+            || !self.integrated_display_panics.is_empty()
+        {
+            push_non_portable_kind(&mut out, NonPortableStateKind::DmwWindowState);
+        }
+        if !self.packet_device_objects.is_empty()
+            || !self.network_stack_adapters.is_empty()
+            || !self.socket_objects.is_empty()
+            || !self.virtio_net_backends.is_empty()
+            || !self.network_benchmarks.is_empty()
+            || !self.network_driver_cleanups.is_empty()
+            || !self.integrated_smp_network_faults.is_empty()
+        {
+            push_non_portable_kind(&mut out, NonPortableStateKind::PacketDeviceBindings);
         }
         if !self.block_device_objects.is_empty()
             || !self.block_range_objects.is_empty()
+            || !self.fake_block_backends.is_empty()
+            || !self.block_pending_io_policies.is_empty()
             || !self.block_request_objects.is_empty()
             || !self.block_waits.is_empty()
             || !self.block_request_queues.is_empty()
+            || !self.block_benchmarks.is_empty()
+            || !self.integrated_disk_preempt_faults.is_empty()
         {
-            out.push(NonPortableStateKind::BlockDeviceBackendBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::BlockDeviceBackendBindings);
         }
-        if !self.network_stack_adapters.is_empty() || !self.socket_objects.is_empty() {
-            out.push(NonPortableStateKind::PacketDeviceBindings);
+        if !self.io_cleanups.is_empty() || !self.virtio_net_backends.is_empty() {
+            push_non_portable_kind(&mut out, NonPortableStateKind::DriverDeviceBindings);
+        }
+        if self.io_cleanups.iter().any(|cleanup| !cleanup.released_mmio_regions.is_empty()) {
+            push_non_portable_kind(&mut out, NonPortableStateKind::MmioBindings);
+        }
+        if !self.integrated_network_disk_ios.is_empty() {
+            push_non_portable_kind(&mut out, NonPortableStateKind::PacketDeviceBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::BlockDeviceBackendBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::DmaPages);
+        }
+        if !self.integrated_osctl_trace_replays.is_empty() {
+            push_non_portable_kind(&mut out, NonPortableStateKind::DmwWindowState);
+            push_non_portable_kind(&mut out, NonPortableStateKind::PacketDeviceBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::BlockDeviceBackendBindings);
+            push_non_portable_kind(&mut out, NonPortableStateKind::NativeStackFrames);
         }
         out
+    }
+}
+
+fn push_non_portable_kind(out: &mut Vec<NonPortableStateKind>, kind: NonPortableStateKind) {
+    if !out.contains(&kind) {
+        out.push(kind);
     }
 }
 
@@ -271,6 +344,8 @@ pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<Contract
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use crate::{FrontendKind, SemanticGraph};
 
@@ -362,6 +437,110 @@ mod tests {
         let summary = snapshot.non_portable_summary();
         assert!(summary.contains(&NonPortableStateKind::MmioBindings));
         assert!(summary.contains(&NonPortableStateKind::BlockDeviceBackendBindings));
+        assert!(summary.contains(&NonPortableStateKind::DriverDeviceBindings));
+    }
+
+    #[test]
+    fn non_portable_summary_reports_backend_records_without_roots() {
+        let mut snapshot = ContractGraphSnapshot::default();
+        snapshot.fake_block_backends.push(FakeBlockBackendObjectRecord {
+            id: 1,
+            name: "fake-blk".to_string(),
+            block_device: 7,
+            block_device_generation: 1,
+            provider: "test".to_string(),
+            profile: "fake".to_string(),
+            sector_size: 512,
+            sector_count: 8,
+            read_only: false,
+            max_transfer_sectors: 1,
+            deterministic_seed: 0,
+            generation: 1,
+            state: FakeBlockBackendObjectState::Bound,
+            recorded_at_event: 1,
+            note: "test".to_string(),
+        });
+        snapshot.virtio_net_backends.push(VirtioNetBackendObjectRecord {
+            id: 1,
+            name: "virtio-net".to_string(),
+            packet_device: 8,
+            packet_device_generation: 1,
+            driver_binding: 9,
+            driver_binding_generation: 1,
+            device: 10,
+            device_generation: 1,
+            provider: "test".to_string(),
+            profile: "virtio".to_string(),
+            model: "virtio-net".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0; 6],
+            frame_format_version: 1,
+            max_payload_len: 1500,
+            device_features: 0,
+            driver_features: 0,
+            negotiated_features: 0,
+            rx_queue_index: 0,
+            tx_queue_index: 1,
+            queue_size: 8,
+            irq_vector: 3,
+            generation: 1,
+            state: VirtioNetBackendObjectState::SkeletonReady,
+            recorded_at_event: 1,
+            note: "test".to_string(),
+        });
+
+        let summary = snapshot.non_portable_summary();
+        assert!(summary.contains(&NonPortableStateKind::BlockDeviceBackendBindings));
+        assert!(summary.contains(&NonPortableStateKind::PacketDeviceBindings));
+        assert!(summary.contains(&NonPortableStateKind::DriverDeviceBindings));
+        assert!(summary.contains(&NonPortableStateKind::IrqLines));
+    }
+
+    #[test]
+    fn non_portable_summary_reports_io_cleanup_dependencies() {
+        let mut snapshot = ContractGraphSnapshot::default();
+        snapshot.io_cleanups.push(IoCleanupRecord {
+            id: 1,
+            driver_store: 2,
+            driver_store_generation: 1,
+            device: 3,
+            device_generation: 1,
+            driver_binding: 4,
+            driver_binding_generation: 1,
+            generation: 1,
+            state: IoCleanupState::Completed,
+            reason: "test".to_string(),
+            started_at_event: 1,
+            completed_at_event: 2,
+            cancelled_io_waits: Vec::new(),
+            revoked_device_capabilities: Vec::new(),
+            revoked_capabilities: Vec::new(),
+            released_dma_buffers: vec![ContractObjectRef::new(
+                ContractObjectKind::DmaBufferObject,
+                10,
+                1,
+            )],
+            released_mmio_regions: vec![ContractObjectRef::new(
+                ContractObjectKind::MmioRegionObject,
+                11,
+                1,
+            )],
+            released_irq_lines: vec![ContractObjectRef::new(
+                ContractObjectKind::IrqLineObject,
+                12,
+                1,
+            )],
+            steps: Vec::new(),
+            note: "test".to_string(),
+        });
+
+        let summary = snapshot.non_portable_summary();
+        assert!(summary.contains(&NonPortableStateKind::DriverDeviceBindings));
+        assert!(summary.contains(&NonPortableStateKind::DmaPages));
+        assert!(summary.contains(&NonPortableStateKind::MmioBindings));
+        assert!(summary.contains(&NonPortableStateKind::IrqLines));
     }
 }
 
