@@ -92,7 +92,7 @@ use semantic_core::{
     BlockCompletionStatus, BlockPendingIoAction, BlockRequestOperation, BlockRequestQueueEntryRef,
     BoundaryKind, BoundaryStatus, BoundaryValidationReport, BoundaryValidationViolation,
     BufferCacheObjectState, CapabilityClass, CapabilityLedger, CapabilityRecord, CodePublishState,
-    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshot, ContractViolation,
+    CommandEnvelope, CommandResult, CommandStatus, ContractGraphSnapshotInputs, ContractViolation,
     CowState, DescriptorObjectAccess, DirectoryEntryKind, DirectoryObjectState,
     DmaBufferObjectAccess, EntrypointState, EventKind, EventRecord, EvidenceBoundaryLevel,
     Ext4AdapterObjectState, ExternalObjectDeclaration, FatAdapterObjectState, FileObjectState,
@@ -693,96 +693,32 @@ fn build_target_executor_v1(
     let external_objects = declared_authority_objects(ledger.records());
     let contract_stores = contract_graph_store_records(semantic, &store_manager);
     let contract_capabilities = contract_graph_capability_records(semantic, &ledger);
-    let contract_snapshot = ContractGraphSnapshot {
+    let merged_tombstones: Vec<TombstoneRecord> = publisher
+        .tombstones()
+        .iter()
+        .chain(store_manager.tombstones().iter())
+        .chain(executor.tombstones().iter())
+        .chain(semantic_cleanup_tombstones.iter())
+        .cloned()
+        .collect();
+    let snapshot_inputs = ContractGraphSnapshotInputs {
         claimed_evidence_level: EvidenceBoundaryLevel::ReferenceService,
-        artifacts: verified_artifacts,
-        code_objects: publisher.objects().to_vec(),
-        target_feature_sets: semantic.target_feature_sets().to_vec(),
-        vector_states: semantic.vector_states().to_vec(),
-        simd_fault_injections: semantic.simd_fault_injections().to_vec(),
-        simd_benchmarks: semantic.simd_benchmarks().to_vec(),
-        simd_context_switch_benchmarks: semantic.simd_context_switch_benchmarks().to_vec(),
-        framebuffer_objects: semantic.framebuffer_objects().to_vec(),
-        display_objects: semantic.display_objects().to_vec(),
-        display_capabilities: semantic.display_capabilities().to_vec(),
-        framebuffer_window_leases: semantic.framebuffer_window_leases().to_vec(),
-        framebuffer_mappings: semantic.framebuffer_mappings().to_vec(),
-        framebuffer_writes: semantic.framebuffer_writes().to_vec(),
-        framebuffer_flush_regions: semantic.framebuffer_flush_regions().to_vec(),
-        framebuffer_dirty_regions: semantic.framebuffer_dirty_regions().to_vec(),
-        display_event_logs: semantic.display_event_logs().to_vec(),
-        display_cleanups: semantic.display_cleanups().to_vec(),
-        display_snapshot_barriers: semantic.display_snapshot_barriers().to_vec(),
-        display_panic_last_frames: semantic.display_panic_last_frames().to_vec(),
-        framebuffer_benchmarks: semantic.framebuffer_benchmarks().to_vec(),
-        integrated_display_scheduler_loads: semantic.integrated_display_scheduler_loads().to_vec(),
-        integrated_snapshot_io_lease_barriers: semantic
-            .integrated_snapshot_io_lease_barriers()
-            .to_vec(),
-        integrated_code_publish_smp_workloads: semantic
-            .integrated_code_publish_smp_workloads()
-            .to_vec(),
-        integrated_display_panics: semantic.integrated_display_panics().to_vec(),
-        integrated_osctl_trace_replays: semantic.integrated_osctl_trace_replays().to_vec(),
-        integrated_smp_preemption_cleanups: semantic.integrated_smp_preemption_cleanups().to_vec(),
-        integrated_smp_network_faults: semantic.integrated_smp_network_faults().to_vec(),
-        integrated_disk_preempt_faults: semantic.integrated_disk_preempt_faults().to_vec(),
-        integrated_simd_migrations: semantic.integrated_simd_migrations().to_vec(),
-        integrated_network_disk_ios: semantic.integrated_network_disk_ios().to_vec(),
-        network_benchmarks: semantic.network_benchmarks().to_vec(),
-        network_driver_cleanups: semantic.network_driver_cleanups().to_vec(),
-        device_objects: semantic.device_objects().to_vec(),
-        packet_device_objects: semantic.packet_device_objects().to_vec(),
-        network_stack_adapters: semantic.network_stack_adapters().to_vec(),
-        socket_objects: semantic.socket_objects().to_vec(),
-        virtio_net_backends: semantic.virtio_net_backends().to_vec(),
-        fake_block_backends: semantic.fake_block_backends().to_vec(),
-        block_benchmarks: semantic.block_benchmarks().to_vec(),
-        io_cleanups: semantic.io_cleanups().to_vec(),
-        block_pending_io_policies: semantic.block_pending_io_policies().to_vec(),
-        block_waits: semantic.block_waits().to_vec(),
-        block_request_objects: semantic.block_request_objects().to_vec(),
-        block_device_objects: semantic.block_device_objects().to_vec(),
-        block_range_objects: semantic.block_range_objects().to_vec(),
-        block_request_queues: semantic.block_request_queues().to_vec(),
-        block_dma_buffers: semantic.block_dma_buffers().to_vec(),
-        harts: semantic.harts().to_vec(),
-        tasks: semantic.tasks().to_vec(),
-        runtime_activations: semantic.runtime_activations().to_vec(),
-        runnable_queues: semantic.runnable_queues().to_vec(),
-        scheduler_decisions: semantic.scheduler_decisions().to_vec(),
-        activation_contexts: semantic.activation_contexts().to_vec(),
-        activation_migrations: semantic.activation_migrations().to_vec(),
-        smp_safe_points: semantic.smp_safe_points().to_vec(),
-        stop_the_world_rendezvous: semantic.stop_the_world_rendezvous().to_vec(),
-        smp_code_publish_barriers: semantic.smp_code_publish_barriers().to_vec(),
-        saved_contexts: semantic.saved_contexts().to_vec(),
-        timer_interrupts: semantic.timer_interrupts().to_vec(),
-        remote_preempts: semantic.remote_preempts().to_vec(),
-        activation_cleanups: semantic.activation_cleanups().to_vec(),
-        smp_cleanup_quiescence: semantic.smp_cleanup_quiescence().to_vec(),
-        smp_snapshot_barriers: semantic.smp_snapshot_barriers().to_vec(),
-        smp_stress_runs: semantic.smp_stress_runs().to_vec(),
-        preemptions: semantic.preemptions().to_vec(),
-        activation_resumes: semantic.activation_resumes().to_vec(),
-        stores: contract_stores,
-        activations: executor.activations().to_vec(),
-        traps: executor.traps().to_vec(),
-        hostcalls: executor.hostcall_trace().to_vec(),
-        capabilities: contract_capabilities,
-        waits: semantic.wait_records().to_vec(),
-        cleanup_transactions: executor.cleanup_transactions().to_vec(),
-        tombstones: publisher
-            .tombstones()
-            .iter()
-            .chain(store_manager.tombstones().iter())
-            .chain(executor.tombstones().iter())
-            .chain(semantic_cleanup_tombstones.iter())
-            .cloned()
-            .collect(),
-        external_objects,
-        explicit_edges: Vec::new(),
+        artifacts: &verified_artifacts,
+        code_objects: publisher.objects(),
+        activations: executor.activations(),
+        traps: executor.traps(),
+        hostcalls: executor.hostcall_trace(),
+        capabilities: &contract_capabilities,
+        cleanup_transactions: executor.cleanup_transactions(),
+        tombstones: &merged_tombstones,
+        external_objects: &external_objects,
+        explicit_edges: &[],
     };
+    let mut contract_snapshot = semantic.snapshot_with(snapshot_inputs);
+    contract_snapshot.stores = contract_stores;
+    contract_snapshot.capabilities = contract_capabilities;
+    contract_snapshot.tombstones = merged_tombstones;
+    contract_snapshot.external_objects = external_objects;
     report.contract_violations = validate_contract_graph(&contract_snapshot)
         .iter()
         .map(contract_violation_manifest)

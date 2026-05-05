@@ -151,6 +151,21 @@ pub struct ContractGraphSnapshot {
     pub explicit_edges: Vec<ContractEdgeRecord>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ContractGraphSnapshotInputs<'a> {
+    pub claimed_evidence_level: EvidenceBoundaryLevel,
+    pub artifacts: &'a [VerifiedArtifact],
+    pub code_objects: &'a [CodeObject],
+    pub activations: &'a [ActivationRecord],
+    pub traps: &'a [TargetTrapRecord],
+    pub hostcalls: &'a [HostcallTraceRecord],
+    pub capabilities: &'a [CapabilityRecord],
+    pub cleanup_transactions: &'a [FaultCleanupTransaction],
+    pub tombstones: &'a [TombstoneRecord],
+    pub external_objects: &'a [ExternalObjectDeclaration],
+    pub explicit_edges: &'a [ContractEdgeRecord],
+}
+
 pub fn validate_contract_graph(snapshot: &ContractGraphSnapshot) -> Vec<ContractViolation> {
     ContractGraphValidator::validate(snapshot)
 }

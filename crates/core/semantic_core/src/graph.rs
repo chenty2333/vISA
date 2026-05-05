@@ -158,3 +158,113 @@ impl Default for SemanticGraph {
         Self::new()
     }
 }
+
+impl SemanticGraph {
+    pub fn snapshot(&self) -> ContractGraphSnapshot {
+        self.snapshot_with(ContractGraphSnapshotInputs::default())
+    }
+
+    pub fn snapshot_with(&self, inputs: ContractGraphSnapshotInputs<'_>) -> ContractGraphSnapshot {
+        let d = &self.domains;
+        ContractGraphSnapshot {
+            claimed_evidence_level: inputs.claimed_evidence_level,
+            artifacts: inputs.artifacts.to_vec(),
+            code_objects: inputs.code_objects.to_vec(),
+            // simd domain
+            target_feature_sets: d.simd.target_feature_sets.clone(),
+            vector_states: d.simd.vector_states.clone(),
+            simd_fault_injections: d.simd.simd_fault_injections.clone(),
+            simd_benchmarks: d.simd.simd_benchmarks.clone(),
+            simd_context_switch_benchmarks: d.simd.simd_context_switch_benchmarks.clone(),
+            // display domain
+            framebuffer_objects: d.display.framebuffer_objects.clone(),
+            display_objects: d.display.display_objects.clone(),
+            display_capabilities: d.display.display_capabilities.clone(),
+            framebuffer_window_leases: d.display.framebuffer_window_leases.clone(),
+            framebuffer_mappings: d.display.framebuffer_mappings.clone(),
+            framebuffer_writes: d.display.framebuffer_writes.clone(),
+            framebuffer_flush_regions: d.display.framebuffer_flush_regions.clone(),
+            framebuffer_dirty_regions: d.display.framebuffer_dirty_regions.clone(),
+            display_event_logs: d.display.display_event_logs.clone(),
+            display_cleanups: d.display.display_cleanups.clone(),
+            display_snapshot_barriers: d.display.display_snapshot_barriers.clone(),
+            display_panic_last_frames: d.display.display_panic_last_frames.clone(),
+            framebuffer_benchmarks: d.display.framebuffer_benchmarks.clone(),
+            // integrated domain
+            integrated_display_scheduler_loads: d
+                .integrated
+                .integrated_display_scheduler_loads
+                .clone(),
+            integrated_snapshot_io_lease_barriers: d
+                .integrated
+                .integrated_snapshot_io_lease_barriers
+                .clone(),
+            integrated_code_publish_smp_workloads: d
+                .integrated
+                .integrated_code_publish_smp_workloads
+                .clone(),
+            integrated_display_panics: d.integrated.integrated_display_panics.clone(),
+            integrated_osctl_trace_replays: d.integrated.integrated_osctl_trace_replays.clone(),
+            integrated_smp_preemption_cleanups: d
+                .integrated
+                .integrated_smp_preemption_cleanups
+                .clone(),
+            integrated_smp_network_faults: d.integrated.integrated_smp_network_faults.clone(),
+            integrated_disk_preempt_faults: d.integrated.integrated_disk_preempt_faults.clone(),
+            integrated_simd_migrations: d.integrated.integrated_simd_migrations.clone(),
+            integrated_network_disk_ios: d.integrated.integrated_network_disk_ios.clone(),
+            // network domain
+            network_benchmarks: d.network.network_benchmarks.clone(),
+            network_driver_cleanups: d.network.network_driver_cleanups.clone(),
+            packet_device_objects: d.network.packet_device_objects.clone(),
+            network_stack_adapters: d.network.network_stack_adapters.clone(),
+            socket_objects: d.network.socket_objects.clone(),
+            virtio_net_backends: d.network.virtio_net_backends.clone(),
+            // device domain
+            device_objects: d.device.device_objects.clone(),
+            // block domain
+            fake_block_backends: d.block.fake_block_backends.clone(),
+            block_benchmarks: d.block.block_benchmarks.clone(),
+            io_cleanups: d.io.io_cleanups.clone(),
+            block_pending_io_policies: d.block.block_pending_io_policies.clone(),
+            block_waits: d.block.block_waits.clone(),
+            block_request_objects: d.block.block_request_objects.clone(),
+            block_device_objects: d.block.block_device_objects.clone(),
+            block_range_objects: d.block.block_range_objects.clone(),
+            block_request_queues: d.block.block_request_queues.clone(),
+            block_dma_buffers: d.block.block_dma_buffers.clone(),
+            // scheduler domain
+            harts: d.scheduler.harts.clone(),
+            tasks: d.scheduler.tasks.clone(),
+            runtime_activations: d.scheduler.runtime_activations.clone(),
+            runnable_queues: d.scheduler.runnable_queues.clone(),
+            scheduler_decisions: d.scheduler.scheduler_decisions.clone(),
+            activation_contexts: d.scheduler.activation_contexts.clone(),
+            activation_migrations: d.scheduler.activation_migrations.clone(),
+            smp_safe_points: d.scheduler.smp_safe_points.clone(),
+            stop_the_world_rendezvous: d.scheduler.stop_the_world_rendezvous.clone(),
+            smp_code_publish_barriers: d.scheduler.smp_code_publish_barriers.clone(),
+            saved_contexts: d.scheduler.saved_contexts.clone(),
+            timer_interrupts: d.scheduler.timer_interrupts.clone(),
+            remote_preempts: d.scheduler.remote_preempts.clone(),
+            activation_cleanups: d.scheduler.activation_cleanups.clone(),
+            smp_cleanup_quiescence: d.scheduler.smp_cleanup_quiescence.clone(),
+            smp_snapshot_barriers: d.scheduler.smp_snapshot_barriers.clone(),
+            smp_stress_runs: d.scheduler.smp_stress_runs.clone(),
+            preemptions: d.scheduler.preemptions.clone(),
+            activation_resumes: d.scheduler.activation_resumes.clone(),
+            // lifecycle + wait domains
+            stores: d.lifecycle.stores.clone(),
+            waits: d.wait.waits.clone(),
+            // executor-side records
+            activations: inputs.activations.to_vec(),
+            traps: inputs.traps.to_vec(),
+            hostcalls: inputs.hostcalls.to_vec(),
+            capabilities: inputs.capabilities.to_vec(),
+            cleanup_transactions: inputs.cleanup_transactions.to_vec(),
+            tombstones: inputs.tombstones.to_vec(),
+            external_objects: inputs.external_objects.to_vec(),
+            explicit_edges: inputs.explicit_edges.to_vec(),
+        }
+    }
+}
