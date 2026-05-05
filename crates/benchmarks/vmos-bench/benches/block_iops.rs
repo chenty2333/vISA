@@ -17,9 +17,14 @@ fn bench_block_request_submit_mutation(c: &mut Criterion) {
             |mut graph| {
                 for i in 0..64 {
                     assert!(graph.record_block_request_object_with_id(
-                        1 + i, 1, 1, 1, 1,
+                        1 + i,
+                        1,
+                        1,
+                        1,
+                        1,
                         BlockRequestOperation::Read,
-                        1 + i, "bench req",
+                        1 + i,
+                        "bench req",
                     ));
                 }
                 black_box(graph.block_request_object_count())

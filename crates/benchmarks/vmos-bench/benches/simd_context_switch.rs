@@ -1,6 +1,8 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use semantic_core::VectorStateState;
-use semantic_core::target_executor::{ContractObjectKind, ContractObjectRef};
+use semantic_core::{
+    VectorStateState,
+    target_executor::{ContractObjectKind, ContractObjectRef},
+};
 use vmos_bench::simd_vector_fixture;
 
 fn bench_simd_vector_state_record_mutation(c: &mut Criterion) {
@@ -13,8 +15,16 @@ fn bench_simd_vector_state_record_mutation(c: &mut Criterion) {
                 let code = ContractObjectRef::new(ContractObjectKind::CodeObject, 3, 1);
                 let tf = ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21002, 1);
                 assert!(graph.record_vector_state_with_id(
-                    22002, activation, store, code, tf,
-                    "riscv-v", 32, 128, 512, VectorStateState::Reserved,
+                    22002,
+                    activation,
+                    store,
+                    code,
+                    tf,
+                    "riscv-v",
+                    32,
+                    128,
+                    512,
+                    VectorStateState::Reserved,
                     "criterion vector state",
                 ));
                 black_box(graph.vector_states().len())

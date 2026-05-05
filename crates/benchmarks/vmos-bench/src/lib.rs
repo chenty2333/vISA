@@ -1,7 +1,7 @@
 use semantic_core::{
     ActivationVectorState, CommandEnvelope, CommandStatus, FrontendKind, HartState,
-    HostcallLinkState, MemoryLayoutState, ResourceKind, RuntimeActivationState, SemanticCommand,
-    SemanticGraph, StoreState, TaskState, VectorStateState, PacketQueueRole,
+    HostcallLinkState, MemoryLayoutState, PacketQueueRole, ResourceKind, RuntimeActivationState,
+    SemanticCommand, SemanticGraph, StoreState, TaskState, VectorStateState,
     target_executor::{ContractObjectKind, ContractObjectRef},
 };
 
@@ -66,7 +66,11 @@ pub fn scheduler_2hart_fixture() -> SemanticGraph {
     assert!(graph.set_hart_state(2, 1, HartState::Running, "boot", "criterion hart1 running"));
     assert!(graph.create_runnable_queue_with_id(1, "main-rq"));
     assert!(graph.create_runtime_activation_with_id(
-        11, 7, 2, Some(1), Some(2),
+        11,
+        7,
+        2,
+        Some(1),
+        Some(2),
         Some(ContractObjectRef::new(ContractObjectKind::CodeObject, 3, 1)),
     ));
     assert!(graph.enqueue_runnable_activation(1, 11, 1));
@@ -82,18 +86,43 @@ pub fn block_request_fixture() -> SemanticGraph {
     let (mut graph, _store) = base_fixture(7, "criterion-block");
     let dev_res = graph.register_resource(ResourceKind::BlockDevice, Some(7), "blk-dev-res");
     assert!(graph.record_device_object_with_id(
-        1, "blk0", "block-device", dev_res, 1, "virtio-blk", "pci", "vmos", "bench-virtio", "criterion",
+        1,
+        "blk0",
+        "block-device",
+        dev_res,
+        1,
+        "virtio-blk",
+        "pci",
+        "vmos",
+        "bench-virtio",
+        "criterion",
     ));
     assert!(graph.record_block_device_object_with_id(
-        1, "bench-blk", 1, 1, 512, 2_097_152, false, 256, "criterion",
+        1,
+        "bench-blk",
+        1,
+        1,
+        512,
+        2_097_152,
+        false,
+        256,
+        "criterion",
     ));
     assert!(graph.record_fake_block_backend_object_with_id(
-        1, "bench-fake-blk", 1, 1, "service_core", "fake-block-v1",
-        512, 2_097_152, false, 256, 42, "criterion fake backend",
+        1,
+        "bench-fake-blk",
+        1,
+        1,
+        "service_core",
+        "fake-block-v1",
+        512,
+        2_097_152,
+        false,
+        256,
+        42,
+        "criterion fake backend",
     ));
-    assert!(graph.record_block_range_object_with_id(
-        1, 1, 1, 0, 256, "criterion block range",
-    ));
+    assert!(graph.record_block_range_object_with_id(1, 1, 1, 0, 256, "criterion block range",));
     graph
 }
 
@@ -103,17 +132,50 @@ pub fn network_packet_fixture() -> SemanticGraph {
     let (mut graph, _store) = base_fixture(7, "criterion-net");
     let dev_res = graph.register_resource(ResourceKind::PacketDevice, Some(7), "net-dev-res");
     assert!(graph.record_device_object_with_id(
-        1, "net0", "packet-device", dev_res, 1, "virtio-net", "pci", "vmos", "bench-virtio-net", "criterion",
+        1,
+        "net0",
+        "packet-device",
+        dev_res,
+        1,
+        "virtio-net",
+        "pci",
+        "vmos",
+        "bench-virtio-net",
+        "criterion",
     ));
     let mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     assert!(graph.record_packet_device_object_with_id(
-        1, "pkt0", 1, 1, 1500, 64, 64, mac, 1, 65536, "criterion",
+        1,
+        "pkt0",
+        1,
+        1,
+        1500,
+        64,
+        64,
+        mac,
+        1,
+        65536,
+        "criterion",
     ));
     assert!(graph.record_packet_queue_object_with_id(
-        1, "rxq", 1, 1, PacketQueueRole::Rx, 0, 64, "criterion rx",
+        1,
+        "rxq",
+        1,
+        1,
+        PacketQueueRole::Rx,
+        0,
+        64,
+        "criterion rx",
     ));
     assert!(graph.record_packet_queue_object_with_id(
-        2, "txq", 1, 1, PacketQueueRole::Tx, 0, 64, "criterion tx",
+        2,
+        "txq",
+        1,
+        1,
+        PacketQueueRole::Tx,
+        0,
+        64,
+        "criterion tx",
     ));
     graph
 }
@@ -124,7 +186,16 @@ pub fn display_framebuffer_fixture() -> SemanticGraph {
     let (mut graph, _store) = base_fixture(7, "criterion-display");
     let fb_res = graph.register_resource(ResourceKind::Framebuffer, Some(7), "fb-res");
     assert!(graph.record_framebuffer_object_with_id(
-        1, "fb0", fb_res, 1, 1920, 1080, 7680, "bgra8888", 8_294_400, "criterion",
+        1,
+        "fb0",
+        fb_res,
+        1,
+        1920,
+        1080,
+        7680,
+        "bgra8888",
+        8_294_400,
+        "criterion",
     ));
     graph
 }
@@ -141,7 +212,10 @@ pub fn simd_vector_fixture() -> SemanticGraph {
         "riscv64",
         "rv64gc",
         "riscv-v",
-        true, 32, 128, true,
+        true,
+        32,
+        128,
+        true,
         "",
         "criterion simd feature set",
     ));
@@ -157,14 +231,20 @@ pub fn preemption_latency_sample() -> usize {
     assert!(graph.record_scheduler_decision_with_id(1, 1, 1, 11, 4, "preempted", "bench decision"));
     assert!(graph.resume_activation_with_id(1, 1, 1, 11, 4, "bench resume"));
     let result = graph.apply_envelope(CommandEnvelope::new(
-        1, "vmos-bench-preemption",
+        1,
+        "vmos-bench-preemption",
         SemanticCommand::RecordPreemptionLatencySample {
             sample: 1,
-            timer_interrupt: 1, timer_interrupt_generation: 1,
-            preemption: 1, preemption_generation: 1,
-            scheduler_decision: 1, scheduler_decision_generation: 1,
-            activation_resume: 1, activation_resume_generation: 1,
-            measured_nanos: 8_500, budget_nanos: 50_000,
+            timer_interrupt: 1,
+            timer_interrupt_generation: 1,
+            preemption: 1,
+            preemption_generation: 1,
+            scheduler_decision: 1,
+            scheduler_decision_generation: 1,
+            activation_resume: 1,
+            activation_resume_generation: 1,
+            measured_nanos: 8_500,
+            budget_nanos: 50_000,
             note: "criterion preemption latency sample".to_owned(),
         },
     ));
@@ -175,8 +255,18 @@ pub fn preemption_latency_sample() -> usize {
 pub fn simd_context_switch_sample() -> usize {
     let mut graph = scheduler_2hart_fixture();
     assert!(graph.record_target_feature_set_with_id(
-        21_002, "bench-riscv-v", "criterion", "guest-frontend",
-        "riscv64", "rv64gc", "riscv-v", true, 32, 128, true, "",
+        21_002,
+        "bench-riscv-v",
+        "criterion",
+        "guest-frontend",
+        "riscv64",
+        "rv64gc",
+        "riscv-v",
+        true,
+        32,
+        128,
+        true,
+        "",
         "criterion target feature set",
     ));
     assert!(graph.record_timer_interrupt_with_id(1, 1, 1, 2, Some(11), Some(3), "bench timer"));
@@ -188,15 +278,34 @@ pub fn simd_context_switch_sample() -> usize {
     let tf_set = ContractObjectRef::new(ContractObjectKind::TargetFeatureSet, 21_002, 1);
     let saved_vector = ContractObjectRef::new(ContractObjectKind::VectorState, 22_002, 1);
     assert!(graph.record_vector_state_with_id(
-        22_002, activation, owner_store, code_object, tf_set,
-        "riscv-v", 32, 128, 512, VectorStateState::Reserved, "criterion dirty vector",
+        22_002,
+        activation,
+        owner_store,
+        code_object,
+        tf_set,
+        "riscv-v",
+        32,
+        128,
+        512,
+        VectorStateState::Reserved,
+        "criterion dirty vector",
     ));
     assert!(graph.update_activation_context_vector_state(
-        12, 2, Some(saved_vector), ActivationVectorState::Dirty,
+        12,
+        2,
+        Some(saved_vector),
+        ActivationVectorState::Dirty,
         "criterion dirty vector context",
     ));
     assert!(graph.save_dirty_vector_state_on_preempt(
-        12, 3, 13, 1, 1, 1, saved_vector, "criterion save dirty vector",
+        12,
+        3,
+        13,
+        1,
+        1,
+        1,
+        saved_vector,
+        "criterion save dirty vector",
     ));
     assert!(graph.record_scheduler_decision_with_id(1, 1, 1, 11, 4, "preempted", "bench decision"));
     assert!(graph.resume_activation_with_id(1, 1, 1, 11, 4, "bench resume"));
@@ -205,8 +314,17 @@ pub fn simd_context_switch_sample() -> usize {
         22_012,
         ContractObjectRef::new(ContractObjectKind::Preemption, 1, 1),
         ContractObjectRef::new(ContractObjectKind::ActivationResume, 1, 1),
-        saved_vector, restored_vector, tf_set,
-        "riscv-v", 32, 128, 64, 30_000, 46_384, 16_384, 50_000,
+        saved_vector,
+        restored_vector,
+        tf_set,
+        "riscv-v",
+        32,
+        128,
+        64,
+        30_000,
+        46_384,
+        16_384,
+        50_000,
         "criterion SIMD context switch",
     ));
     graph.simd_context_switch_benchmarks().len() + graph.vector_states().len()

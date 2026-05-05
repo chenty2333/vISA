@@ -17,17 +17,44 @@ fn bench_network_adapter_record_mutation(c: &mut Criterion) {
             |mut graph| {
                 let mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
                 assert!(graph.record_fake_net_backend_object_with_id(
-                    1, "fake-net", 1, 1, "service_core", "fake-net-v1",
-                    1500, 64, 64, mac, 1, 65536, 42, "bench",
+                    1,
+                    "fake-net",
+                    1,
+                    1,
+                    "service_core",
+                    "fake-net-v1",
+                    1500,
+                    64,
+                    64,
+                    mac,
+                    1,
+                    65536,
+                    42,
+                    "bench",
                 ));
-                let backend_ref = ContractObjectRef::new(
-                    ContractObjectKind::FakeNetBackendObject, 1, 1,
-                );
+                let backend_ref =
+                    ContractObjectRef::new(ContractObjectKind::FakeNetBackendObject, 1, 1);
                 assert!(graph.record_network_stack_adapter_with_id(
-                    1, backend_ref, 1, 1, 1, 1, 2, 1,
-                    "smoltcp", "0.13.0", "smoltcp-0.13.0-ethernet-ipv4-tcp-v1", "ethernet",
-                    mac, [10, 0, 0, 1], 24, 1500,
-                    64, 64, 65536, 0,
+                    1,
+                    backend_ref,
+                    1,
+                    1,
+                    1,
+                    1,
+                    2,
+                    1,
+                    "smoltcp",
+                    "0.13.0",
+                    "smoltcp-0.13.0-ethernet-ipv4-tcp-v1",
+                    "ethernet",
+                    mac,
+                    [10, 0, 0, 1],
+                    24,
+                    1500,
+                    64,
+                    64,
+                    65536,
+                    0,
                     "bench adapter",
                 ));
                 black_box(graph.network_stack_adapter_count())

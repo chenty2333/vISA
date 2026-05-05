@@ -165,54 +165,81 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
     policy: &ConformancePolicy,
     fixtures: &ConformanceFixtures,
 ) -> SubstrateConformanceReport {
-    let compatibility = capabilities.check_profile(profile);
+    let compatibility = SubstrateAuthorityRequirements {
+        required: profile.requirements().merged_with(policy.required),
+        optional: policy.optional,
+        forbidden: policy.forbidden,
+    }
+    .check(capabilities);
     let req = profile.requirements();
     let mut checks = Vec::new();
 
     push_policy_check(
-        &mut checks, "console_write_smoke",
+        &mut checks,
+        "console_write_smoke",
         policy,
-        req.console, policy.required.console, policy.optional.console,
+        req.console,
+        policy.required.console,
+        policy.optional.console,
         || console_write_smoke(backend, b"vISA conformance"),
     );
     push_policy_check(
-        &mut checks, "timer_now_smoke",
+        &mut checks,
+        "timer_now_smoke",
         policy,
-        req.timer, policy.required.timer, policy.optional.timer,
+        req.timer,
+        policy.required.timer,
+        policy.optional.timer,
         || timer_now_smoke(backend),
     );
     push_policy_check(
-        &mut checks, "timer_arm_smoke",
+        &mut checks,
+        "timer_arm_smoke",
         policy,
-        req.timer, policy.required.timer, policy.optional.timer,
+        req.timer,
+        policy.required.timer,
+        policy.optional.timer,
         || timer_arm_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "event_queue_fifo",
+        &mut checks,
+        "event_queue_fifo",
         policy,
-        req.event_queue, policy.required.event_queue, policy.optional.event_queue,
+        req.event_queue,
+        policy.required.event_queue,
+        policy.optional.event_queue,
         || event_queue_fifo_or_declared_order(backend),
     );
     push_policy_check(
-        &mut checks, "capability_denied_event",
+        &mut checks,
+        "capability_denied_event",
         policy,
-        req.event_queue, policy.required.event_queue, policy.optional.event_queue,
+        req.event_queue,
+        policy.required.event_queue,
+        policy.optional.event_queue,
         || capability_denied_event_is_visible(backend),
     );
     push_policy_check(
-        &mut checks, "guest_memory_copy_roundtrip",
+        &mut checks,
+        "guest_memory_copy_roundtrip",
         policy,
-        req.guest_memory, policy.required.guest_memory, policy.optional.guest_memory,
+        req.guest_memory,
+        policy.required.guest_memory,
+        policy.optional.guest_memory,
         || guest_memory_copy_roundtrip(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "artifact_loading_smoke",
+        &mut checks,
+        "artifact_loading_smoke",
         policy,
-        req.artifact_loading, policy.required.artifact_loading, policy.optional.artifact_loading,
+        req.artifact_loading,
+        policy.required.artifact_loading,
+        policy.optional.artifact_loading,
         || artifact_loading_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "code_publish_smoke",
+        &mut checks,
+        "code_publish_smoke",
         policy,
         !matches!(req.code_publish, CodePublishRequirement::None),
         !matches!(policy.required.code_publish, CodePublishRequirement::None),
@@ -220,7 +247,8 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
         || code_publish_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "dmw_window_smoke",
+        &mut checks,
+        "dmw_window_smoke",
         policy,
         !matches!(req.dmw, DmwRequirement::None),
         !matches!(policy.required.dmw, DmwRequirement::None),
@@ -228,19 +256,26 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
         || dmw_window_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "mmio_read_write_smoke",
+        &mut checks,
+        "mmio_read_write_smoke",
         policy,
-        req.mmio, policy.required.mmio, policy.optional.mmio,
+        req.mmio,
+        policy.required.mmio,
+        policy.optional.mmio,
         || mmio_read_write_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "irq_ack_mask_unmask_smoke",
+        &mut checks,
+        "irq_ack_mask_unmask_smoke",
         policy,
-        req.irq, policy.required.irq, policy.optional.irq,
+        req.irq,
+        policy.required.irq,
+        policy.optional.irq,
         || irq_ack_mask_unmask_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "dma_alloc_free_smoke",
+        &mut checks,
+        "dma_alloc_free_smoke",
         policy,
         !matches!(req.dma, DmaRequirement::None),
         !matches!(policy.required.dma, DmaRequirement::None),
@@ -248,7 +283,8 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
         || dma_alloc_free_smoke(backend, fixtures),
     );
     push_policy_check(
-        &mut checks, "snapshot_barrier_smoke",
+        &mut checks,
+        "snapshot_barrier_smoke",
         policy,
         !matches!(req.snapshot, SnapshotRequirement::None),
         !matches!(policy.required.snapshot, SnapshotRequirement::None),
@@ -261,8 +297,7 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
         checks.push(check);
     }
 
-    let ok = compatibility.ok
-        && checks.iter().all(|c| c.status != ConformanceStatus::Failed);
+    let ok = compatibility.ok && checks.iter().all(|c| c.status != ConformanceStatus::Failed);
     SubstrateConformanceReport { profile, capabilities, compatibility, checks, ok }
 }
 
@@ -274,46 +309,103 @@ fn forbidden_policy_checks<B: SubstrateConformanceBackend>(
     let mut out = Vec::new();
     let f = &policy.forbidden;
 
-    let mut try_forbidden = |name: &'static str, gate: bool, run: fn(&mut B) -> ConformanceResult| {
-        if !gate {
-            out.push(ConformanceCheck::skipped(name));
-            return;
-        }
-        match run(backend) {
-            Ok(()) => out.push(ConformanceCheck::passed(name, true)),
-            Err(e) => out.push(ConformanceCheck::failed(e.check, true, e.detail)),
-        }
-    };
+    let mut try_forbidden =
+        |name: &'static str, gate: bool, run: fn(&mut B) -> ConformanceResult| {
+            if !gate {
+                out.push(ConformanceCheck::skipped(name));
+                return;
+            }
+            match run(backend) {
+                Ok(()) => out.push(ConformanceCheck::passed(name, true)),
+                Err(e) => out.push(ConformanceCheck::failed(e.check, true, e.detail)),
+            }
+        };
 
-    try_forbidden("dmw_unsupported_is_reported", !matches!(f.dmw, DmwRequirement::None), dmw_unsupported_is_reported);
-    try_forbidden("dma_unsupported_is_reported", !matches!(f.dma, DmaRequirement::None), dma_unsupported_is_reported);
+    try_forbidden(
+        "dmw_unsupported_is_reported",
+        !matches!(f.dmw, DmwRequirement::None),
+        dmw_unsupported_is_reported,
+    );
+    try_forbidden(
+        "dma_unsupported_is_reported",
+        !matches!(f.dma, DmaRequirement::None),
+        dma_unsupported_is_reported,
+    );
     try_forbidden("console_unsupported_is_reported", f.console, |b| {
-        unsupported_is_reported("console_unsupported", b.console_write(b"test"), "ConsoleAuthority", "console_write")
+        unsupported_is_reported(
+            "console_unsupported",
+            b.console_write(b"test"),
+            "ConsoleAuthority",
+            "console_write",
+        )
     });
     try_forbidden("timer_unsupported_is_reported", f.timer, |b| {
         unsupported_is_reported("timer_unsupported", b.now().map(|_| ()), "TimerAuthority", "now")
     });
     try_forbidden("event_queue_unsupported_is_reported", f.event_queue, |b| {
-        unsupported_is_reported("event_queue_unsupported", b.push_event(SubstrateEvent::unsupported("test", "test", None)), "EventQueueAuthority", "push_event")
+        unsupported_is_reported(
+            "event_queue_unsupported",
+            b.push_event(SubstrateEvent::unsupported("test", "test", None)),
+            "EventQueueAuthority",
+            "push_event",
+        )
     });
     try_forbidden("guest_memory_unsupported_is_reported", f.guest_memory, |b| {
-        unsupported_is_reported("guest_memory_unsupported", b.copyout(UserMemoryHandle::new(1, 1), 0, &[]), "GuestMemoryAuthority", "copyout")
+        unsupported_is_reported(
+            "guest_memory_unsupported",
+            b.copyout(UserMemoryHandle::new(1, 1), 0, &[]),
+            "GuestMemoryAuthority",
+            "copyout",
+        )
     });
     try_forbidden("artifact_loading_unsupported_is_reported", f.artifact_loading, |b| {
-        unsupported_is_reported("artifact_loading_unsupported", b.load_artifact_image(ArtifactImageRef::new(1, 1)), "ArtifactAuthority", "load_artifact_image")
+        unsupported_is_reported(
+            "artifact_loading_unsupported",
+            b.load_artifact_image(ArtifactImageRef::new(1, 1)),
+            "ArtifactAuthority",
+            "load_artifact_image",
+        )
     });
-    try_forbidden("code_publish_unsupported_is_reported", !matches!(f.code_publish, CodePublishRequirement::None), |b| {
-        unsupported_is_reported("code_publish_unsupported", b.publish_code(ArtifactImageRef::new(1, 1), CodeObjectRef::new(1, 1)).map(|_| ()), "CodePublisherAuthority", "publish_code")
-    });
+    try_forbidden(
+        "code_publish_unsupported_is_reported",
+        !matches!(f.code_publish, CodePublishRequirement::None),
+        |b| {
+            unsupported_is_reported(
+                "code_publish_unsupported",
+                b.publish_code(ArtifactImageRef::new(1, 1), CodeObjectRef::new(1, 1)).map(|_| ()),
+                "CodePublisherAuthority",
+                "publish_code",
+            )
+        },
+    );
     try_forbidden("mmio_unsupported_is_reported", f.mmio, |b| {
-        unsupported_is_reported("mmio_unsupported", b.mmio_read32(MmioRegionRef::new(1, 1), 0).map(|_| ()), "MmioAuthority", "mmio_read32")
+        unsupported_is_reported(
+            "mmio_unsupported",
+            b.mmio_read32(MmioRegionRef::new(1, 1), 0).map(|_| ()),
+            "MmioAuthority",
+            "mmio_read32",
+        )
     });
     try_forbidden("irq_unsupported_is_reported", f.irq, |b| {
-        unsupported_is_reported("irq_unsupported", b.irq_ack(IrqLine::new(1, 1)), "IrqAuthority", "irq_ack")
+        unsupported_is_reported(
+            "irq_unsupported",
+            b.irq_ack(IrqLine::new(1, 1)),
+            "IrqAuthority",
+            "irq_ack",
+        )
     });
-    try_forbidden("snapshot_unsupported_is_reported", !matches!(f.snapshot, SnapshotRequirement::None), |b| {
-        unsupported_is_reported("snapshot_unsupported", b.enter_snapshot_barrier().map(|_| ()), "SnapshotAuthority", "enter_snapshot_barrier")
-    });
+    try_forbidden(
+        "snapshot_unsupported_is_reported",
+        !matches!(f.snapshot, SnapshotRequirement::None),
+        |b| {
+            unsupported_is_reported(
+                "snapshot_unsupported",
+                b.enter_snapshot_barrier().map(|_| ()),
+                "SnapshotAuthority",
+                "enter_snapshot_barrier",
+            )
+        },
+    );
 
     out
 }
@@ -346,11 +438,7 @@ fn push_policy_check<F>(
                     detail: "optional authority degraded",
                 });
             } else {
-                checks.push(ConformanceCheck::failed(
-                    error.check,
-                    is_required,
-                    error.detail,
-                ));
+                checks.push(ConformanceCheck::failed(error.check, is_required, error.detail));
             }
         }
     }
@@ -592,11 +680,13 @@ pub fn dma_unsupported_is_reported<A: DmaAuthority>(authority: &mut A) -> Confor
 #[macro_export]
 macro_rules! conformance_test_suite {
     ($backend_factory:expr) => {
-        use $crate::conformance::{
-            check_substrate_profile, ConformanceFixtures, SubstrateConformanceReport,
-        };
-        use $crate::SubstrateCapabilitySet;
         use visa_profile::SubstrateProfile;
+        use $crate::{
+            SubstrateCapabilitySet,
+            conformance::{
+                ConformanceFixtures, SubstrateConformanceReport, check_substrate_profile,
+            },
+        };
 
         fn assert_report_ok(report: &SubstrateConformanceReport, profile_name: &str) {
             if !report.ok {

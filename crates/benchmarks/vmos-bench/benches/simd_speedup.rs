@@ -11,9 +11,18 @@ fn bench_simd_speedup_mutation(c: &mut Criterion) {
                 let scalar = ContractObjectRef::new(ContractObjectKind::CodeObject, 1, 1);
                 let vector = ContractObjectRef::new(ContractObjectKind::CodeObject, 2, 1);
                 assert!(graph.record_simd_benchmark_with_id(
-                    1, tf, scalar, vector,
-                    "riscv-v", 32, 128, 100_000,
-                    12_000_000, 8_000_000, 1500, 4_000_000,
+                    1,
+                    tf,
+                    scalar,
+                    vector,
+                    "riscv-v",
+                    32,
+                    128,
+                    100_000,
+                    12_000_000,
+                    8_000_000,
+                    1500,
+                    4_000_000,
                     "criterion SIMD speedup",
                 ));
                 black_box(graph.simd_benchmark_count())
