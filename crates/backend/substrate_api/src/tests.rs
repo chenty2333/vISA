@@ -36,6 +36,10 @@ impl TimerAuthority for FullConformanceBackend {
     fn now(&self) -> SubstrateResult<VirtualTime> {
         Ok(VirtualTime::from_ticks(42))
     }
+
+    fn arm_timer(&mut self, _deadline: VirtualTime, _token: WaitTokenRef) -> SubstrateResult<()> {
+        Ok(())
+    }
 }
 
 impl EventQueueAuthority for FullConformanceBackend {
@@ -304,7 +308,11 @@ fn profile_conformance_suite_passes_snapshot_replay_backend() {
     assert!(report.ok);
     assert!(report.failures().next().is_none());
     assert!(
-        report.checks.iter().all(|check| check.status != conformance::ConformanceStatus::Skipped)
+        report
+            .checks
+            .iter()
+            .filter(|check| check.required)
+            .all(|check| check.status != conformance::ConformanceStatus::Skipped)
     );
     assert_eq!(backend.loaded, vec![fixtures.artifact]);
     assert_eq!(backend.published, vec![(fixtures.artifact, fixtures.code)]);
@@ -331,6 +339,7 @@ fn profile_conformance_suite_reports_backend_failures() {
         vec![
             "console_write_smoke",
             "timer_now_smoke",
+            "timer_arm_smoke",
             "event_queue_fifo",
             "capability_denied_event"
         ]
