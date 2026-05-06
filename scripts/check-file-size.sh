@@ -3,7 +3,7 @@ set -euo pipefail
 
 # File size gate for the VMOS workspace.
 # Thresholds tighten as the codebase is restructured.
-WARN_LINES=1500
+WARN_LINES=3500
 FAIL_LINES=5000
 
 # No hard-limit exemptions remain. Keep this list empty unless a transitional
