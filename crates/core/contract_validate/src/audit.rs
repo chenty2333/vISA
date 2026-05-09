@@ -154,7 +154,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
     if real_target_substrate_claim {
         if package.required_artifact_profile.target_arch == "target-native" {
             findings.push(ExternalAuditFinding::new(
-                ExternalAuditSeverity::Warning,
+                ExternalAuditSeverity::Error,
                 "real-target-without-concrete-arch",
                 "real target substrate claim uses target-native instead of a concrete target arch",
             ));
@@ -167,7 +167,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
             && package.substrate_boundary.active_virtio_queue_authority_count == 0
         {
             findings.push(ExternalAuditFinding::new(
-                ExternalAuditSeverity::Warning,
+                ExternalAuditSeverity::Error,
                 "real-target-without-extraction-events",
                 "real target substrate claim has no substrate events or active extracted authorities",
             ));
