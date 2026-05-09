@@ -174,9 +174,11 @@ pub struct ArtifactInterfaceCompatibilityReport {
 }
 
 mod artifact;
+mod audit;
 mod migration;
 
 pub use artifact::*;
+pub use audit::*;
 pub use migration::*;
 
 #[cfg(test)]

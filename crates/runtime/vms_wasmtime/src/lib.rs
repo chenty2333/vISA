@@ -263,16 +263,30 @@ impl WasmVisaExecutor {
                     move |mut caller: Caller<'_, WasmVisaState>,
                           params: &[Val],
                           results: &mut [Val]| {
-                        let a = params.first().map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let b = params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let c = params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let d = params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0);
-                        let Some(payload) = hostcall_payload_for_object(&obj, &op, a, b, c, d)
+                        let args = [
+                            params.first().map(|v| v.unwrap_i64()).unwrap_or(0),
+                            params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0),
+                            params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0),
+                            params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0),
+                            params.get(4).map(|v| v.unwrap_i64()).unwrap_or(0),
+                            params.get(5).map(|v| v.unwrap_i64()).unwrap_or(0),
+                        ];
+                        let Some(payload) =
+                            hostcall_payload_for_object(&mut caller, &obj, &op, args)
                         else {
                             return Err(wasmtime::format_err!("hostcall {n} is not bound"));
                         };
                         let result = match caller.data_mut().dispatch_hostcall(n, payload) {
-                            Ok(report) => hostcall_result_i64(&report.value),
+                            Ok(report) => {
+                                if let VisaHostcallValue::Bytes(bytes) = &report.value
+                                    && operation_returns_guest_bytes(&obj, &op)
+                                    && args[4] >= 0
+                                {
+                                    write_guest_bytes(&mut caller, args[4] as usize, bytes)
+                                        .map_err(wasmtime::Error::msg)?;
+                                }
+                                hostcall_result_i64(&report.value)
+                            }
                             Err(_e) => -1,
                         };
                         results[0] = Val::I64(result);
@@ -372,59 +386,85 @@ fn adapter_supports_hostcall(object: &str, operation: &str) -> bool {
         (object, operation),
         ("wasi.fd", "write")
             | ("test.console", "write")
+            | ("visa.console", "write")
             | ("timer.wasi", "read")
             | ("timer", "now")
+            | ("visa.timer", "now")
             | ("timer.wasi", "arm")
+            | ("visa.timer", "arm")
             | ("guest-memory", "read")
             | ("guest-memory", "copyin")
+            | ("visa.memory", "copyin")
             | ("guest-memory", "write")
             | ("guest-memory", "copyout")
+            | ("visa.memory", "copyout")
             | ("dmw", "map")
+            | ("visa.dmw", "map")
             | ("dmw", "unmap")
+            | ("visa.dmw", "unmap")
+            | ("mmio", "read32")
+            | ("visa.mmio", "read32")
+            | ("mmio", "write32")
+            | ("visa.mmio", "write32")
+            | ("dma", "alloc")
+            | ("visa.dma", "alloc")
+            | ("dma", "free")
+            | ("visa.dma", "free")
+            | ("irq", "ack")
+            | ("visa.irq", "ack")
+            | ("irq", "mask")
+            | ("visa.irq", "mask")
+            | ("irq", "unmask")
+            | ("visa.irq", "unmask")
+            | ("snapshot", "enter")
+            | ("visa.snapshot", "enter")
+            | ("snapshot", "exit")
+            | ("visa.snapshot", "exit")
     )
 }
 
 fn hostcall_payload_for_object(
+    caller: &mut Caller<'_, WasmVisaState>,
     object: &str,
     operation: &str,
-    a: i64,
-    b: i64,
-    c: i64,
-    d: i64,
+    args: [i64; 6],
 ) -> Option<VisaHostcallPayload> {
+    let [a, b, c, d, e, _f] = args;
     match (object, operation) {
+        ("visa.console", "write") => {
+            let bytes = read_guest_bytes(caller, a as usize, b.max(0) as usize)?;
+            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+        }
         ("wasi.fd", "write") | ("test.console", "write") => {
             let len = a.max(0) as usize;
             let mut bytes = Vec::with_capacity(len.min(1024));
-            if b > 0 {
-                bytes.push(b as u8);
-            }
-            if c > 0 {
-                bytes.push(c as u8);
-            }
-            if d > 0 {
-                bytes.push(d as u8);
+            for byte in [b, c, d] {
+                if byte > 0 {
+                    bytes.push(byte as u8);
+                }
             }
             Some(VisaHostcallPayload::ConsoleWrite { bytes })
         }
-        ("timer.wasi", "read") | ("timer", "now") => Some(VisaHostcallPayload::TimerNow),
-        ("timer.wasi", "arm") => Some(VisaHostcallPayload::TimerArm {
+        ("timer.wasi", "read") | ("timer", "now") | ("visa.timer", "now") => {
+            Some(VisaHostcallPayload::TimerNow)
+        }
+        ("timer.wasi", "arm") | ("visa.timer", "arm") => Some(VisaHostcallPayload::TimerArm {
             deadline_ticks: a as u64,
             token: substrate_api::WaitTokenRef::new(b as u64, c as u64),
         }),
-        ("guest-memory", "read") | ("guest-memory", "copyin") => {
+        ("guest-memory", "read") | ("guest-memory", "copyin") | ("visa.memory", "copyin") => {
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
             let len = d.max(0) as usize;
             Some(VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len })
         }
-        ("guest-memory", "write") | ("guest-memory", "copyout") => {
+        ("guest-memory", "write") | ("guest-memory", "copyout") | ("visa.memory", "copyout") => {
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
-            let bytes = Vec::new();
+            let bytes = read_guest_bytes(caller, e as usize, d.max(0) as usize)?;
             Some(VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes })
         }
-        ("dmw", "map") => {
+        ("dmw", "map") | ("visa.dmw", "map") => {
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
             let len = d.max(0) as usize;
@@ -432,13 +472,95 @@ fn hostcall_payload_for_object(
                 memory,
                 ptr,
                 len,
-                perms: substrate_api::WindowPerms::READ_WRITE,
+                perms: window_perms_from_bits(e as u64),
             })
         }
-        ("dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
+        ("dmw", "unmap") | ("visa.dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
             lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
         }),
+        ("mmio", "read32") | ("visa.mmio", "read32") => Some(VisaHostcallPayload::MmioRead32 {
+            region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
+            offset: c as u64,
+        }),
+        ("mmio", "write32") | ("visa.mmio", "write32") => Some(VisaHostcallPayload::MmioWrite32 {
+            region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
+            offset: c as u64,
+            value: d as u32,
+        }),
+        ("dma", "alloc") | ("visa.dma", "alloc") => Some(VisaHostcallPayload::DmaAlloc {
+            request: substrate_api::DmaAllocRequest::new(
+                a as u64,
+                b.max(0) as usize,
+                c.max(1) as usize,
+            ),
+        }),
+        ("dma", "free") | ("visa.dma", "free") => Some(VisaHostcallPayload::DmaFree {
+            capability: substrate_api::DmaBufferCapability::new(a as u64, b as u64),
+        }),
+        ("irq", "ack") | ("visa.irq", "ack") => Some(VisaHostcallPayload::IrqAck {
+            irq: substrate_api::IrqLine::new(a as u64, b as u64),
+        }),
+        ("irq", "mask") | ("visa.irq", "mask") => Some(VisaHostcallPayload::IrqMask {
+            irq: substrate_api::IrqLine::new(a as u64, b as u64),
+        }),
+        ("irq", "unmask") | ("visa.irq", "unmask") => Some(VisaHostcallPayload::IrqUnmask {
+            irq: substrate_api::IrqLine::new(a as u64, b as u64),
+        }),
+        ("snapshot", "enter") | ("visa.snapshot", "enter") => {
+            Some(VisaHostcallPayload::SnapshotEnter)
+        }
+        ("snapshot", "exit") | ("visa.snapshot", "exit") => {
+            Some(VisaHostcallPayload::SnapshotExit {
+                barrier: substrate_api::SnapshotBarrierRef::new(a as u64, b as u64),
+            })
+        }
         _ => None,
+    }
+}
+
+fn operation_returns_guest_bytes(object: &str, operation: &str) -> bool {
+    matches!(
+        (object, operation),
+        ("guest-memory", "read") | ("guest-memory", "copyin") | ("visa.memory", "copyin")
+    )
+}
+
+fn read_guest_bytes(
+    caller: &mut Caller<'_, WasmVisaState>,
+    ptr: usize,
+    len: usize,
+) -> Option<Vec<u8>> {
+    let memory = caller.get_export("memory")?.into_memory()?;
+    let data = memory.data(&mut *caller);
+    let end = ptr.checked_add(len)?;
+    let bytes = data.get(ptr..end)?;
+    Some(bytes.to_vec())
+}
+
+fn write_guest_bytes(
+    caller: &mut Caller<'_, WasmVisaState>,
+    ptr: usize,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let memory = caller
+        .get_export("memory")
+        .and_then(|export| export.into_memory())
+        .ok_or_else(|| "guest memory export is missing".to_string())?;
+    let data = memory.data_mut(&mut *caller);
+    let end =
+        ptr.checked_add(bytes.len()).ok_or_else(|| "guest memory write overflow".to_string())?;
+    let Some(dst) = data.get_mut(ptr..end) else {
+        return Err("guest memory write is out of bounds".to_string());
+    };
+    dst.copy_from_slice(bytes);
+    Ok(())
+}
+
+fn window_perms_from_bits(bits: u64) -> substrate_api::WindowPerms {
+    substrate_api::WindowPerms {
+        read: bits & 0b001 != 0,
+        write: bits & 0b010 != 0,
+        execute: bits & 0b100 != 0,
     }
 }
 
@@ -460,14 +582,14 @@ mod tests {
     use sha2::{Digest, Sha256};
     use substrate_api::{
         ArtifactAuthority, CodePublisherAuthority, ConsoleAuthority, DmaAuthority, DmwAuthority,
-        EventQueueAuthority, GuestMemoryAuthority, IrqAuthority, MmioAuthority, SnapshotAuthority,
-        SubstrateResult, TimerAuthority, VirtualTime,
+        EventQueueAuthority, GuestBytes, GuestMemoryAuthority, IrqAuthority, MmioAuthority,
+        SnapshotAuthority, SubstrateError, SubstrateResult, TimerAuthority, VirtualTime,
     };
     use target_abi::{
         TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
     };
     use visa_profile::SubstrateProfile;
-    use vms_runtime::{VisaArtifactDescriptor, VisaRuntimeConfig};
+    use vms_runtime::{VisaArtifactDescriptor, VisaHostcallValue, VisaRuntimeConfig};
 
     use super::*;
 
@@ -477,6 +599,13 @@ mod tests {
     struct TestSubstrate {
         console: Vec<u8>,
         timers: usize,
+        guest_memory_source: Vec<u8>,
+        guest_memory_sink: Vec<u8>,
+        dmw_live: bool,
+        mmio: u32,
+        dma_live: bool,
+        irq_ops: Vec<&'static str>,
+        snapshot_live: bool,
     }
 
     impl ConsoleAuthority for TestSubstrate {
@@ -502,8 +631,59 @@ mod tests {
     }
 
     impl EventQueueAuthority for TestSubstrate {}
-    impl GuestMemoryAuthority for TestSubstrate {}
-    impl DmwAuthority for TestSubstrate {}
+    impl GuestMemoryAuthority for TestSubstrate {
+        fn copyin(
+            &self,
+            _mem: substrate_api::UserMemoryHandle,
+            _ptr: u64,
+            len: usize,
+        ) -> SubstrateResult<GuestBytes> {
+            let source = if self.guest_memory_source.is_empty() {
+                b"vISA".as_slice()
+            } else {
+                self.guest_memory_source.as_slice()
+            };
+            Ok(source.iter().copied().cycle().take(len).collect())
+        }
+
+        fn copyout(
+            &mut self,
+            _mem: substrate_api::UserMemoryHandle,
+            _ptr: u64,
+            data: &[u8],
+        ) -> SubstrateResult<()> {
+            self.guest_memory_sink.clear();
+            self.guest_memory_sink.extend_from_slice(data);
+            Ok(())
+        }
+    }
+
+    impl DmwAuthority for TestSubstrate {
+        fn map_user_window(
+            &mut self,
+            _mem: substrate_api::UserMemoryHandle,
+            _ptr: u64,
+            len: usize,
+            perms: substrate_api::WindowPerms,
+        ) -> SubstrateResult<substrate_api::WindowLeaseRef> {
+            if len == 0 || !perms.read {
+                return Err(SubstrateError::InvalidObject { object: "dmw-window" });
+            }
+            self.dmw_live = true;
+            Ok(substrate_api::WindowLeaseRef::new(1, 1))
+        }
+
+        fn unmap_user_window(
+            &mut self,
+            lease: substrate_api::WindowLeaseRef,
+        ) -> SubstrateResult<()> {
+            if !lease.is_valid() || !self.dmw_live {
+                return Err(SubstrateError::InvalidObject { object: "window-lease" });
+            }
+            self.dmw_live = false;
+            Ok(())
+        }
+    }
     impl ArtifactAuthority for TestSubstrate {
         fn load_artifact_image(
             &mut self,
@@ -521,10 +701,93 @@ mod tests {
             Ok(substrate_api::PublishedCodeRef::new(code.id, code.generation))
         }
     }
-    impl MmioAuthority for TestSubstrate {}
-    impl DmaAuthority for TestSubstrate {}
-    impl IrqAuthority for TestSubstrate {}
-    impl SnapshotAuthority for TestSubstrate {}
+    impl MmioAuthority for TestSubstrate {
+        fn mmio_read32(
+            &self,
+            _region: substrate_api::MmioRegionRef,
+            _offset: u64,
+        ) -> SubstrateResult<u32> {
+            Ok(self.mmio)
+        }
+
+        fn mmio_write32(
+            &mut self,
+            _region: substrate_api::MmioRegionRef,
+            _offset: u64,
+            value: u32,
+        ) -> SubstrateResult<()> {
+            self.mmio = value;
+            Ok(())
+        }
+    }
+
+    impl DmaAuthority for TestSubstrate {
+        fn dma_alloc(
+            &mut self,
+            req: substrate_api::DmaAllocRequest,
+        ) -> SubstrateResult<substrate_api::DmaBufferCapability> {
+            if req.bytes == 0 || req.alignment == 0 {
+                return Err(SubstrateError::InvalidObject { object: "dma-request" });
+            }
+            self.dma_live = true;
+            Ok(substrate_api::DmaBufferCapability::new(1, 1))
+        }
+
+        fn dma_free(
+            &mut self,
+            capability: substrate_api::DmaBufferCapability,
+        ) -> SubstrateResult<()> {
+            if !capability.is_valid() || !self.dma_live {
+                return Err(SubstrateError::InvalidObject { object: "dma-buffer" });
+            }
+            self.dma_live = false;
+            Ok(())
+        }
+    }
+
+    impl IrqAuthority for TestSubstrate {
+        fn irq_ack(&mut self, irq: substrate_api::IrqLine) -> SubstrateResult<()> {
+            if !irq.is_valid() {
+                return Err(SubstrateError::InvalidObject { object: "irq-line" });
+            }
+            self.irq_ops.push("ack");
+            Ok(())
+        }
+
+        fn irq_mask(&mut self, irq: substrate_api::IrqLine) -> SubstrateResult<()> {
+            if !irq.is_valid() {
+                return Err(SubstrateError::InvalidObject { object: "irq-line" });
+            }
+            self.irq_ops.push("mask");
+            Ok(())
+        }
+
+        fn irq_unmask(&mut self, irq: substrate_api::IrqLine) -> SubstrateResult<()> {
+            if !irq.is_valid() {
+                return Err(SubstrateError::InvalidObject { object: "irq-line" });
+            }
+            self.irq_ops.push("unmask");
+            Ok(())
+        }
+    }
+
+    impl SnapshotAuthority for TestSubstrate {
+        fn enter_snapshot_barrier(&mut self) -> SubstrateResult<substrate_api::SnapshotBarrierRef> {
+            self.snapshot_live = true;
+            Ok(substrate_api::SnapshotBarrierRef::new(1, 1))
+        }
+
+        fn exit_snapshot_barrier(
+            &mut self,
+            barrier: substrate_api::SnapshotBarrierRef,
+        ) -> SubstrateResult<()> {
+            if !barrier.is_valid() || !self.snapshot_live {
+                return Err(SubstrateError::InvalidObject { object: "snapshot-barrier" });
+            }
+            self.snapshot_live = false;
+            Ok(())
+        }
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────
 
@@ -617,6 +880,204 @@ mod tests {
         .expect("parse wat")
     }
 
+    fn visa_native_console_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (memory (export "memory") 1)
+  (data (i32.const 16) "native-vISA")
+  (func (export "visa_start") (result i64)
+    i64.const 16
+    i64.const 11
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $console_write
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
+    fn visa_native_full_hostcall_abi_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_2" (func $timer_now (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_3" (func $timer_arm (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_4" (func $memory_copyin (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_5" (func $memory_copyout (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_6" (func $dmw_map (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_7" (func $dmw_unmap (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_8" (func $mmio_read32 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_9" (func $mmio_write32 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_10" (func $dma_alloc (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_11" (func $dma_free (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_12" (func $irq_ack (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_13" (func $irq_mask (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_14" (func $irq_unmask (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_15" (func $snapshot_enter (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "vms" "hostcall_16" (func $snapshot_exit (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (memory (export "memory") 1)
+  (data (i32.const 16) "native-vISA")
+  (func (export "visa_start") (result i64)
+    i64.const 16
+    i64.const 11
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $console_write
+    drop
+
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $timer_now
+    drop
+
+    i64.const 100
+    i64.const 2
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $timer_arm
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 4096
+    i64.const 4
+    i64.const 64
+    i64.const 0
+    call $memory_copyin
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 8192
+    i64.const 4
+    i64.const 64
+    i64.const 0
+    call $memory_copyout
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 4096
+    i64.const 4096
+    i64.const 3
+    i64.const 0
+    call $dmw_map
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $dmw_unmap
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 0
+    i64.const 123
+    i64.const 0
+    i64.const 0
+    call $mmio_write32
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $mmio_read32
+    drop
+
+    i64.const 7
+    i64.const 4096
+    i64.const 4096
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $dma_alloc
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $dma_free
+    drop
+
+    i64.const 3
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $irq_ack
+    drop
+
+    i64.const 3
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $irq_mask
+    drop
+
+    i64.const 3
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $irq_unmask
+    drop
+
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $snapshot_enter
+    drop
+
+    i64.const 1
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $snapshot_exit
+    drop
+
+    i64.const 7
+  )
+  (func (export "probe_copyin_byte") (result i64)
+    i32.const 64
+    i32.load8_u
+    i64.extend_i32_u
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
     fn console_descriptor(id: u64) -> VisaArtifactDescriptor {
         VisaArtifactDescriptor::new(id, "test", "test-artifact", SubstrateProfile::GuestFrontend)
             .with_role("frontend-personality")
@@ -682,6 +1143,97 @@ mod tests {
         assert!(report.loaded.store_id > 0);
         // Hostcall should have been dispatched
         assert!(!report.hostcalls.is_empty(), "must have at least one hostcall dispatch");
+    }
+
+    #[test]
+    fn run_executes_native_visa_memory_backed_console_hostcall() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &visa_native_console_wasm());
+        let personality = vms_runtime::personality::native::VisaNativePersonality::new(
+            "native-visa",
+            SubstrateProfile::MinimalBareMetal,
+        );
+
+        let report = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(19) },
+                "visa_start",
+            )
+            .expect("run native vISA artifact");
+
+        assert_eq!(report.loaded.artifact_id, 19);
+        assert_eq!(report.hostcalls.len(), 1);
+        assert_eq!(report.hostcalls[0].object, "visa.console");
+        assert_eq!(report.hostcalls[0].value, VisaHostcallValue::U64(11));
+        assert!(
+            executor
+                .runtime()
+                .snapshot()
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.role == "visa-native-workload")
+        );
+    }
+
+    #[test]
+    fn run_executes_native_visa_full_substrate_hostcall_abi() {
+        let runtime = VisaRuntime::new(VisaRuntimeConfig::for_profile(
+            SubstrateProfile::SnapshotReplayCapable,
+        ));
+        let substrate =
+            TestSubstrate { guest_memory_source: b"vISA".to_vec(), ..TestSubstrate::default() };
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &visa_native_full_hostcall_abi_wasm());
+        let personality = vms_runtime::personality::native::VisaNativePersonality::new(
+            "native-visa-full",
+            SubstrateProfile::SnapshotReplayCapable,
+        );
+
+        let report = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(29) },
+                "visa_start",
+            )
+            .expect("run native vISA full ABI artifact");
+
+        assert_eq!(report.loaded.artifact_id, 29);
+        assert_eq!(report.hostcalls.len(), 16);
+        assert_eq!(report.hostcalls[0].object, "visa.console");
+        assert_eq!(report.hostcalls[0].value, VisaHostcallValue::U64(11));
+        assert_eq!(report.hostcalls[1].value, VisaHostcallValue::U64(42));
+        assert_eq!(report.hostcalls[3].value, VisaHostcallValue::Bytes(b"vISA".to_vec()));
+        assert!(matches!(
+            report.hostcalls[5].value,
+            VisaHostcallValue::WindowLease(substrate_api::WindowLeaseRef { id: 1, generation: 1 })
+        ));
+        assert_eq!(report.hostcalls[8].value, VisaHostcallValue::U32(123));
+        assert!(matches!(
+            report.hostcalls[9].value,
+            VisaHostcallValue::DmaBuffer(substrate_api::DmaBufferCapability {
+                id: 1,
+                generation: 1
+            })
+        ));
+        assert!(matches!(
+            report.hostcalls[14].value,
+            VisaHostcallValue::SnapshotBarrier(substrate_api::SnapshotBarrierRef {
+                id: 1,
+                generation: 1
+            })
+        ));
+
+        let probe = executor.call_export("probe_copyin_byte", &[]).expect("probe");
+        assert!(
+            matches!(probe.as_slice(), [Val::I64(value)] if *value == i64::from(b'v')),
+            "probe must observe copyin bytes in guest memory: {probe:?}"
+        );
+        assert!(report.evidence_summary().can_claim_portable_artifact_execution);
+        assert_eq!(executor.runtime().executor().hostcall_trace().len(), 16);
     }
 
     #[test]

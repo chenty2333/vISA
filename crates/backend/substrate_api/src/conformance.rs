@@ -122,6 +122,55 @@ impl SubstrateConformanceReport {
     pub fn failures(&self) -> impl Iterator<Item = &ConformanceCheck> {
         self.checks.iter().filter(|check| check.status == ConformanceStatus::Failed)
     }
+
+    pub fn evidence_summary(
+        &self,
+        real_target_substrate_run: bool,
+    ) -> SubstrateConformanceEvidence {
+        let required_checks = self.checks.iter().filter(|check| check.required).count();
+        let passed_required = self
+            .checks
+            .iter()
+            .filter(|check| check.required && check.status == ConformanceStatus::Passed)
+            .count();
+        let failed_checks =
+            self.checks.iter().filter(|check| check.status == ConformanceStatus::Failed).count();
+        let skipped_optional = self
+            .checks
+            .iter()
+            .filter(|check| !check.required && check.status == ConformanceStatus::Skipped)
+            .count();
+        let strongest_profile = SubstrateProfile::strongest_satisfied_by(self.capabilities);
+        let can_claim_profile =
+            self.ok && self.compatibility.ok && passed_required == required_checks;
+        let can_claim_real_target_substrate = can_claim_profile && real_target_substrate_run;
+        SubstrateConformanceEvidence {
+            profile: self.profile,
+            strongest_profile,
+            total_checks: self.checks.len(),
+            required_checks,
+            passed_required,
+            failed_checks,
+            skipped_optional,
+            can_claim_profile,
+            real_target_substrate_run,
+            can_claim_real_target_substrate,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubstrateConformanceEvidence {
+    pub profile: SubstrateProfile,
+    pub strongest_profile: Option<SubstrateProfile>,
+    pub total_checks: usize,
+    pub required_checks: usize,
+    pub passed_required: usize,
+    pub failed_checks: usize,
+    pub skipped_optional: usize,
+    pub can_claim_profile: bool,
+    pub real_target_substrate_run: bool,
+    pub can_claim_real_target_substrate: bool,
 }
 
 #[derive(Clone, Debug, Default)]

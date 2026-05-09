@@ -510,6 +510,128 @@ fn minimal_migration_package() -> MigrationPackageManifest {
     }
 }
 
+fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
+    let hostcall = artifact_manifest::HostcallSpecManifest {
+        number: 1,
+        name: "visa.console.write".to_owned(),
+        category: "service".to_owned(),
+        object: "visa.console".to_owned(),
+        operation: "write".to_owned(),
+        may_pending: false,
+    };
+    package.semantic.target_artifact_count = 1;
+    package.semantic.roots.target_artifact_roots = vec!["target-artifact id=1".to_owned()];
+    package.semantic.target_artifacts = vec![artifact_manifest::TargetArtifactImageManifest {
+        id: 1,
+        package: "native-visa".to_owned(),
+        artifact_name: "visa-native-artifact".to_owned(),
+        role: "visa-native-workload".to_owned(),
+        kind: "target-artifact-image".to_owned(),
+        target_profile: "minimal-bare-metal".to_owned(),
+        abi_fingerprint: "native-visa-abi".to_owned(),
+        manifest_binding_hash: "native-visa-binding".to_owned(),
+        code_hash: "native-visa-code".to_owned(),
+        exports: vec!["visa_start".to_owned()],
+        hostcalls: vec![hostcall.clone()],
+        memory_plan: artifact_manifest::TargetMemoryPlanManifest {
+            max_memory_pages: 16,
+            max_table_elements: 0,
+            max_hostcalls_per_activation: 16,
+        },
+        payload_len: 64,
+        ..Default::default()
+    }];
+
+    package.semantic.code_object_count = 1;
+    package.semantic.roots.code_object_roots = vec!["code-object id=1".to_owned()];
+    package.semantic.code_objects = vec![artifact_manifest::CodeObjectManifest {
+        id: 1,
+        artifact_id: 1,
+        package: "native-visa".to_owned(),
+        owner_profile: "minimal-bare-metal".to_owned(),
+        generation: 1,
+        state: "published".to_owned(),
+        text_permission: "rx".to_owned(),
+        rodata_permission: "r".to_owned(),
+        code_hash: "native-visa-code".to_owned(),
+        hostcalls: vec![hostcall.clone()],
+        ..Default::default()
+    }];
+
+    package.semantic.activation_record_count = 1;
+    package.semantic.roots.activation_record_roots = vec!["activation id=1".to_owned()];
+    package.semantic.activation_records = vec![artifact_manifest::ActivationRecordManifest {
+        id: 1,
+        store: 1,
+        code_object: 1,
+        artifact: 1,
+        entry: "visa_start".to_owned(),
+        generation: 1,
+        state: "running".to_owned(),
+        ..Default::default()
+    }];
+
+    package.semantic.hostcall_trace_count = 1;
+    package.semantic.roots.hostcall_trace_roots = vec!["hostcall id=1".to_owned()];
+    package.semantic.hostcall_trace = vec![artifact_manifest::HostcallTraceManifest {
+        id: 1,
+        generation: 1,
+        activation: 1,
+        code_object: 1,
+        artifact: 1,
+        hostcall_number: 1,
+        name: "visa.console.write".to_owned(),
+        category: "service".to_owned(),
+        object: "visa.console".to_owned(),
+        operation: "write".to_owned(),
+        allowed: true,
+        result: "ok".to_owned(),
+        ..Default::default()
+    }];
+}
+
+#[test]
+fn external_audit_flags_missing_native_consumer_and_artifact_chain() {
+    let package = minimal_migration_package();
+
+    let report = audit_migration_package(&package);
+
+    assert!(!report.ok());
+    assert!(report.errors().any(|finding| finding.code == "missing-target-artifact-evidence"));
+    assert!(report.warnings().any(|finding| finding.code == "missing-visa-native-consumer"));
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.real_target_substrate_claim);
+}
+
+#[test]
+fn external_audit_accepts_visa_native_portable_artifact_chain() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert!(report.replay_quiescent);
+    assert!(report.ok(), "{:#?}", report.errors().collect::<Vec<_>>());
+    assert!(report.portable_artifact_execution_claim);
+    assert_eq!(report.visa_native_artifact_count, 1);
+}
+
+#[test]
+fn external_audit_reports_real_target_claim_gaps() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(report.warnings().any(|finding| finding.code == "real-target-without-concrete-arch"));
+    assert!(
+        report.warnings().any(|finding| finding.code == "real-target-without-extraction-events")
+    );
+}
+
 #[test]
 fn migration_package_rejects_unknown_snapshot_evidence_boundary() {
     let mut package = minimal_migration_package();

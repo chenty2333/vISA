@@ -321,6 +321,15 @@ fn profile_conformance_suite_passes_snapshot_replay_backend() {
     assert_eq!(backend.published, vec![(fixtures.artifact, fixtures.code)]);
     assert!(!backend.dma_live);
     assert!(!backend.snapshot_live);
+
+    let host_side = report.evidence_summary(false);
+    assert!(host_side.can_claim_profile);
+    assert!(!host_side.can_claim_real_target_substrate);
+
+    let real_target = report.evidence_summary(true);
+    assert!(real_target.can_claim_real_target_substrate);
+    assert_eq!(real_target.profile, SubstrateProfile::SnapshotReplayCapable);
+    assert_eq!(real_target.strongest_profile, Some(SubstrateProfile::SnapshotReplayCapable));
 }
 
 #[test]

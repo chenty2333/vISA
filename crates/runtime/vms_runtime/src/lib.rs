@@ -287,6 +287,77 @@ pub struct VisaExecutionReport {
     pub events: Vec<VisaRuntimeEvent>,
 }
 
+impl VisaExecutionReport {
+    pub fn evidence_summary(&self) -> VisaExecutionEvidenceReport {
+        let artifact_loaded = self.events.iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::ArtifactLoaded {
+                    artifact_id,
+                    store_id
+                } if *artifact_id == self.loaded.artifact_id && *store_id == self.loaded.store_id
+            )
+        });
+        let code_published = self.events.iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::CodePublished {
+                    artifact_id,
+                    code_object_id
+                } if *artifact_id == self.loaded.artifact_id
+                    && *code_object_id == self.loaded.code_object_id
+            )
+        });
+        let activation_started = self.events.iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::ActivationStarted {
+                    activation_id,
+                    store_id,
+                    code_object_id
+                } if *activation_id == self.activation.activation_id
+                    && *store_id == self.activation.store_id
+                    && *code_object_id == self.activation.code_object_id
+            )
+        });
+        let hostcall_dispatches = self
+            .events
+            .iter()
+            .filter(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
+            .count();
+
+        VisaExecutionEvidenceReport {
+            evidence_level: self.loaded.evidence_level,
+            artifact_id: self.loaded.artifact_id,
+            store_id: self.loaded.store_id,
+            code_object_id: self.loaded.code_object_id,
+            activation_id: self.activation.activation_id,
+            artifact_loaded,
+            code_published,
+            activation_started,
+            hostcall_dispatches,
+            can_claim_portable_artifact_execution: artifact_loaded
+                && code_published
+                && activation_started
+                && hostcall_dispatches == self.hostcalls.len(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaExecutionEvidenceReport {
+    pub evidence_level: EvidenceBoundaryLevel,
+    pub artifact_id: TargetArtifactId,
+    pub store_id: u64,
+    pub code_object_id: CodeObjectId,
+    pub activation_id: ActivationId,
+    pub artifact_loaded: bool,
+    pub code_published: bool,
+    pub activation_started: bool,
+    pub hostcall_dispatches: usize,
+    pub can_claim_portable_artifact_execution: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VisaRuntimeEvent {
     BoundaryPublished {
@@ -1347,6 +1418,331 @@ fn static_operation(operation: &str) -> &'static str {
 }
 
 pub mod personality {
+    pub mod native {
+        use alloc::{string::String, vec::Vec};
+
+        use semantic_core::target_executor::{
+            HostcallCategory, HostcallSpec, TargetCapabilitySpec,
+        };
+        use substrate_api::{
+            DmaAllocRequest, DmaBufferCapability, IrqLine, MmioRegionRef, SnapshotBarrierRef,
+            UserMemoryHandle, WaitTokenRef, WindowLeaseRef, WindowPerms,
+        };
+        use visa_profile::SubstrateProfile;
+
+        use crate::{VisaArtifactDescriptor, VisaHostcallPayload};
+
+        pub const VISA_CONSOLE_WRITE: u32 = 1;
+        pub const VISA_TIMER_NOW: u32 = 2;
+        pub const VISA_TIMER_ARM: u32 = 3;
+        pub const VISA_MEMORY_COPYIN: u32 = 4;
+        pub const VISA_MEMORY_COPYOUT: u32 = 5;
+        pub const VISA_DMW_MAP: u32 = 6;
+        pub const VISA_DMW_UNMAP: u32 = 7;
+        pub const VISA_MMIO_READ32: u32 = 8;
+        pub const VISA_MMIO_WRITE32: u32 = 9;
+        pub const VISA_DMA_ALLOC: u32 = 10;
+        pub const VISA_DMA_FREE: u32 = 11;
+        pub const VISA_IRQ_ACK: u32 = 12;
+        pub const VISA_IRQ_MASK: u32 = 13;
+        pub const VISA_IRQ_UNMASK: u32 = 14;
+        pub const VISA_SNAPSHOT_ENTER: u32 = 15;
+        pub const VISA_SNAPSHOT_EXIT: u32 = 16;
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct VisaNativePersonality {
+            pub package: String,
+            pub profile: SubstrateProfile,
+        }
+
+        impl VisaNativePersonality {
+            pub fn new(package: &str, profile: SubstrateProfile) -> Self {
+                Self { package: package.into(), profile }
+            }
+
+            pub fn descriptor(&self, artifact_id: u64) -> VisaArtifactDescriptor {
+                let mut descriptor = VisaArtifactDescriptor::new(
+                    artifact_id,
+                    &self.package,
+                    "visa-native-artifact",
+                    self.profile,
+                )
+                .with_role("visa-native-workload")
+                .with_hostcall(HostcallSpec::new(
+                    VISA_CONSOLE_WRITE,
+                    "visa.console.write",
+                    HostcallCategory::Service,
+                    "visa.console",
+                    "write",
+                    false,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    VISA_TIMER_NOW,
+                    "visa.timer.now",
+                    HostcallCategory::Timer,
+                    "visa.timer",
+                    "now",
+                    false,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    VISA_TIMER_ARM,
+                    "visa.timer.arm",
+                    HostcallCategory::Timer,
+                    "visa.timer",
+                    "arm",
+                    true,
+                ));
+                descriptor.capabilities.push(TargetCapabilitySpec::new(
+                    "visa.timer",
+                    &["now", "arm"],
+                    "activation",
+                ));
+
+                if self.profile.satisfies(SubstrateProfile::GuestFrontend) {
+                    descriptor = descriptor
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_MEMORY_COPYIN,
+                            "visa.memory.copyin",
+                            HostcallCategory::GuestMemory,
+                            "visa.memory",
+                            "copyin",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_MEMORY_COPYOUT,
+                            "visa.memory.copyout",
+                            HostcallCategory::GuestMemory,
+                            "visa.memory",
+                            "copyout",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_DMW_MAP,
+                            "visa.dmw.map",
+                            HostcallCategory::Dmw,
+                            "visa.dmw",
+                            "map",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_DMW_UNMAP,
+                            "visa.dmw.unmap",
+                            HostcallCategory::Dmw,
+                            "visa.dmw",
+                            "unmap",
+                            false,
+                        ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.memory",
+                        &["copyin", "copyout"],
+                        "activation",
+                    ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.dmw",
+                        &["map", "unmap"],
+                        "activation",
+                    ));
+                }
+
+                if self.profile.satisfies(SubstrateProfile::DeviceCapable) {
+                    descriptor = descriptor
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_MMIO_READ32,
+                            "visa.mmio.read32",
+                            HostcallCategory::Mmio,
+                            "visa.mmio",
+                            "read32",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_MMIO_WRITE32,
+                            "visa.mmio.write32",
+                            HostcallCategory::Mmio,
+                            "visa.mmio",
+                            "write32",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_DMA_ALLOC,
+                            "visa.dma.alloc",
+                            HostcallCategory::Dma,
+                            "visa.dma",
+                            "alloc",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_DMA_FREE,
+                            "visa.dma.free",
+                            HostcallCategory::Dma,
+                            "visa.dma",
+                            "free",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_IRQ_ACK,
+                            "visa.irq.ack",
+                            HostcallCategory::Irq,
+                            "visa.irq",
+                            "ack",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_IRQ_MASK,
+                            "visa.irq.mask",
+                            HostcallCategory::Irq,
+                            "visa.irq",
+                            "mask",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_IRQ_UNMASK,
+                            "visa.irq.unmask",
+                            HostcallCategory::Irq,
+                            "visa.irq",
+                            "unmask",
+                            false,
+                        ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.mmio",
+                        &["read32", "write32"],
+                        "activation",
+                    ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.dma",
+                        &["alloc", "free"],
+                        "activation",
+                    ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.irq",
+                        &["ack", "mask", "unmask"],
+                        "activation",
+                    ));
+                }
+
+                if self.profile.satisfies(SubstrateProfile::SnapshotReplayCapable) {
+                    descriptor = descriptor
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_SNAPSHOT_ENTER,
+                            "visa.snapshot.enter",
+                            HostcallCategory::Snapshot,
+                            "visa.snapshot",
+                            "enter",
+                            false,
+                        ))
+                        .with_hostcall(HostcallSpec::new(
+                            VISA_SNAPSHOT_EXIT,
+                            "visa.snapshot.exit",
+                            HostcallCategory::Snapshot,
+                            "visa.snapshot",
+                            "exit",
+                            false,
+                        ));
+                    descriptor.capabilities.push(TargetCapabilitySpec::new(
+                        "visa.snapshot",
+                        &["enter", "exit"],
+                        "activation",
+                    ));
+                }
+
+                descriptor.exports.push("visa_start".into());
+                descriptor
+            }
+
+            pub fn console_write(&self, bytes: &[u8]) -> VisaHostcallPayload {
+                VisaHostcallPayload::ConsoleWrite { bytes: Vec::from(bytes) }
+            }
+
+            pub const fn timer_now(&self) -> VisaHostcallPayload {
+                VisaHostcallPayload::TimerNow
+            }
+
+            pub const fn timer_arm(
+                &self,
+                deadline_ticks: u64,
+                token: WaitTokenRef,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::TimerArm { deadline_ticks, token }
+            }
+
+            pub const fn memory_copyin(
+                &self,
+                memory: UserMemoryHandle,
+                ptr: u64,
+                len: usize,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len }
+            }
+
+            pub fn memory_copyout(
+                &self,
+                memory: UserMemoryHandle,
+                ptr: u64,
+                bytes: &[u8],
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes: Vec::from(bytes) }
+            }
+
+            pub const fn dmw_map(
+                &self,
+                memory: UserMemoryHandle,
+                ptr: u64,
+                len: usize,
+                perms: WindowPerms,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::DmwMap { memory, ptr, len, perms }
+            }
+
+            pub const fn dmw_unmap(&self, lease: WindowLeaseRef) -> VisaHostcallPayload {
+                VisaHostcallPayload::DmwUnmap { lease }
+            }
+
+            pub const fn mmio_read32(
+                &self,
+                region: MmioRegionRef,
+                offset: u64,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::MmioRead32 { region, offset }
+            }
+
+            pub const fn mmio_write32(
+                &self,
+                region: MmioRegionRef,
+                offset: u64,
+                value: u32,
+            ) -> VisaHostcallPayload {
+                VisaHostcallPayload::MmioWrite32 { region, offset, value }
+            }
+
+            pub const fn dma_alloc(&self, request: DmaAllocRequest) -> VisaHostcallPayload {
+                VisaHostcallPayload::DmaAlloc { request }
+            }
+
+            pub const fn dma_free(&self, capability: DmaBufferCapability) -> VisaHostcallPayload {
+                VisaHostcallPayload::DmaFree { capability }
+            }
+
+            pub const fn irq_ack(&self, irq: IrqLine) -> VisaHostcallPayload {
+                VisaHostcallPayload::IrqAck { irq }
+            }
+
+            pub const fn irq_mask(&self, irq: IrqLine) -> VisaHostcallPayload {
+                VisaHostcallPayload::IrqMask { irq }
+            }
+
+            pub const fn irq_unmask(&self, irq: IrqLine) -> VisaHostcallPayload {
+                VisaHostcallPayload::IrqUnmask { irq }
+            }
+
+            pub const fn snapshot_enter(&self) -> VisaHostcallPayload {
+                VisaHostcallPayload::SnapshotEnter
+            }
+
+            pub const fn snapshot_exit(&self, barrier: SnapshotBarrierRef) -> VisaHostcallPayload {
+                VisaHostcallPayload::SnapshotExit { barrier }
+            }
+        }
+    }
+
     pub mod wasi {
         use alloc::{string::String, vec::Vec};
 
@@ -1621,6 +2017,7 @@ mod tests {
         assert_eq!(substrate.console, b"hello");
         assert_eq!(substrate.timers, vec![(VirtualTime::from_ticks(75), token)]);
         assert_eq!(runtime.executor().hostcall_trace().len(), 3);
+        assert!(report.evidence_summary().can_claim_portable_artifact_execution);
         assert!(report.events.iter().any(|event| {
             matches!(
                 event,
@@ -1630,6 +2027,82 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn visa_native_personality_runs_without_linux_or_wasi_frontend() {
+        let personality = personality::native::VisaNativePersonality::new(
+            "native-visa-app",
+            SubstrateProfile::MinimalBareMetal,
+        );
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let mut substrate = MockSubstrate { now: 99, ..MockSubstrate::default() };
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let token = WaitTokenRef::new(77, 1);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(17) },
+                ActivationEntry::Symbol("visa_start".into()),
+                [
+                    VisaExecutionStep::new(
+                        personality::native::VISA_CONSOLE_WRITE,
+                        personality.console_write(b"vISA"),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_TIMER_NOW,
+                        personality.timer_now(),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_TIMER_ARM,
+                        personality.timer_arm(128, token),
+                    ),
+                ],
+                &mut substrate,
+            )
+            .expect("run native vISA workload");
+
+        assert_eq!(report.loaded.artifact_id, 17);
+        assert_eq!(report.activation.activation_id, 1);
+        assert_eq!(report.hostcalls.len(), 3);
+        assert_eq!(report.hostcalls[0].object, "visa.console");
+        assert_eq!(report.hostcalls[1].object, "visa.timer");
+        assert_eq!(report.hostcalls[2].operation, "arm");
+        assert!(report.evidence_summary().can_claim_portable_artifact_execution);
+        assert_eq!(substrate.console, b"vISA");
+        assert_eq!(substrate.timers, vec![(VirtualTime::from_ticks(128), token)]);
+        assert!(runtime.snapshot().artifacts.iter().any(|artifact| {
+            artifact.role == "visa-native-workload"
+                && artifact.artifact_name == "visa-native-artifact"
+        }));
+    }
+
+    #[test]
+    fn visa_native_descriptor_scales_with_substrate_profile() {
+        let guest = personality::native::VisaNativePersonality::new(
+            "guest",
+            SubstrateProfile::GuestFrontend,
+        )
+        .descriptor(21);
+        assert!(guest.hostcalls.iter().any(|h| h.object == "visa.memory"));
+        assert!(!guest.hostcalls.iter().any(|h| h.object == "visa.mmio"));
+
+        let device = personality::native::VisaNativePersonality::new(
+            "device",
+            SubstrateProfile::DeviceCapable,
+        )
+        .descriptor(22);
+        assert!(device.hostcalls.iter().any(|h| h.object == "visa.mmio"));
+        assert!(device.hostcalls.iter().any(|h| h.object == "visa.dma"));
+        assert!(!device.hostcalls.iter().any(|h| h.object == "visa.snapshot"));
+
+        let replay = personality::native::VisaNativePersonality::new(
+            "replay",
+            SubstrateProfile::SnapshotReplayCapable,
+        )
+        .descriptor(23);
+        assert!(replay.hostcalls.iter().any(|h| h.object == "visa.snapshot"));
     }
 
     #[test]
