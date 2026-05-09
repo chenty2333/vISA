@@ -532,7 +532,7 @@ fn target_arch_code(arch: &str) -> Result<u16, Box<dyn Error>> {
 fn artifact_kind_code(role: &str) -> u16 {
     match role {
         "driver" => ArtifactKindCodeV1::Driver as u16,
-        "frontend_guest" => ArtifactKindCodeV1::App as u16,
+        "frontend_guest" | "visa-native-workload" => ArtifactKindCodeV1::App as u16,
         _ => ArtifactKindCodeV1::Service as u16,
     }
 }

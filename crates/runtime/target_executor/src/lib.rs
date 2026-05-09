@@ -1053,3 +1053,174 @@ fn semantic_store_resource_ref(
         .ok_or_else(|| format!("semantic graph missing resource handle for store {store}"))?;
     Ok(ContractObjectRef::new(ContractObjectKind::Resource, resource, generation))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_package_projects_visa_native_portable_execution_evidence() {
+        let manifest = test_manifest();
+        let entry = test_visa_native_entry();
+        let plan = ValidatedArtifactPlan {
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract_version: "test-contract".to_owned(),
+            supervisor_world: "test-world".to_owned(),
+            target_arch: "x86_64".to_owned(),
+            compiler_engine: manifest.compiler.engine.clone(),
+            compiler_execution_mode: manifest.compiler.execution_mode.clone(),
+            artifact_format: manifest.compiler.artifact_format.clone(),
+            target_artifact_format: manifest.compiler.target_artifact_format.clone(),
+            runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
+            modules: vec![entry.clone()],
+        };
+        let image = target_artifact_image(1, &entry, &plan);
+        let artifact = target_artifact_manifest(&image);
+        let hostcall = artifact.hostcalls.first().expect("visa native hostcall").clone();
+        let report = TargetExecutorV1Report {
+            target_artifacts: vec![artifact.clone()],
+            code_objects: vec![CodeObjectManifest {
+                id: 1,
+                artifact_id: artifact.id,
+                package: artifact.package.clone(),
+                owner_profile: artifact.target_profile.clone(),
+                generation: 1,
+                state: "published".to_owned(),
+                bound_store: Some(1),
+                bound_store_generation: Some(1),
+                text_permission: "rx".to_owned(),
+                rodata_permission: "r".to_owned(),
+                code_hash: artifact.code_hash.clone(),
+                hostcalls: artifact.hostcalls.clone(),
+                ..Default::default()
+            }],
+            activation_records: vec![ActivationRecordManifest {
+                id: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                entry: "run".to_owned(),
+                generation: 1,
+                state: "exited".to_owned(),
+                ..Default::default()
+            }],
+            hostcall_trace: vec![HostcallTraceManifest {
+                id: 1,
+                generation: 1,
+                activation: 1,
+                activation_generation: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                artifact_generation: 1,
+                hostcall_number: hostcall.number,
+                name: hostcall.name,
+                category: hostcall.category,
+                subject: entry.package.clone(),
+                subject_source: "artifact".to_owned(),
+                object: hostcall.object,
+                operation: hostcall.operation,
+                record_mode: "live".to_owned(),
+                allowed: true,
+                gate_status: "allowed".to_owned(),
+                result: "ok".to_owned(),
+                ret_tag: "ok".to_owned(),
+                ..Default::default()
+            }],
+            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
+            replay_validation: test_boundary_validation_report("package-replay"),
+            ..Default::default()
+        };
+        let semantic = SemanticGraph::new();
+        let package = demo_migration_package(&manifest, &semantic, &report);
+        let audit = contract_validate::audit_migration_package(&package);
+
+        assert!(audit.ok(), "{:#?}", audit.findings);
+        assert!(audit.contract_package_valid);
+        assert!(audit.replay_quiescent);
+        assert!(audit.portable_artifact_execution_claim);
+        assert_eq!(audit.visa_native_artifact_count, 1);
+        assert_eq!(audit.linux_weighted_artifact_count, 0);
+    }
+
+    fn test_visa_native_entry() -> ValidatedArtifactEntry {
+        ValidatedArtifactEntry {
+            package: "wasm_app".to_owned(),
+            artifact_name: "wasm_app_frontend".to_owned(),
+            role: "visa-native-workload".to_owned(),
+            fault_policy: "kill-on-trap".to_owned(),
+            wasm_path: "target/test/wasm_app.wasm".to_owned(),
+            cwasm_path: "target/test/wasm_app.cwasm".to_owned(),
+            target_artifact_path: "target/test/wasm_app.tart".to_owned(),
+            wasm_sha256: "wasm-app-wasm".to_owned(),
+            cwasm_sha256: "wasm-app-cwasm".to_owned(),
+            target_artifact_sha256: "wasm-app-target-artifact".to_owned(),
+            code_payload_format: "cwasm".to_owned(),
+            expected_exports: vec!["memory".to_owned(), "run".to_owned()],
+            capabilities: vec![artifact_manifest::CapabilityManifest {
+                name: "visa.console".to_owned(),
+                rights: vec!["write".to_owned()],
+                lifetime: "activation".to_owned(),
+            }],
+            abi_fingerprint: "wasm-app-abi".to_owned(),
+            service_dependencies: vec!["console_service".to_owned()],
+            resource_limits: artifact_manifest::ResourceLimitsManifest {
+                max_memory_pages: 16,
+                max_table_elements: 0,
+                max_hostcalls_per_activation: 16,
+            },
+            interfaces: artifact_manifest::InterfaceRequirementManifest::default(),
+            signature_scheme: "profile-bound-unverified".to_owned(),
+            signer: "test-signer".to_owned(),
+            manifest_binding_hash: "wasm-app-binding".to_owned(),
+            hash_status: "manifest-bound".to_owned(),
+            signature_status: "profile-bound-unverified".to_owned(),
+            signature_verified: false,
+        }
+    }
+
+    fn test_manifest() -> ArtifactBundleManifest {
+        ArtifactBundleManifest {
+            schema_version: 1,
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract: artifact_manifest::SupervisorContractManifest::default(),
+            target: artifact_manifest::TargetManifest {
+                arch: "x86_64".to_owned(),
+                machine_abi_version: "test-machine-abi".to_owned(),
+                supervisor_abi_version: "test-supervisor-abi".to_owned(),
+                wasm_feature_profile: "test-wasm-profile".to_owned(),
+                memory64: false,
+                multi_memory: false,
+                dmw_layout: "logical".to_owned(),
+                linux_abi_profile: "none".to_owned(),
+                artifact_signature_profile: "profile-bound-unverified".to_owned(),
+                network_contract_version: "test-network".to_owned(),
+            },
+            compiler: artifact_manifest::CompilerManifest {
+                engine: "wasmtime".to_owned(),
+                engine_version: "test".to_owned(),
+                execution_mode: "precompiled-core-module".to_owned(),
+                artifact_format: "target-artifact-image-v1".to_owned(),
+                target_artifact_format: "target-artifact-image-v1".to_owned(),
+                runtime_executor_abi: "vmos-runtime-only-executor-v0".to_owned(),
+            },
+            modules: Vec::new(),
+        }
+    }
+
+    fn test_boundary_validation_report(validator: &str) -> BoundaryValidationReportManifest {
+        BoundaryValidationReportManifest {
+            validator: validator.to_owned(),
+            evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+            ok: true,
+            violation_count: 0,
+            violations: Vec::new(),
+        }
+    }
+}

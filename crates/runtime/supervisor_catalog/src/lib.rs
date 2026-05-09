@@ -49,6 +49,7 @@ pub enum StoreRole {
     CoreService,
     Driver,
     FrontendGuest,
+    VisaNativeWorkload,
 }
 
 impl StoreRole {
@@ -58,6 +59,7 @@ impl StoreRole {
             Self::CoreService => "service",
             Self::Driver => "driver",
             Self::FrontendGuest => "frontend_guest",
+            Self::VisaNativeWorkload => "visa-native-workload",
         }
     }
 }
@@ -578,7 +580,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
     WasmModuleSpec {
         package: "wasm_app",
         artifact_name: "wasm_app_frontend",
-        role: StoreRole::FrontendGuest,
+        role: StoreRole::VisaNativeWorkload,
         fault_policy: FaultPolicy::KillOnTrap,
         capabilities: CONSOLE_CAPABILITIES,
         expected_exports: &["memory", "run"],

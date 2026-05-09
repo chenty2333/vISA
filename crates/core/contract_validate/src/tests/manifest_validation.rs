@@ -57,6 +57,17 @@ fn validated_plan_derives_exports_from_catalog_spec() {
 }
 
 #[test]
+fn validated_plan_marks_wasm_app_as_visa_native_workload() {
+    let manifest = valid_manifest();
+    let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+    let wasm_app = plan.entry("wasm_app").expect("wasm app entry");
+
+    assert_eq!(wasm_app.role, "visa-native-workload");
+    assert_eq!(wasm_app.artifact_name, "wasm_app_frontend");
+    assert!(!wasm_app.package.contains("linux"));
+}
+
+#[test]
 fn manifest_validation_rejects_resource_limit_tamper() {
     let mut manifest = valid_manifest();
     manifest.modules[0].resource_limits.max_memory_pages = u32::MAX;
