@@ -76,8 +76,8 @@ use artifact_manifest::{
     VirtioNetBackendObjectManifest, WaitRecordManifest,
 };
 use contract_validate::{
-    ValidatedArtifactEntry, ValidatedArtifactPlan, build_validated_artifact_plan,
-    validate_migration_against_manifest, validate_replay_quiescent,
+    ValidatedArtifactEntry, ValidatedArtifactPlan, audit_migration_package,
+    build_validated_artifact_plan, validate_migration_against_manifest, validate_replay_quiescent,
 };
 use evidence_scenarios::*;
 use fs_adapter::{
@@ -311,9 +311,35 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     )?;
     let migration = read_migration_package(&migration_path)?;
     validate_migration_package(&migration, &manifest)?;
+    validate_external_audit(&migration)?;
     restore_migration_package(&migration, &semantic, &plan)?;
 
     Ok(())
+}
+
+fn validate_external_audit(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
+    let report = audit_migration_package(package);
+    println!(
+        "external audit package={} ok={} portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} findings={}",
+        report.package_id,
+        report.ok(),
+        report.portable_artifact_execution_claim,
+        report.real_target_substrate_claim,
+        report.visa_native_artifact_count,
+        report.findings.len()
+    );
+    if report.ok() {
+        Ok(())
+    } else {
+        Err(format!("external audit failed: {}", external_audit_error_summary(&report)).into())
+    }
+}
+
+fn external_audit_error_summary(
+    report: &contract_validate::ExternalMigrationAuditReport,
+) -> String {
+    let errors = report.errors().map(|finding| finding.code).collect::<Vec<_>>();
+    if errors.is_empty() { "unknown-error".to_owned() } else { errors.join(",") }
 }
 
 fn runtime_mode_from_plan(plan: &ValidatedArtifactPlan) -> RuntimeMode {
@@ -1146,6 +1172,21 @@ mod tests {
         assert!(audit.portable_artifact_execution_claim);
         assert_eq!(audit.visa_native_artifact_count, 1);
         assert_eq!(audit.linux_weighted_artifact_count, 0);
+        validate_external_audit(&package).expect("generated package should pass audit gate");
+    }
+
+    #[test]
+    fn external_audit_gate_rejects_structurally_invalid_package() {
+        let manifest = test_manifest();
+        let semantic = SemanticGraph::new();
+        let package =
+            demo_migration_package(&manifest, &semantic, &TargetExecutorV1Report::default());
+
+        let error = validate_external_audit(&package).expect_err("audit gate should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("external audit failed"));
+        assert!(message.contains("contract-package-invalid"));
     }
 
     fn test_visa_native_entry() -> ValidatedArtifactEntry {
