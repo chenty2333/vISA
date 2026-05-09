@@ -186,7 +186,7 @@ impl WasmVisaExecutor {
         let result_count = func.ty(&self.store).results().len();
         let mut results = vec![Val::I32(0); result_count];
         func.call(&mut self.store, params, &mut results).map_err(|e| {
-            let msg = format!("{e}");
+            let msg = wasmtime_error_message(&e);
             if e.downcast_ref::<Trap>().is_some() {
                 let (activation_id, store_id) = {
                     let state = self.store.data();
@@ -271,11 +271,10 @@ impl WasmVisaExecutor {
                             params.get(4).map(|v| v.unwrap_i64()).unwrap_or(0),
                             params.get(5).map(|v| v.unwrap_i64()).unwrap_or(0),
                         ];
-                        let Some(payload) =
-                            hostcall_payload_for_object(&mut caller, &obj, &op, args)
-                        else {
-                            return Err(wasmtime::format_err!("hostcall {n} is not bound"));
-                        };
+                        let payload = hostcall_payload_for_object(&mut caller, &obj, &op, args)
+                            .map_err(|error| {
+                                wasmtime::Error::msg(format!("hostcall {n} decode failed: {error}"))
+                            })?;
                         let result = match caller.data_mut().dispatch_hostcall(n, payload) {
                             Ok(report) => {
                                 if let VisaHostcallValue::Bytes(bytes) = &report.value
@@ -322,6 +321,17 @@ impl WasmVisaExecutor {
 }
 
 // ── hostcall wire decoding ────────────────────────────────────────────────
+
+fn wasmtime_error_message(error: &wasmtime::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    message
+}
 
 fn validate_adapter_hostcalls(specs: &[HostcallSpec]) -> Result<(), WasmVisaError> {
     let mut numbers = Vec::new();
@@ -428,12 +438,12 @@ fn hostcall_payload_for_object(
     object: &str,
     operation: &str,
     args: [i64; 6],
-) -> Option<VisaHostcallPayload> {
+) -> Result<VisaHostcallPayload, String> {
     let [a, b, c, d, e, _f] = args;
     match (object, operation) {
         ("visa.console", "write") => {
             let bytes = read_guest_bytes(caller, a as usize, b.max(0) as usize)?;
-            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+            Ok(VisaHostcallPayload::ConsoleWrite { bytes })
         }
         ("wasi.fd", "write") | ("test.console", "write") => {
             let len = a.max(0) as usize;
@@ -443,12 +453,12 @@ fn hostcall_payload_for_object(
                     bytes.push(byte as u8);
                 }
             }
-            Some(VisaHostcallPayload::ConsoleWrite { bytes })
+            Ok(VisaHostcallPayload::ConsoleWrite { bytes })
         }
         ("timer.wasi", "read") | ("timer", "now") | ("visa.timer", "now") => {
-            Some(VisaHostcallPayload::TimerNow)
+            Ok(VisaHostcallPayload::TimerNow)
         }
-        ("timer.wasi", "arm") | ("visa.timer", "arm") => Some(VisaHostcallPayload::TimerArm {
+        ("timer.wasi", "arm") | ("visa.timer", "arm") => Ok(VisaHostcallPayload::TimerArm {
             deadline_ticks: a as u64,
             token: substrate_api::WaitTokenRef::new(b as u64, c as u64),
         }),
@@ -456,65 +466,63 @@ fn hostcall_payload_for_object(
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
             let len = d.max(0) as usize;
-            Some(VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len })
+            Ok(VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len })
         }
         ("guest-memory", "write") | ("guest-memory", "copyout") | ("visa.memory", "copyout") => {
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
             let bytes = read_guest_bytes(caller, e as usize, d.max(0) as usize)?;
-            Some(VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes })
+            Ok(VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes })
         }
         ("dmw", "map") | ("visa.dmw", "map") => {
             let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
             let ptr = c as u64;
             let len = d.max(0) as usize;
-            Some(VisaHostcallPayload::DmwMap {
+            Ok(VisaHostcallPayload::DmwMap {
                 memory,
                 ptr,
                 len,
                 perms: window_perms_from_bits(e as u64),
             })
         }
-        ("dmw", "unmap") | ("visa.dmw", "unmap") => Some(VisaHostcallPayload::DmwUnmap {
+        ("dmw", "unmap") | ("visa.dmw", "unmap") => Ok(VisaHostcallPayload::DmwUnmap {
             lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
         }),
-        ("mmio", "read32") | ("visa.mmio", "read32") => Some(VisaHostcallPayload::MmioRead32 {
+        ("mmio", "read32") | ("visa.mmio", "read32") => Ok(VisaHostcallPayload::MmioRead32 {
             region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
             offset: c as u64,
         }),
-        ("mmio", "write32") | ("visa.mmio", "write32") => Some(VisaHostcallPayload::MmioWrite32 {
+        ("mmio", "write32") | ("visa.mmio", "write32") => Ok(VisaHostcallPayload::MmioWrite32 {
             region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
             offset: c as u64,
             value: d as u32,
         }),
-        ("dma", "alloc") | ("visa.dma", "alloc") => Some(VisaHostcallPayload::DmaAlloc {
+        ("dma", "alloc") | ("visa.dma", "alloc") => Ok(VisaHostcallPayload::DmaAlloc {
             request: substrate_api::DmaAllocRequest::new(
                 a as u64,
                 b.max(0) as usize,
                 c.max(1) as usize,
             ),
         }),
-        ("dma", "free") | ("visa.dma", "free") => Some(VisaHostcallPayload::DmaFree {
+        ("dma", "free") | ("visa.dma", "free") => Ok(VisaHostcallPayload::DmaFree {
             capability: substrate_api::DmaBufferCapability::new(a as u64, b as u64),
         }),
-        ("irq", "ack") | ("visa.irq", "ack") => Some(VisaHostcallPayload::IrqAck {
+        ("irq", "ack") | ("visa.irq", "ack") => {
+            Ok(VisaHostcallPayload::IrqAck { irq: substrate_api::IrqLine::new(a as u64, b as u64) })
+        }
+        ("irq", "mask") | ("visa.irq", "mask") => Ok(VisaHostcallPayload::IrqMask {
             irq: substrate_api::IrqLine::new(a as u64, b as u64),
         }),
-        ("irq", "mask") | ("visa.irq", "mask") => Some(VisaHostcallPayload::IrqMask {
-            irq: substrate_api::IrqLine::new(a as u64, b as u64),
-        }),
-        ("irq", "unmask") | ("visa.irq", "unmask") => Some(VisaHostcallPayload::IrqUnmask {
+        ("irq", "unmask") | ("visa.irq", "unmask") => Ok(VisaHostcallPayload::IrqUnmask {
             irq: substrate_api::IrqLine::new(a as u64, b as u64),
         }),
         ("snapshot", "enter") | ("visa.snapshot", "enter") => {
-            Some(VisaHostcallPayload::SnapshotEnter)
+            Ok(VisaHostcallPayload::SnapshotEnter)
         }
-        ("snapshot", "exit") | ("visa.snapshot", "exit") => {
-            Some(VisaHostcallPayload::SnapshotExit {
-                barrier: substrate_api::SnapshotBarrierRef::new(a as u64, b as u64),
-            })
-        }
-        _ => None,
+        ("snapshot", "exit") | ("visa.snapshot", "exit") => Ok(VisaHostcallPayload::SnapshotExit {
+            barrier: substrate_api::SnapshotBarrierRef::new(a as u64, b as u64),
+        }),
+        _ => Err(format!("unsupported hostcall object={object} operation={operation}")),
     }
 }
 
@@ -529,12 +537,17 @@ fn read_guest_bytes(
     caller: &mut Caller<'_, WasmVisaState>,
     ptr: usize,
     len: usize,
-) -> Option<Vec<u8>> {
-    let memory = caller.get_export("memory")?.into_memory()?;
+) -> Result<Vec<u8>, String> {
+    let memory = caller
+        .get_export("memory")
+        .and_then(|export| export.into_memory())
+        .ok_or_else(|| "guest memory export is missing".to_string())?;
     let data = memory.data(&mut *caller);
-    let end = ptr.checked_add(len)?;
-    let bytes = data.get(ptr..end)?;
-    Some(bytes.to_vec())
+    let end = ptr.checked_add(len).ok_or_else(|| "guest memory read overflow".to_string())?;
+    let Some(bytes) = data.get(ptr..end) else {
+        return Err("guest memory read is out of bounds".to_string());
+    };
+    Ok(bytes.to_vec())
 }
 
 fn write_guest_bytes(
@@ -900,6 +913,43 @@ mod tests {
         .expect("parse wat")
     }
 
+    fn visa_native_console_without_memory_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (func (export "visa_start") (result i64)
+    i64.const 16
+    i64.const 11
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $console_write
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
+    fn visa_native_console_oob_memory_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (memory (export "memory") 1)
+  (func (export "visa_start") (result i64)
+    i64.const 70000
+    i64.const 16
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $console_write
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
     fn visa_native_full_hostcall_abi_wasm() -> Vec<u8> {
         wat::parse_str(
             r#"(module
@@ -1234,6 +1284,59 @@ mod tests {
         );
         assert!(report.evidence_summary().can_claim_portable_artifact_execution);
         assert_eq!(executor.runtime().executor().hostcall_trace().len(), 16);
+    }
+
+    #[test]
+    fn run_rejects_visa_console_without_guest_memory_decode() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let artifact =
+            fake_artifact(&REQUIRED_SECTIONS, &visa_native_console_without_memory_wasm());
+        let personality = vms_runtime::personality::native::VisaNativePersonality::new(
+            "native-visa-no-memory",
+            SubstrateProfile::MinimalBareMetal,
+        );
+
+        let err = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(39) },
+                "visa_start",
+            )
+            .expect_err("missing guest memory must fail payload decode");
+
+        assert!(
+            matches!(err, WasmVisaError::Wasmtime(ref message) if message.contains("guest memory export is missing")),
+            "expected guest memory decode error, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+    }
+
+    #[test]
+    fn run_rejects_visa_console_oob_guest_memory_decode() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &visa_native_console_oob_memory_wasm());
+        let personality = vms_runtime::personality::native::VisaNativePersonality::new(
+            "native-visa-oob-memory",
+            SubstrateProfile::MinimalBareMetal,
+        );
+
+        let err = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(40) },
+                "visa_start",
+            )
+            .expect_err("out-of-bounds guest memory must fail payload decode");
+
+        assert!(
+            matches!(err, WasmVisaError::Wasmtime(ref message) if message.contains("guest memory read is out of bounds")),
+            "expected guest memory bounds error, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
     }
 
     #[test]
