@@ -144,6 +144,7 @@ impl WasmVisaExecutor {
     ) -> Result<(), WasmVisaError> {
         // Preserve hostcall specs from the descriptor before load_artifact consumes it
         let hostcall_specs: Vec<HostcallSpec> = input.descriptor.hostcalls.clone();
+        self.instance = None;
         self.store.data_mut().clear_execution_state();
         validate_adapter_hostcalls(&hostcall_specs)?;
 
@@ -218,6 +219,7 @@ impl WasmVisaExecutor {
         input: VisaArtifactInput<'_>,
         entry: &str,
     ) -> Result<VisaExecutionReport, WasmVisaError> {
+        self.instance = None;
         self.store.data_mut().clear_execution_state();
         let artifact_bytes = input.bytes;
         let specs: Vec<HostcallSpec> = input.descriptor.hostcalls.clone();
@@ -1403,6 +1405,43 @@ mod tests {
             "failed pre-activation run must not expose stale hostcall reports"
         );
         assert_eq!(executor.runtime().semantic().store_count(), store_count_before_failure);
+        assert_no_loaded_instance(&mut executor);
+    }
+
+    #[test]
+    fn failed_manual_load_clears_previous_instance() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let good_artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        executor
+            .run(
+                VisaArtifactInput { bytes: &good_artifact, descriptor: console_descriptor(9) },
+                "entry",
+            )
+            .expect("good run");
+
+        let err = executor
+            .load_and_activate(
+                VisaArtifactInput {
+                    bytes: b"not a target artifact",
+                    descriptor: console_descriptor(10),
+                },
+                "entry",
+            )
+            .expect_err("invalid artifact must fail load");
+        assert!(matches!(err, WasmVisaError::Artifact(_)), "expected artifact error, got: {err}");
+        assert_no_loaded_instance(&mut executor);
+    }
+
+    fn assert_no_loaded_instance(executor: &mut WasmVisaExecutor) {
+        let err =
+            executor.call_export("entry", &[]).expect_err("stale instance must not be callable");
+        assert!(
+            matches!(err, WasmVisaError::Wasmtime(ref message) if message.contains("no instance loaded")),
+            "expected no instance loaded, got: {err}"
+        );
     }
 
     fn no_import_wasm() -> Vec<u8> {
