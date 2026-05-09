@@ -322,14 +322,32 @@ fn profile_conformance_suite_passes_snapshot_replay_backend() {
     assert!(!backend.dma_live);
     assert!(!backend.snapshot_live);
 
-    let host_side = report.evidence_summary(false);
+    let host_side = report.evidence_summary(conformance::ConformanceEvidenceContext::host_side());
     assert!(host_side.can_claim_profile);
     assert!(!host_side.can_claim_real_target_substrate);
+    assert!(!host_side.real_target_substrate_run);
 
-    let real_target = report.evidence_summary(true);
+    let legacy_bool = report.evidence_summary(true);
+    assert!(legacy_bool.can_claim_profile);
+    assert!(legacy_bool.real_target_substrate_run);
+    assert_eq!(legacy_bool.real_target_concrete_arch, None);
+    assert!(!legacy_bool.real_target_extraction_events_observed);
+    assert!(!legacy_bool.can_claim_real_target_substrate);
+
+    let incomplete_real_target = report
+        .evidence_summary(conformance::ConformanceEvidenceContext::real_target("riscv64", false));
+    assert!(incomplete_real_target.real_target_substrate_run);
+    assert_eq!(incomplete_real_target.real_target_concrete_arch, Some("riscv64"));
+    assert!(!incomplete_real_target.real_target_extraction_events_observed);
+    assert!(!incomplete_real_target.can_claim_real_target_substrate);
+
+    let real_target = report
+        .evidence_summary(conformance::ConformanceEvidenceContext::real_target("riscv64", true));
     assert!(real_target.can_claim_real_target_substrate);
     assert_eq!(real_target.profile, SubstrateProfile::SnapshotReplayCapable);
     assert_eq!(real_target.strongest_profile, Some(SubstrateProfile::SnapshotReplayCapable));
+    assert_eq!(real_target.real_target_concrete_arch, Some("riscv64"));
+    assert!(real_target.real_target_extraction_events_observed);
 }
 
 #[test]

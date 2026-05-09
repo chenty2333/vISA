@@ -123,10 +123,11 @@ impl SubstrateConformanceReport {
         self.checks.iter().filter(|check| check.status == ConformanceStatus::Failed)
     }
 
-    pub fn evidence_summary(
-        &self,
-        real_target_substrate_run: bool,
-    ) -> SubstrateConformanceEvidence {
+    pub fn evidence_summary<C>(&self, context: C) -> SubstrateConformanceEvidence
+    where
+        C: Into<ConformanceEvidenceContext>,
+    {
+        let context = context.into();
         let required_checks = self.checks.iter().filter(|check| check.required).count();
         let passed_required = self
             .checks
@@ -143,7 +144,8 @@ impl SubstrateConformanceReport {
         let strongest_profile = SubstrateProfile::strongest_satisfied_by(self.capabilities);
         let can_claim_profile =
             self.ok && self.compatibility.ok && passed_required == required_checks;
-        let can_claim_real_target_substrate = can_claim_profile && real_target_substrate_run;
+        let can_claim_real_target_substrate =
+            can_claim_profile && context.real_target.can_claim_real_target_substrate();
         SubstrateConformanceEvidence {
             profile: self.profile,
             strongest_profile,
@@ -153,9 +155,83 @@ impl SubstrateConformanceReport {
             failed_checks,
             skipped_optional,
             can_claim_profile,
-            real_target_substrate_run,
+            real_target_substrate_run: context.real_target.executed_on_real_target,
+            real_target_concrete_arch: context.real_target.concrete_arch,
+            real_target_extraction_events_observed: context.real_target.extraction_events_observed,
             can_claim_real_target_substrate,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConformanceEvidenceContext {
+    pub real_target: RealTargetConformanceContext,
+}
+
+impl ConformanceEvidenceContext {
+    pub const fn host_side() -> Self {
+        Self { real_target: RealTargetConformanceContext::none() }
+    }
+
+    pub const fn real_target(
+        concrete_arch: &'static str,
+        extraction_events_observed: bool,
+    ) -> Self {
+        Self {
+            real_target: RealTargetConformanceContext::verified(
+                concrete_arch,
+                extraction_events_observed,
+            ),
+        }
+    }
+}
+
+impl Default for ConformanceEvidenceContext {
+    fn default() -> Self {
+        Self::host_side()
+    }
+}
+
+impl From<bool> for ConformanceEvidenceContext {
+    fn from(real_target_substrate_run: bool) -> Self {
+        Self {
+            real_target: RealTargetConformanceContext {
+                executed_on_real_target: real_target_substrate_run,
+                concrete_arch: None,
+                extraction_events_observed: false,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RealTargetConformanceContext {
+    pub executed_on_real_target: bool,
+    pub concrete_arch: Option<&'static str>,
+    pub extraction_events_observed: bool,
+}
+
+impl RealTargetConformanceContext {
+    pub const fn none() -> Self {
+        Self {
+            executed_on_real_target: false,
+            concrete_arch: None,
+            extraction_events_observed: false,
+        }
+    }
+
+    pub const fn verified(concrete_arch: &'static str, extraction_events_observed: bool) -> Self {
+        Self {
+            executed_on_real_target: true,
+            concrete_arch: Some(concrete_arch),
+            extraction_events_observed,
+        }
+    }
+
+    fn can_claim_real_target_substrate(&self) -> bool {
+        self.executed_on_real_target
+            && self.extraction_events_observed
+            && matches!(self.concrete_arch, Some(arch) if !arch.is_empty())
     }
 }
 
@@ -170,6 +246,8 @@ pub struct SubstrateConformanceEvidence {
     pub skipped_optional: usize,
     pub can_claim_profile: bool,
     pub real_target_substrate_run: bool,
+    pub real_target_concrete_arch: Option<&'static str>,
+    pub real_target_extraction_events_observed: bool,
     pub can_claim_real_target_substrate: bool,
 }
 
