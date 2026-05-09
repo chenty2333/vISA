@@ -1,10 +1,10 @@
 use std::{env, error::Error, path::Path};
 
 use osctl_view::{
-    GraphEdgeMode, check_interface_compatibility, check_path, check_substrate_compatibility,
-    handle_view_command, inspect_object, print_activation, print_caps, print_event_log_tail,
-    print_graph, print_interface_events, print_modes, print_plan, print_state,
-    print_substrate_events, print_summary, replay_until, validate_contract,
+    GraphEdgeMode, audit_package, check_interface_compatibility, check_path,
+    check_substrate_compatibility, handle_view_command, inspect_object, print_activation,
+    print_caps, print_event_log_tail, print_graph, print_interface_events, print_modes, print_plan,
+    print_state, print_substrate_events, print_summary, replay_until, validate_contract,
 };
 
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -26,6 +26,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 return Err("check requires a manifest/package JSON path".into());
             };
             check_path(Path::new(&path))
+        }
+        "audit" => {
+            let mut json = false;
+            let mut path = None;
+            for arg in args {
+                if arg == "--json" {
+                    json = true;
+                } else if path.is_none() {
+                    path = Some(arg);
+                } else {
+                    return Err("audit received too many positional paths".into());
+                }
+            }
+            let path = path.ok_or("audit requires a migration package JSON path")?;
+            audit_package(Path::new(&path), json)
         }
         "plan" => {
             let mut json = false;
@@ -551,6 +566,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  osctl summary <manifest-or-migration.json>");
     eprintln!("  osctl check <manifest-or-migration.json>");
+    eprintln!("  osctl audit [--json] <migration.json>");
     eprintln!("  osctl plan [--json] <manifest.json>");
     eprintln!("  osctl substrate check [--json] [--profile <name>] <manifest.json>");
     eprintln!("  osctl substrate events [--json] <migration.json>");

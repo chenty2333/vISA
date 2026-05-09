@@ -58,10 +58,11 @@ use artifact_manifest::{
 use contract_core::VIEW_SCHEMA_V1;
 use contract_validate::{
     ArtifactInterfaceCompatibilityReport, ArtifactSubstrateCompatibilityReport,
-    InterfaceHostCapabilitySet, ValidatedArtifactEntry, ValidatedArtifactPlan,
-    build_validated_artifact_plan, check_artifact_manifest_interface_compatibility,
-    check_artifact_manifest_profile_gate, host_validation_interface_capabilities,
-    validate_migration_against_manifest, validate_migration_package, validate_replay_quiescent,
+    ExternalMigrationAuditReport, InterfaceHostCapabilitySet, ValidatedArtifactEntry,
+    ValidatedArtifactPlan, audit_migration_package, build_validated_artifact_plan,
+    check_artifact_manifest_interface_compatibility, check_artifact_manifest_profile_gate,
+    host_validation_interface_capabilities, validate_migration_against_manifest,
+    validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
 use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
@@ -179,6 +180,90 @@ pub fn validate_contract(path: &Path, json: bool) -> Result<(), Box<dyn Error>> 
         Ok(())
     } else {
         Err(last_error.unwrap_or_else(|| "contract validation failed".to_owned()).into())
+    }
+}
+
+pub fn audit_package(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    let report = audit_migration_package(&package);
+    let value = external_audit_view_v1(&report);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        print_external_audit_text(&report);
+    }
+    if report.ok() { Ok(()) } else { Err("external audit failed".into()) }
+}
+
+fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::Value {
+    let state = if report.ok() { "ok" } else { "failed" };
+    let findings = report
+        .findings
+        .iter()
+        .map(|finding| {
+            serde_json::json!({
+                "severity": finding.severity.as_str(),
+                "code": finding.code,
+                "detail": finding.detail,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+        "kind": "external-audit",
+        "id": 1,
+        "generation": 1,
+        "state": state,
+        "command": "audit",
+        "package": &report.package_id,
+        "ok": report.ok(),
+        "references": {
+            "package": &report.package_id,
+            "auditor": "contract_validate.external-migration-audit",
+        },
+        "claims": {
+            "contract_package_valid": report.contract_package_valid,
+            "replay_quiescent": report.replay_quiescent,
+            "portable_artifact_execution": report.portable_artifact_execution_claim,
+            "real_target_substrate": report.real_target_substrate_claim,
+        },
+        "artifact_mix": {
+            "visa_native_artifacts": report.visa_native_artifact_count,
+            "frontend_personality_artifacts": report.frontend_personality_artifact_count,
+            "linux_weighted_artifacts": report.linux_weighted_artifact_count,
+        },
+        "findings": findings,
+        "last_transition": {
+            "finding_count": report.findings.len(),
+            "error_count": report.errors().count(),
+            "warning_count": report.warnings().count(),
+        },
+        "last_error": report.errors().next().map(|finding| finding.code),
+    })
+}
+
+fn print_external_audit_text(report: &ExternalMigrationAuditReport) {
+    println!(
+        "audit package={} ok={} contract_valid={} replay_quiescent={} portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
+        report.package_id,
+        report.ok(),
+        report.contract_package_valid,
+        report.replay_quiescent,
+        report.portable_artifact_execution_claim,
+        report.real_target_substrate_claim,
+        report.visa_native_artifact_count,
+        report.frontend_personality_artifact_count,
+        report.linux_weighted_artifact_count,
+        report.findings.len()
+    );
+    for finding in &report.findings {
+        println!(
+            "audit finding severity={} code={} detail={}",
+            finding.severity.as_str(),
+            finding.code,
+            finding.detail
+        );
     }
 }
 

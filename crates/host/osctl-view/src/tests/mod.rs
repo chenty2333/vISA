@@ -82,3 +82,83 @@ fn minimal_graph_package() -> MigrationPackageManifest {
     }))
     .expect("minimal graph package")
 }
+
+fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
+    let hostcall = artifact_manifest::HostcallSpecManifest {
+        number: 1,
+        name: "visa.console.write".to_owned(),
+        category: "service".to_owned(),
+        object: "visa.console".to_owned(),
+        operation: "write".to_owned(),
+        may_pending: false,
+    };
+    package.semantic.target_artifact_count = 1;
+    package.semantic.roots.target_artifact_roots = vec!["target-artifact id=1".to_owned()];
+    package.semantic.target_artifacts = vec![artifact_manifest::TargetArtifactImageManifest {
+        id: 1,
+        package: "native-visa".to_owned(),
+        artifact_name: "visa-native-artifact".to_owned(),
+        role: "visa-native-workload".to_owned(),
+        kind: "target-artifact-image".to_owned(),
+        target_profile: "minimal-bare-metal".to_owned(),
+        abi_fingerprint: "native-visa-abi".to_owned(),
+        manifest_binding_hash: "native-visa-binding".to_owned(),
+        code_hash: "native-visa-code".to_owned(),
+        exports: vec!["visa_start".to_owned()],
+        hostcalls: vec![hostcall.clone()],
+        memory_plan: artifact_manifest::TargetMemoryPlanManifest {
+            max_memory_pages: 16,
+            max_table_elements: 0,
+            max_hostcalls_per_activation: 16,
+        },
+        payload_len: 64,
+        ..Default::default()
+    }];
+
+    package.semantic.code_object_count = 1;
+    package.semantic.roots.code_object_roots = vec!["code-object id=1".to_owned()];
+    package.semantic.code_objects = vec![artifact_manifest::CodeObjectManifest {
+        id: 1,
+        artifact_id: 1,
+        package: "native-visa".to_owned(),
+        owner_profile: "minimal-bare-metal".to_owned(),
+        generation: 1,
+        state: "published".to_owned(),
+        text_permission: "rx".to_owned(),
+        rodata_permission: "r".to_owned(),
+        code_hash: "native-visa-code".to_owned(),
+        hostcalls: vec![hostcall.clone()],
+        ..Default::default()
+    }];
+
+    package.semantic.activation_record_count = 1;
+    package.semantic.roots.activation_record_roots = vec!["activation id=1".to_owned()];
+    package.semantic.activation_records = vec![artifact_manifest::ActivationRecordManifest {
+        id: 1,
+        store: 1,
+        code_object: 1,
+        artifact: 1,
+        entry: "visa_start".to_owned(),
+        generation: 1,
+        state: "running".to_owned(),
+        ..Default::default()
+    }];
+
+    package.semantic.hostcall_trace_count = 1;
+    package.semantic.roots.hostcall_trace_roots = vec!["hostcall id=1".to_owned()];
+    package.semantic.hostcall_trace = vec![artifact_manifest::HostcallTraceManifest {
+        id: 1,
+        generation: 1,
+        activation: 1,
+        code_object: 1,
+        artifact: 1,
+        hostcall_number: 1,
+        name: "visa.console.write".to_owned(),
+        category: "service".to_owned(),
+        object: "visa.console".to_owned(),
+        operation: "write".to_owned(),
+        allowed: true,
+        result: "ok".to_owned(),
+        ..Default::default()
+    }];
+}

@@ -326,3 +326,57 @@ fn contract_validation_view_v1_exposes_contract_and_structure_errors_as_json() {
     assert_eq!(structure_error["violations"][1]["code"], "package-structure");
     assert_eq!(structure_error["last_error"], "missing roots");
 }
+
+#[test]
+fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
+    let report = contract_validate::ExternalMigrationAuditReport {
+        package_id: "audit-view-test".to_owned(),
+        contract_package_valid: true,
+        replay_quiescent: true,
+        portable_artifact_execution_claim: true,
+        real_target_substrate_claim: false,
+        visa_native_artifact_count: 1,
+        frontend_personality_artifact_count: 0,
+        linux_weighted_artifact_count: 0,
+        findings: vec![contract_validate::ExternalAuditFinding {
+            severity: contract_validate::ExternalAuditSeverity::Info,
+            code: "no-real-target-substrate-claim",
+            detail: "host-side evidence only".to_owned(),
+        }],
+    };
+
+    let view = external_audit_view_v1(&report);
+
+    assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+    assert_eq!(view["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+    assert_eq!(view["kind"], "external-audit");
+    assert_eq!(view["ok"], true);
+    assert_eq!(view["claims"]["portable_artifact_execution"], true);
+    assert_eq!(view["claims"]["real_target_substrate"], false);
+    assert_eq!(view["artifact_mix"]["visa_native_artifacts"], 1);
+    assert_eq!(view["findings"][0]["severity"], "info");
+    assert_eq!(view["findings"][0]["code"], "no-real-target-substrate-claim");
+    assert_eq!(view["last_transition"]["finding_count"], 1);
+    assert_eq!(view["last_transition"]["error_count"], 0);
+    assert_eq!(view["last_error"], serde_json::Value::Null);
+}
+
+#[test]
+fn audit_package_reads_serialized_package_and_returns_success_for_valid_chain() {
+    let mut package = minimal_graph_package();
+    add_native_portable_execution_chain(&mut package);
+
+    let mut path = std::env::temp_dir();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    path.push(format!("osctl-audit-package-{unique}.json"));
+    std::fs::write(&path, serde_json::to_vec(&package).expect("serialize package"))
+        .expect("write package");
+
+    let result = audit_package(&path, true);
+    let _ = std::fs::remove_file(&path);
+
+    result.expect("valid native portable chain should audit successfully");
+}
