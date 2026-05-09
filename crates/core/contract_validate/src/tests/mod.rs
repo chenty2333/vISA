@@ -600,6 +600,7 @@ fn external_audit_flags_missing_native_consumer_and_artifact_chain() {
     assert!(report.errors().any(|finding| finding.code == "missing-target-artifact-evidence"));
     assert!(report.warnings().any(|finding| finding.code == "missing-visa-native-consumer"));
     assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
     assert!(!report.real_target_substrate_claim);
 }
 
@@ -614,7 +615,28 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
     assert!(report.replay_quiescent);
     assert!(report.ok(), "{:#?}", report.errors().collect::<Vec<_>>());
     assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
     assert_eq!(report.visa_native_artifact_count, 1);
+}
+
+#[test]
+fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    let artifact = &mut package.semantic.target_artifacts[0];
+    artifact.package = "frontend".to_owned();
+    artifact.artifact_name = "frontend-artifact".to_owned();
+    artifact.role = "frontend-personality".to_owned();
+    artifact.hostcalls[0].object = "wasi.console".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.visa_native_artifact_count, 0);
+    assert!(report.warnings().any(|finding| {
+        finding.code == "portable-artifact-execution-without-visa-native-chain"
+    }));
 }
 
 #[test]
@@ -659,6 +681,7 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
 
     assert!(report.ok(), "{:#?}", report.findings);
     assert!(report.real_target_substrate_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
     assert!(report.errors().next().is_none());
 }
 

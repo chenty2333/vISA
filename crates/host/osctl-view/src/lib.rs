@@ -226,6 +226,7 @@ fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::
             "contract_package_valid": report.contract_package_valid,
             "replay_quiescent": report.replay_quiescent,
             "portable_artifact_execution": report.portable_artifact_execution_claim,
+            "visa_native_portable_artifact_execution": report.visa_native_portable_artifact_execution_claim,
             "real_target_substrate": report.real_target_substrate_claim,
         },
         "artifact_mix": {
@@ -245,12 +246,13 @@ fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::
 
 fn print_external_audit_text(report: &ExternalMigrationAuditReport) {
     println!(
-        "audit package={} ok={} contract_valid={} replay_quiescent={} portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
+        "audit package={} ok={} contract_valid={} replay_quiescent={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
         report.package_id,
         report.ok(),
         report.contract_package_valid,
         report.replay_quiescent,
         report.portable_artifact_execution_claim,
+        report.visa_native_portable_artifact_execution_claim,
         report.real_target_substrate_claim,
         report.visa_native_artifact_count,
         report.frontend_personality_artifact_count,

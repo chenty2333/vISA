@@ -38,6 +38,7 @@ pub struct ExternalMigrationAuditReport {
     pub contract_package_valid: bool,
     pub replay_quiescent: bool,
     pub portable_artifact_execution_claim: bool,
+    pub visa_native_portable_artifact_execution_claim: bool,
     pub real_target_substrate_claim: bool,
     pub visa_native_artifact_count: usize,
     pub frontend_personality_artifact_count: usize,
@@ -141,11 +142,20 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         && !package.semantic.activation_records.is_empty()
         && (!package.semantic.hostcall_trace.is_empty()
             || !package.semantic.trap_records.is_empty());
+    let visa_native_portable_artifact_execution_claim = portable_artifact_execution_claim
+        && visa_native_artifact_participates_in_execution(package);
     if !portable_artifact_execution_claim {
         findings.push(ExternalAuditFinding::new(
             ExternalAuditSeverity::Warning,
             "portable-artifact-execution-incomplete",
             "package lacks the target artifact -> code object -> activation -> hostcall/trap evidence chain",
+        ));
+    }
+    if portable_artifact_execution_claim && !visa_native_portable_artifact_execution_claim {
+        findings.push(ExternalAuditFinding::new(
+            ExternalAuditSeverity::Warning,
+            "portable-artifact-execution-without-visa-native-chain",
+            "portable artifact evidence exists, but no vISA-native artifact participates in activation plus hostcall/trap evidence",
         ));
     }
 
@@ -185,6 +195,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         contract_package_valid,
         replay_quiescent,
         portable_artifact_execution_claim,
+        visa_native_portable_artifact_execution_claim,
         real_target_substrate_claim,
         visa_native_artifact_count,
         frontend_personality_artifact_count,
@@ -197,6 +208,37 @@ fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> 
     artifact.role == "visa-native-workload"
         || lower_contains(&artifact.artifact_name, "visa-native")
         || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa."))
+}
+
+fn visa_native_artifact_participates_in_execution(package: &MigrationPackageManifest) -> bool {
+    let native_artifact_ids = package
+        .semantic
+        .target_artifacts
+        .iter()
+        .filter(|artifact| is_visa_native(artifact))
+        .map(|artifact| artifact.id)
+        .collect::<Vec<_>>();
+    if native_artifact_ids.is_empty() {
+        return false;
+    }
+
+    let has_native_activation = package
+        .semantic
+        .activation_records
+        .iter()
+        .any(|activation| native_artifact_ids.contains(&activation.artifact));
+    let has_native_effect = package
+        .semantic
+        .hostcall_trace
+        .iter()
+        .any(|hostcall| native_artifact_ids.contains(&hostcall.artifact))
+        || package
+            .semantic
+            .trap_records
+            .iter()
+            .any(|trap| trap.artifact.is_some_and(|id| native_artifact_ids.contains(&id)));
+
+    has_native_activation && has_native_effect
 }
 
 fn lower_contains(value: &str, needle: &str) -> bool {

@@ -320,10 +320,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 fn validate_external_audit(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
     let report = audit_migration_package(package);
     println!(
-        "external audit package={} ok={} portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} findings={}",
+        "external audit package={} ok={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} findings={}",
         report.package_id,
         report.ok(),
         report.portable_artifact_execution_claim,
+        report.visa_native_portable_artifact_execution_claim,
         report.real_target_substrate_claim,
         report.visa_native_artifact_count,
         report.findings.len()
@@ -1170,6 +1171,7 @@ mod tests {
         assert!(audit.contract_package_valid);
         assert!(audit.replay_quiescent);
         assert!(audit.portable_artifact_execution_claim);
+        assert!(audit.visa_native_portable_artifact_execution_claim);
         assert_eq!(audit.visa_native_artifact_count, 1);
         assert_eq!(audit.linux_weighted_artifact_count, 0);
         validate_external_audit(&package).expect("generated package should pass audit gate");

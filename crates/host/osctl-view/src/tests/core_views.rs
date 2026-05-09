@@ -334,6 +334,7 @@ fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
         contract_package_valid: true,
         replay_quiescent: true,
         portable_artifact_execution_claim: true,
+        visa_native_portable_artifact_execution_claim: true,
         real_target_substrate_claim: false,
         visa_native_artifact_count: 1,
         frontend_personality_artifact_count: 0,
@@ -352,6 +353,7 @@ fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
     assert_eq!(view["kind"], "external-audit");
     assert_eq!(view["ok"], true);
     assert_eq!(view["claims"]["portable_artifact_execution"], true);
+    assert_eq!(view["claims"]["visa_native_portable_artifact_execution"], true);
     assert_eq!(view["claims"]["real_target_substrate"], false);
     assert_eq!(view["artifact_mix"]["visa_native_artifacts"], 1);
     assert_eq!(view["findings"][0]["severity"], "info");
