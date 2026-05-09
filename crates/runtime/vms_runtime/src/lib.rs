@@ -325,6 +325,8 @@ impl VisaExecutionReport {
             .iter()
             .filter(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
             .count();
+        let evidence_boundary_sufficient =
+            self.loaded.evidence_level.can_claim(EvidenceBoundaryLevel::PortableArtifactExecution);
 
         VisaExecutionEvidenceReport {
             evidence_level: self.loaded.evidence_level,
@@ -336,7 +338,9 @@ impl VisaExecutionReport {
             code_published,
             activation_started,
             hostcall_dispatches,
-            can_claim_portable_artifact_execution: artifact_loaded
+            evidence_boundary_sufficient,
+            can_claim_portable_artifact_execution: evidence_boundary_sufficient
+                && artifact_loaded
                 && code_published
                 && activation_started
                 && hostcall_dispatches == self.hostcalls.len(),
@@ -355,6 +359,7 @@ pub struct VisaExecutionEvidenceReport {
     pub code_published: bool,
     pub activation_started: bool,
     pub hostcall_dispatches: usize,
+    pub evidence_boundary_sufficient: bool,
     pub can_claim_portable_artifact_execution: bool,
 }
 
@@ -2027,6 +2032,43 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn execution_summary_does_not_overclaim_weaker_evidence_boundary() {
+        let personality =
+            personality::wasi::WasiPersonality::new("wasi-app", SubstrateProfile::GuestFrontend);
+        let mut runtime = VisaRuntime::new(VisaRuntimeConfig {
+            required_profile: SubstrateProfile::GuestFrontend,
+            reported_profile: SubstrateProfile::GuestFrontend,
+            enforced_capabilities: SubstrateCapabilitySet::for_profile(
+                SubstrateProfile::GuestFrontend,
+            ),
+            evidence_level: EvidenceBoundaryLevel::SemanticModel,
+            runtime_mode: RuntimeMode::Production,
+        });
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(27) },
+                ActivationEntry::Symbol("wasi_start".into()),
+                [VisaExecutionStep::new(
+                    personality::wasi::WASI_FD_WRITE,
+                    personality.fd_write(b"semantic-only"),
+                )],
+                &mut substrate,
+            )
+            .expect("run semantic-level workload");
+
+        let summary = report.evidence_summary();
+        assert!(summary.artifact_loaded);
+        assert!(summary.code_published);
+        assert!(summary.activation_started);
+        assert_eq!(summary.hostcall_dispatches, report.hostcalls.len());
+        assert!(!summary.evidence_boundary_sufficient);
+        assert!(!summary.can_claim_portable_artifact_execution);
     }
 
     #[test]
