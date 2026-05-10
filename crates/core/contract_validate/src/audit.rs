@@ -227,32 +227,46 @@ fn artifact_has_linked_execution_chain(
         .code_objects
         .iter()
         .filter(|code| code.artifact_id == artifact_id)
-        .any(|code| code_has_linked_execution_effect(package, artifact_id, code.id))
+        .any(|code| code_has_linked_execution_effect(package, artifact_id, code))
 }
 
 fn code_has_linked_execution_effect(
     package: &MigrationPackageManifest,
     artifact_id: u64,
-    code_object_id: u64,
+    code: &artifact_manifest::CodeObjectManifest,
 ) -> bool {
     package
         .semantic
         .activation_records
         .iter()
         .filter(|activation| {
-            activation.artifact == artifact_id && activation.code_object == code_object_id
+            activation.artifact == artifact_id && activation.code_object == code.id
         })
         .any(|activation| {
             package.semantic.hostcall_trace.iter().any(|hostcall| {
                 hostcall.artifact == artifact_id
-                    && hostcall.code_object == code_object_id
+                    && hostcall.code_object == code.id
                     && hostcall.activation == activation.id
+                    && hostcall_matches_declared_abi(code, hostcall)
             }) || package.semantic.trap_records.iter().any(|trap| {
                 trap.artifact == Some(artifact_id)
-                    && trap.code_object == Some(code_object_id)
+                    && trap.code_object == Some(code.id)
                     && trap.activation == Some(activation.id)
             })
         })
+}
+
+fn hostcall_matches_declared_abi(
+    code: &artifact_manifest::CodeObjectManifest,
+    trace: &artifact_manifest::HostcallTraceManifest,
+) -> bool {
+    code.hostcalls.iter().any(|declared| {
+        declared.number == trace.hostcall_number
+            && declared.name == trace.name
+            && declared.category == trace.category
+            && declared.object == trace.object
+            && declared.operation == trace.operation
+    })
 }
 
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {

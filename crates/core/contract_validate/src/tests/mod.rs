@@ -677,6 +677,26 @@ fn external_audit_requires_linked_portable_execution_chain() {
 }
 
 #[test]
+fn external_audit_rejects_undeclared_hostcall_trace_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].hostcall_number = 99;
+    package.semantic.hostcall_trace[0].name = "visa.console.unknown".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
 fn external_audit_reports_real_target_claim_gaps() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
