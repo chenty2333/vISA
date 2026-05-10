@@ -1,12 +1,12 @@
 use artifact_manifest::{
-    ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityManifest,
-    CommandResultManifest, CompilerManifest, ExternManifest, GuestStateManifest,
-    InterfaceEventManifest, InterfaceRequirementManifest, MigrationHostManifest,
-    MigrationPackageManifest, MigrationTargetManifest, ModuleArtifactManifest,
-    RequiredArtifactProfileManifest, ResourceLimitsManifest, RuntimeActivationRecordManifest,
-    SemanticRootSetManifest, SemanticSnapshotManifest, SignatureManifest,
-    SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest, SubstrateEventManifest,
-    TargetManifest,
+    ArtifactBundleManifest, BoundaryValidationReportManifest, BoundaryValidationViolationManifest,
+    CapabilityManifest, CommandResultManifest, CompilerManifest, ExternManifest,
+    GuestStateManifest, InterfaceEventManifest, InterfaceRequirementManifest,
+    MigrationHostManifest, MigrationPackageManifest, MigrationTargetManifest,
+    ModuleArtifactManifest, RequiredArtifactProfileManifest, ResourceLimitsManifest,
+    RuntimeActivationRecordManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
+    SignatureManifest, SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest,
+    SubstrateEventManifest, TargetManifest,
 };
 use contract_core::*;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
@@ -1058,6 +1058,50 @@ fn migration_package_rejects_snapshot_evidence_root_mismatch() {
 
     let err = validate_migration_package(&package).expect_err("root mismatch must fail");
     assert_eq!(err.to_string(), "snapshot validation root evidence boundary mismatch");
+}
+
+#[test]
+fn migration_package_rejects_boundary_validation_ok_with_violations() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation_violation_count = 1;
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+        ok: true,
+        violation_count: 1,
+        violations: vec![BoundaryValidationViolationManifest {
+            validator: "snapshot-barrier".to_owned(),
+            kind: "dangling-edge".to_owned(),
+            object: "edge:1".to_owned(),
+            detail: "test violation".to_owned(),
+        }],
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![format!(
+        "boundary-validation validator=snapshot-barrier evidence={} ok=true violations=1",
+        EvidenceBoundaryLevel::SemanticModel.as_str()
+    )];
+
+    let err = validate_migration_package(&package).expect_err("ok with violations must fail");
+    assert_eq!(err.to_string(), "snapshot validation ok flag disagrees with violations");
+}
+
+#[test]
+fn migration_package_rejects_boundary_validation_summary_status_mismatch() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+        ok: true,
+        violation_count: 0,
+        violations: Vec::new(),
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![format!(
+        "boundary-validation validator=snapshot-barrier evidence={} ok=false violations=0",
+        EvidenceBoundaryLevel::SemanticModel.as_str()
+    )];
+
+    let err = validate_migration_package(&package).expect_err("summary mismatch must fail");
+    assert_eq!(err.to_string(), "snapshot validation root summary mismatch");
 }
 
 mod compatibility;

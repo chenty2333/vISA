@@ -921,8 +921,16 @@ fn validate_boundary_validation_report(
             "{label} validation evidence boundary is missing or unknown"
         )));
     };
+    if report.validator.is_empty() {
+        return Err(ContractError::new(format!("{label} validation validator is missing")));
+    }
     if report.violations.len() != report.violation_count {
         return Err(ContractError::new(format!("{label} validation violation count mismatch")));
+    }
+    if report.ok != (report.violation_count == 0) {
+        return Err(ContractError::new(format!(
+            "{label} validation ok flag disagrees with violations"
+        )));
     }
     let expected_root_fragment = format!("evidence={}", boundary.as_str());
     let Some(summary_root) = roots.first() else {
@@ -934,6 +942,16 @@ fn validate_boundary_validation_report(
         return Err(ContractError::new(format!(
             "{label} validation root evidence boundary mismatch"
         )));
+    }
+    let expected_summary = format!(
+        "boundary-validation validator={} evidence={} ok={} violations={}",
+        report.validator,
+        boundary.as_str(),
+        report.ok,
+        report.violation_count
+    );
+    if summary_root != &expected_summary {
+        return Err(ContractError::new(format!("{label} validation root summary mismatch")));
     }
     Ok(())
 }
