@@ -222,12 +222,20 @@ fn artifact_has_linked_execution_chain(
     package: &MigrationPackageManifest,
     artifact: &artifact_manifest::TargetArtifactImageManifest,
 ) -> bool {
+    artifact_has_linked_execution_chain_for_store(package, artifact, None)
+}
+
+fn artifact_has_linked_execution_chain_for_store(
+    package: &MigrationPackageManifest,
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
+    required_store: Option<u64>,
+) -> bool {
     package
         .semantic
         .code_objects
         .iter()
         .filter(|code| code_matches_artifact_manifest(artifact, code))
-        .any(|code| code_has_linked_execution_effect(package, artifact.id, code))
+        .any(|code| code_has_linked_execution_effect(package, artifact.id, code, required_store))
 }
 
 fn code_matches_artifact_manifest(
@@ -273,13 +281,16 @@ fn code_has_linked_execution_effect(
     package: &MigrationPackageManifest,
     artifact_id: u64,
     code: &artifact_manifest::CodeObjectManifest,
+    required_store: Option<u64>,
 ) -> bool {
     package
         .semantic
         .activation_records
         .iter()
         .filter(|activation| {
-            activation.artifact == artifact_id && activation.code_object == code.id
+            activation.artifact == artifact_id
+                && activation.code_object == code.id
+                && required_store.is_none_or(|store| activation.store == store)
         })
         .any(|activation| {
             package.semantic.hostcall_trace.iter().any(|hostcall| {
@@ -347,14 +358,21 @@ fn trap_matches_declared_metadata(
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
     package.semantic.substrate_events.iter().any(|event| {
         event.event_kind == "authority-extracted"
-            && event.store.is_some()
-            && event.artifact.is_some_and(|artifact_id| {
-                package
-                    .semantic
-                    .target_artifacts
-                    .iter()
-                    .find(|artifact| artifact.id == artifact_id)
-                    .is_some_and(|artifact| artifact_has_linked_execution_chain(package, artifact))
+            && event.store.is_some_and(|store| {
+                event.artifact.is_some_and(|artifact_id| {
+                    package
+                        .semantic
+                        .target_artifacts
+                        .iter()
+                        .find(|artifact| artifact.id == artifact_id)
+                        .is_some_and(|artifact| {
+                            artifact_has_linked_execution_chain_for_store(
+                                package,
+                                artifact,
+                                Some(store),
+                            )
+                        })
+                })
             })
     })
 }
