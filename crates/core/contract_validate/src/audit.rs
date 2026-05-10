@@ -316,6 +316,7 @@ fn code_has_linked_execution_effect(
                 hostcall.artifact == artifact_id
                     && hostcall.code_object == code.id
                     && hostcall.activation == activation.id
+                    && hostcall_has_live_success_effect(hostcall)
                     && hostcall_matches_activation_generation(code, activation, hostcall)
                     && hostcall_matches_declared_abi(code, hostcall)
             }) || package.semantic.trap_records.iter().any(|trap| {
@@ -345,6 +346,14 @@ fn hostcall_matches_activation_generation(
         && trace.code_generation == code.generation
         && trace.store == activation.store
         && trace.store_generation == activation.store_generation
+}
+
+fn hostcall_has_live_success_effect(trace: &artifact_manifest::HostcallTraceManifest) -> bool {
+    trace.record_mode == "live"
+        && trace.allowed
+        && trace.gate_status == "allowed"
+        && trace.result == "ok"
+        && trace.ret_tag == "ok"
 }
 
 fn hostcall_matches_declared_abi(

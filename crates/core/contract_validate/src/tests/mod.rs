@@ -599,8 +599,11 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         category: "service".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
+        record_mode: "live".to_owned(),
         allowed: true,
+        gate_status: "allowed".to_owned(),
         result: "ok".to_owned(),
+        ret_tag: "ok".to_owned(),
         ..Default::default()
     }];
 }
@@ -737,6 +740,67 @@ fn external_audit_rejects_undeclared_hostcall_trace_as_portable_execution() {
     add_native_portable_execution_chain(&mut package);
     package.semantic.hostcall_trace[0].hostcall_number = 99;
     package.semantic.hostcall_trace[0].name = "visa.console.unknown".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_denied_hostcall_trace_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].allowed = false;
+    package.semantic.hostcall_trace[0].gate_status = "denied".to_owned();
+    package.semantic.hostcall_trace[0].result = "denied".to_owned();
+    package.semantic.hostcall_trace[0].ret_tag = "denied".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_failed_hostcall_trace_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].result = "unsupported".to_owned();
+    package.semantic.hostcall_trace[0].ret_tag = "error".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_replayed_hostcall_trace_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].record_mode = "replay".to_owned();
 
     let report = audit_migration_package(&package);
 
