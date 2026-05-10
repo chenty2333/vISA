@@ -563,7 +563,9 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
     package.semantic.activation_records = vec![artifact_manifest::ActivationRecordManifest {
         id: 1,
         store: 1,
+        store_generation: 1,
         code_object: 1,
+        code_generation: 1,
         artifact: 1,
         entry: "visa_start".to_owned(),
         generation: 1,
@@ -577,7 +579,11 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         id: 1,
         generation: 1,
         activation: 1,
+        activation_generation: 1,
+        store: 1,
+        store_generation: 1,
         code_object: 1,
+        code_generation: 1,
         artifact: 1,
         hostcall_number: 1,
         name: "visa.console.write".to_owned(),
@@ -682,6 +688,25 @@ fn external_audit_rejects_undeclared_hostcall_trace_as_portable_execution() {
     add_native_portable_execution_chain(&mut package);
     package.semantic.hostcall_trace[0].hostcall_number = 99;
     package.semantic.hostcall_trace[0].name = "visa.console.unknown".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_stale_hostcall_generation_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].activation_generation = 2;
 
     let report = audit_migration_package(&package);
 
