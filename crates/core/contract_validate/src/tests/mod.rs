@@ -640,6 +640,25 @@ fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
 }
 
 #[test]
+fn external_audit_requires_linked_portable_execution_chain() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].artifact_id = 99;
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
 fn external_audit_reports_real_target_claim_gaps() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);

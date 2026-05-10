@@ -137,13 +137,9 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         ));
     }
 
-    let portable_artifact_execution_claim = !package.semantic.target_artifacts.is_empty()
-        && !package.semantic.code_objects.is_empty()
-        && !package.semantic.activation_records.is_empty()
-        && (!package.semantic.hostcall_trace.is_empty()
-            || !package.semantic.trap_records.is_empty());
-    let visa_native_portable_artifact_execution_claim = portable_artifact_execution_claim
-        && visa_native_artifact_participates_in_execution(package);
+    let portable_artifact_execution_claim = artifact_participates_in_execution(package, |_| true);
+    let visa_native_portable_artifact_execution_claim =
+        artifact_participates_in_execution(package, is_visa_native);
     if !portable_artifact_execution_claim {
         findings.push(ExternalAuditFinding::new(
             ExternalAuditSeverity::Warning,
@@ -204,35 +200,53 @@ fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> 
         || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa."))
 }
 
-fn visa_native_artifact_participates_in_execution(package: &MigrationPackageManifest) -> bool {
-    let native_artifact_ids = package
+fn artifact_participates_in_execution(
+    package: &MigrationPackageManifest,
+    predicate: impl Fn(&artifact_manifest::TargetArtifactImageManifest) -> bool,
+) -> bool {
+    package
         .semantic
         .target_artifacts
         .iter()
-        .filter(|artifact| is_visa_native(artifact))
-        .map(|artifact| artifact.id)
-        .collect::<Vec<_>>();
-    if native_artifact_ids.is_empty() {
-        return false;
-    }
+        .filter(|artifact| predicate(artifact))
+        .any(|artifact| artifact_has_linked_execution_chain(package, artifact.id))
+}
 
-    let has_native_activation = package
+fn artifact_has_linked_execution_chain(
+    package: &MigrationPackageManifest,
+    artifact_id: u64,
+) -> bool {
+    package
+        .semantic
+        .code_objects
+        .iter()
+        .filter(|code| code.artifact_id == artifact_id)
+        .any(|code| code_has_linked_execution_effect(package, artifact_id, code.id))
+}
+
+fn code_has_linked_execution_effect(
+    package: &MigrationPackageManifest,
+    artifact_id: u64,
+    code_object_id: u64,
+) -> bool {
+    package
         .semantic
         .activation_records
         .iter()
-        .any(|activation| native_artifact_ids.contains(&activation.artifact));
-    let has_native_effect = package
-        .semantic
-        .hostcall_trace
-        .iter()
-        .any(|hostcall| native_artifact_ids.contains(&hostcall.artifact))
-        || package
-            .semantic
-            .trap_records
-            .iter()
-            .any(|trap| trap.artifact.is_some_and(|id| native_artifact_ids.contains(&id)));
-
-    has_native_activation && has_native_effect
+        .filter(|activation| {
+            activation.artifact == artifact_id && activation.code_object == code_object_id
+        })
+        .any(|activation| {
+            package.semantic.hostcall_trace.iter().any(|hostcall| {
+                hostcall.artifact == artifact_id
+                    && hostcall.code_object == code_object_id
+                    && hostcall.activation == activation.id
+            }) || package.semantic.trap_records.iter().any(|trap| {
+                trap.artifact == Some(artifact_id)
+                    && trap.code_object == Some(code_object_id)
+                    && trap.activation == Some(activation.id)
+            })
+        })
 }
 
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
