@@ -635,6 +635,7 @@ fn convert_native_chain_to_trap_only(package: &mut MigrationPackageManifest, tra
         code_generation: Some(1),
         artifact: Some(1),
         offset: Some(trap_offset),
+        attribution_status: "trap-map-attributed".to_owned(),
         fault_policy: "abort".to_owned(),
         effect: "trap".to_owned(),
         detail: "trap-only execution evidence".to_owned(),
@@ -941,6 +942,46 @@ fn external_audit_accepts_trap_only_portable_execution_with_declared_metadata() 
     assert!(report.contract_package_valid);
     assert!(report.portable_artifact_execution_claim);
     assert!(report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
+fn external_audit_rejects_synthetic_trap_only_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    convert_native_chain_to_trap_only(&mut package, 16);
+    package.semantic.trap_records[0].attribution_status = "synthetic".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_trap_only_execution_without_effect_metadata() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    convert_native_chain_to_trap_only(&mut package, 16);
+    package.semantic.trap_records[0].effect.clear();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
 }
 
 #[test]

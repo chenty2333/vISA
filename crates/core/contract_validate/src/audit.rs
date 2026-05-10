@@ -323,6 +323,7 @@ fn code_has_linked_execution_effect(
                 trap.artifact == Some(artifact_id)
                     && trap.code_object == Some(code.id)
                     && trap.activation == Some(activation.id)
+                    && trap_has_attributed_execution_effect(trap)
                     && trap_matches_activation_generation(code, activation, trap)
                     && trap_matches_declared_metadata(code, trap)
             })
@@ -378,6 +379,12 @@ fn trap_matches_activation_generation(
         && trap.code_generation == Some(code.generation)
         && trap.store == Some(activation.store)
         && trap.store_generation == Some(activation.store_generation)
+}
+
+fn trap_has_attributed_execution_effect(trap: &artifact_manifest::TrapRecordManifest) -> bool {
+    trap.attribution_status == "trap-map-attributed"
+        && !trap.fault_policy.is_empty()
+        && !trap.effect.is_empty()
 }
 
 fn trap_matches_declared_metadata(
