@@ -246,9 +246,14 @@ fn code_matches_artifact_manifest(
         && code.package == artifact.package
         && code.owner_profile == artifact.target_profile
         && code.code_hash == artifact.code_hash
+        && code_has_executable_binding_state(code)
         && hostcall_tables_match(&code.hostcalls, &artifact.hostcalls)
         && trap_metadata_tables_match(&code.trap_metadata, &artifact.trap_metadata)
         && address_map_tables_match(&code.address_map, &artifact.address_map)
+}
+
+fn code_has_executable_binding_state(code: &artifact_manifest::CodeObjectManifest) -> bool {
+    code.state == "bound-to-store" && code.text_permission == "rx" && code.rodata_permission == "ro"
 }
 
 fn hostcall_tables_match(

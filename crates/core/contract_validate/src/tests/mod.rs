@@ -556,11 +556,11 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         package: "native-visa".to_owned(),
         owner_profile: "minimal-bare-metal".to_owned(),
         generation: 1,
-        state: "published".to_owned(),
+        state: "bound-to-store".to_owned(),
         bound_store: Some(1),
         bound_store_generation: Some(1),
         text_permission: "rx".to_owned(),
-        rodata_permission: "r".to_owned(),
+        rodata_permission: "ro".to_owned(),
         code_hash: "native-visa-code".to_owned(),
         hostcalls: vec![hostcall.clone()],
         address_map: vec![address_map],
@@ -814,6 +814,44 @@ fn external_audit_rejects_unbound_code_object_as_portable_execution() {
     add_native_portable_execution_chain(&mut package);
     package.semantic.code_objects[0].bound_store = None;
     package.semantic.code_objects[0].bound_store_generation = None;
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_retired_code_object_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].state = "retired".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_non_executable_text_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].text_permission = "rw".to_owned();
 
     let report = audit_migration_package(&package);
 
