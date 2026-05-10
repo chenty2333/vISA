@@ -176,7 +176,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
             findings.push(ExternalAuditFinding::new(
                 ExternalAuditSeverity::Error,
                 "real-target-without-extraction-events",
-                "real target substrate claim has no authority extraction event or active extracted authority count",
+                "real target substrate claim has no authority extraction event attributed to the linked execution chain",
             ));
         }
     } else {
@@ -256,12 +256,13 @@ fn code_has_linked_execution_effect(
 }
 
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
-    package.semantic.substrate_events.iter().any(|event| event.event_kind == "authority-extracted")
-        || package.substrate_boundary.active_mmio_authority_count != 0
-        || package.substrate_boundary.active_dma_authority_count != 0
-        || package.substrate_boundary.active_irq_authority_count != 0
-        || package.substrate_boundary.active_packet_device_authority_count != 0
-        || package.substrate_boundary.active_virtio_queue_authority_count != 0
+    package.semantic.substrate_events.iter().any(|event| {
+        event.event_kind == "authority-extracted"
+            && event.store.is_some()
+            && event.artifact.is_some_and(|artifact_id| {
+                artifact_has_linked_execution_chain(package, artifact_id)
+            })
+    })
 }
 
 fn lower_contains(value: &str, needle: &str) -> bool {

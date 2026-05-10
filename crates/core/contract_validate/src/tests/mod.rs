@@ -721,6 +721,54 @@ fn external_audit_rejects_generic_substrate_event_as_real_target_extraction() {
 }
 
 #[test]
+fn external_audit_rejects_count_only_real_target_extraction_claim() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.substrate_boundary.active_mmio_authority_count = 1;
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(!report.ok());
+    assert!(!report.replay_quiescent);
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
+}
+
+#[test]
+fn external_audit_rejects_unlinked_real_target_extraction_event() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:mmio:read32 requester=real-target-smoke".to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "mmio".to_owned(),
+        operation: "read32".to_owned(),
+        requester: Some("real-target-smoke".to_owned()),
+        artifact: Some(99),
+        store: Some(1),
+        capability: None,
+        explanation: "extraction event is not linked to executed artifact".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(!report.ok());
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
+}
+
+#[test]
 fn external_audit_rejects_real_target_without_linked_portable_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
