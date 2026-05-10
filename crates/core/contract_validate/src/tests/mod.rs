@@ -557,6 +557,8 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         owner_profile: "minimal-bare-metal".to_owned(),
         generation: 1,
         state: "published".to_owned(),
+        bound_store: Some(1),
+        bound_store_generation: Some(1),
         text_permission: "rx".to_owned(),
         rodata_permission: "r".to_owned(),
         code_hash: "native-visa-code".to_owned(),
@@ -792,6 +794,26 @@ fn external_audit_rejects_code_address_map_mismatch_as_portable_execution() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
     package.semantic.code_objects[0].address_map[0].offset = 16;
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_unbound_code_object_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].bound_store = None;
+    package.semantic.code_objects[0].bound_store_generation = None;
 
     let report = audit_migration_package(&package);
 

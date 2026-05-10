@@ -303,6 +303,7 @@ fn code_has_linked_execution_effect(
         .filter(|activation| {
             activation.artifact == artifact_id
                 && activation.code_object == code.id
+                && code_matches_activation_store(code, activation)
                 && required_store.is_none_or(|store| activation.store == store)
         })
         .any(|activation| {
@@ -320,6 +321,14 @@ fn code_has_linked_execution_effect(
                     && trap_matches_declared_metadata(code, trap)
             })
         })
+}
+
+fn code_matches_activation_store(
+    code: &artifact_manifest::CodeObjectManifest,
+    activation: &artifact_manifest::ActivationRecordManifest,
+) -> bool {
+    code.bound_store == Some(activation.store)
+        && code.bound_store_generation == Some(activation.store_generation)
 }
 
 fn hostcall_matches_activation_generation(
