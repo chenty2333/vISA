@@ -329,10 +329,12 @@ fn validate_external_audit(package: &MigrationPackageManifest) -> Result<(), Box
         report.visa_native_artifact_count,
         report.findings.len()
     );
-    if report.ok() {
-        Ok(())
-    } else {
+    if !report.ok() {
         Err(format!("external audit failed: {}", external_audit_error_summary(&report)).into())
+    } else if !report.visa_native_portable_artifact_execution_claim {
+        Err("external audit failed: missing-visa-native-portable-artifact-execution".into())
+    } else {
+        Ok(())
     }
 }
 
@@ -1175,6 +1177,101 @@ mod tests {
         assert_eq!(audit.visa_native_artifact_count, 1);
         assert_eq!(audit.linux_weighted_artifact_count, 0);
         validate_external_audit(&package).expect("generated package should pass audit gate");
+    }
+
+    #[test]
+    fn external_audit_gate_rejects_generic_portable_execution_without_native_chain() {
+        let manifest = test_manifest();
+        let mut entry = test_visa_native_entry();
+        entry.package = "frontend_app".to_owned();
+        entry.artifact_name = "frontend_app".to_owned();
+        entry.role = "frontend-personality".to_owned();
+        entry.capabilities[0].name = "wasi.console".to_owned();
+        let plan = ValidatedArtifactPlan {
+            artifact_profile: "host-validation".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract_version: "test-contract".to_owned(),
+            supervisor_world: "test-world".to_owned(),
+            target_arch: "x86_64".to_owned(),
+            compiler_engine: manifest.compiler.engine.clone(),
+            compiler_execution_mode: manifest.compiler.execution_mode.clone(),
+            artifact_format: manifest.compiler.artifact_format.clone(),
+            target_artifact_format: manifest.compiler.target_artifact_format.clone(),
+            runtime_executor_abi: manifest.compiler.runtime_executor_abi.clone(),
+            modules: vec![entry.clone()],
+        };
+        let image = target_artifact_image(1, &entry, &plan);
+        let artifact = target_artifact_manifest(&image);
+        let hostcall = artifact.hostcalls.first().expect("generic hostcall").clone();
+        let report = TargetExecutorV1Report {
+            target_artifacts: vec![artifact.clone()],
+            code_objects: vec![CodeObjectManifest {
+                id: 1,
+                artifact_id: artifact.id,
+                package: artifact.package.clone(),
+                owner_profile: artifact.target_profile.clone(),
+                generation: 1,
+                state: "published".to_owned(),
+                bound_store: Some(1),
+                bound_store_generation: Some(1),
+                text_permission: "rx".to_owned(),
+                rodata_permission: "r".to_owned(),
+                code_hash: artifact.code_hash.clone(),
+                hostcalls: artifact.hostcalls.clone(),
+                ..Default::default()
+            }],
+            activation_records: vec![ActivationRecordManifest {
+                id: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                entry: "run".to_owned(),
+                generation: 1,
+                state: "exited".to_owned(),
+                ..Default::default()
+            }],
+            hostcall_trace: vec![HostcallTraceManifest {
+                id: 1,
+                generation: 1,
+                activation: 1,
+                activation_generation: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                artifact_generation: 1,
+                hostcall_number: hostcall.number,
+                name: hostcall.name,
+                category: hostcall.category,
+                subject: entry.package.clone(),
+                subject_source: "artifact".to_owned(),
+                object: hostcall.object,
+                operation: hostcall.operation,
+                record_mode: "live".to_owned(),
+                allowed: true,
+                gate_status: "allowed".to_owned(),
+                result: "ok".to_owned(),
+                ret_tag: "ok".to_owned(),
+                ..Default::default()
+            }],
+            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
+            replay_validation: test_boundary_validation_report("package-replay"),
+            ..Default::default()
+        };
+        let semantic = SemanticGraph::new();
+        let package = demo_migration_package(&manifest, &semantic, &report);
+        let audit = contract_validate::audit_migration_package(&package);
+
+        assert!(audit.ok(), "{:#?}", audit.findings);
+        assert!(audit.portable_artifact_execution_claim);
+        assert!(!audit.visa_native_portable_artifact_execution_claim);
+
+        let error =
+            validate_external_audit(&package).expect_err("target executor gate should fail");
+        assert!(error.to_string().contains("missing-visa-native-portable-artifact-execution"));
     }
 
     #[test]
