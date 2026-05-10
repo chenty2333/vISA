@@ -158,6 +158,13 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
     let real_target_substrate_claim =
         package.substrate_boundary.native_state_policy == REAL_TARGET_SUBSTRATE_POLICY;
     if real_target_substrate_claim {
+        if !portable_artifact_execution_claim {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Error,
+                "real-target-without-portable-artifact-chain",
+                "real target substrate claim requires a linked artifact -> code object -> activation -> hostcall/trap chain",
+            ));
+        }
         if package.required_artifact_profile.target_arch == "target-native" {
             findings.push(ExternalAuditFinding::new(
                 ExternalAuditSeverity::Error,
