@@ -215,19 +215,45 @@ fn artifact_participates_in_execution(
         .target_artifacts
         .iter()
         .filter(|artifact| predicate(artifact))
-        .any(|artifact| artifact_has_linked_execution_chain(package, artifact.id))
+        .any(|artifact| artifact_has_linked_execution_chain(package, artifact))
 }
 
 fn artifact_has_linked_execution_chain(
     package: &MigrationPackageManifest,
-    artifact_id: u64,
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
 ) -> bool {
     package
         .semantic
         .code_objects
         .iter()
-        .filter(|code| code.artifact_id == artifact_id)
-        .any(|code| code_has_linked_execution_effect(package, artifact_id, code))
+        .filter(|code| code_matches_artifact_manifest(artifact, code))
+        .any(|code| code_has_linked_execution_effect(package, artifact.id, code))
+}
+
+fn code_matches_artifact_manifest(
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
+    code: &artifact_manifest::CodeObjectManifest,
+) -> bool {
+    code.artifact_id == artifact.id
+        && code.package == artifact.package
+        && code.owner_profile == artifact.target_profile
+        && code.code_hash == artifact.code_hash
+        && hostcall_tables_match(&code.hostcalls, &artifact.hostcalls)
+}
+
+fn hostcall_tables_match(
+    code_hostcalls: &[artifact_manifest::HostcallSpecManifest],
+    artifact_hostcalls: &[artifact_manifest::HostcallSpecManifest],
+) -> bool {
+    code_hostcalls.len() == artifact_hostcalls.len()
+        && code_hostcalls.iter().zip(artifact_hostcalls.iter()).all(|(code, artifact)| {
+            code.number == artifact.number
+                && code.name == artifact.name
+                && code.category == artifact.category
+                && code.object == artifact.object
+                && code.operation == artifact.operation
+                && code.may_pending == artifact.may_pending
+        })
 }
 
 fn code_has_linked_execution_effect(
@@ -298,7 +324,12 @@ fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bo
         event.event_kind == "authority-extracted"
             && event.store.is_some()
             && event.artifact.is_some_and(|artifact_id| {
-                artifact_has_linked_execution_chain(package, artifact_id)
+                package
+                    .semantic
+                    .target_artifacts
+                    .iter()
+                    .find(|artifact| artifact.id == artifact_id)
+                    .is_some_and(|artifact| artifact_has_linked_execution_chain(package, artifact))
             })
     })
 }

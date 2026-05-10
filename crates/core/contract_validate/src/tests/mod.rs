@@ -634,6 +634,9 @@ fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
     artifact.artifact_name = "frontend-artifact".to_owned();
     artifact.role = "frontend-personality".to_owned();
     artifact.hostcalls[0].object = "wasi.console".to_owned();
+    package.semantic.code_objects[0].package = "frontend".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].object = "wasi.console".to_owned();
+    package.semantic.hostcall_trace[0].object = "wasi.console".to_owned();
 
     let report = audit_migration_package(&package);
 
@@ -654,6 +657,9 @@ fn external_audit_rejects_name_only_visa_native_spoof() {
     artifact.artifact_name = "visa-native-spoof".to_owned();
     artifact.role = "frontend-personality".to_owned();
     artifact.hostcalls[0].object = "wasi.console".to_owned();
+    package.semantic.code_objects[0].package = "frontend".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].object = "wasi.console".to_owned();
+    package.semantic.hostcall_trace[0].object = "wasi.console".to_owned();
 
     let report = audit_migration_package(&package);
 
@@ -688,6 +694,44 @@ fn external_audit_rejects_undeclared_hostcall_trace_as_portable_execution() {
     add_native_portable_execution_chain(&mut package);
     package.semantic.hostcall_trace[0].hostcall_number = 99;
     package.semantic.hostcall_trace[0].name = "visa.console.unknown".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_code_hash_mismatch_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].code_hash = "different-code-hash".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_code_hostcall_table_mismatch_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].hostcalls[0].operation = "debug-write".to_owned();
 
     let report = audit_migration_package(&package);
 
