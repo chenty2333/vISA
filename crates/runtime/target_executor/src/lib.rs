@@ -1122,6 +1122,7 @@ mod tests {
                 rodata_permission: "r".to_owned(),
                 code_hash: artifact.code_hash.clone(),
                 hostcalls: artifact.hostcalls.clone(),
+                trap_metadata: artifact.trap_metadata.clone(),
                 ..Default::default()
             }],
             activation_records: vec![ActivationRecordManifest {
@@ -1218,6 +1219,7 @@ mod tests {
                 rodata_permission: "r".to_owned(),
                 code_hash: artifact.code_hash.clone(),
                 hostcalls: artifact.hostcalls.clone(),
+                trap_metadata: artifact.trap_metadata.clone(),
                 ..Default::default()
             }],
             activation_records: vec![ActivationRecordManifest {

@@ -596,6 +596,40 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
     }];
 }
 
+fn convert_native_chain_to_trap_only(package: &mut MigrationPackageManifest, trap_offset: u64) {
+    let metadata = artifact_manifest::TargetTrapMetadataManifest {
+        class: "fault".to_owned(),
+        symbol: "visa_fault".to_owned(),
+        offset: 16,
+    };
+    package.semantic.target_artifacts[0].trap_metadata = vec![metadata.clone()];
+    package.semantic.code_objects[0].trap_metadata = vec![metadata];
+
+    package.semantic.hostcall_trace_count = 0;
+    package.semantic.roots.hostcall_trace_roots.clear();
+    package.semantic.hostcall_trace.clear();
+
+    package.semantic.trap_record_count = 1;
+    package.semantic.roots.trap_roots = vec!["trap id=1".to_owned()];
+    package.semantic.trap_records = vec![artifact_manifest::TrapRecordManifest {
+        id: 1,
+        generation: 1,
+        class: "fault".to_owned(),
+        store: Some(1),
+        store_generation: Some(1),
+        activation: Some(1),
+        activation_generation: Some(1),
+        code_object: Some(1),
+        code_generation: Some(1),
+        artifact: Some(1),
+        offset: Some(trap_offset),
+        fault_policy: "abort".to_owned(),
+        effect: "trap".to_owned(),
+        detail: "trap-only execution evidence".to_owned(),
+        ..Default::default()
+    }];
+}
+
 #[test]
 fn external_audit_flags_missing_native_consumer_and_artifact_chain() {
     let package = minimal_migration_package();
@@ -732,6 +766,38 @@ fn external_audit_rejects_code_hostcall_table_mismatch_as_portable_execution() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
     package.semantic.code_objects[0].hostcalls[0].operation = "debug-write".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_accepts_trap_only_portable_execution_with_declared_metadata() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    convert_native_chain_to_trap_only(&mut package, 16);
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
+fn external_audit_rejects_trap_only_execution_without_declared_metadata_match() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    convert_native_chain_to_trap_only(&mut package, 24);
 
     let report = audit_migration_package(&package);
 

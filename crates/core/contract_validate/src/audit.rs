@@ -239,6 +239,7 @@ fn code_matches_artifact_manifest(
         && code.owner_profile == artifact.target_profile
         && code.code_hash == artifact.code_hash
         && hostcall_tables_match(&code.hostcalls, &artifact.hostcalls)
+        && trap_metadata_tables_match(&code.trap_metadata, &artifact.trap_metadata)
 }
 
 fn hostcall_tables_match(
@@ -253,6 +254,18 @@ fn hostcall_tables_match(
                 && code.object == artifact.object
                 && code.operation == artifact.operation
                 && code.may_pending == artifact.may_pending
+        })
+}
+
+fn trap_metadata_tables_match(
+    code_metadata: &[artifact_manifest::TargetTrapMetadataManifest],
+    artifact_metadata: &[artifact_manifest::TargetTrapMetadataManifest],
+) -> bool {
+    code_metadata.len() == artifact_metadata.len()
+        && code_metadata.iter().zip(artifact_metadata.iter()).all(|(code, artifact)| {
+            code.class == artifact.class
+                && code.symbol == artifact.symbol
+                && code.offset == artifact.offset
         })
 }
 
@@ -280,6 +293,7 @@ fn code_has_linked_execution_effect(
                     && trap.code_object == Some(code.id)
                     && trap.activation == Some(activation.id)
                     && trap_matches_activation_generation(code, activation, trap)
+                    && trap_matches_declared_metadata(code, trap)
             })
         })
 }
@@ -317,6 +331,17 @@ fn trap_matches_activation_generation(
         && trap.code_generation == Some(code.generation)
         && trap.store == Some(activation.store)
         && trap.store_generation == Some(activation.store_generation)
+}
+
+fn trap_matches_declared_metadata(
+    code: &artifact_manifest::CodeObjectManifest,
+    trap: &artifact_manifest::TrapRecordManifest,
+) -> bool {
+    trap.offset.is_some_and(|offset| {
+        code.trap_metadata
+            .iter()
+            .any(|metadata| metadata.class == trap.class && metadata.offset == offset)
+    })
 }
 
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
