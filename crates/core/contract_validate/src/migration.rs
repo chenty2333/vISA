@@ -953,5 +953,18 @@ fn validate_boundary_validation_report(
     if summary_root != &expected_summary {
         return Err(ContractError::new(format!("{label} validation root summary mismatch")));
     }
+    let expected_root_count = 1 + report.violation_count;
+    if roots.len() != expected_root_count {
+        return Err(ContractError::new(format!("{label} validation root/count mismatch")));
+    }
+    for (root, violation) in roots.iter().skip(1).zip(report.violations.iter()) {
+        let expected_violation_root = format!(
+            "boundary-validation validator={} kind={} object={} detail={}",
+            violation.validator, violation.kind, violation.object, violation.detail
+        );
+        if root != &expected_violation_root {
+            return Err(ContractError::new(format!("{label} validation violation root mismatch")));
+        }
+    }
     Ok(())
 }

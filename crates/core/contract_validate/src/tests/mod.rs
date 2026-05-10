@@ -1104,6 +1104,60 @@ fn migration_package_rejects_boundary_validation_summary_status_mismatch() {
     assert_eq!(err.to_string(), "snapshot validation root summary mismatch");
 }
 
+#[test]
+fn migration_package_rejects_missing_boundary_violation_root() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation_violation_count = 1;
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+        ok: false,
+        violation_count: 1,
+        violations: vec![BoundaryValidationViolationManifest {
+            validator: "snapshot-barrier".to_owned(),
+            kind: "dangling-edge".to_owned(),
+            object: "edge:1".to_owned(),
+            detail: "test violation".to_owned(),
+        }],
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![format!(
+        "boundary-validation validator=snapshot-barrier evidence={} ok=false violations=1",
+        EvidenceBoundaryLevel::SemanticModel.as_str()
+    )];
+
+    let err = validate_migration_package(&package).expect_err("missing violation root must fail");
+    assert_eq!(err.to_string(), "snapshot validation root/count mismatch");
+}
+
+#[test]
+fn migration_package_rejects_boundary_violation_root_mismatch() {
+    let mut package = minimal_migration_package();
+    package.semantic.snapshot_validation_violation_count = 1;
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+        ok: false,
+        violation_count: 1,
+        violations: vec![BoundaryValidationViolationManifest {
+            validator: "snapshot-barrier".to_owned(),
+            kind: "dangling-edge".to_owned(),
+            object: "edge:1".to_owned(),
+            detail: "test violation".to_owned(),
+        }],
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![
+        format!(
+            "boundary-validation validator=snapshot-barrier evidence={} ok=false violations=1",
+            EvidenceBoundaryLevel::SemanticModel.as_str()
+        ),
+        "boundary-validation validator=snapshot-barrier kind=dangling-edge object=edge:1 detail=different"
+            .to_owned(),
+    ];
+
+    let err = validate_migration_package(&package).expect_err("violation root mismatch must fail");
+    assert_eq!(err.to_string(), "snapshot validation violation root mismatch");
+}
+
 mod compatibility;
 mod manifest_validation;
 mod object_refs;
