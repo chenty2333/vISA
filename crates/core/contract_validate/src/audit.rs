@@ -165,11 +165,20 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
                 "real target substrate claim requires a linked artifact -> code object -> activation -> hostcall/trap chain",
             ));
         }
-        if package.required_artifact_profile.target_arch == "target-native" {
+        if !real_target_has_concrete_arch(package) {
             findings.push(ExternalAuditFinding::new(
                 ExternalAuditSeverity::Error,
                 "real-target-without-concrete-arch",
-                "real target substrate claim uses target-native instead of a concrete target arch",
+                "real target substrate claim requires a concrete target arch in both target and required artifact profile metadata",
+            ));
+        }
+        if real_target_has_concrete_arch(package)
+            && package.target.arch_requirement != package.required_artifact_profile.target_arch
+        {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Error,
+                "real-target-arch-mismatch",
+                "real target substrate claim target arch metadata is internally inconsistent",
             ));
         }
         if !has_real_target_extraction_evidence(package) {
@@ -199,6 +208,13 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         linux_weighted_artifact_count,
         findings,
     }
+}
+
+fn real_target_has_concrete_arch(package: &MigrationPackageManifest) -> bool {
+    !package.target.arch_requirement.is_empty()
+        && !package.required_artifact_profile.target_arch.is_empty()
+        && package.target.arch_requirement != "target-native"
+        && package.required_artifact_profile.target_arch != "target-native"
 }
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {
@@ -401,6 +417,7 @@ fn trap_matches_declared_metadata(
 fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
     package.semantic.substrate_events.iter().any(|event| {
         event.event_kind == "authority-extracted"
+            && substrate_event_has_concrete_extraction_context(event)
             && event.store.is_some_and(|store| {
                 event.artifact.is_some_and(|artifact_id| {
                     package
@@ -418,6 +435,15 @@ fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bo
                 })
             })
     })
+}
+
+fn substrate_event_has_concrete_extraction_context(
+    event: &artifact_manifest::SubstrateEventManifest,
+) -> bool {
+    !event.authority.is_empty()
+        && !event.operation.is_empty()
+        && event.requester.as_deref().is_some_and(|requester| !requester.is_empty())
+        && !event.explanation.is_empty()
 }
 
 fn lower_contains(value: &str, needle: &str) -> bool {
