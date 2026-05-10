@@ -218,8 +218,9 @@ fn real_target_has_concrete_arch(package: &MigrationPackageManifest) -> bool {
 }
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {
-    artifact.role == "visa-native-workload"
-        || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa."))
+    !artifact.role.contains("personality")
+        && (artifact.role == "visa-native-workload"
+            || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa.")))
 }
 
 fn artifact_participates_in_execution(

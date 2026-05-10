@@ -717,6 +717,23 @@ fn external_audit_rejects_name_only_visa_native_spoof() {
 }
 
 #[test]
+fn external_audit_rejects_personality_role_with_visa_hostcall_as_native_consumer() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    let artifact = &mut package.semantic.target_artifacts[0];
+    artifact.package = "frontend".to_owned();
+    artifact.role = "frontend-personality".to_owned();
+    package.semantic.code_objects[0].package = "frontend".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.visa_native_artifact_count, 0);
+    assert!(report.warnings().any(|finding| finding.code == "missing-visa-native-consumer"));
+}
+
+#[test]
 fn external_audit_requires_linked_portable_execution_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
