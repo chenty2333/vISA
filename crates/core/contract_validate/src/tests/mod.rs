@@ -519,6 +519,11 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         operation: "write".to_owned(),
         may_pending: false,
     };
+    let address_map = artifact_manifest::TargetAddressMapEntryManifest {
+        symbol: "visa_start".to_owned(),
+        offset: 0,
+        len: 64,
+    };
     package.semantic.target_artifact_count = 1;
     package.semantic.roots.target_artifact_roots = vec!["target-artifact id=1".to_owned()];
     package.semantic.target_artifacts = vec![artifact_manifest::TargetArtifactImageManifest {
@@ -538,6 +543,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
             max_table_elements: 0,
             max_hostcalls_per_activation: 16,
         },
+        address_map: vec![address_map.clone()],
         payload_len: 64,
         ..Default::default()
     }];
@@ -555,6 +561,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         rodata_permission: "r".to_owned(),
         code_hash: "native-visa-code".to_owned(),
         hostcalls: vec![hostcall.clone()],
+        address_map: vec![address_map],
         ..Default::default()
     }];
 
@@ -766,6 +773,25 @@ fn external_audit_rejects_code_hostcall_table_mismatch_as_portable_execution() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
     package.semantic.code_objects[0].hostcalls[0].operation = "debug-write".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
+fn external_audit_rejects_code_address_map_mismatch_as_portable_execution() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.code_objects[0].address_map[0].offset = 16;
 
     let report = audit_migration_package(&package);
 

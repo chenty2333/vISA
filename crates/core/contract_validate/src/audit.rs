@@ -248,6 +248,7 @@ fn code_matches_artifact_manifest(
         && code.code_hash == artifact.code_hash
         && hostcall_tables_match(&code.hostcalls, &artifact.hostcalls)
         && trap_metadata_tables_match(&code.trap_metadata, &artifact.trap_metadata)
+        && address_map_tables_match(&code.address_map, &artifact.address_map)
 }
 
 fn hostcall_tables_match(
@@ -274,6 +275,18 @@ fn trap_metadata_tables_match(
             code.class == artifact.class
                 && code.symbol == artifact.symbol
                 && code.offset == artifact.offset
+        })
+}
+
+fn address_map_tables_match(
+    code_entries: &[artifact_manifest::TargetAddressMapEntryManifest],
+    artifact_entries: &[artifact_manifest::TargetAddressMapEntryManifest],
+) -> bool {
+    code_entries.len() == artifact_entries.len()
+        && code_entries.iter().zip(artifact_entries.iter()).all(|(code, artifact)| {
+            code.symbol == artifact.symbol
+                && code.offset == artifact.offset
+                && code.len == artifact.len
         })
 }
 

@@ -1123,6 +1123,7 @@ mod tests {
                 code_hash: artifact.code_hash.clone(),
                 hostcalls: artifact.hostcalls.clone(),
                 trap_metadata: artifact.trap_metadata.clone(),
+                address_map: artifact.address_map.clone(),
                 ..Default::default()
             }],
             activation_records: vec![ActivationRecordManifest {
@@ -1220,6 +1221,7 @@ mod tests {
                 code_hash: artifact.code_hash.clone(),
                 hostcalls: artifact.hostcalls.clone(),
                 trap_metadata: artifact.trap_metadata.clone(),
+                address_map: artifact.address_map.clone(),
                 ..Default::default()
             }],
             activation_records: vec![ActivationRecordManifest {
