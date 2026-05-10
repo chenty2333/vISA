@@ -203,7 +203,6 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {
     artifact.role == "visa-native-workload"
-        || lower_contains(&artifact.artifact_name, "visa-native")
         || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa."))
 }
 

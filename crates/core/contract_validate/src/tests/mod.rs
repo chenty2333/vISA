@@ -640,6 +640,24 @@ fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
 }
 
 #[test]
+fn external_audit_rejects_name_only_visa_native_spoof() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    let artifact = &mut package.semantic.target_artifacts[0];
+    artifact.package = "frontend".to_owned();
+    artifact.artifact_name = "visa-native-spoof".to_owned();
+    artifact.role = "frontend-personality".to_owned();
+    artifact.hostcalls[0].object = "wasi.console".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.visa_native_artifact_count, 0);
+    assert!(report.warnings().any(|finding| finding.code == "missing-visa-native-consumer"));
+}
+
+#[test]
 fn external_audit_requires_linked_portable_execution_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
