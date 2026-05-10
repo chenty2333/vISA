@@ -197,6 +197,9 @@ pub fn audit_package(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
 
 fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::Value {
     let state = if report.ok() { "ok" } else { "failed" };
+    let target_executor_package_gate =
+        report.ok() && report.visa_native_portable_artifact_execution_claim;
+    let real_target_substrate_gate = report.ok() && report.real_target_substrate_claim;
     let findings = report
         .findings
         .iter()
@@ -229,6 +232,11 @@ fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::
             "visa_native_portable_artifact_execution": report.visa_native_portable_artifact_execution_claim,
             "real_target_substrate": report.real_target_substrate_claim,
         },
+        "gates": {
+            "external_audit": report.ok(),
+            "target_executor_package": target_executor_package_gate,
+            "real_target_substrate": real_target_substrate_gate,
+        },
         "artifact_mix": {
             "visa_native_artifacts": report.visa_native_artifact_count,
             "frontend_personality_artifacts": report.frontend_personality_artifact_count,
@@ -245,10 +253,15 @@ fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::
 }
 
 fn print_external_audit_text(report: &ExternalMigrationAuditReport) {
+    let target_executor_package_gate =
+        report.ok() && report.visa_native_portable_artifact_execution_claim;
+    let real_target_substrate_gate = report.ok() && report.real_target_substrate_claim;
     println!(
-        "audit package={} ok={} contract_valid={} replay_quiescent={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
+        "audit package={} ok={} target_executor_package_gate={} real_target_substrate_gate={} contract_valid={} replay_quiescent={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
         report.package_id,
         report.ok(),
+        target_executor_package_gate,
+        real_target_substrate_gate,
         report.contract_package_valid,
         report.replay_quiescent,
         report.portable_artifact_execution_claim,

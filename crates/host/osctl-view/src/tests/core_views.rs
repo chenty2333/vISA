@@ -355,11 +355,45 @@ fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
     assert_eq!(view["claims"]["portable_artifact_execution"], true);
     assert_eq!(view["claims"]["visa_native_portable_artifact_execution"], true);
     assert_eq!(view["claims"]["real_target_substrate"], false);
+    assert_eq!(view["gates"]["external_audit"], true);
+    assert_eq!(view["gates"]["target_executor_package"], true);
+    assert_eq!(view["gates"]["real_target_substrate"], false);
     assert_eq!(view["artifact_mix"]["visa_native_artifacts"], 1);
     assert_eq!(view["findings"][0]["severity"], "info");
     assert_eq!(view["findings"][0]["code"], "no-real-target-substrate-claim");
     assert_eq!(view["last_transition"]["finding_count"], 1);
     assert_eq!(view["last_transition"]["error_count"], 0);
+    assert_eq!(view["last_error"], serde_json::Value::Null);
+}
+
+#[test]
+fn external_audit_view_v1_distinguishes_generic_ok_from_target_executor_gate() {
+    let report = contract_validate::ExternalMigrationAuditReport {
+        package_id: "generic-portable-view-test".to_owned(),
+        contract_package_valid: true,
+        replay_quiescent: true,
+        portable_artifact_execution_claim: true,
+        visa_native_portable_artifact_execution_claim: false,
+        real_target_substrate_claim: false,
+        visa_native_artifact_count: 0,
+        frontend_personality_artifact_count: 1,
+        linux_weighted_artifact_count: 0,
+        findings: vec![contract_validate::ExternalAuditFinding {
+            severity: contract_validate::ExternalAuditSeverity::Warning,
+            code: "portable-artifact-execution-without-visa-native-chain",
+            detail: "generic portable evidence only".to_owned(),
+        }],
+    };
+
+    let view = external_audit_view_v1(&report);
+
+    assert_eq!(view["ok"], true);
+    assert_eq!(view["claims"]["portable_artifact_execution"], true);
+    assert_eq!(view["claims"]["visa_native_portable_artifact_execution"], false);
+    assert_eq!(view["gates"]["external_audit"], true);
+    assert_eq!(view["gates"]["target_executor_package"], false);
+    assert_eq!(view["gates"]["real_target_substrate"], false);
+    assert_eq!(view["last_transition"]["warning_count"], 1);
     assert_eq!(view["last_error"], serde_json::Value::Null);
 }
 
