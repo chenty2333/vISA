@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write, fs, io, path::Path};
+
+use sha2::{Digest, Sha256};
 
 use crate::{
     catalog::linux_ltp_catalog,
     types::{
-        Boundary, ConformanceReport, LtpCaseResult, LtpSubset, Outcome, REPORT_SCHEMA_VERSION,
-        TestResult, TestSpec,
+        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, LtpCaseResult,
+        LtpSubset, Outcome, REPORT_SCHEMA_VERSION, TestResult, TestSpec,
     },
 };
 
@@ -107,6 +109,50 @@ pub fn ltp_report_from_subset_logs<'a>(
     }
 }
 
+pub fn ltp_report_from_log_dir(
+    target: impl Into<String>,
+    generated_by: impl Into<String>,
+    observed_boundary: Boundary,
+    observed_profile_override: Option<String>,
+    log_dir: impl AsRef<Path>,
+) -> io::Result<ConformanceReport> {
+    let log_dir = log_dir.as_ref();
+    let mut logs = Vec::new();
+    for subset in LtpSubset::ALL {
+        let path = log_dir.join(format!("{}.log", subset.spec_id()));
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let artifact = EvidenceArtifact {
+                    kind: EvidenceArtifactKind::LtpRawLog,
+                    uri: path.display().to_string(),
+                    sha256: sha256_hex(&bytes),
+                    description: format!("raw LTP result log for {}", subset.spec_id()),
+                };
+                logs.push((subset, text, artifact));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut report = ltp_report_from_subset_logs(
+        target,
+        generated_by,
+        observed_boundary,
+        observed_profile_override,
+        logs.iter().map(|(subset, text, _artifact)| (*subset, text.as_str())),
+    );
+    for result in &mut report.results {
+        if let Some((_subset, _text, artifact)) =
+            logs.iter().find(|(subset, _text, _artifact)| subset.spec_id() == result.spec_id)
+        {
+            result.evidence_artifacts.push(artifact.clone());
+        }
+    }
+    Ok(report)
+}
+
 fn normalize_ltp_status(token: &str) -> Option<Outcome> {
     let status = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric()).to_ascii_uppercase();
     match status.as_str() {
@@ -115,4 +161,13 @@ fn normalize_ltp_status(token: &str) -> Option<Outcome> {
         "CONF" | "TCONF" | "NA" | "SKIP" | "TSKIP" => Some(Outcome::Skip),
         _ => None,
     }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
 }

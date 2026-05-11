@@ -14,7 +14,8 @@ pub use catalog::{
     visa_core_catalog, wasi_personality_catalog,
 };
 pub use ltp::{
-    ltp_report_from_subset_logs, ltp_subset_result, parse_ltp_result_line, parse_ltp_results,
+    ltp_report_from_log_dir, ltp_report_from_subset_logs, ltp_subset_result, parse_ltp_result_line,
+    parse_ltp_results,
 };
 pub use performance::{
     criterion_performance_report_from_estimates_dir, required_performance_metrics,

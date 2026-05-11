@@ -5,9 +5,9 @@ use std::{
 };
 
 use vmos_conformance::{
-    Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, LtpSubset,
-    attach_evidence_artifact, criterion_performance_report_from_estimates_dir, full_catalog,
-    gate_report_json, ltp_report_from_subset_logs, parse_report_json, sample_ltp_report,
+    Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
+    criterion_performance_report_from_estimates_dir, full_catalog, gate_report_json,
+    ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json, sample_ltp_report,
     sample_performance_report, sample_report, validate_catalog, validate_report,
 };
 
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
                 None => Boundary::PortableArtifactExecution,
             };
             let profile = args.next();
-            ltp_report_from_log_dir(&log_dir, boundary, profile)
+            ltp_report_from_log_dir_command(&log_dir, boundary, profile)
         }
         "performance-report-from-criterion" => {
             let Some(criterion_dir) = args.next() else {
@@ -126,26 +126,24 @@ fn main() -> ExitCode {
     }
 }
 
-fn ltp_report_from_log_dir(log_dir: &str, boundary: Boundary, profile: Option<String>) -> ExitCode {
-    let mut logs = Vec::new();
-    for subset in LtpSubset::ALL {
-        let path = format!("{}/{}.log", log_dir.trim_end_matches('/'), subset.spec_id());
-        match fs::read_to_string(&path) {
-            Ok(text) => logs.push((subset, text)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                eprintln!("failed to read LTP log {path}: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-    let report = ltp_report_from_subset_logs(
+fn ltp_report_from_log_dir_command(
+    log_dir: &str,
+    boundary: Boundary,
+    profile: Option<String>,
+) -> ExitCode {
+    let report = match build_ltp_report_from_log_dir(
         format!("ltp-log-dir:{log_dir}"),
         "vmos-conformance ltp-report-from-logs",
         boundary,
         profile,
-        logs.iter().map(|(subset, text)| (*subset, text.as_str())),
-    );
+        log_dir,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("failed to read LTP log directory {log_dir}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     print_json(&report)
 }
 

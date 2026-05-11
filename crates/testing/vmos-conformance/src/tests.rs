@@ -588,6 +588,40 @@ fn ltp_report_from_subset_logs_preserves_failures_and_profile_override() {
 }
 
 #[test]
+fn ltp_report_from_log_dir_attaches_raw_log_artifacts() {
+    let root = temp_criterion_dir("ltp-raw-artifacts");
+    fs::create_dir_all(&root).unwrap();
+    for subset in LtpSubset::ALL {
+        fs::write(
+            root.join(format!("{}.log", subset.spec_id())),
+            format!("{}_case01 1 TPASS : passed\n", subset.spec_id().replace('.', "_")),
+        )
+        .unwrap();
+    }
+
+    let report = ltp_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &root,
+    )
+    .unwrap();
+    let validation = validate_report(&report, &linux_ltp_catalog());
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    assert_eq!(report.results.len(), LtpSubset::ALL.len());
+    assert!(report.results.iter().all(|result| {
+        result.evidence_artifacts.len() == 1
+            && result.evidence_artifacts[0].kind == EvidenceArtifactKind::LtpRawLog
+            && result.evidence_artifacts[0].sha256.len() == 64
+            && result.evidence_artifacts[0].uri.ends_with(&format!("{}.log", result.spec_id))
+    }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn sample_ltp_report_validates_against_ltp_catalog() {
     let catalog = linux_ltp_catalog();
     let report = sample_ltp_report();
