@@ -2059,6 +2059,15 @@ pub enum EventKind {
         object: String,
         operation: String,
     },
+    SubstrateAuthorityExtracted {
+        authority: String,
+        operation: String,
+        requester: Option<String>,
+        artifact: Option<ArtifactId>,
+        store: Option<StoreId>,
+        capability: Option<CapabilityId>,
+        capability_generation: Option<Generation>,
+    },
     SubstrateUnsupported {
         authority: String,
         operation: String,

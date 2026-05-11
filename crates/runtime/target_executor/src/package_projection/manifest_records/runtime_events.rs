@@ -1,3 +1,5 @@
+use semantic_core::{CapabilityId, Generation};
+
 use super::super::super::*;
 
 pub(crate) fn wait_record_manifest(wait: &semantic_core::WaitRecord) -> WaitRecordManifest {
@@ -168,6 +170,33 @@ pub(crate) fn substrate_event_manifests(events: &[EventRecord]) -> Vec<Substrate
 
 pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifest> {
     match &event.kind {
+        EventKind::SubstrateAuthorityExtracted {
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+            capability,
+            capability_generation,
+        } => {
+            let requester_label = requester.as_deref().unwrap_or("unknown");
+            let capability_manifest =
+                substrate_capability_manifest(*capability, *capability_generation);
+            Some(SubstrateEventManifest {
+                id: event.id,
+                epoch: event.epoch,
+                event_kind: "authority-extracted".to_owned(),
+                authority: authority.clone(),
+                operation: operation.clone(),
+                requester: requester.clone(),
+                artifact: *artifact,
+                store: *store,
+                capability: capability_manifest,
+                explanation: format!(
+                    "{requester_label} extracted {authority}::{operation} authority from substrate"
+                ),
+            })
+        }
         EventKind::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
             let requester_label = requester.as_deref().unwrap_or("unknown");
             Some(SubstrateEventManifest {
@@ -195,21 +224,8 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
             capability_generation,
         } => {
             let requester_label = requester.as_deref().unwrap_or("unknown");
-            let capability_manifest = match (*capability, *capability_generation) {
-                (Some(id), Some(generation)) => Some(CapabilityHandleArgManifest {
-                    id,
-                    object: "substrate-capability".to_owned(),
-                    generation,
-                    owner_store: None,
-                    owner_store_generation: None,
-                    handle_slot: 0,
-                    handle_generation: 0,
-                    handle_tag: 0,
-                    rights_mask: 0,
-                    rights: Vec::new(),
-                }),
-                _ => None,
-            };
+            let capability_manifest =
+                substrate_capability_manifest(*capability, *capability_generation);
             Some(SubstrateEventManifest {
                 id: event.id,
                 epoch: event.epoch,
@@ -251,6 +267,27 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 ),
             })
         }
+        _ => None,
+    }
+}
+
+fn substrate_capability_manifest(
+    capability: Option<CapabilityId>,
+    capability_generation: Option<Generation>,
+) -> Option<CapabilityHandleArgManifest> {
+    match (capability, capability_generation) {
+        (Some(id), Some(generation)) => Some(CapabilityHandleArgManifest {
+            id,
+            object: "substrate-capability".to_owned(),
+            generation,
+            owner_store: None,
+            owner_store_generation: None,
+            handle_slot: 0,
+            handle_generation: 0,
+            handle_tag: 0,
+            rights_mask: 0,
+            rights: Vec::new(),
+        }),
         _ => None,
     }
 }
@@ -441,5 +478,42 @@ pub(crate) fn memory_policy_manifest(policy: &MemoryClassPolicy) -> MemoryClassP
         can_alias_guest_memory: policy.can_alias_guest_memory,
         can_cross_pending: policy.can_cross_pending,
         can_be_executable: policy.can_be_executable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substrate_authority_extracted_projects_to_manifest() {
+        let event = EventRecord {
+            id: 7,
+            epoch: 11,
+            source: "substrate".to_owned(),
+            causal_parent: None,
+            kind: EventKind::SubstrateAuthorityExtracted {
+                authority: "ConsoleAuthority".to_owned(),
+                operation: "console_write".to_owned(),
+                requester: Some("wasi-app".to_owned()),
+                artifact: Some(9),
+                store: Some(1),
+                capability: Some(3),
+                capability_generation: Some(2),
+            },
+        };
+
+        let manifest = substrate_event_manifest(&event).expect("project extracted authority");
+
+        assert_eq!(manifest.event_kind, "authority-extracted");
+        assert_eq!(manifest.authority, "ConsoleAuthority");
+        assert_eq!(manifest.operation, "console_write");
+        assert_eq!(manifest.requester.as_deref(), Some("wasi-app"));
+        assert_eq!(manifest.artifact, Some(9));
+        assert_eq!(manifest.store, Some(1));
+        let capability = manifest.capability.expect("capability projection");
+        assert_eq!(capability.id, 3);
+        assert_eq!(capability.generation, 2);
+        assert!(manifest.explanation.contains("extracted ConsoleAuthority::console_write"));
     }
 }

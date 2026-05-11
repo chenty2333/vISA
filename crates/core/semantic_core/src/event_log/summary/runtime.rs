@@ -209,6 +209,29 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
             "HostcallEntered label={label} class={} subject={subject} object={object} op={operation}",
             class.as_str()
         ),
+        EventKind::SubstrateAuthorityExtracted {
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+            capability,
+            capability_generation,
+        } => {
+            let requester = requester.as_deref().unwrap_or("none");
+            let artifact =
+                artifact.map(|artifact| artifact.to_string()).unwrap_or_else(|| "none".to_string());
+            let store = store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
+            let capability = capability
+                .map(|capability| capability.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            let generation = capability_generation
+                .map(|generation| generation.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "SubstrateAuthorityExtracted authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
+            )
+        }
         EventKind::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
             let requester = requester.as_deref().unwrap_or("none");
             let artifact =

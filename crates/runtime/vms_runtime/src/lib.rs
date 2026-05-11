@@ -707,8 +707,13 @@ impl VisaRuntime {
         )
         .with_args(payload.args());
         frame.activation_generation = current_activation_generation;
+        let capability_arg = if spec.requires_capability() {
+            capability_handle_arg_for(&self.ledger, &code.package, &spec)
+        } else {
+            None
+        };
         if spec.requires_capability()
-            && let Some(cap_arg) = capability_handle_arg_for(&self.ledger, &code.package, &spec)
+            && let Some(cap_arg) = capability_arg.clone()
         {
             frame = frame.with_cap_args(vec![cap_arg]);
         }
@@ -723,10 +728,22 @@ impl VisaRuntime {
             .executor
             .preflight_hostcall(&code, frame.to_wire_frame(), &self.ledger)
             .map_err(VisaRuntimeError::Executor)?;
+        let substrate_authority = substrate_authority_for_payload(&payload);
         let value = self.dispatch_hostcall_payload(backend, &code, &spec, payload)?;
         self.executor
             .commit_hostcall_success(prepared_hostcall)
             .map_err(VisaRuntimeError::Executor)?;
+        if let Some((authority, operation)) = substrate_authority {
+            self.semantic.record_substrate_authority_extracted(
+                authority,
+                operation,
+                Some(code.package.clone()),
+                Some(code.artifact_id),
+                code.bound_store,
+                capability_arg.as_ref().map(|capability| capability.id),
+                capability_arg.as_ref().map(|capability| capability.generation),
+            );
+        }
         self.events.push(VisaRuntimeEvent::HostcallDispatched {
             activation_id: activation.activation_id,
             hostcall_number,
@@ -1396,6 +1413,32 @@ fn capability_handle_arg_for(
     Some(CapabilityHandleArg::from_record(capability, 1u64 << index, &[spec.operation.as_str()]))
 }
 
+fn substrate_authority_for_payload(
+    payload: &VisaHostcallPayload,
+) -> Option<(&'static str, &'static str)> {
+    match payload {
+        VisaHostcallPayload::None => None,
+        VisaHostcallPayload::ConsoleWrite { .. } => Some(("ConsoleAuthority", "console_write")),
+        VisaHostcallPayload::TimerNow => Some(("TimerAuthority", "now")),
+        VisaHostcallPayload::TimerArm { .. } => Some(("TimerAuthority", "arm_timer")),
+        VisaHostcallPayload::GuestMemoryCopyIn { .. } => Some(("GuestMemoryAuthority", "copyin")),
+        VisaHostcallPayload::GuestMemoryCopyOut { .. } => Some(("GuestMemoryAuthority", "copyout")),
+        VisaHostcallPayload::DmwMap { .. } => Some(("DmwAuthority", "map_user_window")),
+        VisaHostcallPayload::DmwUnmap { .. } => Some(("DmwAuthority", "unmap_user_window")),
+        VisaHostcallPayload::MmioRead32 { .. } => Some(("MmioAuthority", "mmio_read32")),
+        VisaHostcallPayload::MmioWrite32 { .. } => Some(("MmioAuthority", "mmio_write32")),
+        VisaHostcallPayload::DmaAlloc { .. } => Some(("DmaAuthority", "dma_alloc")),
+        VisaHostcallPayload::DmaFree { .. } => Some(("DmaAuthority", "dma_free")),
+        VisaHostcallPayload::IrqAck { .. } => Some(("IrqAuthority", "irq_ack")),
+        VisaHostcallPayload::IrqMask { .. } => Some(("IrqAuthority", "irq_mask")),
+        VisaHostcallPayload::IrqUnmask { .. } => Some(("IrqAuthority", "irq_unmask")),
+        VisaHostcallPayload::SnapshotEnter => Some(("SnapshotAuthority", "enter_snapshot_barrier")),
+        VisaHostcallPayload::SnapshotExit { .. } => {
+            Some(("SnapshotAuthority", "exit_snapshot_barrier"))
+        }
+    }
+}
+
 fn requester_for(artifact: &VerifiedArtifact) -> SubstrateRequester {
     SubstrateRequester::new(artifact.package.clone())
 }
@@ -1842,7 +1885,7 @@ pub mod personality {
 mod tests {
     use std::vec;
 
-    use semantic_core::target_executor::HostcallCategory;
+    use semantic_core::{EventKind, target_executor::HostcallCategory};
     use sha2::{Digest, Sha256};
     use substrate_api::SubstrateResult;
     use target_abi::{
@@ -2030,6 +2073,47 @@ mod tests {
         assert_eq!(substrate.console, b"hello");
         assert_eq!(substrate.timers, vec![(VirtualTime::from_ticks(75), token)]);
         assert_eq!(runtime.executor().hostcall_trace().len(), 3);
+        let extracted = runtime
+            .semantic()
+            .event_log()
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateAuthorityExtracted {
+                    authority,
+                    operation,
+                    requester,
+                    artifact,
+                    store,
+                    ..
+                } => Some((
+                    authority.as_str(),
+                    operation.as_str(),
+                    requester.as_deref(),
+                    *artifact,
+                    *store,
+                    event.summary(),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(extracted.len(), 3);
+        assert!(extracted.iter().any(
+            |(authority, operation, requester, artifact, store, summary)| {
+                *authority == "ConsoleAuthority"
+                    && *operation == "console_write"
+                    && *requester == Some("wasi-app")
+                    && *artifact == Some(9)
+                    && *store == Some(1)
+                    && summary.contains("SubstrateAuthorityExtracted")
+            }
+        ));
+        assert!(extracted.iter().any(|(authority, operation, ..)| {
+            *authority == "TimerAuthority" && *operation == "now"
+        }));
+        assert!(extracted.iter().any(|(authority, operation, ..)| {
+            *authority == "TimerAuthority" && *operation == "arm_timer"
+        }));
         assert!(report.evidence_summary().can_claim_portable_artifact_execution);
         assert!(report.events.iter().any(|event| {
             matches!(
@@ -2074,6 +2158,11 @@ mod tests {
         assert!(runtime.executor().hostcall_trace().is_empty());
         assert!(runtime.snapshot().hostcalls.is_empty());
         assert_eq!(runtime.executor().activations()[0].generation, 1);
+        assert!(
+            !runtime.semantic().event_log().events().iter().any(|event| {
+                matches!(&event.kind, EventKind::SubstrateAuthorityExtracted { .. })
+            })
+        );
         assert!(
             !runtime
                 .events()
