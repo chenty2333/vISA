@@ -46,4 +46,41 @@ if run_conformance validate-report "$partial_report" >"$tmp_root/partial-gate.js
     exit 1
 fi
 
+fake_runltp="$tmp_root/runltp"
+cat >"$fake_runltp" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+scenario=""
+output=""
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        -f)
+            scenario="$2"
+            shift 2
+            ;;
+        -o)
+            output="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$scenario" || -z "$output" ]]; then
+    exit 2
+fi
+
+printf '%s_case01 1 TPASS : passed\n' "$scenario" >"$output"
+EOF
+chmod +x "$fake_runltp"
+
+wrapper_output="$tmp_root/wrapper"
+scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution guest-frontend \
+    "$fake_runltp" >/dev/null
+run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
+    >"$tmp_root/wrapper-gate.json"
+
 echo "Conformance report gate passed."
