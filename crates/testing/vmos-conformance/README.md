@@ -36,6 +36,11 @@ scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-
 scripts/run-vmos-bench-conformance.sh target/vmos-bench-run
 ```
 
+The `sample-*` commands are schema fixtures. They are useful for checking JSON
+shape and catalog wiring, but they are not executable evidence and should not be
+reported as a real conformance pass. Use the LTP, benchmark, substrate, or
+runtime runners for executable claims.
+
 Executable LTP integration should consume the catalog entries whose ids start with
 `linux-ltp.`, use `LtpInvocation` or `ltp-plan-lines` to derive subset commands,
 parse run output into `LtpCaseResult`, and emit `ConformanceReport` JSON using the

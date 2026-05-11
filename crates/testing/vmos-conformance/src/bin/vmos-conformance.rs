@@ -8,9 +8,9 @@ use vmos_conformance::{
     Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
     criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
     criterion_performance_report_from_estimates_dir_with_boundary, full_catalog, gate_report_json,
-    ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json, sample_ltp_report,
-    sample_performance_report, sample_report, validate_catalog, validate_report,
-    validate_report_artifacts,
+    linux_ltp_catalog, ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json,
+    performance_catalog, sample_ltp_report, sample_performance_report, sample_report,
+    validate_catalog, validate_report, validate_report_artifacts,
 };
 
 fn main() -> ExitCode {
@@ -133,16 +133,24 @@ fn main() -> ExitCode {
         "validate-sample" => {
             let catalog = full_catalog();
             let catalog_report = validate_catalog(&catalog);
-            let sample = sample_report(&catalog);
-            let sample_report = validate_report(&sample, &catalog);
-            if catalog_report.ok && sample_report.ok {
-                println!("vmos-conformance sample report is valid");
+            let layered_sample = sample_report(&catalog);
+            let layered_report = validate_report(&layered_sample, &catalog);
+            let ltp_catalog = linux_ltp_catalog();
+            let ltp_sample = sample_ltp_report();
+            let ltp_report = validate_report(&ltp_sample, &ltp_catalog);
+            let perf_catalog = performance_catalog();
+            let perf_sample = sample_performance_report();
+            let perf_report = validate_report(&perf_sample, &perf_catalog);
+            if catalog_report.ok && layered_report.ok && ltp_report.ok && perf_report.ok {
+                println!("vmos-conformance sample reports are structurally valid");
                 ExitCode::SUCCESS
             } else {
                 eprintln!(
-                    "catalog findings: {}\nsample findings: {}",
+                    "catalog findings: {}\nlayered sample findings: {}\nltp sample findings: {}\nperformance sample findings: {}",
                     serde_json::to_string_pretty(&catalog_report).unwrap(),
-                    serde_json::to_string_pretty(&sample_report).unwrap()
+                    serde_json::to_string_pretty(&layered_report).unwrap(),
+                    serde_json::to_string_pretty(&ltp_report).unwrap(),
+                    serde_json::to_string_pretty(&perf_report).unwrap()
                 );
                 ExitCode::FAILURE
             }
