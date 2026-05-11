@@ -25,6 +25,7 @@ cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.jso
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
+cargo run -p vmos-conformance -- attach-evidence-artifact target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
 scripts/run-vmos-bench-conformance.sh target/vmos-bench-run portable-artifact-execution
 ```
@@ -40,7 +41,8 @@ duplicate or empty result sets. It also exits non-zero when any reported result 
 Results that claim `real-target-substrate` must include a structured
 `substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
 SHA-256 digest, and description. Free-form evidence text alone is not enough for
-real target claims.
+real target claims. `attach-evidence-artifact` can add this metadata to an
+existing report for one spec id or for all results with `*`.
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`.

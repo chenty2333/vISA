@@ -166,6 +166,31 @@ pub enum EvidenceArtifactKind {
     LtpRawLog,
 }
 
+impl EvidenceArtifactKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ContractGraphSnapshot => "contract-graph-snapshot",
+            Self::SubstrateExtractionTrace => "substrate-extraction-trace",
+            Self::DeviceTrace => "device-trace",
+            Self::SerialLog => "serial-log",
+            Self::BenchmarkRawOutput => "benchmark-raw-output",
+            Self::LtpRawLog => "ltp-raw-log",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "contract-graph-snapshot" => Some(Self::ContractGraphSnapshot),
+            "substrate-extraction-trace" => Some(Self::SubstrateExtractionTrace),
+            "device-trace" => Some(Self::DeviceTrace),
+            "serial-log" => Some(Self::SerialLog),
+            "benchmark-raw-output" => Some(Self::BenchmarkRawOutput),
+            "ltp-raw-log" => Some(Self::LtpRawLog),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConformanceReport {
     pub schema_version: String,
@@ -707,6 +732,21 @@ pub fn criterion_performance_report_from_estimates_dir(
         generated_by: generated_by.into(),
         results,
     }
+}
+
+pub fn attach_evidence_artifact(
+    report: &mut ConformanceReport,
+    spec_id: &str,
+    artifact: EvidenceArtifact,
+) -> usize {
+    let mut attached = 0;
+    for result in &mut report.results {
+        if spec_id == "*" || result.spec_id == spec_id {
+            result.evidence_artifacts.push(artifact.clone());
+            attached += 1;
+        }
+    }
+    attached
 }
 
 fn criterion_performance_result_for_spec(
@@ -1481,16 +1521,36 @@ mod tests {
         let catalog = linux_ltp_catalog();
         let mut report = sample_ltp_report();
         report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
-        report.results[0].evidence_artifacts.push(EvidenceArtifact {
-            kind: EvidenceArtifactKind::SubstrateExtractionTrace,
-            uri: "target/evidence/substrate-extraction.jsonl".to_string(),
-            sha256: "a".repeat(64),
-            description: "real target substrate authority extraction trace".to_string(),
-        });
+        let attached = attach_evidence_artifact(
+            &mut report,
+            LtpSubset::FsBasic.spec_id(),
+            real_target_extraction_artifact(),
+        );
 
         let validation = validate_report(&report, &catalog);
 
+        assert_eq!(attached, 1);
         assert!(validation.ok, "{:#?}", validation.findings);
+    }
+
+    #[test]
+    fn attach_evidence_artifact_can_target_all_results() {
+        let mut report = sample_ltp_report();
+        let attached =
+            attach_evidence_artifact(&mut report, "*", real_target_extraction_artifact());
+
+        assert_eq!(attached, LtpSubset::ALL.len());
+        assert!(report.results.iter().all(|result| result.evidence_artifacts.len() == 1));
+    }
+
+    #[test]
+    fn evidence_artifact_kind_parse_is_stable() {
+        assert_eq!(
+            EvidenceArtifactKind::parse("substrate-extraction-trace"),
+            Some(EvidenceArtifactKind::SubstrateExtractionTrace)
+        );
+        assert_eq!(EvidenceArtifactKind::DeviceTrace.as_str(), "device-trace");
+        assert_eq!(EvidenceArtifactKind::parse("unknown"), None);
     }
 
     #[test]
@@ -1905,5 +1965,14 @@ rename01 1 TFAIL : rename failed
             ),
         )
         .unwrap();
+    }
+
+    fn real_target_extraction_artifact() -> EvidenceArtifact {
+        EvidenceArtifact {
+            kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+            uri: "target/evidence/substrate-extraction.jsonl".to_string(),
+            sha256: "a".repeat(64),
+            description: "real target substrate authority extraction trace".to_string(),
+        }
     }
 }

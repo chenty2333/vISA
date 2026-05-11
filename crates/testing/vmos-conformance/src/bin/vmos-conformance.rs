@@ -5,8 +5,9 @@ use std::{
 };
 
 use vmos_conformance::{
-    Boundary, LtpInvocation, LtpSubset, criterion_performance_report_from_estimates_dir,
-    full_catalog, gate_report_json, ltp_report_from_subset_logs, sample_ltp_report,
+    Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, LtpSubset,
+    attach_evidence_artifact, criterion_performance_report_from_estimates_dir, full_catalog,
+    gate_report_json, ltp_report_from_subset_logs, parse_report_json, sample_ltp_report,
     sample_performance_report, sample_report, validate_catalog, validate_report,
 };
 
@@ -82,6 +83,28 @@ fn main() -> ExitCode {
             );
             print_json(&report)
         }
+        "attach-evidence-artifact" => {
+            let Some(report_path) = args.next() else {
+                return usage();
+            };
+            let Some(spec_id) = args.next() else {
+                return usage();
+            };
+            let Some(kind) = args.next() else {
+                return usage();
+            };
+            let Some(uri) = args.next() else {
+                return usage();
+            };
+            let Some(sha256) = args.next() else {
+                return usage();
+            };
+            let description = args.collect::<Vec<_>>().join(" ");
+            if description.trim().is_empty() {
+                return usage();
+            }
+            attach_evidence_artifact_path(&report_path, &spec_id, &kind, uri, sha256, description)
+        }
         "validate-sample" => {
             let catalog = full_catalog();
             let catalog_report = validate_catalog(&catalog);
@@ -123,6 +146,47 @@ fn ltp_report_from_log_dir(log_dir: &str, boundary: Boundary, profile: Option<St
         profile,
         logs.iter().map(|(subset, text)| (*subset, text.as_str())),
     );
+    print_json(&report)
+}
+
+fn attach_evidence_artifact_path(
+    report_path: &str,
+    spec_id: &str,
+    kind: &str,
+    uri: String,
+    sha256: String,
+    description: String,
+) -> ExitCode {
+    let kind = match EvidenceArtifactKind::parse(kind) {
+        Some(kind) => kind,
+        None => {
+            eprintln!("unknown evidence artifact kind {kind}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let bytes = match read_input(report_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read report {report_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut report = match parse_report_json(&bytes) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("failed to parse report {}: {}", error.code, error.detail);
+            return ExitCode::FAILURE;
+        }
+    };
+    let attached = attach_evidence_artifact(
+        &mut report,
+        spec_id,
+        EvidenceArtifact { kind, uri, sha256, description },
+    );
+    if attached == 0 {
+        eprintln!("no report results matched spec id {spec_id}");
+        return ExitCode::FAILURE;
+    }
     print_json(&report)
 }
 
@@ -169,7 +233,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }
