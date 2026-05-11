@@ -31,6 +31,7 @@ pass_report="$tmp_root/ltp-pass-report.json"
 run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution guest-frontend \
     >"$pass_report"
 run_conformance validate-report "$pass_report" >/dev/null
+run_conformance validate-artifacts "$pass_report" >/dev/null
 
 partial_logs="$tmp_root/ltp-partial"
 mkdir -p "$partial_logs"
@@ -85,6 +86,8 @@ scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution gue
     "$fake_runltp" >/dev/null
 run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
+run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" \
+    >"$tmp_root/wrapper-artifact-gate.json"
 
 criterion_root="$tmp_root/criterion"
 run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"
@@ -110,5 +113,7 @@ VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
     "$bench_output" portable-artifact-execution "" "$criterion_root" >/dev/null
 run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
+run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \
+    >"$tmp_root/vmos-bench-artifact-gate.json"
 
 echo "Conformance report gate passed."

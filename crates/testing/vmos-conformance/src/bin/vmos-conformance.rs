@@ -9,7 +9,7 @@ use vmos_conformance::{
     criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
     full_catalog, gate_report_json, ltp_report_from_log_dir as build_ltp_report_from_log_dir,
     parse_report_json, sample_ltp_report, sample_performance_report, sample_report,
-    validate_catalog, validate_report,
+    validate_catalog, validate_report, validate_report_artifacts,
 };
 
 fn main() -> ExitCode {
@@ -31,6 +31,11 @@ fn main() -> ExitCode {
         "validate-report" => {
             let path = args.next().unwrap_or_else(|| "-".to_string());
             validate_report_path(&path)
+        }
+        "validate-artifacts" => {
+            let path = args.next().unwrap_or_else(|| "-".to_string());
+            let artifact_root = args.next().unwrap_or_else(|| ".".to_string());
+            validate_artifacts_path(&path, &artifact_root)
         }
         "write-sample-report" => match args.next() {
             Some(path) => {
@@ -232,6 +237,30 @@ fn validate_report_path(path: &str) -> ExitCode {
     }
 }
 
+fn validate_artifacts_path(path: &str, artifact_root: &str) -> ExitCode {
+    let bytes = match read_input(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read report {path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = match parse_report_json(&bytes) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("failed to parse report {}: {}", error.code, error.detail);
+            return ExitCode::FAILURE;
+        }
+    };
+    let validation = validate_report_artifacts(&report, artifact_root);
+    if validation.ok {
+        print_json(&validation)
+    } else {
+        let _ = print_json(&validation);
+        ExitCode::FAILURE
+    }
+}
+
 fn read_input(path: &str) -> io::Result<Vec<u8>> {
     if path == "-" {
         let mut bytes = Vec::new();
@@ -257,7 +286,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

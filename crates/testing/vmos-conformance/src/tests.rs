@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::*;
-use crate::performance::CRITERION_METRIC_SOURCES;
+use crate::{artifacts::write_file_with_sha256, performance::CRITERION_METRIC_SOURCES};
 
 #[test]
 fn full_catalog_is_valid_and_has_unique_ids() {
@@ -239,6 +239,64 @@ fn report_rejects_malformed_evidence_artifacts() {
             || finding.code == "invalid-evidence-artifact-sha256"
             || finding.code == "empty-evidence-artifact-description"
     }));
+}
+
+#[test]
+fn artifact_gate_validates_real_target_extraction_trace_files() {
+    let root = temp_criterion_dir("real-target-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-extraction.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"authority":"ConsoleAuthority","operation":"console_write","event_id":1}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+        uri: trace.display().to_string(),
+        sha256,
+        description: "real target substrate authority extraction trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
+    let root = temp_criterion_dir("bad-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-extraction.jsonl");
+    fs::write(&trace, br#"{"authority":"","operation":""}"#).unwrap();
+    let mut report = sample_ltp_report();
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+        uri: trace.display().to_string(),
+        sha256: "c".repeat(64),
+        description: "bad trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-sha256-mismatch")
+    );
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content")
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -489,6 +547,46 @@ fn criterion_performance_report_maps_estimates_to_required_metrics() {
     }));
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_accepts_ltp_and_criterion_raw_outputs() {
+    let ltp_root = temp_criterion_dir("ltp-artifact-gate");
+    fs::create_dir_all(&ltp_root).unwrap();
+    for subset in LtpSubset::ALL {
+        fs::write(
+            ltp_root.join(format!("{}.log", subset.spec_id())),
+            format!("{}_case01 1 TPASS : passed\n", subset.spec_id().replace('.', "_")),
+        )
+        .unwrap();
+    }
+    let ltp_report = ltp_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &ltp_root,
+    )
+    .unwrap();
+    let ltp_artifact_validation = validate_report_artifacts(&ltp_report, ".");
+    assert!(ltp_artifact_validation.ok, "{:#?}", ltp_artifact_validation.findings);
+
+    let criterion_root = temp_criterion_dir("criterion-artifact-gate");
+    for source in CRITERION_METRIC_SOURCES {
+        write_criterion_estimate(&criterion_root, source.benchmark_id, 1_000.0);
+    }
+    let performance_report = criterion_performance_report_from_estimates_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &criterion_root,
+    );
+    let performance_artifact_validation = validate_report_artifacts(&performance_report, ".");
+    assert!(performance_artifact_validation.ok, "{:#?}", performance_artifact_validation.findings);
+
+    let _ = fs::remove_dir_all(ltp_root);
+    let _ = fs::remove_dir_all(criterion_root);
 }
 
 #[test]

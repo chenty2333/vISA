@@ -24,6 +24,7 @@ cargo run -p vmos-conformance -- sample-performance-report-json
 cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
+cargo run -p vmos-conformance -- validate-artifacts target/vmos-conformance.json .
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-plan-lines target/criterion
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
@@ -41,6 +42,10 @@ file path or `-` for stdin and exits non-zero when the JSON is malformed, refere
 unknown specs, overclaims an evidence boundary, omits pass/fail evidence, or contains
 duplicate or empty result sets. It also exits non-zero when any reported result is
 `fail`, `skip`, or `not-run`.
+`validate-artifacts` is the local evidence artifact gate. It opens artifact files,
+checks SHA-256 digests, and applies type-specific structure checks for raw LTP
+logs, Criterion estimates, extraction traces, device traces, serial logs, and
+contract graph snapshots.
 Results that claim `real-target-substrate` must include a structured
 `substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
 SHA-256 digest, and description. Free-form evidence text alone is not enough for
