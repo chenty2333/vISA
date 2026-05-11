@@ -1071,6 +1071,29 @@ fn external_audit_rejects_stale_hostcall_generation_as_portable_execution() {
 }
 
 #[test]
+fn external_audit_accepts_tombstoned_hostcall_activation_generation() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.activation_records[0].generation = 2;
+    package.semantic.tombstone_count = 1;
+    package.semantic.roots.tombstone_roots =
+        vec!["tombstone kind=activation id=1 generation=1 died_at=7 reason=hostcall".to_owned()];
+    package.semantic.tombstones = vec![artifact_manifest::TombstoneManifest {
+        kind: "activation".to_owned(),
+        id: 1,
+        generation: 1,
+        died_at: 7,
+        reason: "activation-hostcall-previous-generation".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
 fn external_audit_reports_real_target_claim_gaps() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);

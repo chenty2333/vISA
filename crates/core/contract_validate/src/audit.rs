@@ -335,14 +335,14 @@ fn code_has_linked_execution_effect(
                     && hostcall.code_object == code.id
                     && hostcall.activation == activation.id
                     && hostcall_has_live_success_effect(hostcall)
-                    && hostcall_matches_activation_generation(code, activation, hostcall)
+                    && hostcall_matches_activation_generation(package, code, activation, hostcall)
                     && hostcall_matches_declared_abi(code, hostcall)
             }) || package.semantic.trap_records.iter().any(|trap| {
                 trap.artifact == Some(artifact_id)
                     && trap.code_object == Some(code.id)
                     && trap.activation == Some(activation.id)
                     && trap_has_attributed_execution_effect(trap)
-                    && trap_matches_activation_generation(code, activation, trap)
+                    && trap_matches_activation_generation(package, code, activation, trap)
                     && trap_matches_declared_metadata(code, trap)
             })
         })
@@ -357,12 +357,17 @@ fn code_matches_activation_store(
 }
 
 fn hostcall_matches_activation_generation(
+    package: &MigrationPackageManifest,
     code: &artifact_manifest::CodeObjectManifest,
     activation: &artifact_manifest::ActivationRecordManifest,
     trace: &artifact_manifest::HostcallTraceManifest,
 ) -> bool {
-    trace.activation_generation == activation.generation
-        && trace.code_generation == code.generation
+    activation_generation_is_current_or_tombstoned(
+        package,
+        activation.id,
+        activation.generation,
+        trace.activation_generation,
+    ) && trace.code_generation == code.generation
         && trace.store == activation.store
         && trace.store_generation == activation.store_generation
 }
@@ -404,14 +409,36 @@ fn hostcall_matches_declared_abi(
 }
 
 fn trap_matches_activation_generation(
+    package: &MigrationPackageManifest,
     code: &artifact_manifest::CodeObjectManifest,
     activation: &artifact_manifest::ActivationRecordManifest,
     trap: &artifact_manifest::TrapRecordManifest,
 ) -> bool {
-    trap.activation_generation == Some(activation.generation)
-        && trap.code_generation == Some(code.generation)
+    trap.activation_generation.is_some_and(|generation| {
+        activation_generation_is_current_or_tombstoned(
+            package,
+            activation.id,
+            activation.generation,
+            generation,
+        )
+    }) && trap.code_generation == Some(code.generation)
         && trap.store == Some(activation.store)
         && trap.store_generation == Some(activation.store_generation)
+}
+
+fn activation_generation_is_current_or_tombstoned(
+    package: &MigrationPackageManifest,
+    activation_id: u64,
+    current_generation: u64,
+    evidence_generation: u64,
+) -> bool {
+    evidence_generation == current_generation
+        || (evidence_generation < current_generation
+            && package.semantic.tombstones.iter().any(|tombstone| {
+                tombstone.kind == "activation"
+                    && tombstone.id == activation_id
+                    && tombstone.generation == evidence_generation
+            }))
 }
 
 fn trap_has_attributed_execution_effect(trap: &artifact_manifest::TrapRecordManifest) -> bool {
@@ -500,7 +527,9 @@ fn extraction_event_matches_linked_hostcall(
                             && hostcall.code_object == code.id
                             && hostcall.activation == activation.id
                             && hostcall_has_live_success_effect(hostcall)
-                            && hostcall_matches_activation_generation(code, activation, hostcall)
+                            && hostcall_matches_activation_generation(
+                                package, code, activation, hostcall,
+                            )
                             && hostcall_matches_declared_abi(code, hostcall)
                             && substrate_event_matches_hostcall(event, hostcall)
                     })
