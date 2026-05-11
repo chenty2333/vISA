@@ -30,5 +30,8 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Conformance report gate
+        run: bash scripts/check-conformance-report.sh
+
       - name: File size gate
         run: bash scripts/check-file-size.sh
