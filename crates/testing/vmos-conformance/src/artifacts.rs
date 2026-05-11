@@ -3,6 +3,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use contract_core::CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION;
+
 use crate::{
     hash::sha256_hex,
     ltp::parse_ltp_results,
@@ -11,8 +13,6 @@ use crate::{
         ValidationFinding, ValidationReport,
     },
 };
-
-pub const CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION: &str = "contract-graph-snapshot-v0.1";
 
 pub fn validate_report_artifacts(
     report: &ConformanceReport,

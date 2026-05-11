@@ -43,6 +43,7 @@ pub const VIEW_SCHEMA_V1: u16 = 1;
 pub const EDGE_SCHEMA_V1: u16 = 1;
 pub const EVENT_SCHEMA_V1: u16 = 1;
 pub const TRACE_SCHEMA_V1: u16 = 1;
+pub const CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION: &str = "contract-graph-snapshot-v0.1";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EvidenceBoundaryLevel {

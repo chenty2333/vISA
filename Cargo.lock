@@ -1742,6 +1742,7 @@ dependencies = [
  "substrate_api",
  "target_abi",
  "visa_profile",
+ "vmos-conformance",
 ]
 
 [[package]]
