@@ -265,7 +265,7 @@ fn artifact_has_linked_execution_chain_for_store(
         .code_objects
         .iter()
         .filter(|code| code_matches_artifact_manifest(artifact, code))
-        .any(|code| code_has_linked_execution_effect(package, artifact.id, code, required_store))
+        .any(|code| code_has_linked_execution_effect(package, artifact, code, required_store))
 }
 
 fn code_matches_artifact_manifest(
@@ -327,10 +327,11 @@ fn address_map_tables_match(
 
 fn code_has_linked_execution_effect(
     package: &MigrationPackageManifest,
-    artifact_id: u64,
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
     code: &artifact_manifest::CodeObjectManifest,
     required_store: Option<u64>,
 ) -> bool {
+    let artifact_id = artifact.id;
     package
         .semantic
         .activation_records
@@ -339,6 +340,7 @@ fn code_has_linked_execution_effect(
             activation.artifact == artifact_id
                 && activation.code_object == code.id
                 && code_matches_activation_store(code, activation)
+                && activation_entry_matches_artifact_exports(artifact, activation)
                 && required_store.is_none_or(|store| activation.store == store)
         })
         .any(|activation| {
@@ -358,6 +360,14 @@ fn code_has_linked_execution_effect(
                     && trap_matches_declared_metadata(code, trap)
             })
         })
+}
+
+fn activation_entry_matches_artifact_exports(
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
+    activation: &artifact_manifest::ActivationRecordManifest,
+) -> bool {
+    !activation.entry.is_empty()
+        && artifact.exports.iter().any(|export| export == &activation.entry)
 }
 
 fn code_matches_activation_store(

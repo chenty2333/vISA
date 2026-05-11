@@ -804,6 +804,25 @@ fn external_audit_rejects_undeclared_hostcall_trace_as_portable_execution() {
 }
 
 #[test]
+fn external_audit_rejects_activation_entry_not_declared_by_artifact_export() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.activation_records[0].entry = "hidden_entry".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
 fn external_audit_rejects_denied_hostcall_trace_as_portable_execution() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
