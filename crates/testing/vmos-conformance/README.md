@@ -11,6 +11,9 @@ The suite separates four claims:
 
 LTP is intentionally cataloged under `personality-compatibility` with `personality=linux`.
 Passing an LTP subset can prove Linux personality compatibility for that subset. It does not prove vISA semantic completeness, substrate profile conformance, or real target substrate execution unless those claims are reported separately with the required evidence boundary.
+`substrate_report_from_conformance` converts `substrate_api` profile conformance
+reports into this same report schema, including P0 semantic-harness through P4
+snapshot-replay-capable profile claims.
 
 Useful commands:
 

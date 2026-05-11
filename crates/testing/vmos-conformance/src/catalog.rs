@@ -111,6 +111,18 @@ pub fn visa_core_catalog() -> Vec<TestSpec> {
 pub fn substrate_profile_catalog() -> Vec<TestSpec> {
     vec![
         substrate_spec(
+            "substrate.p0.semantic.harness",
+            "Profile 0 semantic harness console, timer, event, and guest memory conformance",
+            SubstrateProfile::SemanticHarness,
+            &[
+                CapabilityDomain::Timer,
+                CapabilityDomain::Event,
+                CapabilityDomain::Hostcall,
+                CapabilityDomain::Memory,
+            ],
+            "cargo test -p substrate_api profile_conformance_suite_passes_snapshot_replay_backend",
+        ),
+        substrate_spec(
             "substrate.p1.console.timer.event",
             "Profile 1 console, timer, and event queue conformance",
             SubstrateProfile::MinimalBareMetal,

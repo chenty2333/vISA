@@ -248,6 +248,9 @@ fn validate_suite_coverage(
         "vmos-linux-ltp-personality-compatibility" => {
             linux_ltp_catalog().into_iter().map(|spec| spec.id).collect()
         }
+        "vmos-substrate-profile-conformance" => {
+            report.results.iter().map(|result| result.spec_id.clone()).collect()
+        }
         "vmos-performance-benchmark" => {
             performance_catalog().into_iter().map(|spec| spec.id).collect()
         }

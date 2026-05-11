@@ -5,6 +5,7 @@ mod ltp;
 mod performance;
 mod report;
 mod samples;
+mod substrate;
 mod types;
 mod validation;
 
@@ -26,6 +27,9 @@ pub use performance::{
 };
 pub use report::attach_evidence_artifact;
 pub use samples::{sample_ltp_report, sample_performance_report, sample_report};
+pub use substrate::{
+    substrate_profile_spec_id, substrate_report_from_conformance, substrate_result_from_conformance,
+};
 pub use types::{
     Boundary, CapabilityDomain, ClaimKind, ConformanceReport, EvidenceArtifact,
     EvidenceArtifactKind, LtpCaseResult, LtpInvocation, LtpPlanEntry, LtpSubset, Outcome,

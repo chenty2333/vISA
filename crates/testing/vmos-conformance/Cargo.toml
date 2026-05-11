@@ -16,4 +16,5 @@ contract_core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+substrate_api = { workspace = true, features = ["conformance"] }
 visa_profile = { workspace = true }

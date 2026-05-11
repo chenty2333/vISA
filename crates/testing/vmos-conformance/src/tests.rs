@@ -5,6 +5,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use substrate_api::conformance::{
+    ConformanceCheck, ConformanceEvidenceContext, ConformanceStatus, SubstrateConformanceReport,
+};
+use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
+
 use super::*;
 use crate::{artifacts::write_file_with_sha256, performance::CRITERION_METRIC_SOURCES};
 
@@ -38,6 +43,48 @@ fn visa_native_full_hostcall_spec_is_primary_visa_conformance() {
     assert_eq!(spec.minimum_boundary, Boundary::PortableArtifactExecution);
     assert!(spec.runner.contains("vms_wasmtime"));
     assert!(spec.does_not_prove.iter().any(|item| item.contains("Linux personality")));
+}
+
+#[test]
+fn substrate_conformance_report_maps_to_unified_report() {
+    let substrate_report = passing_substrate_report(SubstrateProfile::SemanticHarness);
+    let report = substrate_report_from_conformance(
+        "unit-substrate",
+        "unit-test",
+        Boundary::SemanticModel,
+        &substrate_report,
+        ConformanceEvidenceContext::host_side(),
+    );
+    let validation = validate_report(&report, &substrate_profile_catalog());
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    assert_eq!(report.suite_id, "vmos-substrate-profile-conformance");
+    assert_eq!(report.results[0].spec_id, "substrate.p0.semantic.harness");
+    assert_eq!(report.results[0].outcome, Outcome::Pass);
+    assert_eq!(report.results[0].metrics["required_checks"], 1.0);
+    assert_eq!(report.results[0].metrics["passed_required_checks"], 1.0);
+    assert!(report.results[0].remaining_uncertainty.contains("host-side"));
+}
+
+#[test]
+fn substrate_bridge_does_not_overclaim_real_target_without_context() {
+    let substrate_report = passing_substrate_report(SubstrateProfile::DeviceCapable);
+
+    let host_side = substrate_result_from_conformance(
+        &substrate_report,
+        Boundary::RealTargetSubstrate,
+        ConformanceEvidenceContext::host_side(),
+    );
+    let real_target = substrate_result_from_conformance(
+        &substrate_report,
+        Boundary::RealTargetSubstrate,
+        ConformanceEvidenceContext::real_target_with_extraction_event_count("riscv64", 3),
+    );
+
+    assert_eq!(host_side.outcome, Outcome::Fail);
+    assert!(host_side.remaining_uncertainty.contains("did not include"));
+    assert_eq!(real_target.outcome, Outcome::Pass);
+    assert_eq!(real_target.metrics["real_target_extraction_event_count"], 3.0);
 }
 
 #[test]
@@ -847,5 +894,21 @@ fn real_target_extraction_artifact() -> EvidenceArtifact {
         uri: "target/evidence/substrate-extraction.jsonl".to_string(),
         sha256: "a".repeat(64),
         description: "real target substrate authority extraction trace".to_string(),
+    }
+}
+
+fn passing_substrate_report(profile: SubstrateProfile) -> SubstrateConformanceReport {
+    let capabilities = SubstrateCapabilitySet::for_profile(profile);
+    SubstrateConformanceReport {
+        profile,
+        capabilities,
+        compatibility: capabilities.check_profile(profile),
+        checks: vec![ConformanceCheck {
+            check: "unit-required-check",
+            required: true,
+            status: ConformanceStatus::Passed,
+            detail: "ok",
+        }],
+        ok: true,
     }
 }
