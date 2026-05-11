@@ -93,7 +93,7 @@ pub fn sample_performance_report() -> ConformanceReport {
                 for metric in required_performance_metrics(&spec.id) {
                     metrics.insert((*metric).to_string(), 1.0);
                 }
-                let artifact_uri = format!("sample://{}", spec.id);
+                let artifact_uri = format!("samples/{}.criterion/estimates.json", spec.id);
                 TestResult {
                     spec_id: spec.id,
                     outcome: Outcome::Pass,

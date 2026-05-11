@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use visa_profile::SubstrateProfile;
 
 use crate::{
+    artifacts::artifact_uri_is_bundle_relative,
     catalog::{linux_ltp_catalog, performance_catalog, substrate_profile_catalog},
     performance::required_performance_metrics,
     types::{
@@ -149,6 +150,14 @@ fn validate_evidence_artifacts(result: &TestResult, findings: &mut Vec<Validatio
             findings.push(finding(
                 "empty-evidence-artifact-uri",
                 format!("{} has evidence artifact without uri", result.spec_id),
+            ));
+        } else if !artifact_uri_is_bundle_relative(&artifact.uri) {
+            findings.push(finding(
+                "non-bundle-relative-evidence-artifact-uri",
+                format!(
+                    "{} evidence artifact uri {} must be relative to the artifact root",
+                    result.spec_id, artifact.uri
+                ),
             ));
         }
         if artifact.description.trim().is_empty() {

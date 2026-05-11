@@ -396,6 +396,27 @@ fn report_rejects_malformed_evidence_artifacts() {
 }
 
 #[test]
+fn report_rejects_non_bundle_relative_evidence_artifact_uri() {
+    let catalog = linux_ltp_catalog();
+    let mut report = sample_ltp_report();
+    report.results[0].evidence_artifacts.clear();
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::LtpRawLog,
+        uri: "/tmp/linux-ltp.fs.basic.log".to_string(),
+        sha256: "a".repeat(64),
+        description: "absolute artifact path should fail report contract".to_string(),
+    });
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(validation.findings.iter().any(|finding| {
+        finding.code == "non-bundle-relative-evidence-artifact-uri"
+            && finding.detail.contains("linux-ltp.fs.basic")
+    }));
+}
+
+#[test]
 fn artifact_gate_validates_real_target_extraction_trace_files() {
     let root = temp_criterion_dir("real-target-artifact");
     fs::create_dir_all(&root).unwrap();
