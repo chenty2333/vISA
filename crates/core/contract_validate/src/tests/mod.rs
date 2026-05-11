@@ -612,27 +612,35 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
 }
 
 fn add_portable_boundary_validation(package: &mut MigrationPackageManifest) {
+    add_boundary_validation(package, EvidenceBoundaryLevel::PortableArtifactExecution);
+}
+
+fn add_real_target_boundary_validation(package: &mut MigrationPackageManifest) {
+    add_boundary_validation(package, EvidenceBoundaryLevel::RealTargetSubstrate);
+}
+
+fn add_boundary_validation(package: &mut MigrationPackageManifest, level: EvidenceBoundaryLevel) {
     package.semantic.snapshot_validation = BoundaryValidationReportManifest {
         validator: "snapshot-barrier".to_owned(),
-        evidence_boundary: EvidenceBoundaryLevel::PortableArtifactExecution.as_str().to_owned(),
+        evidence_boundary: level.as_str().to_owned(),
         ok: true,
         violation_count: 0,
         violations: Vec::new(),
     };
     package.semantic.replay_validation = BoundaryValidationReportManifest {
         validator: "package-replay".to_owned(),
-        evidence_boundary: EvidenceBoundaryLevel::PortableArtifactExecution.as_str().to_owned(),
+        evidence_boundary: level.as_str().to_owned(),
         ok: true,
         violation_count: 0,
         violations: Vec::new(),
     };
     package.semantic.roots.snapshot_validation_roots = vec![format!(
         "boundary-validation validator=snapshot-barrier evidence={} ok=true violations=0",
-        EvidenceBoundaryLevel::PortableArtifactExecution.as_str()
+        level.as_str()
     )];
     package.semantic.roots.replay_validation_roots = vec![format!(
         "boundary-validation validator=package-replay evidence={} ok=true violations=0",
-        EvidenceBoundaryLevel::PortableArtifactExecution.as_str()
+        level.as_str()
     )];
 }
 
@@ -1519,6 +1527,43 @@ fn external_audit_rejects_real_target_extraction_requester_subject_mismatch() {
 }
 
 #[test]
+fn external_audit_rejects_real_target_claim_with_only_portable_boundary_validation() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=native-visa"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "ConsoleAuthority".to_owned(),
+        operation: "console_write".to_owned(),
+        requester: Some("native-visa".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: None,
+        explanation: "real target extraction with only portable boundary validation".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.linked_authority_extraction_event_count, 1);
+    assert!(!report.ok());
+    assert!(
+        report.errors().any(|finding| finding.code == "real-target-without-boundary-validation")
+    );
+}
+
+#[test]
 fn external_audit_rejects_real_target_without_linked_portable_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
@@ -1559,6 +1604,7 @@ fn external_audit_rejects_real_target_without_linked_portable_chain() {
 fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_event() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
+    add_real_target_boundary_validation(&mut package);
     package.target.arch_requirement = "riscv64".to_owned();
     package.required_artifact_profile.target_arch = "riscv64".to_owned();
     package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();

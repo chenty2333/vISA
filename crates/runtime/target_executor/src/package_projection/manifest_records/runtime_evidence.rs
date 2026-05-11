@@ -378,7 +378,7 @@ mod tests {
     ) -> artifact_manifest::BoundaryValidationReportManifest {
         artifact_manifest::BoundaryValidationReportManifest {
             validator: validator.to_owned(),
-            evidence_boundary: "portable-artifact-execution".to_owned(),
+            evidence_boundary: "real-target-substrate".to_owned(),
             ok: true,
             violation_count: 0,
             violations: Vec::new(),

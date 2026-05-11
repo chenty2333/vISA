@@ -183,6 +183,8 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
     let real_target_substrate_claim =
         package.substrate_boundary.native_state_policy == REAL_TARGET_SUBSTRATE_POLICY;
     if real_target_substrate_claim {
+        let real_target_boundary_validation =
+            package_has_boundary_validation(package, EvidenceBoundaryLevel::RealTargetSubstrate);
         if !portable_artifact_execution_claim {
             if linked_portable_execution_chain && !portable_boundary_validation {
                 findings.push(ExternalAuditFinding::new(
@@ -197,6 +199,13 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
                     "real target substrate claim requires a linked artifact -> code object -> activation -> hostcall/trap chain",
                 ));
             }
+        }
+        if !real_target_boundary_validation {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Error,
+                "real-target-without-boundary-validation",
+                "real target substrate claim requires real-target-substrate snapshot/replay boundary validation",
+            ));
         }
         if !real_target_has_concrete_arch(package) {
             findings.push(ExternalAuditFinding::new(
