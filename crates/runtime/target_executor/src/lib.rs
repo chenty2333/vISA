@@ -87,7 +87,8 @@ use fs_adapter::{
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
 use package_projection::*;
 pub use package_projection::{
-    runtime_evidence_substrate_event_manifests, runtime_evidence_target_artifact_manifests,
+    RuntimeEvidenceTargetRuntimeManifests, runtime_evidence_substrate_event_manifests,
+    runtime_evidence_target_artifact_manifests, runtime_evidence_target_runtime_manifests,
 };
 use runtime::{HostValidationSmokeTrace, RuntimeOnlyExecutor};
 use semantic_core::{
