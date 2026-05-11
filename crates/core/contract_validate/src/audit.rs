@@ -401,6 +401,7 @@ fn code_has_linked_execution_effect(
                     && hostcall_has_live_success_effect(hostcall)
                     && hostcall_matches_activation_generation(package, code, activation, hostcall)
                     && hostcall_matches_declared_abi(code, hostcall)
+                    && hostcall_cap_args_backed_by_live_capability_records(package, hostcall)
             }) || package.semantic.trap_records.iter().any(|trap| {
                 trap.artifact == Some(artifact_id)
                     && trap.code_object == Some(code.id)

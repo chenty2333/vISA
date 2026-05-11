@@ -737,6 +737,30 @@ fn external_audit_rejects_portable_chain_without_boundary_validation() {
 }
 
 #[test]
+fn external_audit_rejects_portable_execution_with_unbacked_hostcall_capability() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].cap_args =
+        vec![artifact_manifest::CapabilityHandleArgManifest {
+            id: 77,
+            object: "visa.timer".to_owned(),
+            generation: 4,
+            rights: vec!["now".to_owned()],
+            ..Default::default()
+        }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
 fn external_audit_accepts_canonical_semantic_hostcall_success_trace() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
