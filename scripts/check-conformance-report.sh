@@ -14,6 +14,11 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 run_conformance validate-sample >/dev/null
 run_conformance sample-ltp-report-json | run_conformance validate-report - >/dev/null
+run_conformance sample-performance-report-json | run_conformance validate-report - >/dev/null
+
+performance_report="$tmp_root/performance-report.json"
+run_conformance write-sample-performance-report "$performance_report"
+run_conformance validate-report "$performance_report" >/dev/null
 
 pass_logs="$tmp_root/ltp-pass"
 mkdir -p "$pass_logs"
