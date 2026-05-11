@@ -106,11 +106,13 @@ pub struct ContractGraphSnapshot {
     pub network_benchmarks: Vec<NetworkBenchmarkRecord>,
     pub block_benchmarks: Vec<BlockBenchmarkRecord>,
     pub fake_block_backends: Vec<FakeBlockBackendObjectRecord>,
+    pub virtio_blk_backends: Vec<VirtioBlkBackendObjectRecord>,
     pub network_driver_cleanups: Vec<NetworkDriverCleanupRecord>,
     pub device_objects: Vec<DeviceObjectRecord>,
     pub packet_device_objects: Vec<PacketDeviceObjectRecord>,
     pub network_stack_adapters: Vec<NetworkStackAdapterRecord>,
     pub socket_objects: Vec<SocketObjectRecord>,
+    pub fake_net_backends: Vec<FakeNetBackendObjectRecord>,
     pub virtio_net_backends: Vec<VirtioNetBackendObjectRecord>,
     pub io_cleanups: Vec<IoCleanupRecord>,
     pub block_pending_io_policies: Vec<BlockPendingIoPolicyRecord>,
@@ -191,8 +193,10 @@ impl ContractGraphSnapshot {
             device_objects: Vec::new(),
             io_cleanups: Vec::new(),
             // Non-portable: device-backed objects
+            fake_net_backends: Vec::new(),
             virtio_net_backends: Vec::new(),
             fake_block_backends: Vec::new(),
+            virtio_blk_backends: Vec::new(),
             // Non-portable: DMA pages
             block_dma_buffers: Vec::new(),
             // Non-portable: window leases/mappings
@@ -252,6 +256,7 @@ impl ContractGraphSnapshot {
         }
         if self.io_cleanups.iter().any(|cleanup| !cleanup.released_irq_lines.is_empty())
             || !self.virtio_net_backends.is_empty()
+            || !self.virtio_blk_backends.is_empty()
         {
             push_non_portable_kind(&mut out, NonPortableStateKind::IrqLines);
         }
@@ -277,6 +282,7 @@ impl ContractGraphSnapshot {
         if !self.packet_device_objects.is_empty()
             || !self.network_stack_adapters.is_empty()
             || !self.socket_objects.is_empty()
+            || !self.fake_net_backends.is_empty()
             || !self.virtio_net_backends.is_empty()
             || !self.network_benchmarks.is_empty()
             || !self.network_driver_cleanups.is_empty()
@@ -287,6 +293,7 @@ impl ContractGraphSnapshot {
         if !self.block_device_objects.is_empty()
             || !self.block_range_objects.is_empty()
             || !self.fake_block_backends.is_empty()
+            || !self.virtio_blk_backends.is_empty()
             || !self.block_pending_io_policies.is_empty()
             || !self.block_request_objects.is_empty()
             || !self.block_waits.is_empty()
@@ -296,7 +303,12 @@ impl ContractGraphSnapshot {
         {
             push_non_portable_kind(&mut out, NonPortableStateKind::BlockDeviceBackendBindings);
         }
-        if !self.io_cleanups.is_empty() || !self.virtio_net_backends.is_empty() {
+        if !self.io_cleanups.is_empty()
+            || !self.fake_net_backends.is_empty()
+            || !self.virtio_net_backends.is_empty()
+            || !self.fake_block_backends.is_empty()
+            || !self.virtio_blk_backends.is_empty()
+        {
             push_non_portable_kind(&mut out, NonPortableStateKind::DriverDeviceBindings);
         }
         if self.io_cleanups.iter().any(|cleanup| !cleanup.released_mmio_regions.is_empty()) {
@@ -386,6 +398,58 @@ mod tests {
         graph
     }
 
+    fn fake_net_backend_record() -> FakeNetBackendObjectRecord {
+        FakeNetBackendObjectRecord {
+            id: 1,
+            name: "fake-net".to_string(),
+            packet_device: 8,
+            packet_device_generation: 1,
+            provider: "test".to_string(),
+            profile: "fake".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0; 6],
+            frame_format_version: 1,
+            max_payload_len: 1500,
+            deterministic_seed: 0,
+            generation: 1,
+            state: FakeNetBackendObjectState::Bound,
+            recorded_at_event: 1,
+            note: "test".to_string(),
+        }
+    }
+
+    fn virtio_blk_backend_record() -> VirtioBlkBackendObjectRecord {
+        VirtioBlkBackendObjectRecord {
+            id: 1,
+            name: "virtio-blk".to_string(),
+            block_device: 7,
+            block_device_generation: 1,
+            driver_binding: 9,
+            driver_binding_generation: 1,
+            device: 10,
+            device_generation: 1,
+            provider: "test".to_string(),
+            profile: "virtio".to_string(),
+            model: "virtio-blk".to_string(),
+            sector_size: 512,
+            sector_count: 8,
+            read_only: false,
+            max_transfer_sectors: 1,
+            device_features: 0,
+            driver_features: 0,
+            negotiated_features: 0,
+            request_queue_index: 0,
+            queue_size: 8,
+            irq_vector: 3,
+            generation: 1,
+            state: VirtioBlkBackendObjectState::SkeletonReady,
+            recorded_at_event: 1,
+            note: "test".to_string(),
+        }
+    }
+
     #[test]
     fn portable_subset_preserves_stores_and_capabilities() {
         let graph = fixture_with_devices_and_stores();
@@ -399,13 +463,17 @@ mod tests {
     #[test]
     fn portable_subset_strips_device_bindings() {
         let graph = fixture_with_devices_and_stores();
-        let snapshot = graph.snapshot();
+        let mut snapshot = graph.snapshot();
+        snapshot.fake_net_backends.push(fake_net_backend_record());
+        snapshot.virtio_blk_backends.push(virtio_blk_backend_record());
         assert!(!snapshot.device_objects.is_empty());
 
         let portable = snapshot.portable_subset();
         assert!(portable.device_objects.is_empty());
         assert!(portable.block_device_objects.is_empty());
+        assert!(portable.fake_net_backends.is_empty());
         assert!(portable.fake_block_backends.is_empty());
+        assert!(portable.virtio_blk_backends.is_empty());
         assert!(!portable.stores.is_empty());
     }
 
@@ -490,6 +558,8 @@ mod tests {
             recorded_at_event: 1,
             note: "test".to_string(),
         });
+        snapshot.fake_net_backends.push(fake_net_backend_record());
+        snapshot.virtio_blk_backends.push(virtio_blk_backend_record());
 
         let summary = snapshot.non_portable_summary();
         assert!(summary.contains(&NonPortableStateKind::BlockDeviceBackendBindings));

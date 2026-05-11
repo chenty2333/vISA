@@ -1449,11 +1449,13 @@ fn unsupported_portable_record(snapshot: &ContractGraphSnapshot) -> Option<&'sta
     reject!(network_benchmarks);
     reject!(block_benchmarks);
     reject!(fake_block_backends);
+    reject!(virtio_blk_backends);
     reject!(network_driver_cleanups);
     reject!(device_objects);
     reject!(packet_device_objects);
     reject!(network_stack_adapters);
     reject!(socket_objects);
+    reject!(fake_net_backends);
     reject!(virtio_net_backends);
     reject!(io_cleanups);
     reject!(block_pending_io_policies);

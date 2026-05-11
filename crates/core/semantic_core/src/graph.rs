@@ -219,11 +219,13 @@ impl SemanticGraph {
             packet_device_objects: d.network.packet_device_objects.clone(),
             network_stack_adapters: d.network.network_stack_adapters.clone(),
             socket_objects: d.network.socket_objects.clone(),
+            fake_net_backends: d.network.fake_net_backends.clone(),
             virtio_net_backends: d.network.virtio_net_backends.clone(),
             // device domain
             device_objects: d.device.device_objects.clone(),
             // block domain
             fake_block_backends: d.block.fake_block_backends.clone(),
+            virtio_blk_backends: d.block.virtio_blk_backends.clone(),
             block_benchmarks: d.block.block_benchmarks.clone(),
             io_cleanups: d.io.io_cleanups.clone(),
             block_pending_io_policies: d.block.block_pending_io_policies.clone(),
@@ -378,6 +380,61 @@ mod tests {
 
         let snapshot = graph.snapshot_with(inputs);
         assert_eq!(snapshot.capabilities.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_projects_packet_and_block_backend_records() {
+        let mut graph = SemanticGraph::new();
+        graph.domains.network.fake_net_backends.push(FakeNetBackendObjectRecord {
+            id: 1,
+            name: "fake-net".into(),
+            packet_device: 2,
+            packet_device_generation: 1,
+            provider: "test".into(),
+            profile: "fake".into(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0; 6],
+            frame_format_version: 1,
+            max_payload_len: 1500,
+            deterministic_seed: 0,
+            generation: 1,
+            state: FakeNetBackendObjectState::Bound,
+            recorded_at_event: 1,
+            note: "test".into(),
+        });
+        graph.domains.block.virtio_blk_backends.push(VirtioBlkBackendObjectRecord {
+            id: 1,
+            name: "virtio-blk".into(),
+            block_device: 2,
+            block_device_generation: 1,
+            driver_binding: 3,
+            driver_binding_generation: 1,
+            device: 4,
+            device_generation: 1,
+            provider: "test".into(),
+            profile: "virtio".into(),
+            model: "virtio-blk".into(),
+            sector_size: 512,
+            sector_count: 8,
+            read_only: false,
+            max_transfer_sectors: 1,
+            device_features: 0,
+            driver_features: 0,
+            negotiated_features: 0,
+            request_queue_index: 0,
+            queue_size: 8,
+            irq_vector: 5,
+            generation: 1,
+            state: VirtioBlkBackendObjectState::SkeletonReady,
+            recorded_at_event: 1,
+            note: "test".into(),
+        });
+
+        let snapshot = graph.snapshot();
+        assert_eq!(snapshot.fake_net_backends.len(), 1);
+        assert_eq!(snapshot.virtio_blk_backends.len(), 1);
     }
 
     #[test]
