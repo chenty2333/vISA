@@ -7,8 +7,8 @@ use crate::{
     hash::sha256_hex,
     ltp::parse_ltp_results,
     types::{
-        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, ValidationFinding,
-        ValidationReport,
+        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, TestResult,
+        ValidationFinding, ValidationReport,
     },
 };
 
@@ -20,14 +20,14 @@ pub fn validate_report_artifacts(
     let mut findings = Vec::new();
     for result in &report.results {
         for artifact in &result.evidence_artifacts {
-            validate_artifact(&result.spec_id, artifact, artifact_root, &mut findings);
+            validate_artifact(result, artifact, artifact_root, &mut findings);
         }
     }
     ValidationReport::new(findings)
 }
 
 fn validate_artifact(
-    spec_id: &str,
+    result: &TestResult,
     artifact: &EvidenceArtifact,
     artifact_root: &Path,
     findings: &mut Vec<ValidationFinding>,
@@ -35,7 +35,7 @@ fn validate_artifact(
     if artifact.uri.contains("://") {
         findings.push(finding(
             "unverifiable-evidence-artifact-uri",
-            format!("{} artifact {} is not a local file URI", spec_id, artifact.uri),
+            format!("{} artifact {} is not a local file URI", result.spec_id, artifact.uri),
         ));
         return;
     }
@@ -46,7 +46,12 @@ fn validate_artifact(
         Err(error) => {
             findings.push(finding(
                 "missing-evidence-artifact-file",
-                format!("{} artifact {} could not be read: {}", spec_id, path.display(), error),
+                format!(
+                    "{} artifact {} could not be read: {}",
+                    result.spec_id,
+                    path.display(),
+                    error
+                ),
             ));
             return;
         }
@@ -58,7 +63,7 @@ fn validate_artifact(
             "evidence-artifact-sha256-mismatch",
             format!(
                 "{} artifact {} sha256 mismatch: report={} actual={}",
-                spec_id,
+                result.spec_id,
                 path.display(),
                 artifact.sha256,
                 actual_sha256
@@ -69,7 +74,15 @@ fn validate_artifact(
     if let Err(error) = validate_artifact_content(artifact.kind, &bytes) {
         findings.push(finding(
             "invalid-evidence-artifact-content",
-            format!("{} artifact {} invalid: {}", spec_id, path.display(), error),
+            format!("{} artifact {} invalid: {}", result.spec_id, path.display(), error),
+        ));
+        return;
+    }
+
+    if let Err(error) = validate_artifact_context(result, artifact.kind, &bytes) {
+        findings.push(finding(
+            "evidence-artifact-boundary-overclaim",
+            format!("{} artifact {} invalid: {}", result.spec_id, path.display(), error),
         ));
     }
 }
@@ -87,6 +100,28 @@ fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result
         EvidenceArtifactKind::SerialLog => validate_non_empty_text(bytes, "serial log"),
         EvidenceArtifactKind::BenchmarkRawOutput => validate_criterion_estimates(bytes),
         EvidenceArtifactKind::LtpRawLog => validate_ltp_log(bytes),
+    }
+}
+
+fn validate_artifact_context(
+    result: &TestResult,
+    kind: EvidenceArtifactKind,
+    bytes: &[u8],
+) -> Result<(), String> {
+    match kind {
+        EvidenceArtifactKind::ContractGraphSnapshot => {
+            let claimed = contract_graph_snapshot_claimed_boundary(bytes)?;
+            if result.observed_boundary.can_claim(claimed) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "contract graph snapshot claims {} but result observed {}",
+                    claimed.as_str(),
+                    result.observed_boundary.as_str()
+                ))
+            }
+        }
+        _ => Ok(()),
     }
 }
 
@@ -131,6 +166,16 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn contract_graph_snapshot_claimed_boundary(bytes: &[u8]) -> Result<Boundary, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let claimed = value
+        .get("claimed_evidence_level")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing claimed_evidence_level".to_string())?;
+    Boundary::parse(claimed).ok_or_else(|| format!("unknown claimed_evidence_level {claimed}"))
 }
 
 fn validate_extraction_trace(bytes: &[u8]) -> Result<(), String> {

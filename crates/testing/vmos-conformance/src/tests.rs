@@ -446,26 +446,8 @@ fn artifact_gate_validates_contract_graph_snapshot_schema() {
     let root = temp_criterion_dir("contract-graph-snapshot-artifact");
     fs::create_dir_all(&root).unwrap();
     let snapshot = root.join("contract-graph-snapshot.json");
-    let sha256 = write_file_with_sha256(
-        &snapshot,
-        br#"{
-  "schema_version": "contract-graph-snapshot-v0.1",
-  "claimed_evidence_level": "portable-artifact-execution",
-  "artifacts": [],
-  "code_objects": [],
-  "stores": [],
-  "activations": [],
-  "hostcalls": [],
-  "traps": [],
-  "capabilities": [],
-  "waits": [],
-  "cleanup_transactions": [],
-  "tombstones": [],
-  "external_objects": [],
-  "explicit_edges": []
-}"#,
-    )
-    .unwrap();
+    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
     let mut report = sample_ltp_report();
     for result in &mut report.results {
         result.evidence_artifacts.clear();
@@ -480,6 +462,37 @@ fn artifact_gate_validates_contract_graph_snapshot_schema() {
     let validation = validate_report_artifacts(&report, ".");
 
     assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_contract_graph_snapshot_boundary_overclaim() {
+    let root = temp_criterion_dir("contract-graph-snapshot-overclaim-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json("real-target-substrate");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].observed_boundary = Boundary::PortableArtifactExecution;
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.display().to_string(),
+        sha256,
+        description: "overclaimed contract graph snapshot".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-boundary-overclaim")
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1145,6 +1158,27 @@ fn contract_graph_snapshot_artifact() -> EvidenceArtifact {
         sha256: "b".repeat(64),
         description: "contract graph snapshot for portable vISA semantic evidence".to_string(),
     }
+}
+
+fn contract_graph_snapshot_json(claimed_boundary: &str) -> String {
+    format!(
+        r#"{{
+  "schema_version": "contract-graph-snapshot-v0.1",
+  "claimed_evidence_level": "{claimed_boundary}",
+  "artifacts": [],
+  "code_objects": [],
+  "stores": [],
+  "activations": [],
+  "hostcalls": [],
+  "traps": [],
+  "capabilities": [],
+  "waits": [],
+  "cleanup_transactions": [],
+  "tombstones": [],
+  "external_objects": [],
+  "explicit_edges": []
+}}"#
+    )
 }
 
 fn passing_substrate_report(profile: SubstrateProfile) -> SubstrateConformanceReport {
