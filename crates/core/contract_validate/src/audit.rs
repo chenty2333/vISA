@@ -447,6 +447,11 @@ fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bo
                                 package,
                                 artifact,
                                 Some(store),
+                            ) && extraction_event_matches_linked_hostcall(
+                                package,
+                                event,
+                                artifact_id,
+                                store,
                             )
                         })
                 })
@@ -461,6 +466,110 @@ fn substrate_event_has_concrete_extraction_context(
         && !event.operation.is_empty()
         && event.requester.as_deref().is_some_and(|requester| !requester.is_empty())
         && !event.explanation.is_empty()
+}
+
+fn extraction_event_matches_linked_hostcall(
+    package: &MigrationPackageManifest,
+    event: &artifact_manifest::SubstrateEventManifest,
+    artifact_id: u64,
+    store: u64,
+) -> bool {
+    package
+        .semantic
+        .code_objects
+        .iter()
+        .filter(|code| {
+            code.artifact_id == artifact_id
+                && code.bound_store == Some(store)
+                && code.bound_store_generation.is_some()
+        })
+        .any(|code| {
+            package
+                .semantic
+                .activation_records
+                .iter()
+                .filter(|activation| {
+                    activation.artifact == artifact_id
+                        && activation.code_object == code.id
+                        && code_matches_activation_store(code, activation)
+                })
+                .any(|activation| {
+                    package.semantic.hostcall_trace.iter().any(|hostcall| {
+                        hostcall.artifact == artifact_id
+                            && hostcall.store == store
+                            && hostcall.code_object == code.id
+                            && hostcall.activation == activation.id
+                            && hostcall_has_live_success_effect(hostcall)
+                            && hostcall_matches_activation_generation(code, activation, hostcall)
+                            && hostcall_matches_declared_abi(code, hostcall)
+                            && substrate_event_matches_hostcall(event, hostcall)
+                    })
+                })
+        })
+}
+
+fn substrate_event_matches_hostcall(
+    event: &artifact_manifest::SubstrateEventManifest,
+    hostcall: &artifact_manifest::HostcallTraceManifest,
+) -> bool {
+    substrate_authority_matches_hostcall_object(&event.authority, &hostcall.object)
+        && substrate_operation_matches_hostcall(
+            &event.operation,
+            &hostcall.object,
+            &hostcall.operation,
+        )
+}
+
+fn substrate_authority_matches_hostcall_object(authority: &str, object: &str) -> bool {
+    let authority = normalize_token(authority);
+    let object = normalize_token(object);
+    let expected = match object.as_str() {
+        "visaconsole" | "console" => "console",
+        "visatimer" | "timer" => "timer",
+        "visamemory" | "memory" | "guestmemory" => "guestmemory",
+        "visadmw" | "dmw" => "dmw",
+        "visammio" | "mmio" => "mmio",
+        "visadma" | "dma" => "dma",
+        "visairq" | "irq" => "irq",
+        "visasnapshot" | "snapshot" => "snapshot",
+        _ => object.as_str(),
+    };
+    authority == expected || authority == format!("{expected}authority")
+}
+
+fn substrate_operation_matches_hostcall(operation: &str, object: &str, hostcall_op: &str) -> bool {
+    let operation = normalize_token(operation);
+    let hostcall_op = normalize_token(hostcall_op);
+    operation == hostcall_op
+        || canonical_substrate_operation(object, hostcall_op.as_str())
+            .is_some_and(|canonical| operation == normalize_token(canonical))
+}
+
+fn canonical_substrate_operation(object: &str, operation: &str) -> Option<&'static str> {
+    let object = normalize_token(object);
+    match (object.as_str(), operation) {
+        ("visaconsole" | "console", "write") => Some("console_write"),
+        ("visatimer" | "timer", "now") => Some("now"),
+        ("visatimer" | "timer", "arm") => Some("arm_timer"),
+        ("visamemory" | "memory" | "guestmemory", "copyin") => Some("copyin"),
+        ("visamemory" | "memory" | "guestmemory", "copyout") => Some("copyout"),
+        ("visadmw" | "dmw", "map") => Some("map_user_window"),
+        ("visadmw" | "dmw", "unmap") => Some("unmap_user_window"),
+        ("visammio" | "mmio", "read32") => Some("mmio_read32"),
+        ("visammio" | "mmio", "write32") => Some("mmio_write32"),
+        ("visadma" | "dma", "alloc") => Some("dma_alloc"),
+        ("visadma" | "dma", "free") => Some("dma_free"),
+        ("visairq" | "irq", "ack") => Some("irq_ack"),
+        ("visairq" | "irq", "mask") => Some("irq_mask"),
+        ("visairq" | "irq", "unmask") => Some("irq_unmask"),
+        ("visasnapshot" | "snapshot", "enter") => Some("enter_snapshot_barrier"),
+        ("visasnapshot" | "snapshot", "exit") => Some("exit_snapshot_barrier"),
+        _ => None,
+    }
+}
+
+fn normalize_token(value: &str) -> String {
+    value.chars().filter(|ch| ch.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 fn lower_contains(value: &str, needle: &str) -> bool {

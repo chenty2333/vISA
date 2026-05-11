@@ -1257,6 +1257,39 @@ fn external_audit_rejects_real_target_extraction_for_unexecuted_store() {
 }
 
 #[test]
+fn external_audit_rejects_real_target_extraction_for_unmatched_hostcall() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:mmio:read32 requester=real-target-smoke".to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "mmio".to_owned(),
+        operation: "read32".to_owned(),
+        requester: Some("real-target-smoke".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: None,
+        explanation: "extraction event names an authority not used by the console hostcall"
+            .to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+    assert!(!report.ok());
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
+}
+
+#[test]
 fn external_audit_rejects_real_target_without_linked_portable_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
@@ -1302,19 +1335,20 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
     package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
     package.semantic.substrate_event_count = 1;
     package.semantic.roots.substrate_event_roots = vec![
-        "substrate-event:authority-extracted:mmio:read32 requester=real-target-smoke".to_owned(),
+        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=real-target-smoke".to_owned(),
     ];
     package.semantic.substrate_events = vec![SubstrateEventManifest {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
-        authority: "mmio".to_owned(),
-        operation: "read32".to_owned(),
+        authority: "ConsoleAuthority".to_owned(),
+        operation: "console_write".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
         artifact: Some(1),
         store: Some(1),
         capability: None,
-        explanation: "concrete substrate extraction event".to_owned(),
+        explanation: "concrete substrate extraction event for the linked console hostcall"
+            .to_owned(),
     }];
 
     let report = audit_migration_package(&package);
