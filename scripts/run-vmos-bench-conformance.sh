@@ -17,6 +17,10 @@ criterion_dir=${4:-target/criterion}
 
 mkdir -p "$output_dir"
 
+run_conformance() {
+    cargo run --quiet -p vmos-conformance -- "$@"
+}
+
 if [[ "${VMOS_SKIP_BENCH_RUN:-0}" != "1" ]]; then
     cargo bench -p vmos-bench
 fi
@@ -27,26 +31,31 @@ artifact_gate="$output_dir/vmos-performance-artifact-gate.json"
 combined_gate="$output_dir/vmos-performance-combined-gate.json"
 
 if [[ -n "$boundary" && -n "$profile" ]]; then
-    cargo run --quiet -p vmos-conformance -- \
-        performance-report-from-criterion "$criterion_dir" "$boundary" "$profile" \
+    run_conformance performance-report-from-criterion "$criterion_dir" "$boundary" "$profile" \
         >"$report"
 elif [[ -n "$boundary" ]]; then
-    cargo run --quiet -p vmos-conformance -- \
-        performance-report-from-criterion "$criterion_dir" "$boundary" \
+    run_conformance performance-report-from-criterion "$criterion_dir" "$boundary" \
         >"$report"
 elif [[ -n "$profile" ]]; then
-    cargo run --quiet -p vmos-conformance -- \
-        performance-report-from-criterion "$criterion_dir" "" "$profile" \
+    run_conformance performance-report-from-criterion "$criterion_dir" "" "$profile" \
         >"$report"
 else
-    cargo run --quiet -p vmos-conformance -- \
-        performance-report-from-criterion "$criterion_dir" \
+    run_conformance performance-report-from-criterion "$criterion_dir" \
         >"$report"
 fi
 
-cargo run --quiet -p vmos-conformance -- validate-report "$report" >"$gate"
-cargo run --quiet -p vmos-conformance -- validate-artifacts "$report" >"$artifact_gate"
-cargo run --quiet -p vmos-conformance -- validate-report-with-artifacts "$report" >"$combined_gate"
+if ! run_conformance validate-report "$report" >"$gate"; then
+    echo "Performance conformance report failed gate: $gate" >&2
+    exit 1
+fi
+if ! run_conformance validate-artifacts "$report" >"$artifact_gate"; then
+    echo "Performance evidence artifacts failed gate: $artifact_gate" >&2
+    exit 1
+fi
+if ! run_conformance validate-report-with-artifacts "$report" >"$combined_gate"; then
+    echo "Performance combined report/artifact gate failed: $combined_gate" >&2
+    exit 1
+fi
 
 echo "Performance conformance report written to $report"
 echo "Performance conformance gate written to $gate"
