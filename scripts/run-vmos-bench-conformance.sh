@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run VMOS host-side microbenchmarks and gate the resulting performance report
-# plus the raw Criterion artifacts referenced by that report.
-#
-# Usage:
-#   scripts/run-vmos-bench-conformance.sh [output-dir] [boundary-override] [profile] [criterion-dir]
-#
-# Set VMOS_SKIP_BENCH_RUN=1 to reuse an existing Criterion directory. This is
-# useful for validating parser/gate behavior with fixture estimates.
+usage() {
+    cat >&2 <<'EOF'
+usage: scripts/run-vmos-bench-conformance.sh [output-dir] [boundary-override] [profile] [criterion-dir]
+
+Runs VMOS host-side microbenchmarks and gates the resulting performance report
+plus the raw Criterion artifacts referenced by that report.
+
+Set VMOS_SKIP_BENCH_RUN=1 to reuse an existing Criterion directory. This is
+useful for validating parser/gate behavior with fixture estimates.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 2
+fi
 
 output_dir=${1:-target/vmos-bench-conformance}
 boundary=${2:-}
