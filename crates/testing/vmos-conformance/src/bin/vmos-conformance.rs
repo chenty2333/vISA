@@ -5,9 +5,9 @@ use std::{
 };
 
 use vmos_conformance::{
-    Boundary, LtpInvocation, LtpSubset, full_catalog, gate_report_json,
-    ltp_report_from_subset_logs, sample_ltp_report, sample_performance_report, sample_report,
-    validate_catalog, validate_report,
+    Boundary, LtpInvocation, LtpSubset, criterion_performance_report_from_estimates_dir,
+    full_catalog, gate_report_json, ltp_report_from_subset_logs, sample_ltp_report,
+    sample_performance_report, sample_report, validate_catalog, validate_report,
 };
 
 fn main() -> ExitCode {
@@ -57,6 +57,30 @@ fn main() -> ExitCode {
             };
             let profile = args.next();
             ltp_report_from_log_dir(&log_dir, boundary, profile)
+        }
+        "performance-report-from-criterion" => {
+            let Some(criterion_dir) = args.next() else {
+                return usage();
+            };
+            let boundary = match args.next() {
+                Some(value) => match Boundary::parse(&value) {
+                    Some(boundary) => boundary,
+                    None => {
+                        eprintln!("unknown boundary {value}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => Boundary::PortableArtifactExecution,
+            };
+            let profile = args.next();
+            let report = criterion_performance_report_from_estimates_dir(
+                format!("criterion-dir:{criterion_dir}"),
+                "vmos-conformance performance-report-from-criterion",
+                boundary,
+                profile,
+                &criterion_dir,
+            );
+            print_json(&report)
         }
         "validate-sample" => {
             let catalog = full_catalog();
@@ -145,7 +169,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

@@ -24,6 +24,7 @@ cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
+cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
 ```
 
@@ -46,3 +47,6 @@ Passing or failing performance results must carry concrete finite, non-negative
 numeric metrics. The current required keys are `latency_ns` for hostcall,
 activation, and snapshot/restore latency claims, plus `block_iops` and
 `network_packets_per_sec` for the block/network throughput claim.
+`performance-report-from-criterion` reads Criterion `estimates.json` files under
+`target/criterion`, maps known benchmark ids into those metrics, and reports
+missing benchmark outputs as explicit `not-run` results.

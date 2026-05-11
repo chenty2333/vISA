@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use contract_core::EvidenceBoundaryLevel;
 use serde::{Deserialize, Serialize};
@@ -606,6 +610,196 @@ pub fn required_performance_metrics(spec_id: &str) -> &'static [&'static str] {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CriterionMetricTransform {
+    MeanNs,
+    OpsPerSecond { ops_per_iter: f64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CriterionMetricSource {
+    spec_id: &'static str,
+    benchmark_id: &'static str,
+    metric: &'static str,
+    transform: CriterionMetricTransform,
+}
+
+const CRITERION_METRIC_SOURCES: &[CriterionMetricSource] = &[
+    CriterionMetricSource {
+        spec_id: "bench.hostcall.latency",
+        benchmark_id: "hostcall_dispatch_latency",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.activation.start",
+        benchmark_id: "artifact_load_activation_start",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.block.network",
+        benchmark_id: "block_request_submit_mutation_64",
+        metric: "block_iops",
+        transform: CriterionMetricTransform::OpsPerSecond { ops_per_iter: 64.0 },
+    },
+    CriterionMetricSource {
+        spec_id: "bench.block.network",
+        benchmark_id: "network_adapter_record_mutation",
+        metric: "network_packets_per_sec",
+        transform: CriterionMetricTransform::OpsPerSecond { ops_per_iter: 1.0 },
+    },
+    CriterionMetricSource {
+        spec_id: "bench.snapshot.restore",
+        benchmark_id: "portable_snapshot_restore_latency",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+];
+
+pub fn criterion_performance_report_from_estimates_dir(
+    target: impl Into<String>,
+    generated_by: impl Into<String>,
+    observed_boundary: Boundary,
+    observed_profile_override: Option<String>,
+    criterion_root: impl AsRef<Path>,
+) -> ConformanceReport {
+    let criterion_root = criterion_root.as_ref();
+    let results = performance_catalog()
+        .into_iter()
+        .map(|spec| {
+            criterion_performance_result_for_spec(
+                &spec,
+                observed_boundary,
+                observed_profile_override.clone().or_else(|| spec.required_profile.clone()),
+                criterion_root,
+            )
+        })
+        .collect();
+
+    ConformanceReport {
+        schema_version: REPORT_SCHEMA_VERSION.to_string(),
+        suite_id: "vmos-performance-benchmark".to_string(),
+        target: target.into(),
+        generated_by: generated_by.into(),
+        results,
+    }
+}
+
+fn criterion_performance_result_for_spec(
+    spec: &TestSpec,
+    observed_boundary: Boundary,
+    observed_profile: Option<String>,
+    criterion_root: &Path,
+) -> TestResult {
+    let sources = criterion_sources_for_spec(&spec.id);
+    let mut metrics = BTreeMap::new();
+    let mut missing = Vec::new();
+    let mut invalid = Vec::new();
+
+    for source in &sources {
+        match read_criterion_mean_ns(criterion_root, source.benchmark_id) {
+            Ok(mean_ns) => {
+                let value = match source.transform {
+                    CriterionMetricTransform::MeanNs => mean_ns,
+                    CriterionMetricTransform::OpsPerSecond { ops_per_iter } => {
+                        ops_per_iter * 1_000_000_000.0 / mean_ns
+                    }
+                };
+                if value.is_finite() && value >= 0.0 {
+                    metrics.insert(source.metric.to_string(), value);
+                } else {
+                    invalid.push(source.benchmark_id);
+                }
+            }
+            Err(CriterionEstimateError::Missing) => missing.push(source.benchmark_id),
+            Err(CriterionEstimateError::Invalid(_)) => invalid.push(source.benchmark_id),
+        }
+    }
+
+    let outcome = if invalid.is_empty() && missing.is_empty() {
+        Outcome::Pass
+    } else if metrics.is_empty() && invalid.is_empty() {
+        Outcome::NotRun
+    } else {
+        Outcome::Fail
+    };
+
+    let evidence = match outcome {
+        Outcome::Pass => {
+            format!("Criterion estimates collected for {}", sources_for_display(&sources))
+        }
+        Outcome::Fail => format!(
+            "Criterion estimates were incomplete for {}: missing=[{}] invalid=[{}]",
+            spec.id,
+            missing.join(","),
+            invalid.join(",")
+        ),
+        Outcome::NotRun => {
+            format!("Criterion estimates were not found for {}", sources_for_display(&sources))
+        }
+        Outcome::Skip => "Criterion benchmark was skipped".to_string(),
+    };
+    let remaining_uncertainty = match outcome {
+        Outcome::Pass => {
+            "Criterion estimates measure host-side benchmark runs; compare across targets only when runner environment and evidence boundary are recorded".to_string()
+        }
+        Outcome::Fail => {
+            "benchmark report is partial or contains invalid Criterion estimates".to_string()
+        }
+        Outcome::NotRun => {
+            "benchmark was not executed or Criterion output was not preserved".to_string()
+        }
+        Outcome::Skip => "benchmark skipped by runner configuration".to_string(),
+    };
+
+    TestResult {
+        spec_id: spec.id.clone(),
+        outcome,
+        observed_boundary,
+        observed_profile,
+        evidence,
+        remaining_uncertainty,
+        metrics,
+    }
+}
+
+fn criterion_sources_for_spec(spec_id: &str) -> Vec<CriterionMetricSource> {
+    CRITERION_METRIC_SOURCES.iter().copied().filter(|source| source.spec_id == spec_id).collect()
+}
+
+fn sources_for_display(sources: &[CriterionMetricSource]) -> String {
+    sources.iter().map(|source| source.benchmark_id).collect::<Vec<_>>().join(",")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CriterionEstimateError {
+    Missing,
+    Invalid(String),
+}
+
+fn read_criterion_mean_ns(
+    criterion_root: &Path,
+    benchmark_id: &str,
+) -> Result<f64, CriterionEstimateError> {
+    let path = criterion_root.join(benchmark_id).join("base").join("estimates.json");
+    let text = fs::read_to_string(&path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            CriterionEstimateError::Missing
+        } else {
+            CriterionEstimateError::Invalid(format!("{}: {}", path.display(), error))
+        }
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| CriterionEstimateError::Invalid(error.to_string()))?;
+    value
+        .get("mean")
+        .and_then(|mean| mean.get("point_estimate"))
+        .and_then(serde_json::Value::as_f64)
+        .filter(|mean_ns| mean_ns.is_finite() && *mean_ns > 0.0)
+        .ok_or_else(|| CriterionEstimateError::Invalid("missing mean.point_estimate".to_string()))
+}
+
 pub fn validate_catalog(specs: &[TestSpec]) -> ValidationReport {
     let mut findings = Vec::new();
     let mut ids = BTreeSet::new();
@@ -1023,6 +1217,11 @@ fn finding(code: &str, detail: impl Into<String>) -> ValidationFinding {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::*;
 
     #[test]
@@ -1326,6 +1525,80 @@ mod tests {
     }
 
     #[test]
+    fn criterion_performance_report_maps_estimates_to_required_metrics() {
+        let root = temp_criterion_dir("all-pass");
+        for source in CRITERION_METRIC_SOURCES {
+            write_criterion_estimate(&root, source.benchmark_id, 1_000.0);
+        }
+
+        let catalog = performance_catalog();
+        let report = criterion_performance_report_from_estimates_dir(
+            "unit-target",
+            "unit-test",
+            Boundary::PortableArtifactExecution,
+            None,
+            &root,
+        );
+        let validation = validate_report(&report, &catalog);
+        let gate = gate_report_json(&serde_json::to_vec(&report).unwrap(), &catalog);
+
+        assert!(validation.ok, "{:#?}", validation.findings);
+        assert!(gate.ok, "{gate:#?}");
+        assert!(report.results.iter().all(|result| result.outcome == Outcome::Pass));
+        let block_network =
+            report.results.iter().find(|result| result.spec_id == "bench.block.network").unwrap();
+        assert_eq!(block_network.metrics["block_iops"], 64_000_000.0);
+        assert_eq!(block_network.metrics["network_packets_per_sec"], 1_000_000.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn criterion_performance_report_marks_missing_estimates_not_run() {
+        let root = temp_criterion_dir("missing");
+        fs::create_dir_all(&root).unwrap();
+
+        let catalog = performance_catalog();
+        let report = criterion_performance_report_from_estimates_dir(
+            "unit-target",
+            "unit-test",
+            Boundary::PortableArtifactExecution,
+            None,
+            &root,
+        );
+        let gate = gate_report_json(&serde_json::to_vec(&report).unwrap(), &catalog);
+
+        assert!(report.results.iter().all(|result| result.outcome == Outcome::NotRun));
+        assert!(!gate.ok);
+        assert!(gate.outcome_findings.iter().any(|finding| finding.code == "result-not-run"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn criterion_performance_report_fails_partial_or_invalid_estimates() {
+        let root = temp_criterion_dir("partial-invalid");
+        write_criterion_estimate(&root, "block_request_submit_mutation_64", 1_000.0);
+        write_criterion_estimate(&root, "network_adapter_record_mutation", 0.0);
+
+        let report = criterion_performance_report_from_estimates_dir(
+            "unit-target",
+            "unit-test",
+            Boundary::PortableArtifactExecution,
+            None,
+            &root,
+        );
+        let block_network =
+            report.results.iter().find(|result| result.spec_id == "bench.block.network").unwrap();
+
+        assert_eq!(block_network.outcome, Outcome::Fail);
+        assert!(block_network.metrics.contains_key("block_iops"));
+        assert!(!block_network.metrics.contains_key("network_packets_per_sec"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn gate_report_json_rejects_malformed_json() {
         let gate = gate_report_json(b"{not-json", &full_catalog());
 
@@ -1460,5 +1733,32 @@ rename01 1 TFAIL : rename failed
             result.observed_boundary == Boundary::PortableArtifactExecution
                 && matches!(result.outcome, Outcome::Pass)
         }));
+    }
+
+    fn temp_criterion_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("vmos-conformance-{name}-{}-{nonce}", std::process::id()))
+    }
+
+    fn write_criterion_estimate(root: &Path, benchmark_id: &str, mean_ns: f64) {
+        let dir = root.join(benchmark_id).join("base");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("estimates.json"),
+            format!(
+                r#"{{
+  "mean": {{
+    "confidence_interval": {{
+      "confidence_level": 0.95,
+      "lower_bound": {mean_ns},
+      "upper_bound": {mean_ns}
+    }},
+    "point_estimate": {mean_ns},
+    "standard_error": 0.0
+  }}
+}}"#
+            ),
+        )
+        .unwrap();
     }
 }
