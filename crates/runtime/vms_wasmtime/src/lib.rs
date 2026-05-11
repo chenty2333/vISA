@@ -1804,5 +1804,11 @@ mod tests {
             .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
             .expect_err("run with trapping wasm must fail");
         assert!(matches!(err, WasmVisaError::Trap(_)), "expected Trap, got: {err}");
+        let evidence = executor.runtime().evidence_snapshot();
+        assert_eq!(evidence.contract_graph.traps.len(), 1);
+        assert_eq!(evidence.contract_graph.traps[0].attribution_status, "synthetic");
+        assert_eq!(evidence.hostcall_trace_count(), 0);
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
     }
 }
