@@ -7,7 +7,7 @@ use crate::{
     hash::sha256_hex,
     ltp::parse_ltp_results,
     types::{
-        ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, ValidationFinding,
+        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, ValidationFinding,
         ValidationReport,
     },
 };
@@ -81,7 +81,7 @@ fn resolve_artifact_path(artifact_root: &Path, uri: &str) -> PathBuf {
 
 fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result<(), String> {
     match kind {
-        EvidenceArtifactKind::ContractGraphSnapshot => validate_json_object(bytes),
+        EvidenceArtifactKind::ContractGraphSnapshot => validate_contract_graph_snapshot(bytes),
         EvidenceArtifactKind::SubstrateExtractionTrace => validate_extraction_trace(bytes),
         EvidenceArtifactKind::DeviceTrace => validate_device_trace(bytes),
         EvidenceArtifactKind::SerialLog => validate_non_empty_text(bytes, "serial log"),
@@ -90,10 +90,47 @@ fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result
     }
 }
 
-fn validate_json_object(bytes: &[u8]) -> Result<(), String> {
+fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
     let value: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    if value.is_object() { Ok(()) } else { Err("expected JSON object".to_string()) }
+    let object = value.as_object().ok_or_else(|| "expected JSON object".to_string())?;
+
+    let schema_version = object
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing schema_version".to_string())?;
+    if schema_version.trim().is_empty() {
+        return Err("schema_version is empty".to_string());
+    }
+
+    let claimed = object
+        .get("claimed_evidence_level")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing claimed_evidence_level".to_string())?;
+    if Boundary::parse(claimed).is_none() {
+        return Err(format!("unknown claimed_evidence_level {claimed}"));
+    }
+
+    for field in [
+        "artifacts",
+        "code_objects",
+        "stores",
+        "activations",
+        "hostcalls",
+        "traps",
+        "capabilities",
+        "waits",
+        "cleanup_transactions",
+        "tombstones",
+        "external_objects",
+        "explicit_edges",
+    ] {
+        if !object.get(field).is_some_and(serde_json::Value::is_array) {
+            return Err(format!("missing or non-array {field}"));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_extraction_trace(bytes: &[u8]) -> Result<(), String> {

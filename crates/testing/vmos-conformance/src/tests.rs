@@ -403,6 +403,77 @@ fn artifact_gate_validates_device_trace_event_identity() {
 }
 
 #[test]
+fn artifact_gate_validates_contract_graph_snapshot_schema() {
+    let root = temp_criterion_dir("contract-graph-snapshot-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let sha256 = write_file_with_sha256(
+        &snapshot,
+        br#"{
+  "schema_version": "contract-graph-snapshot-v0.1",
+  "claimed_evidence_level": "portable-artifact-execution",
+  "artifacts": [],
+  "code_objects": [],
+  "stores": [],
+  "activations": [],
+  "hostcalls": [],
+  "traps": [],
+  "capabilities": [],
+  "waits": [],
+  "cleanup_transactions": [],
+  "tombstones": [],
+  "external_objects": [],
+  "explicit_edges": []
+}"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.display().to_string(),
+        sha256,
+        description: "portable artifact contract graph snapshot".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_empty_contract_graph_snapshot_artifact() {
+    let root = temp_criterion_dir("empty-contract-graph-snapshot-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let sha256 = write_file_with_sha256(&snapshot, br#"{}"#).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.display().to_string(),
+        sha256,
+        description: "empty contract graph snapshot".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
     let root = temp_criterion_dir("bad-artifact");
     fs::create_dir_all(&root).unwrap();
