@@ -24,6 +24,7 @@ fi
 report="$output_dir/vmos-performance-report.json"
 gate="$output_dir/vmos-performance-gate.json"
 artifact_gate="$output_dir/vmos-performance-artifact-gate.json"
+combined_gate="$output_dir/vmos-performance-combined-gate.json"
 
 if [[ -n "$boundary" && -n "$profile" ]]; then
     cargo run --quiet -p vmos-conformance -- \
@@ -45,7 +46,9 @@ fi
 
 cargo run --quiet -p vmos-conformance -- validate-report "$report" >"$gate"
 cargo run --quiet -p vmos-conformance -- validate-artifacts "$report" >"$artifact_gate"
+cargo run --quiet -p vmos-conformance -- validate-report-with-artifacts "$report" >"$combined_gate"
 
 echo "Performance conformance report written to $report"
 echo "Performance conformance gate written to $gate"
 echo "Performance evidence artifact gate written to $artifact_gate"
+echo "Performance combined gate written to $combined_gate"

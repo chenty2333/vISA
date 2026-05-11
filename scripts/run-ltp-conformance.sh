@@ -12,10 +12,11 @@ then emits:
   <output-dir>/vmos-ltp-report.json
   <output-dir>/vmos-ltp-gate.json
   <output-dir>/vmos-ltp-artifact-gate.json
+  <output-dir>/vmos-ltp-combined-gate.json
 
 The script exits non-zero when runltp is missing, any runltp invocation fails,
-the generated conformance report does not pass the report gate, or any raw log
-artifact cannot be opened, hashed, or parsed.
+the generated conformance report does not pass the report gate, or any evidence
+artifact cannot be opened, hashed, parsed, or validated against the report.
 EOF
 }
 
@@ -61,6 +62,7 @@ done <"$plan_file"
 report="$output_dir/vmos-ltp-report.json"
 gate="$output_dir/vmos-ltp-gate.json"
 artifact_gate="$output_dir/vmos-ltp-artifact-gate.json"
+combined_gate="$output_dir/vmos-ltp-combined-gate.json"
 
 run_conformance ltp-report-from-logs "$logs_dir" "$boundary" "$profile" >"$report"
 if ! run_conformance validate-report "$report" >"$gate"; then
@@ -71,6 +73,10 @@ if ! run_conformance validate-artifacts "$report" >"$artifact_gate"; then
     echo "LTP evidence artifacts failed gate: $artifact_gate" >&2
     exit 1
 fi
+if ! run_conformance validate-report-with-artifacts "$report" >"$combined_gate"; then
+    echo "LTP combined report/artifact gate failed: $combined_gate" >&2
+    exit 1
+fi
 
 if [[ "$run_failures" -ne 0 ]]; then
     echo "$run_failures runltp invocation(s) failed even though report gate passed" >&2
@@ -79,3 +85,4 @@ fi
 
 echo "LTP conformance report passed: $report"
 echo "LTP evidence artifact gate passed: $artifact_gate"
+echo "LTP combined gate passed: $combined_gate"

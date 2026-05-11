@@ -101,6 +101,7 @@ scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution gue
     "$fake_runltp" >/dev/null
 test -s "$wrapper_output/vmos-ltp-gate.json"
 test -s "$wrapper_output/vmos-ltp-artifact-gate.json"
+test -s "$wrapper_output/vmos-ltp-combined-gate.json"
 run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
 run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" \
@@ -132,6 +133,7 @@ VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
     "$bench_output" "" "" "$criterion_root" >/dev/null
 test -s "$bench_output/vmos-performance-gate.json"
 test -s "$bench_output/vmos-performance-artifact-gate.json"
+test -s "$bench_output/vmos-performance-combined-gate.json"
 run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
 run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \
