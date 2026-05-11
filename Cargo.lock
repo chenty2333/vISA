@@ -1583,7 +1583,9 @@ dependencies = [
  "target_abi",
  "visa_profile",
  "vms_runtime",
+ "vms_wasmtime",
  "wasmtime",
+ "wat",
 ]
 
 [[package]]

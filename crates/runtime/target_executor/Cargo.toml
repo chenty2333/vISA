@@ -28,3 +28,5 @@ wasmtime = { workspace = true, features = ["runtime", "std"] }
 
 [dev-dependencies]
 visa_profile.workspace = true
+vms_wasmtime.workspace = true
+wat = "1"
