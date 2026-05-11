@@ -242,6 +242,10 @@ fn external_audit_view_v1(report: &ExternalMigrationAuditReport) -> serde_json::
             "frontend_personality_artifacts": report.frontend_personality_artifact_count,
             "linux_weighted_artifacts": report.linux_weighted_artifact_count,
         },
+        "substrate_evidence": {
+            "authority_extraction_events": report.authority_extraction_event_count,
+            "linked_authority_extraction_events": report.linked_authority_extraction_event_count,
+        },
         "findings": findings,
         "last_transition": {
             "finding_count": report.findings.len(),
@@ -257,7 +261,7 @@ fn print_external_audit_text(report: &ExternalMigrationAuditReport) {
         report.ok() && report.visa_native_portable_artifact_execution_claim;
     let real_target_substrate_gate = report.ok() && report.real_target_substrate_claim;
     println!(
-        "audit package={} ok={} target_executor_package_gate={} real_target_substrate_gate={} contract_valid={} replay_quiescent={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} findings={}",
+        "audit package={} ok={} target_executor_package_gate={} real_target_substrate_gate={} contract_valid={} replay_quiescent={} portable_artifact_execution={} visa_native_portable_artifact_execution={} real_target_substrate={} visa_native_artifacts={} frontend_personality_artifacts={} linux_weighted_artifacts={} authority_extraction_events={} linked_authority_extraction_events={} findings={}",
         report.package_id,
         report.ok(),
         target_executor_package_gate,
@@ -270,6 +274,8 @@ fn print_external_audit_text(report: &ExternalMigrationAuditReport) {
         report.visa_native_artifact_count,
         report.frontend_personality_artifact_count,
         report.linux_weighted_artifact_count,
+        report.authority_extraction_event_count,
+        report.linked_authority_extraction_event_count,
         report.findings.len()
     );
     for finding in &report.findings {

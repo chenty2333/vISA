@@ -1103,6 +1103,8 @@ fn external_audit_reports_real_target_claim_gaps() {
 
     assert!(report.real_target_substrate_claim);
     assert!(!report.ok());
+    assert_eq!(report.authority_extraction_event_count, 0);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
     assert!(report.errors().any(|finding| finding.code == "real-target-without-concrete-arch"));
     assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
 }
@@ -1165,6 +1167,8 @@ fn external_audit_rejects_generic_substrate_event_as_real_target_extraction() {
 
     assert!(report.real_target_substrate_claim);
     assert!(!report.ok());
+    assert_eq!(report.authority_extraction_event_count, 0);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
     assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
 }
 
@@ -1309,6 +1313,8 @@ fn external_audit_rejects_real_target_extraction_for_unmatched_hostcall() {
     assert!(report.real_target_substrate_claim);
     assert!(report.visa_native_portable_artifact_execution_claim);
     assert!(!report.ok());
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
     assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
 }
 
@@ -1379,6 +1385,8 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
     assert!(report.ok(), "{:#?}", report.findings);
     assert!(report.real_target_substrate_claim);
     assert!(report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 1);
     assert!(report.errors().next().is_none());
 }
 

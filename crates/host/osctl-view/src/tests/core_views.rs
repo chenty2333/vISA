@@ -339,6 +339,8 @@ fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
         visa_native_artifact_count: 1,
         frontend_personality_artifact_count: 0,
         linux_weighted_artifact_count: 0,
+        authority_extraction_event_count: 2,
+        linked_authority_extraction_event_count: 1,
         findings: vec![contract_validate::ExternalAuditFinding {
             severity: contract_validate::ExternalAuditSeverity::Info,
             code: "no-real-target-substrate-claim",
@@ -359,6 +361,8 @@ fn external_audit_view_v1_exposes_claims_artifact_mix_and_findings() {
     assert_eq!(view["gates"]["target_executor_package"], true);
     assert_eq!(view["gates"]["real_target_substrate"], false);
     assert_eq!(view["artifact_mix"]["visa_native_artifacts"], 1);
+    assert_eq!(view["substrate_evidence"]["authority_extraction_events"], 2);
+    assert_eq!(view["substrate_evidence"]["linked_authority_extraction_events"], 1);
     assert_eq!(view["findings"][0]["severity"], "info");
     assert_eq!(view["findings"][0]["code"], "no-real-target-substrate-claim");
     assert_eq!(view["last_transition"]["finding_count"], 1);
@@ -378,6 +382,8 @@ fn external_audit_view_v1_distinguishes_generic_ok_from_target_executor_gate() {
         visa_native_artifact_count: 0,
         frontend_personality_artifact_count: 1,
         linux_weighted_artifact_count: 0,
+        authority_extraction_event_count: 0,
+        linked_authority_extraction_event_count: 0,
         findings: vec![contract_validate::ExternalAuditFinding {
             severity: contract_validate::ExternalAuditSeverity::Warning,
             code: "portable-artifact-execution-without-visa-native-chain",

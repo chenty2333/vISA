@@ -43,6 +43,8 @@ pub struct ExternalMigrationAuditReport {
     pub visa_native_artifact_count: usize,
     pub frontend_personality_artifact_count: usize,
     pub linux_weighted_artifact_count: usize,
+    pub authority_extraction_event_count: usize,
+    pub linked_authority_extraction_event_count: usize,
     pub findings: Vec<ExternalAuditFinding>,
 }
 
@@ -156,6 +158,14 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         ));
     }
 
+    let authority_extraction_event_count = package
+        .semantic
+        .substrate_events
+        .iter()
+        .filter(|event| event.event_kind == "authority-extracted")
+        .count();
+    let linked_authority_extraction_event_count =
+        linked_real_target_extraction_evidence_count(package);
     let real_target_substrate_claim =
         package.substrate_boundary.native_state_policy == REAL_TARGET_SUBSTRATE_POLICY;
     if real_target_substrate_claim {
@@ -182,7 +192,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
                 "real target substrate claim target arch metadata is internally inconsistent",
             ));
         }
-        if !has_real_target_extraction_evidence(package) {
+        if linked_authority_extraction_event_count == 0 {
             findings.push(ExternalAuditFinding::new(
                 ExternalAuditSeverity::Error,
                 "real-target-without-extraction-events",
@@ -207,6 +217,8 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         visa_native_artifact_count,
         frontend_personality_artifact_count,
         linux_weighted_artifact_count,
+        authority_extraction_event_count,
+        linked_authority_extraction_event_count,
         findings,
     }
 }
@@ -458,32 +470,37 @@ fn trap_matches_declared_metadata(
     })
 }
 
-fn has_real_target_extraction_evidence(package: &MigrationPackageManifest) -> bool {
-    package.semantic.substrate_events.iter().any(|event| {
-        event.event_kind == "authority-extracted"
-            && substrate_event_has_concrete_extraction_context(event)
-            && event.store.is_some_and(|store| {
-                event.artifact.is_some_and(|artifact_id| {
-                    package
-                        .semantic
-                        .target_artifacts
-                        .iter()
-                        .find(|artifact| artifact.id == artifact_id)
-                        .is_some_and(|artifact| {
-                            artifact_has_linked_execution_chain_for_store(
-                                package,
-                                artifact,
-                                Some(store),
-                            ) && extraction_event_matches_linked_hostcall(
-                                package,
-                                event,
-                                artifact_id,
-                                store,
-                            )
-                        })
+fn linked_real_target_extraction_evidence_count(package: &MigrationPackageManifest) -> usize {
+    package
+        .semantic
+        .substrate_events
+        .iter()
+        .filter(|event| {
+            event.event_kind == "authority-extracted"
+                && substrate_event_has_concrete_extraction_context(event)
+                && event.store.is_some_and(|store| {
+                    event.artifact.is_some_and(|artifact_id| {
+                        package
+                            .semantic
+                            .target_artifacts
+                            .iter()
+                            .find(|artifact| artifact.id == artifact_id)
+                            .is_some_and(|artifact| {
+                                artifact_has_linked_execution_chain_for_store(
+                                    package,
+                                    artifact,
+                                    Some(store),
+                                ) && extraction_event_matches_linked_hostcall(
+                                    package,
+                                    event,
+                                    artifact_id,
+                                    store,
+                                )
+                            })
+                    })
                 })
-            })
-    })
+        })
+        .count()
 }
 
 fn substrate_event_has_concrete_extraction_context(
