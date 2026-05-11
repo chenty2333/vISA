@@ -164,21 +164,8 @@ fn ltp_report_from_log_dir_with_scope(
     let log_dir = log_dir.as_ref();
     let mut logs = Vec::new();
     for subset in LtpSubset::ALL {
-        let path = log_dir.join(format!("{}.log", subset.spec_id()));
-        match fs::read(&path) {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                let artifact = EvidenceArtifact {
-                    kind: EvidenceArtifactKind::LtpRawLog,
-                    uri: format!("{}.log", subset.spec_id()),
-                    sha256: sha256_hex(&bytes),
-                    description: format!("raw LTP result log for {}", subset.spec_id()),
-                };
-                let trace_artifact = read_optional_trace_artifact(log_dir, subset)?;
-                logs.push((subset, text, artifact, trace_artifact));
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        if let Some((text, artifacts)) = read_subset_log_bundle(log_dir, subset)? {
+            logs.push((subset, text, artifacts));
         }
     }
 
@@ -189,7 +176,7 @@ fn ltp_report_from_log_dir_with_scope(
             suite_id,
             observed_boundary,
             observed_profile_override,
-            logs.iter().map(|(subset, text, _artifact, _trace)| (*subset, text.as_str())),
+            logs.iter().map(|(subset, text, _artifacts)| (*subset, text.as_str())),
         )
     } else {
         let mut report = ltp_report_from_subset_logs(
@@ -197,20 +184,16 @@ fn ltp_report_from_log_dir_with_scope(
             generated_by,
             observed_boundary,
             observed_profile_override,
-            logs.iter().map(|(subset, text, _artifact, _trace)| (*subset, text.as_str())),
+            logs.iter().map(|(subset, text, _artifacts)| (*subset, text.as_str())),
         );
         report.suite_id = suite_id.to_string();
         report
     };
     for result in &mut report.results {
-        if let Some((_subset, _text, artifact, trace_artifact)) = logs
-            .iter()
-            .find(|(subset, _text, _artifact, _trace)| subset.spec_id() == result.spec_id)
+        if let Some((_subset, _text, artifacts)) =
+            logs.iter().find(|(subset, _text, _artifacts)| subset.spec_id() == result.spec_id)
         {
-            result.evidence_artifacts.push(artifact.clone());
-            if let Some(trace_artifact) = trace_artifact {
-                result.evidence_artifacts.push(trace_artifact.clone());
-            }
+            result.evidence_artifacts.extend(artifacts.iter().cloned());
         }
     }
     Ok(report)
@@ -245,22 +228,80 @@ pub fn ltp_subset_report_from_present_logs<'a>(
     }
 }
 
-fn read_optional_trace_artifact(
+fn read_subset_log_bundle(
     log_dir: &Path,
     subset: LtpSubset,
-) -> io::Result<Option<EvidenceArtifact>> {
-    let trace_name = format!("{}.vmos-trace.jsonl", subset.spec_id());
-    let path = log_dir.join(&trace_name);
-    match fs::read(&path) {
-        Ok(bytes) => Ok(Some(EvidenceArtifact {
+) -> io::Result<Option<(String, Vec<EvidenceArtifact>)>> {
+    let raw_names = matching_log_names(log_dir, subset, ".log", true)?;
+    if raw_names.is_empty() {
+        return Ok(None);
+    }
+
+    let mut text = String::new();
+    let mut artifacts = Vec::new();
+    for raw_name in raw_names {
+        let bytes = fs::read(log_dir.join(&raw_name))?;
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&bytes));
+        artifacts.push(EvidenceArtifact {
+            kind: EvidenceArtifactKind::LtpRawLog,
+            uri: raw_name,
+            sha256: sha256_hex(&bytes),
+            description: format!("raw LTP result log for {}", subset.spec_id()),
+        });
+    }
+
+    for trace_name in matching_log_names(log_dir, subset, ".vmos-trace.jsonl", false)? {
+        let bytes = fs::read(log_dir.join(&trace_name))?;
+        artifacts.push(EvidenceArtifact {
             kind: EvidenceArtifactKind::LinuxPersonalityTrace,
             uri: trace_name,
             sha256: sha256_hex(&bytes),
             description: format!("VMOS Linux personality execution trace for {}", subset.spec_id()),
-        })),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+        });
     }
+
+    Ok(Some((text, artifacts)))
+}
+
+fn matching_log_names(
+    log_dir: &Path,
+    subset: LtpSubset,
+    suffix: &str,
+    exclude_serial: bool,
+) -> io::Result<Vec<String>> {
+    let spec_id = subset.spec_id();
+    let exact = format!("{spec_id}{suffix}");
+    let prefix = format!("{spec_id}.");
+    let mut names = Vec::new();
+
+    match fs::read(&log_dir.join(&exact)) {
+        Ok(_) => names.push(exact.clone()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let entries = match fs::read_dir(log_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(names),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == exact || !name.starts_with(&prefix) || !name.ends_with(suffix) {
+            continue;
+        }
+        if exclude_serial && name.ends_with(".serial.log") {
+            continue;
+        }
+        names.push(name);
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 pub fn default_vmos_ltp_plan(
@@ -272,7 +313,16 @@ pub fn default_vmos_ltp_plan(
     [
         (LtpSubset::FsBasic, "open01"),
         (LtpSubset::MmMapping, "mmap01"),
+        (LtpSubset::MmMapping, "brk01"),
         (LtpSubset::SyscallsCore, "getpid01"),
+        (LtpSubset::SyscallsCore, "uname01"),
+        (LtpSubset::SyscallsCore, "getuid01"),
+        (LtpSubset::SyscallsCore, "gettid01"),
+        (LtpSubset::SyscallsCore, "read01"),
+        (LtpSubset::SyscallsCore, "write01"),
+        (LtpSubset::SchedTimers, "clock_gettime01"),
+        (LtpSubset::SchedTimers, "nanosleep01"),
+        (LtpSubset::NetSocket, "socket01"),
     ]
     .into_iter()
     .map(|(subset, case_id)| vmos_ltp_plan_entry(output_dir, binary_root, subset, case_id))
@@ -293,9 +343,17 @@ fn vmos_ltp_plan_entry(
         subset,
         case_id: case_id.to_string(),
         binary_path: path_string(binary_path),
-        output_log: path_string(logs_dir.join(format!("{}.log", subset.spec_id()))),
-        trace_log: path_string(logs_dir.join(format!("{}.vmos-trace.jsonl", subset.spec_id()))),
-        serial_log: path_string(logs_dir.join(format!("{}.serial.log", subset.spec_id()))),
+        output_log: path_string(logs_dir.join(format!("{}.{}.log", subset.spec_id(), case_id))),
+        trace_log: path_string(logs_dir.join(format!(
+            "{}.{}.vmos-trace.jsonl",
+            subset.spec_id(),
+            case_id
+        ))),
+        serial_log: path_string(logs_dir.join(format!(
+            "{}.{}.serial.log",
+            subset.spec_id(),
+            case_id
+        ))),
     }
 }
 

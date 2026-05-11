@@ -5,21 +5,23 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/run-vmos-ltp-conformance.sh <output-dir> <ltp-binary-root> [boundary] [profile] [single-runner]
 
-Runs the minimal VMOS-backed LTP subset by embedding each selected LTP testcase
+Runs the expanded VMOS-backed LTP subset by embedding each selected LTP testcase
 ELF into the VMOS Linux personality path and gating the resulting raw logs plus
 VMOS execution traces.
 
 Default subset:
 
   linux-ltp.fs.basic       open01
-  linux-ltp.mm.mapping     mmap01
-  linux-ltp.syscalls.core  getpid01
+  linux-ltp.mm.mapping     mmap01 brk01
+  linux-ltp.syscalls.core  getpid01 uname01 getuid01 gettid01 read01 write01
+  linux-ltp.sched.timers   clock_gettime01 nanosleep01
+  linux-ltp.net.socket     socket01
 
 Each testcase produces:
 
-  <output-dir>/logs/<spec>.log
-  <output-dir>/logs/<spec>.vmos-trace.jsonl
-  <output-dir>/logs/<spec>.serial.log
+  <output-dir>/logs/<spec>.<case>.log
+  <output-dir>/logs/<spec>.<case>.vmos-trace.jsonl
+  <output-dir>/logs/<spec>.<case>.serial.log
   <output-dir>/vmos-ltp-report.json
   <output-dir>/vmos-ltp-gate.json
   <output-dir>/vmos-ltp-artifact-gate.json

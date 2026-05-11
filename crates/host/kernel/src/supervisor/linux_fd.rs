@@ -51,7 +51,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             ServiceRoute::Vfs => {
                 self.require_capability("vfs_service", "vfs.namespace", "read")
                     .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
-                self.vfs.read_file(&path, false)?
+                self.vfs.read_file_range(&path, cursor, count)?
             }
             ServiceRoute::Procfs => {
                 self.require_capability("procfs_service", "procfs.tree", "read")
@@ -71,10 +71,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         };
 
-        let start = cursor.min(bytes.len());
-        let end = start.saturating_add(count as usize).min(bytes.len());
-        let chunk = bytes[start..end].to_vec();
-        self.set_fd_cursor(fd, end)?;
+        let chunk = match route {
+            ServiceRoute::Vfs => bytes,
+            ServiceRoute::Procfs | ServiceRoute::Devfs => {
+                let start = cursor.min(bytes.len());
+                let end = start.saturating_add(count as usize).min(bytes.len());
+                bytes[start..end].to_vec()
+            }
+        };
+        self.set_fd_cursor(fd, cursor.saturating_add(chunk.len()))?;
         Ok(chunk)
     }
 
@@ -90,6 +95,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(written)
     }
 
+    pub(crate) fn write_vfs_fd_bytes(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, i32> {
+        self.write_to_fd(fd, bytes).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn is_vfs_file_fd(&self, fd: u32) -> bool {
+        self.fd_entry(fd).is_some_and(|entry| {
+            matches!(
+                entry.resource,
+                FdResource::ServiceNode { route: ServiceRoute::Vfs, node: NodeKind::File, .. }
+            )
+        })
+    }
+
     pub(crate) fn truncate_fd(&mut self, fd: u32, len: usize) -> Result<(), i32> {
         let (route, node, cursor, path) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
@@ -102,6 +120,32 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.set_fd_cursor(fd, len).map_err(errno_from_service_error)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn seek_fd(&mut self, fd: u32, offset: i64, whence: u32) -> Result<i64, i32> {
+        const SEEK_SET: u32 = 0;
+        const SEEK_CUR: u32 = 1;
+        const SEEK_END: u32 = 2;
+
+        let (route, node, cursor, path) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if node == NodeKind::Directory {
+            return Err(ERR_EBADF);
+        }
+        let len = self.len_for_service_node(route, &path);
+        let base = match whence {
+            SEEK_SET => 0,
+            SEEK_CUR => cursor as i64,
+            SEEK_END => i64::try_from(len).map_err(|_| ERR_EINVAL)?,
+            _ => return Err(ERR_EINVAL),
+        };
+        let next = base.checked_add(offset).ok_or(ERR_EINVAL)?;
+        if next < 0 {
+            return Err(ERR_EINVAL);
+        }
+        let next = usize::try_from(next).map_err(|_| ERR_EINVAL)?;
+        self.set_fd_cursor(fd, next).map_err(errno_from_service_error)?;
+        Ok(next as i64)
     }
 
     pub(super) fn read_dir_entries(

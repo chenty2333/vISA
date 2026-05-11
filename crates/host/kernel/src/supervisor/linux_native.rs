@@ -19,8 +19,6 @@ const RESULT_BUFFER_CAPACITY: usize = 1024;
 const PENDING_SLOTS: usize = 8;
 const UTS_FIELD_LEN: usize = 65;
 
-static SLEEP_RESUMED: &[u8] = b"linux frontend: resumed after nanosleep\n";
-
 #[derive(Clone, Copy, Debug)]
 enum PendingOp {
     Empty,
@@ -83,14 +81,7 @@ impl LinuxFrontend {
 
     pub(crate) fn resume_wait(&mut self, token: u32) -> Result<u64, &'static str> {
         let step = match self.take_pending_op(token) {
-            Some(PendingOp::Sleep) => {
-                let (ptr, len) = self.write_arg_bytes(SLEEP_RESUMED)?;
-                self.reset_plan(
-                    PlanKind::Write,
-                    [vmos_abi::FD_STDOUT as u64, ptr as u64, len as u64, 0, 0, 0],
-                );
-                PackedStep::plan(PlanKind::Write)
-            }
+            Some(PendingOp::Sleep) => PackedStep::ready(0),
             Some(PendingOp::FutexWait) => PackedStep::ready(0),
             Some(PendingOp::EpollWait { epfd, max_events, .. }) => {
                 self.reset_plan(PlanKind::EpollReady, [epfd as u64, max_events as u64, 0, 0, 0, 0]);
@@ -161,7 +152,7 @@ impl LinuxFrontend {
 
     pub(crate) fn encode_uname(&mut self, release: &[u8]) -> Result<Vec<u8>, &'static str> {
         self.result_buffer.clear();
-        push_c_field(&mut self.result_buffer, b"VmOS");
+        push_c_field(&mut self.result_buffer, b"Linux");
         push_c_field(&mut self.result_buffer, b"prototype2");
         push_c_field(&mut self.result_buffer, release);
         push_c_field(&mut self.result_buffer, b"supervisor-world");

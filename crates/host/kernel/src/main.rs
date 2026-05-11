@@ -36,7 +36,7 @@ use x86_64::instructions::hlt;
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 #[cfg(target_os = "none")]
-const HEAP_SIZE: usize = 32 * 1024 * 1024;
+const HEAP_SIZE: usize = 64 * 1024 * 1024;
 #[cfg(target_os = "none")]
 static mut HEAP_SPACE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 

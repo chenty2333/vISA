@@ -1459,16 +1459,75 @@ fn vmos_ltp_subset_report_gates_with_raw_log_and_execution_trace() {
 }
 
 #[test]
-fn vmos_ltp_plan_uses_minimal_stable_fs_mm_syscall_cases() {
+fn vmos_ltp_subset_report_aggregates_per_case_logs() {
+    let root = temp_criterion_dir("vmos-ltp-per-case");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("linux-ltp.syscalls.core.getpid01.log"),
+        "getpid01 1 TPASS : getpid passed\n",
+    )
+    .unwrap();
+    fs::write(root.join("linux-ltp.syscalls.core.uname01.log"), "uname01 1 TPASS : uname passed\n")
+        .unwrap();
+    write_ltp_trace_file(
+        &root,
+        LtpSubset::SyscallsCore,
+        "getpid01",
+        "linux-ltp.syscalls.core.getpid01.vmos-trace.jsonl",
+        "linux-ltp.syscalls.core.getpid01.log",
+        "linux-ltp.syscalls.core.getpid01.serial.log",
+    );
+    write_ltp_trace_file(
+        &root,
+        LtpSubset::SyscallsCore,
+        "uname01",
+        "linux-ltp.syscalls.core.uname01.vmos-trace.jsonl",
+        "linux-ltp.syscalls.core.uname01.log",
+        "linux-ltp.syscalls.core.uname01.serial.log",
+    );
+
+    let report = ltp_vmos_subset_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &root,
+    )
+    .unwrap();
+    let validation = validate_report(&report, &linux_ltp_catalog());
+    let artifact_validation = validate_report_artifacts(&report, &root);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    assert!(artifact_validation.ok, "{:#?}", artifact_validation.findings);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].spec_id, LtpSubset::SyscallsCore.spec_id());
+    assert_eq!(report.results[0].metrics["ltp_cases_passed"], 2.0);
+    assert_eq!(report.results[0].evidence_artifacts.len(), 4);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn vmos_ltp_plan_uses_expanded_stable_fs_mm_syscall_timer_socket_cases() {
     let plan = default_vmos_ltp_plan("target/vmos-ltp", "target/ltp-bins");
 
-    assert_eq!(plan.len(), 3);
+    assert_eq!(plan.len(), 12);
     assert_eq!(plan[0].spec_id, LtpSubset::FsBasic.spec_id());
     assert_eq!(plan[0].case_id, "open01");
     assert_eq!(plan[1].spec_id, LtpSubset::MmMapping.spec_id());
     assert_eq!(plan[1].case_id, "mmap01");
-    assert_eq!(plan[2].spec_id, LtpSubset::SyscallsCore.spec_id());
-    assert_eq!(plan[2].case_id, "getpid01");
+    assert!(plan.iter().any(|entry| entry.case_id == "brk01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "getpid01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "uname01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "getuid01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "gettid01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "read01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "write01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "clock_gettime01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "nanosleep01"));
+    assert!(plan.iter().any(|entry| entry.case_id == "socket01"));
+    assert!(plan.iter().all(|entry| entry.output_log.contains(&entry.case_id)));
+    assert!(plan.iter().all(|entry| entry.trace_log.contains(&entry.case_id)));
+    assert!(plan.iter().all(|entry| entry.serial_log.contains(&entry.case_id)));
     assert!(plan.iter().all(|entry| entry.output_log.ends_with(".log")));
     assert!(plan.iter().all(|entry| entry.trace_log.ends_with(".vmos-trace.jsonl")));
     assert!(plan.iter().all(|entry| entry.serial_log.ends_with(".serial.log")));
@@ -1518,16 +1577,34 @@ fn sample_ltp_report_validates_against_ltp_catalog() {
 }
 
 fn write_ltp_trace(root: &Path, subset: LtpSubset, case_id: &str) {
+    write_ltp_trace_file(
+        root,
+        subset,
+        case_id,
+        &format!("{}.vmos-trace.jsonl", subset.spec_id()),
+        &format!("{}.log", subset.spec_id()),
+        &format!("{}.serial.log", subset.spec_id()),
+    );
+}
+
+fn write_ltp_trace_file(
+    root: &Path,
+    subset: LtpSubset,
+    case_id: &str,
+    trace_name: &str,
+    raw_name: &str,
+    serial_name: &str,
+) {
     let trace = format!(
-        "{{\"schema_version\":\"{}\",\"spec_id\":\"{}\",\"case_id\":\"{}\",\"test_binary\":\"target/ltp-bins/{}\",\"runner\":\"vmos-linux-personality\",\"entered_vmos_execution\":true,\"linux_personality_dispatch\":true,\"syscalls_observed\":1,\"service_syscalls_observed\":1,\"exit_status\":0,\"runner_status\":0,\"raw_log_uri\":\"{}.log\",\"serial_log_uri\":\"{}.serial.log\"}}\n",
+        "{{\"schema_version\":\"{}\",\"spec_id\":\"{}\",\"case_id\":\"{}\",\"test_binary\":\"target/ltp-bins/{}\",\"runner\":\"vmos-linux-personality\",\"entered_vmos_execution\":true,\"linux_personality_dispatch\":true,\"syscalls_observed\":1,\"service_syscalls_observed\":1,\"exit_status\":0,\"runner_status\":0,\"raw_log_uri\":\"{}\",\"serial_log_uri\":\"{}\"}}\n",
         LTP_VMOS_TRACE_SCHEMA_VERSION,
         subset.spec_id(),
         case_id,
         case_id,
-        subset.spec_id(),
-        subset.spec_id()
+        raw_name,
+        serial_name
     );
-    fs::write(root.join(format!("{}.vmos-trace.jsonl", subset.spec_id())), trace).unwrap();
+    fs::write(root.join(trace_name), trace).unwrap();
 }
 
 fn temp_criterion_dir(name: &str) -> PathBuf {

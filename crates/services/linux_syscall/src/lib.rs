@@ -21,7 +21,6 @@ const RESULT_BUFFER_CAPACITY: usize = 1024;
 const PENDING_SLOTS: usize = 8;
 const UTS_FIELD_LEN: usize = 65;
 
-static SLEEP_RESUMED: &[u8] = b"linux frontend: resumed after nanosleep\n";
 static mut ARG_BUFFER: [u8; ARG_BUFFER_CAPACITY] = [0; ARG_BUFFER_CAPACITY];
 static mut RESULT_BUFFER: [u8; RESULT_BUFFER_CAPACITY] = [0; RESULT_BUFFER_CAPACITY];
 static mut PLAN_ARGS: [u64; 6] = [0; 6];
@@ -97,20 +96,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
 #[unsafe(no_mangle)]
 pub extern "C" fn resume_wait(token: u32) -> u64 {
     match take_pending_op(token) {
-        Some(PendingOp::Sleep) => {
-            reset_plan(
-                PlanKind::Write,
-                [
-                    vmos_abi::FD_STDOUT as u64,
-                    SLEEP_RESUMED.as_ptr() as u64,
-                    SLEEP_RESUMED.len() as u64,
-                    0,
-                    0,
-                    0,
-                ],
-            );
-            PackedStep::plan(PlanKind::Write).raw()
-        }
+        Some(PendingOp::Sleep) => PackedStep::ready(0).raw(),
         Some(PendingOp::FutexWait) => PackedStep::ready(0).raw(),
         Some(PendingOp::EpollWait { epfd, max_events, .. }) => {
             reset_plan(PlanKind::EpollReady, [epfd as u64, max_events as u64, 0, 0, 0, 0]);

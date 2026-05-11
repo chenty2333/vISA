@@ -1,4 +1,4 @@
-use vmos_abi::{AF_INET, SOCK_STREAM};
+use vmos_abi::{AF_INET, AF_UNIX, SOCK_DGRAM, SOCK_STREAM};
 
 pub const NETWORK_CONTRACT_VERSION: &str = "vmos-network-contract-v2";
 pub const NETWORK_CONTRACT_ABI_VERSION: u32 = 2;
@@ -40,13 +40,23 @@ pub const VIRTIO_NET0_CONTRACT: PacketDeviceContract = PacketDeviceContract {
 };
 
 pub const fn validate_linux_socket_contract(domain: u32, ty: u32, protocol: u32) -> bool {
-    domain == AF_INET
-        && ty == SOCK_STREAM
-        && (protocol == 0 || protocol == PROTO_DEMO_TCP as u32 || protocol == PROTO_TCP as u32)
+    const PROTO_DEMO_TCP_U32: u32 = PROTO_DEMO_TCP as u32;
+    const PROTO_TCP_U32: u32 = PROTO_TCP as u32;
+    const PROTO_UDP_U32: u32 = PROTO_UDP as u32;
+
+    match (domain, ty, protocol) {
+        (AF_UNIX, SOCK_DGRAM, 0) => true,
+        (AF_INET, SOCK_DGRAM, 0 | PROTO_UDP_U32) => true,
+        (AF_INET, SOCK_STREAM, 0 | PROTO_DEMO_TCP_U32 | PROTO_TCP_U32) => true,
+        _ => false,
+    }
 }
 
 pub const fn canonical_socket_protocol(protocol: u32) -> u16 {
-    if protocol == 0 { PROTO_DEMO_TCP } else { protocol as u16 }
+    match protocol {
+        0 => PROTO_DEMO_TCP,
+        other => other as u16,
+    }
 }
 
 pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> bool {
@@ -67,8 +77,6 @@ pub const fn validate_packet_device_contract(contract: PacketDeviceContract) -> 
 
 #[cfg(test)]
 mod tests {
-    use vmos_abi::SOCK_DGRAM;
-
     use super::*;
 
     #[test]
@@ -79,10 +87,18 @@ mod tests {
     }
 
     #[test]
+    fn linux_socket_contract_includes_basic_ltp_socket_matrix() {
+        assert!(validate_linux_socket_contract(AF_UNIX, SOCK_DGRAM, 0));
+        assert!(validate_linux_socket_contract(AF_INET, SOCK_DGRAM, PROTO_UDP as u32));
+        assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, PROTO_TCP as u32));
+        assert!(!validate_linux_socket_contract(AF_INET, SOCK_STREAM, PROTO_UDP as u32));
+    }
+
+    #[test]
     fn linux_socket_contract_is_narrow_by_default() {
         assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, 0));
         assert!(validate_linux_socket_contract(AF_INET, SOCK_STREAM, PROTO_TCP as u32));
-        assert!(!validate_linux_socket_contract(AF_INET, SOCK_DGRAM, 0));
+        assert!(validate_linux_socket_contract(AF_INET, SOCK_DGRAM, 0));
         assert!(!validate_linux_socket_contract(AF_INET + 1, SOCK_STREAM, 0));
         assert_eq!(canonical_socket_protocol(0), PROTO_DEMO_TCP);
     }

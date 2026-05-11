@@ -147,7 +147,7 @@ mod tests {
         let mut state = LinuxSocketState::new();
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
-        assert_eq!(state.register_socket(2, AF_INET, SOCK_DGRAM, 0, 43), Err(ERR_EOPNOTSUPP));
+        assert!(state.register_socket(2, AF_INET, SOCK_DGRAM, 17, 43).is_ok());
         assert_eq!(state.register_socket(3, AF_INET + 1, SOCK_STREAM, 0, 44), Err(ERR_EOPNOTSUPP));
     }
 }

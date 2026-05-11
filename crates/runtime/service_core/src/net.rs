@@ -241,7 +241,7 @@ mod tests {
         let mut state = NetCoreState::new();
 
         assert!(state.create_socket(2, 1, 0).is_ok());
-        assert_eq!(state.create_socket(2, 2, 0), Err(ERR_EOPNOTSUPP));
+        assert!(state.create_socket(2, 2, crate::net_contract::PROTO_UDP as u32).is_ok());
         assert_eq!(state.create_socket(99, 1, 0), Err(ERR_EOPNOTSUPP));
     }
 }

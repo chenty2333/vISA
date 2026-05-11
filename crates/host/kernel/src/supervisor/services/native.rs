@@ -24,11 +24,26 @@ const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\n";
 const SANDBOX_DIR: &[u8] = b"hello.txt\nreadme.link\n";
 const README_LINK: &[u8] = b"/sandbox/hello.txt";
 
-const PROC_DIR: &[u8] = b"self\nmeminfo\nsys\n";
-const PROC_SELF_DIR: &[u8] = b"status\ncwd\n";
+const PROC_DIR: &[u8] = b"self\nmeminfo\ncpuinfo\nsys\n";
+const PROC_SELF_DIR: &[u8] = b"status\nstat\ncwd\n";
 const PROC_SYS_DIR: &[u8] = b"kernel\n";
 const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\n";
-const PROC_STATUS: &[u8] = b"Name:\tvmos-demo\nState:\tR (running)\nSupervisor:\tPrototype2\n";
+const PROC_STATUS: &[u8] = b"Name:\tvmos-ltp\n\
+State:\tR (running)\n\
+Tgid:\t4\n\
+Pid:\t4\n\
+PPid:\t2\n\
+Uid:\t0\t0\t0\t0\n\
+Gid:\t0\t0\t0\t0\n\
+Supervisor:\tPrototype2\n";
+const PROC_STAT: &[u8] = b"4 (vmos-ltp) R 2 4 4 0 -1 0 0 0 0 0 1 0 0 20 0 1 0 1 0 0\n";
+const PROC_CPUINFO: &[u8] = b"processor\t: 0\n\
+vendor_id\t: VMOS\n\
+cpu family\t: 6\n\
+model\t\t: 1\n\
+model name\t: VMOS Virtual CPU\n\
+cpu MHz\t\t: 1000.000\n\
+flags\t\t: fpu tsc cx8 cmov sse sse2 syscall nx lm constant_tsc\n";
 const PROC_PID_MAX: &[u8] = b"4194304\n";
 const PROC_MEMINFO: &[u8] = b"MemTotal:        65536 kB\n\
 MemFree:         32768 kB\n\
@@ -73,11 +88,19 @@ impl ConsoleService {
     }
 }
 
+struct VfsChunk {
+    start: usize,
+    len: usize,
+    fill: Option<u8>,
+    data: Vec<u8>,
+}
+
 struct VfsNode {
     path: Vec<u8>,
     kind: NodeKind,
     mode: u32,
-    data: Vec<u8>,
+    len: usize,
+    chunks: Vec<VfsChunk>,
 }
 
 pub(crate) struct VfsService {
@@ -109,9 +132,11 @@ impl VfsService {
             b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => {
                 lookup(ServiceRoute::Procfs, NodeKind::Directory)
             }
-            b"/proc/self/status" | b"/proc/meminfo" | b"/proc/sys/kernel/pid_max" => {
-                lookup(ServiceRoute::Procfs, NodeKind::File)
-            }
+            b"/proc/self/status"
+            | b"/proc/self/stat"
+            | b"/proc/meminfo"
+            | b"/proc/cpuinfo"
+            | b"/proc/sys/kernel/pid_max" => lookup(ServiceRoute::Procfs, NodeKind::File),
             b"/proc/self/cwd" => lookup(ServiceRoute::Procfs, NodeKind::Symlink),
             b"/dev" => lookup(ServiceRoute::Devfs, NodeKind::Directory),
             b"/dev/null" | b"/dev/zero" | b"/dev/pulse" => {
@@ -131,7 +156,7 @@ impl VfsService {
         }
         if let Some(node) = self.dynamic_node(path) {
             return match node.kind {
-                NodeKind::File => Ok(node.data.clone()),
+                NodeKind::File => Ok(node.read_range(0, node.len)),
                 NodeKind::Directory => errno(ERR_EISDIR),
                 _ => errno(ERR_EINVAL),
             };
@@ -188,7 +213,8 @@ impl VfsService {
             path: normalize_path(path),
             kind: NodeKind::Directory,
             mode: 0o040000 | (mode & 0o7777),
-            data: Vec::new(),
+            len: 0,
+            chunks: Vec::new(),
         });
         Ok(())
     }
@@ -202,7 +228,8 @@ impl VfsService {
             path: normalize_path(path),
             kind: NodeKind::File,
             mode: 0o100000 | (mode & 0o7777),
-            data: Vec::new(),
+            len: 0,
+            chunks: Vec::new(),
         });
         Ok(())
     }
@@ -261,15 +288,33 @@ impl VfsService {
         if node.kind != NodeKind::File {
             return errno(ERR_EISDIR);
         }
-        if cursor > node.data.len() {
-            node.data.resize(cursor, 0);
-        }
         let end = cursor.checked_add(bytes.len()).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
-        if end > node.data.len() {
-            node.data.resize(end, 0);
+        if end > node.len {
+            node.len = end;
         }
-        node.data[cursor..end].copy_from_slice(bytes);
+        node.chunks.push(VfsChunk::from_write(cursor, bytes));
         Ok(bytes.len())
+    }
+
+    pub(crate) fn read_file_range(
+        &mut self,
+        path: &[u8],
+        cursor: usize,
+        count: u32,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        let Some(node) = self.dynamic_node(path) else {
+            return self.read_file(path, false).map(|bytes| {
+                let start = cursor.min(bytes.len());
+                let end = start.saturating_add(count as usize).min(bytes.len());
+                bytes[start..end].to_vec()
+            });
+        };
+        if node.kind != NodeKind::File {
+            return errno(ERR_EISDIR);
+        }
+        let start = cursor.min(node.len);
+        let end = start.saturating_add(count as usize).min(node.len);
+        Ok(node.read_range(start, end))
     }
 
     pub(crate) fn truncate_file(
@@ -283,7 +328,7 @@ impl VfsService {
         if node.kind != NodeKind::File {
             return errno(ERR_EISDIR);
         }
-        node.data.resize(len, 0);
+        node.truncate(len);
         Ok(())
     }
 
@@ -300,7 +345,7 @@ impl VfsService {
     }
 
     pub(crate) fn len_for_path(&self, path: &[u8]) -> u64 {
-        self.dynamic_node(path).map(|node| node.data.len() as u64).unwrap_or(0)
+        self.dynamic_node(path).map(|node| node.len as u64).unwrap_or(0)
     }
 
     fn dynamic_node(&self, path: &[u8]) -> Option<&VfsNode> {
@@ -335,6 +380,65 @@ impl VfsService {
     }
 }
 
+impl VfsChunk {
+    fn from_write(start: usize, bytes: &[u8]) -> Self {
+        let fill = uniform_byte(bytes);
+        let data = if fill.is_some() { Vec::new() } else { bytes.to_vec() };
+        Self { start, len: bytes.len(), fill, data }
+    }
+
+    fn end(&self) -> usize {
+        self.start.saturating_add(self.len)
+    }
+}
+
+impl VfsNode {
+    fn read_range(&self, start: usize, end: usize) -> Vec<u8> {
+        if start >= end {
+            return Vec::new();
+        }
+        let mut out = alloc::vec![0; end - start];
+        for chunk in &self.chunks {
+            let overlap_start = core::cmp::max(start, chunk.start);
+            let overlap_end = core::cmp::min(end, chunk.end());
+            if overlap_start >= overlap_end {
+                continue;
+            }
+            let dst_start = overlap_start - start;
+            let dst_end = overlap_end - start;
+            if let Some(fill) = chunk.fill {
+                out[dst_start..dst_end].fill(fill);
+            } else {
+                let src_start = overlap_start - chunk.start;
+                let src_end = overlap_end - chunk.start;
+                out[dst_start..dst_end].copy_from_slice(&chunk.data[src_start..src_end]);
+            }
+        }
+        out
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.len = len;
+        self.chunks.retain_mut(|chunk| {
+            if chunk.start >= len {
+                return false;
+            }
+            if chunk.end() > len {
+                chunk.len = len - chunk.start;
+                if chunk.fill.is_none() {
+                    chunk.data.truncate(chunk.len);
+                }
+            }
+            true
+        });
+    }
+}
+
+fn uniform_byte(bytes: &[u8]) -> Option<u8> {
+    let first = *bytes.first()?;
+    if bytes.iter().all(|byte| *byte == first) { Some(first) } else { None }
+}
+
 pub(crate) struct ProcfsService;
 
 impl ProcfsService {
@@ -354,9 +458,11 @@ impl ProcfsService {
             b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => {
                 Ok(NodeKind::Directory)
             }
-            b"/proc/self/status" | b"/proc/meminfo" | b"/proc/sys/kernel/pid_max" => {
-                Ok(NodeKind::File)
-            }
+            b"/proc/self/status"
+            | b"/proc/self/stat"
+            | b"/proc/meminfo"
+            | b"/proc/cpuinfo"
+            | b"/proc/sys/kernel/pid_max" => Ok(NodeKind::File),
             b"/proc/self/cwd" => Ok(NodeKind::Symlink),
             _ => errno(ERR_ENOENT),
         }
@@ -372,7 +478,9 @@ impl ProcfsService {
         }
         match path {
             b"/proc/self/status" => Ok(PROC_STATUS.to_vec()),
+            b"/proc/self/stat" => Ok(PROC_STAT.to_vec()),
             b"/proc/meminfo" => Ok(PROC_MEMINFO.to_vec()),
+            b"/proc/cpuinfo" => Ok(PROC_CPUINFO.to_vec()),
             b"/proc/sys/kernel/pid_max" => Ok(PROC_PID_MAX.to_vec()),
             b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => errno(ERR_EISDIR),
             _ => errno(ERR_ENOENT),
@@ -393,8 +501,10 @@ impl ProcfsService {
             b"/proc/sys" => Ok(PROC_SYS_DIR.to_vec()),
             b"/proc/sys/kernel" => Ok(PROC_SYS_KERNEL_DIR.to_vec()),
             b"/proc/self/status"
+            | b"/proc/self/stat"
             | b"/proc/self/cwd"
             | b"/proc/meminfo"
+            | b"/proc/cpuinfo"
             | b"/proc/sys/kernel/pid_max" => errno(ERR_ENOTDIR),
             _ => errno(ERR_ENOENT),
         }
@@ -413,7 +523,9 @@ impl ProcfsService {
             b"/proc"
             | b"/proc/self"
             | b"/proc/self/status"
+            | b"/proc/self/stat"
             | b"/proc/meminfo"
+            | b"/proc/cpuinfo"
             | b"/proc/sys"
             | b"/proc/sys/kernel"
             | b"/proc/sys/kernel/pid_max" => errno(ERR_EINVAL),
