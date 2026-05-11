@@ -565,6 +565,37 @@ fn criterion_performance_plan_entries_match_metric_sources() {
 }
 
 #[test]
+fn criterion_performance_report_defaults_to_per_spec_boundaries() {
+    let root = temp_criterion_dir("per-spec-boundary");
+    for source in CRITERION_METRIC_SOURCES {
+        write_criterion_estimate(&root, source.benchmark_id, 1_000.0);
+    }
+
+    let report = criterion_performance_report_from_estimates_dir_with_boundary(
+        "unit-target",
+        "unit-test",
+        None,
+        None,
+        &root,
+    );
+    let hostcall =
+        report.results.iter().find(|result| result.spec_id == "bench.hostcall.latency").unwrap();
+    let block_network =
+        report.results.iter().find(|result| result.spec_id == "bench.block.network").unwrap();
+    let preemption = report
+        .results
+        .iter()
+        .find(|result| result.spec_id == "bench.scheduler.preemption")
+        .unwrap();
+
+    assert_eq!(hostcall.observed_boundary, Boundary::PortableArtifactExecution);
+    assert_eq!(block_network.observed_boundary, Boundary::SemanticModel);
+    assert_eq!(preemption.observed_boundary, Boundary::SemanticModel);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn criterion_performance_report_maps_estimates_to_required_metrics() {
     let root = temp_criterion_dir("all-pass");
     for source in CRITERION_METRIC_SOURCES {

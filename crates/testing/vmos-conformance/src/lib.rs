@@ -23,7 +23,8 @@ pub use ltp::{
 };
 pub use performance::{
     PerformancePlanEntry, criterion_performance_plan_entries,
-    criterion_performance_report_from_estimates_dir, required_performance_metrics,
+    criterion_performance_report_from_estimates_dir,
+    criterion_performance_report_from_estimates_dir_with_boundary, required_performance_metrics,
 };
 pub use report::attach_evidence_artifact;
 pub use samples::{sample_ltp_report, sample_performance_report, sample_report};

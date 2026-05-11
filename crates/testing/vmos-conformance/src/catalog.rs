@@ -238,48 +238,56 @@ pub fn performance_catalog() -> Vec<TestSpec> {
         perf_spec(
             "bench.hostcall.latency",
             "hostcall dispatch latency through vms_runtime and vms_wasmtime",
+            Boundary::PortableArtifactExecution,
             &[CapabilityDomain::Hostcall],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.activation.start",
             "artifact load and activation start latency",
+            Boundary::PortableArtifactExecution,
             &[CapabilityDomain::Artifact, CapabilityDomain::Activation],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.block.network",
             "block request and packet path throughput",
+            Boundary::SemanticModel,
             &[CapabilityDomain::Block, CapabilityDomain::Network],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.snapshot.restore",
             "portable snapshot subset and restore cost",
+            Boundary::PortableArtifactExecution,
             &[CapabilityDomain::Snapshot],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.scheduler.preemption",
             "scheduler preemption, decision, and activation resume mutation latency",
+            Boundary::SemanticModel,
             &[CapabilityDomain::Scheduler, CapabilityDomain::Activation],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.simd.context",
             "SIMD vector state record mutation latency",
+            Boundary::SemanticModel,
             &[CapabilityDomain::Simd],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.simd.speedup",
             "SIMD benchmark record mutation latency",
+            Boundary::SemanticModel,
             &[CapabilityDomain::Simd],
             "cargo bench -p vmos-bench",
         ),
         perf_spec(
             "bench.display.framebuffer",
             "framebuffer display record mutation latency",
+            Boundary::SemanticModel,
             &[CapabilityDomain::Display],
             "cargo bench -p vmos-bench",
         ),
@@ -336,12 +344,18 @@ fn ltp_spec(
     })
 }
 
-fn perf_spec(id: &str, title: &str, domains: &[CapabilityDomain], runner: &str) -> TestSpec {
+fn perf_spec(
+    id: &str,
+    title: &str,
+    minimum_boundary: Boundary,
+    domains: &[CapabilityDomain],
+    runner: &str,
+) -> TestSpec {
     spec(SpecDef {
         id,
         title,
         claim: ClaimKind::PerformanceBenchmark,
-        minimum_boundary: Boundary::PortableArtifactExecution,
+        minimum_boundary,
         required_profile: None,
         personality: None,
         domains,

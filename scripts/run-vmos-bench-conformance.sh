@@ -4,13 +4,13 @@ set -euo pipefail
 # Run VMOS host-side microbenchmarks and gate the resulting performance report.
 #
 # Usage:
-#   scripts/run-vmos-bench-conformance.sh [output-dir] [boundary] [profile] [criterion-dir]
+#   scripts/run-vmos-bench-conformance.sh [output-dir] [boundary-override] [profile] [criterion-dir]
 #
 # Set VMOS_SKIP_BENCH_RUN=1 to reuse an existing Criterion directory. This is
 # useful for validating parser/gate behavior with fixture estimates.
 
 output_dir=${1:-target/vmos-bench-conformance}
-boundary=${2:-portable-artifact-execution}
+boundary=${2:-}
 profile=${3:-}
 criterion_dir=${4:-target/criterion}
 
@@ -23,13 +23,21 @@ fi
 report="$output_dir/vmos-performance-report.json"
 gate="$output_dir/vmos-performance-gate.json"
 
-if [[ -n "$profile" ]]; then
+if [[ -n "$boundary" && -n "$profile" ]]; then
     cargo run --quiet -p vmos-conformance -- \
         performance-report-from-criterion "$criterion_dir" "$boundary" "$profile" \
         >"$report"
-else
+elif [[ -n "$boundary" ]]; then
     cargo run --quiet -p vmos-conformance -- \
         performance-report-from-criterion "$criterion_dir" "$boundary" \
+        >"$report"
+elif [[ -n "$profile" ]]; then
+    cargo run --quiet -p vmos-conformance -- \
+        performance-report-from-criterion "$criterion_dir" "" "$profile" \
+        >"$report"
+else
+    cargo run --quiet -p vmos-conformance -- \
+        performance-report-from-criterion "$criterion_dir" \
         >"$report"
 fi
 

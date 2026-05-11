@@ -30,10 +30,10 @@ cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-artifacts target/vmos-conformance.json .
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-plan-lines target/criterion
-cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
+cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion
 cargo run -p vmos-conformance -- attach-evidence-artifact target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
-scripts/run-vmos-bench-conformance.sh target/vmos-bench-run portable-artifact-execution
+scripts/run-vmos-bench-conformance.sh target/vmos-bench-run
 ```
 
 Executable LTP integration should consume the catalog entries whose ids start with
@@ -73,6 +73,11 @@ block/network throughput claim.
 missing benchmark outputs as explicit `not-run` results. `performance-plan-lines`
 exports the same benchmark-id to metric mapping for shell fixtures and external
 runners that need to prepare or archive Criterion outputs.
+When no boundary override is provided, each performance result uses its cataloged
+minimum boundary. Mixed reports therefore keep SemanticGraph-only mutation
+benchmarks separate from runtime/artifact-path benchmarks. A runner may pass an
+explicit stronger boundary only when every result in the run can legitimately
+claim that boundary.
 `scripts/run-vmos-bench-conformance.sh` is the standard wrapper for running
 `cargo bench -p vmos-bench`, preserving the generated performance report, and
 gating it through `validate-report`.

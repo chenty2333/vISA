@@ -7,9 +7,10 @@ use std::{
 use vmos_conformance::{
     Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
     criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
-    full_catalog, gate_report_json, ltp_report_from_log_dir as build_ltp_report_from_log_dir,
-    parse_report_json, sample_ltp_report, sample_performance_report, sample_report,
-    validate_catalog, validate_report, validate_report_artifacts,
+    criterion_performance_report_from_estimates_dir_with_boundary, full_catalog, gate_report_json,
+    ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json, sample_ltp_report,
+    sample_performance_report, sample_report, validate_catalog, validate_report,
+    validate_report_artifacts,
 };
 
 fn main() -> ExitCode {
@@ -73,7 +74,7 @@ fn main() -> ExitCode {
             let Some(criterion_dir) = args.next() else {
                 return usage();
             };
-            let boundary = match args.next() {
+            let boundary = match args.next().filter(|value| !value.trim().is_empty()) {
                 Some(value) => match Boundary::parse(&value) {
                     Some(boundary) => boundary,
                     None => {
@@ -81,9 +82,19 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 },
-                None => Boundary::PortableArtifactExecution,
+                None => {
+                    let profile = args.next().filter(|value| !value.trim().is_empty());
+                    let report = criterion_performance_report_from_estimates_dir_with_boundary(
+                        format!("criterion-dir:{criterion_dir}"),
+                        "vmos-conformance performance-report-from-criterion",
+                        None,
+                        profile,
+                        &criterion_dir,
+                    );
+                    return print_json(&report);
+                }
             };
-            let profile = args.next();
+            let profile = args.next().filter(|value| !value.trim().is_empty());
             let report = criterion_performance_report_from_estimates_dir(
                 format!("criterion-dir:{criterion_dir}"),
                 "vmos-conformance performance-report-from-criterion",

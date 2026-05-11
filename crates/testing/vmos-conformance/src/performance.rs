@@ -126,13 +126,29 @@ pub fn criterion_performance_report_from_estimates_dir(
     observed_profile_override: Option<String>,
     criterion_root: impl AsRef<Path>,
 ) -> ConformanceReport {
+    criterion_performance_report_from_estimates_dir_with_boundary(
+        target,
+        generated_by,
+        Some(observed_boundary),
+        observed_profile_override,
+        criterion_root,
+    )
+}
+
+pub fn criterion_performance_report_from_estimates_dir_with_boundary(
+    target: impl Into<String>,
+    generated_by: impl Into<String>,
+    observed_boundary_override: Option<Boundary>,
+    observed_profile_override: Option<String>,
+    criterion_root: impl AsRef<Path>,
+) -> ConformanceReport {
     let criterion_root = criterion_root.as_ref();
     let results = performance_catalog()
         .into_iter()
         .map(|spec| {
             criterion_performance_result_for_spec(
                 &spec,
-                observed_boundary,
+                observed_boundary_override.unwrap_or(spec.minimum_boundary),
                 observed_profile_override.clone().or_else(|| spec.required_profile.clone()),
                 criterion_root,
             )

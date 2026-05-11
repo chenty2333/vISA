@@ -110,7 +110,7 @@ done <"$tmp_root/performance-plan.tsv"
 
 bench_output="$tmp_root/vmos-bench-run"
 VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
-    "$bench_output" portable-artifact-execution "" "$criterion_root" >/dev/null
+    "$bench_output" "" "" "$criterion_root" >/dev/null
 run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
 run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \
