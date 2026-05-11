@@ -158,6 +158,7 @@ impl SubstrateConformanceReport {
             real_target_substrate_run: context.real_target.executed_on_real_target,
             real_target_concrete_arch: context.real_target.concrete_arch,
             real_target_extraction_events_observed: context.real_target.extraction_events_observed,
+            real_target_extraction_event_count: context.real_target.extraction_event_count,
             can_claim_real_target_substrate,
         }
     }
@@ -177,10 +178,18 @@ impl ConformanceEvidenceContext {
         concrete_arch: &'static str,
         extraction_events_observed: bool,
     ) -> Self {
+        let extraction_event_count = if extraction_events_observed { 1 } else { 0 };
+        Self::real_target_with_extraction_event_count(concrete_arch, extraction_event_count)
+    }
+
+    pub const fn real_target_with_extraction_event_count(
+        concrete_arch: &'static str,
+        extraction_event_count: usize,
+    ) -> Self {
         Self {
             real_target: RealTargetConformanceContext::verified(
                 concrete_arch,
-                extraction_events_observed,
+                extraction_event_count,
             ),
         }
     }
@@ -199,6 +208,7 @@ impl From<bool> for ConformanceEvidenceContext {
                 executed_on_real_target: real_target_substrate_run,
                 concrete_arch: None,
                 extraction_events_observed: false,
+                extraction_event_count: 0,
             },
         }
     }
@@ -209,6 +219,7 @@ pub struct RealTargetConformanceContext {
     pub executed_on_real_target: bool,
     pub concrete_arch: Option<&'static str>,
     pub extraction_events_observed: bool,
+    pub extraction_event_count: usize,
 }
 
 impl RealTargetConformanceContext {
@@ -217,14 +228,16 @@ impl RealTargetConformanceContext {
             executed_on_real_target: false,
             concrete_arch: None,
             extraction_events_observed: false,
+            extraction_event_count: 0,
         }
     }
 
-    pub const fn verified(concrete_arch: &'static str, extraction_events_observed: bool) -> Self {
+    pub const fn verified(concrete_arch: &'static str, extraction_event_count: usize) -> Self {
         Self {
             executed_on_real_target: true,
             concrete_arch: Some(concrete_arch),
-            extraction_events_observed,
+            extraction_events_observed: extraction_event_count > 0,
+            extraction_event_count,
         }
     }
 
@@ -248,6 +261,7 @@ pub struct SubstrateConformanceEvidence {
     pub real_target_substrate_run: bool,
     pub real_target_concrete_arch: Option<&'static str>,
     pub real_target_extraction_events_observed: bool,
+    pub real_target_extraction_event_count: usize,
     pub can_claim_real_target_substrate: bool,
 }
 
