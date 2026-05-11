@@ -237,6 +237,7 @@ impl WasmVisaExecutor {
             .map_err(|e| WasmVisaError::Wasmtime(format!("compile: {e}")))?;
         validate_module_hostcall_imports(&module, &specs)?;
 
+        let event_start = self.store.data().runtime.events().len();
         self.load_and_activate(input, entry)?;
 
         self.linker = Linker::new(&self.engine);
@@ -320,7 +321,7 @@ impl WasmVisaExecutor {
                 .clone()
                 .ok_or_else(|| WasmVisaError::Wasmtime("no activation".into()))?,
             hostcalls: data.hostcall_reports.clone(),
-            events: data.runtime.events().to_vec(),
+            events: data.runtime.events()[event_start..].to_vec(),
         })
     }
 }
@@ -1394,6 +1395,7 @@ mod tests {
             .run(VisaArtifactInput { bytes: &artifact, descriptor: console_descriptor(9) }, "entry")
             .expect("first run");
         assert_eq!(first.hostcalls.len(), 1);
+        assert!(!first.events.is_empty());
         assert_eq!(executor.hostcall_reports().len(), 1);
 
         let second = executor
@@ -1403,6 +1405,17 @@ mod tests {
             )
             .expect("second run");
         assert_eq!(second.hostcalls.len(), 1);
+        assert_eq!(second.events.len(), first.events.len());
+        assert!(second.events.iter().any(|event| {
+            matches!(event, vms_runtime::VisaRuntimeEvent::ArtifactParsed { artifact_id: 10, .. })
+        }));
+        assert!(!second.events.iter().any(|event| {
+            matches!(event, vms_runtime::VisaRuntimeEvent::ArtifactParsed { artifact_id: 9, .. })
+        }));
+        assert!(
+            executor.runtime().events().len() > second.events.len(),
+            "runtime event log remains cumulative while each execution report is scoped"
+        );
         assert_eq!(
             executor.hostcall_reports().len(),
             1,
