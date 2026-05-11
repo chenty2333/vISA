@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EBADF, ERR_EPERM, FD_STDOUT, PlanKind, ServiceRoute};
+use vmos_abi::{ERR_EBADF, ERR_ENOENT, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind, ServiceRoute};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -7,6 +7,14 @@ use super::{
 };
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(crate) fn write_console_bytes(&mut self, bytes: &[u8]) -> Result<(), i32> {
+        self.record_hostcall_plan("ring3_write", PlanKind::Write);
+        if self.require_capability("linux_syscall", "console.write", "write").is_err() {
+            return Err(ERR_EPERM);
+        }
+        self.console.write_bytes(bytes, false).map_err(|_| vmos_abi::ERR_EIO)
+    }
+
     pub(super) fn plan_write(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "write plan fd overflowed")?;
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "write plan ptr overflowed")?;
@@ -14,10 +22,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = self.linux.read_bytes(ptr, len)?;
 
         if fd == FD_STDOUT || fd == vmos_abi::FD_STDERR {
-            if self.require_capability("linux_syscall", "console.write", "write").is_err() {
-                return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+            if let Err(errno) = self.write_console_bytes(&bytes) {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
-            self.console.write_bytes(&bytes, false)?;
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
         }
 
@@ -47,6 +54,18 @@ impl<'engine> PrototypeRuntime<'engine> {
                     Err(ServiceCallError::Invalid(err)) => Err(err),
                 }
             }
+            FdResource::ServiceNode { route, node: NodeKind::File, .. }
+                if *route == ServiceRoute::Vfs =>
+            {
+                match self.write_to_fd(fd, &bytes) {
+                    Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                    Err(ServiceCallError::Errno(errno)) => {
+                        Ok(LinuxCallResult::Ret(-(errno as i64)))
+                    }
+                    Err(ServiceCallError::Trap(_)) => Err("vfs_service trapped during write"),
+                    Err(ServiceCallError::Invalid(err)) => Err(err),
+                }
+            }
             _ => Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
         }
     }
@@ -62,6 +81,30 @@ impl<'engine> PrototypeRuntime<'engine> {
                     cursor: 0,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
+            }
+            Err(ServiceCallError::Errno(ERR_ENOENT)) if plan.args[3] & 0o100 != 0 => {
+                let mode = u32::try_from(plan.args[4]).map_err(|_| "openat mode overflowed")?;
+                match self.vfs.create_file(&path, mode) {
+                    Ok(()) => {
+                        let fd = self.alloc_fd(FdEntry {
+                            resource: FdResource::ServiceNode {
+                                route: ServiceRoute::Vfs,
+                                node: NodeKind::File,
+                                path,
+                            },
+                            cursor: 0,
+                        });
+                        Ok(LinuxCallResult::Ret(fd as i64))
+                    }
+                    Err(ServiceCallError::Errno(errno)) => {
+                        Ok(LinuxCallResult::Ret(-(errno as i64)))
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("openat create: {}", reason);
+                        Err("vfs_service trapped during openat create")
+                    }
+                    Err(ServiceCallError::Invalid(err)) => Err(err),
+                }
             }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {

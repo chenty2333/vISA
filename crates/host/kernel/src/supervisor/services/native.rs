@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    EPOLL_CTL_ADD, EPOLL_CTL_DEL, ERR_EINVAL, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind,
-    PackedStep, ServiceRoute,
+    EPOLL_CTL_ADD, EPOLL_CTL_DEL, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR,
+    ERR_ENOTEMPTY, ERR_EPERM, NodeKind, PackedStep, ServiceRoute,
 };
 
 use super::super::{
@@ -20,14 +20,31 @@ pub(crate) use native_network::{
 };
 
 const HELLO_TXT: &[u8] = b"sandbox file: supervisor world says hello\n";
-const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\n";
+const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\n";
 const SANDBOX_DIR: &[u8] = b"hello.txt\nreadme.link\n";
 const README_LINK: &[u8] = b"/sandbox/hello.txt";
 
-const PROC_DIR: &[u8] = b"self\nmeminfo\n";
+const PROC_DIR: &[u8] = b"self\nmeminfo\nsys\n";
 const PROC_SELF_DIR: &[u8] = b"status\ncwd\n";
+const PROC_SYS_DIR: &[u8] = b"kernel\n";
+const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\n";
 const PROC_STATUS: &[u8] = b"Name:\tvmos-demo\nState:\tR (running)\nSupervisor:\tPrototype2\n";
-const PROC_MEMINFO: &[u8] = b"MemTotal:\t8192 kB\nMemFree:\t4096 kB\n";
+const PROC_PID_MAX: &[u8] = b"4194304\n";
+const PROC_MEMINFO: &[u8] = b"MemTotal:        65536 kB\n\
+MemFree:         32768 kB\n\
+MemAvailable:    49152 kB\n\
+Buffers:             0 kB\n\
+Cached:          16384 kB\n\
+SwapCached:          0 kB\n\
+Active:              0 kB\n\
+Inactive:            0 kB\n\
+SwapTotal:           0 kB\n\
+SwapFree:            0 kB\n\
+HugePages_Total:     0\n\
+HugePages_Free:      0\n\
+HugePages_Rsvd:      0\n\
+HugePages_Surp:      0\n\
+Hugepagesize:     2048 kB\n";
 const PROC_CWD: &[u8] = b"/sandbox";
 
 const DEV_DIR: &[u8] = b"null\nzero\npulse\n";
@@ -56,11 +73,20 @@ impl ConsoleService {
     }
 }
 
-pub(crate) struct VfsService;
+struct VfsNode {
+    path: Vec<u8>,
+    kind: NodeKind,
+    mode: u32,
+    data: Vec<u8>,
+}
+
+pub(crate) struct VfsService {
+    nodes: Vec<VfsNode>,
+}
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self)
+        Ok(Self { nodes: Vec::new() })
     }
 
     pub(crate) fn lookup(
@@ -71,13 +97,21 @@ impl VfsService {
         if inject_fault {
             return Err(ServiceCallError::Trap("vfs_service trapped"));
         }
+        if let Some(node) = self.dynamic_node(path) {
+            return lookup(ServiceRoute::Vfs, node.kind);
+        }
         match path {
             b"/" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
+            b"/tmp" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
             b"/sandbox" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
             b"/sandbox/hello.txt" => lookup(ServiceRoute::Vfs, NodeKind::File),
             b"/sandbox/readme.link" => lookup(ServiceRoute::Vfs, NodeKind::Symlink),
-            b"/proc" | b"/proc/self" => lookup(ServiceRoute::Procfs, NodeKind::Directory),
-            b"/proc/self/status" | b"/proc/meminfo" => lookup(ServiceRoute::Procfs, NodeKind::File),
+            b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => {
+                lookup(ServiceRoute::Procfs, NodeKind::Directory)
+            }
+            b"/proc/self/status" | b"/proc/meminfo" | b"/proc/sys/kernel/pid_max" => {
+                lookup(ServiceRoute::Procfs, NodeKind::File)
+            }
             b"/proc/self/cwd" => lookup(ServiceRoute::Procfs, NodeKind::Symlink),
             b"/dev" => lookup(ServiceRoute::Devfs, NodeKind::Directory),
             b"/dev/null" | b"/dev/zero" | b"/dev/pulse" => {
@@ -95,6 +129,13 @@ impl VfsService {
         if inject_fault {
             return Err(ServiceCallError::Trap("vfs_service trapped"));
         }
+        if let Some(node) = self.dynamic_node(path) {
+            return match node.kind {
+                NodeKind::File => Ok(node.data.clone()),
+                NodeKind::Directory => errno(ERR_EISDIR),
+                _ => errno(ERR_EINVAL),
+            };
+        }
         match path {
             b"/sandbox/hello.txt" => Ok(HELLO_TXT.to_vec()),
             b"/" | b"/sandbox" => errno(ERR_EISDIR),
@@ -109,6 +150,11 @@ impl VfsService {
     ) -> Result<Vec<u8>, ServiceCallError> {
         if inject_fault {
             return Err(ServiceCallError::Trap("vfs_service trapped"));
+        }
+        if path == b"/tmp"
+            || self.dynamic_node(path).is_some_and(|node| node.kind == NodeKind::Directory)
+        {
+            return Ok(self.dynamic_listing(path));
         }
         match path {
             b"/" => Ok(ROOT_DIR.to_vec()),
@@ -132,6 +178,161 @@ impl VfsService {
             _ => errno(ERR_ENOENT),
         }
     }
+
+    pub(crate) fn mkdir(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
+        if self.lookup(path, false).is_ok() {
+            return errno(ERR_EEXIST);
+        }
+        self.require_parent_dir(path)?;
+        self.nodes.push(VfsNode {
+            path: normalize_path(path),
+            kind: NodeKind::Directory,
+            mode: 0o040000 | (mode & 0o7777),
+            data: Vec::new(),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn create_file(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
+        if self.lookup(path, false).is_ok() {
+            return Ok(());
+        }
+        self.require_parent_dir(path)?;
+        self.nodes.push(VfsNode {
+            path: normalize_path(path),
+            kind: NodeKind::File,
+            mode: 0o100000 | (mode & 0o7777),
+            data: Vec::new(),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn unlink(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
+        let Some(index) = self
+            .nodes
+            .iter()
+            .position(|node| node.path.as_slice() == path && node.kind == NodeKind::File)
+        else {
+            return errno(ERR_ENOENT);
+        };
+        self.nodes.remove(index);
+        Ok(())
+    }
+
+    pub(crate) fn rmdir(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
+        let normalized = normalize_path(path);
+        let Some(index) = self.nodes.iter().position(|node| {
+            node.path.as_slice() == normalized.as_slice() && node.kind == NodeKind::Directory
+        }) else {
+            return errno(ERR_ENOENT);
+        };
+        if self.nodes.iter().any(|node| child_name(&normalized, &node.path).is_some()) {
+            return errno(ERR_ENOTEMPTY);
+        }
+        self.nodes.remove(index);
+        Ok(())
+    }
+
+    pub(crate) fn chmod(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
+        let Some(node) = self.dynamic_node_mut(path) else {
+            return if matches!(
+                path,
+                b"/" | b"/tmp" | b"/sandbox" | b"/sandbox/hello.txt" | b"/sandbox/readme.link"
+            ) {
+                Ok(())
+            } else {
+                errno(ERR_ENOENT)
+            };
+        };
+        let kind_bits = node.mode & 0o170000;
+        node.mode = kind_bits | (mode & 0o7777);
+        Ok(())
+    }
+
+    pub(crate) fn write_file(
+        &mut self,
+        path: &[u8],
+        cursor: usize,
+        bytes: &[u8],
+    ) -> Result<usize, ServiceCallError> {
+        let Some(node) = self.dynamic_node_mut(path) else {
+            return errno(ERR_ENOENT);
+        };
+        if node.kind != NodeKind::File {
+            return errno(ERR_EISDIR);
+        }
+        if cursor > node.data.len() {
+            node.data.resize(cursor, 0);
+        }
+        let end = cursor.checked_add(bytes.len()).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+        if end > node.data.len() {
+            node.data.resize(end, 0);
+        }
+        node.data[cursor..end].copy_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    pub(crate) fn truncate_file(
+        &mut self,
+        path: &[u8],
+        len: usize,
+    ) -> Result<(), ServiceCallError> {
+        let Some(node) = self.dynamic_node_mut(path) else {
+            return errno(ERR_ENOENT);
+        };
+        if node.kind != NodeKind::File {
+            return errno(ERR_EISDIR);
+        }
+        node.data.resize(len, 0);
+        Ok(())
+    }
+
+    pub(crate) fn mode_for_path(&self, path: &[u8], kind: NodeKind) -> u32 {
+        if let Some(node) = self.dynamic_node(path) {
+            return node.mode;
+        }
+        match kind {
+            NodeKind::Directory => 0o040755,
+            NodeKind::File => 0o100444,
+            NodeKind::Symlink => 0o120777,
+            NodeKind::CharDevice => 0o020666,
+        }
+    }
+
+    pub(crate) fn len_for_path(&self, path: &[u8]) -> u64 {
+        self.dynamic_node(path).map(|node| node.data.len() as u64).unwrap_or(0)
+    }
+
+    fn dynamic_node(&self, path: &[u8]) -> Option<&VfsNode> {
+        self.nodes.iter().find(|node| node.path.as_slice() == path)
+    }
+
+    fn dynamic_node_mut(&mut self, path: &[u8]) -> Option<&mut VfsNode> {
+        self.nodes.iter_mut().find(|node| node.path.as_slice() == path)
+    }
+
+    fn require_parent_dir(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
+        let Some(parent) = parent_path(path) else {
+            return errno(ERR_EPERM);
+        };
+        match self.lookup(&parent, false) {
+            Ok(info) if info.node == NodeKind::Directory => Ok(()),
+            Ok(_) => errno(ERR_ENOTDIR),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn dynamic_listing(&self, dir: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for node in &self.nodes {
+            let Some(name) = child_name(dir, &node.path) else {
+                continue;
+            };
+            out.extend_from_slice(name);
+            out.push(b'\n');
+        }
+        out
+    }
 }
 
 pub(crate) struct ProcfsService;
@@ -150,8 +351,12 @@ impl ProcfsService {
             return Err(ServiceCallError::Trap("procfs_service trapped"));
         }
         match path {
-            b"/proc" | b"/proc/self" => Ok(NodeKind::Directory),
-            b"/proc/self/status" | b"/proc/meminfo" => Ok(NodeKind::File),
+            b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => {
+                Ok(NodeKind::Directory)
+            }
+            b"/proc/self/status" | b"/proc/meminfo" | b"/proc/sys/kernel/pid_max" => {
+                Ok(NodeKind::File)
+            }
             b"/proc/self/cwd" => Ok(NodeKind::Symlink),
             _ => errno(ERR_ENOENT),
         }
@@ -168,7 +373,8 @@ impl ProcfsService {
         match path {
             b"/proc/self/status" => Ok(PROC_STATUS.to_vec()),
             b"/proc/meminfo" => Ok(PROC_MEMINFO.to_vec()),
-            b"/proc" | b"/proc/self" => errno(ERR_EISDIR),
+            b"/proc/sys/kernel/pid_max" => Ok(PROC_PID_MAX.to_vec()),
+            b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => errno(ERR_EISDIR),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -184,7 +390,12 @@ impl ProcfsService {
         match path {
             b"/proc" => Ok(PROC_DIR.to_vec()),
             b"/proc/self" => Ok(PROC_SELF_DIR.to_vec()),
-            b"/proc/self/status" | b"/proc/self/cwd" | b"/proc/meminfo" => errno(ERR_ENOTDIR),
+            b"/proc/sys" => Ok(PROC_SYS_DIR.to_vec()),
+            b"/proc/sys/kernel" => Ok(PROC_SYS_KERNEL_DIR.to_vec()),
+            b"/proc/self/status"
+            | b"/proc/self/cwd"
+            | b"/proc/meminfo"
+            | b"/proc/sys/kernel/pid_max" => errno(ERR_ENOTDIR),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -199,7 +410,13 @@ impl ProcfsService {
         }
         match path {
             b"/proc/self/cwd" => Ok(PROC_CWD.to_vec()),
-            b"/proc" | b"/proc/self" | b"/proc/self/status" | b"/proc/meminfo" => errno(ERR_EINVAL),
+            b"/proc"
+            | b"/proc/self"
+            | b"/proc/self/status"
+            | b"/proc/meminfo"
+            | b"/proc/sys"
+            | b"/proc/sys/kernel"
+            | b"/proc/sys/kernel/pid_max" => errno(ERR_EINVAL),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -500,4 +717,31 @@ fn lookup(route: ServiceRoute, node: NodeKind) -> Result<LookupInfo, ServiceCall
 
 fn errno<T>(errno: i32) -> Result<T, ServiceCallError> {
     Err(ServiceCallError::Errno(errno))
+}
+
+fn normalize_path(path: &[u8]) -> Vec<u8> {
+    if path.len() > 1 && path.ends_with(b"/") {
+        path[..path.len() - 1].to_vec()
+    } else {
+        path.to_vec()
+    }
+}
+
+fn parent_path(path: &[u8]) -> Option<Vec<u8>> {
+    if path == b"/" {
+        return None;
+    }
+    let trimmed =
+        if path.len() > 1 && path.ends_with(b"/") { &path[..path.len() - 1] } else { path };
+    let slash = trimmed.iter().rposition(|byte| *byte == b'/')?;
+    if slash == 0 { Some(b"/".to_vec()) } else { Some(trimmed[..slash].to_vec()) }
+}
+
+fn child_name<'a>(dir: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
+    let rest = if dir == b"/" {
+        path.strip_prefix(b"/")?
+    } else {
+        path.strip_prefix(dir)?.strip_prefix(b"/")?
+    };
+    if rest.is_empty() || rest.contains(&b'/') { None } else { Some(rest) }
 }

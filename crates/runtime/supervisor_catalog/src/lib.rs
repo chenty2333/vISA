@@ -252,7 +252,7 @@ const PROCFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
 }];
 const VFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     name: "vfs.namespace",
-    rights: &["lookup", "read", "list", "readlink"],
+    rights: &["lookup", "read", "write", "list", "readlink"],
     lifetime: "store",
 }];
 const DRIVER_VIRTIO_NET_CAPABILITIES: &[CapabilitySpec] = &[

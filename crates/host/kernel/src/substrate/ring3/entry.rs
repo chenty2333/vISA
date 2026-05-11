@@ -170,6 +170,7 @@ pub(crate) fn enter_user_mode(entry: u64, stack_top: u64) -> ! {
             "push rax",
             "push {user_code}",
             "push {user_entry}",
+            "xor edx, edx",
             "iretq",
             user_data = in(reg) user_data,
             user_stack = in(reg) stack_top,

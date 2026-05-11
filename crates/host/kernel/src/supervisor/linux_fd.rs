@@ -78,6 +78,32 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(chunk)
     }
 
+    pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {
+        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ServiceCallError::Errno(ERR_EBADF));
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write")
+            .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+        let written = self.vfs.write_file(&path, cursor, bytes)?;
+        self.set_fd_cursor(fd, cursor + written)?;
+        Ok(written)
+    }
+
+    pub(crate) fn truncate_fd(&mut self, fd: u32, len: usize) -> Result<(), i32> {
+        let (route, node, cursor, path) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs.truncate_file(&path, len).map_err(errno_from_service_error)?;
+        if cursor > len {
+            self.set_fd_cursor(fd, len).map_err(errno_from_service_error)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn read_dir_entries(
         &mut self,
         fd: u32,
@@ -302,6 +328,69 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.validate_resource_handle(handle).map_err(|_| ServiceCallError::Errno(ERR_EBADF))
     }
 
+    pub(crate) fn mkdir_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.mkdir(path, mode).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn unlink_path(&mut self, path: &[u8]) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.unlink(path).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn rmdir_path(&mut self, path: &[u8]) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.rmdir(path).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn chmod_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.chmod(path, mode).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn truncate_path(&mut self, path: &[u8], len: usize) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn stat_fd_abi(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
+        self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
+        let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
+        let FdResource::ServiceNode { route, node, path } = &entry.resource else {
+            return Err(ERR_EBADF);
+        };
+        let mode = self.mode_for_service_node(*route, *node, path);
+        let len = self.len_for_service_node(*route, path);
+        Ok(encode_stat_abi(mode, len))
+    }
+
+    pub(crate) fn stat_path_abi(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        let mode = self.mode_for_service_node(info.route, info.node, path);
+        let len = self.len_for_service_node(info.route, path);
+        Ok(encode_stat_abi(mode, len))
+    }
+
+    fn mode_for_service_node(&self, route: ServiceRoute, node: NodeKind, path: &[u8]) -> u32 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.mode_for_path(path, node),
+            ServiceRoute::Procfs => match node {
+                NodeKind::Directory => 0o040555,
+                NodeKind::File => 0o100444,
+                NodeKind::Symlink => 0o120777,
+                NodeKind::CharDevice => 0o020666,
+            },
+            ServiceRoute::Devfs => 0o020666,
+        }
+    }
+
+    fn len_for_service_node(&self, route: ServiceRoute, path: &[u8]) -> u64 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.len_for_path(path),
+            ServiceRoute::Procfs | ServiceRoute::Devfs => 0,
+        }
+    }
+
     fn service_fd_snapshot(
         &mut self,
         fd: u32,
@@ -317,7 +406,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn set_fd_cursor(&mut self, fd: u32, cursor: usize) -> Result<(), ServiceCallError> {
+    pub(super) fn set_fd_cursor(&mut self, fd: u32, cursor: usize) -> Result<(), ServiceCallError> {
         let entry = self
             .fd_table
             .get_mut(fd as usize)
@@ -360,4 +449,31 @@ fn join_path(base: &[u8], name: &[u8]) -> Vec<u8> {
     }
     path.extend_from_slice(name);
     path
+}
+
+fn errno_from_service_error(err: ServiceCallError) -> i32 {
+    match err {
+        ServiceCallError::Errno(errno) => errno,
+        ServiceCallError::Trap(_) | ServiceCallError::Invalid(_) => ERR_EINVAL,
+    }
+}
+
+fn encode_stat_abi(mode: u32, size: u64) -> Vec<u8> {
+    let mut out = alloc::vec![0u8; 144];
+    write_u64(&mut out, 0, 1);
+    write_u64(&mut out, 8, 1);
+    write_u64(&mut out, 16, 1);
+    write_u32(&mut out, 24, mode);
+    write_u64(&mut out, 48, size);
+    write_u64(&mut out, 56, 4096);
+    write_u64(&mut out, 64, size.div_ceil(512));
+    out
+}
+
+fn write_u32(out: &mut [u8], offset: usize, value: u32) {
+    out[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(out: &mut [u8], offset: usize, value: u64) {
+    out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }

@@ -3,16 +3,25 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
-    SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
-    SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT,
-    SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext,
+    ERR_EBADF, ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, FD_STDERR, FD_STDOUT,
+    SYS_ACCEPT, SYS_ACCESS, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CHDIR, SYS_CHMOD,
+    SYS_CHOWN, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL,
+    SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKOPT,
+    SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LCHOWN, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MMAP, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
+    SYS_OPENAT, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_STAT, SYS_STATFS,
+    SYS_TRUNCATE, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
+    SyscallContext,
 };
+use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
 use super::{
     context::{ActiveUserContext, active_context, install_active_context},
-    loader::load_demo_program,
+    loader::{USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, load_demo_program},
 };
 use crate::{
     qemu, serial_println,
@@ -21,16 +30,28 @@ use crate::{
 };
 
 const AT_FDCWD: i64 = -100;
+const AT_REMOVEDIR: u64 = 0x200;
 const PATH_MAX: usize = 256;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const EPOLL_EVENT_SIZE: u64 = 12;
+const LINUX_SIGSET_BYTES: usize = 8;
+const LINUX_SIGACTION_BYTES: usize = 32;
+const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
     let image = load_demo_program(boot_info)?;
     let supervisor = runtime()?;
     let task_id = supervisor.allocate_task();
-    let mut context = ActiveUserContext::new(supervisor, image.regions, task_id);
+    let mut context = ActiveUserContext::new(
+        supervisor,
+        image.regions,
+        task_id,
+        USER_BRK_BASE,
+        USER_BRK_END,
+        USER_MMAP_ALLOC_BASE,
+        USER_MMAP_END,
+    );
     install_active_context(&mut context);
 
     crate::kinfo!("entering ring3 ELF demo");
@@ -55,8 +76,46 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     match frame.rax {
         SYS_WRITE => sys_write(frame),
         SYS_READ => sys_read(frame),
+        SYS_OPEN => sys_open(frame),
         SYS_OPENAT => sys_openat(frame),
         SYS_CLOSE => sys_close(frame),
+        SYS_FSTAT => sys_fstat(frame),
+        SYS_STAT | SYS_LSTAT => sys_stat(frame),
+        SYS_NEWFSTATAT => sys_newfstatat(frame),
+        SYS_ACCESS => sys_access(frame),
+        SYS_CHDIR => sys_chdir(frame),
+        SYS_MKDIR => sys_mkdir(frame),
+        SYS_MKDIRAT => sys_mkdirat(frame),
+        SYS_RMDIR => sys_rmdir(frame),
+        SYS_UNLINK => sys_unlink(frame),
+        SYS_UNLINKAT => sys_unlinkat(frame),
+        SYS_CHMOD => sys_chmod(frame),
+        SYS_FCHMODAT => sys_fchmodat(frame),
+        SYS_STATFS => sys_statfs(frame),
+        SYS_FSTATFS => sys_fstatfs(frame),
+        SYS_TRUNCATE => sys_truncate(frame),
+        SYS_FTRUNCATE => sys_ftruncate(frame),
+        SYS_GETPID | SYS_GETTID => Ok(active_context().task_id as i64),
+        SYS_GETPPID => Ok(2),
+        SYS_GETUID | SYS_GETEUID | SYS_GETGID | SYS_GETEGID => Ok(0),
+        SYS_CHOWN | SYS_LCHOWN => sys_chown(frame),
+        SYS_FCHOWNAT => sys_fchownat(frame),
+        SYS_BRK => Ok(active_context().set_program_break(frame.rdi) as i64),
+        SYS_SET_TID_ADDRESS => Ok(active_context().task_id as i64),
+        SYS_SET_ROBUST_LIST => Ok(0),
+        SYS_RSEQ => Ok(0),
+        SYS_PRLIMIT64 => sys_prlimit64(frame),
+        SYS_GETRANDOM => sys_getrandom(frame),
+        SYS_CLOCK_GETTIME => sys_clock_gettime(frame),
+        SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(frame),
+        SYS_RT_SIGACTION => sys_rt_sigaction(frame),
+        SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
+        SYS_ALARM => Ok(0),
+        SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
+        SYS_WAIT4 => sys_wait4(frame),
+        SYS_SETPGID => Ok(0),
+        SYS_KILL => Ok(0),
+        SYS_IOCTL => Ok(0),
         SYS_EPOLL_CREATE1 => sys_epoll_create1(frame),
         SYS_EPOLL_CTL => sys_epoll_ctl(frame),
         SYS_EPOLL_WAIT => sys_epoll_wait(frame),
@@ -70,7 +129,10 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETSOCKOPT => sys_getsockopt(frame),
         SYS_FCNTL => sys_fcntl(frame),
         SYS_MMAP => sys_mmap(frame),
+        SYS_MPROTECT => Ok(0),
+        SYS_MSYNC => Ok(0),
         SYS_MUNMAP => sys_munmap(frame),
+        SYS_ARCH_PRCTL => sys_arch_prctl(frame),
         SYS_FUTEX => sys_futex(frame),
         SYS_GETDENTS64 => sys_getdents64(frame),
         SYS_GETCWD => sys_getcwd(frame),
@@ -78,12 +140,18 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_UNAME => sys_uname(frame),
         SYS_NANOSLEEP => sys_nanosleep(frame),
         SYS_EXIT | SYS_EXIT_GROUP => handle_exit(frame.rdi as i32),
-        _ => Err(ERR_ENOSYS),
+        _ => {
+            crate::kwarn!("ring3 unsupported syscall {}", frame.rax);
+            Err(ERR_ENOSYS)
+        }
     }
 }
 
 fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if fd == FD_STDOUT || fd == FD_STDERR {
+        return sys_console_write(frame);
+    }
     let bytes = user_lease(frame.rsi, frame.rdx, false)?;
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor
@@ -100,6 +168,21 @@ fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_console_write(frame: &SyscallFrame) -> Result<i64, i32> {
+    let len = frame.rdx;
+    if len == 0 {
+        return Ok(0);
+    }
+    if len > i64::MAX as u64 {
+        return Err(ERR_EINVAL);
+    }
+    validate_user_range(frame.rsi, len, false)?;
+    let visible_len = core::cmp::min(len, CONSOLE_WRITE_PREVIEW_LIMIT);
+    let bytes = user_lease(frame.rsi, visible_len, false)?;
+    active_context().supervisor.write_console_bytes(bytes.bytes().map_err(map_dmw_fault)?)?;
+    Ok(len as i64)
 }
 
 fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -125,10 +208,18 @@ fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_openat(frame: &SyscallFrame) -> Result<i64, i32> {
-    let flags = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
-    let mode = u32::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
-    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
-    let resolved = resolve_path(frame.rdi as i64, &path)?;
+    sys_openat_inner(linux_fd_arg(frame.rdi), frame.rsi, frame.rdx, frame.r10)
+}
+
+fn sys_open(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_openat_inner(AT_FDCWD, frame.rdi, frame.rsi, frame.rdx)
+}
+
+fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) -> Result<i64, i32> {
+    let flags = u32::try_from(flags_raw).map_err(|_| ERR_EINVAL)?;
+    let mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
+    let path = read_user_c_string(path_ptr, PATH_MAX)?;
+    let resolved = resolve_path(dirfd, &path)?;
 
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
@@ -137,7 +228,7 @@ fn sys_openat(frame: &SyscallFrame) -> Result<i64, i32> {
             "ring3_openat",
             SyscallContext::new(
                 SYS_OPENAT,
-                [frame.rdi, ptr as u64, len as u64, flags as u64, mode as u64, 0],
+                [dirfd as u64, ptr as u64, len as u64, flags as u64, mode as u64, 0],
             ),
         )
         .map_err(|_| ERR_EINVAL)?
@@ -146,6 +237,228 @@ fn sys_openat(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_fstat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let encoded = active_context().supervisor.stat_fd_abi(fd).map_err(|errno| {
+        crate::kwarn!("ring3_fstat failed fd={} errno={}", fd, errno);
+        errno
+    })?;
+    write_user_bytes(frame.rsi, &encoded)?;
+    Ok(0)
+}
+
+fn sys_stat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
+        crate::kwarn!("ring3_stat failed path={} errno={}", display_path(&resolved), errno);
+        errno
+    })?;
+    write_user_bytes(frame.rsi, &encoded)?;
+    Ok(0)
+}
+
+fn sys_newfstatat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
+        crate::kwarn!(
+            "ring3_newfstatat failed dirfd={} path={} errno={}",
+            linux_fd_arg(frame.rdi),
+            display_path(&resolved),
+            errno
+        );
+        errno
+    })?;
+    write_user_bytes(frame.rdx, &encoded)?;
+    Ok(0)
+}
+
+fn sys_access(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.stat_path_abi(&resolved)?;
+    Ok(0)
+}
+
+fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32)?;
+    Ok(0)
+}
+
+fn sys_mkdirat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32)?;
+    Ok(0)
+}
+
+fn sys_unlink(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.unlink_path(&resolved)?;
+    Ok(0)
+}
+
+fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    if frame.rdx & AT_REMOVEDIR != 0 {
+        active_context().supervisor.rmdir_path(&resolved)?;
+    } else {
+        active_context().supervisor.unlink_path(&resolved)?;
+    }
+    Ok(0)
+}
+
+fn sys_rmdir(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.rmdir_path(&resolved)?;
+    Ok(0)
+}
+
+fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
+        return Err(vmos_abi::ERR_ENOTDIR);
+    }
+    active_context().set_cwd(resolved);
+    Ok(0)
+}
+
+fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.stat_path_abi(&resolved)?;
+    Ok(0)
+}
+
+fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    active_context().supervisor.stat_path_abi(&resolved)?;
+    Ok(0)
+}
+
+fn sys_chmod(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.chmod_path(&resolved, frame.rsi as u32)?;
+    Ok(0)
+}
+
+fn sys_fchmodat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    active_context().supervisor.chmod_path(&resolved, frame.rdx as u32)?;
+    Ok(0)
+}
+
+fn sys_statfs(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    active_context().supervisor.stat_path_abi(&resolved)?;
+    write_user_bytes(frame.rsi, &statfs_abi())?;
+    Ok(0)
+}
+
+fn sys_fstatfs(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.stat_fd_abi(fd)?;
+    write_user_bytes(frame.rsi, &statfs_abi())?;
+    Ok(0)
+}
+
+fn sys_truncate(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.truncate_path(&resolved, len)?;
+    Ok(0)
+}
+
+fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.truncate_fd(fd, len)?;
+    Ok(0)
+}
+
+fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.r10 != 0 {
+        let mut encoded = [0u8; 16];
+        let soft = u64::MAX;
+        let hard = u64::MAX;
+        encoded[..8].copy_from_slice(&soft.to_le_bytes());
+        encoded[8..].copy_from_slice(&hard.to_le_bytes());
+        write_user_bytes(frame.r10, &encoded)?;
+    }
+    Ok(0)
+}
+
+fn sys_getrandom(frame: &SyscallFrame) -> Result<i64, i32> {
+    let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let mut dest = user_lease(frame.rdi, len as u64, true)?;
+    let bytes = dest.bytes_mut().map_err(map_dmw_fault)?;
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = 0xa5 ^ (index as u8).wrapping_mul(31);
+    }
+    Ok(len as i64)
+}
+
+fn sys_clock_gettime(frame: &SyscallFrame) -> Result<i64, i32> {
+    let mut encoded = [0u8; 16];
+    encoded[..8].copy_from_slice(&1u64.to_le_bytes());
+    encoded[8..].copy_from_slice(&0u64.to_le_bytes());
+    write_user_bytes(frame.rsi, &encoded)?;
+    Ok(0)
+}
+
+fn sys_sched_getaffinity(frame: &SyscallFrame) -> Result<i64, i32> {
+    let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    if len == 0 {
+        return Err(ERR_EINVAL);
+    }
+    let mut mask = [0u8; 8];
+    mask[0] = 1;
+    let written = core::cmp::min(len, mask.len());
+    write_user_bytes(frame.rdx, &mask[..written])?;
+    Ok(written as i64)
+}
+
+fn sys_rt_sigaction(frame: &SyscallFrame) -> Result<i64, i32> {
+    let signal = frame.rdi;
+    if signal == 0 || signal > 64 || frame.r10 != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    if frame.rdx != 0 {
+        write_user_bytes(frame.rdx, &[0; LINUX_SIGACTION_BYTES])?;
+    }
+    Ok(0)
+}
+
+fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdx != 0 {
+        write_user_bytes(frame.rdx, &[0; LINUX_SIGSET_BYTES])?;
+    }
+    Ok(0)
+}
+
+fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
+    Ok(0)
+}
+
+fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rsi != 0 {
+        write_user_bytes(frame.rsi, &0i32.to_le_bytes())?;
+    }
+    Err(ERR_ECHILD)
 }
 
 fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -330,20 +643,51 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
-    dispatch_ret(
+    let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
+    if len == 0 {
+        return Err(ERR_EINVAL);
+    }
+
+    let addr = if frame.rdi != 0 {
+        validate_user_range(frame.rdi, len, true)?;
+        frame.rdi
+    } else {
+        active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
+    };
+
+    let _ = dispatch_ret(
         "ring3_mmap",
-        SyscallContext::new(
-            SYS_MMAP,
-            [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
-        ),
-    )
+        SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
+    );
+    Ok(addr as i64)
 }
 
 fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
-    dispatch_ret(
+    let _ = dispatch_ret(
         "ring3_munmap",
         SyscallContext::new(SYS_MUNMAP, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
-    )
+    );
+    Ok(0)
+}
+
+fn sys_arch_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const ARCH_SET_FS: u64 = 0x1002;
+    const ARCH_GET_FS: u64 = 0x1003;
+
+    match frame.rdi {
+        ARCH_SET_FS => {
+            validate_user_range(frame.rsi, 1, false)?;
+            FsBase::write(VirtAddr::new(frame.rsi));
+            Ok(0)
+        }
+        ARCH_GET_FS => {
+            let fs_base = FsBase::read().as_u64();
+            let mut dest = user_lease(frame.rsi, 8, true)?;
+            dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&fs_base.to_le_bytes());
+            Ok(0)
+        }
+        _ => Err(ERR_EINVAL),
+    }
 }
 
 fn dispatch_ret(label: &str, ctx: SyscallContext) -> Result<i64, i32> {
@@ -367,18 +711,7 @@ fn sys_getdents64(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_getcwd(frame: &SyscallFrame) -> Result<i64, i32> {
     let size = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    let supervisor = &mut active_context().supervisor;
-    let cwd = match supervisor
-        .dispatch_linux_syscall(
-            "ring3_getcwd",
-            SyscallContext::new(SYS_GETCWD, [0, size as u64, 0, 0, 0, 0]),
-        )
-        .map_err(|_| ERR_EINVAL)?
-    {
-        LinuxCallResult::Bytes(bytes) => bytes,
-        LinuxCallResult::Ret(ret) if ret <= 0 => return Err((-ret) as i32),
-        _ => return Err(ERR_EINVAL),
-    };
+    let cwd = active_context().cwd().to_vec();
 
     if cwd.len() + 1 > size {
         return Err(ERR_EINVAL);
@@ -392,7 +725,7 @@ fn sys_getcwd(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_readlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
-    let resolved = resolve_path(frame.rdi as i64, &path)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
     let count = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
@@ -594,6 +927,34 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
     Err(ERR_EINVAL)
 }
 
+fn write_user_bytes(ptr: u64, bytes: &[u8]) -> Result<(), i32> {
+    let mut dest = user_lease(ptr, bytes.len() as u64, true)?;
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(bytes);
+    Ok(())
+}
+
+fn statfs_abi() -> [u8; 120] {
+    let mut out = [0u8; 120];
+    write_i64(&mut out, 0, 0x0102_1994);
+    write_i64(&mut out, 8, 4096);
+    write_u64(&mut out, 16, 1024);
+    write_u64(&mut out, 24, 1024);
+    write_u64(&mut out, 32, 1024);
+    write_u64(&mut out, 40, 1024);
+    write_u64(&mut out, 48, 1024);
+    write_i64(&mut out, 64, 255);
+    write_i64(&mut out, 72, 4096);
+    out
+}
+
+fn write_i64(out: &mut [u8], offset: usize, value: i64) {
+    out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(out: &mut [u8], offset: usize, value: u64) {
+    out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
 fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
     let end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
     let regions = &active_context().regions;
@@ -607,13 +968,17 @@ fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
     }
 }
 
+fn align_page(value: u64) -> Option<u64> {
+    value.checked_add(4095).map(|value| value & !4095)
+}
+
 fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     if path.starts_with(b"/") {
         return Ok(path.to_vec());
     }
 
     let base = if dirfd == AT_FDCWD {
-        active_context().supervisor.getcwd().map_err(|_| ERR_EBADF)?
+        active_context().cwd().to_vec()
     } else if dirfd >= 0 {
         active_context().supervisor.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?
     } else {
@@ -626,4 +991,12 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     }
     resolved.extend_from_slice(path);
     Ok(resolved)
+}
+
+fn linux_fd_arg(raw: u64) -> i64 {
+    (raw as i32) as i64
+}
+
+fn display_path(path: &[u8]) -> &str {
+    core::str::from_utf8(path).unwrap_or("<non-utf8>")
 }
