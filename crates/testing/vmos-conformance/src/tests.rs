@@ -392,7 +392,7 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
     let trace = root.join("substrate-extraction.jsonl");
     let sha256 = write_file_with_sha256(
         &trace,
-        br#"{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write"}
+        br#"{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write","target_arch":"riscv64","target_board":"qemu-virt"}
 "#,
     )
     .unwrap();
@@ -411,6 +411,41 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
     let validation = validate_report_artifacts(&report, ".");
 
     assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_real_target_extraction_trace_without_target_context() {
+    let root = temp_criterion_dir("real-target-artifact-missing-context");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-extraction.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write"}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+        uri: trace.display().to_string(),
+        sha256,
+        description: "generic substrate authority extraction trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-boundary-overclaim")
+    );
     let _ = fs::remove_dir_all(root);
 }
 

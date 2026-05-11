@@ -34,7 +34,7 @@ run_conformance validate-report-with-artifacts "$pass_report" >/dev/null
 
 real_target_trace="$tmp_root/substrate-extraction.jsonl"
 cat >"$real_target_trace" <<'EOF'
-{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write"}
+{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write","target_arch":"riscv64","target_board":"qemu-virt"}
 EOF
 real_target_report="$tmp_root/ltp-real-target-report.json"
 run_conformance ltp-report-from-logs "$pass_logs" real-target-substrate guest-frontend \

@@ -136,6 +136,11 @@ fn validate_artifact_context(
                 ))
             }
         }
+        EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
+            if result.observed_boundary == Boundary::RealTargetSubstrate =>
+        {
+            validate_real_target_trace_context(kind, bytes)
+        }
         _ => Ok(()),
     }
 }
@@ -401,6 +406,24 @@ fn validate_device_trace(bytes: &[u8]) -> Result<(), String> {
                 "device trace entries require event_id, event_epoch, device/device_id, and operation"
                     .to_string(),
             )
+        }
+    })
+}
+
+fn validate_real_target_trace_context(
+    kind: EvidenceArtifactKind,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let label = kind.as_str();
+    validate_json_lines(bytes, |value| {
+        let target_arch = value.get("target_arch").and_then(serde_json::Value::as_str);
+        let target_board = value.get("target_board").and_then(serde_json::Value::as_str);
+        if target_arch.is_some_and(|value| !value.trim().is_empty())
+            && target_board.is_some_and(|value| !value.trim().is_empty())
+        {
+            Ok(())
+        } else {
+            Err(format!("{label} real-target entries require target_arch and target_board"))
         }
     })
 }
