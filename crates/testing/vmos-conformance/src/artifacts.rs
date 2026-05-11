@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::{
@@ -36,6 +36,14 @@ fn validate_artifact(
         findings.push(finding(
             "unverifiable-evidence-artifact-uri",
             format!("{} artifact {} is not a local file URI", result.spec_id, artifact.uri),
+        ));
+        return;
+    }
+
+    if relative_artifact_path_escapes_root(&artifact.uri) {
+        findings.push(finding(
+            "evidence-artifact-path-escape",
+            format!("{} artifact {} escapes the artifact root", result.spec_id, artifact.uri),
         ));
         return;
     }
@@ -90,6 +98,11 @@ fn validate_artifact(
 fn resolve_artifact_path(artifact_root: &Path, uri: &str) -> PathBuf {
     let path = Path::new(uri);
     if path.is_absolute() { path.to_path_buf() } else { artifact_root.join(path) }
+}
+
+fn relative_artifact_path_escapes_root(uri: &str) -> bool {
+    let path = Path::new(uri);
+    !path.is_absolute() && path.components().any(|component| component == Component::ParentDir)
 }
 
 fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result<(), String> {

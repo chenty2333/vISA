@@ -561,6 +561,33 @@ fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
 }
 
 #[test]
+fn artifact_gate_rejects_relative_path_escape() {
+    let root = temp_criterion_dir("path-escape-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::LtpRawLog,
+        uri: "../outside-root.log".to_string(),
+        sha256: "d".repeat(64),
+        description: "path escape should be rejected before reading".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "evidence-artifact-path-escape")
+    );
+    assert!(
+        !validation.findings.iter().any(|finding| finding.code == "missing-evidence-artifact-file")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn passing_results_must_record_confidence_and_risk() {
     let catalog = full_catalog();
     let spec = catalog.iter().find(|spec| spec.id == "visa.artifact.load").unwrap();
