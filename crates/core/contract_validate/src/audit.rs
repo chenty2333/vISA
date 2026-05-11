@@ -636,11 +636,25 @@ fn substrate_event_matches_hostcall(
             &hostcall.object,
             &hostcall.operation,
         )
+        && substrate_capability_matches_hostcall_cap_args(event.capability.as_ref(), hostcall)
 }
 
 fn substrate_requester_matches_hostcall_subject(requester: Option<&str>, subject: &str) -> bool {
     requester.is_some_and(|requester| !requester.is_empty() && requester == subject)
         && !subject.is_empty()
+}
+
+fn substrate_capability_matches_hostcall_cap_args(
+    capability: Option<&artifact_manifest::CapabilityHandleArgManifest>,
+    hostcall: &artifact_manifest::HostcallTraceManifest,
+) -> bool {
+    match capability {
+        Some(capability) => hostcall
+            .cap_args
+            .iter()
+            .any(|arg| arg.id == capability.id && arg.generation == capability.generation),
+        None => hostcall.cap_args.is_empty(),
+    }
 }
 
 fn substrate_authority_matches_hostcall_object(authority: &str, object: &str) -> bool {
