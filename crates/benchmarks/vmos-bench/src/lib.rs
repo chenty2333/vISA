@@ -123,7 +123,6 @@ pub fn bench_artifact_descriptor(artifact_id: u64) -> VisaArtifactDescriptor {
         SubstrateProfile::MinimalBareMetal,
     )
     .with_role("visa-native-workload")
-    .with_capability("bench.console", &["write"], "activation")
     .with_hostcall(HostcallSpec::new(
         1,
         "bench.console.write",

@@ -7,6 +7,7 @@ publish = false
 [lib]
 name = "vmos_bench"
 path = "src/lib.rs"
+bench = false
 
 [[bench]]
 name = "block_iops"

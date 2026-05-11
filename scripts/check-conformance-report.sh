@@ -88,4 +88,34 @@ scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution gue
 run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
 
+criterion_root="$tmp_root/criterion"
+for bench_id in \
+    hostcall_dispatch_latency \
+    artifact_load_activation_start \
+    block_request_submit_mutation_64 \
+    network_adapter_record_mutation \
+    portable_snapshot_restore_latency
+do
+    mkdir -p "$criterion_root/$bench_id/base"
+    cat >"$criterion_root/$bench_id/base/estimates.json" <<'EOF'
+{
+  "mean": {
+    "confidence_interval": {
+      "confidence_level": 0.95,
+      "lower_bound": 1000.0,
+      "upper_bound": 1000.0
+    },
+    "point_estimate": 1000.0,
+    "standard_error": 0.0
+  }
+}
+EOF
+done
+
+bench_output="$tmp_root/vmos-bench-run"
+VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
+    "$bench_output" portable-artifact-execution "" "$criterion_root" >/dev/null
+run_conformance validate-report "$bench_output/vmos-performance-report.json" \
+    >"$tmp_root/vmos-bench-gate.json"
+
 echo "Conformance report gate passed."

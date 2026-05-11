@@ -26,6 +26,7 @@ cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
+scripts/run-vmos-bench-conformance.sh target/vmos-bench-run portable-artifact-execution
 ```
 
 Executable LTP integration should consume the catalog entries whose ids start with
@@ -50,3 +51,6 @@ activation, and snapshot/restore latency claims, plus `block_iops` and
 `performance-report-from-criterion` reads Criterion `estimates.json` files under
 `target/criterion`, maps known benchmark ids into those metrics, and reports
 missing benchmark outputs as explicit `not-run` results.
+`scripts/run-vmos-bench-conformance.sh` is the standard wrapper for running
+`cargo bench -p vmos-bench`, preserving the generated performance report, and
+gating it through `validate-report`.
