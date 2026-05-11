@@ -2116,7 +2116,7 @@ mod tests {
         ));
         let mut substrate = MockSubstrate::default();
         let artifact = fake_image(&REQUIRED_SECTIONS);
-        let descriptor = VisaArtifactDescriptor::new(
+        let mut descriptor = VisaArtifactDescriptor::new(
             7,
             "demo",
             "demo-artifact",
@@ -2130,6 +2130,8 @@ mod tests {
             "write",
             false,
         ));
+        descriptor.imports.push("vms.hostcall_1".into());
+        descriptor.exports.push("entry".into());
 
         let loaded = runtime
             .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
@@ -2145,6 +2147,14 @@ mod tests {
         assert!(runtime.events().iter().any(|event| {
             matches!(event, VisaRuntimeEvent::ActivationStarted { activation_id: 1, .. })
         }));
+        let snapshot = runtime.snapshot().portable_subset();
+        assert_eq!(snapshot.artifacts[0].imports, vec![String::from("vms.hostcall_1")]);
+        assert_eq!(snapshot.artifacts[0].exports, vec![String::from("entry")]);
+
+        runtime.restore_portable_subset(&snapshot).expect("restore portable snapshot");
+        let restored = runtime.snapshot();
+        assert_eq!(restored.artifacts[0].imports, vec![String::from("vms.hostcall_1")]);
+        assert_eq!(restored.artifacts[0].exports, vec![String::from("entry")]);
     }
 
     #[test]
