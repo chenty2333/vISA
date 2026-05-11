@@ -668,6 +668,7 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             }
         }
     }
+    validate_suite_coverage(report, &result_ids, catalog, &mut findings);
     ValidationReport::new(findings)
 }
 
@@ -714,6 +715,32 @@ pub fn report_outcome_findings(report: &ConformanceReport) -> Vec<ValidationFind
         ));
     }
     findings
+}
+
+fn validate_suite_coverage(
+    report: &ConformanceReport,
+    result_ids: &BTreeSet<&str>,
+    catalog: &[TestSpec],
+    findings: &mut Vec<ValidationFinding>,
+) {
+    let required_ids: Vec<String> = match report.suite_id.as_str() {
+        "vmos-layered-conformance" => catalog.iter().map(|spec| spec.id.clone()).collect(),
+        "vmos-linux-ltp-personality-compatibility" => {
+            linux_ltp_catalog().into_iter().map(|spec| spec.id).collect()
+        }
+        suite_id => {
+            findings.push(finding("unknown-suite-id", format!("unknown suite id {suite_id}")));
+            return;
+        }
+    };
+    for spec_id in required_ids {
+        if !result_ids.contains(spec_id.as_str()) {
+            findings.push(finding(
+                "missing-suite-result",
+                format!("{} omits required result {}", report.suite_id, spec_id),
+            ));
+        }
+    }
 }
 
 pub fn sample_report(catalog: &[TestSpec]) -> ConformanceReport {
@@ -957,6 +984,42 @@ mod tests {
         let validation = validate_report(&report, &catalog);
         assert!(!validation.ok);
         assert!(validation.findings.iter().any(|finding| finding.code == "unknown-spec-id"));
+    }
+
+    #[test]
+    fn report_rejects_unknown_suite_id() {
+        let catalog = linux_ltp_catalog();
+        let mut report = sample_ltp_report();
+        report.suite_id = "custom-suite".to_string();
+
+        let validation = validate_report(&report, &catalog);
+        assert!(!validation.ok);
+        assert!(validation.findings.iter().any(|finding| finding.code == "unknown-suite-id"));
+    }
+
+    #[test]
+    fn report_rejects_missing_suite_results() {
+        let catalog = linux_ltp_catalog();
+        let spec = catalog.iter().find(|spec| spec.id == LtpSubset::FsBasic.spec_id()).unwrap();
+        let report = ConformanceReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "vmos-linux-ltp-personality-compatibility".to_string(),
+            target: "unit-test".to_string(),
+            generated_by: "unit-test".to_string(),
+            results: vec![TestResult {
+                spec_id: spec.id.clone(),
+                outcome: Outcome::Pass,
+                observed_boundary: spec.minimum_boundary,
+                observed_profile: spec.required_profile.clone(),
+                evidence: "only one passing LTP subset was reported".to_string(),
+                remaining_uncertainty: "other LTP subsets were omitted".to_string(),
+                metrics: BTreeMap::new(),
+            }],
+        };
+
+        let validation = validate_report(&report, &catalog);
+        assert!(!validation.ok);
+        assert!(validation.findings.iter().any(|finding| finding.code == "missing-suite-result"));
     }
 
     #[test]
