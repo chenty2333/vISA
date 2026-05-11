@@ -157,6 +157,19 @@ impl ValidationReport {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportLoadError {
+    pub code: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportGateResult {
+    pub ok: bool,
+    pub load_error: Option<ReportLoadError>,
+    pub validation: Option<ValidationReport>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LtpSubset {
@@ -546,9 +559,19 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             format!("unsupported schema {}", report.schema_version),
         ));
     }
+    if report.results.is_empty() {
+        findings.push(finding("empty-report", "report contains no results"));
+    }
     let spec_by_id =
         catalog.iter().map(|spec| (spec.id.as_str(), spec)).collect::<BTreeMap<_, _>>();
+    let mut result_ids = BTreeSet::new();
     for result in &report.results {
+        if !result_ids.insert(result.spec_id.as_str()) {
+            findings.push(finding(
+                "duplicate-result-spec-id",
+                format!("duplicate result for spec id {}", result.spec_id),
+            ));
+        }
         let Some(spec) = spec_by_id.get(result.spec_id.as_str()) else {
             findings
                 .push(finding("unknown-spec-id", format!("unknown spec id {}", result.spec_id)));
@@ -589,6 +612,23 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
         }
     }
     ValidationReport::new(findings)
+}
+
+pub fn parse_report_json(bytes: &[u8]) -> Result<ConformanceReport, ReportLoadError> {
+    serde_json::from_slice(bytes).map_err(|error| ReportLoadError {
+        code: "invalid-report-json".to_string(),
+        detail: error.to_string(),
+    })
+}
+
+pub fn gate_report_json(bytes: &[u8], catalog: &[TestSpec]) -> ReportGateResult {
+    match parse_report_json(bytes) {
+        Ok(report) => {
+            let validation = validate_report(&report, catalog);
+            ReportGateResult { ok: validation.ok, load_error: None, validation: Some(validation) }
+        }
+        Err(error) => ReportGateResult { ok: false, load_error: Some(error), validation: None },
+    }
 }
 
 pub fn sample_report(catalog: &[TestSpec]) -> ConformanceReport {
@@ -835,6 +875,54 @@ mod tests {
     }
 
     #[test]
+    fn report_rejects_empty_result_set() {
+        let report = ConformanceReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "test".to_string(),
+            target: "test".to_string(),
+            generated_by: "unit-test".to_string(),
+            results: Vec::new(),
+        };
+
+        let validation = validate_report(&report, &full_catalog());
+        assert!(!validation.ok);
+        assert!(validation.findings.iter().any(|finding| finding.code == "empty-report"));
+    }
+
+    #[test]
+    fn report_rejects_duplicate_result_ids() {
+        let catalog = full_catalog();
+        let spec = catalog.iter().find(|spec| spec.id == "visa.artifact.load").unwrap();
+        let mut report = sample_report(&catalog);
+        report.results = vec![
+            TestResult {
+                spec_id: spec.id.clone(),
+                outcome: Outcome::NotRun,
+                observed_boundary: spec.minimum_boundary,
+                observed_profile: spec.required_profile.clone(),
+                evidence: "not run".to_string(),
+                remaining_uncertainty: "duplicate test fixture".to_string(),
+                metrics: BTreeMap::new(),
+            },
+            TestResult {
+                spec_id: spec.id.clone(),
+                outcome: Outcome::NotRun,
+                observed_boundary: spec.minimum_boundary,
+                observed_profile: spec.required_profile.clone(),
+                evidence: "not run".to_string(),
+                remaining_uncertainty: "duplicate test fixture".to_string(),
+                metrics: BTreeMap::new(),
+            },
+        ];
+
+        let validation = validate_report(&report, &catalog);
+        assert!(!validation.ok);
+        assert!(
+            validation.findings.iter().any(|finding| finding.code == "duplicate-result-spec-id")
+        );
+    }
+
+    #[test]
     fn report_rejects_insufficient_boundary() {
         let catalog = full_catalog();
         let mut report = sample_report(&catalog);
@@ -888,6 +976,27 @@ mod tests {
                 .iter()
                 .any(|finding| finding.code == "missing-remaining-uncertainty")
         );
+    }
+
+    #[test]
+    fn gate_report_json_accepts_valid_sample_report() {
+        let catalog = full_catalog();
+        let sample = sample_report(&catalog);
+        let bytes = serde_json::to_vec(&sample).unwrap();
+        let gate = gate_report_json(&bytes, &catalog);
+
+        assert!(gate.ok, "{gate:#?}");
+        assert!(gate.load_error.is_none());
+        assert!(gate.validation.unwrap().ok);
+    }
+
+    #[test]
+    fn gate_report_json_rejects_malformed_json() {
+        let gate = gate_report_json(b"{not-json", &full_catalog());
+
+        assert!(!gate.ok);
+        assert_eq!(gate.load_error.unwrap().code, "invalid-report-json");
+        assert!(gate.validation.is_none());
     }
 
     #[test]

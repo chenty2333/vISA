@@ -20,8 +20,14 @@ cargo run -p vmos-conformance -- sample-report-json
 cargo run -p vmos-conformance -- ltp-plan-json
 cargo run -p vmos-conformance -- sample-ltp-report-json
 cargo run -p vmos-conformance -- validate-sample
+cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
+cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 ```
 
 Executable LTP integration should consume the catalog entries whose ids start with
 `linux-ltp.`, use `LtpInvocation` to derive subset commands, parse run output into
 `LtpCaseResult`, and emit `ConformanceReport` JSON using the schema in `src/lib.rs`.
+`validate-report` is the intended report gate for external runners; it accepts a
+file path or `-` for stdin and exits non-zero when the JSON is malformed, references
+unknown specs, overclaims an evidence boundary, omits pass/fail evidence, or contains
+duplicate or empty result sets.
