@@ -576,7 +576,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         code_object: 1,
         code_generation: 1,
         artifact: 1,
-        entry: "visa_start".to_owned(),
+        entry: "symbol:visa_start".to_owned(),
         generation: 1,
         state: "running".to_owned(),
         ..Default::default()

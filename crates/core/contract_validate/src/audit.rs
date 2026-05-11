@@ -367,7 +367,14 @@ fn activation_entry_matches_artifact_exports(
     activation: &artifact_manifest::ActivationRecordManifest,
 ) -> bool {
     !activation.entry.is_empty()
-        && artifact.exports.iter().any(|export| export == &activation.entry)
+        && artifact
+            .exports
+            .iter()
+            .any(|export| activation_entry_matches_export(&activation.entry, export))
+}
+
+fn activation_entry_matches_export(entry: &str, export: &str) -> bool {
+    entry == export || entry.strip_prefix("symbol:").is_some_and(|symbol| symbol == export)
 }
 
 fn code_matches_activation_store(
