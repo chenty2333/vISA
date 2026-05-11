@@ -673,6 +673,21 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
 }
 
 #[test]
+fn external_audit_does_not_accept_execution_claims_from_invalid_package() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace_count = 2;
+
+    let report = audit_migration_package(&package);
+
+    assert!(!report.contract_package_valid);
+    assert!(!report.ok());
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(report.errors().any(|finding| finding.code == "contract-package-invalid"));
+}
+
+#[test]
 fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);

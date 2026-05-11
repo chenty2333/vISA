@@ -137,9 +137,10 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         ));
     }
 
-    let portable_artifact_execution_claim = artifact_participates_in_execution(package, |_| true);
+    let portable_artifact_execution_claim =
+        contract_package_valid && artifact_participates_in_execution(package, |_| true);
     let visa_native_portable_artifact_execution_claim =
-        artifact_participates_in_execution(package, is_visa_native);
+        contract_package_valid && artifact_participates_in_execution(package, is_visa_native);
     if !portable_artifact_execution_claim {
         findings.push(ExternalAuditFinding::new(
             ExternalAuditSeverity::Warning,
