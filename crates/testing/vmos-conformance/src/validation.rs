@@ -166,6 +166,17 @@ fn validate_performance_metrics(result: &TestResult, findings: &mut Vec<Validati
         }
     }
 
+    if !result
+        .evidence_artifacts
+        .iter()
+        .any(|artifact| artifact.kind == EvidenceArtifactKind::BenchmarkRawOutput)
+    {
+        findings.push(finding(
+            "missing-performance-evidence-artifact",
+            format!("{} is missing benchmark raw output artifact", result.spec_id),
+        ));
+    }
+
     for (name, value) in &result.metrics {
         if !value.is_finite() {
             findings.push(finding(

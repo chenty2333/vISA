@@ -1,9 +1,8 @@
-use std::{collections::BTreeMap, fmt::Write, fs, io, path::Path};
-
-use sha2::{Digest, Sha256};
+use std::{collections::BTreeMap, fs, io, path::Path};
 
 use crate::{
     catalog::linux_ltp_catalog,
+    hash::sha256_hex,
     types::{
         Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, LtpCaseResult,
         LtpSubset, Outcome, REPORT_SCHEMA_VERSION, TestResult, TestSpec,
@@ -161,13 +160,4 @@ fn normalize_ltp_status(token: &str) -> Option<Outcome> {
         "CONF" | "TCONF" | "NA" | "SKIP" | "TSKIP" => Some(Outcome::Skip),
         _ => None,
     }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    out
 }

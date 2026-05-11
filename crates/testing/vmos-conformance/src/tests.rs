@@ -358,6 +358,47 @@ fn performance_report_requires_spec_specific_metric_keys() {
 }
 
 #[test]
+fn performance_report_requires_raw_benchmark_artifacts() {
+    let catalog = performance_catalog();
+    let report = ConformanceReport {
+        schema_version: REPORT_SCHEMA_VERSION.to_string(),
+        suite_id: "vmos-performance-benchmark".to_string(),
+        target: "unit-test".to_string(),
+        generated_by: "unit-test".to_string(),
+        results: catalog
+            .iter()
+            .map(|spec| {
+                let mut metrics = BTreeMap::new();
+                for metric in required_performance_metrics(&spec.id) {
+                    metrics.insert((*metric).to_string(), 1.0);
+                }
+                TestResult {
+                    spec_id: spec.id.clone(),
+                    outcome: Outcome::Pass,
+                    observed_boundary: spec.minimum_boundary,
+                    observed_profile: spec.required_profile.clone(),
+                    evidence: "benchmark completed".to_string(),
+                    remaining_uncertainty: "raw Criterion output was accidentally omitted"
+                        .to_string(),
+                    metrics,
+                    evidence_artifacts: Vec::new(),
+                }
+            })
+            .collect(),
+    };
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-performance-evidence-artifact")
+    );
+}
+
+#[test]
 fn performance_report_rejects_negative_or_non_finite_metrics() {
     let catalog = performance_catalog();
     let mut report = sample_performance_report();
@@ -416,6 +457,15 @@ fn criterion_performance_report_maps_estimates_to_required_metrics() {
         report.results.iter().find(|result| result.spec_id == "bench.block.network").unwrap();
     assert_eq!(block_network.metrics["block_iops"], 64_000_000.0);
     assert_eq!(block_network.metrics["network_packets_per_sec"], 1_000_000.0);
+    assert_eq!(block_network.evidence_artifacts.len(), 2);
+    assert!(report.results.iter().all(|result| {
+        !result.evidence_artifacts.is_empty()
+            && result.evidence_artifacts.iter().all(|artifact| {
+                artifact.kind == EvidenceArtifactKind::BenchmarkRawOutput
+                    && artifact.sha256.len() == 64
+                    && artifact.uri.ends_with("estimates.json")
+            })
+    }));
 
     let _ = fs::remove_dir_all(root);
 }

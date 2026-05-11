@@ -5,8 +5,8 @@ use crate::{
     ltp::ltp_subset_result,
     performance::required_performance_metrics,
     types::{
-        Boundary, ConformanceReport, LtpCaseResult, Outcome, REPORT_SCHEMA_VERSION, TestResult,
-        TestSpec,
+        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, LtpCaseResult,
+        Outcome, REPORT_SCHEMA_VERSION, TestResult, TestSpec,
     },
 };
 
@@ -80,6 +80,7 @@ pub fn sample_performance_report() -> ConformanceReport {
                 for metric in required_performance_metrics(&spec.id) {
                     metrics.insert((*metric).to_string(), 1.0);
                 }
+                let artifact_uri = format!("sample://{}", spec.id);
                 TestResult {
                     spec_id: spec.id,
                     outcome: Outcome::Pass,
@@ -90,7 +91,13 @@ pub fn sample_performance_report() -> ConformanceReport {
                         "sample report validates schema only; it is not a real benchmark run"
                             .to_string(),
                     metrics,
-                    evidence_artifacts: Vec::new(),
+                    evidence_artifacts: vec![EvidenceArtifact {
+                        kind: EvidenceArtifactKind::BenchmarkRawOutput,
+                        uri: artifact_uri,
+                        sha256: "b".repeat(64),
+                        description: "synthetic benchmark artifact for schema validation"
+                            .to_string(),
+                    }],
                 }
             })
             .collect(),

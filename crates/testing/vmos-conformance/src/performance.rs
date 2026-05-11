@@ -2,7 +2,11 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::{
     catalog::performance_catalog,
-    types::{Boundary, ConformanceReport, Outcome, REPORT_SCHEMA_VERSION, TestResult, TestSpec},
+    hash::sha256_hex,
+    types::{
+        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, Outcome,
+        REPORT_SCHEMA_VERSION, TestResult, TestSpec,
+    },
 };
 
 pub fn required_performance_metrics(spec_id: &str) -> &'static [&'static str] {
@@ -99,20 +103,22 @@ fn criterion_performance_result_for_spec(
 ) -> TestResult {
     let sources = criterion_sources_for_spec(&spec.id);
     let mut metrics = BTreeMap::new();
+    let mut evidence_artifacts = Vec::new();
     let mut missing = Vec::new();
     let mut invalid = Vec::new();
 
     for source in &sources {
-        match read_criterion_mean_ns(criterion_root, source.benchmark_id) {
-            Ok(mean_ns) => {
+        match read_criterion_estimate(criterion_root, source.benchmark_id) {
+            Ok(estimate) => {
                 let value = match source.transform {
-                    CriterionMetricTransform::MeanNs => mean_ns,
+                    CriterionMetricTransform::MeanNs => estimate.mean_ns,
                     CriterionMetricTransform::OpsPerSecond { ops_per_iter } => {
-                        ops_per_iter * 1_000_000_000.0 / mean_ns
+                        ops_per_iter * 1_000_000_000.0 / estimate.mean_ns
                     }
                 };
                 if value.is_finite() && value >= 0.0 {
                     metrics.insert(source.metric.to_string(), value);
+                    evidence_artifacts.push(estimate.artifact);
                 } else {
                     invalid.push(source.benchmark_id);
                 }
@@ -166,7 +172,7 @@ fn criterion_performance_result_for_spec(
         evidence,
         remaining_uncertainty,
         metrics,
-        evidence_artifacts: Vec::new(),
+        evidence_artifacts,
     }
 }
 
@@ -184,24 +190,40 @@ enum CriterionEstimateError {
     Invalid(String),
 }
 
-fn read_criterion_mean_ns(
+struct CriterionEstimate {
+    mean_ns: f64,
+    artifact: EvidenceArtifact,
+}
+
+fn read_criterion_estimate(
     criterion_root: &Path,
     benchmark_id: &str,
-) -> Result<f64, CriterionEstimateError> {
+) -> Result<CriterionEstimate, CriterionEstimateError> {
     let path = criterion_root.join(benchmark_id).join("base").join("estimates.json");
-    let text = fs::read_to_string(&path).map_err(|error| {
+    let bytes = fs::read(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             CriterionEstimateError::Missing
         } else {
             CriterionEstimateError::Invalid(format!("{}: {}", path.display(), error))
         }
     })?;
-    let value: serde_json::Value = serde_json::from_str(&text)
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| CriterionEstimateError::Invalid(error.to_string()))?;
-    value
+    let mean_ns = value
         .get("mean")
         .and_then(|mean| mean.get("point_estimate"))
         .and_then(serde_json::Value::as_f64)
         .filter(|mean_ns| mean_ns.is_finite() && *mean_ns > 0.0)
-        .ok_or_else(|| CriterionEstimateError::Invalid("missing mean.point_estimate".to_string()))
+        .ok_or_else(|| {
+            CriterionEstimateError::Invalid("missing mean.point_estimate".to_string())
+        })?;
+    Ok(CriterionEstimate {
+        mean_ns,
+        artifact: EvidenceArtifact {
+            kind: EvidenceArtifactKind::BenchmarkRawOutput,
+            uri: path.display().to_string(),
+            sha256: sha256_hex(&bytes),
+            description: format!("Criterion estimates for {benchmark_id}"),
+        },
+    })
 }

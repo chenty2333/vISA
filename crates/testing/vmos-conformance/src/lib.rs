@@ -1,4 +1,5 @@
 mod catalog;
+mod hash;
 mod ltp;
 mod performance;
 mod report;
