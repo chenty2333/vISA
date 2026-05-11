@@ -1712,6 +1712,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vmos-conformance"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "serde",
+ "serde_json",
+ "visa_profile",
+]
+
+[[package]]
 name = "vmos_abi"
 version = "0.1.0"
 

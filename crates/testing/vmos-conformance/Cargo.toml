@@ -1,0 +1,18 @@
+[package]
+name = "vmos-conformance"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vmos-conformance"
+path = "src/bin/vmos-conformance.rs"
+
+[dependencies]
+contract_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+visa_profile = { workspace = true }

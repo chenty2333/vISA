@@ -20,6 +20,7 @@ members = [
     "crates/runtime/vms_wasmtime",
     "crates/backend/substrate_api",
     "crates/backend/substrate_virtio",
+    "crates/testing/vmos-conformance",
     "crates/services/console_service",
     "crates/services/devfs_service",
     "crates/services/driver_virtio_net",
