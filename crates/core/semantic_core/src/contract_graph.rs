@@ -277,6 +277,87 @@ impl ContractGraphSnapshot {
         }
     }
 
+    /// Return the first field that is portable in the abstract contract graph
+    /// but not currently rebuilt by `VisaRuntime::restore_portable_subset`.
+    pub fn unsupported_runtime_restore_record(&self) -> Option<&'static str> {
+        macro_rules! reject {
+            ($field:ident) => {
+                if !self.$field.is_empty() {
+                    return Some(concat!("unsupported portable record: ", stringify!($field)));
+                }
+            };
+        }
+
+        reject!(target_feature_sets);
+        reject!(vector_states);
+        reject!(simd_fault_injections);
+        reject!(simd_benchmarks);
+        reject!(simd_context_switch_benchmarks);
+        reject!(framebuffer_objects);
+        reject!(display_objects);
+        reject!(display_capabilities);
+        reject!(framebuffer_window_leases);
+        reject!(framebuffer_mappings);
+        reject!(framebuffer_writes);
+        reject!(framebuffer_flush_regions);
+        reject!(framebuffer_dirty_regions);
+        reject!(display_event_logs);
+        reject!(display_cleanups);
+        reject!(display_snapshot_barriers);
+        reject!(display_panic_last_frames);
+        reject!(framebuffer_benchmarks);
+        reject!(integrated_display_scheduler_loads);
+        reject!(integrated_snapshot_io_lease_barriers);
+        reject!(integrated_code_publish_smp_workloads);
+        reject!(integrated_display_panics);
+        reject!(integrated_osctl_trace_replays);
+        reject!(integrated_smp_preemption_cleanups);
+        reject!(integrated_smp_network_faults);
+        reject!(integrated_disk_preempt_faults);
+        reject!(integrated_simd_migrations);
+        reject!(integrated_network_disk_ios);
+        reject!(network_benchmarks);
+        reject!(block_benchmarks);
+        reject!(fake_block_backends);
+        reject!(virtio_blk_backends);
+        reject!(network_driver_cleanups);
+        reject!(device_objects);
+        reject!(packet_device_objects);
+        reject!(network_stack_adapters);
+        reject!(socket_objects);
+        reject!(fake_net_backends);
+        reject!(virtio_net_backends);
+        reject!(io_cleanups);
+        reject!(block_pending_io_policies);
+        reject!(block_waits);
+        reject!(block_request_objects);
+        reject!(block_device_objects);
+        reject!(block_range_objects);
+        reject!(block_request_queues);
+        reject!(block_dma_buffers);
+        reject!(harts);
+        reject!(runnable_queues);
+        reject!(scheduler_decisions);
+        reject!(activation_contexts);
+        reject!(activation_migrations);
+        reject!(smp_safe_points);
+        reject!(stop_the_world_rendezvous);
+        reject!(smp_code_publish_barriers);
+        reject!(saved_contexts);
+        reject!(timer_interrupts);
+        reject!(remote_preempts);
+        reject!(activation_cleanups);
+        reject!(smp_cleanup_quiescence);
+        reject!(smp_snapshot_barriers);
+        reject!(smp_stress_runs);
+        reject!(preemptions);
+        reject!(activation_resumes);
+        reject!(waits);
+        reject!(external_objects);
+        reject!(explicit_edges);
+        None
+    }
+
     /// List non-portable record categories present in this snapshot.
     pub fn non_portable_summary(&self) -> Vec<NonPortableStateKind> {
         let mut out = Vec::new();
@@ -521,6 +602,11 @@ mod tests {
             portable.non_portable_summary().is_empty(),
             "portable subset must self-report zero non-portable state: {:?}",
             portable.non_portable_summary()
+        );
+        assert!(
+            portable.unsupported_runtime_restore_record().is_none(),
+            "portable subset must not retain runtime restore-unsupported records: {:?}",
+            portable.unsupported_runtime_restore_record()
         );
     }
 
