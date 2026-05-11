@@ -15,6 +15,10 @@ pub fn required_performance_metrics(spec_id: &str) -> &'static [&'static str] {
         "bench.activation.start" => &["latency_ns"],
         "bench.block.network" => &["block_iops", "network_packets_per_sec"],
         "bench.snapshot.restore" => &["latency_ns"],
+        "bench.scheduler.preemption" => &["latency_ns"],
+        "bench.simd.context" => &["latency_ns"],
+        "bench.simd.speedup" => &["latency_ns"],
+        "bench.display.framebuffer" => &["latency_ns"],
         _ => &[],
     }
 }
@@ -69,6 +73,30 @@ pub(crate) const CRITERION_METRIC_SOURCES: &[CriterionMetricSource] = &[
     CriterionMetricSource {
         spec_id: "bench.snapshot.restore",
         benchmark_id: "portable_snapshot_restore_latency",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.scheduler.preemption",
+        benchmark_id: "preemption_latency_mutation",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.simd.context",
+        benchmark_id: "simd_vector_state_record_mutation",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.simd.speedup",
+        benchmark_id: "simd_speedup_mutation",
+        metric: "latency_ns",
+        transform: CriterionMetricTransform::MeanNs,
+    },
+    CriterionMetricSource {
+        spec_id: "bench.display.framebuffer",
+        benchmark_id: "display_record_mutation",
         metric: "latency_ns",
         transform: CriterionMetricTransform::MeanNs,
     },

@@ -99,6 +99,8 @@ pub enum CapabilityDomain {
     Block,
     Network,
     Scheduler,
+    Display,
+    Simd,
     Timer,
     Event,
     Virtio,

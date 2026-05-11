@@ -62,7 +62,8 @@ Performance benchmark reports use the `vmos-performance-benchmark` suite id.
 Passing or failing performance results must carry concrete finite, non-negative
 numeric metrics and at least one `benchmark-raw-output` artifact. The current
 required keys are `latency_ns` for hostcall, activation, and snapshot/restore
-latency claims, plus `block_iops` and `network_packets_per_sec` for the
+latency claims, scheduler preemption, SIMD context/speedup records, and display
+framebuffer records, plus `block_iops` and `network_packets_per_sec` for the
 block/network throughput claim.
 `performance-report-from-criterion` reads Criterion `estimates.json` files under
 `target/criterion`, maps known benchmark ids into those metrics, and reports

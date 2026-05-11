@@ -247,6 +247,30 @@ pub fn performance_catalog() -> Vec<TestSpec> {
             &[CapabilityDomain::Snapshot],
             "cargo bench -p vmos-bench",
         ),
+        perf_spec(
+            "bench.scheduler.preemption",
+            "scheduler preemption, decision, and activation resume mutation latency",
+            &[CapabilityDomain::Scheduler, CapabilityDomain::Activation],
+            "cargo bench -p vmos-bench",
+        ),
+        perf_spec(
+            "bench.simd.context",
+            "SIMD vector state record mutation latency",
+            &[CapabilityDomain::Simd],
+            "cargo bench -p vmos-bench",
+        ),
+        perf_spec(
+            "bench.simd.speedup",
+            "SIMD benchmark record mutation latency",
+            &[CapabilityDomain::Simd],
+            "cargo bench -p vmos-bench",
+        ),
+        perf_spec(
+            "bench.display.framebuffer",
+            "framebuffer display record mutation latency",
+            &[CapabilityDomain::Display],
+            "cargo bench -p vmos-bench",
+        ),
     ]
 }
 

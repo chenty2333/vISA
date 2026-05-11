@@ -493,6 +493,7 @@ fn sample_performance_report_validates_and_gates() {
 #[test]
 fn criterion_performance_plan_entries_match_metric_sources() {
     let entries = criterion_performance_plan_entries("target/criterion");
+    let catalog_ids = performance_catalog().into_iter().map(|spec| spec.id).collect::<Vec<_>>();
 
     assert_eq!(entries.len(), CRITERION_METRIC_SOURCES.len());
     assert_eq!(entries[0].spec_id, "bench.hostcall.latency");
@@ -508,7 +509,12 @@ fn criterion_performance_plan_entries_match_metric_sources() {
                 && entry.benchmark_id == source.benchmark_id
                 && entry.metric == source.metric
         }));
+        assert!(catalog_ids.iter().any(|id| id == source.spec_id));
     }
+    assert!(entries.iter().any(|entry| entry.benchmark_id == "preemption_latency_mutation"));
+    assert!(entries.iter().any(|entry| entry.benchmark_id == "simd_vector_state_record_mutation"));
+    assert!(entries.iter().any(|entry| entry.benchmark_id == "simd_speedup_mutation"));
+    assert!(entries.iter().any(|entry| entry.benchmark_id == "display_record_mutation"));
 }
 
 #[test]
