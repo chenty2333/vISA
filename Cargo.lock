@@ -1709,6 +1709,11 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "semantic_core",
+ "sha2",
+ "substrate_api",
+ "target_abi",
+ "visa_profile",
+ "vms_runtime",
 ]
 
 [[package]]

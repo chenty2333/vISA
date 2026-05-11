@@ -1,8 +1,26 @@
 use semantic_core::{
-    ActivationVectorState, CommandEnvelope, CommandStatus, FrontendKind, HartState,
-    HostcallLinkState, MemoryLayoutState, PacketQueueRole, ResourceKind, RuntimeActivationState,
-    SemanticCommand, SemanticGraph, StoreState, TaskState, VectorStateState,
-    target_executor::{ContractObjectKind, ContractObjectRef},
+    ActivationVectorState, CommandEnvelope, CommandStatus, ContractGraphSnapshot, FrontendKind,
+    HartState, HostcallLinkState, MemoryLayoutState, PacketQueueRole, ResourceKind,
+    RuntimeActivationState, SemanticCommand, SemanticGraph, StoreState, TaskState,
+    VectorStateState,
+    target_executor::{
+        ActivationEntry, ContractObjectKind, ContractObjectRef, HostcallCategory, HostcallSpec,
+    },
+};
+use sha2::{Digest, Sha256};
+use substrate_api::{
+    ArtifactAuthority, ArtifactImageRef, CodeObjectRef, CodePublisherAuthority, ConsoleAuthority,
+    DmaAuthority, DmwAuthority, EventQueueAuthority, GuestMemoryAuthority, IrqAuthority,
+    MmioAuthority, PublishedCodeRef, SnapshotAuthority, SubstrateResult, TimerAuthority,
+    VirtualTime,
+};
+use target_abi::{
+    SectionKindV1, TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
+};
+use visa_profile::SubstrateProfile;
+use vms_runtime::{
+    ActivationHandle, LoadedVisaArtifact, VisaArtifactDescriptor, VisaArtifactInput,
+    VisaHostcallPayload, VisaHostcallValue, VisaRuntime, VisaRuntimeConfig,
 };
 
 // ── derive benchmarks (pure math, no SemanticGraph) ──────────────────────────
@@ -31,6 +49,200 @@ pub fn derive_network_throughput_sample() -> u64 {
         acc ^= throughput.rotate_left(sample % 31);
     }
     acc
+}
+
+// ── vms_runtime fixtures ────────────────────────────────────────────────────
+
+const REQUIRED_ARTIFACT_SECTIONS: [SectionKindV1; 7] = [
+    SectionKindV1::Manifest,
+    SectionKindV1::CodeObject,
+    SectionKindV1::HostcallImportTable,
+    SectionKindV1::TrapMap,
+    SectionKindV1::PcRangeTable,
+    SectionKindV1::ProfileRequirements,
+    SectionKindV1::Signature,
+];
+const ARTIFACT_SECTION_PAYLOAD_LEN: usize = 16;
+const TARGET_ARTIFACT_HEADER_LEN: usize = TargetArtifactHeaderV1::WIRE_LEN;
+const TARGET_SECTION_HEADER_LEN: usize = TargetSectionHeaderV1::WIRE_LEN;
+const IMAGE_HASH_OFFSET: usize = 88;
+const IMAGE_HASH_LEN: usize = 32;
+
+#[derive(Default)]
+pub struct BenchSubstrate {
+    pub loaded: Vec<ArtifactImageRef>,
+    pub published: Vec<(ArtifactImageRef, CodeObjectRef)>,
+    pub console_bytes: usize,
+    pub now_ticks: u64,
+}
+
+impl ArtifactAuthority for BenchSubstrate {
+    fn load_artifact_image(&mut self, artifact: ArtifactImageRef) -> SubstrateResult<()> {
+        self.loaded.push(artifact);
+        Ok(())
+    }
+}
+
+impl CodePublisherAuthority for BenchSubstrate {
+    fn publish_code(
+        &mut self,
+        artifact: ArtifactImageRef,
+        code: CodeObjectRef,
+    ) -> SubstrateResult<PublishedCodeRef> {
+        self.published.push((artifact, code));
+        Ok(PublishedCodeRef::new(code.id, code.generation))
+    }
+}
+
+impl ConsoleAuthority for BenchSubstrate {
+    fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+        self.console_bytes += bytes.len();
+        Ok(bytes.len())
+    }
+}
+
+impl TimerAuthority for BenchSubstrate {
+    fn now(&self) -> SubstrateResult<VirtualTime> {
+        Ok(VirtualTime::from_ticks(self.now_ticks))
+    }
+}
+
+impl EventQueueAuthority for BenchSubstrate {}
+impl GuestMemoryAuthority for BenchSubstrate {}
+impl DmwAuthority for BenchSubstrate {}
+impl MmioAuthority for BenchSubstrate {}
+impl DmaAuthority for BenchSubstrate {}
+impl IrqAuthority for BenchSubstrate {}
+impl SnapshotAuthority for BenchSubstrate {}
+
+pub fn bench_artifact_descriptor(artifact_id: u64) -> VisaArtifactDescriptor {
+    let mut descriptor = VisaArtifactDescriptor::new(
+        artifact_id,
+        "vmos-bench",
+        "bench-artifact",
+        SubstrateProfile::MinimalBareMetal,
+    )
+    .with_role("visa-native-workload")
+    .with_capability("bench.console", &["write"], "activation")
+    .with_hostcall(HostcallSpec::new(
+        1,
+        "bench.console.write",
+        HostcallCategory::Service,
+        "bench.console",
+        "write",
+        false,
+    ));
+    descriptor.imports.push("vms.hostcall_1".to_string());
+    descriptor.exports.push("entry".to_string());
+    descriptor
+}
+
+pub fn runtime_loaded_artifact_fixture() -> (VisaRuntime, BenchSubstrate, LoadedVisaArtifact) {
+    let mut runtime =
+        VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+    let mut substrate = BenchSubstrate::default();
+    let artifact = fake_target_artifact_image();
+    let descriptor = bench_artifact_descriptor(7);
+    let loaded = runtime
+        .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+        .expect("load benchmark artifact");
+    (runtime, substrate, loaded)
+}
+
+pub fn runtime_hostcall_fixture() -> (VisaRuntime, BenchSubstrate, ActivationHandle) {
+    let (mut runtime, substrate, loaded) = runtime_loaded_artifact_fixture();
+    let activation = runtime
+        .start_activation(&loaded, ActivationEntry::Symbol("entry".to_string()))
+        .expect("start benchmark activation");
+    (runtime, substrate, activation)
+}
+
+pub fn runtime_restore_fixture() -> (VisaRuntime, ContractGraphSnapshot) {
+    let (mut source, _substrate, loaded) = runtime_loaded_artifact_fixture();
+    source
+        .start_activation(&loaded, ActivationEntry::Symbol("entry".to_string()))
+        .expect("start benchmark activation");
+    let snapshot = source.snapshot().portable_subset();
+    let target =
+        VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+    (target, snapshot)
+}
+
+pub fn invoke_bench_console_hostcall(
+    runtime: &mut VisaRuntime,
+    substrate: &mut BenchSubstrate,
+    activation: &ActivationHandle,
+) -> usize {
+    let report = runtime
+        .invoke_hostcall(
+            activation,
+            1,
+            VisaHostcallPayload::ConsoleWrite { bytes: vec![0x76, 0x49, 0x53, 0x41] },
+            substrate,
+        )
+        .expect("dispatch benchmark hostcall");
+    match report.value {
+        VisaHostcallValue::U64(written) => written as usize,
+        _ => 0,
+    }
+}
+
+pub fn fake_target_artifact_image() -> Vec<u8> {
+    let section_table_len = REQUIRED_ARTIFACT_SECTIONS.len() * TARGET_SECTION_HEADER_LEN;
+    let payload_base = TARGET_ARTIFACT_HEADER_LEN + section_table_len;
+    let image_len = payload_base + REQUIRED_ARTIFACT_SECTIONS.len() * ARTIFACT_SECTION_PAYLOAD_LEN;
+    let mut image = vec![0; image_len];
+
+    let header = TargetArtifactHeaderV1::fake_riscv64(
+        REQUIRED_ARTIFACT_SECTIONS.len() as u32,
+        image_len as u64,
+    );
+    header.write_to(&mut image).expect("write artifact header");
+
+    for (index, kind) in REQUIRED_ARTIFACT_SECTIONS.iter().copied().enumerate() {
+        let offset = payload_base + index * ARTIFACT_SECTION_PAYLOAD_LEN;
+        image[offset..offset + ARTIFACT_SECTION_PAYLOAD_LEN].fill(kind as u32 as u8);
+
+        let mut section =
+            TargetSectionHeaderV1::new(kind, offset as u64, ARTIFACT_SECTION_PAYLOAD_LEN as u64, 1);
+        section.hash = Sha256::digest(&image[offset..offset + ARTIFACT_SECTION_PAYLOAD_LEN]).into();
+        let section_off = TARGET_ARTIFACT_HEADER_LEN + index * TARGET_SECTION_HEADER_LEN;
+        section
+            .write_to(&mut image[section_off..section_off + TARGET_SECTION_HEADER_LEN])
+            .expect("write artifact section");
+    }
+
+    let mut header = TargetArtifactHeaderV1::parse(&image).expect("parse artifact header");
+    if let Some((manifest_start, manifest_end)) =
+        artifact_section_payload_range(&image, SectionKindV1::Manifest)
+    {
+        header.manifest_hash = Sha256::digest(&image[manifest_start..manifest_end]).into();
+        header.write_to(&mut image).expect("write manifest hash");
+    }
+    refresh_artifact_image_hash(&mut image);
+    image
+}
+
+fn artifact_section_payload_range(image: &[u8], kind: SectionKindV1) -> Option<(usize, usize)> {
+    let header = TargetArtifactHeaderV1::parse(image).expect("parse artifact header");
+    for index in 0..header.section_count as usize {
+        let section_off = TARGET_ARTIFACT_HEADER_LEN + index * TARGET_SECTION_HEADER_LEN;
+        let section = TargetSectionHeaderV1::parse(
+            &image[section_off..section_off + TARGET_SECTION_HEADER_LEN],
+        )
+        .expect("parse artifact section");
+        if section.kind == kind {
+            let start = section.offset as usize;
+            return Some((start, start + section.len as usize));
+        }
+    }
+    None
+}
+
+fn refresh_artifact_image_hash(image: &mut [u8]) {
+    image[IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN].fill(0);
+    let hash = canonical_zero_field_image_hash(image).expect("hash artifact image");
+    image[IMAGE_HASH_OFFSET..IMAGE_HASH_OFFSET + IMAGE_HASH_LEN].copy_from_slice(&hash);
 }
 
 // ── shared helpers ───────────────────────────────────────────────────────────
