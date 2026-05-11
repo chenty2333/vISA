@@ -60,6 +60,13 @@ pub struct TargetExecutor {
     event_log: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct PreparedHostcallDispatch {
+    activation_index: usize,
+    frame: HostcallFrame,
+    spec: HostcallSpec,
+}
+
 impl TargetExecutor {
     pub const fn new() -> Self {
         Self {
@@ -266,12 +273,12 @@ impl TargetExecutor {
         (args, decode_error)
     }
 
-    pub fn invoke_hostcall(
+    pub fn preflight_hostcall(
         &mut self,
         code: &CodeObject,
         wire_frame: ExecutorHostcallFrameV1,
         capabilities: &CapabilityLedger,
-    ) -> Result<(), TargetExecutorError> {
+    ) -> Result<PreparedHostcallDispatch, TargetExecutorError> {
         let bad_abi = Self::bad_abi_reason(&wire_frame);
         if let Some(reason) = bad_abi {
             self.event_log.push(format!(
@@ -577,19 +584,53 @@ impl TargetExecutor {
             );
             return Err(TargetExecutorError::DmwLeaseActive);
         }
-        self.record_trace(&frame, spec, true, "complete", HostcallReturnTag::Ok, None, None);
+        Ok(PreparedHostcallDispatch { activation_index, frame, spec: spec.clone() })
+    }
+
+    pub fn commit_hostcall_success(
+        &mut self,
+        prepared: PreparedHostcallDispatch,
+    ) -> Result<(), TargetExecutorError> {
+        let Some(current) = self.activations.get(prepared.activation_index) else {
+            return Err(TargetExecutorError::ActivationMissing);
+        };
+        if current.id != prepared.frame.activation
+            || current.generation != prepared.frame.activation_generation
+            || current.state != ActivationState::Running
+        {
+            return Err(TargetExecutorError::ActivationStoreMismatch);
+        }
+        self.record_trace(
+            &prepared.frame,
+            &prepared.spec,
+            true,
+            "complete",
+            HostcallReturnTag::Ok,
+            None,
+            None,
+        );
         let transition_event = self.next_event("activation-hostcall-complete");
-        let old_generation = self.activations[activation_index].generation;
+        let old_generation = self.activations[prepared.activation_index].generation;
         self.retire_activation_generation(
-            activation.id,
+            prepared.frame.activation,
             old_generation,
             transition_event,
             "activation-hostcall-previous-generation",
         );
-        let activation = &mut self.activations[activation_index];
+        let activation = &mut self.activations[prepared.activation_index];
         activation.return_tag = Some(HostcallReturnTag::Ok);
         activation.generation += 1;
         Ok(())
+    }
+
+    pub fn invoke_hostcall(
+        &mut self,
+        code: &CodeObject,
+        wire_frame: ExecutorHostcallFrameV1,
+        capabilities: &CapabilityLedger,
+    ) -> Result<(), TargetExecutorError> {
+        let prepared = self.preflight_hostcall(code, wire_frame, capabilities)?;
+        self.commit_hostcall_success(prepared)
     }
 
     pub fn acquire_dmw_lease(

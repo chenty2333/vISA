@@ -1266,6 +1266,10 @@ mod tests {
             executor.hostcall_reports().is_empty(),
             "failed dispatch must not expose a successful hostcall report"
         );
+        assert!(
+            executor.runtime().snapshot().hostcalls.is_empty(),
+            "failed dispatch must not commit portable-success hostcall evidence"
+        );
     }
 
     #[test]

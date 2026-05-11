@@ -719,10 +719,14 @@ impl VisaRuntime {
             &spec.object,
             &spec.operation,
         );
-        self.executor
-            .invoke_hostcall(&code, frame.to_wire_frame(), &self.ledger)
+        let prepared_hostcall = self
+            .executor
+            .preflight_hostcall(&code, frame.to_wire_frame(), &self.ledger)
             .map_err(VisaRuntimeError::Executor)?;
         let value = self.dispatch_hostcall_payload(backend, &code, &spec, payload)?;
+        self.executor
+            .commit_hostcall_success(prepared_hostcall)
+            .map_err(VisaRuntimeError::Executor)?;
         self.events.push(VisaRuntimeEvent::HostcallDispatched {
             activation_id: activation.activation_id,
             hostcall_number,
@@ -1862,6 +1866,7 @@ mod tests {
         loaded: Vec<ArtifactImageRef>,
         published: Vec<(ArtifactImageRef, CodeObjectRef)>,
         console: Vec<u8>,
+        fail_console: bool,
         timers: Vec<(VirtualTime, WaitTokenRef)>,
         events: Vec<SubstrateEvent>,
         now: u64,
@@ -1887,6 +1892,9 @@ mod tests {
 
     impl ConsoleAuthority for MockSubstrate {
         fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+            if self.fail_console {
+                return Err(SubstrateError::unsupported("ConsoleAuthority", "console_write"));
+            }
             self.console.extend_from_slice(bytes);
             Ok(bytes.len())
         }
@@ -2032,6 +2040,46 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn failed_substrate_hostcall_does_not_commit_success_trace() {
+        let personality =
+            personality::wasi::WasiPersonality::new("wasi-app", SubstrateProfile::GuestFrontend);
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate { fail_console: true, ..MockSubstrate::default() };
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+
+        let err = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(44) },
+                ActivationEntry::Symbol("wasi_start".into()),
+                [VisaExecutionStep::new(
+                    personality::wasi::WASI_FD_WRITE,
+                    personality.fd_write(b"blocked"),
+                )],
+                &mut substrate,
+            )
+            .expect_err("substrate dispatch failure must reject execution");
+
+        assert!(matches!(
+            err,
+            VisaRuntimeError::SubstrateDispatch {
+                authority: "ConsoleAuthority",
+                operation: "console_write",
+                ..
+            }
+        ));
+        assert!(runtime.executor().hostcall_trace().is_empty());
+        assert!(runtime.snapshot().hostcalls.is_empty());
+        assert_eq!(runtime.executor().activations()[0].generation, 1);
+        assert!(
+            !runtime
+                .events()
+                .iter()
+                .any(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
+        );
     }
 
     #[test]
