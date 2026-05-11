@@ -23,4 +23,5 @@ substrate_api.workspace = true
 substrate_virtio.workspace = true
 supervisor_catalog.workspace = true
 target_abi = { workspace = true, features = ["hash"] }
+vms_runtime.workspace = true
 wasmtime = { workspace = true, features = ["runtime", "std"] }

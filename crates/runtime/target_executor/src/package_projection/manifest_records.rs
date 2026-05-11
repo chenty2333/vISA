@@ -11,5 +11,6 @@ pub(crate) use block_tail_simd_display::*;
 pub(crate) use device_block_fs::*;
 pub(crate) use integrated::*;
 pub(crate) use io_network::*;
+pub use runtime_events::runtime_evidence_substrate_event_manifests;
 pub(crate) use runtime_events::*;
 pub(crate) use scheduler::*;

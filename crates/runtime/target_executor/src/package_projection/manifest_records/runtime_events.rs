@@ -1,4 +1,8 @@
 use semantic_core::{CapabilityId, Generation};
+use vms_runtime::{
+    VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
+    VisaSubstrateUnsupportedEvidence,
+};
 
 use super::super::super::*;
 
@@ -166,6 +170,65 @@ pub(crate) fn cap_arg_manifest(arg: &CapabilityHandleArg) -> CapabilityHandleArg
 
 pub(crate) fn substrate_event_manifests(events: &[EventRecord]) -> Vec<SubstrateEventManifest> {
     events.iter().filter_map(substrate_event_manifest).collect()
+}
+
+pub fn runtime_evidence_substrate_event_manifests(
+    evidence: &VisaRuntimeEvidenceSnapshot,
+) -> Vec<SubstrateEventManifest> {
+    let mut events = Vec::with_capacity(
+        evidence.authority_extractions.len() + evidence.unsupported_substrate_events.len(),
+    );
+    events.extend(evidence.authority_extractions.iter().map(runtime_authority_extraction_manifest));
+    events.extend(
+        evidence.unsupported_substrate_events.iter().map(runtime_unsupported_substrate_manifest),
+    );
+    events.sort_by_key(|event| (event.epoch, event.id));
+    events
+}
+
+fn runtime_authority_extraction_manifest(
+    extraction: &VisaSubstrateAuthorityExtractionEvidence,
+) -> SubstrateEventManifest {
+    let requester_label = extraction.requester.as_deref().unwrap_or("unknown");
+    SubstrateEventManifest {
+        id: extraction.event_id,
+        epoch: extraction.event_epoch,
+        event_kind: "authority-extracted".to_owned(),
+        authority: extraction.authority.clone(),
+        operation: extraction.operation.clone(),
+        requester: extraction.requester.clone(),
+        artifact: extraction.artifact_id,
+        store: extraction.store_id,
+        capability: substrate_capability_manifest(
+            extraction.capability_id,
+            extraction.capability_generation,
+        ),
+        explanation: format!(
+            "{requester_label} extracted {}::{} authority from substrate",
+            extraction.authority, extraction.operation
+        ),
+    }
+}
+
+fn runtime_unsupported_substrate_manifest(
+    unsupported: &VisaSubstrateUnsupportedEvidence,
+) -> SubstrateEventManifest {
+    let requester_label = unsupported.requester.as_deref().unwrap_or("unknown");
+    SubstrateEventManifest {
+        id: unsupported.event_id,
+        epoch: unsupported.event_epoch,
+        event_kind: "unsupported".to_owned(),
+        authority: unsupported.authority.clone(),
+        operation: unsupported.operation.clone(),
+        requester: unsupported.requester.clone(),
+        artifact: unsupported.artifact_id,
+        store: unsupported.store_id,
+        capability: None,
+        explanation: format!(
+            "{requester_label} observed {}::{} as unsupported",
+            unsupported.authority, unsupported.operation
+        ),
+    }
 }
 
 pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifest> {
@@ -341,6 +404,58 @@ pub(crate) fn interface_event_manifest(event: &EventRecord) -> Option<InterfaceE
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod runtime_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_evidence_projects_substrate_event_manifests_in_event_order() {
+        let evidence = VisaRuntimeEvidenceSnapshot {
+            contract_graph: semantic_core::ContractGraphSnapshot::default(),
+            event_log_cursor: 11,
+            runtime_events: Vec::new(),
+            authority_extractions: vec![VisaSubstrateAuthorityExtractionEvidence {
+                event_id: 9,
+                event_epoch: 4,
+                authority: "DmaAuthority".to_owned(),
+                operation: "dma_alloc".to_owned(),
+                requester: Some("native-visa".to_owned()),
+                artifact_id: Some(29),
+                store_id: Some(1),
+                capability_id: Some(7),
+                capability_generation: Some(3),
+            }],
+            unsupported_substrate_events: vec![VisaSubstrateUnsupportedEvidence {
+                event_id: 8,
+                event_epoch: 3,
+                authority: "ConsoleAuthority".to_owned(),
+                operation: "console_write".to_owned(),
+                requester: Some("native-visa".to_owned()),
+                artifact_id: Some(29),
+                store_id: Some(1),
+            }],
+        };
+
+        let manifests = runtime_evidence_substrate_event_manifests(&evidence);
+
+        assert_eq!(manifests.len(), 2);
+        assert_eq!(manifests[0].event_kind, "unsupported");
+        assert_eq!(manifests[0].id, 8);
+        assert_eq!(manifests[0].epoch, 3);
+        assert_eq!(manifests[0].requester.as_deref(), Some("native-visa"));
+        assert!(manifests[0].capability.is_none());
+        assert_eq!(manifests[1].event_kind, "authority-extracted");
+        assert_eq!(manifests[1].id, 9);
+        assert_eq!(manifests[1].epoch, 4);
+        assert_eq!(manifests[1].authority, "DmaAuthority");
+        assert_eq!(manifests[1].operation, "dma_alloc");
+        assert_eq!(manifests[1].artifact, Some(29));
+        assert_eq!(manifests[1].store, Some(1));
+        assert_eq!(manifests[1].capability.as_ref().map(|cap| cap.id), Some(7));
+        assert_eq!(manifests[1].capability.as_ref().map(|cap| cap.generation), Some(3));
     }
 }
 

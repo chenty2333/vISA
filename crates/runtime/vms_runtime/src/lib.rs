@@ -400,6 +400,7 @@ impl VisaRuntimeEvidenceSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VisaSubstrateAuthorityExtractionEvidence {
     pub event_id: EventId,
+    pub event_epoch: u64,
     pub authority: String,
     pub operation: String,
     pub requester: Option<String>,
@@ -412,6 +413,7 @@ pub struct VisaSubstrateAuthorityExtractionEvidence {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VisaSubstrateUnsupportedEvidence {
     pub event_id: EventId,
+    pub event_epoch: u64,
     pub authority: String,
     pub operation: String,
     pub requester: Option<String>,
@@ -1334,6 +1336,7 @@ impl VisaRuntime {
                     capability_generation,
                 } => Some(VisaSubstrateAuthorityExtractionEvidence {
                     event_id: event.id,
+                    event_epoch: event.epoch,
                     authority: authority.clone(),
                     operation: operation.clone(),
                     requester: requester.clone(),
@@ -1357,6 +1360,7 @@ impl VisaRuntime {
                     store,
                 } => Some(VisaSubstrateUnsupportedEvidence {
                     event_id: event.id,
+                    event_epoch: event.epoch,
                     authority: authority.clone(),
                     operation: operation.clone(),
                     requester: requester.clone(),
@@ -2264,6 +2268,7 @@ mod tests {
             evidence.authority_extractions[0],
             VisaSubstrateAuthorityExtractionEvidence {
                 event_id: evidence.authority_extractions[0].event_id,
+                event_epoch: evidence.authority_extractions[0].event_epoch,
                 authority: "ConsoleAuthority".into(),
                 operation: "console_write".into(),
                 requester: Some("wasi-app".into()),
@@ -2323,6 +2328,7 @@ mod tests {
             evidence.unsupported_substrate_events[0],
             VisaSubstrateUnsupportedEvidence {
                 event_id: evidence.unsupported_substrate_events[0].event_id,
+                event_epoch: evidence.unsupported_substrate_events[0].event_epoch,
                 authority: "ConsoleAuthority".into(),
                 operation: "console_write".into(),
                 requester: Some("wasi-app".into()),
