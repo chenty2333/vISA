@@ -113,6 +113,18 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             if spec.claim == ClaimKind::PerformanceBenchmark {
                 validate_performance_metrics(result, &mut findings);
             }
+            if spec.claim == ClaimKind::VisaSemanticConformance
+                && result.observed_boundary.can_claim(Boundary::PortableArtifactExecution)
+                && !has_contract_graph_snapshot_artifact(result)
+            {
+                findings.push(finding(
+                    "missing-contract-graph-snapshot-artifact",
+                    format!(
+                        "{} claims portable vISA semantic execution without a contract graph snapshot artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
             if result.observed_boundary == Boundary::RealTargetSubstrate
                 && !has_real_target_extraction_artifact(result)
             {
@@ -167,6 +179,14 @@ fn has_real_target_extraction_artifact(result: &TestResult) -> bool {
             artifact.kind,
             EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
         ) && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn has_contract_graph_snapshot_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::ContractGraphSnapshot
+            && !artifact.uri.trim().is_empty()
             && is_sha256_hex(&artifact.sha256)
     })
 }

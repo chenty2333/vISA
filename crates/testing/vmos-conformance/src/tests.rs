@@ -306,6 +306,45 @@ fn report_accepts_real_target_claim_with_extraction_artifact() {
 }
 
 #[test]
+fn report_rejects_portable_visa_semantic_claim_without_snapshot_artifact() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result =
+        report.results.iter_mut().find(|result| result.spec_id == "visa.artifact.load").unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "artifact load path completed through vms_runtime".to_string();
+    result.remaining_uncertainty = "unit fixture omits the snapshot artifact".to_string();
+    result.evidence_artifacts.clear();
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    let missing_snapshot = validation
+        .findings
+        .iter()
+        .any(|finding| finding.code == "missing-contract-graph-snapshot-artifact");
+    assert!(missing_snapshot);
+}
+
+#[test]
+fn report_accepts_portable_visa_semantic_claim_with_snapshot_artifact() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result =
+        report.results.iter_mut().find(|result| result.spec_id == "visa.artifact.load").unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "artifact load path completed through vms_runtime".to_string();
+    result.remaining_uncertainty = "unit fixture validates report metadata only".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+}
+
+#[test]
 fn attach_evidence_artifact_can_target_all_results() {
     let mut report = sample_ltp_report();
     let attached = attach_evidence_artifact(&mut report, "*", real_target_extraction_artifact());
@@ -1096,6 +1135,15 @@ fn real_target_extraction_artifact() -> EvidenceArtifact {
         uri: "target/evidence/substrate-extraction.jsonl".to_string(),
         sha256: "a".repeat(64),
         description: "real target substrate authority extraction trace".to_string(),
+    }
+}
+
+fn contract_graph_snapshot_artifact() -> EvidenceArtifact {
+    EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: "target/evidence/contract-graph-snapshot.json".to_string(),
+        sha256: "b".repeat(64),
+        description: "contract graph snapshot for portable vISA semantic evidence".to_string(),
     }
 }
 
