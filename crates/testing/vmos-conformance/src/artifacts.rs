@@ -12,6 +12,8 @@ use crate::{
     },
 };
 
+pub const CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION: &str = "contract-graph-snapshot-v0.1";
+
 pub fn validate_report_artifacts(
     report: &ConformanceReport,
     artifact_root: impl AsRef<Path>,
@@ -147,8 +149,8 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
         .get("schema_version")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "missing schema_version".to_string())?;
-    if schema_version.trim().is_empty() {
-        return Err("schema_version is empty".to_string());
+    if schema_version != CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION {
+        return Err(format!("unsupported schema_version {schema_version}"));
     }
 
     let claimed = object

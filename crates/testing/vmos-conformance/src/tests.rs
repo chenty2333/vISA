@@ -11,7 +11,10 @@ use substrate_api::conformance::{
 use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
 
 use super::*;
-use crate::{artifacts::write_file_with_sha256, performance::CRITERION_METRIC_SOURCES};
+use crate::{
+    artifacts::{CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION, write_file_with_sha256},
+    performance::CRITERION_METRIC_SOURCES,
+};
 
 #[test]
 fn full_catalog_is_valid_and_has_unique_ids() {
@@ -511,6 +514,39 @@ fn artifact_gate_rejects_empty_contract_graph_snapshot_artifact() {
         uri: snapshot.display().to_string(),
         sha256,
         description: "empty contract graph snapshot".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_unknown_contract_graph_snapshot_schema_version() {
+    let root = temp_criterion_dir("unknown-contract-graph-snapshot-schema");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json_with_schema(
+        "contract-graph-snapshot-v9.9",
+        "portable-artifact-execution",
+    );
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.display().to_string(),
+        sha256,
+        description: "unknown contract graph snapshot schema".to_string(),
     });
 
     let validation = validate_report_artifacts(&report, ".");
@@ -1188,9 +1224,19 @@ fn contract_graph_snapshot_artifact() -> EvidenceArtifact {
 }
 
 fn contract_graph_snapshot_json(claimed_boundary: &str) -> String {
+    contract_graph_snapshot_json_with_schema(
+        CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION,
+        claimed_boundary,
+    )
+}
+
+fn contract_graph_snapshot_json_with_schema(
+    schema_version: &str,
+    claimed_boundary: &str,
+) -> String {
     format!(
         r#"{{
-  "schema_version": "contract-graph-snapshot-v0.1",
+  "schema_version": "{schema_version}",
   "claimed_evidence_level": "{claimed_boundary}",
   "artifacts": [],
   "code_objects": [],
