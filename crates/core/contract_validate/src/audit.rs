@@ -510,6 +510,7 @@ fn linked_real_target_extraction_evidence_count(package: &MigrationPackageManife
                                 ) && extraction_event_matches_linked_hostcall(
                                     package,
                                     event,
+                                    artifact,
                                     artifact_id,
                                     store,
                                 )
@@ -532,6 +533,7 @@ fn substrate_event_has_concrete_extraction_context(
 fn extraction_event_matches_linked_hostcall(
     package: &MigrationPackageManifest,
     event: &artifact_manifest::SubstrateEventManifest,
+    artifact: &artifact_manifest::TargetArtifactImageManifest,
     artifact_id: u64,
     store: u64,
 ) -> bool {
@@ -541,6 +543,7 @@ fn extraction_event_matches_linked_hostcall(
         .iter()
         .filter(|code| {
             code.artifact_id == artifact_id
+                && code_matches_artifact_manifest(artifact, code)
                 && code.bound_store == Some(store)
                 && code.bound_store_generation.is_some()
         })
@@ -553,6 +556,7 @@ fn extraction_event_matches_linked_hostcall(
                     activation.artifact == artifact_id
                         && activation.code_object == code.id
                         && code_matches_activation_store(code, activation)
+                        && activation_entry_matches_artifact_exports(artifact, activation)
                 })
                 .any(|activation| {
                     package.semantic.hostcall_trace.iter().any(|hostcall| {

@@ -1338,6 +1338,93 @@ fn external_audit_rejects_real_target_extraction_for_unmatched_hostcall() {
 }
 
 #[test]
+fn external_audit_rejects_real_target_extraction_from_unverified_code_object() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+
+    let mmio_hostcall = artifact_manifest::HostcallSpecManifest {
+        number: 2,
+        name: "visa.mmio.read32".to_owned(),
+        category: "device".to_owned(),
+        object: "visa.mmio".to_owned(),
+        operation: "read32".to_owned(),
+        may_pending: false,
+    };
+    let mut unverified_code = package.semantic.code_objects[0].clone();
+    unverified_code.id = 2;
+    unverified_code.code_hash = "not-the-artifact-code".to_owned();
+    unverified_code.hostcalls = vec![mmio_hostcall.clone()];
+    package.semantic.code_object_count = 2;
+    package.semantic.roots.code_object_roots.push("code-object id=2".to_owned());
+    package.semantic.code_objects.push(unverified_code);
+
+    let mut unverified_activation = package.semantic.activation_records[0].clone();
+    unverified_activation.id = 2;
+    unverified_activation.code_object = 2;
+    package.semantic.activation_record_count = 2;
+    package.semantic.roots.activation_record_roots.push("activation id=2".to_owned());
+    package.semantic.activation_records.push(unverified_activation);
+
+    package.semantic.hostcall_trace_count = 2;
+    package.semantic.roots.hostcall_trace_roots.push("hostcall id=2".to_owned());
+    package.semantic.hostcall_trace.push(artifact_manifest::HostcallTraceManifest {
+        id: 2,
+        generation: 1,
+        activation: 2,
+        activation_generation: 1,
+        store: 1,
+        store_generation: 1,
+        code_object: 2,
+        code_generation: 1,
+        artifact: 1,
+        hostcall_number: 2,
+        name: "visa.mmio.read32".to_owned(),
+        category: "device".to_owned(),
+        subject: "native-visa".to_owned(),
+        subject_source: "active-state".to_owned(),
+        object: "visa.mmio".to_owned(),
+        operation: "read32".to_owned(),
+        record_mode: "live".to_owned(),
+        allowed: true,
+        gate_status: "allowed".to_owned(),
+        result: "ok".to_owned(),
+        ret_tag: "ok".to_owned(),
+        ..Default::default()
+    });
+
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:MmioAuthority:mmio_read32 requester=native-visa"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "MmioAuthority".to_owned(),
+        operation: "mmio_read32".to_owned(),
+        requester: Some("native-visa".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: None,
+        explanation: "extraction event follows a hostcall on an unverified code object".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+    assert!(!report.ok());
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
+}
+
+#[test]
 fn external_audit_rejects_real_target_without_linked_portable_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
