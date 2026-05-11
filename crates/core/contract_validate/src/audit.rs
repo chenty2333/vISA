@@ -579,12 +579,18 @@ fn substrate_event_matches_hostcall(
     event: &artifact_manifest::SubstrateEventManifest,
     hostcall: &artifact_manifest::HostcallTraceManifest,
 ) -> bool {
-    substrate_authority_matches_hostcall_object(&event.authority, &hostcall.object)
+    substrate_requester_matches_hostcall_subject(event.requester.as_deref(), &hostcall.subject)
+        && substrate_authority_matches_hostcall_object(&event.authority, &hostcall.object)
         && substrate_operation_matches_hostcall(
             &event.operation,
             &hostcall.object,
             &hostcall.operation,
         )
+}
+
+fn substrate_requester_matches_hostcall_subject(requester: Option<&str>, subject: &str) -> bool {
+    requester.is_some_and(|requester| !requester.is_empty() && requester == subject)
+        && !subject.is_empty()
 }
 
 fn substrate_authority_matches_hostcall_object(authority: &str, object: &str) -> bool {

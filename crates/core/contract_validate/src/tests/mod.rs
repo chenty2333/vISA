@@ -597,6 +597,8 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         hostcall_number: 1,
         name: "visa.console.write".to_owned(),
         category: "service".to_owned(),
+        subject: "native-visa".to_owned(),
+        subject_source: "active-state".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
         record_mode: "live".to_owned(),
@@ -1425,6 +1427,44 @@ fn external_audit_rejects_real_target_extraction_from_unverified_code_object() {
 }
 
 #[test]
+fn external_audit_rejects_real_target_extraction_requester_subject_mismatch() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.hostcall_trace[0].subject = "native-visa".to_owned();
+    package.semantic.hostcall_trace[0].subject_source = "active-state".to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=other-subject"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "ConsoleAuthority".to_owned(),
+        operation: "console_write".to_owned(),
+        requester: Some("other-subject".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: None,
+        explanation: "extraction event requester does not match the hostcall subject".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+    assert!(!report.ok());
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
+}
+
+#[test]
 fn external_audit_rejects_real_target_without_linked_portable_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
@@ -1470,7 +1510,8 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
     package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
     package.semantic.substrate_event_count = 1;
     package.semantic.roots.substrate_event_roots = vec![
-        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=real-target-smoke".to_owned(),
+        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=native-visa"
+            .to_owned(),
     ];
     package.semantic.substrate_events = vec![SubstrateEventManifest {
         id: 1,
@@ -1478,7 +1519,7 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
         event_kind: "authority-extracted".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
-        requester: Some("real-target-smoke".to_owned()),
+        requester: Some("native-visa".to_owned()),
         artifact: Some(1),
         store: Some(1),
         capability: None,
