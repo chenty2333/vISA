@@ -597,7 +597,7 @@ fn hostcall_result_i64(value: &VisaHostcallValue) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use semantic_core::target_executor::HostcallCategory;
+    use semantic_core::{EventKind, target_executor::HostcallCategory};
     use sha2::{Digest, Sha256};
     use substrate_api::{
         ArtifactAuthority, CodePublisherAuthority, ConsoleAuthority, DmaAuthority, DmwAuthority,
@@ -1271,6 +1271,12 @@ mod tests {
             executor.runtime().snapshot().hostcalls.is_empty(),
             "failed dispatch must not commit portable-success hostcall evidence"
         );
+        assert!(
+            !executor.runtime().semantic().event_log().events().iter().any(|event| {
+                matches!(&event.kind, EventKind::SubstrateAuthorityExtracted { .. })
+            }),
+            "failed dispatch must not record substrate authority extraction evidence"
+        );
     }
 
     #[test]
@@ -1328,6 +1334,50 @@ mod tests {
         );
         assert!(report.evidence_summary().can_claim_portable_artifact_execution);
         assert_eq!(executor.runtime().executor().hostcall_trace().len(), 16);
+        let extracted = executor
+            .runtime()
+            .semantic()
+            .event_log()
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateAuthorityExtracted {
+                    authority,
+                    operation,
+                    requester,
+                    artifact,
+                    store,
+                    ..
+                } => Some((
+                    authority.as_str(),
+                    operation.as_str(),
+                    requester.as_deref(),
+                    *artifact,
+                    *store,
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(extracted.len(), 16);
+        assert!(extracted.iter().any(|entry| {
+            *entry
+                == (
+                    "ConsoleAuthority",
+                    "console_write",
+                    Some("native-visa-full"),
+                    Some(29),
+                    Some(1),
+                )
+        }));
+        assert!(extracted.iter().any(|(authority, operation, ..)| {
+            *authority == "GuestMemoryAuthority" && *operation == "copyin"
+        }));
+        assert!(extracted.iter().any(|(authority, operation, ..)| {
+            *authority == "DmaAuthority" && *operation == "dma_alloc"
+        }));
+        assert!(extracted.iter().any(|(authority, operation, ..)| {
+            *authority == "SnapshotAuthority" && *operation == "exit_snapshot_barrier"
+        }));
     }
 
     #[test]
