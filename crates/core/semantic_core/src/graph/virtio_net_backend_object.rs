@@ -3,6 +3,8 @@ use super::*;
 pub const VIRTIO_NET_BACKEND_PROVIDER_V1: &str = "substrate_virtio";
 pub const VIRTIO_NET_BACKEND_PROFILE_V1: &str = "virtio-net-backend-skeleton-v1";
 pub const VIRTIO_NET_BACKEND_MODEL_V1: &str = "virtio-net";
+pub const VIRTIO_NET_RX_QUEUE_INDEX_V1: u16 = 0;
+pub const VIRTIO_NET_TX_QUEUE_INDEX_V1: u16 = 1;
 
 impl SemanticGraph {
     #[allow(clippy::too_many_arguments)]
@@ -63,6 +65,8 @@ impl SemanticGraph {
             || queue_size == 0
             || irq_vector == 0
             || rx_queue_index == tx_queue_index
+            || rx_queue_index != VIRTIO_NET_RX_QUEUE_INDEX_V1
+            || tx_queue_index != VIRTIO_NET_TX_QUEUE_INDEX_V1
         {
             return Err("virtio net backend object contract values are invalid");
         }
@@ -299,6 +303,8 @@ impl SemanticGraph {
                 || record.queue_size == 0
                 || record.irq_vector == 0
                 || record.rx_queue_index == record.tx_queue_index
+                || record.rx_queue_index != VIRTIO_NET_RX_QUEUE_INDEX_V1
+                || record.tx_queue_index != VIRTIO_NET_TX_QUEUE_INDEX_V1
                 || (record.negotiated_features & !record.device_features) != 0
                 || (record.negotiated_features & !record.driver_features) != 0
                 || record.state != VirtioNetBackendObjectState::SkeletonReady
@@ -411,6 +417,25 @@ impl SemanticGraph {
             .find(|record| record.id == virtio_net_backend)
         {
             record.irq_vector = irq_vector;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_virtio_net_backend_queue_indices_for_test(
+        &mut self,
+        virtio_net_backend: VirtioNetBackendObjectId,
+        rx_queue_index: u16,
+        tx_queue_index: u16,
+    ) {
+        if let Some(record) = self
+            .domains
+            .network
+            .virtio_net_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_net_backend)
+        {
+            record.rx_queue_index = rx_queue_index;
+            record.tx_queue_index = tx_queue_index;
         }
     }
 }

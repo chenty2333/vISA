@@ -297,6 +297,38 @@ pub(super) fn block_runtime_b6_rejects_stale_duplicate_and_invalid_virtio_blk_ba
         vec!["virtio block backend object contract does not match block device".to_string()]
     );
 
+    let invalid_queue_index = graph.apply_envelope(CommandEnvelope::new(
+        6,
+        "b6-test",
+        SemanticCommand::RecordVirtioBlkBackendObject {
+            virtio_blk_backend: 1794,
+            name: "virtio-blk0-backend".to_string(),
+            block_device: 1791,
+            block_device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            provider: "substrate_virtio".to_string(),
+            profile: "virtio-blk-backend-skeleton-v1".to_string(),
+            model: "virtio-blk".to_string(),
+            sector_size: 512,
+            sector_count: 4096,
+            read_only: false,
+            max_transfer_sectors: 128,
+            device_features: 64,
+            driver_features: 64,
+            negotiated_features: 64,
+            request_queue_index: 1,
+            queue_size: 8,
+            irq_vector: 6,
+            note: "b6 invalid queue index".to_string(),
+        },
+    ));
+    assert_eq!(invalid_queue_index.status, CommandStatus::Rejected);
+    assert_eq!(
+        invalid_queue_index.violations,
+        vec!["virtio block backend object contract values are invalid".to_string()]
+    );
+
     assert!(graph.record_virtio_blk_backend_object_with_id(
         1794,
         "virtio-blk0-backend",
@@ -320,7 +352,7 @@ pub(super) fn block_runtime_b6_rejects_stale_duplicate_and_invalid_virtio_blk_ba
         "b6 first backend",
     ));
     let duplicate = graph.apply_envelope(CommandEnvelope::new(
-        6,
+        7,
         "b6-test",
         SemanticCommand::RecordVirtioBlkBackendObject {
             virtio_blk_backend: 1795,
@@ -410,6 +442,35 @@ pub(super) fn block_runtime_b6_invariants_reject_virtio_blk_generation_and_irq_l
         "b6 invariant backend",
     ));
     graph.corrupt_virtio_blk_backend_irq_vector_for_test(1794, 0);
+    assert!(matches!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::VirtioBlkBackendObjectInvalid { virtio_blk_backend: 1794 })
+    ));
+
+    let (mut graph, binding) = setup_b6_virtio_blk_backend_graph();
+    assert!(graph.record_virtio_blk_backend_object_with_id(
+        1794,
+        "virtio-blk0-backend",
+        1791,
+        1,
+        binding,
+        1,
+        "substrate_virtio",
+        "virtio-blk-backend-skeleton-v1",
+        "virtio-blk",
+        512,
+        4096,
+        false,
+        128,
+        64,
+        64,
+        64,
+        0,
+        8,
+        6,
+        "b6 invariant backend",
+    ));
+    graph.corrupt_virtio_blk_backend_request_queue_index_for_test(1794, 1);
     assert!(matches!(
         graph.check_invariants(),
         Err(SemanticInvariantError::VirtioBlkBackendObjectInvalid { virtio_blk_backend: 1794 })

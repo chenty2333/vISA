@@ -85,6 +85,11 @@ pub fn validate_config(config: VirtioNetBackendConfig) -> Result<(), &'static st
     if config.rx_queue_index == config.tx_queue_index {
         return Err("virtio net backend rx and tx queues must be distinct");
     }
+    if config.rx_queue_index != VIRTIO_NET_RX_QUEUE_INDEX
+        || config.tx_queue_index != VIRTIO_NET_TX_QUEUE_INDEX
+    {
+        return Err("virtio net backend queue indices are unsupported");
+    }
     if config.negotiated_features & !config.device_features != 0 {
         return Err("virtio net backend negotiated features exceed device features");
     }
@@ -121,6 +126,14 @@ mod tests {
         assert_eq!(
             validate_config(config),
             Err("virtio net backend rx and tx queues must be distinct")
+        );
+
+        config = VirtioNetBackendConfig::net0();
+        config.rx_queue_index = 2;
+        config.tx_queue_index = 3;
+        assert_eq!(
+            validate_config(config),
+            Err("virtio net backend queue indices are unsupported")
         );
 
         config = VirtioNetBackendConfig::net0();

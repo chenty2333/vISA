@@ -324,6 +324,41 @@ pub(super) fn network_runtime_n5_rejects_stale_mismatched_or_unsupported_backend
         vec!["virtio net backend object contract values are invalid".to_string()]
     );
 
+    let invalid_queue_indices = graph.apply_envelope(CommandEnvelope::new(
+        7,
+        "n5-test",
+        SemanticCommand::RecordVirtioNetBackendObject {
+            virtio_net_backend: 1553,
+            name: "virtio-net2-backend".to_string(),
+            packet_device: 1541,
+            packet_device_generation: 1,
+            driver_binding: binding,
+            driver_binding_generation: 1,
+            provider: "substrate_virtio".to_string(),
+            profile: "virtio-net-backend-skeleton-v1".to_string(),
+            model: "virtio-net".to_string(),
+            mtu: 1500,
+            rx_queue_depth: 4,
+            tx_queue_depth: 4,
+            mac: [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+            frame_format_version: 2,
+            max_payload_len: 512,
+            device_features: 32,
+            driver_features: 32,
+            negotiated_features: 32,
+            rx_queue_index: 2,
+            tx_queue_index: 3,
+            queue_size: 4,
+            irq_vector: 5,
+            note: "n5 invalid queue indices".to_string(),
+        },
+    ));
+    assert_eq!(invalid_queue_indices.status, CommandStatus::Rejected);
+    assert_eq!(
+        invalid_queue_indices.violations,
+        vec!["virtio net backend object contract values are invalid".to_string()]
+    );
+
     assert!(graph.record_virtio_net_backend_object_with_id(
         1553,
         "virtio-net2-backend",
@@ -350,7 +385,7 @@ pub(super) fn network_runtime_n5_rejects_stale_mismatched_or_unsupported_backend
         "n5 first backend",
     ));
     let duplicate = graph.apply_envelope(CommandEnvelope::new(
-        7,
+        8,
         "n5-test",
         SemanticCommand::RecordVirtioNetBackendObject {
             virtio_net_backend: 1554,
@@ -452,6 +487,41 @@ pub(super) fn network_runtime_n5_invariants_reject_invalid_virtio_irq_vector() {
         "n5 invariant backend",
     ));
     graph.corrupt_virtio_net_backend_irq_vector_for_test(1553, 0);
+    assert!(matches!(
+        graph.check_invariants(),
+        Err(SemanticInvariantError::VirtioNetBackendObjectInvalid { virtio_net_backend: 1553 })
+    ));
+}
+
+#[test]
+pub(super) fn network_runtime_n5_invariants_reject_noncanonical_queue_indices() {
+    let (mut graph, binding) = setup_n5_virtio_net_backend_graph();
+    assert!(graph.record_virtio_net_backend_object_with_id(
+        1553,
+        "virtio-net2-backend",
+        1541,
+        1,
+        binding,
+        1,
+        "substrate_virtio",
+        "virtio-net-backend-skeleton-v1",
+        "virtio-net",
+        1500,
+        4,
+        4,
+        [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x03],
+        2,
+        512,
+        32,
+        32,
+        32,
+        0,
+        1,
+        4,
+        5,
+        "n5 invariant backend",
+    ));
+    graph.corrupt_virtio_net_backend_queue_indices_for_test(1553, 2, 3);
     assert!(matches!(
         graph.check_invariants(),
         Err(SemanticInvariantError::VirtioNetBackendObjectInvalid { virtio_net_backend: 1553 })

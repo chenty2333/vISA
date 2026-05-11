@@ -3,6 +3,7 @@ use super::*;
 pub const VIRTIO_BLK_BACKEND_PROVIDER_V1: &str = "substrate_virtio";
 pub const VIRTIO_BLK_BACKEND_PROFILE_V1: &str = "virtio-blk-backend-skeleton-v1";
 pub const VIRTIO_BLK_BACKEND_MODEL_V1: &str = "virtio-blk";
+pub const VIRTIO_BLK_REQUEST_QUEUE_INDEX_V1: u16 = 0;
 
 impl SemanticGraph {
     #[allow(clippy::too_many_arguments)]
@@ -24,7 +25,7 @@ impl SemanticGraph {
         device_features: u64,
         driver_features: u64,
         negotiated_features: u64,
-        _request_queue_index: u16,
+        request_queue_index: u16,
         queue_size: u16,
         irq_vector: u16,
     ) -> Result<(), &'static str> {
@@ -56,6 +57,7 @@ impl SemanticGraph {
             || !sector_size.is_power_of_two()
             || sector_count == 0
             || max_transfer_sectors == 0
+            || request_queue_index != VIRTIO_BLK_REQUEST_QUEUE_INDEX_V1
             || queue_size == 0
             || irq_vector == 0
         {
@@ -285,6 +287,7 @@ impl SemanticGraph {
                 || !record.sector_size.is_power_of_two()
                 || record.sector_count == 0
                 || record.max_transfer_sectors == 0
+                || record.request_queue_index != VIRTIO_BLK_REQUEST_QUEUE_INDEX_V1
                 || record.queue_size == 0
                 || record.irq_vector == 0
                 || (record.negotiated_features & !record.device_features) != 0
@@ -403,6 +406,23 @@ impl SemanticGraph {
             .find(|record| record.id == virtio_blk_backend)
         {
             record.irq_vector = irq_vector;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_virtio_blk_backend_request_queue_index_for_test(
+        &mut self,
+        virtio_blk_backend: VirtioBlkBackendObjectId,
+        request_queue_index: u16,
+    ) {
+        if let Some(record) = self
+            .domains
+            .block
+            .virtio_blk_backends
+            .iter_mut()
+            .find(|record| record.id == virtio_blk_backend)
+        {
+            record.request_queue_index = request_queue_index;
         }
     }
 }
