@@ -1581,6 +1581,7 @@ dependencies = [
  "substrate_virtio",
  "supervisor_catalog",
  "target_abi",
+ "visa_profile",
  "vms_runtime",
  "wasmtime",
 ]

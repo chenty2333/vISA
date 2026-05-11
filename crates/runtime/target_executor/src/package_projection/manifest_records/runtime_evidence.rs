@@ -42,12 +42,76 @@ pub fn runtime_evidence_target_runtime_manifests(
 
 #[cfg(test)]
 mod tests {
+    use sha2::{Digest, Sha256};
+    use substrate_api::{
+        ArtifactAuthority, ArtifactImageRef, CodeObjectRef, CodePublisherAuthority,
+        ConsoleAuthority, DmaAuthority, DmwAuthority, EventQueueAuthority, GuestMemoryAuthority,
+        IrqAuthority, MmioAuthority, PublishedCodeRef, SnapshotAuthority, SubstrateResult,
+        TimerAuthority,
+    };
+    use target_abi::{
+        SectionKindV1, TargetArtifactHeaderV1, TargetSectionHeaderV1,
+        canonical_zero_field_image_hash,
+    };
+    use visa_profile::SubstrateProfile;
     use vms_runtime::{
+        VisaArtifactInput, VisaExecutionStep, VisaRuntime, VisaRuntimeConfig,
         VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
-        VisaSubstrateUnsupportedEvidence,
+        VisaSubstrateUnsupportedEvidence, personality,
     };
 
     use super::*;
+
+    const REQUIRED_SECTIONS: [SectionKindV1; 7] = [
+        SectionKindV1::Manifest,
+        SectionKindV1::CodeObject,
+        SectionKindV1::HostcallImportTable,
+        SectionKindV1::TrapMap,
+        SectionKindV1::PcRangeTable,
+        SectionKindV1::ProfileRequirements,
+        SectionKindV1::Signature,
+    ];
+
+    #[derive(Default)]
+    struct ProjectionSubstrate {
+        loaded: Vec<ArtifactImageRef>,
+        published: Vec<(ArtifactImageRef, CodeObjectRef)>,
+        console: Vec<u8>,
+    }
+
+    impl ArtifactAuthority for ProjectionSubstrate {
+        fn load_artifact_image(&mut self, artifact: ArtifactImageRef) -> SubstrateResult<()> {
+            self.loaded.push(artifact);
+            Ok(())
+        }
+    }
+
+    impl CodePublisherAuthority for ProjectionSubstrate {
+        fn publish_code(
+            &mut self,
+            artifact: ArtifactImageRef,
+            code: CodeObjectRef,
+        ) -> SubstrateResult<PublishedCodeRef> {
+            self.published.push((artifact, code));
+            Ok(PublishedCodeRef::new(code.id, code.generation))
+        }
+    }
+
+    impl ConsoleAuthority for ProjectionSubstrate {
+        fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+            self.console.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+    }
+
+    impl TimerAuthority for ProjectionSubstrate {}
+    impl EventQueueAuthority for ProjectionSubstrate {}
+    impl GuestMemoryAuthority for ProjectionSubstrate {}
+    impl DmwAuthority for ProjectionSubstrate {}
+    impl MmioAuthority for ProjectionSubstrate {}
+    impl DmaAuthority for ProjectionSubstrate {}
+    impl IrqAuthority for ProjectionSubstrate {}
+    impl SnapshotAuthority for ProjectionSubstrate {}
 
     #[test]
     fn runtime_evidence_target_runtime_manifest_bundle_projects_package_ready_records() {
@@ -125,5 +189,113 @@ mod tests {
         assert_eq!(bundle.substrate_events[0].id, 8);
         assert_eq!(bundle.substrate_events[1].event_kind, "authority-extracted");
         assert_eq!(bundle.substrate_events[1].capability.as_ref().map(|cap| cap.id), Some(13));
+    }
+
+    #[test]
+    fn runtime_evidence_bundle_consumes_real_runtime_snapshot() {
+        let personality = personality::native::VisaNativePersonality::new(
+            "native-visa",
+            SubstrateProfile::MinimalBareMetal,
+        );
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let mut substrate = ProjectionSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(41) },
+                ActivationEntry::Symbol("visa_start".into()),
+                [VisaExecutionStep::new(
+                    personality::native::VISA_CONSOLE_WRITE,
+                    personality.console_write(b"bundle"),
+                )],
+                &mut substrate,
+            )
+            .expect("run native vISA runtime path");
+
+        let evidence = runtime.evidence_snapshot();
+        let bundle = runtime_evidence_target_runtime_manifests(&evidence);
+
+        assert_eq!(substrate.console, b"bundle");
+        assert_eq!(bundle.target_artifacts.len(), 1);
+        assert_eq!(bundle.code_objects.len(), 1);
+        assert_eq!(bundle.store_records.len(), 1);
+        assert!(!bundle.capability_records.is_empty());
+        assert_eq!(bundle.activation_records.len(), 1);
+        assert_eq!(bundle.hostcall_trace.len(), 1);
+        assert_eq!(bundle.substrate_events.len(), 1);
+        assert_eq!(bundle.target_artifacts[0].id, report.loaded.artifact_id);
+        assert_eq!(bundle.code_objects[0].id, report.loaded.code_object_id);
+        assert_eq!(bundle.code_objects[0].artifact_id, report.loaded.artifact_id);
+        assert_eq!(bundle.code_objects[0].bound_store, Some(report.loaded.store_id));
+        assert_eq!(bundle.store_records[0].id, report.loaded.store_id);
+        assert_eq!(bundle.activation_records[0].id, report.activation.activation_id);
+        assert_eq!(bundle.activation_records[0].store, report.loaded.store_id);
+        assert_eq!(bundle.hostcall_trace[0].activation, report.activation.activation_id);
+        assert_eq!(bundle.hostcall_trace[0].artifact, report.loaded.artifact_id);
+        assert_eq!(bundle.hostcall_trace[0].name, "visa.console.write");
+        assert_eq!(bundle.hostcall_trace[0].result, "complete");
+        assert_eq!(bundle.substrate_events[0].event_kind, "authority-extracted");
+        assert_eq!(bundle.substrate_events[0].authority, "ConsoleAuthority");
+        assert_eq!(bundle.substrate_events[0].operation, "console_write");
+        assert_eq!(bundle.substrate_events[0].artifact, Some(report.loaded.artifact_id));
+        assert_eq!(bundle.substrate_events[0].store, Some(report.loaded.store_id));
+    }
+
+    fn fake_image(kinds: &[SectionKindV1]) -> Vec<u8> {
+        let header_len = core::mem::size_of::<TargetArtifactHeaderV1>();
+        let section_len = core::mem::size_of::<TargetSectionHeaderV1>();
+        let payload_len = 16;
+        let section_table_len = kinds.len() * section_len;
+        let payload_base = header_len + section_table_len;
+        let image_len = payload_base + kinds.len() * payload_len;
+        let mut image = vec![0; image_len];
+
+        let header = TargetArtifactHeaderV1::fake_riscv64(kinds.len() as u32, image_len as u64);
+        header.write_to(&mut image).expect("header");
+
+        for (index, kind) in kinds.iter().copied().enumerate() {
+            let offset = payload_base + index * payload_len;
+            image[offset..offset + payload_len].fill(kind as u32 as u8);
+            let mut section =
+                TargetSectionHeaderV1::new(kind, offset as u64, payload_len as u64, 1);
+            section.hash = Sha256::digest(&image[offset..offset + payload_len]).into();
+            let section_off = header_len + index * section_len;
+            section.write_to(&mut image[section_off..section_off + section_len]).expect("section");
+        }
+
+        let mut header = TargetArtifactHeaderV1::parse(&image).expect("parse header");
+        let (manifest_start, manifest_end) = section_payload_range(&image, SectionKindV1::Manifest);
+        header.manifest_hash = Sha256::digest(&image[manifest_start..manifest_end]).into();
+        header.write_to(&mut image).expect("manifest hash");
+        refresh_image_hash(&mut image);
+        image
+    }
+
+    fn section_payload_range(image: &[u8], kind: SectionKindV1) -> (usize, usize) {
+        let header = TargetArtifactHeaderV1::parse(image).expect("header");
+        let section_len = core::mem::size_of::<TargetSectionHeaderV1>();
+        for index in 0..header.section_count as usize {
+            let section_off = core::mem::size_of::<TargetArtifactHeaderV1>() + index * section_len;
+            let section =
+                TargetSectionHeaderV1::parse(&image[section_off..section_off + section_len])
+                    .expect("section");
+            if section.kind == kind {
+                let start = section.offset as usize;
+                return (start, start + section.len as usize);
+            }
+        }
+        panic!("missing section")
+    }
+
+    fn refresh_image_hash(image: &mut [u8]) {
+        let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
+        header.image_hash = [0; 32];
+        header.write_to(image).expect("zero image hash");
+        let hash = canonical_zero_field_image_hash(image).expect("canonical hash");
+        let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
+        header.image_hash = hash;
+        header.write_to(image).expect("image hash");
     }
 }
