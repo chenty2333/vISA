@@ -137,6 +137,28 @@ fn report_rejects_unknown_suite_id() {
 }
 
 #[test]
+fn report_rejects_known_spec_in_wrong_suite() {
+    let catalog = full_catalog();
+    let mut report = sample_ltp_report();
+    let visa_spec = catalog.iter().find(|spec| spec.id == "visa.artifact.load").unwrap();
+    report.results.push(TestResult {
+        spec_id: visa_spec.id.clone(),
+        outcome: Outcome::NotRun,
+        observed_boundary: visa_spec.minimum_boundary,
+        observed_profile: visa_spec.required_profile.clone(),
+        evidence: "known spec intentionally placed in wrong suite".to_string(),
+        remaining_uncertainty: "suite membership should reject this result".to_string(),
+        metrics: BTreeMap::new(),
+        evidence_artifacts: Vec::new(),
+    });
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(validation.findings.iter().any(|finding| finding.code == "unexpected-suite-result"));
+}
+
+#[test]
 fn report_rejects_missing_suite_results() {
     let catalog = linux_ltp_catalog();
     let spec = catalog.iter().find(|spec| spec.id == LtpSubset::FsBasic.spec_id()).unwrap();

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use visa_profile::SubstrateProfile;
 
 use crate::{
-    catalog::{linux_ltp_catalog, performance_catalog},
+    catalog::{linux_ltp_catalog, performance_catalog, substrate_profile_catalog},
     performance::required_performance_metrics,
     types::{
         Boundary, ClaimKind, ConformanceReport, EvidenceArtifactKind, Outcome, Personality,
@@ -37,6 +37,7 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
     }
     let spec_by_id =
         catalog.iter().map(|spec| (spec.id.as_str(), spec)).collect::<BTreeMap<_, _>>();
+    let allowed_suite_ids = suite_allowed_result_ids(&report.suite_id, catalog);
     let mut result_ids = BTreeSet::new();
     for result in &report.results {
         if !result_ids.insert(result.spec_id.as_str()) {
@@ -50,6 +51,14 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                 .push(finding("unknown-spec-id", format!("unknown spec id {}", result.spec_id)));
             continue;
         };
+        if let Some(allowed_suite_ids) = &allowed_suite_ids
+            && !allowed_suite_ids.contains(result.spec_id.as_str())
+        {
+            findings.push(finding(
+                "unexpected-suite-result",
+                format!("{} does not belong to suite {}", result.spec_id, report.suite_id),
+            ));
+        }
         if !result.observed_boundary.can_claim(spec.minimum_boundary) {
             findings.push(finding(
                 "insufficient-evidence-boundary",
@@ -330,6 +339,22 @@ fn validate_spec(spec: &TestSpec, findings: &mut Vec<ValidationFinding>) {
                 ),
             ));
         }
+    }
+}
+
+fn suite_allowed_result_ids(suite_id: &str, catalog: &[TestSpec]) -> Option<BTreeSet<String>> {
+    match suite_id {
+        "vmos-layered-conformance" => Some(catalog.iter().map(|spec| spec.id.clone()).collect()),
+        "vmos-linux-ltp-personality-compatibility" => {
+            Some(linux_ltp_catalog().into_iter().map(|spec| spec.id).collect())
+        }
+        "vmos-substrate-profile-conformance" => {
+            Some(substrate_profile_catalog().into_iter().map(|spec| spec.id).collect())
+        }
+        "vmos-performance-benchmark" => {
+            Some(performance_catalog().into_iter().map(|spec| spec.id).collect())
+        }
+        _ => None,
     }
 }
 
