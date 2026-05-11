@@ -64,6 +64,11 @@ if run_conformance validate-report "$partial_report" >"$tmp_root/partial-gate.js
     echo "FAIL: incomplete LTP report unexpectedly passed conformance gate"
     exit 1
 fi
+if run_conformance validate-report-with-artifacts "$partial_report" \
+    >"$tmp_root/partial-combined-gate.json"; then
+    echo "FAIL: incomplete LTP report unexpectedly passed combined conformance gate"
+    exit 1
+fi
 
 fake_runltp="$tmp_root/runltp"
 cat >"$fake_runltp" <<'EOF'
