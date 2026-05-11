@@ -183,12 +183,26 @@ impl NonPortableStateKind {
 }
 
 impl ContractGraphSnapshot {
-    /// Return a new snapshot containing only portable records.
-    /// Non-portable hardware binding records are cleared.
+    /// Return a new snapshot containing portable records that the runtime
+    /// restore path can rebuild without identity remapping.
+    /// Hardware bindings and restore-unsupported semantic projections are
+    /// cleared.
     /// Artifacts and code_objects are kept — identity and manifest metadata
     /// are portable per the vISA spec.
     pub fn portable_subset(&self) -> Self {
         Self {
+            // Not restored yet: SIMD execution and benchmark projections
+            target_feature_sets: Vec::new(),
+            vector_states: Vec::new(),
+            simd_fault_injections: Vec::new(),
+            simd_benchmarks: Vec::new(),
+            simd_context_switch_benchmarks: Vec::new(),
+            integrated_simd_migrations: Vec::new(),
+            // Not restored yet: display roots and code-publish integrated projections
+            framebuffer_objects: Vec::new(),
+            display_objects: Vec::new(),
+            display_capabilities: Vec::new(),
+            integrated_code_publish_smp_workloads: Vec::new(),
             // Non-portable: device/IO/backend bindings
             device_objects: Vec::new(),
             io_cleanups: Vec::new(),
@@ -237,6 +251,27 @@ impl ContractGraphSnapshot {
             integrated_snapshot_io_lease_barriers: Vec::new(),
             integrated_display_panics: Vec::new(),
             integrated_osctl_trace_replays: Vec::new(),
+            // Not restored yet: scheduler execution projections beyond task/runtime activation
+            harts: Vec::new(),
+            runnable_queues: Vec::new(),
+            scheduler_decisions: Vec::new(),
+            activation_contexts: Vec::new(),
+            activation_migrations: Vec::new(),
+            smp_safe_points: Vec::new(),
+            stop_the_world_rendezvous: Vec::new(),
+            smp_code_publish_barriers: Vec::new(),
+            timer_interrupts: Vec::new(),
+            remote_preempts: Vec::new(),
+            activation_cleanups: Vec::new(),
+            smp_cleanup_quiescence: Vec::new(),
+            smp_snapshot_barriers: Vec::new(),
+            smp_stress_runs: Vec::new(),
+            preemptions: Vec::new(),
+            activation_resumes: Vec::new(),
+            waits: Vec::new(),
+            // Not restored yet: external declarations and explicit audit edges
+            external_objects: Vec::new(),
+            explicit_edges: Vec::new(),
             // Portable: keep everything else (incl. artifacts, code_objects, stores, capabilities)
             ..self.clone()
         }

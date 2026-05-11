@@ -2750,6 +2750,36 @@ mod tests {
     }
 
     #[test]
+    fn portable_subset_strips_restore_unsupported_records() {
+        let mut snapshot = ContractGraphSnapshot::default();
+        snapshot.external_objects.push(semantic_core::ExternalObjectDeclaration::new(
+            ContractObjectRef::new(ContractObjectKind::EventLog, 1, 1),
+            "debugger",
+            "external-event-log",
+            "event-log",
+        ));
+        snapshot.explicit_edges.push(
+            semantic_core::ContractEdgeRecord::new(
+                ContractObjectRef::new(ContractObjectKind::Store, 1, 1),
+                ContractObjectRef::new(ContractObjectKind::Task, 1, 1),
+                semantic_core::ContractEdgeMode::Live,
+                "test-edge",
+                1,
+            )
+            .with_evidence_level(EvidenceBoundaryLevel::SemanticModel),
+        );
+
+        let portable = snapshot.portable_subset();
+        assert!(portable.external_objects.is_empty());
+        assert!(portable.explicit_edges.is_empty());
+
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        rt.restore_portable_subset(&portable)
+            .expect("portable subset must be accepted after stripping unsupported records");
+    }
+
+    #[test]
     fn restore_rejects_unsupported_tombstone_kind_without_mutating_runtime() {
         let mut rt =
             VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
