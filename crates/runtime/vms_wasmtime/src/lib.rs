@@ -448,15 +448,18 @@ fn hostcall_payload_for_object(
     let [a, b, c, d, e, _f] = args;
     match (object, operation) {
         ("visa.console", "write") => {
-            let bytes = read_guest_bytes(caller, a as usize, b.max(0) as usize)?;
+            let ptr = arg_usize("buffer_ptr", a)?;
+            let len = arg_usize("byte_len", b)?;
+            let bytes = read_guest_bytes(caller, ptr, len)?;
             Ok(VisaHostcallPayload::ConsoleWrite { bytes })
         }
         ("wasi.fd", "write") | ("test.console", "write") => {
-            let len = a.max(0) as usize;
+            let len = arg_usize("byte_len", a)?;
             let mut bytes = Vec::with_capacity(len.min(1024));
-            for byte in [b, c, d] {
+            for (name, byte) in [("byte0", b), ("byte1", c), ("byte2", d)] {
+                let byte = arg_u8(name, byte)?;
                 if byte > 0 {
-                    bytes.push(byte as u8);
+                    bytes.push(byte);
                 }
             }
             Ok(VisaHostcallPayload::ConsoleWrite { bytes })
@@ -465,71 +468,116 @@ fn hostcall_payload_for_object(
             Ok(VisaHostcallPayload::TimerNow)
         }
         ("timer.wasi", "arm") | ("visa.timer", "arm") => Ok(VisaHostcallPayload::TimerArm {
-            deadline_ticks: a as u64,
-            token: substrate_api::WaitTokenRef::new(b as u64, c as u64),
+            deadline_ticks: arg_u64("deadline_ticks", a)?,
+            token: substrate_api::WaitTokenRef::new(
+                arg_u64("wait_token_id", b)?,
+                arg_u64("wait_token_generation", c)?,
+            ),
         }),
         ("guest-memory", "read") | ("guest-memory", "copyin") | ("visa.memory", "copyin") => {
-            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
-            let ptr = c as u64;
-            let len = d.max(0) as usize;
+            let memory = substrate_api::UserMemoryHandle::new(
+                arg_u64("memory_id", a)?,
+                arg_u64("memory_generation", b)?,
+            );
+            let ptr = arg_u64("guest_ptr", c)?;
+            let len = arg_usize("byte_len", d)?;
             Ok(VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len })
         }
         ("guest-memory", "write") | ("guest-memory", "copyout") | ("visa.memory", "copyout") => {
-            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
-            let ptr = c as u64;
-            let bytes = read_guest_bytes(caller, e as usize, d.max(0) as usize)?;
+            let memory = substrate_api::UserMemoryHandle::new(
+                arg_u64("memory_id", a)?,
+                arg_u64("memory_generation", b)?,
+            );
+            let ptr = arg_u64("guest_ptr", c)?;
+            let len = arg_usize("byte_len", d)?;
+            let buffer_ptr = arg_usize("buffer_ptr", e)?;
+            let bytes = read_guest_bytes(caller, buffer_ptr, len)?;
             Ok(VisaHostcallPayload::GuestMemoryCopyOut { memory, ptr, bytes })
         }
         ("dmw", "map") | ("visa.dmw", "map") => {
-            let memory = substrate_api::UserMemoryHandle::new(a as u64, b as u64);
-            let ptr = c as u64;
-            let len = d.max(0) as usize;
+            let memory = substrate_api::UserMemoryHandle::new(
+                arg_u64("memory_id", a)?,
+                arg_u64("memory_generation", b)?,
+            );
+            let ptr = arg_u64("guest_ptr", c)?;
+            let len = arg_usize("byte_len", d)?;
             Ok(VisaHostcallPayload::DmwMap {
                 memory,
                 ptr,
                 len,
-                perms: window_perms_from_bits(e as u64),
+                perms: window_perms_from_bits(arg_u64("perms", e)?),
             })
         }
         ("dmw", "unmap") | ("visa.dmw", "unmap") => Ok(VisaHostcallPayload::DmwUnmap {
-            lease: substrate_api::WindowLeaseRef::new(a as u64, b as u64),
+            lease: substrate_api::WindowLeaseRef::new(
+                arg_u64("lease_id", a)?,
+                arg_u64("lease_generation", b)?,
+            ),
         }),
         ("mmio", "read32") | ("visa.mmio", "read32") => Ok(VisaHostcallPayload::MmioRead32 {
-            region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
-            offset: c as u64,
+            region: substrate_api::MmioRegionRef::new(
+                arg_u64("region_id", a)?,
+                arg_u64("region_generation", b)?,
+            ),
+            offset: arg_u64("offset", c)?,
         }),
         ("mmio", "write32") | ("visa.mmio", "write32") => Ok(VisaHostcallPayload::MmioWrite32 {
-            region: substrate_api::MmioRegionRef::new(a as u64, b as u64),
-            offset: c as u64,
-            value: d as u32,
+            region: substrate_api::MmioRegionRef::new(
+                arg_u64("region_id", a)?,
+                arg_u64("region_generation", b)?,
+            ),
+            offset: arg_u64("offset", c)?,
+            value: arg_u32("value", d)?,
         }),
         ("dma", "alloc") | ("visa.dma", "alloc") => Ok(VisaHostcallPayload::DmaAlloc {
             request: substrate_api::DmaAllocRequest::new(
-                a as u64,
-                b.max(0) as usize,
-                c.max(1) as usize,
+                arg_u64("device_id", a)?,
+                arg_usize("byte_len", b)?,
+                arg_usize("alignment", c)?,
             ),
         }),
         ("dma", "free") | ("visa.dma", "free") => Ok(VisaHostcallPayload::DmaFree {
-            capability: substrate_api::DmaBufferCapability::new(a as u64, b as u64),
+            capability: substrate_api::DmaBufferCapability::new(
+                arg_u64("dma_buffer_id", a)?,
+                arg_u64("dma_buffer_generation", b)?,
+            ),
         }),
-        ("irq", "ack") | ("visa.irq", "ack") => {
-            Ok(VisaHostcallPayload::IrqAck { irq: substrate_api::IrqLine::new(a as u64, b as u64) })
-        }
+        ("irq", "ack") | ("visa.irq", "ack") => Ok(VisaHostcallPayload::IrqAck {
+            irq: substrate_api::IrqLine::new(arg_u64("irq_id", a)?, arg_u64("irq_generation", b)?),
+        }),
         ("irq", "mask") | ("visa.irq", "mask") => Ok(VisaHostcallPayload::IrqMask {
-            irq: substrate_api::IrqLine::new(a as u64, b as u64),
+            irq: substrate_api::IrqLine::new(arg_u64("irq_id", a)?, arg_u64("irq_generation", b)?),
         }),
         ("irq", "unmask") | ("visa.irq", "unmask") => Ok(VisaHostcallPayload::IrqUnmask {
-            irq: substrate_api::IrqLine::new(a as u64, b as u64),
+            irq: substrate_api::IrqLine::new(arg_u64("irq_id", a)?, arg_u64("irq_generation", b)?),
         }),
         ("snapshot", "enter") | ("visa.snapshot", "enter") => {
             Ok(VisaHostcallPayload::SnapshotEnter)
         }
         ("snapshot", "exit") | ("visa.snapshot", "exit") => Ok(VisaHostcallPayload::SnapshotExit {
-            barrier: substrate_api::SnapshotBarrierRef::new(a as u64, b as u64),
+            barrier: substrate_api::SnapshotBarrierRef::new(
+                arg_u64("barrier_id", a)?,
+                arg_u64("barrier_generation", b)?,
+            ),
         }),
         _ => Err(format!("unsupported hostcall object={object} operation={operation}")),
     }
+}
+
+fn arg_u64(name: &str, value: i64) -> Result<u64, String> {
+    u64::try_from(value).map_err(|_| format!("{name} must be non-negative"))
+}
+
+fn arg_usize(name: &str, value: i64) -> Result<usize, String> {
+    usize::try_from(arg_u64(name, value)?).map_err(|_| format!("{name} is too large"))
+}
+
+fn arg_u32(name: &str, value: i64) -> Result<u32, String> {
+    u32::try_from(arg_u64(name, value)?).map_err(|_| format!("{name} is too large"))
+}
+
+fn arg_u8(name: &str, value: i64) -> Result<u8, String> {
+    u8::try_from(arg_u64(name, value)?).map_err(|_| format!("{name} is too large"))
 }
 
 fn operation_returns_guest_bytes(object: &str, operation: &str) -> bool {
@@ -954,6 +1002,24 @@ mod tests {
     i64.const 0
     i64.const 0
     call $console_write
+  )
+)"#,
+        )
+        .expect("parse wat")
+    }
+
+    fn visa_native_negative_timer_arg_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+  (import "vms" "hostcall_1" (func $timer_arm (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (func (export "visa_start") (result i64)
+    i64.const 10
+    i64.const -1
+    i64.const 1
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $timer_arm
   )
 )"#,
         )
@@ -1457,6 +1523,47 @@ mod tests {
             "expected guest memory bounds error, got: {err}"
         );
         assert!(executor.hostcall_reports().is_empty());
+    }
+
+    #[test]
+    fn run_rejects_negative_hostcall_abi_arguments_before_dispatch() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &visa_native_negative_timer_arg_wasm());
+        let descriptor = VisaArtifactDescriptor::new(
+            42,
+            "native-visa-negative-arg",
+            "negative-arg",
+            SubstrateProfile::MinimalBareMetal,
+        )
+        .with_role("visa-native-workload")
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "visa.timer.arm",
+            HostcallCategory::Timer,
+            "visa.timer",
+            "arm",
+            false,
+        ));
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor }, "visa_start")
+            .expect_err("negative hostcall ABI lane must fail decode");
+
+        assert!(
+            matches!(err, WasmVisaError::Wasmtime(ref message) if message.contains("wait_token_id must be non-negative")),
+            "expected negative token decode error, got: {err}"
+        );
+        assert!(
+            executor.hostcall_reports().is_empty(),
+            "decode failure must not expose a successful hostcall report"
+        );
+        assert!(
+            executor.runtime().snapshot().hostcalls.is_empty(),
+            "decode failure must not commit portable hostcall evidence"
+        );
     }
 
     #[test]
