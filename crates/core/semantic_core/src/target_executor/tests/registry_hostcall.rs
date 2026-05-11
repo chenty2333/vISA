@@ -104,6 +104,37 @@ fn registry_only_verifies_artifact_identity_and_code_publisher_owns_publish_stat
 }
 
 #[test]
+fn registry_rejects_malformed_hostcall_tables() {
+    let mut registry = ArtifactRegistry::new();
+
+    let mut zero_number = image();
+    zero_number.hostcalls[0].number = 0;
+    assert_eq!(registry.verify(zero_number), Err(ArtifactRegistryError::InvalidHostcallSpec));
+
+    let mut duplicate_number = image();
+    duplicate_number.hostcalls[1].number = duplicate_number.hostcalls[0].number;
+    assert_eq!(registry.verify(duplicate_number), Err(ArtifactRegistryError::InvalidHostcallSpec));
+
+    let mut empty_object = image();
+    empty_object.hostcalls[0].object.clear();
+    assert_eq!(registry.verify(empty_object), Err(ArtifactRegistryError::InvalidHostcallSpec));
+}
+
+#[test]
+fn registry_restore_rejects_malformed_hostcall_tables() {
+    let mut registry = ArtifactRegistry::new();
+    let mut verified = registry.verify(image()).unwrap();
+    verified.hostcalls[0].operation.clear();
+
+    let mut restored = ArtifactRegistry::new();
+    assert!(
+        !restored.restore_verified_records(&[verified]),
+        "restore must reject verified artifact records with malformed hostcall tables"
+    );
+    assert!(restored.verified().is_empty());
+}
+
+#[test]
 fn registry_policy_rejects_manifest_binding_and_hash_mismatch() {
     let expected = ExpectedTargetArtifact::new(
         "driver_virtio_net",

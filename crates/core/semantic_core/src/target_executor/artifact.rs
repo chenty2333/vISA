@@ -587,6 +587,7 @@ pub enum ArtifactRegistryError {
     EmptyCodeHash,
     EmptyTargetProfile,
     EmptyAbiFingerprint,
+    InvalidHostcallSpec,
     DuplicateArtifact,
     UnexpectedArtifact,
     TargetProfileMismatch,
@@ -607,6 +608,7 @@ impl ArtifactRegistryError {
             Self::EmptyCodeHash => "artifact code hash is empty",
             Self::EmptyTargetProfile => "artifact target profile is empty",
             Self::EmptyAbiFingerprint => "artifact ABI fingerprint is empty",
+            Self::InvalidHostcallSpec => "artifact hostcall table is malformed",
             Self::DuplicateArtifact => "artifact identity was already verified",
             Self::UnexpectedArtifact => "artifact is not present in expected manifest policy",
             Self::TargetProfileMismatch => "artifact target profile does not match expected policy",
@@ -662,6 +664,9 @@ impl ArtifactRegistry {
         }
         if image.abi_fingerprint.is_empty() {
             return Err(ArtifactRegistryError::EmptyAbiFingerprint);
+        }
+        if !hostcall_table_is_well_formed(&image.hostcalls) {
+            return Err(ArtifactRegistryError::InvalidHostcallSpec);
         }
         if self.verified.iter().any(|verified| verified.artifact_id == image.id) {
             return Err(ArtifactRegistryError::DuplicateArtifact);
@@ -738,6 +743,7 @@ impl ArtifactRegistry {
                 || record.generation == 0
                 || record.package.is_empty()
                 || record.artifact_name.is_empty()
+                || !hostcall_table_is_well_formed(&record.hostcalls)
                 || restored
                     .iter()
                     .any(|existing: &VerifiedArtifact| existing.artifact_id == record.artifact_id)
@@ -749,6 +755,22 @@ impl ArtifactRegistry {
         self.verified = restored;
         true
     }
+}
+
+fn hostcall_table_is_well_formed(hostcalls: &[HostcallSpec]) -> bool {
+    let mut numbers = Vec::new();
+    for hostcall in hostcalls {
+        if hostcall.number == 0
+            || hostcall.name.is_empty()
+            || hostcall.object.is_empty()
+            || hostcall.operation.is_empty()
+            || numbers.contains(&hostcall.number)
+        {
+            return false;
+        }
+        numbers.push(hostcall.number);
+    }
+    true
 }
 
 impl Default for ArtifactRegistry {
