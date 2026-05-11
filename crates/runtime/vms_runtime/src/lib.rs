@@ -892,10 +892,11 @@ impl VisaRuntime {
                     backend,
                     "CodePublisherAuthority",
                     "publish_code",
-                    requester_for(artifact).with_artifact(artifact_ref).with_store(StoreRef::new(
-                        code.bound_store.unwrap_or(0),
-                        code.bound_store_generation.unwrap_or(0),
-                    )),
+                    requester_with_optional_store(
+                        requester_for(artifact).with_artifact(artifact_ref),
+                        code.bound_store,
+                        code.bound_store_generation,
+                    ),
                     error,
                 )?;
                 unreachable!("substrate_error always returns Err")
@@ -1135,11 +1136,9 @@ impl VisaRuntime {
         error: SubstrateError,
     ) -> VisaRuntimeError {
         let requester = SubstrateRequester::new(code.package.clone())
-            .with_artifact(ArtifactImageRef::new(code.artifact_id, 1))
-            .with_store(StoreRef::new(
-                code.bound_store.unwrap_or(0),
-                code.bound_store_generation.unwrap_or(0),
-            ));
+            .with_artifact(ArtifactImageRef::new(code.artifact_id, 1));
+        let requester =
+            requester_with_optional_store(requester, code.bound_store, code.bound_store_generation);
         let _ = self.substrate_error(backend, authority, operation, requester, error.clone());
         VisaRuntimeError::SubstrateDispatch {
             authority,
@@ -1502,6 +1501,17 @@ fn substrate_authority_for_payload(
 
 fn requester_for(artifact: &VerifiedArtifact) -> SubstrateRequester {
     SubstrateRequester::new(artifact.package.clone())
+}
+
+fn requester_with_optional_store(
+    requester: SubstrateRequester,
+    store: Option<u64>,
+    generation: Option<u64>,
+) -> SubstrateRequester {
+    match (store, generation) {
+        (Some(store), Some(generation)) => requester.with_store(StoreRef::new(store, generation)),
+        _ => requester,
+    }
 }
 
 fn stronger_profile(left: SubstrateProfile, right: SubstrateProfile) -> SubstrateProfile {
@@ -1964,6 +1974,19 @@ mod tests {
         SectionKindV1::ProfileRequirements,
         SectionKindV1::Signature,
     ];
+
+    #[test]
+    fn requester_optional_store_does_not_invent_zero_identity() {
+        let requester = SubstrateRequester::new("test").with_artifact(ArtifactImageRef::new(7, 1));
+
+        assert_eq!(requester_with_optional_store(requester.clone(), None, None).store, None);
+        assert_eq!(requester_with_optional_store(requester.clone(), Some(9), None).store, None);
+        assert_eq!(requester_with_optional_store(requester.clone(), None, Some(2)).store, None);
+        assert_eq!(
+            requester_with_optional_store(requester, Some(9), Some(2)).store,
+            Some(StoreRef::new(9, 2))
+        );
+    }
 
     #[derive(Default)]
     struct MockSubstrate {
