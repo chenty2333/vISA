@@ -619,10 +619,44 @@ fn extraction_event_matches_linked_hostcall(
                                 package, code, activation, hostcall,
                             )
                             && hostcall_matches_declared_abi(code, hostcall)
+                            && hostcall_cap_args_backed_by_live_capability_records(
+                                package, hostcall,
+                            )
                             && substrate_event_matches_hostcall(event, hostcall)
                     })
                 })
         })
+}
+
+fn hostcall_cap_args_backed_by_live_capability_records(
+    package: &MigrationPackageManifest,
+    hostcall: &artifact_manifest::HostcallTraceManifest,
+) -> bool {
+    hostcall.cap_args.iter().all(|arg| {
+        package
+            .semantic
+            .capability_records
+            .iter()
+            .any(|record| capability_record_matches_hostcall_arg(record, hostcall, arg))
+    })
+}
+
+fn capability_record_matches_hostcall_arg(
+    record: &artifact_manifest::CapabilityRecordManifest,
+    hostcall: &artifact_manifest::HostcallTraceManifest,
+    arg: &artifact_manifest::CapabilityHandleArgManifest,
+) -> bool {
+    record.id == arg.id
+        && record.generation == arg.generation
+        && !record.revoked
+        && record.subject == hostcall.subject
+        && record.object == hostcall.object
+        && (arg.object.is_empty() || arg.object == record.object)
+        && record.rights.iter().any(|right| right == &hostcall.operation)
+        && record.owner_store.is_none_or(|store| store == hostcall.store)
+        && record
+            .owner_store_generation
+            .is_none_or(|generation| generation == hostcall.store_generation)
 }
 
 fn substrate_event_matches_hostcall(
