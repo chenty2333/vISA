@@ -57,6 +57,17 @@ impl Boundary {
         }
     }
 
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "semantic-model" => Some(Self::SemanticModel),
+            "reference-service" => Some(Self::ReferenceService),
+            "reference-aot-harness" => Some(Self::ReferenceAotHarness),
+            "portable-artifact-execution" => Some(Self::PortableArtifactExecution),
+            "real-target-substrate" => Some(Self::RealTargetSubstrate),
+            _ => None,
+        }
+    }
+
     pub fn can_claim(self, claimed: Self) -> bool {
         self.level().can_claim(claimed.level())
     }
@@ -168,6 +179,7 @@ pub struct ReportGateResult {
     pub ok: bool,
     pub load_error: Option<ReportLoadError>,
     pub validation: Option<ValidationReport>,
+    pub outcome_findings: Vec<ValidationFinding>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -211,6 +223,10 @@ impl LtpSubset {
             Self::SyscallsCore => "syscalls",
             Self::NetSocket => "net.ipv4,net.tcp_cmds",
         }
+    }
+
+    pub fn from_spec_id(spec_id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|subset| subset.spec_id() == spec_id)
     }
 }
 
@@ -303,6 +319,47 @@ pub fn ltp_subset_result(
         ),
         remaining_uncertainty: "LTP compatibility does not prove vISA semantic completeness, substrate profile conformance, or real target substrate execution unless separately claimed with matching evidence".to_string(),
         metrics,
+    }
+}
+
+pub fn ltp_report_from_subset_logs<'a>(
+    target: impl Into<String>,
+    generated_by: impl Into<String>,
+    observed_boundary: Boundary,
+    observed_profile_override: Option<String>,
+    logs: impl IntoIterator<Item = (LtpSubset, &'a str)>,
+) -> ConformanceReport {
+    let logs = logs.into_iter().collect::<BTreeMap<_, _>>();
+    let results = linux_ltp_catalog()
+        .into_iter()
+        .map(|spec| {
+            let subset = LtpSubset::from_spec_id(&spec.id).expect("linux_ltp_catalog id mismatch");
+            let observed_profile =
+                observed_profile_override.clone().or_else(|| spec.required_profile.clone());
+            match logs.get(&subset) {
+                Some(text) => {
+                    let cases = parse_ltp_results(text);
+                    ltp_subset_result(&spec, &cases, observed_boundary, observed_profile)
+                }
+                None => TestResult {
+                    spec_id: spec.id,
+                    outcome: Outcome::NotRun,
+                    observed_boundary,
+                    observed_profile,
+                    evidence: "LTP subset log was not provided".to_string(),
+                    remaining_uncertainty:
+                        "subset was not executed or the runner did not collect its log".to_string(),
+                    metrics: BTreeMap::new(),
+                },
+            }
+        })
+        .collect();
+    ConformanceReport {
+        schema_version: REPORT_SCHEMA_VERSION.to_string(),
+        suite_id: "vmos-linux-ltp-personality-compatibility".to_string(),
+        target: target.into(),
+        generated_by: generated_by.into(),
+        results,
     }
 }
 
@@ -625,10 +682,38 @@ pub fn gate_report_json(bytes: &[u8], catalog: &[TestSpec]) -> ReportGateResult 
     match parse_report_json(bytes) {
         Ok(report) => {
             let validation = validate_report(&report, catalog);
-            ReportGateResult { ok: validation.ok, load_error: None, validation: Some(validation) }
+            let outcome_findings = report_outcome_findings(&report);
+            ReportGateResult {
+                ok: validation.ok && outcome_findings.is_empty(),
+                load_error: None,
+                validation: Some(validation),
+                outcome_findings,
+            }
         }
-        Err(error) => ReportGateResult { ok: false, load_error: Some(error), validation: None },
+        Err(error) => ReportGateResult {
+            ok: false,
+            load_error: Some(error),
+            validation: None,
+            outcome_findings: Vec::new(),
+        },
     }
+}
+
+pub fn report_outcome_findings(report: &ConformanceReport) -> Vec<ValidationFinding> {
+    let mut findings = Vec::new();
+    for result in &report.results {
+        let code = match result.outcome {
+            Outcome::Pass => continue,
+            Outcome::Fail => "result-failed",
+            Outcome::Skip => "result-skipped",
+            Outcome::NotRun => "result-not-run",
+        };
+        findings.push(finding(
+            code,
+            format!("{} reported outcome {:?}", result.spec_id, result.outcome),
+        ));
+    }
+    findings
 }
 
 pub fn sample_report(catalog: &[TestSpec]) -> ConformanceReport {
@@ -979,15 +1064,28 @@ mod tests {
     }
 
     #[test]
-    fn gate_report_json_accepts_valid_sample_report() {
-        let catalog = full_catalog();
-        let sample = sample_report(&catalog);
+    fn gate_report_json_accepts_all_pass_sample_report() {
+        let catalog = linux_ltp_catalog();
+        let sample = sample_ltp_report();
         let bytes = serde_json::to_vec(&sample).unwrap();
         let gate = gate_report_json(&bytes, &catalog);
 
         assert!(gate.ok, "{gate:#?}");
         assert!(gate.load_error.is_none());
         assert!(gate.validation.unwrap().ok);
+        assert!(gate.outcome_findings.is_empty());
+    }
+
+    #[test]
+    fn gate_report_json_rejects_not_run_or_failed_outcomes() {
+        let catalog = full_catalog();
+        let sample = sample_report(&catalog);
+        let bytes = serde_json::to_vec(&sample).unwrap();
+        let gate = gate_report_json(&bytes, &catalog);
+
+        assert!(!gate.ok);
+        assert!(gate.validation.unwrap().ok);
+        assert!(gate.outcome_findings.iter().any(|finding| finding.code == "result-not-run"));
     }
 
     #[test]
@@ -997,6 +1095,7 @@ mod tests {
         assert!(!gate.ok);
         assert_eq!(gate.load_error.unwrap().code, "invalid-report-json");
         assert!(gate.validation.is_none());
+        assert!(gate.outcome_findings.is_empty());
     }
 
     #[test]
@@ -1066,6 +1165,51 @@ rename01 1 TFAIL : rename failed
         assert_eq!(result.metrics["ltp_cases_passed"], 1.0);
         assert_eq!(result.metrics["ltp_cases_failed"], 1.0);
         assert!(result.remaining_uncertainty.contains("vISA semantic completeness"));
+    }
+
+    #[test]
+    fn ltp_report_from_subset_logs_marks_missing_subsets_not_run() {
+        let report = ltp_report_from_subset_logs(
+            "unit-test",
+            "unit-test",
+            Boundary::PortableArtifactExecution,
+            None,
+            [(LtpSubset::FsBasic, "open01 1 TPASS : open succeeded")],
+        );
+
+        let validation = validate_report(&report, &linux_ltp_catalog());
+        assert!(validation.ok, "{:#?}", validation.findings);
+        assert_eq!(report.results.len(), LtpSubset::ALL.len());
+        assert_eq!(report.results[0].spec_id, LtpSubset::FsBasic.spec_id());
+        assert_eq!(report.results[0].outcome, Outcome::Pass);
+        assert!(
+            report.results.iter().filter(|result| result.outcome == Outcome::NotRun).count() >= 1
+        );
+    }
+
+    #[test]
+    fn ltp_report_from_subset_logs_preserves_failures_and_profile_override() {
+        let report = ltp_report_from_subset_logs(
+            "unit-test",
+            "unit-test",
+            Boundary::RealTargetSubstrate,
+            Some("snapshot-replay-capable".to_string()),
+            [(
+                LtpSubset::NetSocket,
+                "socket01 1 TPASS : socket opened\nsocket02 1 TFAIL : connect failed",
+            )],
+        );
+
+        let socket = report
+            .results
+            .iter()
+            .find(|result| result.spec_id == LtpSubset::NetSocket.spec_id())
+            .unwrap();
+        assert_eq!(socket.outcome, Outcome::Fail);
+        assert_eq!(socket.observed_boundary, Boundary::RealTargetSubstrate);
+        assert_eq!(socket.observed_profile.as_deref(), Some("snapshot-replay-capable"));
+        assert_eq!(socket.metrics["ltp_cases_failed"], 1.0);
+        assert!(validate_report(&report, &linux_ltp_catalog()).ok);
     }
 
     #[test]

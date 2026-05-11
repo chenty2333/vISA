@@ -5,8 +5,9 @@ use std::{
 };
 
 use vmos_conformance::{
-    LtpInvocation, full_catalog, gate_report_json, sample_ltp_report, sample_report,
-    validate_catalog, validate_report,
+    Boundary, LtpInvocation, LtpSubset, full_catalog, gate_report_json,
+    ltp_report_from_subset_logs, sample_ltp_report, sample_report, validate_catalog,
+    validate_report,
 };
 
 fn main() -> ExitCode {
@@ -35,6 +36,23 @@ fn main() -> ExitCode {
             Some(path) => write_json_file(&path, &sample_ltp_report()),
             None => usage(),
         },
+        "ltp-report-from-logs" => {
+            let Some(log_dir) = args.next() else {
+                return usage();
+            };
+            let boundary = match args.next() {
+                Some(value) => match Boundary::parse(&value) {
+                    Some(boundary) => boundary,
+                    None => {
+                        eprintln!("unknown boundary {value}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => Boundary::PortableArtifactExecution,
+            };
+            let profile = args.next();
+            ltp_report_from_log_dir(&log_dir, boundary, profile)
+        }
         "validate-sample" => {
             let catalog = full_catalog();
             let catalog_report = validate_catalog(&catalog);
@@ -54,6 +72,29 @@ fn main() -> ExitCode {
         }
         _ => usage(),
     }
+}
+
+fn ltp_report_from_log_dir(log_dir: &str, boundary: Boundary, profile: Option<String>) -> ExitCode {
+    let mut logs = Vec::new();
+    for subset in LtpSubset::ALL {
+        let path = format!("{}/{}.log", log_dir.trim_end_matches('/'), subset.spec_id());
+        match fs::read_to_string(&path) {
+            Ok(text) => logs.push((subset, text)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                eprintln!("failed to read LTP log {path}: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let report = ltp_report_from_subset_logs(
+        format!("ltp-log-dir:{log_dir}"),
+        "vmos-conformance ltp-report-from-logs",
+        boundary,
+        profile,
+        logs.iter().map(|(subset, text)| (*subset, text.as_str())),
+    );
+    print_json(&report)
 }
 
 fn validate_report_path(path: &str) -> ExitCode {
@@ -99,7 +140,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|ltp-report-from-logs <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }
