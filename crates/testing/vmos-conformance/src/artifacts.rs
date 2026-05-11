@@ -100,12 +100,19 @@ fn validate_extraction_trace(bytes: &[u8]) -> Result<(), String> {
     validate_json_lines(bytes, |value| {
         let authority = value.get("authority").and_then(serde_json::Value::as_str);
         let operation = value.get("operation").and_then(serde_json::Value::as_str);
+        let event_id = value.get("event_id").and_then(serde_json::Value::as_u64);
+        let event_epoch = value.get("event_epoch").and_then(serde_json::Value::as_u64);
         if authority.is_some_and(|value| !value.trim().is_empty())
             && operation.is_some_and(|value| !value.trim().is_empty())
+            && event_id.is_some()
+            && event_epoch.is_some()
         {
             Ok(())
         } else {
-            Err("substrate extraction trace entries require authority and operation".to_string())
+            Err(
+                "substrate extraction trace entries require event_id, event_epoch, authority, and operation"
+                    .to_string(),
+            )
         }
     })
 }

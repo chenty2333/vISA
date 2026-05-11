@@ -352,7 +352,7 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
     let trace = root.join("substrate-extraction.jsonl");
     let sha256 = write_file_with_sha256(
         &trace,
-        br#"{"authority":"ConsoleAuthority","operation":"console_write","event_id":1}
+        br#"{"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write"}
 "#,
     )
     .unwrap();
