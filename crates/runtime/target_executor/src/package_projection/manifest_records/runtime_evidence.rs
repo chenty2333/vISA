@@ -236,11 +236,90 @@ mod tests {
         assert_eq!(bundle.hostcall_trace[0].artifact, report.loaded.artifact_id);
         assert_eq!(bundle.hostcall_trace[0].name, "visa.console.write");
         assert_eq!(bundle.hostcall_trace[0].result, "complete");
+        assert_eq!(bundle.hostcall_trace[0].subject, "native-visa");
         assert_eq!(bundle.substrate_events[0].event_kind, "authority-extracted");
         assert_eq!(bundle.substrate_events[0].authority, "ConsoleAuthority");
         assert_eq!(bundle.substrate_events[0].operation, "console_write");
+        assert_eq!(
+            bundle.substrate_events[0].requester.as_deref(),
+            Some(bundle.hostcall_trace[0].subject.as_str())
+        );
         assert_eq!(bundle.substrate_events[0].artifact, Some(report.loaded.artifact_id));
         assert_eq!(bundle.substrate_events[0].store, Some(report.loaded.store_id));
+
+        let target_v1 = TargetExecutorV1Report {
+            target_artifacts: bundle.target_artifacts.clone(),
+            code_objects: bundle.code_objects.clone(),
+            store_records: bundle.store_records.clone(),
+            capability_records: bundle.capability_records.clone(),
+            wait_records: bundle.wait_records.clone(),
+            activation_records: bundle.activation_records.clone(),
+            trap_records: bundle.trap_records.clone(),
+            hostcall_trace: bundle.hostcall_trace.clone(),
+            cleanup_transactions: bundle.cleanup_transactions.clone(),
+            tombstones: bundle.tombstones.clone(),
+            substrate_events: bundle.substrate_events.clone(),
+            snapshot_validation: runtime_evidence_validation_report("snapshot-barrier"),
+            replay_validation: runtime_evidence_validation_report("package-replay"),
+            ..Default::default()
+        };
+        let manifest = runtime_evidence_test_manifest();
+        let mut package = demo_migration_package(&manifest, runtime.semantic(), &target_v1);
+        package.target.arch_requirement = "riscv64".to_owned();
+        package.required_artifact_profile.target_arch = "riscv64".to_owned();
+        package.substrate_boundary.native_state_policy =
+            contract_validate::REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+
+        let audit = contract_validate::audit_migration_package(&package);
+
+        assert!(audit.ok(), "{:#?}", audit.findings);
+        assert!(audit.portable_artifact_execution_claim);
+        assert!(audit.visa_native_portable_artifact_execution_claim);
+        assert!(audit.real_target_substrate_claim);
+        assert_eq!(audit.linked_authority_extraction_event_count, 1);
+        validate_external_audit(&package).expect("runtime evidence package should pass audit gate");
+    }
+
+    fn runtime_evidence_validation_report(
+        validator: &str,
+    ) -> artifact_manifest::BoundaryValidationReportManifest {
+        artifact_manifest::BoundaryValidationReportManifest {
+            validator: validator.to_owned(),
+            evidence_boundary: "portable-artifact-execution".to_owned(),
+            ok: true,
+            violation_count: 0,
+            violations: Vec::new(),
+        }
+    }
+
+    fn runtime_evidence_test_manifest() -> artifact_manifest::ArtifactBundleManifest {
+        artifact_manifest::ArtifactBundleManifest {
+            schema_version: 1,
+            artifact_profile: "minimal-bare-metal".to_owned(),
+            runtime_mode: "research".to_owned(),
+            contract: artifact_manifest::SupervisorContractManifest::default(),
+            target: artifact_manifest::TargetManifest {
+                arch: "riscv64".to_owned(),
+                machine_abi_version: "test-machine-abi".to_owned(),
+                supervisor_abi_version: "test-supervisor-abi".to_owned(),
+                wasm_feature_profile: "test-wasm-profile".to_owned(),
+                memory64: false,
+                multi_memory: false,
+                dmw_layout: "test-dmw-layout".to_owned(),
+                linux_abi_profile: "none".to_owned(),
+                artifact_signature_profile: "test-signature-profile".to_owned(),
+                network_contract_version: "test-network-contract".to_owned(),
+            },
+            compiler: artifact_manifest::CompilerManifest {
+                engine: "test-engine".to_owned(),
+                engine_version: "test-version".to_owned(),
+                execution_mode: "test-execution".to_owned(),
+                artifact_format: "target-artifact-image-v1".to_owned(),
+                target_artifact_format: "target-artifact-image-v1".to_owned(),
+                runtime_executor_abi: "test-runtime-executor-abi".to_owned(),
+            },
+            modules: Vec::new(),
+        }
     }
 
     fn fake_image(kinds: &[SectionKindV1]) -> Vec<u8> {
