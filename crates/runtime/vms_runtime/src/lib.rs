@@ -2577,13 +2577,13 @@ mod tests {
                 metrics: BTreeMap::new(),
                 evidence_artifacts: vec![vmos_conformance::EvidenceArtifact {
                     kind: vmos_conformance::EvidenceArtifactKind::ContractGraphSnapshot,
-                    uri: path.display().to_string(),
+                    uri: "contract-graph-snapshot.json".to_string(),
                     sha256: test_sha256_hex(snapshot_json.as_bytes()),
                     description: "runtime contract graph snapshot artifact".to_string(),
                 }],
             }],
         };
-        let validation = vmos_conformance::validate_report_artifacts(&conformance_report, ".");
+        let validation = vmos_conformance::validate_report_artifacts(&conformance_report, &root);
         assert!(validation.ok, "{:#?}", validation.findings);
 
         let extraction_with_target_jsonl =
@@ -2609,14 +2609,14 @@ mod tests {
                 metrics: BTreeMap::new(),
                 evidence_artifacts: vec![vmos_conformance::EvidenceArtifact {
                     kind: vmos_conformance::EvidenceArtifactKind::SubstrateExtractionTrace,
-                    uri: extraction_path.display().to_string(),
+                    uri: "substrate-extraction.jsonl".to_string(),
                     sha256: test_sha256_hex(extraction_with_target_jsonl.as_bytes()),
                     description: "target-context substrate extraction trace".to_string(),
                 }],
             }],
         };
         let target_trace_validation =
-            vmos_conformance::validate_report_artifacts(&real_target_artifact_report, ".");
+            vmos_conformance::validate_report_artifacts(&real_target_artifact_report, &root);
         assert!(target_trace_validation.ok, "{:#?}", target_trace_validation.findings);
         let _ = fs::remove_dir_all(root);
         assert!(report.events.iter().any(|event| {

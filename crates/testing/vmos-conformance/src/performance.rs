@@ -290,7 +290,7 @@ fn read_criterion_estimate(
         mean_ns,
         artifact: EvidenceArtifact {
             kind: EvidenceArtifactKind::BenchmarkRawOutput,
-            uri: path.display().to_string(),
+            uri: Path::new(benchmark_id).join("base").join("estimates.json").display().to_string(),
             sha256: sha256_hex(&bytes),
             description: format!("Criterion estimates for {benchmark_id}"),
         },

@@ -403,12 +403,12 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::SubstrateExtractionTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "real target substrate authority extraction trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(validation.ok, "{:#?}", validation.findings);
     let _ = fs::remove_dir_all(root);
@@ -432,12 +432,12 @@ fn artifact_gate_rejects_real_target_extraction_trace_without_target_context() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::SubstrateExtractionTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "generic substrate authority extraction trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -466,12 +466,12 @@ fn artifact_gate_validates_device_trace_event_identity() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::DeviceTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "real target device trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(validation.ok, "{:#?}", validation.findings);
     let _ = fs::remove_dir_all(root);
@@ -495,12 +495,12 @@ fn artifact_gate_validates_real_target_device_trace_context() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::DeviceTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "real target device trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(validation.ok, "{:#?}", validation.findings);
     let _ = fs::remove_dir_all(root);
@@ -524,12 +524,12 @@ fn artifact_gate_rejects_real_target_device_trace_without_target_context() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::DeviceTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "generic device trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -554,12 +554,12 @@ fn artifact_gate_validates_contract_graph_snapshot_schema() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::ContractGraphSnapshot,
-        uri: snapshot.display().to_string(),
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "portable artifact contract graph snapshot".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(validation.ok, "{:#?}", validation.findings);
     let _ = fs::remove_dir_all(root);
@@ -579,12 +579,12 @@ fn artifact_gate_rejects_contract_graph_snapshot_boundary_overclaim() {
     report.results[0].observed_boundary = Boundary::PortableArtifactExecution;
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::ContractGraphSnapshot,
-        uri: snapshot.display().to_string(),
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "overclaimed contract graph snapshot".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -608,12 +608,12 @@ fn artifact_gate_rejects_empty_contract_graph_snapshot_artifact() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::ContractGraphSnapshot,
-        uri: snapshot.display().to_string(),
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "empty contract graph snapshot".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -668,12 +668,12 @@ fn artifact_gate_rejects_malformed_contract_graph_snapshot_identities() {
         }
         report.results[0].evidence_artifacts.push(EvidenceArtifact {
             kind: EvidenceArtifactKind::ContractGraphSnapshot,
-            uri: snapshot.display().to_string(),
+            uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
             sha256,
             description: format!("malformed contract graph snapshot {name}"),
         });
 
-        let validation = validate_report_artifacts(&report, ".");
+        let validation = validate_report_artifacts(&report, &root);
 
         assert!(!validation.ok, "{name} should fail");
         assert!(
@@ -704,12 +704,12 @@ fn artifact_gate_rejects_unknown_contract_graph_snapshot_schema_version() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::ContractGraphSnapshot,
-        uri: snapshot.display().to_string(),
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
         sha256,
         description: "unknown contract graph snapshot schema".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -733,12 +733,12 @@ fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
     }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::SubstrateExtractionTrace,
-        uri: trace.display().to_string(),
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
         sha256: "c".repeat(64),
         description: "bad trace".to_string(),
     });
 
-    let validation = validate_report_artifacts(&report, ".");
+    let validation = validate_report_artifacts(&report, &root);
 
     assert!(!validation.ok);
     assert!(
@@ -769,6 +769,35 @@ fn artifact_gate_rejects_relative_path_escape() {
         uri: "../outside-root.log".to_string(),
         sha256: "d".repeat(64),
         description: "path escape should be rejected before reading".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "evidence-artifact-path-escape")
+    );
+    assert!(
+        !validation.findings.iter().any(|finding| finding.code == "missing-evidence-artifact-file")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_absolute_artifact_paths() {
+    let root = temp_criterion_dir("absolute-path-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let artifact = root.join("absolute.log");
+    let sha256 = write_file_with_sha256(&artifact, b"open01 1 TPASS : open succeeded\n").unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::LtpRawLog,
+        uri: artifact.display().to_string(),
+        sha256,
+        description: "absolute paths must not bypass the artifact root".to_string(),
     });
 
     let validation = validate_report_artifacts(&report, &root);
@@ -1089,7 +1118,7 @@ fn artifact_gate_accepts_ltp_and_criterion_raw_outputs() {
         &ltp_root,
     )
     .unwrap();
-    let ltp_artifact_validation = validate_report_artifacts(&ltp_report, ".");
+    let ltp_artifact_validation = validate_report_artifacts(&ltp_report, &ltp_root);
     assert!(ltp_artifact_validation.ok, "{:#?}", ltp_artifact_validation.findings);
 
     let criterion_root = temp_criterion_dir("criterion-artifact-gate");
@@ -1103,7 +1132,8 @@ fn artifact_gate_accepts_ltp_and_criterion_raw_outputs() {
         None,
         &criterion_root,
     );
-    let performance_artifact_validation = validate_report_artifacts(&performance_report, ".");
+    let performance_artifact_validation =
+        validate_report_artifacts(&performance_report, &criterion_root);
     assert!(performance_artifact_validation.ok, "{:#?}", performance_artifact_validation.findings);
 
     let _ = fs::remove_dir_all(ltp_root);

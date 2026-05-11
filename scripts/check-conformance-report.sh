@@ -29,24 +29,26 @@ pass_report="$tmp_root/ltp-pass-report.json"
 run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution guest-frontend \
     >"$pass_report"
 run_conformance validate-report "$pass_report" >/dev/null
-run_conformance validate-artifacts "$pass_report" >/dev/null
-run_conformance validate-report-with-artifacts "$pass_report" >/dev/null
+run_conformance validate-artifacts "$pass_report" "$pass_logs" >/dev/null
+run_conformance validate-report-with-artifacts "$pass_report" "$pass_logs" >/dev/null
 
-real_target_trace="$tmp_root/substrate-extraction.jsonl"
+real_target_trace="$pass_logs/substrate-extraction.jsonl"
 cat >"$real_target_trace" <<'EOF'
 {"event_id":1,"event_epoch":1,"authority":"ConsoleAuthority","operation":"console_write","target_arch":"riscv64","target_board":"qemu-virt"}
 EOF
+real_target_trace_sha=$(sha256sum "$real_target_trace" | awk '{ print $1 }')
 real_target_report="$tmp_root/ltp-real-target-report.json"
 run_conformance ltp-report-from-logs "$pass_logs" real-target-substrate guest-frontend \
     >"$real_target_report"
 real_target_attached_report="$tmp_root/ltp-real-target-attached-report.json"
-run_conformance attach-evidence-artifact-file \
-    "$real_target_report" '*' substrate-extraction-trace "$real_target_trace" \
+run_conformance attach-evidence-artifact \
+    "$real_target_report" '*' substrate-extraction-trace "substrate-extraction.jsonl" \
+    "$real_target_trace_sha" \
     "real target substrate extraction trace" \
     >"$real_target_attached_report"
 run_conformance validate-report "$real_target_attached_report" >/dev/null
-run_conformance validate-artifacts "$real_target_attached_report" >/dev/null
-run_conformance validate-report-with-artifacts "$real_target_attached_report" >/dev/null
+run_conformance validate-artifacts "$real_target_attached_report" "$pass_logs" >/dev/null
+run_conformance validate-report-with-artifacts "$real_target_attached_report" "$pass_logs" >/dev/null
 
 partial_logs="$tmp_root/ltp-partial"
 mkdir -p "$partial_logs"
@@ -65,6 +67,7 @@ if run_conformance validate-report "$partial_report" >"$tmp_root/partial-gate.js
     exit 1
 fi
 if run_conformance validate-report-with-artifacts "$partial_report" \
+    "$partial_logs" \
     >"$tmp_root/partial-combined-gate.json"; then
     echo "FAIL: incomplete LTP report unexpectedly passed combined conformance gate"
     exit 1
@@ -109,9 +112,9 @@ test -s "$wrapper_output/vmos-ltp-artifact-gate.json"
 test -s "$wrapper_output/vmos-ltp-combined-gate.json"
 run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
-run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" \
+run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" "$wrapper_output/logs" \
     >"$tmp_root/wrapper-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$wrapper_output/vmos-ltp-report.json" \
+run_conformance validate-report-with-artifacts "$wrapper_output/vmos-ltp-report.json" "$wrapper_output/logs" \
     >"$tmp_root/wrapper-combined-gate.json"
 
 criterion_root="$tmp_root/criterion"
@@ -141,9 +144,9 @@ test -s "$bench_output/vmos-performance-artifact-gate.json"
 test -s "$bench_output/vmos-performance-combined-gate.json"
 run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
-run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \
+run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" "$criterion_root" \
     >"$tmp_root/vmos-bench-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$bench_output/vmos-performance-report.json" \
+run_conformance validate-report-with-artifacts "$bench_output/vmos-performance-report.json" "$criterion_root" \
     >"$tmp_root/vmos-bench-combined-gate.json"
 
 echo "Conformance report gate passed."

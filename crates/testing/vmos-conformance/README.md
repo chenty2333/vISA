@@ -55,7 +55,9 @@ duplicate or empty result sets. It also exits non-zero when any reported result 
 `validate-artifacts` is the local evidence artifact gate. It opens artifact files,
 checks SHA-256 digests, and applies type-specific structure checks for raw LTP
 logs, Criterion estimates, extraction traces, device traces, serial logs, and
-contract graph snapshots.
+contract graph snapshots. Evidence artifact URIs must be relative to the artifact
+root passed to the command; absolute paths and `..` escapes are rejected so reports
+can be moved as bundles.
 `validate-report-with-artifacts` composes both gates and is the preferred local
 package gate for executable evidence bundles. It fails when either the report
 contract or any linked evidence artifact fails validation.
@@ -64,14 +66,16 @@ Portable-or-stronger `visa-semantic-conformance` pass/fail results must include 
 `schema_version=contract-graph-snapshot-v0.1`, declare `claimed_evidence_level`,
 and carry the core snapshot arrays needed by the artifact gate. The artifact gate
 rejects unknown snapshot schema ids, snapshot boundary overclaims relative to the
-owning result, and relative artifact paths that escape the artifact root.
+owning result, and artifact paths that are absolute or escape the artifact root.
 Results that claim `real-target-substrate` must include a structured
 `substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
 SHA-256 digest, and description. Free-form evidence text alone is not enough for
 real target claims. `attach-evidence-artifact` can add this metadata to an
 existing report for one spec id or for all results with `*`.
 `attach-evidence-artifact-file` is the safer local runner variant: it reads the
-artifact file and computes the SHA-256 digest before attaching the metadata.
+artifact file and computes the SHA-256 digest before attaching the metadata. The
+attached path must still be relative to the artifact root used by
+`validate-artifacts` when the resulting report should be bundle-valid.
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`. Present subset logs

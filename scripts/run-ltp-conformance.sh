@@ -69,11 +69,11 @@ if ! run_conformance validate-report "$report" >"$gate"; then
     echo "LTP conformance report failed gate: $gate" >&2
     exit 1
 fi
-if ! run_conformance validate-artifacts "$report" >"$artifact_gate"; then
+if ! run_conformance validate-artifacts "$report" "$logs_dir" >"$artifact_gate"; then
     echo "LTP evidence artifacts failed gate: $artifact_gate" >&2
     exit 1
 fi
-if ! run_conformance validate-report-with-artifacts "$report" >"$combined_gate"; then
+if ! run_conformance validate-report-with-artifacts "$report" "$logs_dir" >"$combined_gate"; then
     echo "LTP combined report/artifact gate failed: $combined_gate" >&2
     exit 1
 fi

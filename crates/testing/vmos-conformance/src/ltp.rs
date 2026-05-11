@@ -124,7 +124,7 @@ pub fn ltp_report_from_log_dir(
                 let text = String::from_utf8_lossy(&bytes).into_owned();
                 let artifact = EvidenceArtifact {
                     kind: EvidenceArtifactKind::LtpRawLog,
-                    uri: path.display().to_string(),
+                    uri: format!("{}.log", subset.spec_id()),
                     sha256: sha256_hex(&bytes),
                     description: format!("raw LTP result log for {}", subset.spec_id()),
                 };

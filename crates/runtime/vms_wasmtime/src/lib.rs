@@ -1564,13 +1564,13 @@ mod tests {
                 metrics: BTreeMap::new(),
                 evidence_artifacts: vec![vmos_conformance::EvidenceArtifact {
                     kind: vmos_conformance::EvidenceArtifactKind::ContractGraphSnapshot,
-                    uri: path.display().to_string(),
+                    uri: "contract-graph-snapshot.json".to_string(),
                     sha256: test_sha256_hex(snapshot_json.as_bytes()),
                     description: "wasmtime contract graph snapshot artifact".to_string(),
                 }],
             }],
         };
-        let validation = vmos_conformance::validate_report_artifacts(&conformance_report, ".");
+        let validation = vmos_conformance::validate_report_artifacts(&conformance_report, &root);
         assert!(validation.ok, "{:#?}", validation.findings);
         let _ = fs::remove_dir_all(root);
         assert!(evidence.authority_extractions.iter().any(|entry| {
