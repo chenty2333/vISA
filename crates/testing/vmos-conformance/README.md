@@ -23,6 +23,7 @@ cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
+scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
 ```
 
 Executable LTP integration should consume the catalog entries whose ids start with
@@ -36,3 +37,6 @@ duplicate or empty result sets. It also exits non-zero when any reported result 
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`.
+`scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
+LTP installed. It runs the cataloged subsets, preserves raw logs, emits
+`vmos-ltp-report.json`, and gates the result.
