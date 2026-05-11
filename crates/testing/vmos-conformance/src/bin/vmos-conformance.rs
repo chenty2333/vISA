@@ -6,9 +6,10 @@ use std::{
 
 use vmos_conformance::{
     Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
-    criterion_performance_report_from_estimates_dir, full_catalog, gate_report_json,
-    ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json, sample_ltp_report,
-    sample_performance_report, sample_report, validate_catalog, validate_report,
+    criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
+    full_catalog, gate_report_json, ltp_report_from_log_dir as build_ltp_report_from_log_dir,
+    parse_report_json, sample_ltp_report, sample_performance_report, sample_report,
+    validate_catalog, validate_report,
 };
 
 fn main() -> ExitCode {
@@ -87,6 +88,10 @@ fn main() -> ExitCode {
             );
             print_json(&report)
         }
+        "performance-plan-lines" => {
+            let criterion_dir = args.next().unwrap_or_else(|| "target/criterion".to_string());
+            print_performance_plan_lines(&criterion_dir)
+        }
         "attach-evidence-artifact" => {
             let Some(report_path) = args.next() else {
                 return usage();
@@ -154,6 +159,16 @@ fn ltp_report_from_log_dir_command(
 fn print_ltp_plan_lines(output_dir: &str) -> ExitCode {
     for entry in LtpInvocation::default_plan(output_dir).plan_entries() {
         println!("{}\t{}\t{}", entry.spec_id, entry.scenario_arg, entry.output_log);
+    }
+    ExitCode::SUCCESS
+}
+
+fn print_performance_plan_lines(criterion_dir: &str) -> ExitCode {
+    for entry in criterion_performance_plan_entries(criterion_dir) {
+        println!(
+            "{}\t{}\t{}\t{}",
+            entry.spec_id, entry.benchmark_id, entry.metric, entry.estimate_path
+        );
     }
     ExitCode::SUCCESS
 }
@@ -242,7 +257,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

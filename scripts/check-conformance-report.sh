@@ -87,15 +87,10 @@ run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
 
 criterion_root="$tmp_root/criterion"
-for bench_id in \
-    hostcall_dispatch_latency \
-    artifact_load_activation_start \
-    block_request_submit_mutation_64 \
-    network_adapter_record_mutation \
-    portable_snapshot_restore_latency
-do
-    mkdir -p "$criterion_root/$bench_id/base"
-    cat >"$criterion_root/$bench_id/base/estimates.json" <<'EOF'
+run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"
+while IFS=$'\t' read -r _spec_id _bench_id _metric estimate_path; do
+    mkdir -p "$(dirname "$estimate_path")"
+    cat >"$estimate_path" <<'EOF'
 {
   "mean": {
     "confidence_interval": {
@@ -108,7 +103,7 @@ do
   }
 }
 EOF
-done
+done <"$tmp_root/performance-plan.tsv"
 
 bench_output="$tmp_root/vmos-bench-run"
 VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \

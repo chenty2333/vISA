@@ -19,6 +19,7 @@ pub use ltp::{
     parse_ltp_results,
 };
 pub use performance::{
+    PerformancePlanEntry, criterion_performance_plan_entries,
     criterion_performance_report_from_estimates_dir, required_performance_metrics,
 };
 pub use report::attach_evidence_artifact;

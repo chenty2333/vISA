@@ -19,6 +19,14 @@ pub fn required_performance_metrics(spec_id: &str) -> &'static [&'static str] {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerformancePlanEntry {
+    pub spec_id: String,
+    pub benchmark_id: String,
+    pub metric: String,
+    pub estimate_path: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum CriterionMetricTransform {
     MeanNs,
@@ -65,6 +73,23 @@ pub(crate) const CRITERION_METRIC_SOURCES: &[CriterionMetricSource] = &[
         transform: CriterionMetricTransform::MeanNs,
     },
 ];
+
+pub fn criterion_performance_plan_entries(
+    criterion_root: impl AsRef<Path>,
+) -> Vec<PerformancePlanEntry> {
+    let criterion_root = criterion_root.as_ref();
+    CRITERION_METRIC_SOURCES
+        .iter()
+        .map(|source| PerformancePlanEntry {
+            spec_id: source.spec_id.to_string(),
+            benchmark_id: source.benchmark_id.to_string(),
+            metric: source.metric.to_string(),
+            estimate_path: criterion_estimate_path(criterion_root, source.benchmark_id)
+                .display()
+                .to_string(),
+        })
+        .collect()
+}
 
 pub fn criterion_performance_report_from_estimates_dir(
     target: impl Into<String>,
@@ -199,7 +224,7 @@ fn read_criterion_estimate(
     criterion_root: &Path,
     benchmark_id: &str,
 ) -> Result<CriterionEstimate, CriterionEstimateError> {
-    let path = criterion_root.join(benchmark_id).join("base").join("estimates.json");
+    let path = criterion_estimate_path(criterion_root, benchmark_id);
     let bytes = fs::read(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             CriterionEstimateError::Missing
@@ -226,4 +251,8 @@ fn read_criterion_estimate(
             description: format!("Criterion estimates for {benchmark_id}"),
         },
     })
+}
+
+fn criterion_estimate_path(criterion_root: &Path, benchmark_id: &str) -> std::path::PathBuf {
+    criterion_root.join(benchmark_id).join("base").join("estimates.json")
 }

@@ -433,6 +433,27 @@ fn sample_performance_report_validates_and_gates() {
 }
 
 #[test]
+fn criterion_performance_plan_entries_match_metric_sources() {
+    let entries = criterion_performance_plan_entries("target/criterion");
+
+    assert_eq!(entries.len(), CRITERION_METRIC_SOURCES.len());
+    assert_eq!(entries[0].spec_id, "bench.hostcall.latency");
+    assert_eq!(entries[0].benchmark_id, "hostcall_dispatch_latency");
+    assert_eq!(entries[0].metric, "latency_ns");
+    assert_eq!(
+        entries[0].estimate_path,
+        "target/criterion/hostcall_dispatch_latency/base/estimates.json"
+    );
+    for source in CRITERION_METRIC_SOURCES {
+        assert!(entries.iter().any(|entry| {
+            entry.spec_id == source.spec_id
+                && entry.benchmark_id == source.benchmark_id
+                && entry.metric == source.metric
+        }));
+    }
+}
+
+#[test]
 fn criterion_performance_report_maps_estimates_to_required_metrics() {
     let root = temp_criterion_dir("all-pass");
     for source in CRITERION_METRIC_SOURCES {

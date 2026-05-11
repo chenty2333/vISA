@@ -25,6 +25,7 @@ cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
+cargo run -p vmos-conformance -- performance-plan-lines target/criterion
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion portable-artifact-execution
 cargo run -p vmos-conformance -- attach-evidence-artifact target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
@@ -60,7 +61,9 @@ latency claims, plus `block_iops` and `network_packets_per_sec` for the
 block/network throughput claim.
 `performance-report-from-criterion` reads Criterion `estimates.json` files under
 `target/criterion`, maps known benchmark ids into those metrics, and reports
-missing benchmark outputs as explicit `not-run` results.
+missing benchmark outputs as explicit `not-run` results. `performance-plan-lines`
+exports the same benchmark-id to metric mapping for shell fixtures and external
+runners that need to prepare or archive Criterion outputs.
 `scripts/run-vmos-bench-conformance.sh` is the standard wrapper for running
 `cargo bench -p vmos-bench`, preserving the generated performance report, and
 gating it through `validate-report`.
