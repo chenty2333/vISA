@@ -10,6 +10,12 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 
+pub const SUPPORTED_REAL_TARGET_ARCHES: [&str; 3] = ["riscv64", "x86_64", "aarch64"];
+
+pub fn is_supported_real_target_arch(arch: &str) -> bool {
+    SUPPORTED_REAL_TARGET_ARCHES.contains(&arch)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DmwSupport {
     None,
@@ -884,6 +890,16 @@ mod tests {
             Some(VisaProfileLevel::GuestFrontend)
         );
         assert_eq!(VisaProfileLevel::DeviceCapable.canonical_id(), "device-capable");
+    }
+
+    #[test]
+    fn supported_real_target_arches_are_canonical() {
+        assert!(is_supported_real_target_arch("riscv64"));
+        assert!(is_supported_real_target_arch("x86_64"));
+        assert!(is_supported_real_target_arch("aarch64"));
+        assert!(!is_supported_real_target_arch(""));
+        assert!(!is_supported_real_target_arch("target-native"));
+        assert!(!is_supported_real_target_arch("banana64"));
     }
 
     #[test]

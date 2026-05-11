@@ -244,7 +244,7 @@ impl RealTargetConformanceContext {
     fn can_claim_real_target_substrate(&self) -> bool {
         self.executed_on_real_target
             && self.extraction_events_observed
-            && matches!(self.concrete_arch, Some(arch) if !arch.is_empty())
+            && matches!(self.concrete_arch, Some(arch) if is_supported_real_target_arch(arch))
     }
 }
 

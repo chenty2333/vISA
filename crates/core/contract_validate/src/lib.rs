@@ -29,6 +29,7 @@ use supervisor_catalog::{
 use visa_profile::{
     AuthorityMismatch, AuthorityRequirementSet, SubstrateAuthorityRequirements,
     SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile,
+    is_supported_real_target_arch,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

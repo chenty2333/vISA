@@ -215,8 +215,8 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
             ));
         }
         if real_target_has_concrete_arch(package)
-            && (!real_target_arch_is_supported(&package.target.arch_requirement)
-                || !real_target_arch_is_supported(&package.required_artifact_profile.target_arch))
+            && (!is_supported_real_target_arch(&package.target.arch_requirement)
+                || !is_supported_real_target_arch(&package.required_artifact_profile.target_arch))
         {
             findings.push(ExternalAuditFinding::new(
                 ExternalAuditSeverity::Error,
@@ -288,10 +288,6 @@ fn real_target_has_concrete_arch(package: &MigrationPackageManifest) -> bool {
         && !package.required_artifact_profile.target_arch.is_empty()
         && package.target.arch_requirement != "target-native"
         && package.required_artifact_profile.target_arch != "target-native"
-}
-
-fn real_target_arch_is_supported(arch: &str) -> bool {
-    matches!(arch, "riscv64" | "x86_64" | "aarch64")
 }
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {

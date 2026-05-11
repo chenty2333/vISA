@@ -354,6 +354,16 @@ fn profile_conformance_suite_passes_snapshot_replay_backend() {
     assert_eq!(real_target.real_target_concrete_arch, Some("riscv64"));
     assert!(real_target.real_target_extraction_events_observed);
     assert_eq!(real_target.real_target_extraction_event_count, 3);
+
+    let unsupported_arch = report.evidence_summary(
+        conformance::ConformanceEvidenceContext::real_target_with_extraction_event_count(
+            "banana64", 3,
+        ),
+    );
+    assert!(unsupported_arch.real_target_substrate_run);
+    assert_eq!(unsupported_arch.real_target_concrete_arch, Some("banana64"));
+    assert!(unsupported_arch.real_target_extraction_events_observed);
+    assert!(!unsupported_arch.can_claim_real_target_substrate);
 }
 
 #[test]
