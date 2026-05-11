@@ -718,6 +718,30 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
 }
 
 #[test]
+fn external_audit_allows_declared_but_unexecuted_hostcall_specs() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    let timer_hostcall = artifact_manifest::HostcallSpecManifest {
+        number: 2,
+        name: "visa.timer.now".to_owned(),
+        category: "timer".to_owned(),
+        object: "visa.timer".to_owned(),
+        operation: "now".to_owned(),
+        may_pending: false,
+    };
+    package.semantic.target_artifacts[0].hostcalls.push(timer_hostcall.clone());
+    package.semantic.code_objects[0].hostcalls.push(timer_hostcall);
+
+    let report = audit_migration_package(&package);
+
+    assert_eq!(package.semantic.target_artifacts[0].hostcalls.len(), 2);
+    assert_eq!(package.semantic.hostcall_trace_count, 1);
+    assert!(report.contract_package_valid);
+    assert!(report.ok(), "{:#?}", report.errors().collect::<Vec<_>>());
+    assert!(report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
 fn external_audit_rejects_portable_chain_without_boundary_validation() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
