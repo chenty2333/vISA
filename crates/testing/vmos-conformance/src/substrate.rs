@@ -5,7 +5,10 @@ use substrate_api::conformance::{
 };
 use visa_profile::SubstrateProfile;
 
-use crate::types::{Boundary, ConformanceReport, Outcome, REPORT_SCHEMA_VERSION, TestResult};
+use crate::types::{
+    Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, Outcome,
+    REPORT_SCHEMA_VERSION, TestResult,
+};
 
 pub fn substrate_profile_spec_id(profile: SubstrateProfile) -> &'static str {
     match profile {
@@ -24,12 +27,35 @@ pub fn substrate_report_from_conformance(
     report: &SubstrateConformanceReport,
     context: ConformanceEvidenceContext,
 ) -> ConformanceReport {
+    substrate_report_from_conformance_with_artifacts(
+        target,
+        generated_by,
+        observed_boundary,
+        report,
+        context,
+        Vec::new(),
+    )
+}
+
+pub fn substrate_report_from_conformance_with_artifacts(
+    target: impl Into<String>,
+    generated_by: impl Into<String>,
+    observed_boundary: Boundary,
+    report: &SubstrateConformanceReport,
+    context: ConformanceEvidenceContext,
+    evidence_artifacts: Vec<EvidenceArtifact>,
+) -> ConformanceReport {
     ConformanceReport {
         schema_version: REPORT_SCHEMA_VERSION.to_string(),
         suite_id: "vmos-substrate-profile-conformance".to_string(),
         target: target.into(),
         generated_by: generated_by.into(),
-        results: vec![substrate_result_from_conformance(report, observed_boundary, context)],
+        results: vec![substrate_result_from_conformance_with_artifacts(
+            report,
+            observed_boundary,
+            context,
+            evidence_artifacts,
+        )],
     }
 }
 
@@ -37,6 +63,15 @@ pub fn substrate_result_from_conformance(
     report: &SubstrateConformanceReport,
     observed_boundary: Boundary,
     context: ConformanceEvidenceContext,
+) -> TestResult {
+    substrate_result_from_conformance_with_artifacts(report, observed_boundary, context, Vec::new())
+}
+
+pub fn substrate_result_from_conformance_with_artifacts(
+    report: &SubstrateConformanceReport,
+    observed_boundary: Boundary,
+    context: ConformanceEvidenceContext,
+    evidence_artifacts: Vec<EvidenceArtifact>,
 ) -> TestResult {
     let evidence_summary = report.evidence_summary(context);
     let failed_checks =
@@ -49,7 +84,13 @@ pub fn substrate_result_from_conformance(
     let required_checks = report.checks.iter().filter(|check| check.required).count();
     let real_target_boundary_ok = observed_boundary != Boundary::RealTargetSubstrate
         || evidence_summary.can_claim_real_target_substrate;
-    let outcome = if report.ok && real_target_boundary_ok { Outcome::Pass } else { Outcome::Fail };
+    let real_target_artifact_ok = observed_boundary != Boundary::RealTargetSubstrate
+        || has_real_target_evidence_artifact(&evidence_artifacts);
+    let outcome = if report.ok && real_target_boundary_ok && real_target_artifact_ok {
+        Outcome::Pass
+    } else {
+        Outcome::Fail
+    };
     let mut metrics = BTreeMap::new();
     metrics.insert("total_checks".to_string(), report.checks.len() as f64);
     metrics.insert("required_checks".to_string(), required_checks as f64);
@@ -72,18 +113,42 @@ pub fn substrate_result_from_conformance(
             failed_checks,
             evidence_summary.strongest_profile.map(SubstrateProfile::as_str).unwrap_or("none")
         ),
-        remaining_uncertainty: remaining_uncertainty(observed_boundary, real_target_boundary_ok),
+        remaining_uncertainty: remaining_uncertainty(
+            observed_boundary,
+            real_target_boundary_ok,
+            real_target_artifact_ok,
+        ),
         metrics,
-        evidence_artifacts: Vec::new(),
+        evidence_artifacts,
     }
 }
 
-fn remaining_uncertainty(observed_boundary: Boundary, real_target_boundary_ok: bool) -> String {
+fn remaining_uncertainty(
+    observed_boundary: Boundary,
+    real_target_boundary_ok: bool,
+    real_target_artifact_ok: bool,
+) -> String {
     if observed_boundary == Boundary::RealTargetSubstrate && !real_target_boundary_ok {
         "report requested real-target-substrate, but the substrate conformance context did not include a supported concrete arch with extraction events".to_string()
+    } else if observed_boundary == Boundary::RealTargetSubstrate && !real_target_artifact_ok {
+        "report requested real-target-substrate, but no linked substrate extraction or device trace artifact was attached".to_string()
     } else if observed_boundary == Boundary::RealTargetSubstrate {
-        "real target substrate claim still requires a linked extraction or device trace artifact in the outer conformance report".to_string()
+        "real target substrate claim is linked to extraction evidence; remaining risk is target-specific runner reproducibility".to_string()
     } else {
         "host-side substrate conformance does not prove real target substrate execution".to_string()
     }
+}
+
+fn has_real_target_evidence_artifact(evidence_artifacts: &[EvidenceArtifact]) -> bool {
+    evidence_artifacts.iter().any(|artifact| {
+        matches!(
+            artifact.kind,
+            EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
+        ) && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

@@ -80,11 +80,30 @@ fn substrate_bridge_does_not_overclaim_real_target_without_context() {
         Boundary::RealTargetSubstrate,
         ConformanceEvidenceContext::real_target_with_extraction_event_count("riscv64", 3),
     );
+    let real_target_with_artifact = substrate_result_from_conformance_with_artifacts(
+        &substrate_report,
+        Boundary::RealTargetSubstrate,
+        ConformanceEvidenceContext::real_target_with_extraction_event_count("riscv64", 3),
+        vec![real_target_extraction_artifact()],
+    );
+    let unified_real_target_report = substrate_report_from_conformance_with_artifacts(
+        "unit-substrate",
+        "unit-test",
+        Boundary::RealTargetSubstrate,
+        &substrate_report,
+        ConformanceEvidenceContext::real_target_with_extraction_event_count("riscv64", 3),
+        vec![real_target_extraction_artifact()],
+    );
 
     assert_eq!(host_side.outcome, Outcome::Fail);
     assert!(host_side.remaining_uncertainty.contains("did not include"));
-    assert_eq!(real_target.outcome, Outcome::Pass);
+    assert_eq!(real_target.outcome, Outcome::Fail);
+    assert!(real_target.remaining_uncertainty.contains("no linked"));
     assert_eq!(real_target.metrics["real_target_extraction_event_count"], 3.0);
+    assert_eq!(real_target_with_artifact.outcome, Outcome::Pass);
+    assert_eq!(real_target_with_artifact.metrics["real_target_extraction_event_count"], 3.0);
+    let validation = validate_report(&unified_real_target_report, &substrate_profile_catalog());
+    assert!(validation.ok, "{:#?}", validation.findings);
 }
 
 #[test]
