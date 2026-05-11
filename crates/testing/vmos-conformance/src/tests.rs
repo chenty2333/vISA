@@ -478,6 +478,70 @@ fn artifact_gate_validates_device_trace_event_identity() {
 }
 
 #[test]
+fn artifact_gate_validates_real_target_device_trace_context() {
+    let root = temp_criterion_dir("real-target-device-trace-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("device.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":7,"event_epoch":2,"device":"virtio-net0","operation":"irq_ack","target_arch":"riscv64","target_board":"qemu-virt"}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::DeviceTrace,
+        uri: trace.display().to_string(),
+        sha256,
+        description: "real target device trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_real_target_device_trace_without_target_context() {
+    let root = temp_criterion_dir("real-target-device-trace-missing-context");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("device.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":7,"event_epoch":2,"device":"virtio-net0","operation":"irq_ack"}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::DeviceTrace,
+        uri: trace.display().to_string(),
+        sha256,
+        description: "generic device trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-boundary-overclaim")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn artifact_gate_validates_contract_graph_snapshot_schema() {
     let root = temp_criterion_dir("contract-graph-snapshot-artifact");
     fs::create_dir_all(&root).unwrap();
