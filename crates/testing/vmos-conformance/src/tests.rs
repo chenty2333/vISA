@@ -550,6 +550,11 @@ fn ltp_invocation_maps_subsets_to_runltp_commands() {
             "target/ltp/linux-ltp.net.socket.log".to_string(),
         ]
     );
+    let entries = plan.plan_entries();
+    assert_eq!(entries.len(), LtpSubset::ALL.len());
+    assert_eq!(entries[0].spec_id, LtpSubset::FsBasic.spec_id());
+    assert_eq!(entries[0].scenario_arg, LtpSubset::FsBasic.scenario_arg());
+    assert_eq!(entries[0].output_log, "target/ltp/linux-ltp.fs.basic.log");
 }
 
 #[test]

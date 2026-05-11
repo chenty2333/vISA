@@ -18,6 +18,7 @@ Useful commands:
 cargo run -p vmos-conformance -- plan-json
 cargo run -p vmos-conformance -- sample-report-json
 cargo run -p vmos-conformance -- ltp-plan-json
+cargo run -p vmos-conformance -- ltp-plan-lines target/ltp
 cargo run -p vmos-conformance -- sample-ltp-report-json
 cargo run -p vmos-conformance -- sample-performance-report-json
 cargo run -p vmos-conformance -- validate-sample
@@ -31,8 +32,9 @@ scripts/run-vmos-bench-conformance.sh target/vmos-bench-run portable-artifact-ex
 ```
 
 Executable LTP integration should consume the catalog entries whose ids start with
-`linux-ltp.`, use `LtpInvocation` to derive subset commands, parse run output into
-`LtpCaseResult`, and emit `ConformanceReport` JSON using the schema in `src/lib.rs`.
+`linux-ltp.`, use `LtpInvocation` or `ltp-plan-lines` to derive subset commands,
+parse run output into `LtpCaseResult`, and emit `ConformanceReport` JSON using the
+schema in `src/lib.rs`.
 `validate-report` is the intended report gate for external runners; it accepts a
 file path or `-` for stdin and exits non-zero when the JSON is malformed, references
 unknown specs, overclaims an evidence boundary, omits pass/fail evidence, or contains
@@ -45,15 +47,17 @@ real target claims. `attach-evidence-artifact` can add this metadata to an
 existing report for one spec id or for all results with `*`.
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
-compatibility report that can be piped into `validate-report`.
+compatibility report that can be piped into `validate-report`. Present subset logs
+are attached as `ltp-raw-log` artifacts with SHA-256 hashes.
 `scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
 LTP installed. It runs the cataloged subsets, preserves raw logs, emits
 `vmos-ltp-report.json`, and gates the result.
 Performance benchmark reports use the `vmos-performance-benchmark` suite id.
 Passing or failing performance results must carry concrete finite, non-negative
-numeric metrics. The current required keys are `latency_ns` for hostcall,
-activation, and snapshot/restore latency claims, plus `block_iops` and
-`network_packets_per_sec` for the block/network throughput claim.
+numeric metrics and at least one `benchmark-raw-output` artifact. The current
+required keys are `latency_ns` for hostcall, activation, and snapshot/restore
+latency claims, plus `block_iops` and `network_packets_per_sec` for the
+block/network throughput claim.
 `performance-report-from-criterion` reads Criterion `estimates.json` files under
 `target/criterion`, maps known benchmark ids into those metrics, and reports
 missing benchmark outputs as explicit `not-run` results.

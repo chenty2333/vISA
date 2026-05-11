@@ -21,6 +21,10 @@ fn main() -> ExitCode {
             print_json(&sample_report(&catalog))
         }
         "ltp-plan-json" => print_json(&LtpInvocation::default_plan("target/ltp")),
+        "ltp-plan-lines" => {
+            let output_dir = args.next().unwrap_or_else(|| "target/ltp".to_string());
+            print_ltp_plan_lines(&output_dir)
+        }
         "sample-ltp-report-json" => print_json(&sample_ltp_report()),
         "sample-performance-report-json" => print_json(&sample_performance_report()),
         "validate-report" => {
@@ -147,6 +151,13 @@ fn ltp_report_from_log_dir_command(
     print_json(&report)
 }
 
+fn print_ltp_plan_lines(output_dir: &str) -> ExitCode {
+    for entry in LtpInvocation::default_plan(output_dir).plan_entries() {
+        println!("{}\t{}\t{}", entry.spec_id, entry.scenario_arg, entry.output_log);
+    }
+    ExitCode::SUCCESS
+}
+
 fn attach_evidence_artifact_path(
     report_path: &str,
     spec_id: &str,
@@ -231,7 +242,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

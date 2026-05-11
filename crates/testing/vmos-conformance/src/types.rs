@@ -282,6 +282,13 @@ pub struct LtpInvocation {
     pub subsets: Vec<LtpSubset>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LtpPlanEntry {
+    pub spec_id: String,
+    pub scenario_arg: String,
+    pub output_log: String,
+}
+
 impl LtpInvocation {
     pub fn default_plan(output_dir: impl Into<String>) -> Self {
         Self {
@@ -300,6 +307,19 @@ impl LtpInvocation {
             "-o".to_string(),
             format!("{output_dir}/{}.log", subset.spec_id()),
         ]
+    }
+
+    pub fn plan_entries(&self) -> Vec<LtpPlanEntry> {
+        let output_dir = self.output_dir.trim_end_matches('/');
+        self.subsets
+            .iter()
+            .copied()
+            .map(|subset| LtpPlanEntry {
+                spec_id: subset.spec_id().to_string(),
+                scenario_arg: subset.scenario_arg().to_string(),
+                output_log: format!("{output_dir}/{}.log", subset.spec_id()),
+            })
+            .collect()
     }
 }
 

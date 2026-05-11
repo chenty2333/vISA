@@ -39,35 +39,22 @@ run_conformance() {
 logs_dir="$output_dir/logs"
 mkdir -p "$logs_dir"
 
-declare -A scenarios=(
-    ["linux-ltp.fs.basic"]="fs"
-    ["linux-ltp.mm.mapping"]="mm"
-    ["linux-ltp.ipc.futex"]="ipc"
-    ["linux-ltp.sched.timers"]="sched,timers"
-    ["linux-ltp.syscalls.core"]="syscalls"
-    ["linux-ltp.net.socket"]="net.ipv4,net.tcp_cmds"
-)
-
-ordered_specs=(
-    linux-ltp.fs.basic
-    linux-ltp.mm.mapping
-    linux-ltp.ipc.futex
-    linux-ltp.sched.timers
-    linux-ltp.syscalls.core
-    linux-ltp.net.socket
-)
+plan_file="$output_dir/ltp-plan.tsv"
+run_conformance ltp-plan-lines "$logs_dir" >"$plan_file"
 
 run_failures=0
-for spec in "${ordered_specs[@]}"; do
-    scenario="${scenarios[$spec]}"
-    result_log="$logs_dir/$spec.log"
+while IFS=$'\t' read -r spec scenario result_log; do
+    if [[ -z "$spec" || -z "$scenario" || -z "$result_log" ]]; then
+        echo "invalid LTP plan row in $plan_file" >&2
+        exit 1
+    fi
     run_log="$logs_dir/$spec.run.log"
     echo "running $spec with runltp -f $scenario"
     if ! "$runltp_bin" -f "$scenario" -o "$result_log" >"$run_log" 2>&1; then
         echo "WARN: runltp failed for $spec; preserving logs and continuing" >&2
         run_failures=$((run_failures + 1))
     fi
-done
+done <"$plan_file"
 
 report="$output_dir/vmos-ltp-report.json"
 gate="$output_dir/vmos-ltp-gate.json"

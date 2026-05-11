@@ -22,16 +22,10 @@ run_conformance validate-report "$performance_report" >/dev/null
 
 pass_logs="$tmp_root/ltp-pass"
 mkdir -p "$pass_logs"
-for spec in \
-    linux-ltp.fs.basic \
-    linux-ltp.mm.mapping \
-    linux-ltp.ipc.futex \
-    linux-ltp.sched.timers \
-    linux-ltp.syscalls.core \
-    linux-ltp.net.socket
-do
-    printf '%s_case01 1 TPASS : passed\n' "$spec" >"$pass_logs/$spec.log"
-done
+run_conformance ltp-plan-lines "$pass_logs" >"$tmp_root/ltp-plan.tsv"
+while IFS=$'\t' read -r spec _scenario result_log; do
+    printf '%s_case01 1 TPASS : passed\n' "$spec" >"$result_log"
+done <"$tmp_root/ltp-plan.tsv"
 
 pass_report="$tmp_root/ltp-pass-report.json"
 run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution guest-frontend \
@@ -40,7 +34,11 @@ run_conformance validate-report "$pass_report" >/dev/null
 
 partial_logs="$tmp_root/ltp-partial"
 mkdir -p "$partial_logs"
-printf 'open01 1 TPASS : open succeeded\n' >"$partial_logs/linux-ltp.fs.basic.log"
+first_partial_log=$(
+    run_conformance ltp-plan-lines "$partial_logs" \
+        | awk -F '\t' 'NR == 1 { print $3 }'
+)
+printf 'open01 1 TPASS : open succeeded\n' >"$first_partial_log"
 
 partial_report="$tmp_root/ltp-partial-report.json"
 run_conformance ltp-report-from-logs "$partial_logs" portable-artifact-execution guest-frontend \

@@ -25,8 +25,8 @@ pub use report::attach_evidence_artifact;
 pub use samples::{sample_ltp_report, sample_performance_report, sample_report};
 pub use types::{
     Boundary, CapabilityDomain, ClaimKind, ConformanceReport, EvidenceArtifact,
-    EvidenceArtifactKind, LtpCaseResult, LtpInvocation, LtpSubset, Outcome, Personality,
-    REPORT_SCHEMA_VERSION, ReportGateResult, ReportLoadError, TestResult, TestSpec,
+    EvidenceArtifactKind, LtpCaseResult, LtpInvocation, LtpPlanEntry, LtpSubset, Outcome,
+    Personality, REPORT_SCHEMA_VERSION, ReportGateResult, ReportLoadError, TestResult, TestSpec,
     ValidationFinding, ValidationReport,
 };
 pub use validation::{
