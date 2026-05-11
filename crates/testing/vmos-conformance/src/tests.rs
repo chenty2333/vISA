@@ -365,6 +365,16 @@ fn evidence_artifact_kind_parse_is_stable() {
 }
 
 #[test]
+fn evidence_artifact_uri_must_be_bundle_relative() {
+    assert!(artifact_uri_is_bundle_relative("logs/linux-ltp.fs.basic.log"));
+    assert!(artifact_uri_is_bundle_relative("criterion/bench/base/estimates.json"));
+    assert!(!artifact_uri_is_bundle_relative(""));
+    assert!(!artifact_uri_is_bundle_relative("../escape.log"));
+    assert!(!artifact_uri_is_bundle_relative("/tmp/absolute.log"));
+    assert!(!artifact_uri_is_bundle_relative("file:///tmp/absolute.log"));
+}
+
+#[test]
 fn report_rejects_malformed_evidence_artifacts() {
     let catalog = linux_ltp_catalog();
     let mut report = sample_ltp_report();

@@ -28,6 +28,10 @@ pub fn validate_report_artifacts(
     ValidationReport::new(findings)
 }
 
+pub fn artifact_uri_is_bundle_relative(uri: &str) -> bool {
+    !uri.trim().is_empty() && !uri.contains("://") && !artifact_path_escapes_root(uri)
+}
+
 fn validate_artifact(
     result: &TestResult,
     artifact: &EvidenceArtifact,
@@ -42,7 +46,7 @@ fn validate_artifact(
         return;
     }
 
-    if artifact_path_escapes_root(&artifact.uri) {
+    if !artifact_uri_is_bundle_relative(&artifact.uri) {
         findings.push(finding(
             "evidence-artifact-path-escape",
             format!(

@@ -12,7 +12,7 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
-pub use artifacts::validate_report_artifacts;
+pub use artifacts::{artifact_uri_is_bundle_relative, validate_report_artifacts};
 pub use catalog::{
     full_catalog, linux_ltp_catalog, performance_catalog, substrate_profile_catalog,
     visa_core_catalog, wasi_personality_catalog,

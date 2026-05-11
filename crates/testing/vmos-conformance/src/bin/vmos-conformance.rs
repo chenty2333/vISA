@@ -6,8 +6,9 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use vmos_conformance::{
-    Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
-    criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
+    Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation,
+    artifact_uri_is_bundle_relative, attach_evidence_artifact, criterion_performance_plan_entries,
+    criterion_performance_report_from_estimates_dir,
     criterion_performance_report_from_estimates_dir_with_boundary, full_catalog, gate_report_json,
     linux_ltp_catalog, ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json,
     performance_catalog, sample_ltp_report, sample_performance_report, sample_report,
@@ -237,6 +238,12 @@ fn attach_evidence_artifact_path(
             return ExitCode::FAILURE;
         }
     };
+    if !artifact_uri_is_bundle_relative(&uri) {
+        eprintln!(
+            "evidence artifact uri must be relative to the artifact root and must not escape it: {uri}"
+        );
+        return ExitCode::FAILURE;
+    }
     let bytes = match read_input(report_path) {
         Ok(bytes) => bytes,
         Err(error) => {
