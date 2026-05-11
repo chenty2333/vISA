@@ -527,6 +527,69 @@ fn artifact_gate_rejects_empty_contract_graph_snapshot_artifact() {
 }
 
 #[test]
+fn artifact_gate_rejects_malformed_contract_graph_snapshot_identities() {
+    let root = temp_criterion_dir("malformed-contract-graph-snapshot-identities");
+    fs::create_dir_all(&root).unwrap();
+
+    let cases = [
+        (
+            "zero-artifact-id",
+            contract_graph_snapshot_json("portable-artifact-execution")
+                .replace("\"artifacts\": []", "\"artifacts\": [{\"id\":0,\"generation\":1}]"),
+        ),
+        (
+            "zero-tombstone-generation",
+            contract_graph_snapshot_json("portable-artifact-execution").replace(
+                "\"tombstones\": []",
+                "\"tombstones\": [{\"kind\":\"store\",\"id\":1,\"generation\":0}]",
+            ),
+        ),
+        (
+            "zero-external-ref-id",
+            contract_graph_snapshot_json("portable-artifact-execution").replace(
+                "\"external_objects\": []",
+                "\"external_objects\": [{\"object\":{\"kind\":\"external-object\",\"id\":0,\"generation\":0},\"provider\":\"pci\",\"class\":\"device\"}]",
+            ),
+        ),
+        (
+            "zero-internal-edge-generation",
+            contract_graph_snapshot_json("portable-artifact-execution").replace(
+                "\"explicit_edges\": []",
+                "\"explicit_edges\": [{\"from\":{\"kind\":\"store\",\"id\":1,\"generation\":1},\"to\":{\"kind\":\"task\",\"id\":2,\"generation\":0},\"mode\":\"live\",\"evidence_level\":\"portable-artifact-execution\",\"epoch\":1}]",
+            ),
+        ),
+    ];
+
+    for (name, snapshot_json) in cases {
+        let snapshot = root.join(format!("{name}.json"));
+        let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+        let mut report = sample_ltp_report();
+        for result in &mut report.results {
+            result.evidence_artifacts.clear();
+        }
+        report.results[0].evidence_artifacts.push(EvidenceArtifact {
+            kind: EvidenceArtifactKind::ContractGraphSnapshot,
+            uri: snapshot.display().to_string(),
+            sha256,
+            description: format!("malformed contract graph snapshot {name}"),
+        });
+
+        let validation = validate_report_artifacts(&report, ".");
+
+        assert!(!validation.ok, "{name} should fail");
+        assert!(
+            validation
+                .findings
+                .iter()
+                .any(|finding| finding.code == "invalid-evidence-artifact-content"),
+            "{name} should report invalid snapshot content: {:#?}",
+            validation.findings
+        );
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn artifact_gate_rejects_unknown_contract_graph_snapshot_schema_version() {
     let root = temp_criterion_dir("unknown-contract-graph-snapshot-schema");
     fs::create_dir_all(&root).unwrap();

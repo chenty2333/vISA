@@ -180,6 +180,173 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
         }
     }
 
+    for field in [
+        "artifacts",
+        "code_objects",
+        "stores",
+        "activations",
+        "hostcalls",
+        "traps",
+        "capabilities",
+        "waits",
+        "cleanup_transactions",
+    ] {
+        validate_identity_array(object, field)?;
+    }
+    validate_tombstone_array(object)?;
+    validate_external_object_array(object)?;
+    validate_explicit_edge_array(object)?;
+
+    Ok(())
+}
+
+fn snapshot_array<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<&'a Vec<serde_json::Value>, String> {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("missing or non-array {field}"))
+}
+
+fn validate_identity_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<(), String> {
+    for (index, value) in snapshot_array(object, field)?.iter().enumerate() {
+        validate_identity_object(value, field, index)?;
+    }
+    Ok(())
+}
+
+fn validate_identity_object(
+    value: &serde_json::Value,
+    field: &str,
+    index: usize,
+) -> Result<(), String> {
+    let object = value.as_object().ok_or_else(|| format!("{field}[{index}] must be an object"))?;
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field}[{index}] missing numeric id"))?;
+    let generation = object
+        .get("generation")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field}[{index}] missing numeric generation"))?;
+    if id == 0 {
+        return Err(format!("{field}[{index}] id must be non-zero"));
+    }
+    if generation == 0 {
+        return Err(format!("{field}[{index}] generation must be non-zero"));
+    }
+    Ok(())
+}
+
+fn validate_tombstone_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (index, value) in snapshot_array(object, "tombstones")?.iter().enumerate() {
+        let tombstone =
+            value.as_object().ok_or_else(|| format!("tombstones[{index}] must be an object"))?;
+        let kind = tombstone
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("tombstones[{index}] missing kind"))?;
+        if kind.trim().is_empty() {
+            return Err(format!("tombstones[{index}] kind must be non-empty"));
+        }
+        validate_identity_object(value, "tombstones", index)?;
+    }
+    Ok(())
+}
+
+fn validate_external_object_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (index, value) in snapshot_array(object, "external_objects")?.iter().enumerate() {
+        let external = value
+            .as_object()
+            .ok_or_else(|| format!("external_objects[{index}] must be an object"))?;
+        let object_ref = external
+            .get("object")
+            .ok_or_else(|| format!("external_objects[{index}] missing object"))?;
+        validate_ref_object(object_ref, "external_objects", index)?;
+        for field in ["provider", "class"] {
+            let value = external
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("external_objects[{index}] missing {field}"))?;
+            if value.trim().is_empty() {
+                return Err(format!("external_objects[{index}] {field} must be non-empty"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_explicit_edge_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (index, value) in snapshot_array(object, "explicit_edges")?.iter().enumerate() {
+        let edge = value
+            .as_object()
+            .ok_or_else(|| format!("explicit_edges[{index}] must be an object"))?;
+        let from =
+            edge.get("from").ok_or_else(|| format!("explicit_edges[{index}] missing from"))?;
+        let to = edge.get("to").ok_or_else(|| format!("explicit_edges[{index}] missing to"))?;
+        validate_ref_object(from, "explicit_edges.from", index)?;
+        validate_ref_object(to, "explicit_edges.to", index)?;
+
+        let mode = edge
+            .get("mode")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("explicit_edges[{index}] missing mode"))?;
+        if !matches!(mode, "live" | "historical" | "cleanup-effect" | "external") {
+            return Err(format!("explicit_edges[{index}] unknown mode {mode}"));
+        }
+
+        let evidence_level = edge
+            .get("evidence_level")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("explicit_edges[{index}] missing evidence_level"))?;
+        if Boundary::parse(evidence_level).is_none() {
+            return Err(format!("explicit_edges[{index}] unknown evidence_level {evidence_level}"));
+        }
+
+        if edge.get("epoch").and_then(serde_json::Value::as_u64).is_none() {
+            return Err(format!("explicit_edges[{index}] missing numeric epoch"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ref_object(value: &serde_json::Value, field: &str, index: usize) -> Result<(), String> {
+    let object =
+        value.as_object().ok_or_else(|| format!("{field}[{index}] ref must be an object"))?;
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{field}[{index}] ref missing kind"))?;
+    if kind.trim().is_empty() {
+        return Err(format!("{field}[{index}] ref kind must be non-empty"));
+    }
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field}[{index}] ref missing numeric id"))?;
+    let generation = object
+        .get("generation")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field}[{index}] ref missing numeric generation"))?;
+    if id == 0 {
+        return Err(format!("{field}[{index}] ref id must be non-zero"));
+    }
+    if generation == 0 && kind != "external-object" {
+        return Err(format!(
+            "{field}[{index}] ref generation must be non-zero for internal objects"
+        ));
+    }
     Ok(())
 }
 
