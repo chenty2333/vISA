@@ -121,6 +121,30 @@ fn registry_rejects_malformed_hostcall_tables() {
 }
 
 #[test]
+fn hostcall_spec_table_validation_reports_precise_errors() {
+    let mut zero_number = image().hostcalls;
+    zero_number[0].number = 0;
+    assert_eq!(
+        HostcallSpec::validate_table(&zero_number),
+        Err(HostcallSpecValidationError::ZeroNumber)
+    );
+
+    let mut duplicate_number = image().hostcalls;
+    duplicate_number[1].number = duplicate_number[0].number;
+    assert_eq!(
+        HostcallSpec::validate_table(&duplicate_number),
+        Err(HostcallSpecValidationError::DuplicateNumber(1))
+    );
+
+    let mut empty_name = image().hostcalls;
+    empty_name[0].name.clear();
+    assert_eq!(
+        HostcallSpec::validate_table(&empty_name),
+        Err(HostcallSpecValidationError::EmptyName(1))
+    );
+}
+
+#[test]
 fn registry_restore_rejects_malformed_hostcall_tables() {
     let mut registry = ArtifactRegistry::new();
     let mut verified = registry.verify(image()).unwrap();

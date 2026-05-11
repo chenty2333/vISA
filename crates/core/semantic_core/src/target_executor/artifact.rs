@@ -226,6 +226,55 @@ impl HostcallSpec {
         self.category.requires_capability()
             || capability_class_requires_hostcall_gate(CapabilityClass::from_object(&self.object))
     }
+
+    pub fn validate(&self) -> Result<(), HostcallSpecValidationError> {
+        if self.number == 0 {
+            return Err(HostcallSpecValidationError::ZeroNumber);
+        }
+        if self.name.is_empty() {
+            return Err(HostcallSpecValidationError::EmptyName(self.number));
+        }
+        if self.object.is_empty() {
+            return Err(HostcallSpecValidationError::EmptyObject(self.number));
+        }
+        if self.operation.is_empty() {
+            return Err(HostcallSpecValidationError::EmptyOperation(self.number));
+        }
+        Ok(())
+    }
+
+    pub fn validate_table(hostcalls: &[Self]) -> Result<(), HostcallSpecValidationError> {
+        let mut numbers = Vec::new();
+        for hostcall in hostcalls {
+            hostcall.validate()?;
+            if numbers.contains(&hostcall.number) {
+                return Err(HostcallSpecValidationError::DuplicateNumber(hostcall.number));
+            }
+            numbers.push(hostcall.number);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostcallSpecValidationError {
+    ZeroNumber,
+    DuplicateNumber(u32),
+    EmptyName(u32),
+    EmptyObject(u32),
+    EmptyOperation(u32),
+}
+
+impl HostcallSpecValidationError {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ZeroNumber => "hostcall-zero-number",
+            Self::DuplicateNumber(_) => "hostcall-duplicate-number",
+            Self::EmptyName(_) => "hostcall-empty-name",
+            Self::EmptyObject(_) => "hostcall-empty-object",
+            Self::EmptyOperation(_) => "hostcall-empty-operation",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -665,7 +714,7 @@ impl ArtifactRegistry {
         if image.abi_fingerprint.is_empty() {
             return Err(ArtifactRegistryError::EmptyAbiFingerprint);
         }
-        if !hostcall_table_is_well_formed(&image.hostcalls) {
+        if HostcallSpec::validate_table(&image.hostcalls).is_err() {
             return Err(ArtifactRegistryError::InvalidHostcallSpec);
         }
         if self.verified.iter().any(|verified| verified.artifact_id == image.id) {
@@ -743,7 +792,7 @@ impl ArtifactRegistry {
                 || record.generation == 0
                 || record.package.is_empty()
                 || record.artifact_name.is_empty()
-                || !hostcall_table_is_well_formed(&record.hostcalls)
+                || HostcallSpec::validate_table(&record.hostcalls).is_err()
                 || restored
                     .iter()
                     .any(|existing: &VerifiedArtifact| existing.artifact_id == record.artifact_id)
@@ -755,22 +804,6 @@ impl ArtifactRegistry {
         self.verified = restored;
         true
     }
-}
-
-fn hostcall_table_is_well_formed(hostcalls: &[HostcallSpec]) -> bool {
-    let mut numbers = Vec::new();
-    for hostcall in hostcalls {
-        if hostcall.number == 0
-            || hostcall.name.is_empty()
-            || hostcall.object.is_empty()
-            || hostcall.operation.is_empty()
-            || numbers.contains(&hostcall.number)
-        {
-            return false;
-        }
-        numbers.push(hostcall.number);
-    }
-    true
 }
 
 impl Default for ArtifactRegistry {

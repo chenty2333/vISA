@@ -12,7 +12,7 @@ use std::{
     vec::Vec,
 };
 
-use semantic_core::target_executor::{ActivationEntry, HostcallSpec};
+use semantic_core::target_executor::{ActivationEntry, HostcallSpec, HostcallSpecValidationError};
 use target_abi::{SectionKindV1, TargetArtifactError};
 use vms_runtime::{
     ActivationHandle, HostcallDispatchReport, LoadedVisaArtifact, VisaArtifactInput,
@@ -32,6 +32,7 @@ pub enum WasmVisaError {
     HostcallNotBound(u32),
     DuplicateHostcallNumber(u32),
     InvalidHostcallNumber(u32),
+    InvalidHostcallSpec(HostcallSpecValidationError),
     InvalidHostcallImport(String),
     Trap(String),
 }
@@ -46,6 +47,7 @@ impl fmt::Display for WasmVisaError {
             Self::HostcallNotBound(n) => write!(f, "hostcall {n} not bound"),
             Self::DuplicateHostcallNumber(n) => write!(f, "duplicate hostcall number: {n}"),
             Self::InvalidHostcallNumber(n) => write!(f, "invalid hostcall number: {n}"),
+            Self::InvalidHostcallSpec(e) => write!(f, "invalid hostcall spec: {}", e.as_str()),
             Self::InvalidHostcallImport(name) => write!(f, "invalid hostcall import: {name}"),
             Self::Trap(msg) => write!(f, "trap: {msg}"),
         }
@@ -342,20 +344,23 @@ fn wasmtime_error_message(error: &wasmtime::Error) -> String {
 }
 
 fn validate_adapter_hostcalls(specs: &[HostcallSpec]) -> Result<(), WasmVisaError> {
-    let mut numbers = Vec::new();
+    HostcallSpec::validate_table(specs).map_err(adapter_validation_error)?;
     for spec in specs {
-        if spec.number == 0 {
-            return Err(WasmVisaError::InvalidHostcallNumber(spec.number));
-        }
-        if numbers.contains(&spec.number) {
-            return Err(WasmVisaError::DuplicateHostcallNumber(spec.number));
-        }
-        numbers.push(spec.number);
         if !adapter_supports_hostcall(&spec.object, &spec.operation) {
             return Err(WasmVisaError::HostcallNotBound(spec.number));
         }
     }
     Ok(())
+}
+
+fn adapter_validation_error(error: HostcallSpecValidationError) -> WasmVisaError {
+    match error {
+        HostcallSpecValidationError::ZeroNumber => WasmVisaError::InvalidHostcallNumber(0),
+        HostcallSpecValidationError::DuplicateNumber(number) => {
+            WasmVisaError::DuplicateHostcallNumber(number)
+        }
+        error => WasmVisaError::InvalidHostcallSpec(error),
+    }
 }
 
 fn validate_module_hostcall_imports(
@@ -1900,6 +1905,43 @@ mod tests {
         assert!(
             matches!(err, WasmVisaError::InvalidHostcallNumber(0)),
             "expected InvalidHostcallNumber, got: {err}"
+        );
+        assert!(executor.hostcall_reports().is_empty());
+        assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
+    }
+
+    #[test]
+    fn run_rejects_empty_descriptor_hostcall_name_before_activation() {
+        let rt = VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let substrate = TestSubstrate::default();
+        let mut executor = WasmVisaExecutor::new(rt, Box::new(substrate));
+        let store_count_before = executor.runtime().semantic().store_count();
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &wasm_module_bytes());
+        let desc = VisaArtifactDescriptor::new(
+            9,
+            "test",
+            "test-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_role("frontend-personality")
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "",
+            HostcallCategory::Service,
+            "test.console",
+            "write",
+            false,
+        ));
+
+        let err = executor
+            .run(VisaArtifactInput { bytes: &artifact, descriptor: desc }, "entry")
+            .expect_err("empty descriptor hostcall name must fail shared spec validation");
+        assert!(
+            matches!(
+                err,
+                WasmVisaError::InvalidHostcallSpec(HostcallSpecValidationError::EmptyName(1))
+            ),
+            "expected InvalidHostcallSpec(EmptyName), got: {err}"
         );
         assert!(executor.hostcall_reports().is_empty());
         assert_eq!(executor.runtime().semantic().store_count(), store_count_before);
