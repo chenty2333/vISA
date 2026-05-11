@@ -28,6 +28,7 @@ cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-artifacts target/vmos-conformance.json .
+cargo run -p vmos-conformance -- validate-report-with-artifacts target/vmos-conformance.json .
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-plan-lines target/criterion
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion
@@ -55,6 +56,15 @@ duplicate or empty result sets. It also exits non-zero when any reported result 
 checks SHA-256 digests, and applies type-specific structure checks for raw LTP
 logs, Criterion estimates, extraction traces, device traces, serial logs, and
 contract graph snapshots.
+`validate-report-with-artifacts` composes both gates and is the preferred local
+package gate for executable evidence bundles. It fails when either the report
+contract or any linked evidence artifact fails validation.
+Portable-or-stronger `visa-semantic-conformance` pass/fail results must include a
+`contract-graph-snapshot` artifact. Snapshot artifact files use
+`schema_version=contract-graph-snapshot-v0.1`, declare `claimed_evidence_level`,
+and carry the core snapshot arrays needed by the artifact gate. The artifact gate
+rejects unknown snapshot schema ids, snapshot boundary overclaims relative to the
+owning result, and relative artifact paths that escape the artifact root.
 Results that claim `real-target-substrate` must include a structured
 `substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
 SHA-256 digest, and description. Free-form evidence text alone is not enough for
@@ -68,10 +78,11 @@ compatibility report that can be piped into `validate-report`. Present subset lo
 are attached as `ltp-raw-log` artifacts with SHA-256 hashes.
 `scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
 LTP installed. It runs the cataloged subsets, preserves raw logs, emits
-`vmos-ltp-report.json`, `vmos-ltp-gate.json`, and
-`vmos-ltp-artifact-gate.json`. The artifact gate checks that every referenced
-raw log can be opened, matches its SHA-256 digest, and contains parseable LTP
-case output.
+`vmos-ltp-report.json`, `vmos-ltp-gate.json`, `vmos-ltp-artifact-gate.json`, and
+`vmos-ltp-combined-gate.json`. The artifact gate checks that every referenced raw
+log can be opened, matches its SHA-256 digest, and contains parseable LTP case
+output. The combined gate records the report and artifact validation result in
+one JSON file for downstream CI/archive consumers.
 Performance benchmark reports use the `vmos-performance-benchmark` suite id.
 Passing or failing performance results must carry concrete finite, non-negative
 numeric metrics and at least one `benchmark-raw-output` artifact. The current
@@ -91,6 +102,7 @@ explicit stronger boundary only when every result in the run can legitimately
 claim that boundary.
 `scripts/run-vmos-bench-conformance.sh` is the standard wrapper for running
 `cargo bench -p vmos-bench`, preserving the generated performance report, and
-gating it through `validate-report` and `validate-artifacts`. It emits
-`vmos-performance-report.json`, `vmos-performance-gate.json`, and
-`vmos-performance-artifact-gate.json`.
+gating it through `validate-report`, `validate-artifacts`, and
+`validate-report-with-artifacts`. It emits `vmos-performance-report.json`,
+`vmos-performance-gate.json`, `vmos-performance-artifact-gate.json`, and
+`vmos-performance-combined-gate.json`.
