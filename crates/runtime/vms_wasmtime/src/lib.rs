@@ -1296,26 +1296,29 @@ mod tests {
             "native-visa",
             SubstrateProfile::MinimalBareMetal,
         );
+        let descriptor = personality.descriptor(19);
+        let declared_hostcalls = descriptor.hostcalls.len();
+        assert!(
+            declared_hostcalls > 1,
+            "native vISA descriptors are profile ABI surfaces, not exact import manifests"
+        );
 
         let report = executor
-            .run(
-                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(19) },
-                "visa_start",
-            )
+            .run(VisaArtifactInput { bytes: &artifact, descriptor }, "visa_start")
             .expect("run native vISA artifact");
 
         assert_eq!(report.loaded.artifact_id, 19);
         assert_eq!(report.hostcalls.len(), 1);
         assert_eq!(report.hostcalls[0].object, "visa.console");
         assert_eq!(report.hostcalls[0].value, VisaHostcallValue::U64(11));
+        let snapshot = executor.runtime().snapshot();
+        assert_eq!(snapshot.artifacts[0].hostcalls.len(), declared_hostcalls);
+        assert_eq!(snapshot.hostcalls.len(), 1);
         assert!(
-            executor
-                .runtime()
-                .snapshot()
-                .artifacts
-                .iter()
-                .any(|artifact| artifact.role == "visa-native-workload")
+            snapshot.hostcalls.iter().all(|trace| trace.object == "visa.console"),
+            "descriptor-only timer hostcalls must not appear as execution trace evidence"
         );
+        assert!(snapshot.artifacts.iter().any(|artifact| artifact.role == "visa-native-workload"));
     }
 
     #[test]
