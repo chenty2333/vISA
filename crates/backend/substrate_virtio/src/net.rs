@@ -82,6 +82,12 @@ pub fn validate_config(config: VirtioNetBackendConfig) -> Result<(), &'static st
     if config.queue_size == 0 {
         return Err("virtio net backend queue size is zero");
     }
+    if !config.queue_size.is_power_of_two() {
+        return Err("virtio net backend queue size is not a power of two");
+    }
+    if config.irq_vector == 0 {
+        return Err("virtio net backend irq vector is zero");
+    }
     if config.rx_queue_index == config.tx_queue_index {
         return Err("virtio net backend rx and tx queues must be distinct");
     }
@@ -120,6 +126,17 @@ mod tests {
         let mut config = VirtioNetBackendConfig::net0();
         config.queue_size = 0;
         assert_eq!(validate_config(config), Err("virtio net backend queue size is zero"));
+
+        config = VirtioNetBackendConfig::net0();
+        config.queue_size = 3;
+        assert_eq!(
+            validate_config(config),
+            Err("virtio net backend queue size is not a power of two")
+        );
+
+        config = VirtioNetBackendConfig::net0();
+        config.irq_vector = 0;
+        assert_eq!(validate_config(config), Err("virtio net backend irq vector is zero"));
 
         config = VirtioNetBackendConfig::net0();
         config.tx_queue_index = config.rx_queue_index;

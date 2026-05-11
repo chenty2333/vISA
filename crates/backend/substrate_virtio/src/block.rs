@@ -96,6 +96,9 @@ pub fn validate_config(config: VirtioBlkBackendConfig) -> Result<(), &'static st
     if config.queue_size == 0 {
         return Err("virtio block backend queue size is zero");
     }
+    if !config.queue_size.is_power_of_two() {
+        return Err("virtio block backend queue size is not a power of two");
+    }
     if config.request_queue_index != VIRTIO_BLK_REQUEST_QUEUE_INDEX {
         return Err("virtio block backend request queue index is unsupported");
     }
@@ -141,6 +144,13 @@ mod tests {
         config = VirtioBlkBackendConfig::blk0();
         config.queue_size = 0;
         assert_eq!(validate_config(config), Err("virtio block backend queue size is zero"));
+
+        config = VirtioBlkBackendConfig::blk0();
+        config.queue_size = 3;
+        assert_eq!(
+            validate_config(config),
+            Err("virtio block backend queue size is not a power of two")
+        );
 
         config = VirtioBlkBackendConfig::blk0();
         config.request_queue_index = 1;
