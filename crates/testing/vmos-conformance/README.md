@@ -37,6 +37,10 @@ file path or `-` for stdin and exits non-zero when the JSON is malformed, refere
 unknown specs, overclaims an evidence boundary, omits pass/fail evidence, or contains
 duplicate or empty result sets. It also exits non-zero when any reported result is
 `fail`, `skip`, or `not-run`.
+Results that claim `real-target-substrate` must include a structured
+`substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
+SHA-256 digest, and description. Free-form evidence text alone is not enough for
+real target claims.
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`.

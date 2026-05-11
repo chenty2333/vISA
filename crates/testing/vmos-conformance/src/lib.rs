@@ -143,6 +143,27 @@ pub struct TestResult {
     pub remaining_uncertainty: String,
     #[serde(default)]
     pub metrics: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub evidence_artifacts: Vec<EvidenceArtifact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceArtifact {
+    pub kind: EvidenceArtifactKind,
+    pub uri: String,
+    pub sha256: String,
+    pub description: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceArtifactKind {
+    ContractGraphSnapshot,
+    SubstrateExtractionTrace,
+    DeviceTrace,
+    SerialLog,
+    BenchmarkRawOutput,
+    LtpRawLog,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -323,6 +344,7 @@ pub fn ltp_subset_result(
         ),
         remaining_uncertainty: "LTP compatibility does not prove vISA semantic completeness, substrate profile conformance, or real target substrate execution unless separately claimed with matching evidence".to_string(),
         metrics,
+        evidence_artifacts: Vec::new(),
     }
 }
 
@@ -354,6 +376,7 @@ pub fn ltp_report_from_subset_logs<'a>(
                     remaining_uncertainty:
                         "subset was not executed or the runner did not collect its log".to_string(),
                     metrics: BTreeMap::new(),
+                    evidence_artifacts: Vec::new(),
                 },
             }
         })
@@ -761,6 +784,7 @@ fn criterion_performance_result_for_spec(
         evidence,
         remaining_uncertainty,
         metrics,
+        evidence_artifacts: Vec::new(),
     }
 }
 
@@ -857,6 +881,7 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                 format!("{} observed unknown profile {}", result.spec_id, profile),
             ));
         }
+        validate_evidence_artifacts(result, &mut findings);
         if matches!(result.outcome, Outcome::Pass | Outcome::Fail) {
             if result.evidence.trim().is_empty() {
                 findings.push(finding(
@@ -873,10 +898,66 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             if spec.claim == ClaimKind::PerformanceBenchmark {
                 validate_performance_metrics(result, &mut findings);
             }
+            if result.observed_boundary == Boundary::RealTargetSubstrate
+                && !has_real_target_extraction_artifact(result)
+            {
+                findings.push(finding(
+                    "missing-real-target-extraction-artifact",
+                    format!(
+                        "{} claims real-target-substrate without substrate extraction or device trace artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
         }
     }
     validate_suite_coverage(report, &result_ids, catalog, &mut findings);
     ValidationReport::new(findings)
+}
+
+fn validate_evidence_artifacts(result: &TestResult, findings: &mut Vec<ValidationFinding>) {
+    let mut artifact_keys = BTreeSet::new();
+    for artifact in &result.evidence_artifacts {
+        if artifact.uri.trim().is_empty() {
+            findings.push(finding(
+                "empty-evidence-artifact-uri",
+                format!("{} has evidence artifact without uri", result.spec_id),
+            ));
+        }
+        if artifact.description.trim().is_empty() {
+            findings.push(finding(
+                "empty-evidence-artifact-description",
+                format!("{} has evidence artifact without description", result.spec_id),
+            ));
+        }
+        if !is_sha256_hex(&artifact.sha256) {
+            findings.push(finding(
+                "invalid-evidence-artifact-sha256",
+                format!("{} has evidence artifact with invalid sha256", result.spec_id),
+            ));
+        }
+        let key = (artifact.kind, artifact.uri.as_str());
+        if !artifact_keys.insert(key) {
+            findings.push(finding(
+                "duplicate-evidence-artifact",
+                format!("{} repeats evidence artifact {}", result.spec_id, artifact.uri),
+            ));
+        }
+    }
+}
+
+fn has_real_target_extraction_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        matches!(
+            artifact.kind,
+            EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
+        ) && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_performance_metrics(result: &TestResult, findings: &mut Vec<ValidationFinding>) {
@@ -1002,6 +1083,7 @@ pub fn sample_report(catalog: &[TestSpec]) -> ConformanceReport {
                 evidence: "catalog entry not executed".to_string(),
                 remaining_uncertainty: "no executable result has been collected".to_string(),
                 metrics: BTreeMap::new(),
+                evidence_artifacts: Vec::new(),
             })
             .collect(),
     }
@@ -1065,6 +1147,7 @@ pub fn sample_performance_report() -> ConformanceReport {
                         "sample report validates schema only; it is not a real benchmark run"
                             .to_string(),
                     metrics,
+                    evidence_artifacts: Vec::new(),
                 }
             })
             .collect(),
@@ -1291,6 +1374,7 @@ mod tests {
                 evidence: "only one passing LTP subset was reported".to_string(),
                 remaining_uncertainty: "other LTP subsets were omitted".to_string(),
                 metrics: BTreeMap::new(),
+                evidence_artifacts: Vec::new(),
             }],
         };
 
@@ -1328,6 +1412,7 @@ mod tests {
                 evidence: "not run".to_string(),
                 remaining_uncertainty: "duplicate test fixture".to_string(),
                 metrics: BTreeMap::new(),
+                evidence_artifacts: Vec::new(),
             },
             TestResult {
                 spec_id: spec.id.clone(),
@@ -1337,6 +1422,7 @@ mod tests {
                 evidence: "not run".to_string(),
                 remaining_uncertainty: "duplicate test fixture".to_string(),
                 metrics: BTreeMap::new(),
+                evidence_artifacts: Vec::new(),
             },
         ];
 
@@ -1360,6 +1446,7 @@ mod tests {
             evidence: "LTP fs subset passed in a semantic-only harness".to_string(),
             remaining_uncertainty: "portable artifact execution was not observed".to_string(),
             metrics: BTreeMap::new(),
+            evidence_artifacts: Vec::new(),
         }];
 
         let validation = validate_report(&report, &catalog);
@@ -1370,6 +1457,61 @@ mod tests {
                 .iter()
                 .any(|finding| finding.code == "insufficient-evidence-boundary")
         );
+    }
+
+    #[test]
+    fn report_rejects_real_target_claim_without_extraction_artifact() {
+        let catalog = linux_ltp_catalog();
+        let mut report = sample_ltp_report();
+        report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+
+        let validation = validate_report(&report, &catalog);
+
+        assert!(!validation.ok);
+        assert!(
+            validation
+                .findings
+                .iter()
+                .any(|finding| finding.code == "missing-real-target-extraction-artifact")
+        );
+    }
+
+    #[test]
+    fn report_accepts_real_target_claim_with_extraction_artifact() {
+        let catalog = linux_ltp_catalog();
+        let mut report = sample_ltp_report();
+        report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+        report.results[0].evidence_artifacts.push(EvidenceArtifact {
+            kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+            uri: "target/evidence/substrate-extraction.jsonl".to_string(),
+            sha256: "a".repeat(64),
+            description: "real target substrate authority extraction trace".to_string(),
+        });
+
+        let validation = validate_report(&report, &catalog);
+
+        assert!(validation.ok, "{:#?}", validation.findings);
+    }
+
+    #[test]
+    fn report_rejects_malformed_evidence_artifacts() {
+        let catalog = linux_ltp_catalog();
+        let mut report = sample_ltp_report();
+        report.results[0].evidence_artifacts.push(EvidenceArtifact {
+            kind: EvidenceArtifactKind::SubstrateExtractionTrace,
+            uri: String::new(),
+            sha256: "not-a-sha".to_string(),
+            description: String::new(),
+        });
+
+        let validation = validate_report(&report, &catalog);
+
+        assert!(!validation.ok);
+        assert!(validation.findings.iter().any(|finding| {
+            finding.code == "empty-evidence-artifact-uri"
+                || finding.code == "invalid-evidence-artifact-sha256"
+                || finding.code == "empty-evidence-artifact-description"
+        }));
     }
 
     #[test]
@@ -1389,6 +1531,7 @@ mod tests {
                 evidence: String::new(),
                 remaining_uncertainty: String::new(),
                 metrics: BTreeMap::new(),
+                evidence_artifacts: Vec::new(),
             }],
         };
 
@@ -1446,6 +1589,7 @@ mod tests {
                     evidence: "benchmark completed".to_string(),
                     remaining_uncertainty: "metrics were accidentally omitted".to_string(),
                     metrics: BTreeMap::new(),
+                    evidence_artifacts: Vec::new(),
                 })
                 .collect(),
         };
@@ -1478,6 +1622,7 @@ mod tests {
                         evidence: "benchmark completed".to_string(),
                         remaining_uncertainty: "wrong metric key was reported".to_string(),
                         metrics,
+                        evidence_artifacts: Vec::new(),
                     }
                 })
                 .collect(),
@@ -1702,7 +1847,7 @@ rename01 1 TFAIL : rename failed
         let report = ltp_report_from_subset_logs(
             "unit-test",
             "unit-test",
-            Boundary::RealTargetSubstrate,
+            Boundary::PortableArtifactExecution,
             Some("snapshot-replay-capable".to_string()),
             [(
                 LtpSubset::NetSocket,
@@ -1716,7 +1861,7 @@ rename01 1 TFAIL : rename failed
             .find(|result| result.spec_id == LtpSubset::NetSocket.spec_id())
             .unwrap();
         assert_eq!(socket.outcome, Outcome::Fail);
-        assert_eq!(socket.observed_boundary, Boundary::RealTargetSubstrate);
+        assert_eq!(socket.observed_boundary, Boundary::PortableArtifactExecution);
         assert_eq!(socket.observed_profile.as_deref(), Some("snapshot-replay-capable"));
         assert_eq!(socket.metrics["ltp_cases_failed"], 1.0);
         assert!(validate_report(&report, &linux_ltp_catalog()).ok);
