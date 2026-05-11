@@ -39,6 +39,11 @@ fn main() -> ExitCode {
             let artifact_root = args.next().unwrap_or_else(|| ".".to_string());
             validate_artifacts_path(&path, &artifact_root)
         }
+        "validate-report-with-artifacts" => {
+            let path = args.next().unwrap_or_else(|| "-".to_string());
+            let artifact_root = args.next().unwrap_or_else(|| ".".to_string());
+            validate_report_with_artifacts_path(&path, &artifact_root)
+        }
         "write-sample-report" => match args.next() {
             Some(path) => {
                 let catalog = full_catalog();
@@ -328,6 +333,33 @@ fn validate_artifacts_path(path: &str, artifact_root: &str) -> ExitCode {
     }
 }
 
+fn validate_report_with_artifacts_path(path: &str, artifact_root: &str) -> ExitCode {
+    let bytes = match read_input(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read report {path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let catalog = full_catalog();
+    let report_gate = gate_report_json(&bytes, &catalog);
+    let artifact_validation = parse_report_json(&bytes)
+        .ok()
+        .map(|report| validate_report_artifacts(&report, artifact_root));
+    let ok = report_gate.ok && artifact_validation.as_ref().is_some_and(|report| report.ok);
+    let output = serde_json::json!({
+        "ok": ok,
+        "report": report_gate,
+        "artifacts": artifact_validation,
+    });
+    if ok {
+        print_json(&output)
+    } else {
+        let _ = print_json(&output);
+        ExitCode::FAILURE
+    }
+}
+
 fn read_input(path: &str) -> io::Result<Vec<u8>> {
     if path == "-" {
         let mut bytes = Vec::new();
@@ -353,7 +385,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

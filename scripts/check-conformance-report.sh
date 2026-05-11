@@ -30,6 +30,7 @@ run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution gu
     >"$pass_report"
 run_conformance validate-report "$pass_report" >/dev/null
 run_conformance validate-artifacts "$pass_report" >/dev/null
+run_conformance validate-report-with-artifacts "$pass_report" >/dev/null
 
 real_target_trace="$tmp_root/substrate-extraction.jsonl"
 cat >"$real_target_trace" <<'EOF'
@@ -45,6 +46,7 @@ run_conformance attach-evidence-artifact-file \
     >"$real_target_attached_report"
 run_conformance validate-report "$real_target_attached_report" >/dev/null
 run_conformance validate-artifacts "$real_target_attached_report" >/dev/null
+run_conformance validate-report-with-artifacts "$real_target_attached_report" >/dev/null
 
 partial_logs="$tmp_root/ltp-partial"
 mkdir -p "$partial_logs"
@@ -103,6 +105,8 @@ run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
 run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$wrapper_output/vmos-ltp-report.json" \
+    >"$tmp_root/wrapper-combined-gate.json"
 
 criterion_root="$tmp_root/criterion"
 run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"
@@ -132,5 +136,7 @@ run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
 run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$bench_output/vmos-performance-report.json" \
+    >"$tmp_root/vmos-bench-combined-gate.json"
 
 echo "Conformance report gate passed."
