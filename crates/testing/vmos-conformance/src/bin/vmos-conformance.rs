@@ -4,6 +4,7 @@ use std::{
     process::ExitCode,
 };
 
+use sha2::{Digest, Sha256};
 use vmos_conformance::{
     Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation, attach_evidence_artifact,
     criterion_performance_plan_entries, criterion_performance_report_from_estimates_dir,
@@ -130,6 +131,25 @@ fn main() -> ExitCode {
             }
             attach_evidence_artifact_path(&report_path, &spec_id, &kind, uri, sha256, description)
         }
+        "attach-evidence-artifact-file" => {
+            let Some(report_path) = args.next() else {
+                return usage();
+            };
+            let Some(spec_id) = args.next() else {
+                return usage();
+            };
+            let Some(kind) = args.next() else {
+                return usage();
+            };
+            let Some(path) = args.next() else {
+                return usage();
+            };
+            let description = args.collect::<Vec<_>>().join(" ");
+            if description.trim().is_empty() {
+                return usage();
+            }
+            attach_evidence_artifact_file_path(&report_path, &spec_id, &kind, &path, description)
+        }
         "validate-sample" => {
             let catalog = full_catalog();
             let catalog_report = validate_catalog(&catalog);
@@ -238,6 +258,34 @@ fn attach_evidence_artifact_path(
     print_json(&report)
 }
 
+fn attach_evidence_artifact_file_path(
+    report_path: &str,
+    spec_id: &str,
+    kind: &str,
+    path: &str,
+    description: String,
+) -> ExitCode {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read evidence artifact {path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let sha256 = sha256_hex(&bytes);
+    attach_evidence_artifact_path(report_path, spec_id, kind, path.to_string(), sha256, description)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
 fn validate_report_path(path: &str) -> ExitCode {
     let bytes = match read_input(path) {
         Ok(bytes) => bytes,
@@ -305,7 +353,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

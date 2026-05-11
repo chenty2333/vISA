@@ -32,6 +32,7 @@ cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifa
 cargo run -p vmos-conformance -- performance-plan-lines target/criterion
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion
 cargo run -p vmos-conformance -- attach-evidence-artifact target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
+cargo run -p vmos-conformance -- attach-evidence-artifact-file target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl "real target extraction trace"
 scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
 scripts/run-vmos-bench-conformance.sh target/vmos-bench-run
 ```
@@ -59,6 +60,8 @@ Results that claim `real-target-substrate` must include a structured
 SHA-256 digest, and description. Free-form evidence text alone is not enough for
 real target claims. `attach-evidence-artifact` can add this metadata to an
 existing report for one spec id or for all results with `*`.
+`attach-evidence-artifact-file` is the safer local runner variant: it reads the
+artifact file and computes the SHA-256 digest before attaching the metadata.
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`. Present subset logs

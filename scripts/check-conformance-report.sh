@@ -31,6 +31,21 @@ run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution gu
 run_conformance validate-report "$pass_report" >/dev/null
 run_conformance validate-artifacts "$pass_report" >/dev/null
 
+real_target_trace="$tmp_root/substrate-extraction.jsonl"
+cat >"$real_target_trace" <<'EOF'
+{"authority":"ConsoleAuthority","operation":"console_write","event_id":1}
+EOF
+real_target_report="$tmp_root/ltp-real-target-report.json"
+run_conformance ltp-report-from-logs "$pass_logs" real-target-substrate guest-frontend \
+    >"$real_target_report"
+real_target_attached_report="$tmp_root/ltp-real-target-attached-report.json"
+run_conformance attach-evidence-artifact-file \
+    "$real_target_report" '*' substrate-extraction-trace "$real_target_trace" \
+    "real target substrate extraction trace" \
+    >"$real_target_attached_report"
+run_conformance validate-report "$real_target_attached_report" >/dev/null
+run_conformance validate-artifacts "$real_target_attached_report" >/dev/null
+
 partial_logs="$tmp_root/ltp-partial"
 mkdir -p "$partial_logs"
 first_partial_log=$(
