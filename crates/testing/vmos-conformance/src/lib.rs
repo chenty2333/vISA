@@ -503,6 +503,31 @@ pub fn visa_core_catalog() -> Vec<TestSpec> {
             proves: &["portable state survives profile-change restore with stable identity"],
             does_not_prove: &["product-grade live migration latency", "device binding continuity"],
         }),
+        spec(SpecDef {
+            id: "visa.native.full-hostcall-abi",
+            title: "vISA-native Wasm artifact drives the full typed hostcall ABI without Linux or WASI personality semantics",
+            claim: ClaimKind::VisaSemanticConformance,
+            minimum_boundary: Boundary::PortableArtifactExecution,
+            required_profile: Some(SubstrateProfile::SnapshotReplayCapable),
+            personality: Some(Personality::VisaNative),
+            domains: &[
+                CapabilityDomain::Artifact,
+                CapabilityDomain::Activation,
+                CapabilityDomain::Hostcall,
+                CapabilityDomain::Capability,
+                CapabilityDomain::Memory,
+                CapabilityDomain::Mmio,
+                CapabilityDomain::Dma,
+                CapabilityDomain::Irq,
+                CapabilityDomain::Snapshot,
+                CapabilityDomain::Timer,
+            ],
+            runner: "cargo test -p vms_wasmtime run_executes_native_visa_full_substrate_hostcall_abi",
+            proves: &[
+                "a non-Linux vISA-native artifact exercises typed console, timer, memory, DMW, MMIO, DMA, IRQ, and snapshot hostcalls through the Wasmtime adapter",
+            ],
+            does_not_prove: &["Linux personality compatibility", "real target substrate execution"],
+        }),
     ]
 }
 
@@ -1365,6 +1390,20 @@ mod tests {
             );
             assert_ne!(spec.claim, ClaimKind::VisaSemanticConformance);
         }
+    }
+
+    #[test]
+    fn visa_native_full_hostcall_spec_is_primary_visa_conformance() {
+        let spec = visa_core_catalog()
+            .into_iter()
+            .find(|spec| spec.id == "visa.native.full-hostcall-abi")
+            .expect("native vISA spec");
+
+        assert_eq!(spec.claim, ClaimKind::VisaSemanticConformance);
+        assert_eq!(spec.personality, Some(Personality::VisaNative));
+        assert_eq!(spec.minimum_boundary, Boundary::PortableArtifactExecution);
+        assert!(spec.runner.contains("vms_wasmtime"));
+        assert!(spec.does_not_prove.iter().any(|item| item.contains("Linux personality")));
     }
 
     #[test]
