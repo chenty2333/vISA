@@ -349,6 +349,7 @@ impl VisaExecutionReport {
                 && artifact_loaded
                 && code_published
                 && activation_started
+                && hostcall_dispatches > 0
                 && hostcall_dispatches == self.hostcalls.len(),
         }
     }
@@ -2398,6 +2399,35 @@ mod tests {
         assert_eq!(summary.hostcall_dispatches, report.hostcalls.len());
         assert_eq!(summary.substrate_authority_extractions, report.hostcalls.len());
         assert!(!summary.evidence_boundary_sufficient);
+        assert!(!summary.can_claim_portable_artifact_execution);
+    }
+
+    #[test]
+    fn execution_summary_requires_observable_hostcall_step() {
+        let personality = personality::native::VisaNativePersonality::new(
+            "native-visa-empty",
+            SubstrateProfile::MinimalBareMetal,
+        );
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(28) },
+                ActivationEntry::Symbol("visa_start".into()),
+                [],
+                &mut substrate,
+            )
+            .expect("load and activate without hostcalls");
+
+        let summary = report.evidence_summary();
+        assert!(summary.artifact_loaded);
+        assert!(summary.code_published);
+        assert!(summary.activation_started);
+        assert_eq!(summary.hostcall_dispatches, 0);
+        assert!(summary.evidence_boundary_sufficient);
         assert!(!summary.can_claim_portable_artifact_execution);
     }
 
