@@ -375,6 +375,34 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
 }
 
 #[test]
+fn artifact_gate_validates_device_trace_event_identity() {
+    let root = temp_criterion_dir("device-trace-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("device.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":7,"event_epoch":2,"device":"virtio-net0","operation":"irq_ack"}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::DeviceTrace,
+        uri: trace.display().to_string(),
+        sha256,
+        description: "real target device trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, ".");
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
     let root = temp_criterion_dir("bad-artifact");
     fs::create_dir_all(&root).unwrap();

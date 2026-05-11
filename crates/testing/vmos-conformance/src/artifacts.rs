@@ -119,12 +119,24 @@ fn validate_extraction_trace(bytes: &[u8]) -> Result<(), String> {
 
 fn validate_device_trace(bytes: &[u8]) -> Result<(), String> {
     validate_json_lines(bytes, |value| {
-        let has_device = value.get("device").is_some() || value.get("device_id").is_some();
-        let has_operation = value.get("operation").is_some();
-        if has_device && has_operation {
+        let has_device = value
+            .get("device")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|device| !device.trim().is_empty())
+            || value.get("device_id").is_some();
+        let has_operation = value
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|operation| !operation.trim().is_empty());
+        let event_id = value.get("event_id").and_then(serde_json::Value::as_u64);
+        let event_epoch = value.get("event_epoch").and_then(serde_json::Value::as_u64);
+        if has_device && has_operation && event_id.is_some() && event_epoch.is_some() {
             Ok(())
         } else {
-            Err("device trace entries require device/device_id and operation".to_string())
+            Err(
+                "device trace entries require event_id, event_epoch, device/device_id, and operation"
+                    .to_string(),
+            )
         }
     })
 }
