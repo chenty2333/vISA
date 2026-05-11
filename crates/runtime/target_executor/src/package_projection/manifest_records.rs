@@ -6,6 +6,7 @@ mod io_network;
 mod runtime_events;
 mod scheduler;
 
+pub use artifact_runtime::runtime_evidence_target_artifact_manifests;
 pub(crate) use artifact_runtime::*;
 pub(crate) use block_tail_simd_display::*;
 pub(crate) use device_block_fs::*;
