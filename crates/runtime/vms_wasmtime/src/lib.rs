@@ -270,14 +270,9 @@ impl WasmVisaExecutor {
                     move |mut caller: Caller<'_, WasmVisaState>,
                           params: &[Val],
                           results: &mut [Val]| {
-                        let args = [
-                            params.first().map(|v| v.unwrap_i64()).unwrap_or(0),
-                            params.get(1).map(|v| v.unwrap_i64()).unwrap_or(0),
-                            params.get(2).map(|v| v.unwrap_i64()).unwrap_or(0),
-                            params.get(3).map(|v| v.unwrap_i64()).unwrap_or(0),
-                            params.get(4).map(|v| v.unwrap_i64()).unwrap_or(0),
-                            params.get(5).map(|v| v.unwrap_i64()).unwrap_or(0),
-                        ];
+                        let args = hostcall_callback_args(params).map_err(|error| {
+                            wasmtime::Error::msg(format!("hostcall {n} ABI failed: {error}"))
+                        })?;
                         let payload = hostcall_payload_for_object(&mut caller, &obj, &op, args)
                             .map_err(|error| {
                                 wasmtime::Error::msg(format!("hostcall {n} decode failed: {error}"))
@@ -341,6 +336,20 @@ fn wasmtime_error_message(error: &wasmtime::Error) -> String {
         source = error.source();
     }
     message
+}
+
+fn hostcall_callback_args(params: &[Val]) -> Result<[i64; 6], String> {
+    if params.len() != 6 {
+        return Err(format!("expected 6 i64 arguments, got {}", params.len()));
+    }
+    let mut args = [0; 6];
+    for (index, param) in params.iter().enumerate() {
+        let Val::I64(value) = param else {
+            return Err(format!("argument {index} is not i64"));
+        };
+        args[index] = *value;
+    }
+    Ok(args)
 }
 
 fn validate_adapter_hostcalls(specs: &[HostcallSpec]) -> Result<(), WasmVisaError> {
@@ -1250,6 +1259,34 @@ mod tests {
         let (rt, mut sub) = executor.into_parts();
         assert!(!rt.semantic().tasks().is_empty());
         assert!(sub.console_write(b"test").is_ok());
+    }
+
+    #[test]
+    fn hostcall_callback_args_require_exact_i64_lanes() {
+        assert_eq!(
+            hostcall_callback_args(&[
+                Val::I64(1),
+                Val::I64(2),
+                Val::I64(3),
+                Val::I64(4),
+                Val::I64(5),
+                Val::I64(6),
+            ])
+            .unwrap(),
+            [1, 2, 3, 4, 5, 6]
+        );
+        assert!(hostcall_callback_args(&[Val::I64(1)]).is_err());
+        assert!(
+            hostcall_callback_args(&[
+                Val::I64(1),
+                Val::I64(2),
+                Val::I64(3),
+                Val::I64(4),
+                Val::I64(5),
+                Val::I32(6),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
