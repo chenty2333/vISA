@@ -1332,7 +1332,10 @@ mod tests {
             matches!(probe.as_slice(), [Val::I64(value)] if *value == i64::from(b'v')),
             "probe must observe copyin bytes in guest memory: {probe:?}"
         );
-        assert!(report.evidence_summary().can_claim_portable_artifact_execution);
+        let summary = report.evidence_summary();
+        assert_eq!(summary.hostcall_dispatches, 16);
+        assert_eq!(summary.substrate_authority_extractions, 16);
+        assert!(summary.can_claim_portable_artifact_execution);
         assert_eq!(executor.runtime().executor().hostcall_trace().len(), 16);
         let extracted = executor
             .runtime()

@@ -325,6 +325,11 @@ impl VisaExecutionReport {
             .iter()
             .filter(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
             .count();
+        let substrate_authority_extractions = self
+            .events
+            .iter()
+            .filter(|event| matches!(event, VisaRuntimeEvent::SubstrateAuthorityExtracted { .. }))
+            .count();
         let evidence_boundary_sufficient =
             self.loaded.evidence_level.can_claim(EvidenceBoundaryLevel::PortableArtifactExecution);
 
@@ -338,6 +343,7 @@ impl VisaExecutionReport {
             code_published,
             activation_started,
             hostcall_dispatches,
+            substrate_authority_extractions,
             evidence_boundary_sufficient,
             can_claim_portable_artifact_execution: evidence_boundary_sufficient
                 && artifact_loaded
@@ -359,6 +365,7 @@ pub struct VisaExecutionEvidenceReport {
     pub code_published: bool,
     pub activation_started: bool,
     pub hostcall_dispatches: usize,
+    pub substrate_authority_extractions: usize,
     pub evidence_boundary_sufficient: bool,
     pub can_claim_portable_artifact_execution: bool,
 }
@@ -391,6 +398,12 @@ pub enum VisaRuntimeEvent {
         hostcall_number: u32,
         object: String,
         operation: String,
+    },
+    SubstrateAuthorityExtracted {
+        authority: String,
+        operation: String,
+        artifact_id: TargetArtifactId,
+        store_id: Option<u64>,
     },
     SubstrateUnsupported {
         authority: &'static str,
@@ -743,6 +756,12 @@ impl VisaRuntime {
                 capability_arg.as_ref().map(|capability| capability.id),
                 capability_arg.as_ref().map(|capability| capability.generation),
             );
+            self.events.push(VisaRuntimeEvent::SubstrateAuthorityExtracted {
+                authority: authority.to_string(),
+                operation: operation.to_string(),
+                artifact_id: code.artifact_id,
+                store_id: code.bound_store,
+            });
         }
         self.events.push(VisaRuntimeEvent::HostcallDispatched {
             activation_id: activation.activation_id,
@@ -2114,7 +2133,10 @@ mod tests {
         assert!(extracted.iter().any(|(authority, operation, ..)| {
             *authority == "TimerAuthority" && *operation == "arm_timer"
         }));
-        assert!(report.evidence_summary().can_claim_portable_artifact_execution);
+        let summary = report.evidence_summary();
+        assert_eq!(summary.hostcall_dispatches, 3);
+        assert_eq!(summary.substrate_authority_extractions, 3);
+        assert!(summary.can_claim_portable_artifact_execution);
         assert!(report.events.iter().any(|event| {
             matches!(
                 event,
@@ -2169,6 +2191,9 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
         );
+        assert!(!runtime.events().iter().any(|event| {
+            matches!(event, VisaRuntimeEvent::SubstrateAuthorityExtracted { .. })
+        }));
     }
 
     #[test]
@@ -2204,6 +2229,7 @@ mod tests {
         assert!(summary.code_published);
         assert!(summary.activation_started);
         assert_eq!(summary.hostcall_dispatches, report.hostcalls.len());
+        assert_eq!(summary.substrate_authority_extractions, report.hostcalls.len());
         assert!(!summary.evidence_boundary_sufficient);
         assert!(!summary.can_claim_portable_artifact_execution);
     }
