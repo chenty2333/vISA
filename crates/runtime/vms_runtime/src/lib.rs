@@ -23,11 +23,11 @@ use alloc::{
 
 use contract_core::EvidenceBoundaryLevel;
 use semantic_core::{
-    ActivationId, ArtifactVerificationState, BoundaryKind, BoundaryStatus, CapabilityLedger,
-    CodeObjectId, CodePublishState, CommandEnvelope, ContractGraphSnapshot,
-    ContractGraphSnapshotInputs, EntrypointState, FrontendKind, HostcallClass, HostcallLinkState,
-    MemoryLayoutState, NonPortableStateKind, RuntimeMode, SemanticCommand, SemanticGraph,
-    StoreState, TargetArtifactId, TrapSurfaceState,
+    ActivationId, ArtifactVerificationState, BoundaryKind, BoundaryStatus, CapabilityId,
+    CapabilityLedger, CodeObjectId, CodePublishState, CommandEnvelope, ContractGraphSnapshot,
+    ContractGraphSnapshotInputs, EntrypointState, EventId, EventKind, FrontendKind, Generation,
+    HostcallClass, HostcallLinkState, MemoryLayoutState, NonPortableStateKind, RuntimeMode,
+    SemanticCommand, SemanticGraph, StoreId, StoreState, TargetArtifactId, TrapSurfaceState,
     target_executor::{
         ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
         ContractObjectKind, ContractObjectRef, HostcallFrame, HostcallSpec, ManagedStoreRecord,
@@ -368,6 +368,55 @@ pub struct VisaExecutionEvidenceReport {
     pub substrate_authority_extractions: usize,
     pub evidence_boundary_sufficient: bool,
     pub can_claim_portable_artifact_execution: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct VisaRuntimeEvidenceSnapshot {
+    pub contract_graph: ContractGraphSnapshot,
+    pub event_log_cursor: EventId,
+    pub runtime_events: Vec<VisaRuntimeEvent>,
+    pub authority_extractions: Vec<VisaSubstrateAuthorityExtractionEvidence>,
+    pub unsupported_substrate_events: Vec<VisaSubstrateUnsupportedEvidence>,
+}
+
+impl VisaRuntimeEvidenceSnapshot {
+    pub fn authority_extraction_count(&self) -> usize {
+        self.authority_extractions.len()
+    }
+
+    pub fn unsupported_substrate_event_count(&self) -> usize {
+        self.unsupported_substrate_events.len()
+    }
+
+    pub fn hostcall_trace_count(&self) -> usize {
+        self.contract_graph.hostcalls.len()
+    }
+
+    pub fn has_substrate_authority_extraction_evidence(&self) -> bool {
+        !self.authority_extractions.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaSubstrateAuthorityExtractionEvidence {
+    pub event_id: EventId,
+    pub authority: String,
+    pub operation: String,
+    pub requester: Option<String>,
+    pub artifact_id: Option<TargetArtifactId>,
+    pub store_id: Option<StoreId>,
+    pub capability_id: Option<CapabilityId>,
+    pub capability_generation: Option<Generation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaSubstrateUnsupportedEvidence {
+    pub event_id: EventId,
+    pub authority: String,
+    pub operation: String,
+    pub requester: Option<String>,
+    pub artifact_id: Option<TargetArtifactId>,
+    pub store_id: Option<StoreId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1109,6 +1158,13 @@ impl VisaRuntime {
         error: SubstrateError,
     ) -> Result<(), VisaRuntimeError> {
         if let SubstrateError::Unsupported { authority, operation } = error {
+            self.semantic.record_substrate_unsupported(
+                authority,
+                operation,
+                Some(requester.subject.clone()),
+                requester.artifact.map(|artifact| artifact.id),
+                requester.store.map(|store| store.id),
+            );
             let event = SubstrateEvent::unsupported(authority, operation, Some(requester));
             let _ = backend.push_event(event);
             self.events.push(VisaRuntimeEvent::SubstrateUnsupported { authority, operation });
@@ -1260,6 +1316,64 @@ impl VisaRuntime {
             ..Default::default()
         };
         self.semantic.snapshot_with(inputs)
+    }
+
+    pub fn evidence_snapshot(&self) -> VisaRuntimeEvidenceSnapshot {
+        let event_log = self.semantic.event_log();
+        let authority_extractions = event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateAuthorityExtracted {
+                    authority,
+                    operation,
+                    requester,
+                    artifact,
+                    store,
+                    capability,
+                    capability_generation,
+                } => Some(VisaSubstrateAuthorityExtractionEvidence {
+                    event_id: event.id,
+                    authority: authority.clone(),
+                    operation: operation.clone(),
+                    requester: requester.clone(),
+                    artifact_id: *artifact,
+                    store_id: *store,
+                    capability_id: *capability,
+                    capability_generation: *capability_generation,
+                }),
+                _ => None,
+            })
+            .collect();
+        let unsupported_substrate_events = event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateUnsupported {
+                    authority,
+                    operation,
+                    requester,
+                    artifact,
+                    store,
+                } => Some(VisaSubstrateUnsupportedEvidence {
+                    event_id: event.id,
+                    authority: authority.clone(),
+                    operation: operation.clone(),
+                    requester: requester.clone(),
+                    artifact_id: *artifact,
+                    store_id: *store,
+                }),
+                _ => None,
+            })
+            .collect();
+
+        VisaRuntimeEvidenceSnapshot {
+            contract_graph: self.snapshot(),
+            event_log_cursor: event_log.cursor(),
+            runtime_events: self.events.clone(),
+            authority_extractions,
+            unsupported_substrate_events,
+        }
     }
 
     pub fn record_trap(&mut self, activation_id: ActivationId, store_id: u64, detail: &str) {
@@ -2137,6 +2251,28 @@ mod tests {
         assert_eq!(summary.hostcall_dispatches, 3);
         assert_eq!(summary.substrate_authority_extractions, 3);
         assert!(summary.can_claim_portable_artifact_execution);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.event_log_cursor, runtime.semantic().event_log().cursor());
+        assert_eq!(evidence.hostcall_trace_count(), 3);
+        assert_eq!(evidence.authority_extraction_count(), 3);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_eq!(evidence.contract_graph.artifacts.len(), 1);
+        assert_eq!(evidence.contract_graph.code_objects.len(), 1);
+        assert_eq!(evidence.contract_graph.activations.len(), 1);
+        assert_eq!(evidence.contract_graph.hostcalls.len(), 3);
+        assert_eq!(
+            evidence.authority_extractions[0],
+            VisaSubstrateAuthorityExtractionEvidence {
+                event_id: evidence.authority_extractions[0].event_id,
+                authority: "ConsoleAuthority".into(),
+                operation: "console_write".into(),
+                requester: Some("wasi-app".into()),
+                artifact_id: Some(9),
+                store_id: Some(1),
+                capability_id: None,
+                capability_generation: None,
+            }
+        );
         assert!(report.events.iter().any(|event| {
             matches!(
                 event,
@@ -2179,6 +2315,21 @@ mod tests {
         ));
         assert!(runtime.executor().hostcall_trace().is_empty());
         assert!(runtime.snapshot().hostcalls.is_empty());
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.hostcall_trace_count(), 0);
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 1);
+        assert_eq!(
+            evidence.unsupported_substrate_events[0],
+            VisaSubstrateUnsupportedEvidence {
+                event_id: evidence.unsupported_substrate_events[0].event_id,
+                authority: "ConsoleAuthority".into(),
+                operation: "console_write".into(),
+                requester: Some("wasi-app".into()),
+                artifact_id: Some(44),
+                store_id: Some(1),
+            }
+        );
         assert_eq!(runtime.executor().activations()[0].generation, 1);
         assert!(
             !runtime.semantic().event_log().events().iter().any(|event| {

@@ -1277,6 +1277,14 @@ mod tests {
             }),
             "failed dispatch must not record substrate authority extraction evidence"
         );
+        let evidence = executor.runtime().evidence_snapshot();
+        assert_eq!(evidence.hostcall_trace_count(), 0);
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 1);
+        assert_eq!(
+            evidence.unsupported_substrate_events[0].requester.as_deref(),
+            Some("native-visa-console-fails")
+        );
     }
 
     #[test]
@@ -1380,6 +1388,21 @@ mod tests {
         }));
         assert!(extracted.iter().any(|(authority, operation, ..)| {
             *authority == "SnapshotAuthority" && *operation == "exit_snapshot_barrier"
+        }));
+        let evidence = executor.runtime().evidence_snapshot();
+        assert_eq!(evidence.hostcall_trace_count(), 16);
+        assert_eq!(evidence.authority_extraction_count(), 16);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_eq!(evidence.contract_graph.artifacts.len(), 1);
+        assert_eq!(evidence.contract_graph.code_objects.len(), 1);
+        assert_eq!(evidence.contract_graph.activations.len(), 1);
+        assert_eq!(evidence.contract_graph.hostcalls.len(), 16);
+        assert!(evidence.authority_extractions.iter().any(|entry| {
+            entry.authority == "DmaAuthority"
+                && entry.operation == "dma_alloc"
+                && entry.requester.as_deref() == Some("native-visa-full")
+                && entry.artifact_id == Some(29)
+                && entry.store_id == Some(1)
         }));
     }
 
