@@ -656,6 +656,12 @@ fn capability_record_matches_hostcall_arg(
         && record.subject == hostcall.subject
         && record.object == hostcall.object
         && (arg.object.is_empty() || arg.object == record.object)
+        && arg.rights_mask != 0
+        && arg.rights.iter().any(|right| right == &hostcall.operation)
+        && arg.owner_store.is_none_or(|store| store == hostcall.store)
+        && arg
+            .owner_store_generation
+            .is_none_or(|generation| generation == hostcall.store_generation)
         && record.rights.iter().any(|right| right == &hostcall.operation)
         && record.owner_store.is_none_or(|store| store == hostcall.store)
         && record

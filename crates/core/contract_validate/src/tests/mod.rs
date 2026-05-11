@@ -789,6 +789,57 @@ fn external_audit_rejects_capability_gated_hostcall_without_cap_args() {
 }
 
 #[test]
+fn external_audit_rejects_hostcall_cap_arg_without_required_right() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.target_artifacts[0].hostcalls[0].name = "visa.timer.now".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].category = "timer".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].object = "visa.timer".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].operation = "now".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].name = "visa.timer.now".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].category = "timer".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].object = "visa.timer".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].operation = "now".to_owned();
+    package.semantic.hostcall_trace[0].name = "visa.timer.now".to_owned();
+    package.semantic.hostcall_trace[0].category = "timer".to_owned();
+    package.semantic.hostcall_trace[0].object = "visa.timer".to_owned();
+    package.semantic.hostcall_trace[0].operation = "now".to_owned();
+    package.semantic.hostcall_trace[0].cap_args =
+        vec![artifact_manifest::CapabilityHandleArgManifest {
+            id: 7,
+            object: "visa.timer".to_owned(),
+            generation: 2,
+            rights: Vec::new(),
+            rights_mask: 0,
+            owner_store: Some(1),
+            owner_store_generation: Some(1),
+            ..Default::default()
+        }];
+    package.semantic.capability_record_count = 1;
+    package.semantic.roots.target_capability_record_roots =
+        vec!["capability-record id=7 generation=2".to_owned()];
+    package.semantic.capability_records = vec![artifact_manifest::CapabilityRecordManifest {
+        id: 7,
+        subject: "native-visa".to_owned(),
+        object: "visa.timer".to_owned(),
+        rights: vec!["now".to_owned()],
+        lifetime: "store".to_owned(),
+        class: "timer".to_owned(),
+        owner_store: Some(1),
+        owner_store_generation: Some(1),
+        source: "test".to_owned(),
+        generation: 2,
+        ..Default::default()
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
 fn external_audit_accepts_canonical_semantic_hostcall_success_trace() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
