@@ -673,6 +673,22 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
 }
 
 #[test]
+fn external_audit_accepts_canonical_semantic_hostcall_success_trace() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.hostcall_trace[0].record_mode = "deterministic".to_owned();
+    package.semantic.hostcall_trace[0].gate_status = "exit".to_owned();
+    package.semantic.hostcall_trace[0].result = "complete".to_owned();
+    package.semantic.hostcall_trace[0].ret_tag = "ok".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert!(report.portable_artifact_execution_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+}
+
+#[test]
 fn external_audit_does_not_accept_execution_claims_from_invalid_package() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);

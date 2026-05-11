@@ -368,11 +368,26 @@ fn hostcall_matches_activation_generation(
 }
 
 fn hostcall_has_live_success_effect(trace: &artifact_manifest::HostcallTraceManifest) -> bool {
-    trace.record_mode == "live"
+    hostcall_record_mode_proves_execution(&trace.record_mode)
         && trace.allowed
-        && trace.gate_status == "allowed"
-        && trace.result == "ok"
+        && hostcall_gate_status_is_success(&trace.gate_status)
+        && hostcall_result_is_success(&trace.result)
         && trace.ret_tag == "ok"
+}
+
+fn hostcall_record_mode_proves_execution(record_mode: &str) -> bool {
+    matches!(
+        record_mode,
+        "deterministic" | "record-input" | "record-output" | "record-input-output" | "live"
+    )
+}
+
+fn hostcall_gate_status_is_success(gate_status: &str) -> bool {
+    matches!(gate_status, "exit" | "allowed")
+}
+
+fn hostcall_result_is_success(result: &str) -> bool {
+    matches!(result, "complete" | "ok")
 }
 
 fn hostcall_matches_declared_abi(
