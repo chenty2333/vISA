@@ -407,6 +407,24 @@ impl VisaRuntimeEvidenceSnapshot {
         out
     }
 
+    /// Serializes authority extraction events with caller-supplied target identity.
+    ///
+    /// The target fields are evidence context, not proof. Supplying them does not
+    /// upgrade the snapshot's boundary; callers must only use this for real-target
+    /// claims when execution evidence independently establishes that target.
+    pub fn authority_extractions_jsonl_with_target_context(
+        &self,
+        target_arch: &str,
+        target_board: &str,
+    ) -> String {
+        let mut out = String::new();
+        for extraction in &self.authority_extractions {
+            extraction.write_json_line_with_target_context(&mut out, target_arch, target_board);
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn contract_graph_snapshot_artifact_json(&self) -> String {
         let snapshot = &self.contract_graph;
         let mut out = String::new();
@@ -495,6 +513,26 @@ pub struct VisaSubstrateAuthorityExtractionEvidence {
 impl VisaSubstrateAuthorityExtractionEvidence {
     fn write_json_line(&self, out: &mut String) {
         out.push('{');
+        self.write_json_fields(out);
+        out.push('}');
+    }
+
+    fn write_json_line_with_target_context(
+        &self,
+        out: &mut String,
+        target_arch: &str,
+        target_board: &str,
+    ) {
+        out.push('{');
+        self.write_json_fields(out);
+        out.push(',');
+        push_json_str_field(out, "target_arch", target_arch);
+        out.push(',');
+        push_json_str_field(out, "target_board", target_board);
+        out.push('}');
+    }
+
+    fn write_json_fields(&self, out: &mut String) {
         push_json_u64_field(out, "event_id", self.event_id);
         out.push(',');
         push_json_u64_field(out, "event_epoch", self.event_epoch);
@@ -512,7 +550,6 @@ impl VisaSubstrateAuthorityExtractionEvidence {
         push_json_optional_u64_field(out, "capability_id", self.capability_id);
         out.push(',');
         push_json_optional_u64_field(out, "capability_generation", self.capability_generation);
-        out.push('}');
     }
 }
 
@@ -2548,6 +2585,39 @@ mod tests {
         };
         let validation = vmos_conformance::validate_report_artifacts(&conformance_report, ".");
         assert!(validation.ok, "{:#?}", validation.findings);
+
+        let extraction_with_target_jsonl =
+            evidence.authority_extractions_jsonl_with_target_context("riscv64", "qemu-virt");
+        assert!(extraction_with_target_jsonl.contains("\"target_arch\":\"riscv64\""));
+        assert!(extraction_with_target_jsonl.contains("\"target_board\":\"qemu-virt\""));
+        let extraction_path = root.join("substrate-extraction.jsonl");
+        fs::write(&extraction_path, extraction_with_target_jsonl.as_bytes()).unwrap();
+        let real_target_artifact_report = vmos_conformance::ConformanceReport {
+            schema_version: vmos_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "vmos-layered-conformance".to_string(),
+            target: "vms-runtime-unit".to_string(),
+            generated_by: "vms-runtime-test".to_string(),
+            results: vec![vmos_conformance::TestResult {
+                spec_id: "substrate.profile.guest-frontend".to_string(),
+                outcome: vmos_conformance::Outcome::Pass,
+                observed_boundary: vmos_conformance::Boundary::RealTargetSubstrate,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime exported target-context substrate extraction JSONL".to_string(),
+                remaining_uncertainty:
+                    "target identity is caller supplied and does not prove real execution"
+                        .to_string(),
+                metrics: BTreeMap::new(),
+                evidence_artifacts: vec![vmos_conformance::EvidenceArtifact {
+                    kind: vmos_conformance::EvidenceArtifactKind::SubstrateExtractionTrace,
+                    uri: extraction_path.display().to_string(),
+                    sha256: test_sha256_hex(extraction_with_target_jsonl.as_bytes()),
+                    description: "target-context substrate extraction trace".to_string(),
+                }],
+            }],
+        };
+        let target_trace_validation =
+            vmos_conformance::validate_report_artifacts(&real_target_artifact_report, ".");
+        assert!(target_trace_validation.ok, "{:#?}", target_trace_validation.findings);
         let _ = fs::remove_dir_all(root);
         assert!(report.events.iter().any(|event| {
             matches!(
