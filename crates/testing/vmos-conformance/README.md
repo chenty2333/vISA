@@ -42,5 +42,7 @@ compatibility report that can be piped into `validate-report`.
 LTP installed. It runs the cataloged subsets, preserves raw logs, emits
 `vmos-ltp-report.json`, and gates the result.
 Performance benchmark reports use the `vmos-performance-benchmark` suite id.
-Passing or failing performance results must carry concrete numeric metrics; a
-benchmark claim without metrics is rejected by report validation.
+Passing or failing performance results must carry concrete finite, non-negative
+numeric metrics. The current required keys are `latency_ns` for hostcall,
+activation, and snapshot/restore latency claims, plus `block_iops` and
+`network_packets_per_sec` for the block/network throughput claim.

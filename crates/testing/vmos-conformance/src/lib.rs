@@ -596,6 +596,16 @@ pub fn performance_catalog() -> Vec<TestSpec> {
     ]
 }
 
+pub fn required_performance_metrics(spec_id: &str) -> &'static [&'static str] {
+    match spec_id {
+        "bench.hostcall.latency" => &["latency_ns"],
+        "bench.activation.start" => &["latency_ns"],
+        "bench.block.network" => &["block_iops", "network_packets_per_sec"],
+        "bench.snapshot.restore" => &["latency_ns"],
+        _ => &[],
+    }
+}
+
 pub fn validate_catalog(specs: &[TestSpec]) -> ValidationReport {
     let mut findings = Vec::new();
     let mut ids = BTreeSet::new();
@@ -666,16 +676,46 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                     format!("{} has no remaining uncertainty text", result.spec_id),
                 ));
             }
-            if spec.claim == ClaimKind::PerformanceBenchmark && result.metrics.is_empty() {
-                findings.push(finding(
-                    "missing-performance-metrics",
-                    format!("{} is a performance result without metrics", result.spec_id),
-                ));
+            if spec.claim == ClaimKind::PerformanceBenchmark {
+                validate_performance_metrics(result, &mut findings);
             }
         }
     }
     validate_suite_coverage(report, &result_ids, catalog, &mut findings);
     ValidationReport::new(findings)
+}
+
+fn validate_performance_metrics(result: &TestResult, findings: &mut Vec<ValidationFinding>) {
+    if result.metrics.is_empty() {
+        findings.push(finding(
+            "missing-performance-metrics",
+            format!("{} is a performance result without metrics", result.spec_id),
+        ));
+        return;
+    }
+
+    for metric in required_performance_metrics(&result.spec_id) {
+        if !result.metrics.contains_key(*metric) {
+            findings.push(finding(
+                "missing-performance-metric",
+                format!("{} is missing required metric {}", result.spec_id, metric),
+            ));
+        }
+    }
+
+    for (name, value) in &result.metrics {
+        if !value.is_finite() {
+            findings.push(finding(
+                "invalid-performance-metric",
+                format!("{} metric {} is not finite", result.spec_id, name),
+            ));
+        } else if *value < 0.0 {
+            findings.push(finding(
+                "invalid-performance-metric",
+                format!("{} metric {} is negative", result.spec_id, name),
+            ));
+        }
+    }
 }
 
 pub fn parse_report_json(bytes: &[u8]) -> Result<ConformanceReport, ReportLoadError> {
@@ -818,7 +858,9 @@ pub fn sample_performance_report() -> ConformanceReport {
             .into_iter()
             .map(|spec| {
                 let mut metrics = BTreeMap::new();
-                metrics.insert("sample_value".to_string(), 1.0);
+                for metric in required_performance_metrics(&spec.id) {
+                    metrics.insert((*metric).to_string(), 1.0);
+                }
                 TestResult {
                     spec_id: spec.id,
                     outcome: Outcome::Pass,
@@ -1217,6 +1259,57 @@ mod tests {
     }
 
     #[test]
+    fn performance_report_requires_spec_specific_metric_keys() {
+        let catalog = performance_catalog();
+        let report = ConformanceReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "vmos-performance-benchmark".to_string(),
+            target: "unit-test".to_string(),
+            generated_by: "unit-test".to_string(),
+            results: catalog
+                .iter()
+                .map(|spec| {
+                    let mut metrics = BTreeMap::new();
+                    metrics.insert("sample_value".to_string(), 1.0);
+                    TestResult {
+                        spec_id: spec.id.clone(),
+                        outcome: Outcome::Pass,
+                        observed_boundary: spec.minimum_boundary,
+                        observed_profile: spec.required_profile.clone(),
+                        evidence: "benchmark completed".to_string(),
+                        remaining_uncertainty: "wrong metric key was reported".to_string(),
+                        metrics,
+                    }
+                })
+                .collect(),
+        };
+
+        let validation = validate_report(&report, &catalog);
+        assert!(!validation.ok);
+        assert!(
+            validation.findings.iter().any(|finding| finding.code == "missing-performance-metric")
+        );
+    }
+
+    #[test]
+    fn performance_report_rejects_negative_or_non_finite_metrics() {
+        let catalog = performance_catalog();
+        let mut report = sample_performance_report();
+        report.results[0].metrics.insert("latency_ns".to_string(), -1.0);
+        report.results[1].metrics.insert("latency_ns".to_string(), f64::INFINITY);
+
+        let validation = validate_report(&report, &catalog);
+        let invalid_metric_count = validation
+            .findings
+            .iter()
+            .filter(|finding| finding.code == "invalid-performance-metric")
+            .count();
+
+        assert!(!validation.ok);
+        assert_eq!(invalid_metric_count, 2);
+    }
+
+    #[test]
     fn sample_performance_report_validates_and_gates() {
         let catalog = performance_catalog();
         let report = sample_performance_report();
@@ -1225,7 +1318,11 @@ mod tests {
 
         assert!(validation.ok, "{:#?}", validation.findings);
         assert!(gate.ok, "{gate:#?}");
-        assert!(report.results.iter().all(|result| !result.metrics.is_empty()));
+        assert!(report.results.iter().all(|result| {
+            required_performance_metrics(&result.spec_id)
+                .iter()
+                .all(|metric| result.metrics.contains_key(*metric))
+        }));
     }
 
     #[test]
