@@ -1380,7 +1380,12 @@ impl VisaRuntime {
         }
     }
 
-    pub fn record_trap(&mut self, activation_id: ActivationId, store_id: u64, detail: &str) {
+    pub fn record_synthetic_trap(
+        &mut self,
+        activation_id: ActivationId,
+        store_id: u64,
+        detail: &str,
+    ) {
         let activation = self.executor.activations().iter().find(|a| a.id == activation_id);
         let code_object = activation.and_then(|a| self.publisher.object(a.code_object));
 

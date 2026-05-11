@@ -200,7 +200,7 @@ impl WasmVisaExecutor {
                         _ => return WasmVisaError::Trap(msg),
                     }
                 };
-                self.store.data_mut().runtime.record_trap(activation_id, store_id, &msg);
+                self.store.data_mut().runtime.record_synthetic_trap(activation_id, store_id, &msg);
                 WasmVisaError::Trap(msg)
             } else {
                 WasmVisaError::Wasmtime(msg)
