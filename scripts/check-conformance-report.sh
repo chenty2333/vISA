@@ -23,6 +23,9 @@ mkdir -p "$pass_logs"
 run_conformance ltp-plan-lines "$pass_logs" >"$tmp_root/ltp-plan.tsv"
 while IFS=$'\t' read -r spec _scenario result_log; do
     printf '%s_case01 1 TPASS : passed\n' "$spec" >"$result_log"
+    cat >"$pass_logs/$spec.vmos-trace.jsonl" <<EOF
+{"schema_version":"vmos-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"${spec}_case01","test_binary":"target/ltp-bins/${spec}_case01","runner":"vmos-linux-personality","entered_vmos_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$spec.log","serial_log_uri":"$spec.serial.log"}
+EOF
 done <"$tmp_root/ltp-plan.tsv"
 
 pass_report="$tmp_root/ltp-pass-report.json"
@@ -105,17 +108,63 @@ EOF
 chmod +x "$fake_runltp"
 
 wrapper_output="$tmp_root/wrapper"
-scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution guest-frontend \
+scripts/run-host-ltp-log-adapter.sh "$wrapper_output" portable-artifact-execution guest-frontend \
     "$fake_runltp" >/dev/null
-test -s "$wrapper_output/vmos-ltp-gate.json"
-test -s "$wrapper_output/vmos-ltp-artifact-gate.json"
-test -s "$wrapper_output/vmos-ltp-combined-gate.json"
-run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
-    >"$tmp_root/wrapper-gate.json"
-run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" "$wrapper_output/logs" \
+test -s "$wrapper_output/host-ltp-log-adapter-report.json"
+test -s "$wrapper_output/host-ltp-log-adapter-artifact-gate.json"
+test -s "$wrapper_output/host-ltp-log-adapter-report-gate.json"
+if run_conformance validate-report "$wrapper_output/host-ltp-log-adapter-report.json" \
+    >"$tmp_root/host-wrapper-gate.json"; then
+    echo "FAIL: host-only LTP adapter unexpectedly passed VMOS conformance gate"
+    exit 1
+fi
+run_conformance validate-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
     >"$tmp_root/wrapper-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$wrapper_output/vmos-ltp-report.json" "$wrapper_output/logs" \
-    >"$tmp_root/wrapper-combined-gate.json"
+if run_conformance validate-report-with-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
+    >"$tmp_root/host-wrapper-combined-gate.json"; then
+    echo "FAIL: host-only LTP adapter unexpectedly passed combined VMOS conformance gate"
+    exit 1
+fi
+
+fake_ltp_root="$tmp_root/fake-ltp-bins"
+mkdir -p "$fake_ltp_root"
+touch "$fake_ltp_root/open01" "$fake_ltp_root/mmap01" "$fake_ltp_root/getpid01"
+fake_vmos_single="$tmp_root/run-vmos-ltp-single"
+cat >"$fake_vmos_single" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+spec="$1"
+case_id="$2"
+_binary="$3"
+raw_log="$4"
+trace_log="$5"
+serial_log="$6"
+mkdir -p "$(dirname "$raw_log")" "$(dirname "$trace_log")" "$(dirname "$serial_log")"
+cat >"$serial_log" <<SERIAL
+== ring3 real ELF demo ==
+${case_id} 1 TPASS : passed
+HostcallEntered label=ring3_openat class=immediate-privileged-op subject=linux_syscall object=vfs_service op=lookup
+vmos: demo completed
+SERIAL
+printf '%s 1 TPASS : passed\n' "$case_id" >"$raw_log"
+cat >"$trace_log" <<TRACE
+{"schema_version":"vmos-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"$case_id","test_binary":"$_binary","runner":"vmos-linux-personality","entered_vmos_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$(basename "$raw_log")","serial_log_uri":"$(basename "$serial_log")"}
+TRACE
+EOF
+chmod +x "$fake_vmos_single"
+
+vmos_wrapper_output="$tmp_root/vmos-wrapper"
+scripts/run-vmos-ltp-conformance.sh "$vmos_wrapper_output" "$fake_ltp_root" \
+    portable-artifact-execution guest-frontend "$fake_vmos_single" >/dev/null
+test -s "$vmos_wrapper_output/vmos-ltp-gate.json"
+test -s "$vmos_wrapper_output/vmos-ltp-artifact-gate.json"
+test -s "$vmos_wrapper_output/vmos-ltp-combined-gate.json"
+run_conformance validate-report "$vmos_wrapper_output/vmos-ltp-report.json" \
+    >"$tmp_root/vmos-wrapper-gate.json"
+run_conformance validate-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "$vmos_wrapper_output/logs" \
+    >"$tmp_root/vmos-wrapper-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "$vmos_wrapper_output/logs" \
+    >"$tmp_root/vmos-wrapper-combined-gate.json"
 
 criterion_root="$tmp_root/criterion"
 run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"

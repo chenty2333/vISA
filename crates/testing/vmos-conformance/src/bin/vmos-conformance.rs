@@ -9,10 +9,12 @@ use vmos_conformance::{
     Boundary, EvidenceArtifact, EvidenceArtifactKind, LtpInvocation,
     artifact_uri_is_bundle_relative, attach_evidence_artifact, criterion_performance_plan_entries,
     criterion_performance_report_from_estimates_dir,
-    criterion_performance_report_from_estimates_dir_with_boundary, full_catalog, gate_report_json,
-    linux_ltp_catalog, ltp_report_from_log_dir as build_ltp_report_from_log_dir, parse_report_json,
-    performance_catalog, sample_ltp_report, sample_performance_report, sample_report,
-    validate_catalog, validate_report, validate_report_artifacts,
+    criterion_performance_report_from_estimates_dir_with_boundary, default_vmos_ltp_plan,
+    full_catalog, gate_report_json, linux_ltp_catalog, ltp_raw_log_from_serial,
+    ltp_report_from_log_dir as build_ltp_report_from_log_dir, ltp_vmos_subset_report_from_log_dir,
+    ltp_vmos_trace_from_serial, parse_report_json, performance_catalog, sample_ltp_report,
+    sample_performance_report, sample_report, validate_catalog, validate_report,
+    validate_report_artifacts,
 };
 
 fn main() -> ExitCode {
@@ -28,6 +30,11 @@ fn main() -> ExitCode {
         "ltp-plan-lines" => {
             let output_dir = args.next().unwrap_or_else(|| "target/ltp".to_string());
             print_ltp_plan_lines(&output_dir)
+        }
+        "vmos-ltp-plan-lines" => {
+            let output_dir = args.next().unwrap_or_else(|| "target/vmos-ltp".to_string());
+            let binary_root = args.next().unwrap_or_else(|| "target/ltp-bins".to_string());
+            print_vmos_ltp_plan_lines(&output_dir, &binary_root)
         }
         "sample-ltp-report-json" => print_json(&sample_ltp_report()),
         "sample-performance-report-json" => print_json(&sample_performance_report()),
@@ -76,6 +83,63 @@ fn main() -> ExitCode {
             };
             let profile = args.next();
             ltp_report_from_log_dir_command(&log_dir, boundary, profile)
+        }
+        "ltp-vmos-report-from-logs" => {
+            let Some(log_dir) = args.next() else {
+                return usage();
+            };
+            let boundary = match args.next() {
+                Some(value) => match Boundary::parse(&value) {
+                    Some(boundary) => boundary,
+                    None => {
+                        eprintln!("unknown boundary {value}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => Boundary::PortableArtifactExecution,
+            };
+            let profile = args.next();
+            ltp_vmos_report_from_log_dir_command(&log_dir, boundary, profile)
+        }
+        "ltp-raw-log-from-serial" => {
+            let Some(case_id) = args.next() else {
+                return usage();
+            };
+            let Some(serial_path) = args.next() else {
+                return usage();
+            };
+            let status = args.next().and_then(|value| value.parse::<i32>().ok()).unwrap_or(1);
+            ltp_raw_log_from_serial_command(&case_id, &serial_path, status)
+        }
+        "ltp-vmos-trace-from-serial" => {
+            let Some(spec_id) = args.next() else {
+                return usage();
+            };
+            let Some(case_id) = args.next() else {
+                return usage();
+            };
+            let Some(binary_path) = args.next() else {
+                return usage();
+            };
+            let Some(raw_log_uri) = args.next() else {
+                return usage();
+            };
+            let Some(serial_log_uri) = args.next() else {
+                return usage();
+            };
+            let Some(serial_path) = args.next() else {
+                return usage();
+            };
+            let status = args.next().and_then(|value| value.parse::<i32>().ok()).unwrap_or(1);
+            ltp_vmos_trace_from_serial_command(
+                &spec_id,
+                &case_id,
+                &binary_path,
+                &raw_log_uri,
+                &serial_log_uri,
+                &serial_path,
+                status,
+            )
         }
         "performance-report-from-criterion" => {
             let Some(criterion_dir) = args.next() else {
@@ -206,11 +270,99 @@ fn ltp_report_from_log_dir_command(
     print_json(&report)
 }
 
+fn ltp_vmos_report_from_log_dir_command(
+    log_dir: &str,
+    boundary: Boundary,
+    profile: Option<String>,
+) -> ExitCode {
+    let report = match ltp_vmos_subset_report_from_log_dir(
+        format!("vmos-ltp-log-dir:{log_dir}"),
+        "vmos-conformance ltp-vmos-report-from-logs",
+        boundary,
+        profile,
+        log_dir,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("failed to read VMOS LTP log directory {log_dir}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    print_json(&report)
+}
+
 fn print_ltp_plan_lines(output_dir: &str) -> ExitCode {
     for entry in LtpInvocation::default_plan(output_dir).plan_entries() {
         println!("{}\t{}\t{}", entry.spec_id, entry.scenario_arg, entry.output_log);
     }
     ExitCode::SUCCESS
+}
+
+fn print_vmos_ltp_plan_lines(output_dir: &str, binary_root: &str) -> ExitCode {
+    for entry in default_vmos_ltp_plan(output_dir, binary_root) {
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            entry.spec_id,
+            entry.case_id,
+            entry.binary_path,
+            entry.output_log,
+            entry.trace_log,
+            entry.serial_log,
+            entry.subset.scenario_arg()
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn ltp_raw_log_from_serial_command(case_id: &str, serial_path: &str, status: i32) -> ExitCode {
+    let bytes = match fs::read(serial_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read serial log {serial_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let serial = String::from_utf8_lossy(&bytes);
+    print!("{}", ltp_raw_log_from_serial(case_id, &serial, status));
+    ExitCode::SUCCESS
+}
+
+fn ltp_vmos_trace_from_serial_command(
+    spec_id: &str,
+    case_id: &str,
+    binary_path: &str,
+    raw_log_uri: &str,
+    serial_log_uri: &str,
+    serial_path: &str,
+    status: i32,
+) -> ExitCode {
+    let bytes = match fs::read(serial_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("failed to read serial log {serial_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let serial = String::from_utf8_lossy(&bytes);
+    let trace = ltp_vmos_trace_from_serial(
+        spec_id,
+        case_id,
+        binary_path,
+        raw_log_uri,
+        serial_log_uri,
+        &serial,
+        status,
+    );
+    match serde_json::to_string(&trace) {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("failed to serialize trace: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn print_performance_plan_lines(criterion_dir: &str) -> ExitCode {
@@ -392,7 +544,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|vmos-ltp-plan-lines [output-dir] [binary-root]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|ltp-vmos-report-from-logs <dir> [boundary] [profile]|ltp-raw-log-from-serial <case-id> <serial-log> [runner-status]|ltp-vmos-trace-from-serial <spec-id> <case-id> <binary> <raw-log-uri> <serial-log-uri> <serial-log> [runner-status]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

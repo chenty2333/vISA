@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::{
     catalog::{linux_ltp_catalog, performance_catalog},
     hash::sha256_hex,
-    ltp::ltp_subset_result,
+    ltp::{LTP_VMOS_TRACE_SCHEMA_VERSION, ltp_subset_result},
     performance::required_performance_metrics,
     types::{
         Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, LtpCaseResult,
@@ -72,6 +72,22 @@ pub fn sample_ltp_report() -> ConformanceReport {
                     uri: format!("samples/{}.log", spec.id),
                     sha256: sha256_hex(raw_log.as_bytes()),
                     description: "synthetic raw LTP log metadata for schema validation"
+                        .to_string(),
+                });
+                let trace = format!(
+                    "{{\"schema_version\":\"{}\",\"spec_id\":\"{}\",\"case_id\":\"{}_smoke_01\",\"test_binary\":\"samples/{}\",\"runner\":\"vmos-linux-personality\",\"entered_vmos_execution\":true,\"linux_personality_dispatch\":true,\"syscalls_observed\":1,\"service_syscalls_observed\":1,\"exit_status\":0,\"runner_status\":0,\"raw_log_uri\":\"samples/{}.log\",\"serial_log_uri\":\"samples/{}.serial.log\"}}\n",
+                    LTP_VMOS_TRACE_SCHEMA_VERSION,
+                    spec.id,
+                    spec.id.replace('.', "_"),
+                    spec.id,
+                    spec.id,
+                    spec.id
+                );
+                result.evidence_artifacts.push(EvidenceArtifact {
+                    kind: EvidenceArtifactKind::LinuxPersonalityTrace,
+                    uri: format!("samples/{}.vmos-trace.jsonl", spec.id),
+                    sha256: sha256_hex(trace.as_bytes()),
+                    description: "synthetic VMOS Linux personality trace metadata for schema validation"
                         .to_string(),
                 });
                 result

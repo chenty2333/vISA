@@ -123,6 +123,7 @@ fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result
         EvidenceArtifactKind::SerialLog => validate_non_empty_text(bytes, "serial log"),
         EvidenceArtifactKind::BenchmarkRawOutput => validate_criterion_estimates(bytes),
         EvidenceArtifactKind::LtpRawLog => validate_ltp_log(bytes),
+        EvidenceArtifactKind::LinuxPersonalityTrace => validate_linux_personality_trace(bytes),
     }
 }
 
@@ -148,6 +149,9 @@ fn validate_artifact_context(
             if result.observed_boundary == Boundary::RealTargetSubstrate =>
         {
             validate_real_target_trace_context(kind, bytes)
+        }
+        EvidenceArtifactKind::LinuxPersonalityTrace => {
+            validate_linux_personality_trace_context(&result.spec_id, bytes)
         }
         _ => Ok(()),
     }
@@ -436,6 +440,20 @@ fn validate_real_target_trace_context(
     })
 }
 
+fn validate_linux_personality_trace_context(spec_id: &str, bytes: &[u8]) -> Result<(), String> {
+    validate_json_lines(bytes, |value| {
+        let trace_spec = value.get("spec_id").and_then(serde_json::Value::as_str);
+        if trace_spec == Some(spec_id) {
+            Ok(())
+        } else {
+            Err(format!(
+                "linux personality trace spec_id {:?} does not match result {}",
+                trace_spec, spec_id
+            ))
+        }
+    })
+}
+
 fn validate_json_lines<F>(bytes: &[u8], validate_entry: F) -> Result<(), String>
 where
     F: Fn(&serde_json::Value) -> Result<(), String>,
@@ -485,6 +503,45 @@ fn validate_ltp_log(bytes: &[u8]) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn validate_linux_personality_trace(bytes: &[u8]) -> Result<(), String> {
+    validate_json_lines(bytes, |value| {
+        let schema_version = value.get("schema_version").and_then(serde_json::Value::as_str);
+        if schema_version != Some(crate::ltp::LTP_VMOS_TRACE_SCHEMA_VERSION) {
+            return Err(format!(
+                "linux personality trace requires schema_version {}",
+                crate::ltp::LTP_VMOS_TRACE_SCHEMA_VERSION
+            ));
+        }
+        for field in ["spec_id", "case_id", "test_binary", "runner", "raw_log_uri"] {
+            if !value
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|field| !field.trim().is_empty())
+            {
+                return Err(format!("linux personality trace requires non-empty {field}"));
+            }
+        }
+        if value.get("runner").and_then(serde_json::Value::as_str) != Some("vmos-linux-personality")
+        {
+            return Err("linux personality trace runner must be vmos-linux-personality".to_string());
+        }
+        for field in ["entered_vmos_execution", "linux_personality_dispatch"] {
+            if value.get(field).and_then(serde_json::Value::as_bool) != Some(true) {
+                return Err(format!("linux personality trace requires {field}=true"));
+            }
+        }
+        for field in ["syscalls_observed", "service_syscalls_observed"] {
+            if value.get(field).and_then(serde_json::Value::as_u64).unwrap_or(0) == 0 {
+                return Err(format!("linux personality trace requires positive {field}"));
+            }
+        }
+        if value.get("exit_status").and_then(serde_json::Value::as_i64).is_none() {
+            return Err("linux personality trace requires numeric exit_status".to_string());
+        }
+        Ok(())
+    })
 }
 
 fn finding(code: &str, detail: impl Into<String>) -> ValidationFinding {

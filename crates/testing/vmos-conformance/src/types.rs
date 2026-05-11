@@ -161,6 +161,7 @@ pub enum EvidenceArtifactKind {
     SerialLog,
     BenchmarkRawOutput,
     LtpRawLog,
+    LinuxPersonalityTrace,
 }
 
 impl EvidenceArtifactKind {
@@ -172,6 +173,7 @@ impl EvidenceArtifactKind {
             Self::SerialLog => "serial-log",
             Self::BenchmarkRawOutput => "benchmark-raw-output",
             Self::LtpRawLog => "ltp-raw-log",
+            Self::LinuxPersonalityTrace => "linux-personality-trace",
         }
     }
 
@@ -183,6 +185,7 @@ impl EvidenceArtifactKind {
             "serial-log" => Some(Self::SerialLog),
             "benchmark-raw-output" => Some(Self::BenchmarkRawOutput),
             "ltp-raw-log" => Some(Self::LtpRawLog),
+            "linux-personality-trace" => Some(Self::LinuxPersonalityTrace),
             _ => None,
         }
     }
@@ -289,6 +292,17 @@ pub struct LtpPlanEntry {
     pub spec_id: String,
     pub scenario_arg: String,
     pub output_log: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LtpVmosPlanEntry {
+    pub spec_id: String,
+    pub subset: LtpSubset,
+    pub case_id: String,
+    pub binary_path: String,
+    pub output_log: String,
+    pub trace_log: String,
+    pub serial_log: String,
 }
 
 impl LtpInvocation {

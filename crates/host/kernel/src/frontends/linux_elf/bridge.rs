@@ -478,11 +478,11 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn handle_exit(status: i32) -> ! {
+    serial_println!("== post-ring3 semantic object graph ==");
+    for line in active_context().supervisor.semantic_debug_lines() {
+        serial_println!("{}", line);
+    }
     if status == 0 {
-        serial_println!("== post-ring3 semantic object graph ==");
-        for line in active_context().supervisor.semantic_debug_lines() {
-            serial_println!("{}", line);
-        }
         serial_println!("vmos: demo completed");
         qemu::exit_success();
     } else {

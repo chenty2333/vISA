@@ -29,6 +29,7 @@ fn main() {
         PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR")).join("wasm-target");
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     println!("cargo:rerun-if-changed={}", workspace_root.join(".cargo/config.toml").display());
+    println!("cargo:rerun-if-env-changed=VMOS_LINUX_USER_ELF");
 
     for module in SUPERVISOR_WASM_MODULES {
         build_module(&cargo, workspace_root, &target_dir, module.package);
@@ -232,7 +233,13 @@ fn expose_user_binary_path(workspace_root: &Path, target_dir: &Path, binary: &st
     println!("cargo:rerun-if-changed={}", workspace_root.join(binary).display());
     println!("cargo:rerun-if-changed={}", workspace_root.join("abi").display());
 
-    let artifact = target_dir.join("x86_64-unknown-none").join("debug").join(binary);
+    let artifact = if binary == "linux_user_demo" {
+        env::var_os("VMOS_LINUX_USER_ELF")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| target_dir.join("x86_64-unknown-none").join("debug").join(binary))
+    } else {
+        target_dir.join("x86_64-unknown-none").join("debug").join(binary)
+    };
     let env_key = format!("VMOS_{}_ELF", binary.to_ascii_uppercase());
     println!("cargo:rustc-env={}={}", env_key, artifact.display());
 }

@@ -18,7 +18,10 @@ pub use catalog::{
     visa_core_catalog, wasi_personality_catalog,
 };
 pub use ltp::{
-    ltp_report_from_log_dir, ltp_report_from_subset_logs, ltp_subset_result, parse_ltp_result_line,
+    LTP_FULL_SUITE_ID, LTP_VMOS_SUBSET_SUITE_ID, LTP_VMOS_TRACE_SCHEMA_VERSION,
+    default_vmos_ltp_plan, ltp_raw_log_from_serial, ltp_report_from_log_dir,
+    ltp_report_from_subset_logs, ltp_subset_report_from_present_logs, ltp_subset_result,
+    ltp_vmos_subset_report_from_log_dir, ltp_vmos_trace_from_serial, parse_ltp_result_line,
     parse_ltp_results,
 };
 pub use performance::{

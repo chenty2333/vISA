@@ -22,6 +22,7 @@ cargo run -p vmos-conformance -- plan-json
 cargo run -p vmos-conformance -- sample-report-json
 cargo run -p vmos-conformance -- ltp-plan-json
 cargo run -p vmos-conformance -- ltp-plan-lines target/ltp
+cargo run -p vmos-conformance -- vmos-ltp-plan-lines target/vmos-ltp /opt/ltp/testcases/bin
 cargo run -p vmos-conformance -- sample-ltp-report-json
 cargo run -p vmos-conformance -- sample-performance-report-json
 cargo run -p vmos-conformance -- validate-sample
@@ -30,12 +31,15 @@ cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-artifacts target/vmos-conformance.json .
 cargo run -p vmos-conformance -- validate-report-with-artifacts target/vmos-conformance.json .
 cargo run -p vmos-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
+cargo run -p vmos-conformance -- ltp-vmos-report-from-logs target/vmos-ltp/logs portable-artifact-execution guest-frontend
 cargo run -p vmos-conformance -- performance-plan-lines target/criterion
 cargo run -p vmos-conformance -- performance-report-from-criterion target/criterion
 cargo run -p vmos-conformance -- attach-evidence-artifact target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
 cargo run -p vmos-conformance -- attach-evidence-artifact-file target/vmos-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl "real target extraction trace"
-scripts/run-ltp-conformance.sh target/ltp-run portable-artifact-execution guest-frontend runltp
+scripts/run-host-ltp-log-adapter.sh target/host-ltp-run portable-artifact-execution guest-frontend runltp
+scripts/run-vmos-ltp-conformance.sh target/vmos-ltp-run /opt/ltp/testcases/bin
 scripts/run-vmos-bench-conformance.sh target/vmos-bench-run
+scripts/run-report-gates.sh
 ```
 
 The `sample-*` commands are schema fixtures. They are useful for checking JSON
@@ -44,9 +48,11 @@ reported as a real conformance pass. Use the LTP, benchmark, substrate, or
 runtime runners for executable claims.
 
 Executable LTP integration should consume the catalog entries whose ids start with
-`linux-ltp.`, use `LtpInvocation` or `ltp-plan-lines` to derive subset commands,
-parse run output into `LtpCaseResult`, and emit `ConformanceReport` JSON using the
-schema in `src/lib.rs`.
+`linux-ltp.`, parse run output into `LtpCaseResult`, attach raw LTP logs, and
+attach `linux-personality-trace` artifacts when the result claims VMOS-backed
+portable artifact execution. Host-side LTP logs without VMOS trace artifacts are
+valid parser inputs, but they must not be reported as VMOS Linux personality
+conformance.
 `validate-report` is the intended report gate for external runners; it accepts a
 file path or `-` for stdin and exits non-zero when the JSON is malformed, references
 unknown specs, overclaims an evidence boundary, omits pass/fail evidence, or contains
@@ -79,14 +85,28 @@ attached path must still be relative to the artifact root used by
 `ltp-report-from-logs` reads files named `<linux-ltp spec id>.log` from the given
 directory, marks missing subset logs as `not-run`, and emits a Linux personality
 compatibility report that can be piped into `validate-report`. Present subset logs
-are attached as `ltp-raw-log` artifacts with SHA-256 hashes.
-`scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
-LTP installed. It runs the cataloged subsets, preserves raw logs, emits
-`vmos-ltp-report.json`, `vmos-ltp-gate.json`, `vmos-ltp-artifact-gate.json`, and
-`vmos-ltp-combined-gate.json`. The artifact gate checks that every referenced raw
-log can be opened, matches its SHA-256 digest, and contains parseable LTP case
-output. The combined gate records the report and artifact validation result in
-one JSON file for downstream CI/archive consumers.
+are attached as `ltp-raw-log` artifacts with SHA-256 hashes. If matching files
+named `<linux-ltp spec id>.vmos-trace.jsonl` exist, they are attached as
+`linux-personality-trace` artifacts.
+`ltp-vmos-report-from-logs` emits a staged VMOS-backed subset report from the
+logs that are present. It is intended for `scripts/run-vmos-ltp-conformance.sh`
+and does not require unrelated LTP subsets to appear in the same bundle.
+Portable-or-stronger LTP pass/fail results must carry both `ltp-raw-log` and
+`linux-personality-trace` artifacts. The trace gate requires entries to identify
+the VMOS Linux personality runner, state that VMOS execution and Linux dispatch
+were observed, and record positive syscall/service counts.
+`scripts/run-host-ltp-log-adapter.sh` is the host-side adapter for an external
+`runltp` binary. It preserves raw logs and validates the raw-log artifact bundle,
+but it is not VMOS-backed LTP evidence and its report gate is expected to fail
+when VMOS trace artifacts are absent.
+`scripts/run-vmos-ltp-conformance.sh` is the VMOS-backed runner. It embeds each
+selected testcase ELF through `VMOS_LINUX_USER_ELF`, runs the QEMU VMOS runner,
+captures serial output, emits raw LTP logs plus VMOS Linux personality traces,
+and gates the resulting report/artifact bundle. Ordinary dynamic Linux binaries
+may still fail until the VMOS Linux ELF frontend supports their loader, stack,
+and auxv requirements; those failures are recorded as LTP failures, not hidden.
+`scripts/run-ltp-conformance.sh` remains only as a deprecated compatibility alias
+for the host log adapter.
 Performance benchmark reports use the `vmos-performance-benchmark` suite id.
 Passing or failing performance results must carry concrete finite, non-negative
 numeric metrics and at least one `benchmark-raw-output` artifact. The current

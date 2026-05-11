@@ -351,7 +351,7 @@ fn attach_evidence_artifact_can_target_all_results() {
     let attached = attach_evidence_artifact(&mut report, "*", real_target_extraction_artifact());
 
     assert_eq!(attached, LtpSubset::ALL.len());
-    assert!(report.results.iter().all(|result| result.evidence_artifacts.len() == 2));
+    assert!(report.results.iter().all(|result| result.evidence_artifacts.len() == 3));
 }
 
 #[test]
@@ -361,6 +361,10 @@ fn evidence_artifact_kind_parse_is_stable() {
         Some(EvidenceArtifactKind::SubstrateExtractionTrace)
     );
     assert_eq!(EvidenceArtifactKind::DeviceTrace.as_str(), "device-trace");
+    assert_eq!(
+        EvidenceArtifactKind::parse("linux-personality-trace"),
+        Some(EvidenceArtifactKind::LinuxPersonalityTrace)
+    );
     assert_eq!(EvidenceArtifactKind::parse("unknown"), None);
 }
 
@@ -1140,6 +1144,11 @@ fn artifact_gate_accepts_ltp_and_criterion_raw_outputs() {
             format!("{}_case01 1 TPASS : passed\n", subset.spec_id().replace('.', "_")),
         )
         .unwrap();
+        write_ltp_trace(
+            &ltp_root,
+            subset,
+            &format!("{}_case01", subset.spec_id().replace('.', "_")),
+        );
     }
     let ltp_report = ltp_report_from_log_dir(
         "unit-test",
@@ -1360,6 +1369,7 @@ fn ltp_report_from_log_dir_attaches_raw_log_artifacts() {
             format!("{}_case01 1 TPASS : passed\n", subset.spec_id().replace('.', "_")),
         )
         .unwrap();
+        write_ltp_trace(&root, subset, &format!("{}_case01", subset.spec_id().replace('.', "_")));
     }
 
     let report = ltp_report_from_log_dir(
@@ -1375,13 +1385,115 @@ fn ltp_report_from_log_dir_attaches_raw_log_artifacts() {
     assert!(validation.ok, "{:#?}", validation.findings);
     assert_eq!(report.results.len(), LtpSubset::ALL.len());
     assert!(report.results.iter().all(|result| {
-        result.evidence_artifacts.len() == 1
-            && result.evidence_artifacts[0].kind == EvidenceArtifactKind::LtpRawLog
-            && result.evidence_artifacts[0].sha256.len() == 64
-            && result.evidence_artifacts[0].uri.ends_with(&format!("{}.log", result.spec_id))
+        result.evidence_artifacts.len() == 2
+            && result.evidence_artifacts.iter().any(|artifact| {
+                artifact.kind == EvidenceArtifactKind::LtpRawLog
+                    && artifact.sha256.len() == 64
+                    && artifact.uri.ends_with(&format!("{}.log", result.spec_id))
+            })
+            && result.evidence_artifacts.iter().any(|artifact| {
+                artifact.kind == EvidenceArtifactKind::LinuxPersonalityTrace
+                    && artifact.sha256.len() == 64
+                    && artifact.uri.ends_with(&format!("{}.vmos-trace.jsonl", result.spec_id))
+            })
     }));
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn vmos_ltp_subset_report_requires_vmos_trace_for_portable_claims() {
+    let root = temp_criterion_dir("vmos-ltp-missing-trace");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("linux-ltp.fs.basic.log"), "open01 1 TPASS : passed\n").unwrap();
+
+    let report = ltp_vmos_subset_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &root,
+    )
+    .unwrap();
+    let validation = validate_report(&report, &linux_ltp_catalog());
+
+    assert_eq!(report.suite_id, LTP_VMOS_SUBSET_SUITE_ID);
+    assert_eq!(report.results.len(), 1);
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-linux-personality-trace-artifact")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn vmos_ltp_subset_report_gates_with_raw_log_and_execution_trace() {
+    let root = temp_criterion_dir("vmos-ltp-subset");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("linux-ltp.fs.basic.log"), "open01 1 TPASS : passed\n").unwrap();
+    write_ltp_trace(&root, LtpSubset::FsBasic, "open01");
+
+    let report = ltp_vmos_subset_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &root,
+    )
+    .unwrap();
+    let validation = validate_report(&report, &linux_ltp_catalog());
+    let artifact_validation = validate_report_artifacts(&report, &root);
+    let gate = gate_report_json(&serde_json::to_vec(&report).unwrap(), &linux_ltp_catalog());
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    assert!(artifact_validation.ok, "{:#?}", artifact_validation.findings);
+    assert!(gate.ok, "{gate:#?}");
+    assert_eq!(report.suite_id, LTP_VMOS_SUBSET_SUITE_ID);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].spec_id, LtpSubset::FsBasic.spec_id());
+    assert_eq!(report.results[0].evidence_artifacts.len(), 2);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn vmos_ltp_plan_uses_minimal_stable_fs_mm_syscall_cases() {
+    let plan = default_vmos_ltp_plan("target/vmos-ltp", "target/ltp-bins");
+
+    assert_eq!(plan.len(), 3);
+    assert_eq!(plan[0].spec_id, LtpSubset::FsBasic.spec_id());
+    assert_eq!(plan[0].case_id, "open01");
+    assert_eq!(plan[1].spec_id, LtpSubset::MmMapping.spec_id());
+    assert_eq!(plan[1].case_id, "mmap01");
+    assert_eq!(plan[2].spec_id, LtpSubset::SyscallsCore.spec_id());
+    assert_eq!(plan[2].case_id, "getpid01");
+    assert!(plan.iter().all(|entry| entry.output_log.ends_with(".log")));
+    assert!(plan.iter().all(|entry| entry.trace_log.ends_with(".vmos-trace.jsonl")));
+    assert!(plan.iter().all(|entry| entry.serial_log.ends_with(".serial.log")));
+}
+
+#[test]
+fn vmos_ltp_serial_helpers_preserve_ltp_output_and_trace_execution_path() {
+    let serial = "== ring3 real ELF demo ==\nopen01 1 TPASS : passed\nHostcallEntered label=ring3_openat class=immediate-privileged-op subject=linux_syscall object=vfs_service op=lookup\nvmos: demo completed\n";
+    let raw = ltp_raw_log_from_serial("open01", serial, 0);
+    let trace = ltp_vmos_trace_from_serial(
+        LtpSubset::FsBasic.spec_id(),
+        "open01",
+        "target/ltp-bins/open01",
+        "linux-ltp.fs.basic.log",
+        "linux-ltp.fs.basic.serial.log",
+        serial,
+        0,
+    );
+
+    assert_eq!(raw, "open01 1 TPASS : passed\n");
+    assert_eq!(trace["schema_version"], LTP_VMOS_TRACE_SCHEMA_VERSION);
+    assert_eq!(trace["entered_vmos_execution"], true);
+    assert_eq!(trace["linux_personality_dispatch"], true);
+    assert_eq!(trace["syscalls_observed"], 1);
+    assert!(trace["service_syscalls_observed"].as_u64().unwrap() >= 1);
 }
 
 #[test]
@@ -1394,9 +1506,28 @@ fn sample_ltp_report_validates_against_ltp_catalog() {
     assert!(report.results.iter().all(|result| {
         result.observed_boundary == Boundary::PortableArtifactExecution
             && matches!(result.outcome, Outcome::Pass)
-            && result.evidence_artifacts.len() == 1
-            && result.evidence_artifacts[0].kind == EvidenceArtifactKind::LtpRawLog
+            && result
+                .evidence_artifacts
+                .iter()
+                .any(|artifact| artifact.kind == EvidenceArtifactKind::LtpRawLog)
+            && result
+                .evidence_artifacts
+                .iter()
+                .any(|artifact| artifact.kind == EvidenceArtifactKind::LinuxPersonalityTrace)
     }));
+}
+
+fn write_ltp_trace(root: &Path, subset: LtpSubset, case_id: &str) {
+    let trace = format!(
+        "{{\"schema_version\":\"{}\",\"spec_id\":\"{}\",\"case_id\":\"{}\",\"test_binary\":\"target/ltp-bins/{}\",\"runner\":\"vmos-linux-personality\",\"entered_vmos_execution\":true,\"linux_personality_dispatch\":true,\"syscalls_observed\":1,\"service_syscalls_observed\":1,\"exit_status\":0,\"runner_status\":0,\"raw_log_uri\":\"{}.log\",\"serial_log_uri\":\"{}.serial.log\"}}\n",
+        LTP_VMOS_TRACE_SCHEMA_VERSION,
+        subset.spec_id(),
+        case_id,
+        case_id,
+        subset.spec_id(),
+        subset.spec_id()
+    );
+    fs::write(root.join(format!("{}.vmos-trace.jsonl", subset.spec_id())), trace).unwrap();
 }
 
 fn temp_criterion_dir(name: &str) -> PathBuf {

@@ -5,6 +5,7 @@ use visa_profile::SubstrateProfile;
 use crate::{
     artifacts::artifact_uri_is_bundle_relative,
     catalog::{linux_ltp_catalog, performance_catalog, substrate_profile_catalog},
+    ltp::{LTP_FULL_SUITE_ID, LTP_VMOS_SUBSET_SUITE_ID},
     performance::required_performance_metrics,
     types::{
         Boundary, ClaimKind, ConformanceReport, EvidenceArtifactKind, Outcome, Personality,
@@ -96,6 +97,19 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             findings.push(finding(
                 "missing-ltp-raw-log-artifact",
                 format!("{} reports LTP execution without a raw log artifact", result.spec_id),
+            ));
+        }
+        if is_linux_ltp_spec(spec)
+            && matches!(result.outcome, Outcome::Pass | Outcome::Fail)
+            && result.observed_boundary.can_claim(Boundary::PortableArtifactExecution)
+            && !has_linux_personality_trace_artifact(result)
+        {
+            findings.push(finding(
+                "missing-linux-personality-trace-artifact",
+                format!(
+                    "{} claims VMOS-backed Linux personality execution without a Linux personality trace artifact",
+                    result.spec_id
+                ),
             ));
         }
         if matches!(result.outcome, Outcome::Pass | Outcome::Fail) {
@@ -208,6 +222,14 @@ fn has_ltp_raw_log_artifact(result: &TestResult) -> bool {
     })
 }
 
+fn has_linux_personality_trace_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::LinuxPersonalityTrace
+            && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
 fn is_linux_ltp_spec(spec: &TestSpec) -> bool {
     spec.claim == ClaimKind::PersonalityCompatibility
         && spec.personality == Some(Personality::Linux)
@@ -314,9 +336,8 @@ fn validate_suite_coverage(
 ) {
     let required_ids: Vec<String> = match report.suite_id.as_str() {
         "vmos-layered-conformance" => catalog.iter().map(|spec| spec.id.clone()).collect(),
-        "vmos-linux-ltp-personality-compatibility" => {
-            linux_ltp_catalog().into_iter().map(|spec| spec.id).collect()
-        }
+        LTP_FULL_SUITE_ID => linux_ltp_catalog().into_iter().map(|spec| spec.id).collect(),
+        LTP_VMOS_SUBSET_SUITE_ID => return validate_ltp_subset_suite(result_ids, findings),
         "vmos-substrate-profile-conformance" => {
             report.results.iter().map(|result| result.spec_id.clone()).collect()
         }
@@ -335,6 +356,15 @@ fn validate_suite_coverage(
                 format!("{} omits required result {}", report.suite_id, spec_id),
             ));
         }
+    }
+}
+
+fn validate_ltp_subset_suite(result_ids: &BTreeSet<&str>, findings: &mut Vec<ValidationFinding>) {
+    if result_ids.is_empty() {
+        findings.push(finding(
+            "empty-ltp-subset-suite",
+            "VMOS-backed LTP subset suite must contain at least one result",
+        ));
     }
 }
 
@@ -383,7 +413,7 @@ fn validate_spec(spec: &TestSpec, findings: &mut Vec<ValidationFinding>) {
 fn suite_allowed_result_ids(suite_id: &str, catalog: &[TestSpec]) -> Option<BTreeSet<String>> {
     match suite_id {
         "vmos-layered-conformance" => Some(catalog.iter().map(|spec| spec.id.clone()).collect()),
-        "vmos-linux-ltp-personality-compatibility" => {
+        LTP_FULL_SUITE_ID | LTP_VMOS_SUBSET_SUITE_ID => {
             Some(linux_ltp_catalog().into_iter().map(|spec| spec.id).collect())
         }
         "vmos-substrate-profile-conformance" => {
