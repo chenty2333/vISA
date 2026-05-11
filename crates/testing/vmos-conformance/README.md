@@ -60,7 +60,10 @@ compatibility report that can be piped into `validate-report`. Present subset lo
 are attached as `ltp-raw-log` artifacts with SHA-256 hashes.
 `scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
 LTP installed. It runs the cataloged subsets, preserves raw logs, emits
-`vmos-ltp-report.json`, and gates the result.
+`vmos-ltp-report.json`, `vmos-ltp-gate.json`, and
+`vmos-ltp-artifact-gate.json`. The artifact gate checks that every referenced
+raw log can be opened, matches its SHA-256 digest, and contains parseable LTP
+case output.
 Performance benchmark reports use the `vmos-performance-benchmark` suite id.
 Passing or failing performance results must carry concrete finite, non-negative
 numeric metrics and at least one `benchmark-raw-output` artifact. The current
@@ -80,4 +83,6 @@ explicit stronger boundary only when every result in the run can legitimately
 claim that boundary.
 `scripts/run-vmos-bench-conformance.sh` is the standard wrapper for running
 `cargo bench -p vmos-bench`, preserving the generated performance report, and
-gating it through `validate-report`.
+gating it through `validate-report` and `validate-artifacts`. It emits
+`vmos-performance-report.json`, `vmos-performance-gate.json`, and
+`vmos-performance-artifact-gate.json`.

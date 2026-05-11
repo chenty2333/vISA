@@ -84,6 +84,8 @@ chmod +x "$fake_runltp"
 wrapper_output="$tmp_root/wrapper"
 scripts/run-ltp-conformance.sh "$wrapper_output" portable-artifact-execution guest-frontend \
     "$fake_runltp" >/dev/null
+test -s "$wrapper_output/vmos-ltp-gate.json"
+test -s "$wrapper_output/vmos-ltp-artifact-gate.json"
 run_conformance validate-report "$wrapper_output/vmos-ltp-report.json" \
     >"$tmp_root/wrapper-gate.json"
 run_conformance validate-artifacts "$wrapper_output/vmos-ltp-report.json" \
@@ -111,6 +113,8 @@ done <"$tmp_root/performance-plan.tsv"
 bench_output="$tmp_root/vmos-bench-run"
 VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
     "$bench_output" "" "" "$criterion_root" >/dev/null
+test -s "$bench_output/vmos-performance-gate.json"
+test -s "$bench_output/vmos-performance-artifact-gate.json"
 run_conformance validate-report "$bench_output/vmos-performance-report.json" \
     >"$tmp_root/vmos-bench-gate.json"
 run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" \

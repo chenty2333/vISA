@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run VMOS host-side microbenchmarks and gate the resulting performance report.
+# Run VMOS host-side microbenchmarks and gate the resulting performance report
+# plus the raw Criterion artifacts referenced by that report.
 #
 # Usage:
 #   scripts/run-vmos-bench-conformance.sh [output-dir] [boundary-override] [profile] [criterion-dir]
@@ -22,6 +23,7 @@ fi
 
 report="$output_dir/vmos-performance-report.json"
 gate="$output_dir/vmos-performance-gate.json"
+artifact_gate="$output_dir/vmos-performance-artifact-gate.json"
 
 if [[ -n "$boundary" && -n "$profile" ]]; then
     cargo run --quiet -p vmos-conformance -- \
@@ -42,6 +44,8 @@ else
 fi
 
 cargo run --quiet -p vmos-conformance -- validate-report "$report" >"$gate"
+cargo run --quiet -p vmos-conformance -- validate-artifacts "$report" >"$artifact_gate"
 
 echo "Performance conformance report written to $report"
 echo "Performance conformance gate written to $gate"
+echo "Performance evidence artifact gate written to $artifact_gate"
