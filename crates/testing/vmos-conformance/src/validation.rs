@@ -70,6 +70,15 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             ));
         }
         validate_evidence_artifacts(result, &mut findings);
+        if is_linux_ltp_spec(spec)
+            && !matches!(result.outcome, Outcome::NotRun)
+            && !has_ltp_raw_log_artifact(result)
+        {
+            findings.push(finding(
+                "missing-ltp-raw-log-artifact",
+                format!("{} reports LTP execution without a raw log artifact", result.spec_id),
+            ));
+        }
         if matches!(result.outcome, Outcome::Pass | Outcome::Fail) {
             if result.evidence.trim().is_empty() {
                 findings.push(finding(
@@ -142,6 +151,19 @@ fn has_real_target_extraction_artifact(result: &TestResult) -> bool {
         ) && !artifact.uri.trim().is_empty()
             && is_sha256_hex(&artifact.sha256)
     })
+}
+
+fn has_ltp_raw_log_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::LtpRawLog
+            && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn is_linux_ltp_spec(spec: &TestSpec) -> bool {
+    spec.claim == ClaimKind::PersonalityCompatibility
+        && spec.personality == Some(Personality::Linux)
 }
 
 fn is_sha256_hex(value: &str) -> bool {

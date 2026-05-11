@@ -254,7 +254,7 @@ fn attach_evidence_artifact_can_target_all_results() {
     let attached = attach_evidence_artifact(&mut report, "*", real_target_extraction_artifact());
 
     assert_eq!(attached, LtpSubset::ALL.len());
-    assert!(report.results.iter().all(|result| result.evidence_artifacts.len() == 1));
+    assert!(report.results.iter().all(|result| result.evidence_artifacts.len() == 2));
 }
 
 #[test]
@@ -301,6 +301,9 @@ fn artifact_gate_validates_real_target_extraction_trace_files() {
     .unwrap();
     let mut report = sample_ltp_report();
     report.results[0].observed_boundary = Boundary::RealTargetSubstrate;
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::SubstrateExtractionTrace,
         uri: trace.display().to_string(),
@@ -321,6 +324,9 @@ fn artifact_gate_rejects_sha_mismatch_and_invalid_structured_content() {
     let trace = root.join("substrate-extraction.jsonl");
     fs::write(&trace, br#"{"authority":"","operation":""}"#).unwrap();
     let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
     report.results[0].evidence_artifacts.push(EvidenceArtifact {
         kind: EvidenceArtifactKind::SubstrateExtractionTrace,
         uri: trace.display().to_string(),
@@ -813,7 +819,10 @@ fn ltp_report_from_subset_logs_marks_missing_subsets_not_run() {
     );
 
     let validation = validate_report(&report, &linux_ltp_catalog());
-    assert!(validation.ok, "{:#?}", validation.findings);
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "missing-ltp-raw-log-artifact")
+    );
     assert_eq!(report.results.len(), LtpSubset::ALL.len());
     assert_eq!(report.results[0].spec_id, LtpSubset::FsBasic.spec_id());
     assert_eq!(report.results[0].outcome, Outcome::Pass);
@@ -842,7 +851,11 @@ fn ltp_report_from_subset_logs_preserves_failures_and_profile_override() {
     assert_eq!(socket.observed_boundary, Boundary::PortableArtifactExecution);
     assert_eq!(socket.observed_profile.as_deref(), Some("snapshot-replay-capable"));
     assert_eq!(socket.metrics["ltp_cases_failed"], 1.0);
-    assert!(validate_report(&report, &linux_ltp_catalog()).ok);
+    let validation = validate_report(&report, &linux_ltp_catalog());
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "missing-ltp-raw-log-artifact")
+    );
 }
 
 #[test]
@@ -889,6 +902,8 @@ fn sample_ltp_report_validates_against_ltp_catalog() {
     assert!(report.results.iter().all(|result| {
         result.observed_boundary == Boundary::PortableArtifactExecution
             && matches!(result.outcome, Outcome::Pass)
+            && result.evidence_artifacts.len() == 1
+            && result.evidence_artifacts[0].kind == EvidenceArtifactKind::LtpRawLog
     }));
 }
 

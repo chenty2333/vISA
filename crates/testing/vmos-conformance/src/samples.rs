@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     catalog::{linux_ltp_catalog, performance_catalog},
+    hash::sha256_hex,
     ltp::ltp_subset_result,
     performance::required_performance_metrics,
     types::{
@@ -42,6 +43,10 @@ pub fn sample_ltp_report() -> ConformanceReport {
         results: catalog
             .iter()
             .map(|spec| {
+                let raw_log = format!(
+                    "{case_prefix}_smoke_01 1 TPASS : sample LTP case passed\n{case_prefix}_smoke_02 1 TCONF : sample LTP case skipped by configuration\n",
+                    case_prefix = spec.id.replace('.', "_")
+                );
                 let cases = [
                     LtpCaseResult {
                         case_id: format!("{}_smoke_01", spec.id.replace('.', "_")),
@@ -56,12 +61,20 @@ pub fn sample_ltp_report() -> ConformanceReport {
                         detail: "sample LTP case skipped by configuration".to_string(),
                     },
                 ];
-                ltp_subset_result(
+                let mut result = ltp_subset_result(
                     spec,
                     &cases,
                     Boundary::PortableArtifactExecution,
                     spec.required_profile.clone(),
-                )
+                );
+                result.evidence_artifacts.push(EvidenceArtifact {
+                    kind: EvidenceArtifactKind::LtpRawLog,
+                    uri: format!("samples/{}.log", spec.id),
+                    sha256: sha256_hex(raw_log.as_bytes()),
+                    description: "synthetic raw LTP log metadata for schema validation"
+                        .to_string(),
+                });
+                result
             })
             .collect(),
     }
