@@ -633,6 +633,9 @@ fn hostcall_cap_args_backed_by_live_capability_records(
     package: &MigrationPackageManifest,
     hostcall: &artifact_manifest::HostcallTraceManifest,
 ) -> bool {
+    if hostcall_requires_capability(hostcall) && hostcall.cap_args.is_empty() {
+        return false;
+    }
     hostcall.cap_args.iter().all(|arg| {
         package
             .semantic
@@ -658,6 +661,67 @@ fn capability_record_matches_hostcall_arg(
         && record
             .owner_store_generation
             .is_none_or(|generation| generation == hostcall.store_generation)
+}
+
+fn hostcall_requires_capability(hostcall: &artifact_manifest::HostcallTraceManifest) -> bool {
+    hostcall_category_requires_capability(&hostcall.category)
+        || hostcall_object_requires_capability(&hostcall.object)
+}
+
+fn hostcall_category_requires_capability(category: &str) -> bool {
+    matches!(
+        normalize_token(category).as_str(),
+        "device"
+            | "packetdevice"
+            | "mmio"
+            | "dma"
+            | "irq"
+            | "virtqueue"
+            | "dmw"
+            | "codepublish"
+            | "snapshot"
+            | "guestmemory"
+            | "timer"
+            | "faultdomain"
+            | "eventlog"
+            | "storecontrol"
+    )
+}
+
+fn hostcall_object_requires_capability(object: &str) -> bool {
+    matches!(
+        normalize_token(object).as_str(),
+        "device"
+            | "visadevice"
+            | "packetdevice"
+            | "visapacketdevice"
+            | "mmio"
+            | "visammio"
+            | "dma"
+            | "visadma"
+            | "irq"
+            | "visairq"
+            | "virtqueue"
+            | "visavirtqueue"
+            | "dmw"
+            | "visadmw"
+            | "codepublish"
+            | "visacodepublish"
+            | "snapshot"
+            | "visasnapshot"
+            | "guestmemory"
+            | "visaguestmemory"
+            | "memory"
+            | "visamemory"
+            | "timer"
+            | "visatimer"
+            | "faultdomain"
+            | "visafaultdomain"
+            | "eventlog"
+            | "visaeventlog"
+            | "storecontrol"
+            | "visastorecontrol"
+    )
 }
 
 fn substrate_event_matches_hostcall(

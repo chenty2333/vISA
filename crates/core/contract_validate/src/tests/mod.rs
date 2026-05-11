@@ -761,6 +761,34 @@ fn external_audit_rejects_portable_execution_with_unbacked_hostcall_capability()
 }
 
 #[test]
+fn external_audit_rejects_capability_gated_hostcall_without_cap_args() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.target_artifacts[0].hostcalls[0].name = "visa.timer.now".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].category = "timer".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].object = "visa.timer".to_owned();
+    package.semantic.target_artifacts[0].hostcalls[0].operation = "now".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].name = "visa.timer.now".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].category = "timer".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].object = "visa.timer".to_owned();
+    package.semantic.code_objects[0].hostcalls[0].operation = "now".to_owned();
+    package.semantic.hostcall_trace[0].name = "visa.timer.now".to_owned();
+    package.semantic.hostcall_trace[0].category = "timer".to_owned();
+    package.semantic.hostcall_trace[0].object = "visa.timer".to_owned();
+    package.semantic.hostcall_trace[0].operation = "now".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-incomplete" })
+    );
+}
+
+#[test]
 fn external_audit_accepts_canonical_semantic_hostcall_success_trace() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
