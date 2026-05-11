@@ -396,6 +396,15 @@ impl VisaRuntimeEvidenceSnapshot {
     pub fn has_substrate_authority_extraction_evidence(&self) -> bool {
         !self.authority_extractions.is_empty()
     }
+
+    pub fn authority_extractions_jsonl(&self) -> String {
+        let mut out = String::new();
+        for extraction in &self.authority_extractions {
+            extraction.write_json_line(&mut out);
+            out.push('\n');
+        }
+        out
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -411,6 +420,30 @@ pub struct VisaSubstrateAuthorityExtractionEvidence {
     pub capability_generation: Option<Generation>,
 }
 
+impl VisaSubstrateAuthorityExtractionEvidence {
+    fn write_json_line(&self, out: &mut String) {
+        out.push('{');
+        push_json_u64_field(out, "event_id", self.event_id);
+        out.push(',');
+        push_json_u64_field(out, "event_epoch", self.event_epoch);
+        out.push(',');
+        push_json_str_field(out, "authority", &self.authority);
+        out.push(',');
+        push_json_str_field(out, "operation", &self.operation);
+        out.push(',');
+        push_json_optional_str_field(out, "requester", self.requester.as_deref());
+        out.push(',');
+        push_json_optional_u64_field(out, "artifact_id", self.artifact_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "store_id", self.store_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "capability_id", self.capability_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "capability_generation", self.capability_generation);
+        out.push('}');
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VisaSubstrateUnsupportedEvidence {
     pub event_id: EventId,
@@ -420,6 +453,68 @@ pub struct VisaSubstrateUnsupportedEvidence {
     pub requester: Option<String>,
     pub artifact_id: Option<TargetArtifactId>,
     pub store_id: Option<StoreId>,
+}
+
+fn push_json_u64_field(out: &mut String, key: &str, value: u64) {
+    push_json_key(out, key);
+    out.push_str(&value.to_string());
+}
+
+fn push_json_optional_u64_field(out: &mut String, key: &str, value: Option<u64>) {
+    push_json_key(out, key);
+    match value {
+        Some(value) => out.push_str(&value.to_string()),
+        None => out.push_str("null"),
+    }
+}
+
+fn push_json_str_field(out: &mut String, key: &str, value: &str) {
+    push_json_key(out, key);
+    push_json_string(out, value);
+}
+
+fn push_json_optional_str_field(out: &mut String, key: &str, value: Option<&str>) {
+    push_json_key(out, key);
+    match value {
+        Some(value) => push_json_string(out, value),
+        None => out.push_str("null"),
+    }
+}
+
+fn push_json_key(out: &mut String, key: &str) {
+    push_json_string(out, key);
+    out.push(':');
+}
+
+fn push_json_string(out: &mut String, value: &str) {
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                out.push_str("\\u");
+                let code = ch as u32;
+                out.push(hex_digit((code >> 12) & 0xf));
+                out.push(hex_digit((code >> 8) & 0xf));
+                out.push(hex_digit((code >> 4) & 0xf));
+                out.push(hex_digit(code & 0xf));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+fn hex_digit(value: u32) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value as u8),
+        10..=15 => char::from(b'a' + (value as u8 - 10)),
+        _ => '0',
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2240,6 +2335,13 @@ mod tests {
                 capability_generation: None,
             }
         );
+        let extraction_jsonl = evidence.authority_extractions_jsonl();
+        assert_eq!(extraction_jsonl.lines().count(), 3);
+        assert!(extraction_jsonl.contains("\"authority\":\"ConsoleAuthority\""));
+        assert!(extraction_jsonl.contains("\"operation\":\"console_write\""));
+        assert!(extraction_jsonl.contains("\"requester\":\"wasi-app\""));
+        assert!(extraction_jsonl.contains("\"artifact_id\":9"));
+        assert!(extraction_jsonl.contains("\"store_id\":1"));
         assert!(report.events.iter().any(|event| {
             matches!(
                 event,
@@ -2249,6 +2351,14 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn authority_extraction_json_escaping_is_stable() {
+        let mut out = String::new();
+        push_json_string(&mut out, "quote\" slash\\ newline\n tab\t control\u{0007}");
+
+        assert_eq!(out, "\"quote\\\" slash\\\\ newline\\n tab\\t control\\u0007\"");
     }
 
     #[test]
