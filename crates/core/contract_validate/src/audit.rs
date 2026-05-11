@@ -139,16 +139,30 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         ));
     }
 
-    let portable_artifact_execution_claim =
+    let linked_portable_execution_chain =
         contract_package_valid && artifact_participates_in_execution(package, |_| true);
-    let visa_native_portable_artifact_execution_claim =
+    let linked_visa_native_execution_chain =
         contract_package_valid && artifact_participates_in_execution(package, is_visa_native);
+    let portable_boundary_validation =
+        package_has_boundary_validation(package, EvidenceBoundaryLevel::PortableArtifactExecution);
+    let portable_artifact_execution_claim =
+        linked_portable_execution_chain && portable_boundary_validation;
+    let visa_native_portable_artifact_execution_claim =
+        linked_visa_native_execution_chain && portable_boundary_validation;
     if !portable_artifact_execution_claim {
-        findings.push(ExternalAuditFinding::new(
-            ExternalAuditSeverity::Warning,
-            "portable-artifact-execution-incomplete",
-            "package lacks the target artifact -> code object -> activation -> hostcall/trap evidence chain",
-        ));
+        if !linked_portable_execution_chain {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Warning,
+                "portable-artifact-execution-incomplete",
+                "package lacks the target artifact -> code object -> activation -> hostcall/trap evidence chain",
+            ));
+        } else {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Warning,
+                "portable-artifact-execution-without-validation",
+                "package has a linked portable execution chain but lacks successful portable snapshot/replay boundary validation",
+            ));
+        }
     }
     if portable_artifact_execution_claim && !visa_native_portable_artifact_execution_claim {
         findings.push(ExternalAuditFinding::new(
@@ -170,11 +184,19 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         package.substrate_boundary.native_state_policy == REAL_TARGET_SUBSTRATE_POLICY;
     if real_target_substrate_claim {
         if !portable_artifact_execution_claim {
-            findings.push(ExternalAuditFinding::new(
-                ExternalAuditSeverity::Error,
-                "real-target-without-portable-artifact-chain",
-                "real target substrate claim requires a linked artifact -> code object -> activation -> hostcall/trap chain",
-            ));
+            if linked_portable_execution_chain && !portable_boundary_validation {
+                findings.push(ExternalAuditFinding::new(
+                    ExternalAuditSeverity::Error,
+                    "real-target-without-portable-artifact-validation",
+                    "real target substrate claim requires portable snapshot/replay boundary validation",
+                ));
+            } else {
+                findings.push(ExternalAuditFinding::new(
+                    ExternalAuditSeverity::Error,
+                    "real-target-without-portable-artifact-chain",
+                    "real target substrate claim requires a linked artifact -> code object -> activation -> hostcall/trap chain",
+                ));
+            }
         }
         if !real_target_has_concrete_arch(package) {
             findings.push(ExternalAuditFinding::new(
@@ -221,6 +243,25 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         linked_authority_extraction_event_count,
         findings,
     }
+}
+
+fn package_has_boundary_validation(
+    package: &MigrationPackageManifest,
+    required: EvidenceBoundaryLevel,
+) -> bool {
+    boundary_validation_report_satisfies(&package.semantic.snapshot_validation, required)
+        && boundary_validation_report_satisfies(&package.semantic.replay_validation, required)
+}
+
+fn boundary_validation_report_satisfies(
+    report: &artifact_manifest::BoundaryValidationReportManifest,
+    required: EvidenceBoundaryLevel,
+) -> bool {
+    report.ok
+        && report.violation_count == 0
+        && !report.validator.is_empty()
+        && EvidenceBoundaryLevel::parse(&report.evidence_boundary)
+            .is_some_and(|level| level.satisfies(required))
 }
 
 fn real_target_has_concrete_arch(package: &MigrationPackageManifest) -> bool {

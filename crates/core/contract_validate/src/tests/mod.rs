@@ -608,6 +608,41 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         ret_tag: "ok".to_owned(),
         ..Default::default()
     }];
+    add_portable_boundary_validation(package);
+}
+
+fn add_portable_boundary_validation(package: &mut MigrationPackageManifest) {
+    package.semantic.snapshot_validation = BoundaryValidationReportManifest {
+        validator: "snapshot-barrier".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::PortableArtifactExecution.as_str().to_owned(),
+        ok: true,
+        violation_count: 0,
+        violations: Vec::new(),
+    };
+    package.semantic.replay_validation = BoundaryValidationReportManifest {
+        validator: "package-replay".to_owned(),
+        evidence_boundary: EvidenceBoundaryLevel::PortableArtifactExecution.as_str().to_owned(),
+        ok: true,
+        violation_count: 0,
+        violations: Vec::new(),
+    };
+    package.semantic.roots.snapshot_validation_roots = vec![format!(
+        "boundary-validation validator=snapshot-barrier evidence={} ok=true violations=0",
+        EvidenceBoundaryLevel::PortableArtifactExecution.as_str()
+    )];
+    package.semantic.roots.replay_validation_roots = vec![format!(
+        "boundary-validation validator=package-replay evidence={} ok=true violations=0",
+        EvidenceBoundaryLevel::PortableArtifactExecution.as_str()
+    )];
+}
+
+fn clear_boundary_validation(package: &mut MigrationPackageManifest) {
+    package.semantic.snapshot_validation = Default::default();
+    package.semantic.replay_validation = Default::default();
+    package.semantic.snapshot_validation_violation_count = 0;
+    package.semantic.replay_validation_violation_count = 0;
+    package.semantic.roots.snapshot_validation_roots.clear();
+    package.semantic.roots.replay_validation_roots.clear();
 }
 
 fn convert_native_chain_to_trap_only(package: &mut MigrationPackageManifest, trap_offset: u64) {
@@ -672,6 +707,25 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
     assert!(report.portable_artifact_execution_claim);
     assert!(report.visa_native_portable_artifact_execution_claim);
     assert_eq!(report.visa_native_artifact_count, 1);
+}
+
+#[test]
+fn external_audit_rejects_portable_chain_without_boundary_validation() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    clear_boundary_validation(&mut package);
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.contract_package_valid);
+    assert_eq!(report.visa_native_artifact_count, 1);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(
+        report
+            .warnings()
+            .any(|finding| { finding.code == "portable-artifact-execution-without-validation" })
+    );
 }
 
 #[test]

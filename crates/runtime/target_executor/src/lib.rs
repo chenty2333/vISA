@@ -1365,7 +1365,7 @@ mod tests {
     fn test_boundary_validation_report(validator: &str) -> BoundaryValidationReportManifest {
         BoundaryValidationReportManifest {
             validator: validator.to_owned(),
-            evidence_boundary: EvidenceBoundaryLevel::SemanticModel.as_str().to_owned(),
+            evidence_boundary: EvidenceBoundaryLevel::PortableArtifactExecution.as_str().to_owned(),
             ok: true,
             violation_count: 0,
             violations: Vec::new(),
