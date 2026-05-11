@@ -19,6 +19,7 @@ cargo run -p vmos-conformance -- plan-json
 cargo run -p vmos-conformance -- sample-report-json
 cargo run -p vmos-conformance -- ltp-plan-json
 cargo run -p vmos-conformance -- sample-ltp-report-json
+cargo run -p vmos-conformance -- sample-performance-report-json
 cargo run -p vmos-conformance -- validate-sample
 cargo run -p vmos-conformance -- write-sample-report target/vmos-conformance.json
 cargo run -p vmos-conformance -- validate-report target/vmos-conformance.json
@@ -40,3 +41,6 @@ compatibility report that can be piped into `validate-report`.
 `scripts/run-ltp-conformance.sh` is the standard wrapper when a target already has
 LTP installed. It runs the cataloged subsets, preserves raw logs, emits
 `vmos-ltp-report.json`, and gates the result.
+Performance benchmark reports use the `vmos-performance-benchmark` suite id.
+Passing or failing performance results must carry concrete numeric metrics; a
+benchmark claim without metrics is rejected by report validation.

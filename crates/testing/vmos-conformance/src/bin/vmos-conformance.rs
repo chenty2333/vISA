@@ -6,8 +6,8 @@ use std::{
 
 use vmos_conformance::{
     Boundary, LtpInvocation, LtpSubset, full_catalog, gate_report_json,
-    ltp_report_from_subset_logs, sample_ltp_report, sample_report, validate_catalog,
-    validate_report,
+    ltp_report_from_subset_logs, sample_ltp_report, sample_performance_report, sample_report,
+    validate_catalog, validate_report,
 };
 
 fn main() -> ExitCode {
@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         }
         "ltp-plan-json" => print_json(&LtpInvocation::default_plan("target/ltp")),
         "sample-ltp-report-json" => print_json(&sample_ltp_report()),
+        "sample-performance-report-json" => print_json(&sample_performance_report()),
         "validate-report" => {
             let path = args.next().unwrap_or_else(|| "-".to_string());
             validate_report_path(&path)
@@ -34,6 +35,10 @@ fn main() -> ExitCode {
         },
         "write-sample-ltp-report" => match args.next() {
             Some(path) => write_json_file(&path, &sample_ltp_report()),
+            None => usage(),
+        },
+        "write-sample-performance-report" => match args.next() {
+            Some(path) => write_json_file(&path, &sample_performance_report()),
             None => usage(),
         },
         "ltp-report-from-logs" => {
@@ -140,7 +145,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|ltp-report-from-logs <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|validate-report <path|->|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

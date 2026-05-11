@@ -666,6 +666,12 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                     format!("{} has no remaining uncertainty text", result.spec_id),
                 ));
             }
+            if spec.claim == ClaimKind::PerformanceBenchmark && result.metrics.is_empty() {
+                findings.push(finding(
+                    "missing-performance-metrics",
+                    format!("{} is a performance result without metrics", result.spec_id),
+                ));
+            }
         }
     }
     validate_suite_coverage(report, &result_ids, catalog, &mut findings);
@@ -727,6 +733,9 @@ fn validate_suite_coverage(
         "vmos-layered-conformance" => catalog.iter().map(|spec| spec.id.clone()).collect(),
         "vmos-linux-ltp-personality-compatibility" => {
             linux_ltp_catalog().into_iter().map(|spec| spec.id).collect()
+        }
+        "vmos-performance-benchmark" => {
+            performance_catalog().into_iter().map(|spec| spec.id).collect()
         }
         suite_id => {
             findings.push(finding("unknown-suite-id", format!("unknown suite id {suite_id}")));
@@ -794,6 +803,33 @@ pub fn sample_ltp_report() -> ConformanceReport {
                     Boundary::PortableArtifactExecution,
                     spec.required_profile.clone(),
                 )
+            })
+            .collect(),
+    }
+}
+
+pub fn sample_performance_report() -> ConformanceReport {
+    ConformanceReport {
+        schema_version: REPORT_SCHEMA_VERSION.to_string(),
+        suite_id: "vmos-performance-benchmark".to_string(),
+        target: "performance-parser-sample".to_string(),
+        generated_by: "vmos-conformance sample-performance-report".to_string(),
+        results: performance_catalog()
+            .into_iter()
+            .map(|spec| {
+                let mut metrics = BTreeMap::new();
+                metrics.insert("sample_value".to_string(), 1.0);
+                TestResult {
+                    spec_id: spec.id,
+                    outcome: Outcome::Pass,
+                    observed_boundary: spec.minimum_boundary,
+                    observed_profile: spec.required_profile,
+                    evidence: "synthetic performance metric recorded".to_string(),
+                    remaining_uncertainty:
+                        "sample report validates schema only; it is not a real benchmark run"
+                            .to_string(),
+                    metrics,
+                }
             })
             .collect(),
     }
@@ -1149,6 +1185,47 @@ mod tests {
         assert!(!gate.ok);
         assert!(gate.validation.unwrap().ok);
         assert!(gate.outcome_findings.iter().any(|finding| finding.code == "result-not-run"));
+    }
+
+    #[test]
+    fn performance_report_requires_metrics_for_pass_or_fail_results() {
+        let catalog = performance_catalog();
+        let report = ConformanceReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "vmos-performance-benchmark".to_string(),
+            target: "unit-test".to_string(),
+            generated_by: "unit-test".to_string(),
+            results: catalog
+                .iter()
+                .map(|spec| TestResult {
+                    spec_id: spec.id.clone(),
+                    outcome: Outcome::Pass,
+                    observed_boundary: spec.minimum_boundary,
+                    observed_profile: spec.required_profile.clone(),
+                    evidence: "benchmark completed".to_string(),
+                    remaining_uncertainty: "metrics were accidentally omitted".to_string(),
+                    metrics: BTreeMap::new(),
+                })
+                .collect(),
+        };
+
+        let validation = validate_report(&report, &catalog);
+        assert!(!validation.ok);
+        assert!(
+            validation.findings.iter().any(|finding| finding.code == "missing-performance-metrics")
+        );
+    }
+
+    #[test]
+    fn sample_performance_report_validates_and_gates() {
+        let catalog = performance_catalog();
+        let report = sample_performance_report();
+        let validation = validate_report(&report, &catalog);
+        let gate = gate_report_json(&serde_json::to_vec(&report).unwrap(), &catalog);
+
+        assert!(validation.ok, "{:#?}", validation.findings);
+        assert!(gate.ok, "{gate:#?}");
+        assert!(report.results.iter().all(|result| !result.metrics.is_empty()));
     }
 
     #[test]
