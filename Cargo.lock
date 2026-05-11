@@ -1755,6 +1755,7 @@ dependencies = [
  "substrate_api",
  "target_abi",
  "visa_profile",
+ "vmos-conformance",
  "vms_runtime",
  "wasmtime",
  "wat",

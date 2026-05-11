@@ -667,6 +667,9 @@ fn hostcall_result_i64(value: &VisaHostcallValue) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, fs};
+
+    use contract_core::CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION;
     use semantic_core::{EventKind, target_executor::HostcallCategory};
     use sha2::{Digest, Sha256};
     use substrate_api::{
@@ -953,6 +956,22 @@ mod tests {
         let mut header = TargetArtifactHeaderV1::parse(image).expect("header");
         header.image_hash = hash;
         header.write_to(image).expect("image hash");
+    }
+
+    fn temp_wasmtime_test_dir(name: &str) -> std::path::PathBuf {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("vms-wasmtime-{name}-{}-{nonce}", std::process::id()))
+    }
+
+    fn test_sha256_hex(bytes: &[u8]) -> String {
+        let digest = Sha256::digest(bytes);
+        let mut out = String::with_capacity(64);
+        for byte in digest {
+            use core::fmt::Write as _;
+            write!(&mut out, "{byte:02x}").unwrap();
+        }
+        out
     }
 
     fn wasm_module_bytes() -> Vec<u8> {
@@ -1516,6 +1535,44 @@ mod tests {
         assert_eq!(evidence.contract_graph.code_objects.len(), 1);
         assert_eq!(evidence.contract_graph.activations.len(), 1);
         assert_eq!(evidence.contract_graph.hostcalls.len(), 16);
+        let snapshot_json = evidence.contract_graph_snapshot_artifact_json();
+        assert!(snapshot_json.contains(CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION));
+        assert!(
+            snapshot_json.contains("\"claimed_evidence_level\":\"portable-artifact-execution\"")
+        );
+        assert!(snapshot_json.contains("\"hostcalls\":[{\"id\":1,\"generation\":1}"));
+        let root = temp_wasmtime_test_dir("snapshot-artifact");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("contract-graph-snapshot.json");
+        fs::write(&path, snapshot_json.as_bytes()).unwrap();
+        let conformance_report = vmos_conformance::ConformanceReport {
+            schema_version: vmos_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "vmos-layered-conformance".to_string(),
+            target: "vms-wasmtime-unit".to_string(),
+            generated_by: "vms-wasmtime-test".to_string(),
+            results: vec![vmos_conformance::TestResult {
+                spec_id: "visa.native.full-hostcall-abi".to_string(),
+                outcome: vmos_conformance::Outcome::Pass,
+                observed_boundary: vmos_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(
+                    SubstrateProfile::SnapshotReplayCapable.canonical_id().to_string(),
+                ),
+                evidence: "wasmtime adapter produced contract graph snapshot artifact json"
+                    .to_string(),
+                remaining_uncertainty:
+                    "unit fixture validates host-side portable artifact evidence".to_string(),
+                metrics: BTreeMap::new(),
+                evidence_artifacts: vec![vmos_conformance::EvidenceArtifact {
+                    kind: vmos_conformance::EvidenceArtifactKind::ContractGraphSnapshot,
+                    uri: path.display().to_string(),
+                    sha256: test_sha256_hex(snapshot_json.as_bytes()),
+                    description: "wasmtime contract graph snapshot artifact".to_string(),
+                }],
+            }],
+        };
+        let validation = vmos_conformance::validate_report_artifacts(&conformance_report, ".");
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
         assert!(evidence.authority_extractions.iter().any(|entry| {
             entry.authority == "DmaAuthority"
                 && entry.operation == "dma_alloc"

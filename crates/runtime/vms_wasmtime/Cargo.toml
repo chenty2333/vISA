@@ -19,3 +19,4 @@ wasmtime = { workspace = true, features = ["cranelift", "runtime", "std"] }
 [dev-dependencies]
 wat = "1"
 sha2.workspace = true
+vmos-conformance = { path = "../../testing/vmos-conformance" }
