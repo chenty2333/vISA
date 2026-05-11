@@ -277,18 +277,21 @@ impl WasmVisaExecutor {
                             .map_err(|error| {
                                 wasmtime::Error::msg(format!("hostcall {n} decode failed: {error}"))
                             })?;
-                        let result = match caller.data_mut().dispatch_hostcall(n, payload) {
-                            Ok(report) => {
-                                if let VisaHostcallValue::Bytes(bytes) = &report.value
-                                    && operation_returns_guest_bytes(&obj, &op)
-                                    && args[4] >= 0
-                                {
-                                    write_guest_bytes(&mut caller, args[4] as usize, bytes)
-                                        .map_err(wasmtime::Error::msg)?;
-                                }
-                                hostcall_result_i64(&report.value)
+                        let report =
+                            caller.data_mut().dispatch_hostcall(n, payload).map_err(|error| {
+                                wasmtime::Error::msg(format!(
+                                    "hostcall {n} dispatch failed: {error:?}"
+                                ))
+                            })?;
+                        let result = {
+                            if let VisaHostcallValue::Bytes(bytes) = &report.value
+                                && operation_returns_guest_bytes(&obj, &op)
+                                && args[4] >= 0
+                            {
+                                write_guest_bytes(&mut caller, args[4] as usize, bytes)
+                                    .map_err(wasmtime::Error::msg)?;
                             }
-                            Err(_e) => -1,
+                            hostcall_result_i64(&report.value)
                         };
                         results[0] = Val::I64(result);
                         Ok(())
@@ -613,6 +616,7 @@ mod tests {
     #[derive(Default)]
     struct TestSubstrate {
         console: Vec<u8>,
+        fail_console: bool,
         timers: usize,
         guest_memory_source: Vec<u8>,
         guest_memory_sink: Vec<u8>,
@@ -625,6 +629,9 @@ mod tests {
 
     impl ConsoleAuthority for TestSubstrate {
         fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
+            if self.fail_console {
+                return Err(SubstrateError::unsupported("ConsoleAuthority", "console_write"));
+            }
             self.console.extend_from_slice(bytes);
             Ok(bytes.len())
         }
@@ -1228,6 +1235,36 @@ mod tests {
                 .artifacts
                 .iter()
                 .any(|artifact| artifact.role == "visa-native-workload")
+        );
+    }
+
+    #[test]
+    fn run_rejects_substrate_dispatch_error_without_success_report() {
+        let runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        let substrate = TestSubstrate { fail_console: true, ..TestSubstrate::default() };
+        let mut executor = WasmVisaExecutor::new(runtime, Box::new(substrate));
+
+        let artifact = fake_artifact(&REQUIRED_SECTIONS, &visa_native_console_wasm());
+        let personality = vms_runtime::personality::native::VisaNativePersonality::new(
+            "native-visa-console-fails",
+            SubstrateProfile::MinimalBareMetal,
+        );
+
+        let err = executor
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(41) },
+                "visa_start",
+            )
+            .expect_err("substrate dispatch failure must stop execution");
+
+        assert!(
+            matches!(err, WasmVisaError::Wasmtime(ref message) if message.contains("hostcall 1 dispatch failed")),
+            "expected hostcall dispatch failure, got: {err}"
+        );
+        assert!(
+            executor.hostcall_reports().is_empty(),
+            "failed dispatch must not expose a successful hostcall report"
         );
     }
 
