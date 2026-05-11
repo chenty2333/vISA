@@ -215,6 +215,16 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
             ));
         }
         if real_target_has_concrete_arch(package)
+            && (!real_target_arch_is_supported(&package.target.arch_requirement)
+                || !real_target_arch_is_supported(&package.required_artifact_profile.target_arch))
+        {
+            findings.push(ExternalAuditFinding::new(
+                ExternalAuditSeverity::Error,
+                "real-target-unknown-arch",
+                "real target substrate claim requires a supported canonical target arch token",
+            ));
+        }
+        if real_target_has_concrete_arch(package)
             && package.target.arch_requirement != package.required_artifact_profile.target_arch
         {
             findings.push(ExternalAuditFinding::new(
@@ -278,6 +288,10 @@ fn real_target_has_concrete_arch(package: &MigrationPackageManifest) -> bool {
         && !package.required_artifact_profile.target_arch.is_empty()
         && package.target.arch_requirement != "target-native"
         && package.required_artifact_profile.target_arch != "target-native"
+}
+
+fn real_target_arch_is_supported(arch: &str) -> bool {
+    matches!(arch, "riscv64" | "x86_64" | "aarch64")
 }
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {

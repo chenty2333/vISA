@@ -1327,6 +1327,39 @@ fn external_audit_rejects_real_target_arch_mismatch() {
 }
 
 #[test]
+fn external_audit_rejects_real_target_unknown_arch_token() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    add_real_target_boundary_validation(&mut package);
+    package.target.arch_requirement = "banana64".to_owned();
+    package.required_artifact_profile.target_arch = "banana64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:ConsoleAuthority:console_write requester=native-visa"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority: "ConsoleAuthority".to_owned(),
+        operation: "console_write".to_owned(),
+        requester: Some("native-visa".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: None,
+        explanation: "real target extraction with unknown arch metadata".to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert!(!report.ok());
+    assert!(report.errors().any(|finding| finding.code == "real-target-unknown-arch"));
+}
+
+#[test]
 fn external_audit_rejects_generic_substrate_event_as_real_target_extraction() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
