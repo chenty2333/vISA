@@ -113,7 +113,7 @@ pub fn audit_migration_package(package: &MigrationPackageManifest) -> ExternalMi
         .semantic
         .target_artifacts
         .iter()
-        .filter(|artifact| artifact.role.contains("personality"))
+        .filter(|artifact| artifact_is_personality(artifact))
         .count();
     let linux_weighted_artifact_count = package
         .semantic
@@ -295,9 +295,13 @@ fn real_target_arch_is_supported(arch: &str) -> bool {
 }
 
 fn is_visa_native(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {
-    !artifact.role.contains("personality")
+    !artifact_is_personality(artifact)
         && (artifact.role == "visa-native-workload"
             || artifact.hostcalls.iter().any(|hostcall| hostcall.object.starts_with("visa.")))
+}
+
+fn artifact_is_personality(artifact: &artifact_manifest::TargetArtifactImageManifest) -> bool {
+    lower_contains(&artifact.role, "personality")
 }
 
 fn artifact_participates_in_execution(
