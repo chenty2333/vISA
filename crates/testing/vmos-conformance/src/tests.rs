@@ -200,6 +200,22 @@ fn report_rejects_empty_result_set() {
 }
 
 #[test]
+fn report_rejects_empty_metadata() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    report.suite_id.clear();
+    report.target = "  ".to_string();
+    report.generated_by.clear();
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(validation.findings.iter().any(|finding| finding.code == "missing-report-suite-id"));
+    assert!(validation.findings.iter().any(|finding| finding.code == "missing-report-target"));
+    assert!(validation.findings.iter().any(|finding| finding.code == "missing-report-generator"));
+}
+
+#[test]
 fn report_rejects_duplicate_result_ids() {
     let catalog = full_catalog();
     let spec = catalog.iter().find(|spec| spec.id == "visa.artifact.load").unwrap();

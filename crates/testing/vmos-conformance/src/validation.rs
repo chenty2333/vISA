@@ -32,6 +32,15 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
             format!("unsupported schema {}", report.schema_version),
         ));
     }
+    if report.suite_id.trim().is_empty() {
+        findings.push(finding("missing-report-suite-id", "report suite id is empty"));
+    }
+    if report.target.trim().is_empty() {
+        findings.push(finding("missing-report-target", "report target is empty"));
+    }
+    if report.generated_by.trim().is_empty() {
+        findings.push(finding("missing-report-generator", "report generator is empty"));
+    }
     if report.results.is_empty() {
         findings.push(finding("empty-report", "report contains no results"));
     }
