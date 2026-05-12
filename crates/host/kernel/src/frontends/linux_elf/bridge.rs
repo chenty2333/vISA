@@ -7,19 +7,19 @@ use vmos_abi::{
     ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
     SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF,
     SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT,
-    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLONE,
-    SYS_CLONE3, SYS_CLOSE, SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
+    SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
     SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL,
     SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
     SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MMAP, SYS_MOUNT,
-    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
-    SYS_PAUSE, SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_STAT,
-    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
-    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SyscallContext,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
+    SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
+    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -116,8 +116,10 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_PRLIMIT64 => sys_prlimit64(frame),
         SYS_PRCTL => sys_prctl(frame),
         SYS_GETRANDOM => sys_getrandom(frame),
+        SYS_GETTIMEOFDAY => sys_gettimeofday(frame),
         SYS_CLOCK_GETTIME => sys_clock_gettime(frame),
         SYS_CLOCK_GETRES => sys_clock_getres(frame),
+        SYS_CLOCK_SETTIME => sys_clock_settime(frame),
         SYS_CLOCK_NANOSLEEP => sys_clock_nanosleep(frame),
         SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(frame),
         SYS_RT_SIGACTION => sys_rt_sigaction(frame),
@@ -549,18 +551,34 @@ fn sys_getrandom(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_time(frame: &SyscallFrame) -> Result<i64, i32> {
-    let now = 1 + (crate::interrupts::tick_count() / crate::interrupts::TIMER_HZ as u64);
+    let now = current_realtime_ns() / 1_000_000_000;
     if frame.rdi != 0 {
         write_user_bytes(frame.rdi, &(now as i64).to_le_bytes())?;
     }
     Ok(now as i64)
 }
 
+fn sys_gettimeofday(frame: &SyscallFrame) -> Result<i64, i32> {
+    let now_us = current_realtime_ns() / 1000;
+    if frame.rdi != 0 {
+        let mut encoded = [0u8; 16];
+        encoded[..8].copy_from_slice(&(now_us / 1_000_000).to_le_bytes());
+        encoded[8..].copy_from_slice(&(now_us % 1_000_000).to_le_bytes());
+        write_user_bytes(frame.rdi, &encoded)?;
+    }
+    Ok(0)
+}
+
 fn sys_clock_gettime(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi > 11 {
+        return Err(ERR_EINVAL);
+    }
+    let now_ns = if frame.rdi == 0 || frame.rdi == 5 || frame.rdi == 8 {
+        current_realtime_ns()
+    } else {
+        current_monotonic_ns()
+    };
     let mut encoded = [0u8; 16];
-    let tick_ns = 1_000_000_000u64 / crate::interrupts::TIMER_HZ as u64;
-    let now_ns =
-        1_000_000_000u64.saturating_add(crate::interrupts::tick_count().saturating_mul(tick_ns));
     encoded[..8].copy_from_slice(&(now_ns / 1_000_000_000).to_le_bytes());
     encoded[8..].copy_from_slice(&(now_ns % 1_000_000_000).to_le_bytes());
     write_user_bytes(frame.rsi, &encoded)?;
@@ -579,6 +597,15 @@ fn sys_clock_getres(frame: &SyscallFrame) -> Result<i64, i32> {
         );
         write_user_bytes(frame.rsi, &encoded)?;
     }
+    Ok(0)
+}
+
+fn sys_clock_settime(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let now_ns = read_user_timespec_ns(frame.rsi)?;
+    active_context().set_realtime_ns(now_ns, crate::interrupts::tick_count());
     Ok(0)
 }
 
@@ -666,7 +693,11 @@ fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
-    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let fd_raw = linux_fd_arg(frame.rdi);
+    if fd_raw < 0 {
+        return Err(ERR_EBADF);
+    }
+    let fd = u32::try_from(fd_raw).map_err(|_| ERR_EBADF)?;
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
@@ -1087,6 +1118,10 @@ fn sleep_for_ms(label: &str, delay_ms: u64) -> Result<i64, i32> {
 }
 
 fn read_user_timespec_ms(ptr: u64) -> Result<u64, i32> {
+    Ok(read_user_timespec_ns(ptr)?.div_ceil(1_000_000))
+}
+
+fn read_user_timespec_ns(ptr: u64) -> Result<u64, i32> {
     let req = user_lease(ptr, LINUX_TIMESPEC_SIZE, false)?;
     let bytes = req.bytes().map_err(map_dmw_fault)?;
     let tv_sec = i64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?);
@@ -1094,13 +1129,23 @@ fn read_user_timespec_ms(ptr: u64) -> Result<u64, i32> {
     if tv_sec < 0 || tv_nsec < 0 || tv_nsec >= 1_000_000_000 {
         return Err(ERR_EINVAL);
     }
-    Ok((tv_sec as u64).saturating_mul(1000).saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
+    Ok((tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(tv_nsec as u64))
 }
 
 fn current_clock_ms() -> u64 {
-    1000u64.saturating_add(
-        crate::interrupts::tick_count().saturating_mul(1000) / crate::interrupts::TIMER_HZ as u64,
+    current_monotonic_ns() / 1_000_000
+}
+
+fn current_monotonic_ns() -> u64 {
+    1_000_000_000u64.saturating_add(
+        crate::interrupts::tick_count().saturating_mul(1_000_000_000)
+            / crate::interrupts::TIMER_HZ as u64,
     )
+}
+
+fn current_realtime_ns() -> u64 {
+    active_context()
+        .realtime_now_ns(crate::interrupts::tick_count(), crate::interrupts::TIMER_HZ as u64)
 }
 
 fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {

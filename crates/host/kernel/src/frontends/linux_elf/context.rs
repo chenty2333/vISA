@@ -29,6 +29,8 @@ pub(crate) struct ActiveUserContext {
     mmap_end: u64,
     next_activation_id: u64,
     alarm_seconds: u64,
+    realtime_epoch_ns: u64,
+    realtime_epoch_tick: u64,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -56,6 +58,8 @@ impl ActiveUserContext {
             mmap_end,
             next_activation_id: (task_id as u64) << 32 | 1,
             alarm_seconds: 0,
+            realtime_epoch_ns: 1_000_000_000,
+            realtime_epoch_tick: 0,
         }
     }
 
@@ -106,6 +110,17 @@ impl ActiveUserContext {
         let previous = self.alarm_seconds;
         self.alarm_seconds = seconds;
         previous
+    }
+
+    pub(crate) fn realtime_now_ns(&self, tick_count: u64, timer_hz: u64) -> u64 {
+        let elapsed_ticks = tick_count.saturating_sub(self.realtime_epoch_tick);
+        self.realtime_epoch_ns
+            .saturating_add(elapsed_ticks.saturating_mul(1_000_000_000) / timer_hz.max(1))
+    }
+
+    pub(crate) fn set_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
+        self.realtime_epoch_ns = now_ns;
+        self.realtime_epoch_tick = tick_count;
     }
 }
 
