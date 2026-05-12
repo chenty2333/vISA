@@ -6,17 +6,17 @@ use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS,
     ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
     SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF,
-    SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CLOCK_ADJTIME,
-    SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLONE, SYS_CLONE3, SYS_CLOSE,
-    SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FSTAT,
-    SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID,
-    SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKNAME,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
-    SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT,
-    SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE,
-    SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR,
-    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
+    SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLONE,
+    SYS_CLONE3, SYS_CLOSE, SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL,
+    SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
+    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MMAP, SYS_MOUNT,
+    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
+    SYS_PAUSE, SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_STAT,
     SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
     SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SyscallContext,
@@ -35,7 +35,7 @@ use crate::{
 
 const AT_FDCWD: i64 = -100;
 const AT_REMOVEDIR: u64 = 0x200;
-const PATH_MAX: usize = 256;
+const PATH_MAX: usize = 4096;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
@@ -90,6 +90,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_ACCESS => sys_access(frame),
         SYS_CREAT => sys_creat(frame),
         SYS_CHDIR => sys_chdir(frame),
+        SYS_CHROOT => sys_chroot(frame),
         SYS_MKDIR => sys_mkdir(frame),
         SYS_MKDIRAT => sys_mkdirat(frame),
         SYS_RMDIR => sys_rmdir(frame),
@@ -378,6 +379,15 @@ fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
+fn sys_chroot(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &path)?;
+    if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
+        return Err(vmos_abi::ERR_ENOTDIR);
+    }
+    Ok(0)
+}
+
 fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
@@ -558,6 +568,9 @@ fn sys_clock_gettime(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_clock_getres(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi > 11 {
+        return Err(ERR_EINVAL);
+    }
     if frame.rsi != 0 {
         let mut encoded = [0u8; 16];
         encoded[..8].copy_from_slice(&0u64.to_le_bytes());
@@ -1238,7 +1251,7 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
         }
         out.push(byte);
     }
-    Err(ERR_EINVAL)
+    Err(vmos_abi::ERR_ENAMETOOLONG)
 }
 
 fn read_user_u32(ptr: u64) -> Result<u32, i32> {
@@ -1304,7 +1317,7 @@ fn align_page(value: u64) -> Option<u64> {
 
 fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     if path.starts_with(b"/") {
-        return Ok(path.to_vec());
+        return Ok(normalize_user_path(path));
     }
 
     let base = if dirfd == AT_FDCWD {
@@ -1320,7 +1333,30 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
         resolved.push(b'/');
     }
     resolved.extend_from_slice(path);
-    Ok(resolved)
+    Ok(normalize_user_path(&resolved))
+}
+
+fn normalize_user_path(path: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut last_was_slash = false;
+    for byte in path.iter().copied() {
+        if byte == b'/' {
+            if !last_was_slash {
+                out.push(byte);
+            }
+            last_was_slash = true;
+        } else {
+            out.push(byte);
+            last_was_slash = false;
+        }
+    }
+    while out.len() > 1 && out.ends_with(b"/") {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push(b'/');
+    }
+    out
 }
 
 fn linux_fd_arg(raw: u64) -> i64 {
