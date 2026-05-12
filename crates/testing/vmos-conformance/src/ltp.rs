@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::{
@@ -294,7 +294,7 @@ fn matching_log_names(
         if name == exact || !name.starts_with(&prefix) || !name.ends_with(suffix) {
             continue;
         }
-        if exclude_serial && name.ends_with(".serial.log") {
+        if exclude_serial && (name.ends_with(".serial.log") || name.ends_with(".host-runltp.log")) {
             continue;
         }
         names.push(name);
@@ -329,14 +329,65 @@ pub fn default_vmos_ltp_plan(
     .collect()
 }
 
+pub fn vmos_ltp_manifest_plan(
+    output_dir: impl AsRef<Path>,
+    binary_root: impl AsRef<Path>,
+    manifest_text: &str,
+) -> Result<Vec<LtpVmosPlanEntry>, String> {
+    let output_dir = output_dir.as_ref();
+    let binary_root = binary_root.as_ref();
+    let mut entries = Vec::new();
+    for (line_idx, raw_line) in manifest_text.lines().enumerate() {
+        let line_number = line_idx + 1;
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() < 3 {
+            return Err(format!(
+                "line {line_number}: expected spec_id, case_id, and relative binary path"
+            ));
+        }
+        let spec_id = fields[0].trim();
+        let case_id = fields[1].trim();
+        let relative_binary = fields[2].trim();
+        let subset = LtpSubset::from_spec_id(spec_id)
+            .ok_or_else(|| format!("line {line_number}: unknown LTP spec id {spec_id}"))?;
+        validate_ltp_case_id(case_id, line_number)?;
+        let relative_binary = validate_ltp_relative_path(relative_binary, line_number)?;
+        entries.push(vmos_ltp_plan_entry_with_binary(
+            output_dir,
+            binary_root,
+            subset,
+            case_id,
+            &relative_binary,
+        ));
+    }
+    if entries.is_empty() {
+        return Err("manifest did not contain any VMOS LTP entries".to_string());
+    }
+    Ok(entries)
+}
+
 fn vmos_ltp_plan_entry(
     output_dir: &Path,
     binary_root: &Path,
     subset: LtpSubset,
     case_id: &str,
 ) -> LtpVmosPlanEntry {
+    vmos_ltp_plan_entry_with_binary(output_dir, binary_root, subset, case_id, Path::new(case_id))
+}
+
+fn vmos_ltp_plan_entry_with_binary(
+    output_dir: &Path,
+    binary_root: &Path,
+    subset: LtpSubset,
+    case_id: &str,
+    relative_binary: &Path,
+) -> LtpVmosPlanEntry {
     let spec_id = subset.spec_id().to_string();
-    let binary_path = binary_root.join(case_id);
+    let binary_path = binary_root.join(relative_binary);
     let logs_dir = output_dir.join("logs");
     LtpVmosPlanEntry {
         spec_id,
@@ -355,6 +406,37 @@ fn vmos_ltp_plan_entry(
             case_id
         ))),
     }
+}
+
+fn validate_ltp_case_id(case_id: &str, line_number: usize) -> Result<(), String> {
+    if case_id.is_empty() {
+        return Err(format!("line {line_number}: case id is empty"));
+    }
+    if !case_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err(format!(
+            "line {line_number}: case id {case_id:?} is not safe for log file names"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ltp_relative_path(path: &str, line_number: usize) -> Result<PathBuf, String> {
+    if path.is_empty() {
+        return Err(format!("line {line_number}: binary path is empty"));
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Err(format!("line {line_number}: binary path must be relative"));
+    }
+    if !path.components().all(|component| matches!(component, Component::Normal(_))) {
+        return Err(format!(
+            "line {line_number}: binary path must not contain '.', '..', prefixes, or roots"
+        ));
+    }
+    Ok(path.to_path_buf())
 }
 
 fn path_string(path: PathBuf) -> String {

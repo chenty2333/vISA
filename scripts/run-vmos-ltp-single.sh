@@ -13,6 +13,10 @@ The test ELF must be loadable by the current VMOS Linux ELF frontend. Ordinary
 dynamic Linux binaries may fail until the frontend supports their loader, stack,
 and auxv requirements; that failure is recorded as LTP failure evidence rather
 than hidden.
+
+Environment:
+
+  VMOS_LTP_RUN_TIMEOUT   Optional timeout passed to timeout(1) for the VMOS run.
 EOF
 }
 
@@ -36,7 +40,13 @@ fi
 mkdir -p "$(dirname "$raw_log")" "$(dirname "$trace_log")" "$(dirname "$serial_log")"
 
 set +e
-VMOS_LINUX_USER_ELF="$test_elf" cargo run --quiet -p runner -- --verbose >"$serial_log" 2>&1
+if [[ -n "${VMOS_LTP_RUN_TIMEOUT:-}" ]]; then
+    timeout --kill-after=5s "$VMOS_LTP_RUN_TIMEOUT" \
+        env VMOS_LINUX_USER_ELF="$test_elf" cargo run --quiet -p runner -- --verbose \
+        >"$serial_log" 2>&1
+else
+    VMOS_LINUX_USER_ELF="$test_elf" cargo run --quiet -p runner -- --verbose >"$serial_log" 2>&1
+fi
 run_status=$?
 set -e
 

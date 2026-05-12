@@ -5,19 +5,20 @@ use semantic_core::ResourceHandle;
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS,
     ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
-    SYS_ACCEPT, SYS_ACCESS, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CHDIR, SYS_CHMOD,
-    SYS_CHOWN, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLONE, SYS_CLOSE,
-    SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
-    SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPID,
-    SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MMAP, SYS_MPROTECT, SYS_MSYNC,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PIPE2, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_STAT, SYS_STATFS,
-    SYS_TRUNCATE, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
-    SyscallContext,
+    SYS_ACCEPT, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CHDIR,
+    SYS_CHMOD, SYS_CHOWN, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+    SYS_CLOCK_NANOSLEEP, SYS_CLONE, SYS_CLOSE, SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FALLOCATE, SYS_FCHMODAT,
+    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID,
+    SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
+    SYS_OPEN, SYS_OPENAT, SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
+    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -86,6 +87,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_STAT | SYS_LSTAT => sys_stat(frame),
         SYS_NEWFSTATAT => sys_newfstatat(frame),
         SYS_ACCESS => sys_access(frame),
+        SYS_CREAT => sys_creat(frame),
         SYS_CHDIR => sys_chdir(frame),
         SYS_MKDIR => sys_mkdir(frame),
         SYS_MKDIRAT => sys_mkdirat(frame),
@@ -116,7 +118,13 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(frame),
         SYS_RT_SIGACTION => sys_rt_sigaction(frame),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
-        SYS_ALARM => Ok(0),
+        SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
+        SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
+        SYS_TGKILL => sys_tgkill(frame),
+        SYS_UMASK => Ok(0),
+        SYS_MOUNT => Err(ERR_EPERM),
+        SYS_FALLOCATE => Err(vmos_abi::ERR_EOPNOTSUPP),
+        SYS_ADD_KEY | SYS_KEYCTL => Err(ERR_EPERM),
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
         SYS_WAIT4 => sys_wait4(frame),
         SYS_SETPGID => Ok(0),
@@ -127,8 +135,11 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_EPOLL_WAIT => sys_epoll_wait(frame),
         SYS_SOCKET => sys_socket(frame),
         SYS_BIND => sys_bind(frame),
+        SYS_LISTEN => sys_listen(frame),
         SYS_CONNECT => sys_connect(frame),
         SYS_ACCEPT => sys_accept(frame),
+        SYS_GETSOCKNAME => sys_getsockname(frame),
+        SYS_GETPEERNAME => Err(vmos_abi::ERR_ENOTCONN),
         SYS_SENDTO => sys_sendto(frame),
         SYS_RECVFROM => sys_recvfrom(frame),
         SYS_SETSOCKOPT => sys_setsockopt(frame),
@@ -231,6 +242,14 @@ fn sys_openat(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_open(frame: &SyscallFrame) -> Result<i64, i32> {
     sys_openat_inner(AT_FDCWD, frame.rdi, frame.rsi, frame.rdx)
+}
+
+fn sys_creat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const O_WRONLY: u64 = 0x1;
+    const O_CREAT: u64 = 0x40;
+    const O_TRUNC: u64 = 0x200;
+
+    sys_openat_inner(AT_FDCWD, frame.rdi, O_WRONLY | O_CREAT | O_TRUNC, frame.rsi)
 }
 
 fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) -> Result<i64, i32> {
@@ -481,6 +500,14 @@ fn sys_clock_nanosleep(frame: &SyscallFrame) -> Result<i64, i32> {
     sleep_from_user_timespec("ring3_clock_nanosleep", SYS_NANOSLEEP, req_ptr)
 }
 
+fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rsi == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let _ = user_lease(frame.rsi, 208, true)?;
+    Err(ERR_EPERM)
+}
+
 fn sys_sched_getaffinity(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
     if len == 0 {
@@ -509,6 +536,24 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
         write_user_bytes(frame.rdx, &[0; LINUX_SIGSET_BYTES])?;
     }
     Ok(0)
+}
+
+fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
+    let tgid = frame.rdi;
+    let tid = frame.rsi;
+    let signal = frame.rdx;
+    let current = active_context().task_id as u64;
+
+    if signal == 0 {
+        return Ok(0);
+    }
+    if tgid != current || tid != current {
+        return Err(vmos_abi::ERR_ESRCH);
+    }
+    if signal > 64 {
+        return Err(ERR_EINVAL);
+    }
+    handle_exit(128 + signal as i32)
 }
 
 fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
@@ -646,6 +691,13 @@ fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
     )
 }
 
+fn sys_listen(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_listen",
+        SyscallContext::new(SYS_LISTEN, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
+    )
+}
+
 fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
     dispatch_ret(
         "ring3_connect",
@@ -654,10 +706,49 @@ fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_accept(frame: &SyscallFrame) -> Result<i64, i32> {
+    validate_optional_sockaddr(frame.rsi, frame.rdx, true)?;
     dispatch_ret(
         "ring3_accept",
         SyscallContext::new(SYS_ACCEPT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
     )
+}
+
+fn sys_getsockname(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if fd < 3 {
+        return Err(ERR_EBADF);
+    }
+    write_sockaddr_in(frame.rsi, frame.rdx)
+}
+
+fn validate_optional_sockaddr(addr_ptr: u64, len_ptr: u64, writable: bool) -> Result<(), i32> {
+    if addr_ptr == 0 && len_ptr == 0 {
+        return Ok(());
+    }
+    if addr_ptr == 0 || len_ptr == 0 {
+        return Err(ERR_EINVAL);
+    }
+    let addr_len = read_user_u32(len_ptr)?;
+    if addr_len == 0 || addr_len > 128 {
+        return Err(ERR_EINVAL);
+    }
+    let _ = user_lease(addr_ptr, addr_len as u64, writable)?;
+    Ok(())
+}
+
+fn write_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<i64, i32> {
+    if addr_ptr == 0 || len_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let addr_len = read_user_u32(len_ptr)?;
+    if addr_len < 16 {
+        return Err(ERR_EINVAL);
+    }
+    let mut sockaddr = [0u8; 16];
+    sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
+    write_user_bytes(addr_ptr, &sockaddr)?;
+    write_user_u32(len_ptr, 16)?;
+    Ok(0)
 }
 
 fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1054,6 +1145,16 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
         out.push(byte);
     }
     Err(ERR_EINVAL)
+}
+
+fn read_user_u32(ptr: u64) -> Result<u32, i32> {
+    let lease = user_lease(ptr, 4, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    Ok(u32::from_le_bytes(bytes[..4].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn write_user_u32(ptr: u64, value: u32) -> Result<(), i32> {
+    write_user_bytes(ptr, &value.to_le_bytes())
 }
 
 fn write_user_bytes(ptr: u64, bytes: &[u8]) -> Result<(), i32> {

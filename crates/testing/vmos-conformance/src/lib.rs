@@ -22,7 +22,7 @@ pub use ltp::{
     default_vmos_ltp_plan, ltp_raw_log_from_serial, ltp_report_from_log_dir,
     ltp_report_from_subset_logs, ltp_subset_report_from_present_logs, ltp_subset_result,
     ltp_vmos_subset_report_from_log_dir, ltp_vmos_trace_from_serial, parse_ltp_result_line,
-    parse_ltp_results,
+    parse_ltp_results, vmos_ltp_manifest_plan,
 };
 pub use performance::{
     PerformancePlanEntry, criterion_performance_plan_entries,

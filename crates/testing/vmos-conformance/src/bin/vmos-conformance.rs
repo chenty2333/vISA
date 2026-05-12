@@ -14,7 +14,7 @@ use vmos_conformance::{
     ltp_report_from_log_dir as build_ltp_report_from_log_dir, ltp_vmos_subset_report_from_log_dir,
     ltp_vmos_trace_from_serial, parse_report_json, performance_catalog, sample_ltp_report,
     sample_performance_report, sample_report, validate_catalog, validate_report,
-    validate_report_artifacts,
+    validate_report_artifacts, vmos_ltp_manifest_plan,
 };
 
 fn main() -> ExitCode {
@@ -35,6 +35,18 @@ fn main() -> ExitCode {
             let output_dir = args.next().unwrap_or_else(|| "target/vmos-ltp".to_string());
             let binary_root = args.next().unwrap_or_else(|| "target/ltp-bins".to_string());
             print_vmos_ltp_plan_lines(&output_dir, &binary_root)
+        }
+        "vmos-ltp-manifest-plan-lines" => {
+            let Some(output_dir) = args.next() else {
+                return usage();
+            };
+            let Some(binary_root) = args.next() else {
+                return usage();
+            };
+            let Some(manifest_path) = args.next() else {
+                return usage();
+            };
+            print_vmos_ltp_manifest_plan_lines(&output_dir, &binary_root, &manifest_path)
         }
         "sample-ltp-report-json" => print_json(&sample_ltp_report()),
         "sample-performance-report-json" => print_json(&sample_performance_report()),
@@ -314,6 +326,40 @@ fn print_vmos_ltp_plan_lines(output_dir: &str, binary_root: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn print_vmos_ltp_manifest_plan_lines(
+    output_dir: &str,
+    binary_root: &str,
+    manifest_path: &str,
+) -> ExitCode {
+    let manifest = match fs::read_to_string(manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            eprintln!("failed to read VMOS LTP manifest {manifest_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let plan = match vmos_ltp_manifest_plan(output_dir, binary_root, &manifest) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("invalid VMOS LTP manifest {manifest_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for entry in plan {
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            entry.spec_id,
+            entry.case_id,
+            entry.binary_path,
+            entry.output_log,
+            entry.trace_log,
+            entry.serial_log,
+            entry.subset.scenario_arg()
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 fn ltp_raw_log_from_serial_command(case_id: &str, serial_path: &str, status: i32) -> ExitCode {
     let bytes = match fs::read(serial_path) {
         Ok(bytes) => bytes,
@@ -544,7 +590,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|vmos-ltp-plan-lines [output-dir] [binary-root]|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|ltp-vmos-report-from-logs <dir> [boundary] [profile]|ltp-raw-log-from-serial <case-id> <serial-log> [runner-status]|ltp-vmos-trace-from-serial <spec-id> <case-id> <binary> <raw-log-uri> <serial-log-uri> <serial-log> [runner-status]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: vmos-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|vmos-ltp-plan-lines [output-dir] [binary-root]|vmos-ltp-manifest-plan-lines <output-dir> <binary-root> <manifest>|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|ltp-vmos-report-from-logs <dir> [boundary] [profile]|ltp-raw-log-from-serial <case-id> <serial-log> [runner-status]|ltp-vmos-trace-from-serial <spec-id> <case-id> <binary> <raw-log-uri> <serial-log-uri> <serial-log> [runner-status]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }

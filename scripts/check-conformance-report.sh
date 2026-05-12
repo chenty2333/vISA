@@ -166,6 +166,26 @@ run_conformance validate-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "
 run_conformance validate-report-with-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "$vmos_wrapper_output/logs" \
     >"$tmp_root/vmos-wrapper-combined-gate.json"
 
+vmos_manifest="$tmp_root/vmos-ltp-manifest.tsv"
+cat >"$vmos_manifest" <<'EOF'
+# spec_id	case_id	relative_binary	source
+linux-ltp.syscalls.core	getpid01	getpid01	fake
+linux-ltp.fs.basic	open01	open01	fake
+EOF
+
+vmos_manifest_output="$tmp_root/vmos-manifest-wrapper"
+scripts/run-vmos-ltp-manifest.sh "$vmos_manifest_output" "$fake_ltp_root" "$vmos_manifest" \
+    portable-artifact-execution guest-frontend "$fake_vmos_single" >/dev/null
+test -s "$vmos_manifest_output/vmos-ltp-gate.json"
+test -s "$vmos_manifest_output/vmos-ltp-artifact-gate.json"
+test -s "$vmos_manifest_output/vmos-ltp-combined-gate.json"
+run_conformance validate-report "$vmos_manifest_output/vmos-ltp-report.json" \
+    >"$tmp_root/vmos-manifest-wrapper-gate.json"
+run_conformance validate-artifacts "$vmos_manifest_output/vmos-ltp-report.json" "$vmos_manifest_output/logs" \
+    >"$tmp_root/vmos-manifest-wrapper-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$vmos_manifest_output/vmos-ltp-report.json" "$vmos_manifest_output/logs" \
+    >"$tmp_root/vmos-manifest-wrapper-combined-gate.json"
+
 criterion_root="$tmp_root/criterion"
 run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"
 while IFS=$'\t' read -r _spec_id _bench_id _metric estimate_path; do

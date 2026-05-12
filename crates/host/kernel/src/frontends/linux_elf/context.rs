@@ -28,6 +28,7 @@ pub(crate) struct ActiveUserContext {
     mmap_cursor: u64,
     mmap_end: u64,
     next_activation_id: u64,
+    alarm_seconds: u64,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -54,6 +55,7 @@ impl ActiveUserContext {
             mmap_cursor: mmap_base,
             mmap_end,
             next_activation_id: (task_id as u64) << 32 | 1,
+            alarm_seconds: 0,
         }
     }
 
@@ -98,6 +100,12 @@ impl ActiveUserContext {
 
     pub(crate) fn set_cwd(&mut self, path: Vec<u8>) {
         self.cwd = path;
+    }
+
+    pub(crate) fn replace_alarm(&mut self, seconds: u64) -> u64 {
+        let previous = self.alarm_seconds;
+        self.alarm_seconds = seconds;
+        previous
     }
 }
 

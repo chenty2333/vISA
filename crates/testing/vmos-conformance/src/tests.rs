@@ -1507,6 +1507,36 @@ fn vmos_ltp_subset_report_aggregates_per_case_logs() {
 }
 
 #[test]
+fn ltp_report_ignores_host_runltp_transport_logs_as_raw_results() {
+    let root = temp_criterion_dir("ltp-host-transport-logs");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("linux-ltp.fs.basic.log"), "open01 1 TPASS : passed\n").unwrap();
+    fs::write(root.join("linux-ltp.fs.basic.host-runltp.log"), "host wrapper stdout only\n")
+        .unwrap();
+
+    let report = ltp_report_from_log_dir(
+        "unit-test",
+        "unit-test",
+        Boundary::PortableArtifactExecution,
+        None,
+        &root,
+    )
+    .unwrap();
+    let fs_result = report
+        .results
+        .iter()
+        .find(|result| result.spec_id == LtpSubset::FsBasic.spec_id())
+        .unwrap();
+
+    assert_eq!(fs_result.metrics["ltp_cases_passed"], 1.0);
+    assert_eq!(fs_result.evidence_artifacts.len(), 1);
+    assert_eq!(fs_result.evidence_artifacts[0].uri, "linux-ltp.fs.basic.log");
+    let artifact_validation = validate_report_artifacts(&report, &root);
+    assert!(artifact_validation.ok, "{:#?}", artifact_validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn vmos_ltp_plan_uses_expanded_stable_fs_mm_syscall_timer_socket_cases() {
     let plan = default_vmos_ltp_plan("target/vmos-ltp", "target/ltp-bins");
 
@@ -1531,6 +1561,64 @@ fn vmos_ltp_plan_uses_expanded_stable_fs_mm_syscall_timer_socket_cases() {
     assert!(plan.iter().all(|entry| entry.output_log.ends_with(".log")));
     assert!(plan.iter().all(|entry| entry.trace_log.ends_with(".vmos-trace.jsonl")));
     assert!(plan.iter().all(|entry| entry.serial_log.ends_with(".serial.log")));
+}
+
+#[test]
+fn vmos_ltp_manifest_plan_accepts_large_candidate_entries() {
+    let manifest = "\
+# spec_id\tcase_id\trelative_binary\tsource
+linux-ltp.syscalls.core\taccept01\taccept01\ttestcases/kernel/syscalls/accept/accept01
+linux-ltp.syscalls.core\topenat201\tsyscalls/openat201\ttestcases/kernel/syscalls/openat2/openat201
+linux-ltp.mm.mapping\tmmap01\tmmap01\ttestcases/kernel/syscalls/mmap/mmap01
+";
+    let plan =
+        vmos_ltp_manifest_plan("target/vmos-ltp-large", "target/ltp-bins", manifest).unwrap();
+
+    assert_eq!(plan.len(), 3);
+    assert_eq!(plan[0].spec_id, LtpSubset::SyscallsCore.spec_id());
+    assert_eq!(plan[0].case_id, "accept01");
+    assert_eq!(plan[0].binary_path, "target/ltp-bins/accept01");
+    assert_eq!(plan[1].binary_path, "target/ltp-bins/syscalls/openat201");
+    assert!(plan[1].output_log.ends_with("linux-ltp.syscalls.core.openat201.log"));
+    assert!(plan[1].trace_log.ends_with("linux-ltp.syscalls.core.openat201.vmos-trace.jsonl"));
+    assert!(plan[1].serial_log.ends_with("linux-ltp.syscalls.core.openat201.serial.log"));
+    assert_eq!(plan[2].spec_id, LtpSubset::MmMapping.spec_id());
+}
+
+#[test]
+fn vmos_ltp_manifest_plan_rejects_unsafe_entries() {
+    assert!(
+        vmos_ltp_manifest_plan("target/out", "target/bins", "linux-ltp.unknown\tcase01\tcase01")
+            .unwrap_err()
+            .contains("unknown LTP spec id")
+    );
+    assert!(
+        vmos_ltp_manifest_plan(
+            "target/out",
+            "target/bins",
+            "linux-ltp.syscalls.core\t../bad\tcase01"
+        )
+        .unwrap_err()
+        .contains("not safe")
+    );
+    assert!(
+        vmos_ltp_manifest_plan(
+            "target/out",
+            "target/bins",
+            "linux-ltp.syscalls.core\tcase01\t../case01"
+        )
+        .unwrap_err()
+        .contains("must not contain")
+    );
+    assert!(
+        vmos_ltp_manifest_plan(
+            "target/out",
+            "target/bins",
+            "linux-ltp.syscalls.core\tcase01\t/tmp/case01"
+        )
+        .unwrap_err()
+        .contains("must be relative")
+    );
 }
 
 #[test]
