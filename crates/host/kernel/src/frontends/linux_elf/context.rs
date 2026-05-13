@@ -31,6 +31,9 @@ pub(crate) struct ActiveUserContext {
     alarm_seconds: u64,
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
+    fake_child_pending: bool,
+    fake_child_pid: u64,
+    fake_signal_pending: bool,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -60,6 +63,9 @@ impl ActiveUserContext {
             alarm_seconds: 0,
             realtime_epoch_ns: 1_000_000_000,
             realtime_epoch_tick: 0,
+            fake_child_pending: false,
+            fake_child_pid: task_id as u64 + 1,
+            fake_signal_pending: false,
         }
     }
 
@@ -85,6 +91,12 @@ impl ActiveUserContext {
         }
         self.mmap_cursor = end;
         Some(start)
+    }
+
+    pub(crate) fn record_user_region(&mut self, start: u64, len: u64, writable: bool) {
+        if let Some(end) = start.checked_add(len) {
+            self.regions.push(UserRegion { start, end, writable });
+        }
     }
 
     pub(crate) fn set_program_break(&mut self, requested: u64) -> u64 {
@@ -121,6 +133,26 @@ impl ActiveUserContext {
     pub(crate) fn set_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
         self.realtime_epoch_ns = now_ns;
         self.realtime_epoch_tick = tick_count;
+    }
+
+    pub(crate) fn spawn_fake_child(&mut self) -> u64 {
+        self.fake_child_pending = true;
+        self.fake_signal_pending = true;
+        self.fake_child_pid
+    }
+
+    pub(crate) fn reap_fake_child(&mut self) -> Option<u64> {
+        if !self.fake_child_pending {
+            return None;
+        }
+        self.fake_child_pending = false;
+        Some(self.fake_child_pid)
+    }
+
+    pub(crate) fn consume_fake_signal(&mut self) -> bool {
+        let pending = self.fake_signal_pending;
+        self.fake_signal_pending = false;
+        pending
     }
 }
 

@@ -8,6 +8,18 @@ use super::{
 use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(crate) fn note_synthetic_listener(&mut self, _backlog: u64) {
+        self.synthetic_listener_connects = self.synthetic_listener_connects.saturating_add(1);
+    }
+
+    pub(crate) fn consume_synthetic_listener_connect(&mut self) -> bool {
+        if self.synthetic_listener_connects == 0 {
+            return false;
+        }
+        self.synthetic_listener_connects -= 1;
+        true
+    }
+
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("linux_syscall", "linux.socket", "socket").is_err()
             || self.require_capability("net_core", "net.socket", "create").is_err()
@@ -55,6 +67,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = self.alloc_fd(FdEntry {
             resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
         });
         if let Some(handle) = self.fd_handle(fd) {
             self.semantic.record_socket_state_changed(handle.id, "open");

@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_ENOTSOCK, ERR_EPERM, NodeKind, ServiceRoute,
+    EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK, ERR_EPERM,
+    NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -11,9 +12,23 @@ use super::{
     runtime::PrototypeRuntime,
     semantic::{fd_resource_kind, fd_resource_label},
     services::ProcfsService,
-    types::{FdEntry, FdResource, InjectedFault, LookupInfo, ServiceCallError},
+    types::{
+        EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, ServiceCallError,
+        SocketPairState,
+    },
 };
 use crate::interrupts;
+
+const MAX_LINUX_FD: u32 = 1024;
+const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
+const PIPE_READY_TAG: u64 = 0x7000_0000_0000_0000;
+const SOCKETPAIR_READY_TAG: u64 = 0x8000_0000_0000_0000;
+const EVENTFD_READY_TAG: u64 = 0x9000_0000_0000_0000;
+const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
+const DEFAULT_PIPE_CAPACITY: usize = 65_536;
+const EVENTFD_MAX_COUNTER: u64 = u64::MAX - 1;
+const POLLIN: u16 = 0x001;
+const POLLOUT: u16 = 0x004;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn lookup_path(&mut self, path: &[u8]) -> Result<LookupInfo, ServiceCallError> {
@@ -275,12 +290,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    pub(super) fn alloc_fd(&mut self, entry: FdEntry) -> u32 {
+    pub(super) fn alloc_fd(&mut self, mut entry: FdEntry) -> u32 {
         let resource_kind = fd_resource_kind(&entry.resource);
         let resource_label = fd_resource_label(&entry.resource);
         let owner_task = Some(self.scheduler.current_task());
         let resource_id =
             self.semantic.register_resource(resource_kind, owner_task, &resource_label);
+        if entry.cursor_group.is_none() {
+            entry.cursor_group = Some(resource_id);
+        }
 
         if let Some(fd) = (3..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             self.fd_table[fd] = Some(entry);
@@ -306,6 +324,690 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(super) fn fd_handle(&self, fd: u32) -> Option<ResourceHandle> {
         self.fd_handles.get(fd as usize).copied().flatten()
+    }
+
+    pub(crate) fn dup_fd(&mut self, old_fd: u32) -> Result<u32, i32> {
+        let entry = self.dup_source_entry(old_fd)?;
+        let new_fd = (3..MAX_LINUX_FD)
+            .find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
+            .ok_or(ERR_EMFILE)?;
+        self.install_fd_at(new_fd, entry);
+        Ok(new_fd)
+    }
+
+    pub(crate) fn dup_fd_to(
+        &mut self,
+        old_fd: u32,
+        new_fd: u32,
+        allow_same_fd: bool,
+    ) -> Result<u32, i32> {
+        if new_fd >= MAX_LINUX_FD {
+            return Err(ERR_EBADF);
+        }
+        if old_fd == new_fd {
+            if allow_same_fd {
+                let _ = self.dup_source_entry(old_fd)?;
+                return Ok(new_fd);
+            }
+            return Err(ERR_EINVAL);
+        }
+
+        let entry = self.dup_source_entry(old_fd)?;
+        self.close_fd_if_present(new_fd)?;
+        self.install_fd_at(new_fd, entry);
+        Ok(new_fd)
+    }
+
+    pub(crate) fn close_fd_number(&mut self, fd: u32) -> Result<(), i32> {
+        if self.require_capability("linux_syscall", "fd.table", "close").is_err() {
+            return Err(ERR_EPERM);
+        }
+        if fd < 3 {
+            return Err(ERR_EBADF);
+        }
+        self.close_fd_slot(fd, true)
+    }
+
+    pub(crate) fn close_fd_range(&mut self, first: u32, last: u32) -> Result<(), i32> {
+        if first > last {
+            return Err(ERR_EINVAL);
+        }
+        if self.require_capability("linux_syscall", "fd.table", "close").is_err() {
+            return Err(ERR_EPERM);
+        }
+        let end = last.min(MAX_LINUX_FD - 1);
+        for fd in first.max(3)..=end {
+            let _ = self.close_fd_slot(fd, true);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_fd_flags_range(
+        &mut self,
+        first: u32,
+        last: u32,
+        flags: u32,
+    ) -> Result<(), i32> {
+        if first > last {
+            return Err(ERR_EINVAL);
+        }
+        let end = last.min(MAX_LINUX_FD - 1);
+        for fd in first.max(3)..=end {
+            if let Some(entry) = self.fd_table.get_mut(fd as usize).and_then(Option::as_mut) {
+                entry.fd_flags = flags;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn create_fifo_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        if self.lookup_path(path).is_ok() {
+            return Err(vmos_abi::ERR_EEXIST);
+        }
+        self.vfs.create_file(path, mode).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
+        let pipe_id = self.next_pipe_id;
+        self.next_pipe_id = self.next_pipe_id.saturating_add(1);
+        self.pipes.push(PipeState {
+            id: pipe_id,
+            buffer: Vec::new(),
+            capacity: DEFAULT_PIPE_CAPACITY,
+            read_open: true,
+            write_open: true,
+        });
+        let read_fd = self.alloc_fd(FdEntry {
+            resource: FdResource::PipeEnd { pipe_id, readable: true, writable: false },
+            cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
+        });
+        let write_fd = self.alloc_fd(FdEntry {
+            resource: FdResource::PipeEnd { pipe_id, readable: false, writable: true },
+            cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
+        });
+        Ok((read_fd, write_fd))
+    }
+
+    pub(crate) fn create_socketpair(&mut self) -> Result<(u32, u32), i32> {
+        let pair_id = self.next_socketpair_id;
+        self.next_socketpair_id = self.next_socketpair_id.saturating_add(1);
+        self.socketpairs.push(SocketPairState {
+            id: pair_id,
+            a_to_b: Vec::new(),
+            b_to_a: Vec::new(),
+            capacity: DEFAULT_PIPE_CAPACITY,
+            open_a: true,
+            open_b: true,
+        });
+        let fd_a = self.alloc_fd(FdEntry {
+            resource: FdResource::SocketPairEnd { pair_id, endpoint: 0 },
+            cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
+        });
+        let fd_b = self.alloc_fd(FdEntry {
+            resource: FdResource::SocketPairEnd { pair_id, endpoint: 1 },
+            cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
+        });
+        Ok((fd_a, fd_b))
+    }
+
+    pub(crate) fn create_eventfd(&mut self, initval: u64, flags: u32) -> Result<u32, i32> {
+        const EFD_SEMAPHORE: u32 = 1;
+        const EFD_CLOEXEC: u32 = 0o2000000;
+        const EFD_NONBLOCK: u32 = 0o0004000;
+
+        if flags & !(EFD_SEMAPHORE | EFD_CLOEXEC | EFD_NONBLOCK) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        if initval > EVENTFD_MAX_COUNTER {
+            return Err(ERR_EINVAL);
+        }
+
+        let eventfd_id = self.next_eventfd_id;
+        self.next_eventfd_id = self.next_eventfd_id.saturating_add(1);
+        self.eventfds.push(EventFdState {
+            id: eventfd_id,
+            counter: initval,
+            semaphore: flags & EFD_SEMAPHORE != 0,
+        });
+        let fd = self.alloc_fd(FdEntry {
+            resource: FdResource::EventFd { eventfd_id },
+            cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
+        });
+        if flags & EFD_CLOEXEC != 0 {
+            self.set_fd_flags(fd, 1)?;
+        }
+        Ok(fd)
+    }
+
+    pub(crate) fn is_pipe_fd(&self, fd: u32) -> bool {
+        self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::PipeEnd { .. }))
+    }
+
+    pub(crate) fn is_socketpair_fd(&self, fd: u32) -> bool {
+        self.fd_entry(fd)
+            .is_some_and(|entry| matches!(entry.resource, FdResource::SocketPairEnd { .. }))
+    }
+
+    pub(crate) fn require_socket_fd(&self, fd: u32) -> Result<(), i32> {
+        let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
+        if matches!(entry.resource, FdResource::Socket { .. }) { Ok(()) } else { Err(ERR_ENOTSOCK) }
+    }
+
+    pub(crate) fn is_eventfd_fd(&self, fd: u32) -> bool {
+        self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::EventFd { .. }))
+    }
+
+    pub(crate) fn read_pipe_fd_bytes(&mut self, fd: u32, count: usize) -> Result<Vec<u8>, i32> {
+        let (pipe_id, readable) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::PipeEnd { pipe_id, readable, .. } => (*pipe_id, *readable),
+            _ => return Err(ERR_EBADF),
+        };
+        if !readable {
+            return Err(ERR_EBADF);
+        }
+        let pipe = self.pipe_mut(pipe_id)?;
+        if !pipe.read_open {
+            return Err(ERR_EBADF);
+        }
+        if pipe.buffer.is_empty() {
+            return if pipe.write_open { Err(ERR_EAGAIN) } else { Ok(Vec::new()) };
+        }
+        let len = count.min(pipe.buffer.len());
+        let bytes = pipe.buffer.drain(..len).collect();
+        if len != 0 {
+            self.notify_ready_key(pipe_ready_key(pipe_id, false, true), "pipe write readiness");
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn write_pipe_fd_bytes(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, i32> {
+        let (pipe_id, writable) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::PipeEnd { pipe_id, writable, .. } => (*pipe_id, *writable),
+            _ => return Err(ERR_EBADF),
+        };
+        if !writable {
+            return Err(ERR_EBADF);
+        }
+        let pipe = self.pipe_mut(pipe_id)?;
+        if !pipe.write_open {
+            return Err(ERR_EBADF);
+        }
+        let available = pipe.capacity.saturating_sub(pipe.buffer.len());
+        if available == 0 {
+            return Err(ERR_EAGAIN);
+        }
+        let written = bytes.len().min(available);
+        pipe.buffer.extend_from_slice(&bytes[..written]);
+        if written != 0 {
+            self.notify_ready_key(pipe_ready_key(pipe_id, true, false), "pipe read readiness");
+        }
+        Ok(written)
+    }
+
+    pub(crate) fn set_pipe_capacity(&mut self, fd: u32, requested: usize) -> Result<usize, i32> {
+        let pipe_id = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::PipeEnd { pipe_id, .. } => *pipe_id,
+            _ => return Err(ERR_EBADF),
+        };
+        let pipe = self.pipe_mut(pipe_id)?;
+        let next = requested.max(pipe.buffer.len()).max(1);
+        pipe.capacity = next;
+        Ok(next)
+    }
+
+    pub(crate) fn pipe_capacity(&mut self, fd: u32) -> Result<usize, i32> {
+        let pipe_id = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::PipeEnd { pipe_id, .. } => *pipe_id,
+            _ => return Err(ERR_EBADF),
+        };
+        Ok(self.pipe_mut(pipe_id)?.capacity)
+    }
+
+    pub(crate) fn pipe_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
+        let (pipe_id, readable, writable) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::PipeEnd { pipe_id, readable, writable } => (*pipe_id, *readable, *writable),
+            _ => return Ok(0),
+        };
+        let pipe = self.pipes.iter().find(|pipe| pipe.id == pipe_id).ok_or(ERR_EBADF)?;
+        let mut revents = 0u16;
+        if readable && events & POLLIN != 0 && !pipe.buffer.is_empty() {
+            revents |= POLLIN;
+        }
+        if writable && events & POLLOUT != 0 && pipe.read_open && pipe.buffer.len() < pipe.capacity
+        {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
+    }
+
+    pub(super) fn pipe_ready_key_matches_events(&mut self, ready_key: u64, events: u32) -> bool {
+        if ready_key & READY_TAG_MASK != PIPE_READY_TAG {
+            return false;
+        }
+        let pipe_id = (ready_key & 0x0fff_ffff_ffff_fffe) >> 1;
+        let write_end = (ready_key & 1) != 0;
+        self.pipes.iter().find(|pipe| pipe.id == pipe_id).is_some_and(|pipe| {
+            if write_end {
+                events & EPOLLOUT != 0 && pipe.read_open && pipe.write_open
+            } else {
+                events & EPOLLIN != 0 && pipe.read_open && !pipe.buffer.is_empty()
+            }
+        })
+    }
+
+    fn pipe_mut(&mut self, pipe_id: u64) -> Result<&mut PipeState, i32> {
+        self.pipes.iter_mut().find(|pipe| pipe.id == pipe_id).ok_or(ERR_EBADF)
+    }
+
+    pub(crate) fn read_socketpair_fd_bytes(
+        &mut self,
+        fd: u32,
+        count: usize,
+    ) -> Result<Vec<u8>, i32> {
+        let (pair_id, endpoint) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::SocketPairEnd { pair_id, endpoint } => (*pair_id, *endpoint),
+            _ => return Err(ERR_EBADF),
+        };
+        let pair = self.socketpair_mut(pair_id)?;
+        let (incoming, peer_open) = if endpoint == 0 {
+            (&mut pair.b_to_a, pair.open_b)
+        } else {
+            (&mut pair.a_to_b, pair.open_a)
+        };
+        if incoming.is_empty() {
+            return if peer_open { Err(ERR_EAGAIN) } else { Ok(Vec::new()) };
+        }
+        let len = count.min(incoming.len());
+        let bytes = incoming.drain(..len).collect();
+        if len != 0 {
+            self.notify_ready_key(
+                socketpair_ready_key(pair_id, peer_endpoint(endpoint)),
+                "socketpair write readiness",
+            );
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn write_socketpair_fd_bytes(
+        &mut self,
+        fd: u32,
+        bytes: &[u8],
+    ) -> Result<usize, i32> {
+        let (pair_id, endpoint) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::SocketPairEnd { pair_id, endpoint } => (*pair_id, *endpoint),
+            _ => return Err(ERR_EBADF),
+        };
+        let pair = self.socketpair_mut(pair_id)?;
+        let (outgoing, peer_open) = if endpoint == 0 {
+            (&mut pair.a_to_b, pair.open_b)
+        } else {
+            (&mut pair.b_to_a, pair.open_a)
+        };
+        if !peer_open {
+            return Err(ERR_EBADF);
+        }
+        let available = pair.capacity.saturating_sub(outgoing.len());
+        if available == 0 {
+            return Err(ERR_EAGAIN);
+        }
+        let written = bytes.len().min(available);
+        outgoing.extend_from_slice(&bytes[..written]);
+        if written != 0 {
+            self.notify_ready_key(
+                socketpair_ready_key(pair_id, peer_endpoint(endpoint)),
+                "socketpair read readiness",
+            );
+        }
+        Ok(written)
+    }
+
+    pub(crate) fn socketpair_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
+        let (pair_id, endpoint) = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::SocketPairEnd { pair_id, endpoint } => (*pair_id, *endpoint),
+            _ => return Ok(0),
+        };
+        let pair = self.socketpairs.iter().find(|pair| pair.id == pair_id).ok_or(ERR_EBADF)?;
+        let (incoming, outgoing, peer_open) = if endpoint == 0 {
+            (&pair.b_to_a, &pair.a_to_b, pair.open_b)
+        } else {
+            (&pair.a_to_b, &pair.b_to_a, pair.open_a)
+        };
+        let mut revents = 0u16;
+        if events & POLLIN != 0 && !incoming.is_empty() {
+            revents |= POLLIN;
+        }
+        if events & POLLOUT != 0 && peer_open && outgoing.len() < pair.capacity {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
+    }
+
+    pub(crate) fn simulate_socketpair_peer_activity(&mut self) {
+        let mut ready = Vec::new();
+        for pair in &mut self.socketpairs {
+            if pair.open_a && pair.open_b && pair.b_to_a.len() < pair.capacity {
+                pair.b_to_a.push(b'w');
+                ready.push(socketpair_ready_key(pair.id, 0));
+            }
+        }
+        for ready_key in ready {
+            self.notify_ready_key(ready_key, "socketpair fake child write");
+        }
+    }
+
+    pub(super) fn socketpair_ready_key_matches_events(
+        &mut self,
+        ready_key: u64,
+        events: u32,
+    ) -> bool {
+        if ready_key & READY_TAG_MASK != SOCKETPAIR_READY_TAG {
+            return false;
+        }
+        let pair_id = (ready_key & 0x0fff_ffff_ffff_fffe) >> 1;
+        let endpoint = (ready_key & 1) as u8;
+        self.socketpairs.iter().find(|pair| pair.id == pair_id).is_some_and(|pair| {
+            let (incoming, outgoing, peer_open) = if endpoint == 0 {
+                (&pair.b_to_a, &pair.a_to_b, pair.open_b)
+            } else {
+                (&pair.a_to_b, &pair.b_to_a, pair.open_a)
+            };
+            (events & EPOLLIN != 0 && !incoming.is_empty())
+                || (events & EPOLLOUT != 0 && peer_open && outgoing.len() < pair.capacity)
+        })
+    }
+
+    fn socketpair_mut(&mut self, pair_id: u64) -> Result<&mut SocketPairState, i32> {
+        self.socketpairs.iter_mut().find(|pair| pair.id == pair_id).ok_or(ERR_EBADF)
+    }
+
+    pub(crate) fn read_eventfd_value(&mut self, fd: u32, count: usize) -> Result<Vec<u8>, i32> {
+        if count < 8 {
+            return Err(ERR_EINVAL);
+        }
+        let eventfd_id = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::EventFd { eventfd_id } => *eventfd_id,
+            _ => return Err(ERR_EBADF),
+        };
+        let (value, notify_writable) = {
+            let eventfd = self.eventfd_mut(eventfd_id)?;
+            if eventfd.counter == 0 {
+                return Err(ERR_EAGAIN);
+            }
+            let value = if eventfd.semaphore { 1 } else { eventfd.counter };
+            eventfd.counter = eventfd.counter.saturating_sub(value);
+            (value, eventfd.counter < EVENTFD_MAX_COUNTER)
+        };
+        if notify_writable {
+            self.notify_ready_key(eventfd_ready_key(eventfd_id), "eventfd write readiness");
+        }
+        Ok(value.to_le_bytes().to_vec())
+    }
+
+    pub(crate) fn write_eventfd_value(
+        &mut self,
+        fd: u32,
+        value: u64,
+        count: usize,
+    ) -> Result<usize, i32> {
+        if count < 8 || value == u64::MAX {
+            return Err(ERR_EINVAL);
+        }
+        let eventfd_id = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::EventFd { eventfd_id } => *eventfd_id,
+            _ => return Err(ERR_EBADF),
+        };
+        let notify_readable = {
+            let eventfd = self.eventfd_mut(eventfd_id)?;
+            if EVENTFD_MAX_COUNTER.saturating_sub(eventfd.counter) < value {
+                return Err(ERR_EAGAIN);
+            }
+            eventfd.counter = eventfd.counter.saturating_add(value);
+            value != 0
+        };
+        if notify_readable {
+            self.notify_ready_key(eventfd_ready_key(eventfd_id), "eventfd read readiness");
+        }
+        Ok(8)
+    }
+
+    pub(crate) fn simulate_eventfd_child_activity(&mut self) {
+        const FAKE_CHILD_EVENTFD_VALUE: u64 = 0xdead_beef;
+
+        let mut ready = Vec::new();
+        for eventfd in &mut self.eventfds {
+            if EVENTFD_MAX_COUNTER.saturating_sub(eventfd.counter) >= FAKE_CHILD_EVENTFD_VALUE {
+                eventfd.counter = eventfd.counter.saturating_add(FAKE_CHILD_EVENTFD_VALUE);
+                ready.push(eventfd_ready_key(eventfd.id));
+            }
+        }
+        for ready_key in ready {
+            self.notify_ready_key(ready_key, "eventfd fake child write");
+        }
+    }
+
+    pub(crate) fn fd_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
+        let Some(entry) = self.fd_entry(fd) else {
+            return Err(ERR_EBADF);
+        };
+        match entry.resource {
+            FdResource::PipeEnd { .. } => self.pipe_poll_revents(fd, events),
+            FdResource::SocketPairEnd { .. } => self.socketpair_poll_revents(fd, events),
+            FdResource::EventFd { .. } => self.eventfd_poll_revents(fd, events),
+            _ => Ok(0),
+        }
+    }
+
+    pub(crate) fn eventfd_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
+        let eventfd_id = match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::EventFd { eventfd_id } => *eventfd_id,
+            _ => return Ok(0),
+        };
+        let eventfd =
+            self.eventfds.iter().find(|eventfd| eventfd.id == eventfd_id).ok_or(ERR_EBADF)?;
+        let mut revents = 0u16;
+        if events & POLLIN != 0 && eventfd.counter > 0 {
+            revents |= POLLIN;
+        }
+        if events & POLLOUT != 0 && eventfd.counter < EVENTFD_MAX_COUNTER {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
+    }
+
+    pub(super) fn eventfd_ready_key_matches_events(&mut self, ready_key: u64, events: u32) -> bool {
+        if ready_key & READY_TAG_MASK != EVENTFD_READY_TAG {
+            return false;
+        }
+        let eventfd_id = ready_key & !READY_TAG_MASK;
+        self.eventfds.iter().find(|eventfd| eventfd.id == eventfd_id).is_some_and(|eventfd| {
+            (events & EPOLLIN != 0 && eventfd.counter > 0)
+                || (events & EPOLLOUT != 0 && eventfd.counter < EVENTFD_MAX_COUNTER)
+        })
+    }
+
+    fn eventfd_mut(&mut self, eventfd_id: u64) -> Result<&mut EventFdState, i32> {
+        self.eventfds.iter_mut().find(|eventfd| eventfd.id == eventfd_id).ok_or(ERR_EBADF)
+    }
+
+    fn dup_source_entry(&mut self, fd: u32) -> Result<FdEntry, i32> {
+        if fd < 3 {
+            return Ok(FdEntry {
+                resource: FdResource::ServiceNode {
+                    route: ServiceRoute::Devfs,
+                    node: NodeKind::CharDevice,
+                    path: b"/dev/null".to_vec(),
+                },
+                cursor: 0,
+                fd_flags: 0,
+                cursor_group: None,
+            });
+        }
+        self.validate_fd_handle(fd).map_err(errno_from_service_error)?;
+        let mut entry = self.fd_entry(fd).cloned().ok_or(ERR_EBADF)?;
+        entry.fd_flags = 0;
+        Ok(entry)
+    }
+
+    fn close_fd_if_present(&mut self, fd: u32) -> Result<(), i32> {
+        if self.fd_table.get(fd as usize).and_then(Option::as_ref).is_none() {
+            return Ok(());
+        }
+        self.close_fd_slot(fd, true)
+    }
+
+    fn close_fd_slot(&mut self, fd: u32, validate_handle: bool) -> Result<(), i32> {
+        let Some(handle) = self.fd_handle(fd) else {
+            return Err(ERR_EBADF);
+        };
+        if validate_handle && self.validate_resource_handle(handle).is_err() {
+            return Err(ERR_EBADF);
+        }
+
+        let closing_socket = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::Socket { socket_id, .. } => Some(*socket_id as u32),
+            _ => None,
+        });
+        let closing_pipe = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::PipeEnd { pipe_id, readable, writable } => {
+                Some((*pipe_id, *readable, *writable))
+            }
+            _ => None,
+        });
+        let closing_socketpair = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::SocketPairEnd { pair_id, endpoint } => Some((*pair_id, *endpoint)),
+            _ => None,
+        });
+        if let Some(socket_id) = closing_socket {
+            if self.require_capability("linux_syscall", "linux.socket", "close").is_err()
+                || self.require_capability("net_core", "net.socket", "close").is_err()
+            {
+                return Err(ERR_EPERM);
+            }
+            match self.linux_socket.close_socket(socket_id) {
+                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
+                Err(ServiceCallError::Errno(errno)) => return Err(errno),
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("linux_socket close: {}", reason);
+                    return Err(ERR_EINVAL);
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("linux_socket close: {}", err);
+                    return Err(ERR_EINVAL);
+                }
+            }
+            match self.net_core.close_socket(socket_id) {
+                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
+                Err(ServiceCallError::Errno(errno)) => return Err(errno),
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("net_core close: {}", reason);
+                    return Err(ERR_EINVAL);
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("net_core close: {}", err);
+                    return Err(ERR_EINVAL);
+                }
+            }
+        }
+
+        let slot = self.fd_table.get_mut(fd as usize).ok_or(ERR_EBADF)?;
+        if slot.take().is_none() {
+            return Err(ERR_EBADF);
+        }
+        if let Some(slot) = self.fd_handles.get_mut(fd as usize)
+            && let Some(handle) = slot.take()
+        {
+            if closing_socket.is_some() {
+                self.semantic.record_socket_state_changed(handle.id, "closed");
+            }
+            self.semantic.close_resource(handle.id);
+        }
+        if let Some((pipe_id, readable, writable)) = closing_pipe {
+            let other_read_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::PipeEnd { pipe_id: id, readable: true, .. } if id == pipe_id
+                )
+            });
+            let other_write_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::PipeEnd { pipe_id: id, writable: true, .. } if id == pipe_id
+                )
+            });
+            let pipe = self.pipe_mut(pipe_id)?;
+            if readable {
+                pipe.read_open = other_read_open;
+            }
+            if writable {
+                pipe.write_open = other_write_open;
+            }
+        }
+        if let Some((pair_id, endpoint)) = closing_socketpair {
+            let same_endpoint_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::SocketPairEnd { pair_id: id, endpoint: ep }
+                        if id == pair_id && ep == endpoint
+                )
+            });
+            let pair = self.socketpair_mut(pair_id)?;
+            if endpoint == 0 {
+                pair.open_a = same_endpoint_open;
+            } else {
+                pair.open_b = same_endpoint_open;
+            }
+            self.notify_ready_key(
+                socketpair_ready_key(pair_id, peer_endpoint(endpoint)),
+                "socketpair peer close",
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fd_flags(&self, fd: u32) -> Result<u32, i32> {
+        if fd < 3 {
+            return Ok(0);
+        }
+        self.fd_entry(fd).map(|entry| entry.fd_flags).ok_or(ERR_EBADF)
+    }
+
+    pub(crate) fn set_fd_flags(&mut self, fd: u32, flags: u32) -> Result<(), i32> {
+        if fd < 3 {
+            return Ok(());
+        }
+        self.validate_fd_handle(fd).map_err(errno_from_service_error)?;
+        let entry = self.fd_table.get_mut(fd as usize).and_then(Option::as_mut).ok_or(ERR_EBADF)?;
+        entry.fd_flags = flags;
+        Ok(())
+    }
+
+    fn install_fd_at(&mut self, fd: u32, mut entry: FdEntry) {
+        let resource_kind = fd_resource_kind(&entry.resource);
+        let resource_label = fd_resource_label(&entry.resource);
+        let owner_task = Some(self.scheduler.current_task());
+        let resource_id =
+            self.semantic.register_resource(resource_kind, owner_task, &resource_label);
+        if entry.cursor_group.is_none() {
+            entry.cursor_group = Some(resource_id);
+        }
+        let fd = fd as usize;
+        while self.fd_table.len() <= fd {
+            self.fd_table.push(None);
+        }
+        self.ensure_fd_handle_slot(fd);
+        self.fd_table[fd] = Some(entry);
+        self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
     }
 
     fn socket_for_ready_key(&self, ready_key: u64) -> Option<(u32, ResourceHandle)> {
@@ -400,6 +1102,14 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn stat_fd_abi(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
         self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
         let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
+        if matches!(
+            entry.resource,
+            FdResource::PipeEnd { .. }
+                | FdResource::SocketPairEnd { .. }
+                | FdResource::EventFd { .. }
+        ) {
+            return Ok(encode_stat_abi(0o010666, 0));
+        }
         let FdResource::ServiceNode { route, node, path } = &entry.resource else {
             return Err(ERR_EBADF);
         };
@@ -447,16 +1157,33 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::Socket { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 
     pub(super) fn set_fd_cursor(&mut self, fd: u32, cursor: usize) -> Result<(), ServiceCallError> {
-        let entry = self
+        let cursor_group = self
             .fd_table
-            .get_mut(fd as usize)
-            .and_then(Option::as_mut)
-            .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
-        entry.cursor = cursor;
+            .get(fd as usize)
+            .and_then(Option::as_ref)
+            .ok_or(ServiceCallError::Errno(ERR_EBADF))?
+            .cursor_group;
+        if let Some(group) = cursor_group {
+            for entry in self.fd_table.iter_mut().filter_map(Option::as_mut) {
+                if entry.cursor_group == Some(group) {
+                    entry.cursor = cursor;
+                }
+            }
+        } else {
+            let entry = self
+                .fd_table
+                .get_mut(fd as usize)
+                .and_then(Option::as_mut)
+                .ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+            entry.cursor = cursor;
+        }
         Ok(())
     }
 
@@ -476,13 +1203,42 @@ impl<'engine> PrototypeRuntime<'engine> {
                 PulseDevice::ready_key_for_path(path).ok_or(ServiceCallError::Errno(ERR_EINVAL))
             }
             FdResource::Socket { ready_key, .. } => Ok(*ready_key),
-            _ => Err(ServiceCallError::Errno(ERR_EINVAL)),
+            FdResource::PipeEnd { pipe_id, readable, writable } => {
+                Ok(pipe_ready_key(*pipe_id, *readable, *writable))
+            }
+            FdResource::SocketPairEnd { pair_id, endpoint } => {
+                Ok(socketpair_ready_key(*pair_id, *endpoint))
+            }
+            FdResource::EventFd { eventfd_id } => Ok(eventfd_ready_key(*eventfd_id)),
+            FdResource::EpollInstance { epoll_id } => Ok(epoll_ready_key(*epoll_id)),
+            _ => Err(ServiceCallError::Errno(ERR_EPERM)),
         }
     }
 
     fn procfs_mut(&mut self) -> &mut ProcfsService {
         self.procfs.as_mut().expect("procfs service should always be installed outside recovery")
     }
+}
+
+fn pipe_ready_key(pipe_id: u64, readable: bool, writable: bool) -> u64 {
+    let direction = u64::from(writable && !readable);
+    PIPE_READY_TAG | (pipe_id << 1) | direction
+}
+
+fn epoll_ready_key(epoll_id: u32) -> u64 {
+    EPOLL_READY_TAG | epoll_id as u64
+}
+
+fn socketpair_ready_key(pair_id: u64, endpoint: u8) -> u64 {
+    SOCKETPAIR_READY_TAG | (pair_id << 1) | u64::from(endpoint & 1)
+}
+
+fn eventfd_ready_key(eventfd_id: u64) -> u64 {
+    EVENTFD_READY_TAG | eventfd_id
+}
+
+fn peer_endpoint(endpoint: u8) -> u8 {
+    if endpoint == 0 { 1 } else { 0 }
 }
 
 fn join_path(base: &[u8], name: &[u8]) -> Vec<u8> {

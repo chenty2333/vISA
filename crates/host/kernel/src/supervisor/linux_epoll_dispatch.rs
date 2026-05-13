@@ -23,6 +23,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let fd = self.alloc_fd(FdEntry {
                     resource: FdResource::EpollInstance { epoll_id },
                     cursor: 0,
+                    fd_flags: 0,
+                    cursor_group: None,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
             }
@@ -46,14 +48,35 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = u32::try_from(plan.args[2]).map_err(|_| "epoll_ctl fd overflowed")?;
         let events = u32::try_from(plan.args[3]).map_err(|_| "epoll_ctl events overflowed")?;
         let data = plan.args[4];
-        let epoll_id =
-            self.epoll_id_from_fd(epfd).map_err(|_| "epoll_ctl targeted an invalid epoll fd")?;
-        let ready_key =
-            self.fd_ready_key(fd).map_err(|_| "epoll_ctl targeted a non-pollable fd")?;
+        let epoll_id = match self.epoll_id_from_fd(epfd) {
+            Ok(epoll_id) => epoll_id,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_ctl epfd validation: {}", reason);
+                return Err("epoll_ctl epfd validation trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        let ready_key = match self.fd_ready_key(fd) {
+            Ok(ready_key) => ready_key,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("epoll_ctl fd validation: {}", reason);
+                return Err("epoll_ctl fd validation trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
         match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
             Ok(()) => {
                 if self.pulse.is_ready_key(ready_key)
                     || self.socket_ready_key_is_readable(ready_key)
+                    || self.pipe_ready_key_matches_events(ready_key, events)
+                    || self.socketpair_ready_key_matches_events(ready_key, events)
+                    || self.eventfd_ready_key_matches_events(ready_key, events)
                 {
                     let _ = self.epoll.notify_ready(ready_key);
                 }

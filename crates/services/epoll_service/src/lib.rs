@@ -7,12 +7,19 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use vmos_abi::{EPOLL_CTL_ADD, EPOLL_CTL_DEL, ERR_EINVAL, ERR_EIO, ERR_ENOENT};
+use vmos_abi::{
+    EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EIO, ERR_ELOOP,
+    ERR_ENOENT,
+};
 
 const RESPONSE_CAPACITY: usize = 16 * 16;
 const MAX_INSTANCES: usize = 8;
 const MAX_WATCHERS: usize = 32;
 const MAX_WAITERS: usize = 16;
+const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
+const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
+const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
+const EPOLLONESHOT: u32 = 0x4000_0000;
 
 static mut REQUEST: [u8; 1] = [0; 1];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
@@ -37,12 +44,20 @@ struct Watcher {
     events: u32,
     data: u64,
     ready: bool,
+    disabled: bool,
     active: bool,
 }
 
 impl Watcher {
-    const EMPTY: Self =
-        Self { epoll_id: 0, ready_key: 0, events: 0, data: 0, ready: false, active: false };
+    const EMPTY: Self = Self {
+        epoll_id: 0,
+        ready_key: 0,
+        events: 0,
+        data: 0,
+        ready: false,
+        disabled: false,
+        active: false,
+    };
 }
 
 #[derive(Clone, Copy)]
@@ -107,6 +122,7 @@ pub extern "C" fn ctl(epoll_id: u32, op: u32, ready_key: u64, events: u32, data:
 
     match op {
         EPOLL_CTL_ADD => add_watcher(epoll_id, ready_key, events, data),
+        EPOLL_CTL_MOD => mod_watcher(epoll_id, ready_key, events, data),
         EPOLL_CTL_DEL => del_watcher(epoll_id, ready_key),
         _ => -ERR_EINVAL,
     }
@@ -125,7 +141,8 @@ pub extern "C" fn collect_ready(epoll_id: u32, max_events: u32) -> i32 {
         let response = addr_of_mut!(RESPONSE) as *mut u8;
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
-            if !(*slot).active || !(*slot).ready || (*slot).epoll_id != epoll_id {
+            if !(*slot).active || (*slot).disabled || !(*slot).ready || (*slot).epoll_id != epoll_id
+            {
                 continue;
             }
             if written == max_events {
@@ -147,6 +164,9 @@ pub extern "C" fn collect_ready(epoll_id: u32, max_events: u32) -> i32 {
                 response.add(offset + 4),
                 8,
             );
+            if (*slot).events & EPOLLONESHOT != 0 {
+                (*slot).disabled = true;
+            }
             (*slot).ready = false;
             written += 1;
         }
@@ -202,25 +222,66 @@ pub extern "C" fn cancel_wait(wait_id: u64) -> i32 {
 }
 
 fn add_watcher(epoll_id: u32, ready_key: u64, events: u32, data: u64) -> i32 {
+    if let Some(target_epoll_id) = epoll_id_from_ready_key(ready_key) {
+        if target_epoll_id == epoll_id {
+            return -ERR_EINVAL;
+        }
+        match epoll_reaches(target_epoll_id, epoll_id) {
+            Ok(true) => return -ERR_ELOOP,
+            Ok(false) => {}
+            Err(errno) => return -errno,
+        }
+        match epoll_nesting_depth(target_epoll_id) {
+            Ok(depth) if 1 + depth < MAX_EPOLL_NESTING_DEPTH => {}
+            Ok(_) => return -ERR_EINVAL,
+            Err(errno) => return -errno,
+        }
+    }
+
     unsafe {
         let watchers = core::ptr::addr_of_mut!(WATCHERS) as *mut Watcher;
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
             if (*slot).active && (*slot).epoll_id == epoll_id && (*slot).ready_key == ready_key {
-                return -ERR_EINVAL;
+                return -ERR_EEXIST;
             }
         }
 
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
             if !(*slot).active {
-                *slot = Watcher { epoll_id, ready_key, events, data, ready: false, active: true };
+                *slot = Watcher {
+                    epoll_id,
+                    ready_key,
+                    events,
+                    data,
+                    ready: false,
+                    disabled: false,
+                    active: true,
+                };
                 return 0;
             }
         }
     }
 
     -ERR_EIO
+}
+
+fn mod_watcher(epoll_id: u32, ready_key: u64, events: u32, data: u64) -> i32 {
+    unsafe {
+        let watchers = core::ptr::addr_of_mut!(WATCHERS) as *mut Watcher;
+        for index in 0..MAX_WATCHERS {
+            let slot = watchers.add(index);
+            if (*slot).active && (*slot).epoll_id == epoll_id && (*slot).ready_key == ready_key {
+                (*slot).events = events;
+                (*slot).data = data;
+                (*slot).disabled = false;
+                return 0;
+            }
+        }
+    }
+
+    -ERR_ENOENT
 }
 
 fn del_watcher(epoll_id: u32, ready_key: u64) -> i32 {
@@ -238,12 +299,95 @@ fn del_watcher(epoll_id: u32, ready_key: u64) -> i32 {
     -ERR_ENOENT
 }
 
+fn epoll_nesting_depth(epoll_id: u32) -> Result<u32, i32> {
+    let mut seen = [0u32; MAX_INSTANCES];
+    epoll_nesting_depth_inner(epoll_id, &mut seen, 0)
+}
+
+fn epoll_reaches(start_epoll_id: u32, target_epoll_id: u32) -> Result<bool, i32> {
+    let mut seen = [0u32; MAX_INSTANCES];
+    epoll_reaches_inner(start_epoll_id, target_epoll_id, &mut seen, 0)
+}
+
+fn epoll_reaches_inner(
+    start_epoll_id: u32,
+    target_epoll_id: u32,
+    seen: &mut [u32; MAX_INSTANCES],
+    seen_len: usize,
+) -> Result<bool, i32> {
+    if start_epoll_id == target_epoll_id {
+        return Ok(true);
+    }
+    if seen[..seen_len].contains(&start_epoll_id) {
+        return Err(ERR_ELOOP);
+    }
+    if seen_len == MAX_INSTANCES {
+        return Err(ERR_ELOOP);
+    }
+    seen[seen_len] = start_epoll_id;
+
+    unsafe {
+        let watchers = core::ptr::addr_of!(WATCHERS) as *const Watcher;
+        for index in 0..MAX_WATCHERS {
+            let slot = watchers.add(index);
+            if !(*slot).active || (*slot).epoll_id != start_epoll_id {
+                continue;
+            }
+            if let Some(next_epoll_id) = epoll_id_from_ready_key((*slot).ready_key)
+                && epoll_reaches_inner(next_epoll_id, target_epoll_id, seen, seen_len + 1)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn epoll_nesting_depth_inner(
+    epoll_id: u32,
+    seen: &mut [u32; MAX_INSTANCES],
+    seen_len: usize,
+) -> Result<u32, i32> {
+    if seen[..seen_len].contains(&epoll_id) {
+        return Err(ERR_EINVAL);
+    }
+    if seen_len == MAX_INSTANCES {
+        return Err(ERR_EINVAL);
+    }
+    seen[seen_len] = epoll_id;
+
+    let mut depth = 0u32;
+    unsafe {
+        let watchers = core::ptr::addr_of!(WATCHERS) as *const Watcher;
+        for index in 0..MAX_WATCHERS {
+            let slot = watchers.add(index);
+            if !(*slot).active || (*slot).epoll_id != epoll_id {
+                continue;
+            }
+            if let Some(target_epoll_id) = epoll_id_from_ready_key((*slot).ready_key) {
+                let child_depth = epoll_nesting_depth_inner(target_epoll_id, seen, seen_len + 1)?;
+                depth = depth.max(1 + child_depth);
+            }
+        }
+    }
+    Ok(depth)
+}
+
+fn epoll_id_from_ready_key(ready_key: u64) -> Option<u32> {
+    if ready_key & READY_TAG_MASK == EPOLL_READY_TAG {
+        u32::try_from(ready_key & !READY_TAG_MASK).ok()
+    } else {
+        None
+    }
+}
+
 fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
     unsafe {
         let watchers = core::ptr::addr_of_mut!(WATCHERS) as *mut Watcher;
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
-            if (*slot).active && (*slot).ready_key == ready_key && !restart {
+            if (*slot).active && (*slot).ready_key == ready_key && !(*slot).disabled && !restart {
                 (*slot).ready = true;
             }
         }
@@ -266,7 +410,7 @@ fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
                 if !(*watch).active || (*watch).epoll_id != (*slot).epoll_id {
                     continue;
                 }
-                if (*watch).ready_key == ready_key {
+                if (*watch).ready_key == ready_key && !(*watch).disabled {
                     should_wake = true;
                     break;
                 }

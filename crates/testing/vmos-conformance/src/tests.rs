@@ -1269,19 +1269,24 @@ fn ltp_invocation_maps_subsets_to_runltp_commands() {
 
 #[test]
 fn ltp_parser_maps_common_status_lines() {
-    let cases = parse_ltp_results(
-        r#"
+    let serial = format!(
+        "
 open01 1 TPASS : open succeeded
 rename01 1 TFAIL : rename failed
 mmap01 1 TCONF : unsupported configuration
-"#,
+{esc}[1;33meventfd06{esc}[0m 1 {esc}[1;33mTCONF{esc}[0m : libaio is not available
+",
+        esc = '\u{1b}'
     );
+    let cases = parse_ltp_results(&serial);
 
-    assert_eq!(cases.len(), 3);
+    assert_eq!(cases.len(), 4);
     assert_eq!(cases[0].case_id, "open01");
     assert_eq!(cases[0].outcome, Outcome::Pass);
     assert_eq!(cases[1].outcome, Outcome::Fail);
     assert_eq!(cases[2].outcome, Outcome::Skip);
+    assert_eq!(cases[3].case_id, "eventfd06");
+    assert_eq!(cases[3].outcome, Outcome::Skip);
 }
 
 #[test]

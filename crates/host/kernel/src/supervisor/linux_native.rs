@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind,
-    RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
-    SYS_WRITE, SyscallContext, is_stdio_fd,
+    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_WAIT, FUTEX_WAKE, PackedStep, PlanKind, RestartClass,
+    SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT,
+    SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE,
+    SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -573,7 +573,7 @@ fn pack_epoll_events(records: &[u8], max_events: usize) -> Result<Vec<u8>, &'sta
         let mut data_bytes = [0u8; 8];
         event_bytes.copy_from_slice(&records[offset..offset + 4]);
         data_bytes.copy_from_slice(&records[offset + 4..offset + 12]);
-        let events = u32::from_le_bytes(event_bytes) | EPOLLIN;
+        let events = u32::from_le_bytes(event_bytes);
         out.extend_from_slice(&events.to_le_bytes());
         out.extend_from_slice(&data_bytes);
     }

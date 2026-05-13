@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
+use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EISCONN, ERR_EOPNOTSUPP};
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 
@@ -70,6 +70,10 @@ impl LinuxSocketState {
     }
 
     pub fn connect_socket(&mut self, socket_id: u32, _addr_len: u32) -> Result<(), i32> {
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].state == 3 {
+            return Err(ERR_EISCONN);
+        }
         self.set_state(socket_id, 3)
     }
 
@@ -149,5 +153,14 @@ mod tests {
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert!(state.register_socket(2, AF_INET, SOCK_DGRAM, 17, 43).is_ok());
         assert_eq!(state.register_socket(3, AF_INET + 1, SOCK_STREAM, 0, 44), Err(ERR_EOPNOTSUPP));
+    }
+
+    #[test]
+    fn connect_reports_already_connected() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(state.connect_socket(1, 16), Err(ERR_EISCONN));
     }
 }

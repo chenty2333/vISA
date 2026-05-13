@@ -65,6 +65,9 @@ pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {
         FdResource::ServiceNode { .. } => ResourceKind::Fd,
         FdResource::EpollInstance { .. } => ResourceKind::Epoll,
         FdResource::Socket { .. } => ResourceKind::NetSocket,
+        FdResource::PipeEnd { .. } => ResourceKind::Fd,
+        FdResource::SocketPairEnd { .. } => ResourceKind::Fd,
+        FdResource::EventFd { .. } => ResourceKind::Fd,
     }
 }
 
@@ -76,6 +79,13 @@ pub(super) fn fd_resource_label(resource: &FdResource) -> String {
         }
         FdResource::EpollInstance { epoll_id } => format!("epoll:{epoll_id}"),
         FdResource::Socket { socket_id, .. } => format!("socket:net:{socket_id}"),
+        FdResource::PipeEnd { pipe_id, readable, writable } => {
+            format!("pipe:{pipe_id}:r{readable}:w{writable}")
+        }
+        FdResource::SocketPairEnd { pair_id, endpoint } => {
+            format!("socketpair:{pair_id}:endpoint{endpoint}")
+        }
+        FdResource::EventFd { eventfd_id } => format!("eventfd:{eventfd_id}"),
     }
 }
 

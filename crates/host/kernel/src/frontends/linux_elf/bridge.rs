@@ -3,23 +3,27 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    AF_INET, AF_UNIX, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS,
-    ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
-    SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF,
-    SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT,
-    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
-    SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CONNECT, SYS_CREAT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL,
-    SYS_FORK, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
-    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
-    SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE2, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
-    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SyscallContext,
+    AF_INET, AF_UNIX, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED, ERR_EFAULT,
+    ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM,
+    SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
+    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
+    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
+    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+    SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
+    SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
+    SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT,
+    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
+    SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_SCHED_GETAFFINITY, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME,
+    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
+    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -40,6 +44,8 @@ const LINUX_TIMESPEC_SIZE: u64 = 16;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
 const LINUX_SIGACTION_BYTES: usize = 32;
+const LINUX_IOVEC_SIZE: u64 = 16;
+const LINUX_IOV_MAX: usize = 1024;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
@@ -79,20 +85,28 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let _activation = ActivationGuard { activation_id };
     match frame.rax {
         SYS_WRITE => sys_write(frame),
+        SYS_WRITEV => sys_writev(frame),
         SYS_READ => sys_read(frame),
         SYS_LSEEK => sys_lseek(frame),
         SYS_OPEN => sys_open(frame),
         SYS_OPENAT => sys_openat(frame),
         SYS_CLOSE => sys_close(frame),
+        SYS_CLOSE_RANGE => sys_close_range(frame),
+        SYS_DUP => sys_dup(frame),
+        SYS_DUP2 => sys_dup2(frame),
+        SYS_DUP3 => sys_dup3(frame),
         SYS_FSTAT => sys_fstat(frame),
         SYS_STAT | SYS_LSTAT => sys_stat(frame),
         SYS_NEWFSTATAT => sys_newfstatat(frame),
         SYS_ACCESS => sys_access(frame),
+        SYS_FACCESSAT => sys_faccessat(frame),
+        SYS_FACCESSAT2 => sys_faccessat(frame),
         SYS_CREAT => sys_creat(frame),
         SYS_CHDIR => sys_chdir(frame),
         SYS_CHROOT => sys_chroot(frame),
         SYS_MKDIR => sys_mkdir(frame),
         SYS_MKDIRAT => sys_mkdirat(frame),
+        SYS_MKNODAT => sys_mknodat(frame),
         SYS_RMDIR => sys_rmdir(frame),
         SYS_UNLINK => sys_unlink(frame),
         SYS_UNLINKAT => sys_unlinkat(frame),
@@ -128,11 +142,13 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
         SYS_PAUSE => Err(vmos_abi::ERR_EINTR),
+        SYS_PSELECT6 => sys_pselect6(frame),
         SYS_UMASK => Ok(0),
         SYS_TIME => sys_time(frame),
         SYS_UTIMENSAT => Ok(0),
         SYS_MOUNT => Err(ERR_EPERM),
         SYS_FALLOCATE => Err(vmos_abi::ERR_EOPNOTSUPP),
+        SYS_FSETXATTR | SYS_FREMOVEXATTR => Err(vmos_abi::ERR_EOPNOTSUPP),
         SYS_BPF => Err(ERR_EPERM),
         SYS_ADD_KEY | SYS_KEYCTL => Err(ERR_EPERM),
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
@@ -141,10 +157,18 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SETPGID => Ok(0),
         SYS_KILL => Ok(0),
         SYS_IOCTL => Ok(0),
+        SYS_PIPE => sys_pipe(frame, 0),
+        SYS_EVENTFD => sys_eventfd(frame, 0),
+        SYS_EVENTFD2 => sys_eventfd(frame, frame.rsi),
         SYS_EPOLL_CREATE1 => sys_epoll_create1(frame),
+        SYS_EPOLL_CREATE => sys_epoll_create(frame),
         SYS_EPOLL_CTL => sys_epoll_ctl(frame),
         SYS_EPOLL_WAIT => sys_epoll_wait(frame),
+        SYS_EPOLL_PWAIT => sys_epoll_pwait(frame),
+        SYS_EPOLL_PWAIT2 => sys_epoll_pwait2(frame),
+        SYS_POLL => sys_poll(frame),
         SYS_SOCKET => sys_socket(frame),
+        SYS_SOCKETPAIR => sys_socketpair(frame),
         SYS_BIND => sys_bind(frame),
         SYS_LISTEN => sys_listen(frame),
         SYS_CONNECT => sys_connect(frame),
@@ -158,7 +182,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETSOCKOPT => sys_getsockopt(frame),
         SYS_FCNTL => sys_fcntl(frame),
         SYS_MMAP => sys_mmap(frame),
-        SYS_MPROTECT => Ok(0),
+        SYS_MPROTECT => sys_mprotect(frame),
         SYS_MSYNC => Ok(0),
         SYS_MUNMAP => sys_munmap(frame),
         SYS_ARCH_PRCTL => sys_arch_prctl(frame),
@@ -168,7 +192,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_READLINKAT => sys_readlinkat(frame),
         SYS_UNAME => sys_uname(frame),
         SYS_NANOSLEEP => sys_nanosleep(frame),
-        SYS_PIPE2 => Err(ERR_ENOSYS),
+        SYS_PIPE2 => sys_pipe(frame, frame.rsi),
         SYS_EXIT | SYS_EXIT_GROUP => handle_exit(frame.rdi as i32),
         _ => {
             crate::kwarn!("ring3 unsupported syscall {}", frame.rax);
@@ -187,6 +211,26 @@ fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
         let count = active_context().supervisor.write_vfs_fd_bytes(fd, bytes)?;
         return Ok(count as i64);
     }
+    if active_context().supervisor.is_pipe_fd(fd) {
+        let bytes = user_lease(frame.rsi, frame.rdx, false)?;
+        let count = active_context()
+            .supervisor
+            .write_pipe_fd_bytes(fd, bytes.bytes().map_err(map_dmw_fault)?)?;
+        return Ok(count as i64);
+    }
+    if active_context().supervisor.is_socketpair_fd(fd) {
+        let bytes = user_lease(frame.rsi, frame.rdx, false)?;
+        let count = active_context()
+            .supervisor
+            .write_socketpair_fd_bytes(fd, bytes.bytes().map_err(map_dmw_fault)?)?;
+        return Ok(count as i64);
+    }
+    if active_context().supervisor.is_eventfd_fd(fd) {
+        let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+        let value = read_user_u64(frame.rsi)?;
+        let count = active_context().supervisor.write_eventfd_value(fd, value, count)?;
+        return Ok(count as i64);
+    }
     let bytes = user_lease(frame.rsi, frame.rdx, false)?;
     let bytes = bytes.bytes().map_err(map_dmw_fault)?;
     let supervisor = &mut active_context().supervisor;
@@ -199,6 +243,97 @@ fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
         .map_err(|_| ERR_EINVAL)?
     {
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
+        LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn sys_writev(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let iovcnt = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    if iovcnt > LINUX_IOV_MAX {
+        return Err(ERR_EINVAL);
+    }
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+
+    let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
+    let mut total = 0usize;
+    for (base, len) in iovecs {
+        if len == 0 {
+            continue;
+        }
+        let lease = user_lease(base, len, false)?;
+        let bytes = lease.bytes().map_err(map_dmw_fault)?;
+        match write_fd_chunk(fd, bytes) {
+            Ok(written) => {
+                total = total.checked_add(written).ok_or(ERR_EINVAL)?;
+                if written < bytes.len() {
+                    return Ok(total as i64);
+                }
+            }
+            Err(_errno) if total > 0 => return Ok(total as i64),
+            Err(errno) => return Err(errno),
+        }
+    }
+    Ok(total as i64)
+}
+
+fn read_user_iovecs(ptr: u64, iovcnt: usize) -> Result<Vec<(u64, u64)>, i32> {
+    let len = (iovcnt as u64).checked_mul(LINUX_IOVEC_SIZE).ok_or(ERR_EINVAL)?;
+    let lease = user_lease(ptr, len, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    let mut out = Vec::with_capacity(iovcnt);
+    let mut total = 0u64;
+    for index in 0..iovcnt {
+        let offset = index * LINUX_IOVEC_SIZE as usize;
+        let base =
+            u64::from_le_bytes(bytes[offset..offset + 8].try_into().map_err(|_| ERR_EINVAL)?);
+        let len =
+            u64::from_le_bytes(bytes[offset + 8..offset + 16].try_into().map_err(|_| ERR_EINVAL)?);
+        total = total.checked_add(len).ok_or(ERR_EINVAL)?;
+        if total > i64::MAX as u64 {
+            return Err(ERR_EINVAL);
+        }
+        out.push((base, len));
+    }
+    Ok(out)
+}
+
+fn write_fd_chunk(fd: u32, bytes: &[u8]) -> Result<usize, i32> {
+    if fd == FD_STDOUT || fd == FD_STDERR {
+        active_context().supervisor.write_console_bytes(bytes)?;
+        return Ok(bytes.len());
+    }
+    if active_context().supervisor.is_vfs_file_fd(fd) {
+        return active_context().supervisor.write_vfs_fd_bytes(fd, bytes);
+    }
+    if active_context().supervisor.is_pipe_fd(fd) {
+        return active_context().supervisor.write_pipe_fd_bytes(fd, bytes);
+    }
+    if active_context().supervisor.is_socketpair_fd(fd) {
+        return active_context().supervisor.write_socketpair_fd_bytes(fd, bytes);
+    }
+    if active_context().supervisor.is_eventfd_fd(fd) {
+        let value = bytes
+            .get(..8)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u64::from_le_bytes)
+            .ok_or(ERR_EINVAL)?;
+        return active_context().supervisor.write_eventfd_value(fd, value, bytes.len());
+    }
+
+    let supervisor = &mut active_context().supervisor;
+    let (ptr, len) = supervisor.write_linux_arg_bytes(bytes).map_err(|_| ERR_EFAULT)?;
+    match supervisor
+        .dispatch_linux_syscall(
+            "ring3_writev_chunk",
+            SyscallContext::new(SYS_WRITE, [fd as u64, ptr as u64, len as u64, 0, 0, 0]),
+        )
+        .map_err(|_| ERR_EINVAL)?
+    {
+        LinuxCallResult::Ret(ret) if ret >= 0 => usize::try_from(ret).map_err(|_| ERR_EINVAL),
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
@@ -222,6 +357,24 @@ fn sys_console_write(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    if active_context().supervisor.is_pipe_fd(fd) {
+        let bytes = active_context().supervisor.read_pipe_fd_bytes(fd, count)?;
+        let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+        dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+        return Ok(bytes.len() as i64);
+    }
+    if active_context().supervisor.is_socketpair_fd(fd) {
+        let bytes = active_context().supervisor.read_socketpair_fd_bytes(fd, count)?;
+        let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+        dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+        return Ok(bytes.len() as i64);
+    }
+    if active_context().supervisor.is_eventfd_fd(fd) {
+        let bytes = active_context().supervisor.read_eventfd_value(fd, count)?;
+        let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+        dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+        return Ok(bytes.len() as i64);
+    }
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
@@ -332,6 +485,13 @@ fn sys_access(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
+fn sys_faccessat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    active_context().supervisor.stat_path_abi(&resolved)?;
+    Ok(0)
+}
+
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
@@ -343,6 +503,22 @@ fn sys_mkdirat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
     active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32)?;
+    Ok(0)
+}
+
+fn sys_mknodat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const S_IFMT: u32 = 0o170000;
+    const S_IFIFO: u32 = 0o010000;
+    const S_IFREG: u32 = 0o100000;
+
+    let mode = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let file_type = mode & S_IFMT;
+    if file_type != S_IFIFO && file_type != S_IFREG {
+        return Err(ERR_EPERM);
+    }
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    active_context().supervisor.create_fifo_path(&resolved, mode)?;
     Ok(0)
 }
 
@@ -517,10 +693,16 @@ fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
+    const RLIMIT_NOFILE: u64 = 7;
+    const VMOS_NOFILE_LIMIT: u64 = 1024;
+
     if frame.r10 != 0 {
         let mut encoded = [0u8; 16];
-        let soft = u64::MAX;
-        let hard = u64::MAX;
+        let (soft, hard) = if frame.rsi == RLIMIT_NOFILE {
+            (VMOS_NOFILE_LIMIT, VMOS_NOFILE_LIMIT)
+        } else {
+            (u64::MAX, u64::MAX)
+        };
         encoded[..8].copy_from_slice(&soft.to_le_bytes());
         encoded[8..].copy_from_slice(&hard.to_le_bytes());
         write_user_bytes(frame.r10, &encoded)?;
@@ -625,6 +807,24 @@ fn sys_clock_nanosleep(frame: &SyscallFrame) -> Result<i64, i32> {
     sleep_from_user_timespec("ring3_clock_nanosleep", SYS_NANOSLEEP, req_ptr)
 }
 
+fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
+    const POLLIN: u16 = 0x001;
+    const POLLOUT: u16 = 0x004;
+
+    let nfds = usize::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if nfds > 1024 {
+        return Err(ERR_EINVAL);
+    }
+    if frame.r8 != 0 {
+        let _ = read_user_timespec_ns(frame.r8)?;
+    }
+    let mut ready = 0i64;
+    ready += filter_fdset(frame.rsi, nfds, POLLIN)?;
+    ready += filter_fdset(frame.rdx, nfds, POLLOUT)?;
+    clear_fdset(frame.r10, nfds)?;
+    Ok(ready)
+}
+
 fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.rsi == 0 {
         return Err(ERR_EFAULT);
@@ -682,12 +882,18 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
-    Ok(0)
+    let child_pid = active_context().spawn_fake_child();
+    active_context().supervisor.simulate_socketpair_peer_activity();
+    active_context().supervisor.simulate_eventfd_child_activity();
+    Ok(child_pid as i64)
 }
 
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.rsi != 0 {
-        write_user_bytes(frame.rsi, &0i32.to_le_bytes())?;
+    if let Some(child_pid) = active_context().reap_fake_child() {
+        if frame.rsi != 0 {
+            write_user_bytes(frame.rsi, &0i32.to_le_bytes())?;
+        }
+        return Ok(child_pid as i64);
     }
     Err(ERR_ECHILD)
 }
@@ -712,26 +918,113 @@ fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 }
 
+fn sys_close_range(frame: &SyscallFrame) -> Result<i64, i32> {
+    const CLOSE_RANGE_UNSHARE: u64 = 1 << 1;
+    const CLOSE_RANGE_CLOEXEC: u64 = 1 << 2;
+
+    let first = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let last = u32::try_from(frame.rsi).unwrap_or(u32::MAX);
+    let flags = frame.rdx;
+    if flags & !(CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC) != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & CLOSE_RANGE_CLOEXEC != 0 {
+        active_context().supervisor.set_fd_flags_range(first, last, 1)?;
+        return Ok(0);
+    }
+    active_context().supervisor.close_fd_range(first, last)?;
+    Ok(0)
+}
+
+fn sys_pipe(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
+    const O_CLOEXEC: u64 = 0o2000000;
+    const O_NONBLOCK: u64 = 0o0004000;
+
+    if flags & !(O_CLOEXEC | O_NONBLOCK) != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let (read_fd, write_fd) = active_context().supervisor.create_pipe_pair()?;
+    if flags & O_CLOEXEC != 0 {
+        active_context().supervisor.set_fd_flags(read_fd, 1)?;
+        active_context().supervisor.set_fd_flags(write_fd, 1)?;
+    }
+    let mut encoded = [0u8; 8];
+    encoded[..4].copy_from_slice(&(read_fd as i32).to_le_bytes());
+    encoded[4..].copy_from_slice(&(write_fd as i32).to_le_bytes());
+    write_user_bytes(frame.rdi, &encoded)?;
+    Ok(0)
+}
+
+fn sys_dup(frame: &SyscallFrame) -> Result<i64, i32> {
+    let old_fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    Ok(active_context().supervisor.dup_fd(old_fd)? as i64)
+}
+
+fn sys_dup2(frame: &SyscallFrame) -> Result<i64, i32> {
+    let old_fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    let new_fd = u32::try_from(linux_fd_arg(frame.rsi)).map_err(|_| ERR_EBADF)?;
+    Ok(active_context().supervisor.dup_fd_to(old_fd, new_fd, true)? as i64)
+}
+
+fn sys_dup3(frame: &SyscallFrame) -> Result<i64, i32> {
+    const O_CLOEXEC: u64 = 0o2000000;
+
+    let old_fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    let new_fd = u32::try_from(linux_fd_arg(frame.rsi)).map_err(|_| ERR_EBADF)?;
+    if frame.rdx & !O_CLOEXEC != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let fd = active_context().supervisor.dup_fd_to(old_fd, new_fd, false)?;
+    if frame.rdx & O_CLOEXEC != 0 {
+        active_context().supervisor.set_fd_flags(fd, 1)?;
+    }
+    Ok(fd as i64)
+}
+
+fn sys_eventfd(frame: &SyscallFrame, flags_raw: u64) -> Result<i64, i32> {
+    let initval = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)? as u64;
+    let flags = u32::try_from(flags_raw).map_err(|_| ERR_EINVAL)?;
+    Ok(active_context().supervisor.create_eventfd(initval, flags)? as i64)
+}
+
+fn sys_epoll_create(frame: &SyscallFrame) -> Result<i64, i32> {
+    let size = i32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if size <= 0 {
+        return Err(ERR_EINVAL);
+    }
+    dispatch_ret("ring3_epoll_create", SyscallContext::new(SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]))
+}
+
 fn sys_epoll_create1(frame: &SyscallFrame) -> Result<i64, i32> {
+    const EPOLL_CLOEXEC: u32 = 0o2000000;
+
     let flags = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if flags & !EPOLL_CLOEXEC != 0 {
+        return Err(ERR_EINVAL);
+    }
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
             "ring3_epoll_create1",
-            SyscallContext::new(SYS_EPOLL_CREATE1, [flags as u64, 0, 0, 0, 0, 0]),
+            SyscallContext::new(SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]),
         )
         .map_err(|_| ERR_EINVAL)?
     {
-        LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
+        LinuxCallResult::Ret(ret) if ret >= 0 => {
+            if flags & EPOLL_CLOEXEC != 0 {
+                active_context().supervisor.set_fd_flags(ret as u32, 1)?;
+            }
+            Ok(ret)
+        }
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
 }
 
 fn sys_epoll_ctl(frame: &SyscallFrame) -> Result<i64, i32> {
-    let epfd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let epfd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
     let op = u32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    let fd = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let fd = u32::try_from(linux_fd_arg(frame.rdx)).map_err(|_| ERR_EBADF)?;
     let (events, data) = read_epoll_event(frame.r10)?;
     let supervisor = &mut active_context().supervisor;
     match supervisor
@@ -751,9 +1044,22 @@ fn sys_epoll_ctl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_epoll_wait(frame: &SyscallFrame) -> Result<i64, i32> {
-    let epfd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
-    let max_events = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
-    let timeout_ms = frame.r10 as i32 as i64;
+    sys_epoll_wait_args(frame.rdi, frame.rsi, frame.rdx, frame.r10 as i32 as i64)
+}
+
+fn sys_epoll_wait_args(
+    epfd_arg: u64,
+    events_ptr: u64,
+    max_events_arg: u64,
+    timeout_ms: i64,
+) -> Result<i64, i32> {
+    let epfd = u32::try_from(linux_fd_arg(epfd_arg)).map_err(|_| ERR_EBADF)?;
+    let max_events_signed = i32::try_from(max_events_arg as i64).map_err(|_| ERR_EINVAL)?;
+    if max_events_signed <= 0 {
+        return Err(ERR_EINVAL);
+    }
+    let max_events = max_events_signed as u32;
+    validate_user_range(events_ptr, max_events as u64 * EPOLL_EVENT_SIZE, true)?;
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
@@ -770,7 +1076,7 @@ fn sys_epoll_wait(frame: &SyscallFrame) -> Result<i64, i32> {
             if bytes.len() as u64 > max_len {
                 return Err(ERR_EFAULT);
             }
-            let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+            let mut dest = user_lease(events_ptr, bytes.len() as u64, true)?;
             dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
             Ok((bytes.len() as u64 / EPOLL_EVENT_SIZE) as i64)
         }
@@ -778,6 +1084,61 @@ fn sys_epoll_wait(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_epoll_pwait(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.r8 != 0 {
+        let len = if frame.r9 == 0 { 8 } else { frame.r9 };
+        validate_user_range(frame.r8, len, false)?;
+    } else if active_context().consume_fake_signal() {
+        return Err(vmos_abi::ERR_EINTR);
+    }
+    sys_epoll_wait(frame)
+}
+
+fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.r10 != 0 {
+        let timeout_ms = read_user_timespec_ms(frame.r10)?;
+        if frame.r8 != 0 {
+            let len = if frame.r9 == 0 { 8 } else { frame.r9 };
+            validate_user_range(frame.r8, len, false)?;
+        }
+        return sys_epoll_wait_args(frame.rdi, frame.rsi, frame.rdx, timeout_ms as i64);
+    }
+    if frame.r8 != 0 {
+        let len = if frame.r9 == 0 { 8 } else { frame.r9 };
+        validate_user_range(frame.r8, len, false)?;
+    } else if active_context().consume_fake_signal() {
+        return Err(vmos_abi::ERR_EINTR);
+    }
+    sys_epoll_wait(frame)
+}
+
+fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
+    const POLLFD_SIZE: u64 = 8;
+
+    let nfds = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let total_len = frame.rsi.checked_mul(POLLFD_SIZE).ok_or(ERR_EINVAL)?;
+    let mut lease = user_lease(frame.rdi, total_len, true)?;
+    let bytes = lease.bytes_mut().map_err(map_dmw_fault)?;
+    let mut ready = 0i64;
+    for index in 0..nfds {
+        let offset = index * POLLFD_SIZE as usize;
+        let fd = i32::from_le_bytes(bytes[offset..offset + 4].try_into().map_err(|_| ERR_EINVAL)?);
+        let events =
+            u16::from_le_bytes(bytes[offset + 4..offset + 6].try_into().map_err(|_| ERR_EINVAL)?);
+        let revents = if fd < 0 {
+            0
+        } else {
+            let fd = fd as u32;
+            active_context().supervisor.fd_poll_revents(fd, events)?
+        };
+        bytes[offset + 6..offset + 8].copy_from_slice(&revents.to_le_bytes());
+        if revents != 0 {
+            ready += 1;
+        }
+    }
+    Ok(ready)
 }
 
 fn sys_socket(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -789,6 +1150,32 @@ fn sys_socket(frame: &SyscallFrame) -> Result<i64, i32> {
         "ring3_socket",
         SyscallContext::new(SYS_SOCKET, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
     )
+}
+
+fn sys_socketpair(frame: &SyscallFrame) -> Result<i64, i32> {
+    const SOCK_CLOEXEC: u64 = 0o2000000;
+    const SOCK_NONBLOCK: u64 = 0o0004000;
+
+    let domain = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let ty = frame.rsi;
+    let protocol = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    if domain != AF_UNIX || ty & !(SOCK_CLOEXEC | SOCK_NONBLOCK | SOCK_STREAM as u64) != 0 {
+        return Err(ERR_EAFNOSUPPORT);
+    }
+    if ty & SOCK_STREAM as u64 == 0 || protocol != 0 {
+        return Err(ERR_EPROTONOSUPPORT);
+    }
+
+    let (fd_a, fd_b) = active_context().supervisor.create_socketpair()?;
+    if ty & SOCK_CLOEXEC != 0 {
+        active_context().supervisor.set_fd_flags(fd_a, 1)?;
+        active_context().supervisor.set_fd_flags(fd_b, 1)?;
+    }
+    let mut encoded = [0u8; 8];
+    encoded[..4].copy_from_slice(&(fd_a as i32).to_le_bytes());
+    encoded[4..].copy_from_slice(&(fd_b as i32).to_le_bytes());
+    write_user_bytes(frame.r10, &encoded)?;
+    Ok(0)
 }
 
 fn linux_socket_create_error(domain: u32, ty: u32, protocol: u32) -> Option<i32> {
@@ -821,17 +1208,57 @@ fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_listen(frame: &SyscallFrame) -> Result<i64, i32> {
-    dispatch_ret(
+    let ret = dispatch_ret(
         "ring3_listen",
         SyscallContext::new(SYS_LISTEN, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
-    )
+    )?;
+    if ret == 0 {
+        active_context().supervisor.note_synthetic_listener(frame.rsi);
+    }
+    Ok(ret)
 }
 
 fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
-    dispatch_ret(
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    active_context().supervisor.require_socket_fd(fd)?;
+    let sockaddr = read_connect_sockaddr(frame.rsi, frame.rdx)?;
+    if sockaddr.family != AF_INET as u16 && sockaddr.family != AF_UNIX as u16 {
+        return Err(ERR_EAFNOSUPPORT);
+    }
+    if sockaddr.family == AF_INET as u16 && sockaddr.port_be != 0 {
+        return Err(ERR_ECONNREFUSED);
+    }
+    let ret = dispatch_ret(
         "ring3_connect",
         SyscallContext::new(SYS_CONNECT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
-    )
+    )?;
+    if sockaddr.family == AF_INET as u16
+        && ret == 0
+        && !active_context().supervisor.consume_synthetic_listener_connect()
+    {
+        return Err(ERR_ECONNREFUSED);
+    }
+    Ok(ret)
+}
+
+struct ConnectSockaddr {
+    family: u16,
+    port_be: u16,
+}
+
+fn read_connect_sockaddr(addr_ptr: u64, addr_len: u64) -> Result<ConnectSockaddr, i32> {
+    if addr_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    if addr_len < 16 {
+        return Err(ERR_EINVAL);
+    }
+    let lease = user_lease(addr_ptr, 16, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    Ok(ConnectSockaddr {
+        family: u16::from_le_bytes(bytes[..2].try_into().map_err(|_| ERR_EINVAL)?),
+        port_be: u16::from_be_bytes(bytes[2..4].try_into().map_err(|_| ERR_EINVAL)?),
+    })
 }
 
 fn sys_accept(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -952,6 +1379,26 @@ fn sys_getsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const F_GETFD: u64 = 1;
+    const F_SETFD: u64 = 2;
+    const F_SETPIPE_SZ: u64 = 1031;
+    const F_GETPIPE_SZ: u64 = 1032;
+    const FD_CLOEXEC: u32 = 1;
+
+    let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    match frame.rsi {
+        F_GETFD => return Ok(active_context().supervisor.fd_flags(fd)? as i64),
+        F_SETFD => {
+            active_context().supervisor.set_fd_flags(fd, (frame.rdx as u32) & FD_CLOEXEC)?;
+            return Ok(0);
+        }
+        F_SETPIPE_SZ => {
+            let size = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+            return Ok(active_context().supervisor.set_pipe_capacity(fd, size)? as i64);
+        }
+        F_GETPIPE_SZ => return Ok(active_context().supervisor.pipe_capacity(fd)? as i64),
+        _ => {}
+    }
     dispatch_ret(
         "ring3_fcntl",
         SyscallContext::new(SYS_FCNTL, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
@@ -959,6 +1406,8 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PROT_WRITE: u64 = 0x2;
+
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
         return Err(ERR_EINVAL);
@@ -975,7 +1424,17 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         "ring3_mmap",
         SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
     );
+    active_context().record_user_region(addr, len, frame.rdx & PROT_WRITE != 0);
     Ok(addr as i64)
+}
+
+fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PROT_WRITE: u64 = 0x2;
+
+    let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
+    validate_user_range(frame.rdi, len, false)?;
+    active_context().record_user_region(frame.rdi, len, frame.rdx & PROT_WRITE != 0);
+    Ok(0)
 }
 
 fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1134,6 +1593,42 @@ fn read_user_timespec_ns(ptr: u64) -> Result<u64, i32> {
 
 fn current_clock_ms() -> u64 {
     current_monotonic_ns() / 1_000_000
+}
+
+fn clear_fdset(ptr: u64, nfds: usize) -> Result<(), i32> {
+    if ptr == 0 || nfds == 0 {
+        return Ok(());
+    }
+    let len = nfds.div_ceil(8);
+    let mut set = user_lease(ptr, len as u64, true)?;
+    for byte in set.bytes_mut().map_err(map_dmw_fault)? {
+        *byte = 0;
+    }
+    Ok(())
+}
+
+fn filter_fdset(ptr: u64, nfds: usize, events: u16) -> Result<i64, i32> {
+    if ptr == 0 || nfds == 0 {
+        return Ok(0);
+    }
+    let len = nfds.div_ceil(8);
+    let mut set = user_lease(ptr, len as u64, true)?;
+    let bytes = set.bytes_mut().map_err(map_dmw_fault)?;
+    let mut ready = 0i64;
+    for fd in 0..nfds {
+        let byte = fd / 8;
+        let mask = 1u8 << (fd % 8);
+        if bytes[byte] & mask == 0 {
+            continue;
+        }
+        let revents = active_context().supervisor.fd_poll_revents(fd as u32, events)?;
+        if revents & events != 0 {
+            ready += 1;
+        } else {
+            bytes[byte] &= !mask;
+        }
+    }
+    Ok(ready)
 }
 
 fn current_monotonic_ns() -> u64 {
@@ -1305,6 +1800,12 @@ fn read_user_u32(ptr: u64) -> Result<u32, i32> {
     Ok(u32::from_le_bytes(bytes[..4].try_into().map_err(|_| ERR_EINVAL)?))
 }
 
+fn read_user_u64(ptr: u64) -> Result<u64, i32> {
+    let lease = user_lease(ptr, 8, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    Ok(u64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
 fn write_user_u32(ptr: u64, value: u32) -> Result<(), i32> {
     write_user_bytes(ptr, &value.to_le_bytes())
 }
@@ -1344,16 +1845,37 @@ fn write_u64(out: &mut [u8], offset: usize, value: u64) {
 }
 
 fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
+    if len == 0 {
+        return Ok(());
+    }
     let end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
     let regions = &active_context().regions;
-    if regions
-        .iter()
-        .any(|region| ptr >= region.start && end <= region.end && (!write || region.writable))
-    {
-        Ok(())
-    } else {
-        Err(ERR_EFAULT)
+    let mut cursor = ptr;
+    while cursor < end {
+        let Some((index, region)) = regions
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, region)| cursor >= region.start && cursor < region.end)
+        else {
+            return Err(ERR_EFAULT);
+        };
+        if write && !region.writable {
+            return Err(ERR_EFAULT);
+        }
+
+        let mut covered_end = core::cmp::min(region.end, end);
+        for later in &regions[index + 1..] {
+            if later.start > cursor && later.start < covered_end {
+                covered_end = later.start;
+            }
+        }
+        if covered_end <= cursor {
+            return Err(ERR_EFAULT);
+        }
+        cursor = covered_end;
     }
+    Ok(())
 }
 
 fn align_page(value: u64) -> Option<u64> {
@@ -1382,24 +1904,23 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
 }
 
 fn normalize_user_path(path: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut last_was_slash = false;
-    for byte in path.iter().copied() {
-        if byte == b'/' {
-            if !last_was_slash {
-                out.push(byte);
+    let mut components: Vec<&[u8]> = Vec::new();
+    for component in path.split(|byte| *byte == b'/') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                let _ = components.pop();
             }
-            last_was_slash = true;
-        } else {
-            out.push(byte);
-            last_was_slash = false;
+            _ => components.push(component),
         }
     }
-    while out.len() > 1 && out.ends_with(b"/") {
-        out.pop();
-    }
-    if out.is_empty() {
-        out.push(b'/');
+    let mut out = Vec::new();
+    out.push(b'/');
+    for (index, component) in components.iter().enumerate() {
+        if index > 0 {
+            out.push(b'/');
+        }
+        out.extend_from_slice(component);
     }
     out
 }

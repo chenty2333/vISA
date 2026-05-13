@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    EPOLL_CTL_ADD, EPOLL_CTL_DEL, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR,
-    ERR_ENOTEMPTY, ERR_EPERM, NodeKind, PackedStep, ServiceRoute,
+    EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ELOOP,
+    ERR_ENOENT, ERR_ENOTDIR, ERR_ENOTEMPTY, ERR_EPERM, NodeKind, PackedStep, ServiceRoute,
 };
 
 use super::super::{
@@ -20,14 +20,27 @@ pub(crate) use native_network::{
 };
 
 const HELLO_TXT: &[u8] = b"sandbox file: supervisor world says hello\n";
-const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\n";
+const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\nboot\nlib\n";
 const SANDBOX_DIR: &[u8] = b"hello.txt\nreadme.link\n";
 const README_LINK: &[u8] = b"/sandbox/hello.txt";
+const BOOT_DIR: &[u8] = b"config-prototype2\n";
+const LIB_DIR: &[u8] = b"modules\nkernel\n";
+const LIB_MODULES_DIR: &[u8] = b"prototype2\n";
+const LIB_MODULES_PROTOTYPE2_DIR: &[u8] = b"build\nconfig\n";
+const LIB_MODULES_BUILD_DIR: &[u8] = b".config\n";
+const LIB_KERNEL_DIR: &[u8] = b"config-prototype2\n";
+const BOOT_CONFIG: &[u8] = b"CONFIG_EVENTFD=y\n\
+CONFIG_MODULES=n\n\
+CONFIG_MODULE_UNLOAD=n\n\
+CONFIG_MODULE_SIG=n\n\
+CONFIG_SECURITY_LOCKDOWN_LSM=n\n\
+CONFIG_EFI_SECURE_BOOT_LOCK_DOWN=n\n\
+CONFIG_LOCK_DOWN_IN_EFI_SECURE_BOOT=n\n";
 
-const PROC_DIR: &[u8] = b"self\nmeminfo\ncpuinfo\nsys\n";
+const PROC_DIR: &[u8] = b"self\nmeminfo\ncpuinfo\nsys\ncmdline\nmounts\n";
 const PROC_SELF_DIR: &[u8] = b"status\nstat\ncwd\n";
 const PROC_SYS_DIR: &[u8] = b"kernel\n";
-const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\n";
+const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\ntainted\n";
 const PROC_STATUS: &[u8] = b"Name:\tvmos-ltp\n\
 State:\tR (running)\n\
 Tgid:\t4\n\
@@ -45,6 +58,10 @@ model name\t: VMOS Virtual CPU\n\
 cpu MHz\t\t: 1000.000\n\
 flags\t\t: fpu tsc cx8 cmov sse sse2 syscall nx lm constant_tsc\n";
 const PROC_PID_MAX: &[u8] = b"4194304\n";
+const PROC_TAINTED: &[u8] = b"0\n";
+const PROC_CMDLINE: &[u8] = b"root=/dev/vmos module.sig_enforce=0\n";
+const PROC_MOUNTS: &[u8] = b"tmpfs / tmpfs rw,relatime 0 0\n\
+tmpfs /tmp tmpfs rw,relatime 0 0\n";
 const PROC_MEMINFO: &[u8] = b"MemTotal:        65536 kB\n\
 MemFree:         32768 kB\n\
 MemAvailable:    49152 kB\n\
@@ -126,6 +143,16 @@ impl VfsService {
         match path {
             b"/" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
             b"/tmp" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
+            b"/boot" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
+            b"/lib"
+            | b"/lib/modules"
+            | b"/lib/modules/prototype2"
+            | b"/lib/modules/prototype2/build"
+            | b"/lib/kernel" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
+            b"/boot/config-prototype2"
+            | b"/lib/modules/prototype2/build/.config"
+            | b"/lib/modules/prototype2/config"
+            | b"/lib/kernel/config-prototype2" => lookup(ServiceRoute::Vfs, NodeKind::File),
             b"/sandbox" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
             b"/sandbox/hello.txt" => lookup(ServiceRoute::Vfs, NodeKind::File),
             b"/sandbox/readme.link" => lookup(ServiceRoute::Vfs, NodeKind::Symlink),
@@ -134,8 +161,11 @@ impl VfsService {
             }
             b"/proc/self/status"
             | b"/proc/self/stat"
+            | b"/proc/cmdline"
+            | b"/proc/mounts"
             | b"/proc/meminfo"
             | b"/proc/cpuinfo"
+            | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => lookup(ServiceRoute::Procfs, NodeKind::File),
             b"/proc/self/cwd" => lookup(ServiceRoute::Procfs, NodeKind::Symlink),
             b"/dev" => lookup(ServiceRoute::Devfs, NodeKind::Directory),
@@ -163,7 +193,18 @@ impl VfsService {
         }
         match path {
             b"/sandbox/hello.txt" => Ok(HELLO_TXT.to_vec()),
-            b"/" | b"/sandbox" => errno(ERR_EISDIR),
+            b"/boot/config-prototype2"
+            | b"/lib/modules/prototype2/build/.config"
+            | b"/lib/modules/prototype2/config"
+            | b"/lib/kernel/config-prototype2" => Ok(BOOT_CONFIG.to_vec()),
+            b"/"
+            | b"/sandbox"
+            | b"/boot"
+            | b"/lib"
+            | b"/lib/modules"
+            | b"/lib/modules/prototype2"
+            | b"/lib/modules/prototype2/build"
+            | b"/lib/kernel" => errno(ERR_EISDIR),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -184,7 +225,18 @@ impl VfsService {
         match path {
             b"/" => Ok(ROOT_DIR.to_vec()),
             b"/sandbox" => Ok(SANDBOX_DIR.to_vec()),
-            b"/sandbox/hello.txt" | b"/sandbox/readme.link" => errno(ERR_ENOTDIR),
+            b"/boot" => Ok(BOOT_DIR.to_vec()),
+            b"/lib" => Ok(LIB_DIR.to_vec()),
+            b"/lib/modules" => Ok(LIB_MODULES_DIR.to_vec()),
+            b"/lib/modules/prototype2" => Ok(LIB_MODULES_PROTOTYPE2_DIR.to_vec()),
+            b"/lib/modules/prototype2/build" => Ok(LIB_MODULES_BUILD_DIR.to_vec()),
+            b"/lib/kernel" => Ok(LIB_KERNEL_DIR.to_vec()),
+            b"/sandbox/hello.txt"
+            | b"/sandbox/readme.link"
+            | b"/boot/config-prototype2"
+            | b"/lib/modules/prototype2/build/.config"
+            | b"/lib/modules/prototype2/config"
+            | b"/lib/kernel/config-prototype2" => errno(ERR_ENOTDIR),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -460,8 +512,11 @@ impl ProcfsService {
             }
             b"/proc/self/status"
             | b"/proc/self/stat"
+            | b"/proc/cmdline"
+            | b"/proc/mounts"
             | b"/proc/meminfo"
             | b"/proc/cpuinfo"
+            | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => Ok(NodeKind::File),
             b"/proc/self/cwd" => Ok(NodeKind::Symlink),
             _ => errno(ERR_ENOENT),
@@ -479,8 +534,11 @@ impl ProcfsService {
         match path {
             b"/proc/self/status" => Ok(PROC_STATUS.to_vec()),
             b"/proc/self/stat" => Ok(PROC_STAT.to_vec()),
+            b"/proc/cmdline" => Ok(PROC_CMDLINE.to_vec()),
+            b"/proc/mounts" => Ok(PROC_MOUNTS.to_vec()),
             b"/proc/meminfo" => Ok(PROC_MEMINFO.to_vec()),
             b"/proc/cpuinfo" => Ok(PROC_CPUINFO.to_vec()),
+            b"/proc/sys/kernel/tainted" => Ok(PROC_TAINTED.to_vec()),
             b"/proc/sys/kernel/pid_max" => Ok(PROC_PID_MAX.to_vec()),
             b"/proc" | b"/proc/self" | b"/proc/sys" | b"/proc/sys/kernel" => errno(ERR_EISDIR),
             _ => errno(ERR_ENOENT),
@@ -503,8 +561,11 @@ impl ProcfsService {
             b"/proc/self/status"
             | b"/proc/self/stat"
             | b"/proc/self/cwd"
+            | b"/proc/cmdline"
+            | b"/proc/mounts"
             | b"/proc/meminfo"
             | b"/proc/cpuinfo"
+            | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => errno(ERR_ENOTDIR),
             _ => errno(ERR_ENOENT),
         }
@@ -524,10 +585,13 @@ impl ProcfsService {
             | b"/proc/self"
             | b"/proc/self/status"
             | b"/proc/self/stat"
+            | b"/proc/cmdline"
+            | b"/proc/mounts"
             | b"/proc/meminfo"
             | b"/proc/cpuinfo"
             | b"/proc/sys"
             | b"/proc/sys/kernel"
+            | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => errno(ERR_EINVAL),
             _ => errno(ERR_ENOENT),
         }
@@ -614,6 +678,7 @@ struct EpollWatcher {
     events: u32,
     data: u64,
     ready: bool,
+    disabled: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -621,6 +686,11 @@ struct EpollWaiter {
     epoll_id: u32,
     wait_id: u64,
 }
+
+const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
+const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
+const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
+const EPOLLONESHOT: u32 = 0x4000_0000;
 
 pub(crate) struct EpollService {
     next_id: u32,
@@ -655,12 +725,23 @@ impl EpollService {
         self.require_instance(epoll_id)?;
         match op {
             EPOLL_CTL_ADD => {
+                if let Some(target_epoll_id) = epoll_id_from_ready_key(ready_key) {
+                    if target_epoll_id == epoll_id {
+                        return errno(ERR_EINVAL);
+                    }
+                    if self.epoll_reaches(target_epoll_id, epoll_id)? {
+                        return errno(ERR_ELOOP);
+                    }
+                    if 1 + self.epoll_nesting_depth(target_epoll_id)? >= MAX_EPOLL_NESTING_DEPTH {
+                        return errno(ERR_EINVAL);
+                    }
+                }
                 if self
                     .watchers
                     .iter()
                     .any(|watcher| watcher.epoll_id == epoll_id && watcher.ready_key == ready_key)
                 {
-                    return errno(ERR_EINVAL);
+                    return errno(ERR_EEXIST);
                 }
                 self.watchers.push(EpollWatcher {
                     epoll_id,
@@ -668,8 +749,23 @@ impl EpollService {
                     events,
                     data,
                     ready: false,
+                    disabled: false,
                 });
                 Ok(())
+            }
+            EPOLL_CTL_MOD => {
+                if let Some(watcher) = self
+                    .watchers
+                    .iter_mut()
+                    .find(|watcher| watcher.epoll_id == epoll_id && watcher.ready_key == ready_key)
+                {
+                    watcher.events = events;
+                    watcher.data = data;
+                    watcher.disabled = false;
+                    Ok(())
+                } else {
+                    errno(ERR_ENOENT)
+                }
             }
             EPOLL_CTL_DEL => {
                 let old_len = self.watchers.len();
@@ -692,11 +788,15 @@ impl EpollService {
         let mut count = 0usize;
         let limit = max_events.max(1) as usize;
         for watcher in &mut self.watchers {
-            if watcher.epoll_id != epoll_id || !watcher.ready || count == limit {
+            if watcher.epoll_id != epoll_id || watcher.disabled || !watcher.ready || count == limit
+            {
                 continue;
             }
             out.extend_from_slice(&watcher.events.to_le_bytes());
             out.extend_from_slice(&watcher.data.to_le_bytes());
+            if watcher.events & EPOLLONESHOT != 0 {
+                watcher.disabled = true;
+            }
             watcher.ready = false;
             count += 1;
         }
@@ -727,6 +827,63 @@ impl EpollService {
         if self.instances.contains(&epoll_id) { Ok(()) } else { errno(ERR_ENOENT) }
     }
 
+    fn epoll_nesting_depth(&self, epoll_id: u32) -> Result<u32, ServiceCallError> {
+        self.epoll_nesting_depth_inner(epoll_id, &mut Vec::new())
+    }
+
+    fn epoll_reaches(
+        &self,
+        start_epoll_id: u32,
+        target_epoll_id: u32,
+    ) -> Result<bool, ServiceCallError> {
+        self.epoll_reaches_inner(start_epoll_id, target_epoll_id, &mut Vec::new())
+    }
+
+    fn epoll_reaches_inner(
+        &self,
+        start_epoll_id: u32,
+        target_epoll_id: u32,
+        seen: &mut Vec<u32>,
+    ) -> Result<bool, ServiceCallError> {
+        if start_epoll_id == target_epoll_id {
+            return Ok(true);
+        }
+        if seen.contains(&start_epoll_id) {
+            return errno(ERR_ELOOP);
+        }
+        seen.push(start_epoll_id);
+        for watcher in self.watchers.iter().filter(|watcher| watcher.epoll_id == start_epoll_id) {
+            if let Some(next_epoll_id) = epoll_id_from_ready_key(watcher.ready_key)
+                && self.epoll_reaches_inner(next_epoll_id, target_epoll_id, seen)?
+            {
+                seen.pop();
+                return Ok(true);
+            }
+        }
+        seen.pop();
+        Ok(false)
+    }
+
+    fn epoll_nesting_depth_inner(
+        &self,
+        epoll_id: u32,
+        seen: &mut Vec<u32>,
+    ) -> Result<u32, ServiceCallError> {
+        if seen.contains(&epoll_id) {
+            return errno(ERR_EINVAL);
+        }
+        seen.push(epoll_id);
+        let mut depth = 0;
+        for watcher in self.watchers.iter().filter(|watcher| watcher.epoll_id == epoll_id) {
+            if let Some(target_epoll_id) = epoll_id_from_ready_key(watcher.ready_key) {
+                let child_depth = 1 + self.epoll_nesting_depth_inner(target_epoll_id, seen)?;
+                depth = depth.max(child_depth);
+            }
+        }
+        seen.pop();
+        Ok(depth)
+    }
+
     fn signal_waiters(
         &mut self,
         ready_key: u64,
@@ -734,7 +891,7 @@ impl EpollService {
     ) -> Result<Vec<u64>, ServiceCallError> {
         if !restart {
             for watcher in &mut self.watchers {
-                if watcher.ready_key == ready_key {
+                if watcher.ready_key == ready_key && !watcher.disabled {
                     watcher.ready = true;
                 }
             }
@@ -742,7 +899,7 @@ impl EpollService {
 
         let mut ready_epolls = Vec::new();
         for watcher in &self.watchers {
-            if watcher.ready_key == ready_key {
+            if watcher.ready_key == ready_key && !watcher.disabled {
                 ready_epolls.push(watcher.epoll_id);
             }
         }
@@ -757,6 +914,14 @@ impl EpollService {
             }
         });
         Ok(wait_ids)
+    }
+}
+
+fn epoll_id_from_ready_key(ready_key: u64) -> Option<u32> {
+    if ready_key & READY_TAG_MASK == EPOLL_READY_TAG {
+        u32::try_from(ready_key & !READY_TAG_MASK).ok()
+    } else {
+        None
     }
 }
 

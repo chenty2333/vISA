@@ -298,6 +298,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = self.alloc_fd(FdEntry {
             resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
+            fd_flags: 0,
+            cursor_group: None,
         });
         let handle =
             self.fd_handle(fd).ok_or("demo socket fd did not publish a resource handle")?;

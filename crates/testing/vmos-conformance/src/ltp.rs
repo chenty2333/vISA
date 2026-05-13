@@ -22,7 +22,8 @@ pub fn parse_ltp_results(text: &str) -> Vec<LtpCaseResult> {
 }
 
 pub fn parse_ltp_result_line(line: &str) -> Option<LtpCaseResult> {
-    let trimmed = line.trim();
+    let clean_line = strip_ansi_csi(line);
+    let trimmed = clean_line.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -446,8 +447,9 @@ fn path_string(path: PathBuf) -> String {
 pub fn ltp_raw_log_from_serial(case_id: &str, serial_text: &str, runner_status: i32) -> String {
     let mut out = String::new();
     for line in serial_text.lines() {
-        if parse_ltp_result_line(line).is_some() {
-            out.push_str(line.trim());
+        let clean_line = strip_ansi_csi(line);
+        if parse_ltp_result_line(&clean_line).is_some() {
+            out.push_str(clean_line.trim());
             out.push('\n');
         }
     }
@@ -525,4 +527,22 @@ fn normalize_ltp_status(token: &str) -> Option<Outcome> {
         "CONF" | "TCONF" | "NA" | "SKIP" | "TSKIP" => Some(Outcome::Skip),
         _ => None,
     }
+}
+
+fn strip_ansi_csi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for next in chars.by_ref() {
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }

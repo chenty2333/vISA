@@ -79,6 +79,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let fd = self.alloc_fd(FdEntry {
                     resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
                     cursor: 0,
+                    fd_flags: 0,
+                    cursor_group: None,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
             }
@@ -93,6 +95,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 path,
                             },
                             cursor: 0,
+                            fd_flags: 0,
+                            cursor_group: None,
                         });
                         Ok(LinuxCallResult::Ret(fd as i64))
                     }
@@ -137,72 +141,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_close(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self.require_capability("linux_syscall", "fd.table", "close").is_err() {
-            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
-        }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "close plan fd overflowed")?;
-        if fd < 3 {
-            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
+        match self.close_fd_number(fd) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
-
-        let Some(handle) = self.fd_handle(fd) else {
-            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
-        };
-        if self.validate_resource_handle(handle).is_err() {
-            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
-        }
-
-        let closing_socket = self.fd_entry(fd).and_then(|entry| match &entry.resource {
-            FdResource::Socket { socket_id, .. } => Some(*socket_id as u32),
-            _ => None,
-        });
-        if let Some(socket_id) = closing_socket {
-            if self.require_capability("linux_syscall", "linux.socket", "close").is_err()
-                || self.require_capability("net_core", "net.socket", "close").is_err()
-            {
-                return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
-            }
-            match self.linux_socket.close_socket(socket_id) {
-                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
-                Err(ServiceCallError::Errno(errno)) => {
-                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
-                }
-                Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("linux_socket close: {}", reason);
-                    return Err("linux_socket_service trapped during close");
-                }
-                Err(ServiceCallError::Invalid(err)) => return Err(err),
-            }
-            match self.net_core.close_socket(socket_id) {
-                Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
-                Err(ServiceCallError::Errno(errno)) => {
-                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
-                }
-                Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("net_core close: {}", reason);
-                    return Err("net_core trapped during close");
-                }
-                Err(ServiceCallError::Invalid(err)) => return Err(err),
-            }
-        }
-
-        let slot = self
-            .fd_table
-            .get_mut(fd as usize)
-            .ok_or("close targeted an out-of-range file descriptor")?;
-        if slot.take().is_none() {
-            return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64)));
-        }
-        if let Some(slot) = self.fd_handles.get_mut(fd as usize)
-            && let Some(handle) = slot.take()
-        {
-            if closing_socket.is_some() {
-                self.semantic.record_socket_state_changed(handle.id, "closed");
-            }
-            self.semantic.close_resource(handle.id);
-        }
-
-        Ok(LinuxCallResult::Ret(0))
     }
     pub(super) fn plan_getdents(
         &mut self,

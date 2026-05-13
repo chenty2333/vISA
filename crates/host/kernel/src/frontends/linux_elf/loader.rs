@@ -15,9 +15,9 @@ use xmas_elf::{ElfFile, program::Type as ProgramType};
 use super::context::{LoadedUserImage, UserRegion};
 
 const PAGE_SIZE: usize = 4096;
-const USER_STACK_PAGES: usize = 4;
-const USER_STACK_BASE: u64 = 0x0000_0000_7000_0000;
-const USER_STACK_TOP: u64 = USER_STACK_BASE + (USER_STACK_PAGES * PAGE_SIZE) as u64;
+const USER_STACK_PAGES: usize = 2048;
+const USER_STACK_TOP: u64 = 0x0000_0000_7000_0000;
+const USER_STACK_BASE: u64 = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE) as u64;
 pub(crate) const USER_MMAP_BASE: u64 = 0x0000_0000_6000_0000;
 pub(crate) const USER_MMAP_PAGES: usize = 4096;
 pub(crate) const USER_MMAP_END: u64 = USER_MMAP_BASE + (USER_MMAP_PAGES * PAGE_SIZE) as u64;
@@ -100,7 +100,7 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         )?;
 
         regions.push(UserRegion {
-            start: virt_start,
+            start: virt_start & !(PAGE_SIZE as u64 - 1),
             end: align_up(virt_end as usize, PAGE_SIZE) as u64,
             writable: ph.flags().is_write(),
         });
@@ -219,6 +219,8 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
     let execfn = push_bytes(&mut page_bytes, page_base, &mut cursor, b"/bin/vmos-ltp\0")?;
     let platform = push_bytes(&mut page_bytes, page_base, &mut cursor, b"x86_64\0")?;
     let random = push_bytes(&mut page_bytes, page_base, &mut cursor, b"vmos-ltp-random!")?;
+    let kconfig_skip =
+        push_bytes(&mut page_bytes, page_base, &mut cursor, b"KCONFIG_SKIP_CHECK=1\0")?;
     cursor &= !15;
 
     let entry = elf.header.pt2.entry_point();
@@ -246,6 +248,7 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
     values.push(1);
     values.push(execfn);
     values.push(0);
+    values.push(kconfig_skip);
     values.push(0);
     for (kind, value) in auxv {
         values.push(kind);
