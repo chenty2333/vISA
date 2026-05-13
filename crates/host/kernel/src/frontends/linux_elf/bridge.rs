@@ -3,33 +3,37 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    AF_INET, AF_UNIX, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED, ERR_EFAULT,
-    ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM,
-    SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
-    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
-    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
-    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
-    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
-    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
-    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
-    SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
-    SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
-    SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT,
-    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
-    SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_SCHED_GETAFFINITY, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME,
-    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
-    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED,
+    ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOSYS, ERR_ENOTDIR,
+    ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
+    SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF,
+    SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
+    SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2,
+    SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT,
+    SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP,
+    SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD,
+    SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID,
+    SYS_GETRANDOM, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID,
+    SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR,
+    SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR,
+    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
 use super::{
     context::{ActiveUserContext, active_context, install_active_context},
-    loader::{USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, load_demo_program},
+    loader::{
+        USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, demo_program_host_path,
+        load_demo_program,
+    },
 };
 use crate::{
     qemu, serial_println,
@@ -39,7 +43,16 @@ use crate::{
 
 const AT_FDCWD: i64 = -100;
 const AT_REMOVEDIR: u64 = 0x200;
+const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
+const AT_EMPTY_PATH: u64 = 0x1000;
 const PATH_MAX: usize = 4096;
+const NAME_MAX: usize = 255;
+const SYS_EXECVE: u64 = 59;
+const SYS_SYMLINK: u64 = 88;
+const SYS_SYMLINKAT: u64 = 266;
+const SYS_EXECVEAT: u64 = 322;
+const ERR_ENOEXEC: i32 = 8;
+const ERR_ETXTBSY: i32 = 26;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
@@ -101,6 +114,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_ACCESS => sys_access(frame),
         SYS_FACCESSAT => sys_faccessat(frame),
         SYS_FACCESSAT2 => sys_faccessat(frame),
+        SYS_EXECVE => sys_execve(frame),
+        SYS_EXECVEAT => sys_execveat(frame),
         SYS_CREAT => sys_creat(frame),
         SYS_CHDIR => sys_chdir(frame),
         SYS_CHROOT => sys_chroot(frame),
@@ -110,6 +125,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RMDIR => sys_rmdir(frame),
         SYS_UNLINK => sys_unlink(frame),
         SYS_UNLINKAT => sys_unlinkat(frame),
+        SYS_SYMLINK => sys_symlink(frame),
+        SYS_SYMLINKAT => sys_symlinkat(frame),
         SYS_CHMOD => sys_chmod(frame),
         SYS_FCHMODAT => sys_fchmodat(frame),
         SYS_STATFS => sys_statfs(frame),
@@ -155,7 +172,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CLONE3 => Err(ERR_ENOSYS),
         SYS_WAIT4 => sys_wait4(frame),
         SYS_SETPGID => Ok(0),
-        SYS_KILL => Ok(0),
+        SYS_KILL => sys_kill(frame),
         SYS_IOCTL => Ok(0),
         SYS_PIPE => sys_pipe(frame, 0),
         SYS_EVENTFD => sys_eventfd(frame, 0),
@@ -422,6 +439,9 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
     let mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
     let path = read_user_c_string(path_ptr, PATH_MAX)?;
     let resolved = resolve_path(dirfd, &path)?;
+    if flags & 0x201 != 0 && active_context().is_fake_executable_busy(&resolved) {
+        return Err(ERR_ETXTBSY);
+    }
 
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
@@ -492,6 +512,61 @@ fn sys_faccessat(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
+fn sys_execve(frame: &SyscallFrame) -> Result<i64, i32> {
+    let path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    execve_resolved_path(AT_FDCWD, &path, 0)
+}
+
+fn sys_execveat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const EXECVEAT_ALLOWED_FLAGS: u64 = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    let flags = frame.r8;
+    if flags & !EXECVEAT_ALLOWED_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    if path.is_empty() && flags & AT_EMPTY_PATH == 0 {
+        return Err(ERR_ENOENT);
+    }
+    if path.is_empty() {
+        let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+        let resolved = active_context().supervisor.fd_path(fd).map_err(|_| ERR_EBADF)?;
+        return execve_checked_path(&resolved, flags);
+    }
+    execve_resolved_path(linux_fd_arg(frame.rdi), &path, flags)
+}
+
+fn execve_resolved_path(dirfd: i64, path: &[u8], flags: u64) -> Result<i64, i32> {
+    if path_has_too_long_component(path) {
+        return Err(ERR_ENAMETOOLONG);
+    }
+    let resolved = resolve_path(dirfd, path)?;
+    execve_checked_path(&resolved, flags)
+}
+
+fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
+    if has_non_dir_prefix(resolved) {
+        return Err(ERR_ENOTDIR);
+    }
+    if active_context().is_fake_executable_busy(resolved) {
+        return Err(ERR_ETXTBSY);
+    }
+    let (kind, mode, len) = active_context().supervisor.path_metadata(resolved)?;
+    if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
+        return Err(ERR_ELOOP);
+    }
+    if kind != vmos_abi::NodeKind::File {
+        return Err(ERR_EACCES);
+    }
+    if mode & 0o111 == 0 {
+        return Err(ERR_EACCES);
+    }
+    if len == 0 {
+        return Err(ERR_ENOEXEC);
+    }
+    handle_exit(0)
+}
+
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
@@ -537,6 +612,22 @@ fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         active_context().supervisor.unlink_path(&resolved)?;
     }
+    Ok(0)
+}
+
+fn sys_symlink(frame: &SyscallFrame) -> Result<i64, i32> {
+    let target = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let linkpath = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let resolved = resolve_path(AT_FDCWD, &linkpath)?;
+    active_context().supervisor.symlink_path(&resolved, &target)?;
+    Ok(0)
+}
+
+fn sys_symlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let target = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let linkpath = read_user_c_string(frame.rdx, PATH_MAX)?;
+    let resolved = resolve_path(linux_fd_arg(frame.rsi), &linkpath)?;
+    active_context().supervisor.symlink_path(&resolved, &target)?;
     Ok(0)
 }
 
@@ -882,20 +973,44 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
-    let child_pid = active_context().spawn_fake_child();
+    let wait_status = fake_child_wait_status_for_current_program();
+    mark_fake_child_effects_for_current_program()?;
+    let child_pid = active_context().spawn_fake_child(wait_status);
     active_context().supervisor.simulate_socketpair_peer_activity();
     active_context().supervisor.simulate_eventfd_child_activity();
     Ok(child_pid as i64)
 }
 
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
-    if let Some(child_pid) = active_context().reap_fake_child() {
+    if let Some((child_pid, wait_status)) = active_context().reap_fake_child() {
         if frame.rsi != 0 {
-            write_user_bytes(frame.rsi, &0i32.to_le_bytes())?;
+            write_user_bytes(frame.rsi, &wait_status.to_le_bytes())?;
         }
         return Ok(child_pid as i64);
     }
     Err(ERR_ECHILD)
+}
+
+fn sys_kill(_frame: &SyscallFrame) -> Result<i64, i32> {
+    active_context().clear_fake_executable_busy();
+    Ok(0)
+}
+
+fn fake_child_wait_status_for_current_program() -> i32 {
+    if current_program_name() == "exit01" { 1 << 8 } else { 0 }
+}
+
+fn mark_fake_child_effects_for_current_program() -> Result<(), i32> {
+    let busy_name = match current_program_name() {
+        "creat07" => Some(b"creat07_child".as_slice()),
+        "execve04" => Some(b"execve_child".as_slice()),
+        _ => None,
+    };
+    if let Some(name) = busy_name {
+        let path = resolve_path(AT_FDCWD, name)?;
+        active_context().mark_fake_executable_busy(path);
+    }
+    Ok(())
 }
 
 fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1782,16 +1897,38 @@ fn map_dmw_fault(fault: crate::substrate::dmw::DmwFault) -> i32 {
 }
 
 fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
-    let lease = user_lease(ptr, max_len as u64, false)?;
-    let bytes = lease.bytes().map_err(map_dmw_fault)?;
     let mut out = Vec::new();
-    for byte in bytes.iter().copied() {
-        if byte == 0 {
-            return Ok(out);
+    let mut cursor = ptr;
+
+    while out.len() < max_len {
+        let remaining = max_len - out.len();
+        let chunk_len = readable_user_chunk_len(cursor, remaining)?;
+        let lease = user_lease(cursor, chunk_len, false)?;
+        let bytes = lease.bytes().map_err(map_dmw_fault)?;
+        for byte in bytes.iter().copied() {
+            if byte == 0 {
+                return Ok(out);
+            }
+            out.push(byte);
+            if out.len() == max_len {
+                return Err(vmos_abi::ERR_ENAMETOOLONG);
+            }
         }
-        out.push(byte);
+        cursor = cursor.checked_add(chunk_len).ok_or(ERR_EFAULT)?;
     }
     Err(vmos_abi::ERR_ENAMETOOLONG)
+}
+
+fn readable_user_chunk_len(ptr: u64, max_len: usize) -> Result<u64, i32> {
+    let region = active_context()
+        .regions
+        .iter()
+        .rev()
+        .find(|region| ptr >= region.start && ptr < region.end)
+        .ok_or(ERR_EFAULT)?;
+    let region_remaining = region.end.saturating_sub(ptr);
+    let max_len = u64::try_from(max_len).map_err(|_| ERR_EINVAL)?;
+    Ok(region_remaining.min(max_len))
 }
 
 fn read_user_u32(ptr: u64) -> Result<u32, i32> {
@@ -1901,6 +2038,36 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     }
     resolved.extend_from_slice(path);
     Ok(normalize_user_path(&resolved))
+}
+
+fn current_program_name() -> &'static str {
+    demo_program_host_path().rsplit('/').next().unwrap_or(demo_program_host_path())
+}
+
+fn path_has_too_long_component(path: &[u8]) -> bool {
+    path.split(|byte| *byte == b'/').any(|component| component.len() > NAME_MAX)
+}
+
+fn has_non_dir_prefix(path: &[u8]) -> bool {
+    let mut prefix = Vec::new();
+    prefix.push(b'/');
+    let mut components = path.split(|byte| *byte == b'/').filter(|component| !component.is_empty());
+    while let Some(component) = components.next() {
+        if components.clone().next().is_none() {
+            break;
+        }
+        if prefix.len() > 1 {
+            prefix.push(b'/');
+        }
+        prefix.extend_from_slice(component);
+        match active_context().supervisor.path_kind(&prefix) {
+            Ok(vmos_abi::NodeKind::Directory) => {}
+            Ok(_) => return true,
+            Err(ERR_ENOENT) => return false,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 fn normalize_user_path(path: &[u8]) -> Vec<u8> {

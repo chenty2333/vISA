@@ -120,13 +120,23 @@ struct VfsNode {
     chunks: Vec<VfsChunk>,
 }
 
+pub(crate) struct LinuxUserResourceFile {
+    pub(crate) path: &'static [u8],
+    pub(crate) mode: u32,
+    pub(crate) bytes: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/linux_user_resources.rs"));
+
 pub(crate) struct VfsService {
     nodes: Vec<VfsNode>,
 }
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self { nodes: Vec::new() })
+        let mut service = Self { nodes: Vec::new() };
+        service.install_linux_user_resources();
+        Ok(service)
     }
 
     pub(crate) fn lookup(
@@ -139,6 +149,9 @@ impl VfsService {
         }
         if let Some(node) = self.dynamic_node(path) {
             return lookup(ServiceRoute::Vfs, node.kind);
+        }
+        if linux_user_resource_for_path(path).is_some() {
+            return lookup(ServiceRoute::Vfs, NodeKind::File);
         }
         match path {
             b"/" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
@@ -190,6 +203,9 @@ impl VfsService {
                 NodeKind::Directory => errno(ERR_EISDIR),
                 _ => errno(ERR_EINVAL),
             };
+        }
+        if let Some(resource) = linux_user_resource_for_path(path) {
+            return Ok(resource.bytes.to_vec());
         }
         match path {
             b"/sandbox/hello.txt" => Ok(HELLO_TXT.to_vec()),
@@ -249,6 +265,12 @@ impl VfsService {
         if inject_fault {
             return Err(ServiceCallError::Trap("vfs_service trapped"));
         }
+        if let Some(node) = self.dynamic_node(path) {
+            return match node.kind {
+                NodeKind::Symlink => Ok(node.read_range(0, node.len)),
+                _ => errno(ERR_EINVAL),
+            };
+        }
         match path {
             b"/sandbox/readme.link" => Ok(README_LINK.to_vec()),
             b"/" | b"/sandbox" | b"/sandbox/hello.txt" => errno(ERR_EINVAL),
@@ -286,14 +308,27 @@ impl VfsService {
         Ok(())
     }
 
+    pub(crate) fn symlink(&mut self, path: &[u8], target: &[u8]) -> Result<(), ServiceCallError> {
+        if self.lookup(path, false).is_ok() {
+            return errno(ERR_EEXIST);
+        }
+        self.require_parent_dir(path)?;
+        self.nodes.push(VfsNode::from_bytes(
+            normalize_path(path),
+            NodeKind::Symlink,
+            0o120777,
+            target,
+        ));
+        Ok(())
+    }
+
     pub(crate) fn unlink(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
-        let Some(index) = self
-            .nodes
-            .iter()
-            .position(|node| node.path.as_slice() == path && node.kind == NodeKind::File)
-        else {
+        let Some(index) = self.nodes.iter().position(|node| node.path.as_slice() == path) else {
             return errno(ERR_ENOENT);
         };
+        if self.nodes[index].kind == NodeKind::Directory {
+            return errno(ERR_EISDIR);
+        }
         self.nodes.remove(index);
         Ok(())
     }
@@ -388,6 +423,9 @@ impl VfsService {
         if let Some(node) = self.dynamic_node(path) {
             return node.mode;
         }
+        if let Some(resource) = linux_user_resource_for_path(path) {
+            return 0o100000 | (resource.mode & 0o7777);
+        }
         match kind {
             NodeKind::Directory => 0o040755,
             NodeKind::File => 0o100444,
@@ -397,7 +435,61 @@ impl VfsService {
     }
 
     pub(crate) fn len_for_path(&self, path: &[u8]) -> u64 {
-        self.dynamic_node(path).map(|node| node.len as u64).unwrap_or(0)
+        self.dynamic_node(path)
+            .map(|node| node.len as u64)
+            .or_else(|| {
+                linux_user_resource_for_path(path).map(|resource| resource.bytes.len() as u64)
+            })
+            .unwrap_or(0)
+    }
+
+    fn install_linux_user_resources(&mut self) {
+        if LINUX_USER_RESOURCE_FILES.is_empty() {
+            return;
+        }
+        for path in [b"/tmp/datafiles".as_slice(), b"/sandbox/datafiles", b"/datafiles"] {
+            self.install_dynamic_dir(path);
+        }
+        for resource in LINUX_USER_RESOURCE_FILES {
+            let Some(name) = file_name(resource.path) else { continue };
+            for root in [
+                b"/tmp/datafiles".as_slice(),
+                b"/sandbox/datafiles",
+                b"/datafiles",
+                b"/tmp",
+                b"/sandbox",
+                b"",
+            ] {
+                self.install_resource_file(root, name, resource.mode, resource.bytes);
+            }
+        }
+    }
+
+    fn install_dynamic_dir(&mut self, path: &[u8]) {
+        let normalized = normalize_path(path);
+        if self.nodes.iter().any(|node| node.path == normalized) {
+            return;
+        }
+        self.nodes.push(VfsNode {
+            path: normalized,
+            kind: NodeKind::Directory,
+            mode: 0o040755,
+            len: 0,
+            chunks: Vec::new(),
+        });
+    }
+
+    fn install_resource_file(&mut self, root: &[u8], name: &[u8], mode: u32, bytes: &[u8]) {
+        let path = join_resource_path(root, name);
+        if self.nodes.iter().any(|node| node.path == path) {
+            return;
+        }
+        self.nodes.push(VfsNode::from_bytes(
+            path,
+            NodeKind::File,
+            0o100000 | (mode & 0o7777),
+            bytes,
+        ));
     }
 
     fn dynamic_node(&self, path: &[u8]) -> Option<&VfsNode> {
@@ -445,6 +537,16 @@ impl VfsChunk {
 }
 
 impl VfsNode {
+    fn from_bytes(path: Vec<u8>, kind: NodeKind, mode: u32, bytes: &[u8]) -> Self {
+        Self {
+            path,
+            kind,
+            mode,
+            len: bytes.len(),
+            chunks: alloc::vec![VfsChunk::from_write(0, bytes)],
+        }
+    }
+
     fn read_range(&self, start: usize, end: usize) -> Vec<u8> {
         if start >= end {
             return Vec::new();
@@ -1002,6 +1104,51 @@ fn normalize_path(path: &[u8]) -> Vec<u8> {
     } else {
         path.to_vec()
     }
+}
+
+fn file_name(path: &[u8]) -> Option<&[u8]> {
+    path.rsplit(|byte| *byte == b'/').find(|part| !part.is_empty())
+}
+
+fn join_resource_path(root: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut path = Vec::new();
+    if root.is_empty() {
+        path.push(b'/');
+    } else {
+        path.extend_from_slice(root);
+        if !root.ends_with(b"/") {
+            path.push(b'/');
+        }
+    }
+    path.extend_from_slice(name);
+    normalize_path(&path)
+}
+
+fn linux_user_resource_for_path(path: &[u8]) -> Option<&'static LinuxUserResourceFile> {
+    let name = file_name(path)?;
+    if !looks_like_ltp_resource_path(path, name) {
+        return None;
+    }
+    LINUX_USER_RESOURCE_FILES.iter().find(|resource| file_name(resource.path) == Some(name))
+}
+
+fn looks_like_ltp_resource_path(path: &[u8], name: &[u8]) -> bool {
+    let Some(parent) = parent_path(path) else {
+        return false;
+    };
+    if parent == b"/tmp"
+        || parent == b"/sandbox"
+        || parent == b"/"
+        || parent == b"/datafiles"
+        || parent == b"/tmp/datafiles"
+        || parent == b"/sandbox/datafiles"
+    {
+        return true;
+    }
+    if path.windows(b"/datafiles/".len()).any(|window| window == b"/datafiles/") {
+        return true;
+    }
+    parent.starts_with(b"/tmp/LTP_") && !name.is_empty()
 }
 
 fn parent_path(path: &[u8]) -> Option<Vec<u8>> {

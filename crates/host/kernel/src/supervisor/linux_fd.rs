@@ -1094,6 +1094,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.chmod(path, mode).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn symlink_path(&mut self, path: &[u8], target: &[u8]) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.symlink(path, target).map_err(errno_from_service_error)
+    }
+
     pub(crate) fn truncate_path(&mut self, path: &[u8], len: usize) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
@@ -1123,6 +1128,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let len = self.len_for_service_node(info.route, path);
         Ok(encode_stat_abi(mode, len))
+    }
+
+    pub(crate) fn path_metadata(&mut self, path: &[u8]) -> Result<(NodeKind, u32, u64), i32> {
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        let mode = self.mode_for_service_node(info.route, info.node, path);
+        let len = self.len_for_service_node(info.route, path);
+        Ok((info.node, mode, len))
     }
 
     fn mode_for_service_node(&self, route: ServiceRoute, node: NodeKind, path: &[u8]) -> u32 {

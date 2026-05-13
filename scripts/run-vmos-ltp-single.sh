@@ -38,14 +38,19 @@ if [[ ! -f "$test_elf" ]]; then
 fi
 
 mkdir -p "$(dirname "$raw_log")" "$(dirname "$trace_log")" "$(dirname "$serial_log")"
+resource_dir="$(dirname "$test_elf")/.resources/$case_id"
+runner_env=(VMOS_LINUX_USER_ELF="$test_elf")
+if [[ -d "$resource_dir" ]]; then
+    runner_env+=(VMOS_LINUX_USER_RESOURCE_DIR="$resource_dir")
+fi
 
 set +e
 if [[ -n "${VMOS_LTP_RUN_TIMEOUT:-}" ]]; then
     timeout --kill-after=5s "$VMOS_LTP_RUN_TIMEOUT" \
-        env VMOS_LINUX_USER_ELF="$test_elf" cargo run --quiet -p runner -- --verbose \
+        env "${runner_env[@]}" cargo run --quiet -p runner -- --verbose \
         >"$serial_log" 2>&1
 else
-    VMOS_LINUX_USER_ELF="$test_elf" cargo run --quiet -p runner -- --verbose >"$serial_log" 2>&1
+    env "${runner_env[@]}" cargo run --quiet -p runner -- --verbose >"$serial_log" 2>&1
 fi
 run_status=$?
 set -e

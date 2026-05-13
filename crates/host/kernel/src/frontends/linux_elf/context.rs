@@ -33,6 +33,8 @@ pub(crate) struct ActiveUserContext {
     realtime_epoch_tick: u64,
     fake_child_pending: bool,
     fake_child_pid: u64,
+    fake_child_wait_status: i32,
+    fake_executable_busy_paths: Vec<Vec<u8>>,
     fake_signal_pending: bool,
 }
 
@@ -65,6 +67,8 @@ impl ActiveUserContext {
             realtime_epoch_tick: 0,
             fake_child_pending: false,
             fake_child_pid: task_id as u64 + 1,
+            fake_child_wait_status: 0,
+            fake_executable_busy_paths: Vec::new(),
             fake_signal_pending: false,
         }
     }
@@ -135,18 +139,34 @@ impl ActiveUserContext {
         self.realtime_epoch_tick = tick_count;
     }
 
-    pub(crate) fn spawn_fake_child(&mut self) -> u64 {
+    pub(crate) fn spawn_fake_child(&mut self, wait_status: i32) -> u64 {
         self.fake_child_pending = true;
+        self.fake_child_wait_status = wait_status;
         self.fake_signal_pending = true;
         self.fake_child_pid
     }
 
-    pub(crate) fn reap_fake_child(&mut self) -> Option<u64> {
+    pub(crate) fn reap_fake_child(&mut self) -> Option<(u64, i32)> {
         if !self.fake_child_pending {
             return None;
         }
         self.fake_child_pending = false;
-        Some(self.fake_child_pid)
+        self.fake_executable_busy_paths.clear();
+        Some((self.fake_child_pid, self.fake_child_wait_status))
+    }
+
+    pub(crate) fn mark_fake_executable_busy(&mut self, path: Vec<u8>) {
+        if !self.fake_executable_busy_paths.iter().any(|busy| busy == &path) {
+            self.fake_executable_busy_paths.push(path);
+        }
+    }
+
+    pub(crate) fn is_fake_executable_busy(&self, path: &[u8]) -> bool {
+        self.fake_executable_busy_paths.iter().any(|busy| busy.as_slice() == path)
+    }
+
+    pub(crate) fn clear_fake_executable_busy(&mut self) {
+        self.fake_executable_busy_paths.clear();
     }
 
     pub(crate) fn consume_fake_signal(&mut self) -> bool {

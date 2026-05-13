@@ -48,6 +48,10 @@ struct AlignedElf<const N: usize>([u8; N]);
 static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")).len() }> =
     AlignedElf(*include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")));
 
+pub(crate) fn demo_program_host_path() -> &'static str {
+    env!("VMOS_LINUX_USER_DEMO_ELF")
+}
+
 pub(crate) fn load_demo_program(boot_info: &BootInfo) -> Result<LoadedUserImage, &'static str> {
     load_user_program(boot_info, &LINUX_USER_DEMO_ELF.0)
 }

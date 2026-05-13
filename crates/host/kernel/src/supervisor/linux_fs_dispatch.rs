@@ -1,10 +1,14 @@
-use vmos_abi::{ERR_EBADF, ERR_ENOENT, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind, ServiceRoute};
+use vmos_abi::{
+    ERR_EBADF, ERR_ENOENT, ERR_ENOTDIR, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind, ServiceRoute,
+};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{FdEntry, FdResource, ServiceCallError},
 };
+
+const O_DIRECTORY: u64 = 0o200000;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn write_console_bytes(&mut self, bytes: &[u8]) -> Result<(), i32> {
@@ -76,6 +80,9 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         match self.lookup_path(&path) {
             Ok(info) => {
+                if plan.args[3] & O_DIRECTORY != 0 && info.node != NodeKind::Directory {
+                    return Ok(LinuxCallResult::Ret(-(ERR_ENOTDIR as i64)));
+                }
                 let fd = self.alloc_fd(FdEntry {
                     resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
                     cursor: 0,
