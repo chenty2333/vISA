@@ -22,12 +22,12 @@ use vmos_abi::{
     SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT,
     SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR,
-    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE,
-    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
-    SYS_WRITEV, SyscallContext,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
+    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
+    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -58,6 +58,10 @@ const AT_REMOVEDIR: u64 = 0x200;
 const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const AT_EMPTY_PATH: u64 = 0x1000;
 const AT_EACCESS: u64 = 0x200;
+const RENAME_NOREPLACE: u64 = 1;
+const RENAME_EXCHANGE: u64 = 2;
+const RENAME_WHITEOUT: u64 = 4;
+const RENAME_SUPPORTED_FLAGS: u64 = RENAME_NOREPLACE | RENAME_EXCHANGE;
 const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
 const SYS_EXECVE: u64 = 59;
@@ -159,6 +163,9 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RMDIR => sys_rmdir(frame),
         SYS_UNLINK => sys_unlink(frame),
         SYS_UNLINKAT => sys_unlinkat(frame),
+        SYS_RENAME => sys_rename(frame),
+        SYS_RENAMEAT => sys_renameat(frame),
+        SYS_RENAMEAT2 => sys_renameat2(frame),
         SYS_SYMLINK => sys_symlink(frame),
         SYS_SYMLINKAT => sys_symlinkat(frame),
         SYS_CHMOD => sys_chmod(frame),
@@ -704,6 +711,59 @@ fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         active_context().supervisor.unlink_path(&resolved, access.ids())?;
     }
+    Ok(0)
+}
+
+fn sys_rename(frame: &SyscallFrame) -> Result<i64, i32> {
+    let old_path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let new_path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    rename_resolved_paths(AT_FDCWD, &old_path, AT_FDCWD, &new_path, 0)
+}
+
+fn sys_renameat(frame: &SyscallFrame) -> Result<i64, i32> {
+    let old_path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let new_path = read_user_c_string(frame.r10, PATH_MAX)?;
+    rename_resolved_paths(linux_fd_arg(frame.rdi), &old_path, linux_fd_arg(frame.rdx), &new_path, 0)
+}
+
+fn sys_renameat2(frame: &SyscallFrame) -> Result<i64, i32> {
+    let flags = frame.r8;
+    if flags & !RENAME_SUPPORTED_FLAGS != 0
+        || flags & RENAME_WHITEOUT != 0
+        || flags & (RENAME_NOREPLACE | RENAME_EXCHANGE) == RENAME_NOREPLACE | RENAME_EXCHANGE
+    {
+        return Err(ERR_EINVAL);
+    }
+    let old_path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let new_path = read_user_c_string(frame.r10, PATH_MAX)?;
+    rename_resolved_paths(
+        linux_fd_arg(frame.rdi),
+        &old_path,
+        linux_fd_arg(frame.rdx),
+        &new_path,
+        flags,
+    )
+}
+
+fn rename_resolved_paths(
+    old_dirfd: i64,
+    old_path: &[u8],
+    new_dirfd: i64,
+    new_path: &[u8],
+    flags: u64,
+) -> Result<i64, i32> {
+    if old_path.is_empty() || new_path.is_empty() {
+        return Err(ERR_ENOENT);
+    }
+    let old_resolved = resolve_path(old_dirfd, old_path)?;
+    let new_resolved = resolve_path(new_dirfd, new_path)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.rename_path(
+        &old_resolved,
+        &new_resolved,
+        u32::try_from(flags).map_err(|_| ERR_EINVAL)?,
+        access.ids(),
+    )?;
     Ok(0)
 }
 

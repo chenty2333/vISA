@@ -84,6 +84,9 @@ const PULSE_BYTES: &[u8] = b"pulse\n";
 
 const WASM_APP_PTR: u32 = 0x2000;
 const WASM_APP_MESSAGE: &[u8] = b"wasm frontend: hello from wasm_app\n";
+const RENAME_NOREPLACE: u32 = 1;
+const RENAME_EXCHANGE: u32 = 2;
+const RENAME_SUPPORTED_FLAGS: u32 = RENAME_NOREPLACE | RENAME_EXCHANGE;
 
 pub(crate) struct ConsoleService;
 
@@ -379,6 +382,86 @@ impl VfsService {
         Ok(())
     }
 
+    pub(crate) fn rename(
+        &mut self,
+        old_path: &[u8],
+        new_path: &[u8],
+        flags: u32,
+    ) -> Result<(), ServiceCallError> {
+        if flags & !RENAME_SUPPORTED_FLAGS != 0
+            || flags & (RENAME_NOREPLACE | RENAME_EXCHANGE) == RENAME_NOREPLACE | RENAME_EXCHANGE
+        {
+            return errno(ERR_EINVAL);
+        }
+
+        let old_path = normalize_path(old_path);
+        let new_path = normalize_path(new_path);
+        if old_path == new_path {
+            self.lookup(&old_path, false)?;
+            return Ok(());
+        }
+
+        self.require_parent_dir(&new_path)?;
+        let Some(old_index) = self.nodes.iter().position(|node| node.path == old_path) else {
+            self.lookup(&old_path, false)?;
+            return errno(ERR_EPERM);
+        };
+        let old_kind = self.nodes[old_index].kind;
+        if old_kind == NodeKind::Directory && is_descendant_path(&new_path, &old_path) {
+            return errno(ERR_EINVAL);
+        }
+
+        let target_index = self.nodes.iter().position(|node| node.path == new_path);
+        let target_kind = if let Some(index) = target_index {
+            Some(self.nodes[index].kind)
+        } else {
+            match self.lookup(&new_path, false) {
+                Ok(info) => Some(info.node),
+                Err(ServiceCallError::Errno(ERR_ENOENT)) => None,
+                Err(err) => return Err(err),
+            }
+        };
+
+        if flags & RENAME_NOREPLACE != 0 && target_kind.is_some() {
+            return errno(ERR_EEXIST);
+        }
+
+        if flags & RENAME_EXCHANGE != 0 {
+            let Some(target_index) = target_index else {
+                return if target_kind.is_some() { errno(ERR_EPERM) } else { errno(ERR_ENOENT) };
+            };
+            if self.nodes[target_index].kind == NodeKind::Directory
+                && is_descendant_path(&old_path, &new_path)
+            {
+                return errno(ERR_EINVAL);
+            }
+            self.swap_subtree_prefixes(&old_path, &new_path);
+            return Ok(());
+        }
+
+        match target_index {
+            Some(index) => {
+                let target_kind = self.nodes[index].kind;
+                match (old_kind == NodeKind::Directory, target_kind == NodeKind::Directory) {
+                    (true, false) => return errno(ERR_ENOTDIR),
+                    (false, true) => return errno(ERR_EISDIR),
+                    _ => {}
+                }
+                if target_kind == NodeKind::Directory
+                    && self.nodes.iter().any(|node| child_name(&new_path, &node.path).is_some())
+                {
+                    return errno(ERR_ENOTEMPTY);
+                }
+                self.nodes.remove(index);
+            }
+            None if target_kind.is_some() => return errno(ERR_EPERM),
+            None => {}
+        }
+
+        self.rename_subtree_prefix(&old_path, &new_path);
+        Ok(())
+    }
+
     pub(crate) fn chmod(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
         let Some(node) = self.dynamic_node_mut(path) else {
             return if matches!(
@@ -597,6 +680,36 @@ impl VfsService {
             out.push(b'\n');
         }
         out
+    }
+
+    fn rename_subtree_prefix(&mut self, old_prefix: &[u8], new_prefix: &[u8]) {
+        for node in &mut self.nodes {
+            if let Some(path) = replace_path_prefix(&node.path, old_prefix, new_prefix) {
+                node.path = path;
+            }
+        }
+        for lock in &mut self.locks {
+            if let Some(path) = replace_path_prefix(&lock.path, old_prefix, new_prefix) {
+                lock.path = path;
+            }
+        }
+    }
+
+    fn swap_subtree_prefixes(&mut self, left: &[u8], right: &[u8]) {
+        for node in &mut self.nodes {
+            if let Some(path) = replace_path_prefix(&node.path, left, right) {
+                node.path = path;
+            } else if let Some(path) = replace_path_prefix(&node.path, right, left) {
+                node.path = path;
+            }
+        }
+        for lock in &mut self.locks {
+            if let Some(path) = replace_path_prefix(&lock.path, left, right) {
+                lock.path = path;
+            } else if let Some(path) = replace_path_prefix(&lock.path, right, left) {
+                lock.path = path;
+            }
+        }
     }
 
     pub(crate) fn fcntl_setlk(
@@ -1404,4 +1517,21 @@ fn child_name<'a>(dir: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
         path.strip_prefix(dir)?.strip_prefix(b"/")?
     };
     if rest.is_empty() || rest.contains(&b'/') { None } else { Some(rest) }
+}
+
+fn is_descendant_path(path: &[u8], prefix: &[u8]) -> bool {
+    path != prefix && subtree_suffix(path, prefix).is_some()
+}
+
+fn replace_path_prefix(path: &[u8], old_prefix: &[u8], new_prefix: &[u8]) -> Option<Vec<u8>> {
+    let suffix = subtree_suffix(path, old_prefix)?;
+    let mut out = Vec::with_capacity(new_prefix.len() + suffix.len());
+    out.extend_from_slice(new_prefix);
+    out.extend_from_slice(suffix);
+    Some(normalize_path(&out))
+}
+
+fn subtree_suffix<'a>(path: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
+    let rest = path.strip_prefix(prefix)?;
+    if rest.is_empty() || rest.starts_with(b"/") { Some(rest) } else { None }
 }

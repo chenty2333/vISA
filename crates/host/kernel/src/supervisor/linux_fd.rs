@@ -1336,6 +1336,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.rmdir(path).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn rename_path(
+        &mut self,
+        old_path: &[u8],
+        new_path: &[u8],
+        flags: u32,
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_parent_access(old_path, MAY_WRITE | MAY_EXEC, access)?;
+        self.check_parent_access(new_path, MAY_WRITE | MAY_EXEC, access)?;
+        self.check_sticky_removal_access(old_path, access)?;
+        if self.lookup_path(new_path).is_ok() {
+            self.check_sticky_removal_access(new_path, access)?;
+        }
+        self.vfs.rename(old_path, new_path, flags).map_err(errno_from_service_error)
+    }
+
     pub(crate) fn chmod_path(
         &mut self,
         path: &[u8],
