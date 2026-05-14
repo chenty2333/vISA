@@ -1,12 +1,13 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE,
-    FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
-    SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
-    SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_REQUEUE,
+    FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind,
+    RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
+    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
+    SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -202,15 +203,26 @@ impl LinuxFrontend {
         timeout_len: u64,
         current_word: u64,
     ) -> PackedStep {
-        let timeout_ms = if timeout_ptr == 0 || timeout_len == 0 {
-            u64::MAX
-        } else {
-            match self.parse_timespec_ms(timeout_ptr as u32, timeout_len as u32) {
-                Ok(ms) => ms,
-                Err(_) => return PackedStep::error(-ERR_EINVAL),
+        let command = (op as u32) & FUTEX_CMD_MASK;
+        let timeout_ms = match command {
+            FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+                if timeout_ptr == 0 || timeout_len == 0 {
+                    u64::MAX
+                } else {
+                    match self.parse_timespec_ms(timeout_ptr as u32, timeout_len as u32) {
+                        Ok(ms) => ms,
+                        Err(_) => return PackedStep::error(-ERR_EINVAL),
+                    }
+                }
             }
+            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_ptr,
+            _ => u64::MAX,
         };
-        self.plan_futex(key, op, val, timeout_ms, current_word)
+        let aux_word = match command {
+            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_len,
+            _ => current_word,
+        };
+        self.plan_futex(key, op, val, timeout_ms, aux_word)
     }
 
     fn plan_sleep(&mut self, duration_ms: u64) -> PackedStep {
@@ -235,6 +247,8 @@ impl LinuxFrontend {
             FUTEX_WAKE => self.plan_futex_wake(key, val),
             FUTEX_WAIT_BITSET => self.plan_futex_wait_bitset(key, val, timeout_ms, current_word),
             FUTEX_WAKE_BITSET => self.plan_futex_wake_bitset(key, val, current_word),
+            FUTEX_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, false),
+            FUTEX_CMP_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, true),
             _ => PackedStep::error(-ERR_EINVAL),
         }
     }
@@ -294,6 +308,29 @@ impl LinuxFrontend {
             [key, count.min(u32::MAX as u64), bitset, 0, 0, 0],
         );
         PackedStep::plan(PlanKind::FutexWakeBitset)
+    }
+
+    fn plan_futex_requeue(
+        &mut self,
+        src_key: u64,
+        wake_count: u64,
+        requeue_count: u64,
+        dst_key: u64,
+        compare_checked: bool,
+    ) -> PackedStep {
+        let kind = if compare_checked { PlanKind::FutexCmpRequeue } else { PlanKind::FutexRequeue };
+        self.reset_plan(
+            kind,
+            [
+                src_key,
+                requeue_count.min(u32::MAX as u64),
+                dst_key,
+                wake_count.min(u32::MAX as u64),
+                0,
+                0,
+            ],
+        );
+        PackedStep::plan(kind)
     }
 
     fn plan_epoll_create1(&mut self, flags: u64) -> PackedStep {

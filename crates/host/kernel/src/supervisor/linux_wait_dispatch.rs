@@ -148,6 +148,35 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    pub(super) fn plan_futex_requeue(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("futex_service", "futex.waitset", "requeue").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let src_key = plan.args[0];
+        let requeue_count =
+            u32::try_from(plan.args[1]).map_err(|_| "futex requeue count overflowed")?;
+        let dst_key = plan.args[2];
+        let wake_count = u32::try_from(plan.args[3]).map_err(|_| "futex wake count overflowed")?;
+        match self.futex.requeue(src_key, requeue_count, dst_key, wake_count) {
+            Ok((total, wait_ids)) => {
+                for wait_id in &wait_ids {
+                    self.scheduler.push_event(Event::WaitReady(*wait_id));
+                }
+                self.drain_event_queue();
+                Ok(LinuxCallResult::Ret(total as i64))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("futex_requeue: {}", reason);
+                Err("futex_service trapped during futex requeue")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
     pub(super) fn block_on_wait(
         &mut self,
         label: &str,

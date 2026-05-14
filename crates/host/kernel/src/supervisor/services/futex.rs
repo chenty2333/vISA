@@ -13,6 +13,7 @@ pub(crate) struct FutexService {
     register_wait_bitset: WasmFn<(u64, u64, u32), i32>,
     wake: WasmFn<(u64, u32), i32>,
     wake_bitset: WasmFn<(u64, u32, u32), i32>,
+    requeue: WasmFn<(u64, u32, u64, u32), i32>,
     cancel_wait: WasmFn<u64, i32>,
 }
 
@@ -28,9 +29,18 @@ impl FutexService {
             io.bind("register_wait_bitset", "missing futex register_wait_bitset export")?;
         let wake = io.bind("wake", "missing futex wake export")?;
         let wake_bitset = io.bind("wake_bitset", "missing futex wake_bitset export")?;
+        let requeue = io.bind("requeue", "missing futex requeue export")?;
         let cancel_wait = io.bind("cancel_wait", "missing futex cancel_wait export")?;
 
-        Ok(Self { io, register_wait, register_wait_bitset, wake, wake_bitset, cancel_wait })
+        Ok(Self {
+            io,
+            register_wait,
+            register_wait_bitset,
+            wake,
+            wake_bitset,
+            requeue,
+            cancel_wait,
+        })
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
@@ -77,6 +87,26 @@ impl FutexService {
         self.read_wake_response(len)
     }
 
+    pub(crate) fn requeue(
+        &mut self,
+        src_key: u64,
+        requeue_count: u32,
+        dst_key: u64,
+        wake_count: u32,
+    ) -> Result<(u32, Vec<u64>), ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(
+                    &self.requeue,
+                    (src_key, requeue_count, dst_key, wake_count),
+                    "futex_service trapped",
+                )
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
+        decode_requeue_response(&bytes)
+    }
+
     fn read_wake_response(&self, len: usize) -> Result<Vec<u64>, ServiceCallError> {
         let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
 
@@ -102,4 +132,24 @@ impl FutexService {
                 .map_err(ServiceCallError::Trap)?,
         )
     }
+}
+
+fn decode_requeue_response(bytes: &[u8]) -> Result<(u32, Vec<u64>), ServiceCallError> {
+    if bytes.len() < 8 || bytes.len() % 8 != 0 {
+        return Err(ServiceCallError::Invalid(
+            "futex_service returned a malformed requeue response",
+        ));
+    }
+    let mut total = [0u8; 8];
+    total.copy_from_slice(&bytes[..8]);
+    let total = u64::from_le_bytes(total);
+    let total = u32::try_from(total)
+        .map_err(|_| ServiceCallError::Invalid("futex_service requeue total overflowed"))?;
+    let mut ids = Vec::with_capacity((bytes.len() - 8) / 8);
+    for chunk in bytes[8..].chunks_exact(8) {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(chunk);
+        ids.push(u64::from_le_bytes(raw));
+    }
+    Ok((total, ids))
 }

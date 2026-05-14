@@ -1263,6 +1263,41 @@ impl FutexService {
         Ok(wait_ids)
     }
 
+    pub(crate) fn requeue(
+        &mut self,
+        src_key: u64,
+        requeue_count: u32,
+        dst_key: u64,
+        wake_count: u32,
+    ) -> Result<(u32, Vec<u64>), ServiceCallError> {
+        let mut wake_remaining = wake_count as usize;
+        let mut requeue_remaining = requeue_count as usize;
+        let mut wait_ids = Vec::new();
+        let mut total = 0u32;
+
+        self.waiters.retain(|waiter| {
+            if waiter.key == src_key && wake_remaining > 0 {
+                wait_ids.push(waiter.wait_id);
+                wake_remaining -= 1;
+                total = total.saturating_add(1);
+                false
+            } else {
+                true
+            }
+        });
+
+        for waiter in &mut self.waiters {
+            if waiter.key != src_key || requeue_remaining == 0 {
+                continue;
+            }
+            waiter.key = dst_key;
+            requeue_remaining -= 1;
+            total = total.saturating_add(1);
+        }
+
+        Ok((total, wait_ids))
+    }
+
     pub(crate) fn cancel_wait(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
         let old_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.wait_id != wait_id);

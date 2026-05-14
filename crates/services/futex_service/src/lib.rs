@@ -117,12 +117,14 @@ pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
 pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u32) -> i32 {
     let count = count as usize;
     let wake_count = wake_count as usize;
-    let mut moved = 0usize;
     let mut woken = 0usize;
 
     unsafe {
         let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         let response = addr_of_mut!(RESPONSE) as *mut u8;
+        if RESPONSE_CAPACITY < 8 {
+            return -ERR_EIO;
+        }
 
         // First pass: wake up to wake_count waiters from src_key
         for index in 0..MAX_WAITERS {
@@ -131,7 +133,7 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
                 continue;
             }
             if woken < wake_count {
-                let offset = (moved + woken) * 8;
+                let offset = 8 + woken * 8;
                 if offset + 8 > RESPONSE_CAPACITY {
                     return -ERR_EIO;
                 }
@@ -157,10 +159,12 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
                 requeued += 1;
             }
         }
-        moved = requeued;
+
+        let total = (requeued + woken) as u64;
+        core::ptr::copy_nonoverlapping(total.to_le_bytes().as_ptr(), response, 8);
     }
 
-    ((moved + woken) * 8) as i32
+    (8 + woken * 8) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -203,6 +207,17 @@ mod tests {
         }
     }
 
+    fn requeue_total() -> u64 {
+        unsafe { u64::from_le_bytes(RESPONSE[0..8].try_into().unwrap()) }
+    }
+
+    fn requeue_wait_id(index: usize) -> u64 {
+        unsafe {
+            let start = 8 + index * 8;
+            u64::from_le_bytes(RESPONSE[start..start + 8].try_into().unwrap())
+        }
+    }
+
     #[test]
     fn wake_zero_count_wakes_no_waiters() {
         reset();
@@ -219,7 +234,8 @@ mod tests {
     fn requeue_zero_count_moves_no_waiters() {
         reset();
         assert_eq!(register_wait(11, 7), 0);
-        assert_eq!(requeue(11, 0, 22, 0), 0);
+        assert_eq!(requeue(11, 0, 22, 0), 8);
+        assert_eq!(requeue_total(), 0);
         unsafe {
             let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
             assert!((*waiters).active);
@@ -240,6 +256,25 @@ mod tests {
             assert!(!(*waiters).active);
             assert!((*waiters.add(1)).active);
             assert_eq!((*waiters.add(1)).wait_id, 8);
+        }
+    }
+
+    #[test]
+    fn requeue_wakes_then_moves_waiters() {
+        reset();
+        assert_eq!(register_wait(11, 7), 0);
+        assert_eq!(register_wait(11, 8), 0);
+        assert_eq!(register_wait(11, 9), 0);
+        assert_eq!(requeue(11, 2, 22, 1), 16);
+        assert_eq!(requeue_total(), 3);
+        assert_eq!(requeue_wait_id(0), 7);
+        unsafe {
+            let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+            assert!(!(*waiters).active);
+            assert!((*waiters.add(1)).active);
+            assert_eq!((*waiters.add(1)).key, 22);
+            assert!((*waiters.add(2)).active);
+            assert_eq!((*waiters.add(2)).key, 22);
         }
     }
 }
