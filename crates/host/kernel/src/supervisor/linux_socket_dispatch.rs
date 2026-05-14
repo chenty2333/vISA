@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EOPNOTSUPP, ERR_EPERM, PlanKind};
+use vmos_abi::{ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_EPERM, PlanKind};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -338,6 +338,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_fcntl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        const F_DUPFD: u32 = 0;
+        const F_GETFD: u32 = 1;
+        const F_SETFD: u32 = 2;
+        const F_GETFL: u32 = 3;
+        const F_SETFL: u32 = 4;
+        const F_GETLK: u32 = 5;
+        const F_SETLK: u32 = 6;
+        const F_SETLKW: u32 = 7;
+        const F_DUPFD_CLOEXEC: u32 = 1030;
+        const F_SETPIPE_SZ: u32 = 1031;
+        const F_GETPIPE_SZ: u32 = 1032;
+        const FD_CLOEXEC: u32 = 1;
+
         if self.require_capability("linux_syscall", "linux.socket", "fcntl").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
@@ -355,17 +368,35 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl cmd overflowed")?;
         let arg = plan.args[2];
-        if let Ok((socket_id, _, _)) = self.socket_fd_snapshot(fd) {
-            return match self.linux_socket.fcntl(socket_id, cmd, arg) {
-                Ok(value) => Ok(LinuxCallResult::Ret(value as i64)),
-                Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
-                Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("linux_socket fcntl: {}", reason);
-                    Err("linux_socket_service trapped during fcntl")
-                }
-                Err(ServiceCallError::Invalid(err)) => Err(err),
-            };
+        let ret = match cmd {
+            F_DUPFD => {
+                self.dup_fd_from(fd, u32::try_from(arg).map_err(|_| "fcntl arg overflowed")?)
+            }
+            F_DUPFD_CLOEXEC => {
+                let min_fd = u32::try_from(arg).map_err(|_| "fcntl arg overflowed")?;
+                self.dup_fd_from(fd, min_fd).and_then(|new_fd| {
+                    self.set_fd_flags(new_fd, FD_CLOEXEC)?;
+                    Ok(new_fd)
+                })
+            }
+            F_GETFD => self.fd_flags(fd),
+            F_SETFD => self.set_fd_flags(fd, (arg as u32) & FD_CLOEXEC).map(|()| 0),
+            F_GETFL => self.file_status_flags(fd),
+            F_SETFL => self.set_file_status_flags(fd, arg as u32).map(|()| 0),
+            F_SETPIPE_SZ => {
+                let requested = usize::try_from(arg).map_err(|_| "fcntl pipe size overflowed")?;
+                self.set_pipe_capacity(fd, requested)
+                    .and_then(|size| u32::try_from(size).map_err(|_| ERR_EINVAL))
+            }
+            F_GETPIPE_SZ => {
+                self.pipe_capacity(fd).and_then(|size| u32::try_from(size).map_err(|_| ERR_EINVAL))
+            }
+            F_GETLK | F_SETLK | F_SETLKW => Err(ERR_ENOSYS),
+            _ => Err(ERR_ENOSYS),
+        };
+        match ret {
+            Ok(value) => Ok(LinuxCallResult::Ret(value as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
-        Ok(LinuxCallResult::Ret(0))
     }
 }

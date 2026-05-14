@@ -113,7 +113,7 @@ impl LinuxSocketState {
 
     pub fn fcntl(&self, socket_id: u32, _cmd: u32, _arg: u64) -> Result<u32, i32> {
         self.socket_index(socket_id)?;
-        Ok(0)
+        Err(ERR_EOPNOTSUPP)
     }
 
     pub fn socket_count(&self) -> u32 {
@@ -162,5 +162,13 @@ mod tests {
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.connect_socket(1, 16), Ok(()));
         assert_eq!(state.connect_socket(1, 16), Err(ERR_EISCONN));
+    }
+
+    #[test]
+    fn fcntl_does_not_fake_socket_success() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.fcntl(1, 3, 0), Err(ERR_EOPNOTSUPP));
     }
 }
