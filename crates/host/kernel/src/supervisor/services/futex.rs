@@ -10,7 +10,9 @@ const FUTEX_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_FUTEX_SERVICE_WASM")
 pub(crate) struct FutexService {
     io: BufferedModule,
     register_wait: WasmFn<(u64, u64), i32>,
+    register_wait_bitset: WasmFn<(u64, u64, u32), i32>,
     wake: WasmFn<(u64, u32), i32>,
+    wake_bitset: WasmFn<(u64, u32, u32), i32>,
     cancel_wait: WasmFn<u64, i32>,
 }
 
@@ -22,10 +24,13 @@ impl FutexService {
             "failed to instantiate futex_service",
         )?;
         let register_wait = io.bind("register_wait", "missing futex register_wait export")?;
+        let register_wait_bitset =
+            io.bind("register_wait_bitset", "missing futex register_wait_bitset export")?;
         let wake = io.bind("wake", "missing futex wake export")?;
+        let wake_bitset = io.bind("wake_bitset", "missing futex wake_bitset export")?;
         let cancel_wait = io.bind("cancel_wait", "missing futex cancel_wait export")?;
 
-        Ok(Self { io, register_wait, wake, cancel_wait })
+        Ok(Self { io, register_wait, register_wait_bitset, wake, wake_bitset, cancel_wait })
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
@@ -36,12 +41,43 @@ impl FutexService {
         )
     }
 
+    pub(crate) fn register_wait_bitset(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        bitset: u32,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(&self.register_wait_bitset, (key, wait_id, bitset), "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
     pub(crate) fn wake(&mut self, key: u64, max_count: u32) -> Result<Vec<u64>, ServiceCallError> {
         let len = expect_len(
             self.io
                 .call(&self.wake, (key, max_count), "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
+        self.read_wake_response(len)
+    }
+
+    pub(crate) fn wake_bitset(
+        &mut self,
+        key: u64,
+        max_count: u32,
+        bitset: u32,
+    ) -> Result<Vec<u64>, ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(&self.wake_bitset, (key, max_count, bitset), "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        self.read_wake_response(len)
+    }
+
+    fn read_wake_response(&self, len: usize) -> Result<Vec<u64>, ServiceCallError> {
         let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
 
         if bytes.len() % 8 != 0 {

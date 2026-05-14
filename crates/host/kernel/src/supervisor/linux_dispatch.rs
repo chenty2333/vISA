@@ -261,6 +261,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Sleep => self.plan_sleep(plan),
             PlanKind::FutexWait => self.plan_futex_wait(plan),
             PlanKind::FutexWake => self.plan_futex_wake(plan),
+            PlanKind::FutexWaitBitset => self.plan_futex_wait_bitset(plan),
+            PlanKind::FutexWakeBitset => self.plan_futex_wake_bitset(plan),
             PlanKind::EpollCreate1 => self.plan_epoll_create1(plan),
             PlanKind::EpollCtl => self.plan_epoll_ctl(plan),
             PlanKind::EpollWait => self.plan_epoll_wait(plan),
@@ -296,8 +298,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Fgetxattr
             | PlanKind::Flock
             | PlanKind::FcntlSetlk
-            | PlanKind::FutexWaitBitset
-            | PlanKind::FutexWakeBitset
             | PlanKind::FutexRequeue
             | PlanKind::FutexCmpRequeue
             | PlanKind::FutexLockPi

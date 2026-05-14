@@ -8,12 +8,12 @@ use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_WAIT, FUTEX_WAKE,
-    PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT,
-    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_WAIT, FUTEX_WAIT_BITSET,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
+    SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -256,6 +256,8 @@ fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -
     match (op as u32) & FUTEX_CMD_MASK {
         FUTEX_WAIT => plan_futex_wait(key, val, timeout_ms, current_word),
         FUTEX_WAKE => plan_futex_wake(key, val),
+        FUTEX_WAIT_BITSET => plan_futex_wait_bitset(key, val, timeout_ms, current_word),
+        FUTEX_WAKE_BITSET => plan_futex_wake_bitset(key, val, current_word),
         _ => PackedStep::error(-ERR_EINVAL),
     }
 }
@@ -277,6 +279,30 @@ fn plan_futex_wake(key: u64, count: u64) -> PackedStep {
     let count = count.min(u32::MAX as u64);
     reset_plan(PlanKind::FutexWake, [key, count, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::FutexWake)
+}
+
+fn plan_futex_wait_bitset(key: u64, expected: u64, timeout_ms: u64, bitset: u64) -> PackedStep {
+    if bitset == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    let Some(resume_cookie) = allocate_pending_op(PendingOp::FutexWait) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+    let timeout = if timeout_ms == u64::MAX { u64::MAX } else { (timeout_ms as u32) as u64 };
+    reset_plan(
+        PlanKind::FutexWaitBitset,
+        [key, timeout, resume_cookie as u64, bitset, expected, 0],
+    );
+    PackedStep::plan(PlanKind::FutexWaitBitset)
+}
+
+fn plan_futex_wake_bitset(key: u64, count: u64, bitset: u64) -> PackedStep {
+    if bitset == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    let count = count.min(u32::MAX as u64);
+    reset_plan(PlanKind::FutexWakeBitset, [key, count, bitset, 0, 0, 0]);
+    PackedStep::plan(PlanKind::FutexWakeBitset)
 }
 
 fn plan_epoll_create1(flags: u64) -> PackedStep {

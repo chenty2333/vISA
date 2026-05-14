@@ -1213,6 +1213,7 @@ fn epoll_id_from_ready_key(ready_key: u64) -> Option<u32> {
 struct FutexWaiter {
     key: u64,
     wait_id: u64,
+    bitset: u32,
 }
 
 pub(crate) struct FutexService {
@@ -1225,15 +1226,33 @@ impl FutexService {
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
-        self.waiters.push(FutexWaiter { key, wait_id });
+        self.register_wait_bitset(key, wait_id, u32::MAX)
+    }
+
+    pub(crate) fn register_wait_bitset(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        bitset: u32,
+    ) -> Result<(), ServiceCallError> {
+        self.waiters.push(FutexWaiter { key, wait_id, bitset });
         Ok(())
     }
 
     pub(crate) fn wake(&mut self, key: u64, max_count: u32) -> Result<Vec<u64>, ServiceCallError> {
-        let mut remaining = max_count.max(1) as usize;
+        self.wake_bitset(key, max_count, u32::MAX)
+    }
+
+    pub(crate) fn wake_bitset(
+        &mut self,
+        key: u64,
+        max_count: u32,
+        bitset: u32,
+    ) -> Result<Vec<u64>, ServiceCallError> {
+        let mut remaining = max_count as usize;
         let mut wait_ids = Vec::new();
         self.waiters.retain(|waiter| {
-            if waiter.key == key && remaining > 0 {
+            if waiter.key == key && waiter.bitset & bitset != 0 && remaining > 0 {
                 wait_ids.push(waiter.wait_id);
                 remaining -= 1;
                 false

@@ -196,6 +196,13 @@ mod tests {
         }
     }
 
+    fn response_wait_id(index: usize) -> u64 {
+        unsafe {
+            let start = index * 8;
+            u64::from_le_bytes(RESPONSE[start..start + 8].try_into().unwrap())
+        }
+    }
+
     #[test]
     fn wake_zero_count_wakes_no_waiters() {
         reset();
@@ -218,6 +225,21 @@ mod tests {
             assert!((*waiters).active);
             assert_eq!((*waiters).key, 11);
             assert_eq!((*waiters).wait_id, 7);
+        }
+    }
+
+    #[test]
+    fn wake_bitset_only_wakes_overlapping_waiters() {
+        reset();
+        assert_eq!(register_wait_bitset(11, 7, 0b0100), 0);
+        assert_eq!(register_wait_bitset(11, 8, 0b0010), 0);
+        assert_eq!(wake_bitset(11, 10, 0b0100), 8);
+        assert_eq!(response_wait_id(0), 7);
+        unsafe {
+            let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+            assert!(!(*waiters).active);
+            assert!((*waiters.add(1)).active);
+            assert_eq!((*waiters.add(1)).wait_id, 8);
         }
     }
 }

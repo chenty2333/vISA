@@ -35,6 +35,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
+        self.plan_futex_wait_common(plan, u32::MAX)
+    }
+
+    pub(super) fn plan_futex_wait_bitset(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let bitset = u32::try_from(plan.args[3]).map_err(|_| "futex bitset overflowed")?;
+        if bitset == 0 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+        self.plan_futex_wait_common(plan, bitset)
+    }
+
+    fn plan_futex_wait_common(
+        &mut self,
+        plan: LinuxPlan,
+        bitset: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("futex_service", "futex.waitset", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
@@ -53,7 +72,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::TIMER_HZ,
         );
 
-        match self.futex.register_wait(key, token.id) {
+        let registered = if bitset == u32::MAX {
+            self.futex.register_wait(key, token.id)
+        } else {
+            self.futex.register_wait_bitset(key, token.id, bitset)
+        };
+        match registered {
             Ok(()) => {
                 self.record_wait_token(token);
                 Ok(LinuxCallResult::Pending(token))
@@ -74,16 +98,41 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
     pub(super) fn plan_futex_wake(
         &mut self,
         plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        self.plan_futex_wake_common(plan, u32::MAX)
+    }
+
+    pub(super) fn plan_futex_wake_bitset(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let bitset = u32::try_from(plan.args[2]).map_err(|_| "futex bitset overflowed")?;
+        if bitset == 0 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+        self.plan_futex_wake_common(plan, bitset)
+    }
+
+    fn plan_futex_wake_common(
+        &mut self,
+        plan: LinuxPlan,
+        bitset: u32,
     ) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("futex_service", "futex.waitset", "wake").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let key = plan.args[0];
         let count = u32::try_from(plan.args[1]).map_err(|_| "futex wake count overflowed")?;
-        match self.futex.wake(key, count) {
+        let woken = if bitset == u32::MAX {
+            self.futex.wake(key, count)
+        } else {
+            self.futex.wake_bitset(key, count, bitset)
+        };
+        match woken {
             Ok(wait_ids) => {
                 for wait_id in &wait_ids {
                     self.scheduler.push_event(Event::WaitReady(*wait_id));
