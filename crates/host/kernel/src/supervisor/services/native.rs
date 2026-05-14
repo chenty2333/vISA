@@ -130,13 +130,22 @@ pub(crate) struct LinuxUserResourceFile {
 
 include!(concat!(env!("OUT_DIR"), "/linux_user_resources.rs"));
 
+struct FileLock {
+    path: Vec<u8>,
+    owner_pid: u32,
+    write: bool,
+    start: i64,
+    len: i64,
+}
+
 pub(crate) struct VfsService {
     nodes: Vec<VfsNode>,
+    locks: Vec<FileLock>,
 }
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        let mut service = Self { nodes: Vec::new() };
+        let mut service = Self { nodes: Vec::new(), locks: Vec::new() };
         service.install_linux_user_resources();
         Ok(service)
     }
@@ -584,6 +593,27 @@ impl VfsService {
             out.push(b'\n');
         }
         out
+    }
+
+    pub(crate) fn fcntl_setlk(&mut self, path: &[u8], owner: u32, write: bool, s: i64, l: i64) -> Result<(), i32> {
+        for lock in &self.locks {
+            if lock.path != path || lock.owner_pid == owner { continue; }
+            let le = if lock.len == 0 { i64::MAX } else { lock.start.saturating_add(lock.len) };
+            let re = if l == 0 { i64::MAX } else { s.saturating_add(l) };
+            if s < le && re > lock.start && (write || lock.write) { return Err(vmos_abi::ERR_EAGAIN); }
+        }
+        self.locks.push(FileLock { path: path.to_vec(), owner_pid: owner, write, start: s, len: l });
+        Ok(())
+    }
+
+    pub(crate) fn fcntl_getlk(&self, path: &[u8], want_write: bool, s: i64, l: i64) -> Option<(bool, u32, i64, i64)> {
+        let re = if l == 0 { i64::MAX } else { s.saturating_add(l) };
+        for lock in &self.locks {
+            if lock.path != path { continue; }
+            let le = if lock.len == 0 { i64::MAX } else { lock.start.saturating_add(lock.len) };
+            if s < le && re > lock.start { return Some((lock.write, lock.owner_pid, lock.start, lock.len)); }
+        }
+        None
     }
 }
 
