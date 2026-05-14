@@ -274,6 +274,14 @@ impl SemanticGraph {
                 }
                 caps
             },
+            // process domain
+            processes: d.process.processes.clone(),
+            threads: d.process.threads.clone(),
+            thread_groups: d.process.thread_groups.clone(),
+            fd_tables: d.process.fd_tables.clone(),
+            open_file_descriptions: d.process.open_file_descriptions.clone(),
+            credentials: d.process.credentials.clone(),
+            credential_transitions: d.process.credential_transitions.clone(),
             cleanup_transactions: inputs.cleanup_transactions.to_vec(),
             tombstones: inputs.tombstones.to_vec(),
             external_objects: inputs.external_objects.to_vec(),

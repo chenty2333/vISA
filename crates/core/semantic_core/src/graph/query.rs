@@ -234,6 +234,10 @@ impl SemanticGraph {
             }
         }
 
+        for violation in self.check_process_invariants() {
+            return Err(SemanticInvariantError::ProcessInvariantViolation { detail: violation });
+        }
+
         Ok(())
     }
 }

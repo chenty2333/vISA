@@ -850,23 +850,33 @@ pub fn object_kind_evidence_level(kind: ObjectKind) -> EvidenceBoundaryLevel {
     use EvidenceBoundaryLevel::*;
     match kind {
         // Process/Thread family — portable semantic models
-        ObjectKind::Process | ObjectKind::Thread | ObjectKind::ThreadGroup
-        | ObjectKind::FdTable | ObjectKind::OpenFileDescription
-        | ObjectKind::Credential | ObjectKind::CredentialTransition => SemanticModel,
+        ObjectKind::Process
+        | ObjectKind::Thread
+        | ObjectKind::ThreadGroup
+        | ObjectKind::FdTable
+        | ObjectKind::OpenFileDescription
+        | ObjectKind::Credential
+        | ObjectKind::CredentialTransition => SemanticModel,
 
         // Signal family — dispositions, masks, deliveries are semantic; SignalFrame is arch-specific
-        ObjectKind::SignalDisposition | ObjectKind::PendingSignal
-        | ObjectKind::SignalMask | ObjectKind::SignalDelivery => SemanticModel,
+        ObjectKind::SignalDisposition
+        | ObjectKind::PendingSignal
+        | ObjectKind::SignalMask
+        | ObjectKind::SignalDelivery => SemanticModel,
         ObjectKind::SignalFrame => PortableArtifactExecution, // contains arch regs — arch-specific evidence layer
 
         // Memory expansion — semantic facts, NOT physical page table state
-        ObjectKind::PageFaultEvent | ObjectKind::CowBreakEvent
-        | ObjectKind::VmaSplitEvent => SemanticModel,
+        ObjectKind::PageFaultEvent | ObjectKind::CowBreakEvent | ObjectKind::VmaSplitEvent => {
+            SemanticModel
+        }
         ObjectKind::PageAllocSubstrateEvent => RealTargetSubstrate, // physical frame identity
 
         // Futex family — pure semantic
-        ObjectKind::FutexKey | ObjectKind::FutexWait | ObjectKind::FutexWake
-        | ObjectKind::FutexRequeue | ObjectKind::RobustList => SemanticModel,
+        ObjectKind::FutexKey
+        | ObjectKind::FutexWait
+        | ObjectKind::FutexWake
+        | ObjectKind::FutexRequeue
+        | ObjectKind::RobustList => SemanticModel,
 
         // Epoll readiness — semantic models
         ObjectKind::ReadySource | ObjectKind::EpollWatcher => SemanticModel,
@@ -874,14 +884,152 @@ pub fn object_kind_evidence_level(kind: ObjectKind) -> EvidenceBoundaryLevel {
         // Filesystem expansion — semantic
         ObjectKind::FileLock | ObjectKind::Xattr => SemanticModel,
 
-        // All other existing kinds — default to SemanticModel (existing behavior)
-        _ => SemanticModel,
+        // Legacy kinds — keep explicit; not adding new kinds here is a review smell
+        ObjectKind::Hart
+        | ObjectKind::Task
+        | ObjectKind::RunnableQueue
+        | ObjectKind::ActivationContext
+        | ObjectKind::SavedContext
+        | ObjectKind::TimerInterrupt
+        | ObjectKind::IpiEvent
+        | ObjectKind::RemotePreempt
+        | ObjectKind::RemotePark
+        | ObjectKind::Preemption
+        | ObjectKind::SchedulerDecision
+        | ObjectKind::CrossHartSchedulerDecision
+        | ObjectKind::ActivationMigration
+        | ObjectKind::SmpSafePoint
+        | ObjectKind::StopTheWorldRendezvous
+        | ObjectKind::SmpCodePublishBarrier
+        | ObjectKind::SmpCleanupQuiescence
+        | ObjectKind::SmpSnapshotBarrier
+        | ObjectKind::SmpStressRun
+        | ObjectKind::SmpScalingBenchmark
+        | ObjectKind::IntegratedSmpPreemptionCleanup
+        | ObjectKind::IntegratedSmpNetworkFault
+        | ObjectKind::IntegratedDiskPreemptFault
+        | ObjectKind::IntegratedSimdMigration
+        | ObjectKind::IntegratedNetworkDiskIo
+        | ObjectKind::IntegratedDisplaySchedulerLoad
+        | ObjectKind::IntegratedSnapshotIoLeaseBarrier
+        | ObjectKind::IntegratedCodePublishSmpWorkload
+        | ObjectKind::IntegratedDisplayPanic
+        | ObjectKind::IntegratedOsctlTraceReplay
+        | ObjectKind::DeviceObject
+        | ObjectKind::QueueObject
+        | ObjectKind::DescriptorObject
+        | ObjectKind::DmaBufferObject
+        | ObjectKind::MmioRegionObject
+        | ObjectKind::IrqLineObject
+        | ObjectKind::IrqEvent
+        | ObjectKind::DeviceCapability
+        | ObjectKind::DriverStoreBinding
+        | ObjectKind::IoWait
+        | ObjectKind::IoCleanup
+        | ObjectKind::IoFaultInjection
+        | ObjectKind::IoValidationReport
+        | ObjectKind::PacketDeviceObject
+        | ObjectKind::PacketBufferObject
+        | ObjectKind::PacketQueueObject
+        | ObjectKind::PacketDescriptorObject
+        | ObjectKind::FakeNetBackendObject
+        | ObjectKind::VirtioNetBackendObject
+        | ObjectKind::NetworkRxInterrupt
+        | ObjectKind::NetworkRxWaitResolution
+        | ObjectKind::NetworkTxCapabilityGate
+        | ObjectKind::NetworkTxCompletion
+        | ObjectKind::NetworkStackAdapter
+        | ObjectKind::SocketObject
+        | ObjectKind::EndpointObject
+        | ObjectKind::SocketOperation
+        | ObjectKind::SocketWait
+        | ObjectKind::NetworkBackpressure
+        | ObjectKind::NetworkDriverCleanup
+        | ObjectKind::NetworkGenerationAudit
+        | ObjectKind::NetworkFaultInjection
+        | ObjectKind::NetworkBenchmark
+        | ObjectKind::NetworkRecoveryBenchmark
+        | ObjectKind::BlockDeviceObject
+        | ObjectKind::BlockRangeObject
+        | ObjectKind::BlockRequestObject
+        | ObjectKind::BlockCompletionObject
+        | ObjectKind::BlockWait
+        | ObjectKind::FakeBlockBackendObject
+        | ObjectKind::VirtioBlkBackendObject
+        | ObjectKind::BlockReadPath
+        | ObjectKind::BlockWritePath
+        | ObjectKind::BlockRequestQueue
+        | ObjectKind::BlockDmaBuffer
+        | ObjectKind::BlockPageObject
+        | ObjectKind::BufferCacheObject
+        | ObjectKind::FileObject
+        | ObjectKind::DirectoryObject
+        | ObjectKind::FatAdapterObject
+        | ObjectKind::Ext4AdapterObject
+        | ObjectKind::FileHandleCapability
+        | ObjectKind::FsWait
+        | ObjectKind::BlockDriverCleanup
+        | ObjectKind::BlockPendingIoPolicy
+        | ObjectKind::BlockRequestGenerationAudit
+        | ObjectKind::BlockBenchmark
+        | ObjectKind::BlockRecoveryBenchmark
+        | ObjectKind::TargetFeatureSet
+        | ObjectKind::VectorState
+        | ObjectKind::SimdFaultInjection
+        | ObjectKind::SimdBenchmark
+        | ObjectKind::SimdContextSwitchBenchmark
+        | ObjectKind::FramebufferObject
+        | ObjectKind::DisplayObject
+        | ObjectKind::DisplayCapability
+        | ObjectKind::FramebufferWindowLease
+        | ObjectKind::FramebufferMapping
+        | ObjectKind::FramebufferWrite
+        | ObjectKind::FramebufferFlushRegion
+        | ObjectKind::FramebufferDirtyRegion
+        | ObjectKind::DisplayEventLog
+        | ObjectKind::DisplayCleanup
+        | ObjectKind::DisplaySnapshotBarrier
+        | ObjectKind::DisplayPanicLastFrame
+        | ObjectKind::FramebufferBenchmark
+        | ObjectKind::ActivationResume
+        | ObjectKind::ActivationWait
+        | ObjectKind::ActivationCleanup
+        | ObjectKind::PreemptionLatency
+        | ObjectKind::HartEventAttribution
+        | ObjectKind::Resource
+        | ObjectKind::Capability
+        | ObjectKind::WaitToken
+        | ObjectKind::FaultDomain
+        | ObjectKind::Store
+        | ObjectKind::StoreActivation
+        | ObjectKind::Activation
+        | ObjectKind::Artifact
+        | ObjectKind::CodeObject
+        | ObjectKind::Boundary
+        | ObjectKind::Transaction
+        | ObjectKind::Event
+        | ObjectKind::Trap
+        | ObjectKind::Hostcall
+        | ObjectKind::Cleanup
+        | ObjectKind::MemoryObject
+        | ObjectKind::GuestAddressSpace
+        | ObjectKind::VmaRegion
+        | ObjectKind::PageObject
+        | ObjectKind::Tombstone
+        | ObjectKind::External => SemanticModel,
     }
+}
+
+/// Returns the total count of ObjectKind variants — used in tests to verify evidence boundary coverage.
+#[doc(hidden)]
+pub const fn object_kind_count() -> usize {
+    // Update this when adding new ObjectKind variants to the enum.
+    226
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{object_kind_evidence_level, EvidenceBoundaryLevel, ObjectKind};
+    use super::{EvidenceBoundaryLevel, ObjectKind, object_kind_count, object_kind_evidence_level};
 
     #[test]
     fn evidence_boundary_levels_are_ordered_by_claim_strength() {
@@ -926,47 +1074,78 @@ mod tests {
     #[test]
     fn phase1_process_types_are_portable_semantic() {
         use EvidenceBoundaryLevel::SemanticModel;
-        for kind in [ObjectKind::Process, ObjectKind::Thread, ObjectKind::ThreadGroup,
-                     ObjectKind::FdTable, ObjectKind::Credential] {
-            assert_eq!(object_kind_evidence_level(kind), SemanticModel,
-                "{} must be SemanticModel (portable)", kind.as_str());
+        for kind in [
+            ObjectKind::Process,
+            ObjectKind::Thread,
+            ObjectKind::ThreadGroup,
+            ObjectKind::FdTable,
+            ObjectKind::Credential,
+        ] {
+            assert_eq!(
+                object_kind_evidence_level(kind),
+                SemanticModel,
+                "{} must be SemanticModel (portable)",
+                kind.as_str()
+            );
         }
     }
 
     #[test]
     fn signal_frame_is_not_pure_semantic() {
         let level = object_kind_evidence_level(ObjectKind::SignalFrame);
-        assert!(level.rank() >= EvidenceBoundaryLevel::PortableArtifactExecution.rank(),
-            "SignalFrame must be at least PortableArtifactExecution (contains arch regs)");
+        assert!(
+            level.rank() >= EvidenceBoundaryLevel::PortableArtifactExecution.rank(),
+            "SignalFrame must be at least PortableArtifactExecution (contains arch regs)"
+        );
     }
 
     #[test]
     fn page_alloc_is_substrate_evidence_only() {
         let level = object_kind_evidence_level(ObjectKind::PageAllocSubstrateEvent);
-        assert_eq!(level, EvidenceBoundaryLevel::RealTargetSubstrate,
-            "PageAllocSubstrateEvent contains physical frame identity — substrate evidence only");
+        assert_eq!(
+            level,
+            EvidenceBoundaryLevel::RealTargetSubstrate,
+            "PageAllocSubstrateEvent contains physical frame identity — substrate evidence only"
+        );
     }
 
     #[test]
-    fn all_new_kinds_have_explicit_evidence_boundary() {
+    fn all_new_process_family_kinds_have_explicit_boundary() {
         let new_kinds = [
-            ObjectKind::Process, ObjectKind::Thread, ObjectKind::ThreadGroup,
-            ObjectKind::FdTable, ObjectKind::OpenFileDescription,
-            ObjectKind::Credential, ObjectKind::CredentialTransition,
-            ObjectKind::SignalDisposition, ObjectKind::PendingSignal,
-            ObjectKind::SignalMask, ObjectKind::SignalFrame, ObjectKind::SignalDelivery,
-            ObjectKind::PageFaultEvent, ObjectKind::CowBreakEvent,
-            ObjectKind::VmaSplitEvent, ObjectKind::PageAllocSubstrateEvent,
-            ObjectKind::FutexKey, ObjectKind::FutexWait, ObjectKind::FutexWake,
-            ObjectKind::FutexRequeue, ObjectKind::RobustList,
-            ObjectKind::ReadySource, ObjectKind::EpollWatcher,
-            ObjectKind::FileLock, ObjectKind::Xattr,
+            ObjectKind::Process,
+            ObjectKind::Thread,
+            ObjectKind::ThreadGroup,
+            ObjectKind::FdTable,
+            ObjectKind::OpenFileDescription,
+            ObjectKind::Credential,
+            ObjectKind::CredentialTransition,
+            ObjectKind::SignalDisposition,
+            ObjectKind::PendingSignal,
+            ObjectKind::SignalMask,
+            ObjectKind::SignalFrame,
+            ObjectKind::SignalDelivery,
+            ObjectKind::PageFaultEvent,
+            ObjectKind::CowBreakEvent,
+            ObjectKind::VmaSplitEvent,
+            ObjectKind::PageAllocSubstrateEvent,
+            ObjectKind::FutexKey,
+            ObjectKind::FutexWait,
+            ObjectKind::FutexWake,
+            ObjectKind::FutexRequeue,
+            ObjectKind::RobustList,
+            ObjectKind::ReadySource,
+            ObjectKind::EpollWatcher,
+            ObjectKind::FileLock,
+            ObjectKind::Xattr,
         ];
         for kind in new_kinds {
             // Must not panic — every kind must be handled in object_kind_evidence_level()
             let _level = object_kind_evidence_level(kind);
-            assert!(_level.rank() <= EvidenceBoundaryLevel::RealTargetSubstrate.rank(),
-                "{} has invalid evidence boundary", kind.as_str());
+            assert!(
+                _level.rank() <= EvidenceBoundaryLevel::RealTargetSubstrate.rank(),
+                "{} has invalid evidence boundary",
+                kind.as_str()
+            );
         }
     }
 }

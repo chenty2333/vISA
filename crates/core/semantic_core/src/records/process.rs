@@ -1,5 +1,4 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use super::super::*;
 
@@ -13,7 +12,7 @@ pub struct ProcessRecord {
     pub pgid: u32,
     pub sid: u32,
     pub thread_group: ContractObjectRef,
-    pub children: Vec<u32>,
+    pub children: Vec<ContractObjectRef>,
     pub state: ProcessState,
     pub exit_signal: Option<u8>,
     pub recorded_at_event: EventId,
@@ -47,7 +46,7 @@ pub struct ThreadRecord {
     pub credential: ContractObjectRef,
     pub thread_group: ContractObjectRef,
     pub interrupted_activation: Option<ContractObjectRef>, // Activation ref
-    pub arch_regs_evidence: Option<ContractObjectRef>, // host-specific evidence
+    pub arch_regs_evidence: Option<ContractObjectRef>,     // host-specific evidence
     pub clear_child_tid: Option<u64>,
     pub robust_list_head: Option<u64>,
     pub robust_list_len: usize,
@@ -133,8 +132,14 @@ impl OpenFileDescriptionRecord {
 pub struct CredentialRecord {
     pub id: CredentialId,
     pub owner_process: ContractObjectRef,
-    pub uid: u32, pub euid: u32, pub suid: u32, pub fsuid: u32,
-    pub gid: u32, pub egid: u32, pub sgid: u32, pub fsgid: u32,
+    pub uid: u32,
+    pub euid: u32,
+    pub suid: u32,
+    pub fsuid: u32,
+    pub gid: u32,
+    pub egid: u32,
+    pub sgid: u32,
+    pub fsgid: u32,
     pub supplementary_groups: Vec<u32>,
     pub capability_sets: LinuxCapSets,
     pub recorded_at_event: EventId,

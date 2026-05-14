@@ -227,7 +227,7 @@ pub enum MigrationValidationError {
     UnsupportedGuestIsa,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SemanticInvariantError {
     HartInvalidObjectIdentity {
         hart: HartId,
@@ -2396,5 +2396,8 @@ pub enum SemanticInvariantError {
     },
     AuthorityCapabilityMissing {
         authority: AuthorityId,
+    },
+    ProcessInvariantViolation {
+        detail: String,
     },
 }

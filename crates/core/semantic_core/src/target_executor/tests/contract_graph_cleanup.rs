@@ -154,6 +154,7 @@ fn contract_graph_validator_reports_generation_dead_and_tombstone_edges() {
         },
         external_objects: Vec::new(),
         explicit_edges: Vec::new(),
+        ..Default::default()
     };
     let violations = validate_contract_graph(&snapshot);
     assert!(violations.len() >= 4);
@@ -307,6 +308,7 @@ fn contract_graph_validator_rejects_cleanup_effect_mismatch() {
         tombstones: Vec::new(),
         external_objects: Vec::new(),
         explicit_edges: Vec::new(),
+        ..Default::default()
     };
     let violations = validate_contract_graph(&snapshot);
     assert!(violations.iter().any(|violation| {
@@ -610,6 +612,7 @@ fn contract_graph_validator_allows_historical_hostcall_to_tombstoned_generation(
         },
         external_objects: Vec::new(),
         explicit_edges: Vec::new(),
+        ..Default::default()
     };
     let violations = validate_contract_graph(&snapshot);
     assert!(!violations.iter().any(|violation| {
@@ -816,6 +819,7 @@ fn contract_graph_validator_enforces_live_cleanup_and_external_edges() {
             );
             edges
         },
+        ..Default::default()
     };
     let violations = validate_contract_graph(&snapshot);
     assert!(violations.iter().any(|violation| {
@@ -1114,6 +1118,7 @@ fn contract_graph_validator_allows_historical_cleanup_and_declared_external_edge
             );
             edges
         },
+        ..Default::default()
     };
     let violations = validate_contract_graph(&snapshot);
     assert!(!violations.iter().any(|violation| {

@@ -922,6 +922,13 @@ impl ContractGraphValidator {
                 | ContractObjectKind::WaitToken
                 | ContractObjectKind::CleanupTransaction
                 | ContractObjectKind::ExternalObject
+                | ContractObjectKind::Process
+                | ContractObjectKind::Thread
+                | ContractObjectKind::ThreadGroup
+                | ContractObjectKind::FdTable
+                | ContractObjectKind::OpenFileDescription
+                | ContractObjectKind::Credential
+                | ContractObjectKind::CredentialTransition
         )
     }
 
