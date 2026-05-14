@@ -17,6 +17,7 @@ mod linux_wait_dispatch;
 mod net;
 mod process;
 mod pulse;
+mod signal;
 mod recovery;
 mod runtime;
 mod scheduler;
@@ -24,7 +25,7 @@ mod semantic;
 mod services;
 mod store;
 mod store_manager;
-mod types;
+pub(crate) mod types;
 mod wait;
 
 pub(crate) use linux::LinuxCallResult;

@@ -2,6 +2,8 @@ use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
+
+use crate::supervisor::types::SigAction;
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED,
     ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOSYS, ERR_ENOTDIR,
@@ -108,7 +110,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     };
     active_context().supervisor.set_current_task(task_id);
     let _activation = ActivationGuard { activation_id };
-    match frame.rax {
+    let result = match frame.rax {
         SYS_WRITE => sys_write(frame),
         SYS_WRITEV => sys_writev(frame),
         SYS_READ => sys_read(frame),
@@ -243,7 +245,11 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
             crate::kwarn!("ring3 unsupported syscall {}", frame.rax);
             Err(ERR_ENOSYS)
         }
-    }
+    };
+    // Check pending signals before returning to userspace
+    let tid = active_context().tid;
+    active_context().supervisor.deliver_pending_signals(tid);
+    result
 }
 
 fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1065,19 +1071,58 @@ fn sys_sched_getaffinity(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_rt_sigaction(frame: &SyscallFrame) -> Result<i64, i32> {
-    let signal = frame.rdi;
-    if signal == 0 || signal > 64 || frame.r10 != LINUX_SIGSET_BYTES as u64 {
+    let signo = frame.rdi as u8;
+    if signo == 0 || signo > 64 || frame.r10 != LINUX_SIGSET_BYTES as u64 {
         return Err(ERR_EINVAL);
     }
+    // Read new action from userspace (if provided)
+    let new_act = if frame.rsi != 0 {
+        let bytes = read_user_bytes(frame.rsi, LINUX_SIGACTION_BYTES)?;
+        SigAction {
+            handler: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            flags: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            restorer: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+            mask: u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+        }
+    } else {
+        SigAction::default()
+    };
+    let pid = active_context().pid;
+    let supervisor = &mut active_context().supervisor;
+    // Return old action
+    let old = supervisor.get_sigaction(pid, signo).unwrap_or_default();
     if frame.rdx != 0 {
-        write_user_bytes(frame.rdx, &[0; LINUX_SIGACTION_BYTES])?;
+        let mut buf = [0u8; LINUX_SIGACTION_BYTES];
+        buf[0..8].copy_from_slice(&old.handler.to_le_bytes());
+        buf[8..16].copy_from_slice(&old.flags.to_le_bytes());
+        buf[16..24].copy_from_slice(&old.restorer.to_le_bytes());
+        buf[24..32].copy_from_slice(&old.mask.to_le_bytes());
+        write_user_bytes(frame.rdx, &buf)?;
+    }
+    if frame.rsi != 0 {
+        supervisor.set_sigaction(pid, signo, new_act);
     }
     Ok(0)
 }
 
 fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.rdx != 0 {
-        write_user_bytes(frame.rdx, &[0; LINUX_SIGSET_BYTES])?;
+    let how = frame.rdi as u32;
+    let set_ptr = frame.rsi;
+    let oldset_ptr = frame.rdx;
+    let sigsetsize = frame.r10;
+    if sigsetsize != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    let tid = active_context().tid;
+    let supervisor = &mut active_context().supervisor;
+    let old_mask = supervisor.get_sigmask(tid).unwrap_or(0);
+    if oldset_ptr != 0 {
+        write_user_bytes(oldset_ptr, &old_mask.to_le_bytes())?;
+    }
+    if set_ptr != 0 {
+        let bytes = read_user_bytes(set_ptr, LINUX_SIGSET_BYTES)?;
+        let set = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        supervisor.set_sigmask(tid, how, set);
     }
     Ok(0)
 }
@@ -1104,13 +1149,22 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     if signal == 0 {
         return Ok(0);
     }
-    if tgid != current || tid != current {
-        return Err(vmos_abi::ERR_ESRCH);
-    }
     if signal > 64 {
         return Err(ERR_EINVAL);
     }
-    handle_exit(128 + signal as i32)
+    let supervisor = &mut active_context().supervisor;
+    // Find the target thread
+    let target_tid = supervisor.threads.iter()
+        .find(|t| t.pid as u64 == tgid as u64 && t.tid as u64 == tid as u64)
+        .map(|t| t.tid);
+    let Some(target_tid) = target_tid else {
+        return Err(ERR_ESRCH);
+    };
+    let sender_pid = active_context().pid;
+    supervisor.queue_signal_to_thread(target_tid, signal as u8, 0, sender_pid, 0);
+    let current_tid = active_context().tid;
+    supervisor.deliver_pending_signals(current_tid);
+    Ok(0)
 }
 
 fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1151,17 +1205,23 @@ fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
     let sig = frame.rsi as u32;
     if sig == 0 {
         // Existence check
-        let current_pid = active_context().pid;
-        if pid == 0 || pid == current_pid || pid == u32::MAX.wrapping_neg() {
-            return Ok(0);
-        }
-        return Err(ERR_ESRCH);
+        let supervisor = &active_context().supervisor;
+        let found = supervisor.processes.iter().any(|p| p.pid == pid || pid == 0);
+        return if found { Ok(0) } else { Err(ERR_ESRCH) };
     }
-    if pid == 0 || pid == active_context().pid {
-        // Signal to self
-        return Ok(0);
+    if sig > 64 {
+        return Err(ERR_EINVAL);
     }
-    Err(ERR_ESRCH)
+    let supervisor = &mut active_context().supervisor;
+    let current_pid = active_context().pid;
+    if pid == 0 || pid == current_pid {
+        supervisor.queue_signal_to_process(current_pid, sig as u8, 0, current_pid, 0);
+    } else {
+        supervisor.queue_signal_to_process(pid, sig as u8, 0, current_pid, 0);
+    }
+    let tid = active_context().tid;
+    supervisor.deliver_pending_signals(tid);
+    Ok(0)
 }
 
 fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2134,6 +2194,15 @@ fn map_dmw_fault(fault: crate::substrate::dmw::DmwFault) -> i32 {
             ERR_EFAULT
         }
     }
+}
+
+fn read_user_bytes(ptr: u64, len: usize) -> Result<Vec<u8>, i32> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let lease = user_lease(ptr, len as u64, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    Ok(bytes.to_vec())
 }
 
 fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {

@@ -20,8 +20,8 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, SocketPairState, TaskId, Tid, ThreadRuntimeState,
-        ThreadRuntimeStateKind,
+        ProcessRuntimeStateKind, SigAction, SocketPairState, TaskId, Tid,
+        ThreadRuntimeState, ThreadRuntimeStateKind,
     },
     wait::WaitRegistry,
 };
@@ -60,8 +60,8 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) replay_snapshot: ReplaySnapshotService,
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
-    pub(super) processes: Vec<ProcessRuntimeState>,
-    pub(super) threads: Vec<ThreadRuntimeState>,
+    pub(crate) processes: Vec<ProcessRuntimeState>,
+    pub(crate) threads: Vec<ThreadRuntimeState>,
     pub(super) next_pid: Pid,
     pub(super) next_tid: Tid,
     pub(super) fd_table: Vec<Option<FdEntry>>,
@@ -158,6 +158,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     exit_signal: None,
                     state: ProcessRuntimeStateKind::Running,
                     exit_code: None,
+                    sigactions: [SigAction::default(); 64],
                 });
                 procs
             },
@@ -168,6 +169,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                     tid: 1, task_id: 1, pid: 1,
                     state: ThreadRuntimeStateKind::Running,
                     clear_child_tid: None,
+                    sigmask: 0,
+                    pending_signals: Vec::new(),
                 });
                 thrds
             },
@@ -209,10 +212,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             ppid,
             pgid,
             sid,
-            tgid: pid as Tid,  // new thread group for the process
+            tgid: pid as Tid,
             exit_signal: None,
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
+            sigactions: [SigAction::default(); 64],
         });
         pid
     }
@@ -227,6 +231,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             pid,
             state: ThreadRuntimeStateKind::Running,
             clear_child_tid: None,
+            sigmask: 0,
+            pending_signals: Vec::new(),
         });
         tid
     }

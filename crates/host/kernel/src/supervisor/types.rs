@@ -19,6 +19,8 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) exit_signal: Option<u8>,
     pub(crate) state: ProcessRuntimeStateKind,
     pub(crate) exit_code: Option<i32>,
+    // Signal dispositions shared by all threads in the process (CLONE_SIGHAND)
+    pub(crate) sigactions: [SigAction; 64],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +37,8 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) pid: Pid,
     pub(crate) state: ThreadRuntimeStateKind,
     pub(crate) clear_child_tid: Option<u64>,
+    pub(crate) sigmask: u64,
+    pub(crate) pending_signals: Vec<PendingSignal>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +47,31 @@ pub(crate) enum ThreadRuntimeStateKind {
     Blocked,
     Stopped,
     Dead,
+}
+
+// Signal types
+pub(crate) const SIG_NUM: usize = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SigAction {
+    pub(crate) handler: u64,     // 0=SIG_DFL, 1=SIG_IGN, else=handler VA
+    pub(crate) flags: u64,       // SA_SIGINFO etc.
+    pub(crate) restorer: u64,
+    pub(crate) mask: u64,
+}
+
+impl Default for SigAction {
+    fn default() -> Self {
+        Self { handler: 0, flags: 0, restorer: 0, mask: 0 }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingSignal {
+    pub(crate) signo: u8,
+    pub(crate) si_code: i32,
+    pub(crate) si_pid: u32,
+    pub(crate) si_uid: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
