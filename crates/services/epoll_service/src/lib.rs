@@ -20,6 +20,8 @@ const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
 const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
 const EPOLLONESHOT: u32 = 0x4000_0000;
+const EPOLLET: u32 = 0x8000_0000;
+const EPOLLEXCLUSIVE: u32 = 0x1000_0000;
 
 static mut REQUEST: [u8; 1] = [0; 1];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
@@ -46,6 +48,9 @@ struct Watcher {
     ready: bool,
     disabled: bool,
     active: bool,
+    edge_triggered: bool,
+    exclusive: bool,
+    readiness_gen: u64,
 }
 
 impl Watcher {
@@ -57,6 +62,9 @@ impl Watcher {
         ready: false,
         disabled: false,
         active: false,
+        edge_triggered: false,
+        exclusive: false,
+        readiness_gen: 0,
     };
 }
 
@@ -167,7 +175,11 @@ pub extern "C" fn collect_ready(epoll_id: u32, max_events: u32) -> i32 {
             if (*slot).events & EPOLLONESHOT != 0 {
                 (*slot).disabled = true;
             }
-            (*slot).ready = false;
+            // LT watchers: ready stays true if fd is still active (reflects current state)
+            // ET watchers: ready cleared after collection (edge consumed)
+            if (*slot).edge_triggered {
+                (*slot).ready = false;
+            }
             written += 1;
         }
     }
@@ -258,6 +270,9 @@ fn add_watcher(epoll_id: u32, ready_key: u64, events: u32, data: u64) -> i32 {
                     ready: false,
                     disabled: false,
                     active: true,
+                    edge_triggered: events & EPOLLET != 0,
+                    exclusive: events & EPOLLEXCLUSIVE != 0,
+                    readiness_gen: 0,
                 };
                 return 0;
             }
@@ -383,21 +398,36 @@ fn epoll_id_from_ready_key(ready_key: u64) -> Option<u32> {
 }
 
 fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
+    // Update readiness for matching watchers
     unsafe {
         let watchers = core::ptr::addr_of_mut!(WATCHERS) as *mut Watcher;
         for index in 0..MAX_WATCHERS {
             let slot = watchers.add(index);
-            if (*slot).active && (*slot).ready_key == ready_key && !(*slot).disabled && !restart {
-                (*slot).ready = true;
+            if !(*slot).active || (*slot).ready_key != ready_key || (*slot).disabled {
+                continue;
             }
+            if restart {
+                continue;
+            }
+            // LT: always set ready (current state)
+            // ET: set ready only if this is a new edge (generation bumped)
+            if (*slot).edge_triggered {
+                (*slot).readiness_gen = (*slot).readiness_gen.wrapping_add(1);
+            }
+            (*slot).ready = true;
         }
     }
 
+    // Wake waiters — exclusive semantics: at most one waiter per exclusive watcher
     let mut written = 0usize;
     unsafe {
         let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         let watchers = core::ptr::addr_of_mut!(WATCHERS) as *mut Watcher;
         let response = addr_of_mut!(RESPONSE) as *mut u8;
+
+        // Track which exclusive watchers have already woken a waiter
+        let mut exclusive_woken = [0u8; MAX_WATCHERS];
+
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
             if !(*slot).active {
@@ -405,13 +435,21 @@ fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
             }
 
             let mut should_wake = false;
+            let mut watcher_idx = 0usize;
             for watch_index in 0..MAX_WATCHERS {
                 let watch = watchers.add(watch_index);
                 if !(*watch).active || (*watch).epoll_id != (*slot).epoll_id {
                     continue;
                 }
-                if (*watch).ready_key == ready_key && !(*watch).disabled {
+                if (*watch).ready && (*watch).ready_key == ready_key && !(*watch).disabled {
+                    if (*watch).exclusive {
+                        if exclusive_woken[watch_index] != 0 {
+                            continue; // already woke one for this exclusive watcher
+                        }
+                        exclusive_woken[watch_index] = 1;
+                    }
                     should_wake = true;
+                    watcher_idx = watch_index;
                     break;
                 }
             }
