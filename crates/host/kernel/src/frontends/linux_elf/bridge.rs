@@ -1407,20 +1407,63 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
-fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
+fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     if frame.rax == SYS_VFORK {
         return sys_vfork(frame);
     }
+    if frame.rax == SYS_CLONE3 {
+        return Err(ERR_ENOSYS);
+    }
+    if active_context().has_suspended_clone_parent() {
+        return Err(ERR_ENOSYS);
+    }
     let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 { frame.rdi } else { 0 };
     let stack = frame.rsi;
-    let parent_tid = frame.rdx;
-    let child_tid = frame.r10;
-    let tls = frame.r8;
+    let _parent_tid = frame.rdx;
+    let _child_tid = frame.r10;
+    let _tls = frame.r8;
 
-    let pid = active_context().pid;
-    let result =
-        active_context().supervisor.do_clone(flags, stack, parent_tid, child_tid, tls, pid)?;
-    Ok(result)
+    let (parent_pid, parent_tid_runtime, credential) = {
+        let context = active_context();
+        (context.pid, context.tid, context.credential_state())
+    };
+    let caps = LinuxCapSets {
+        bounding: credential.cap_bounding,
+        inheritable: credential.cap_inheritable,
+        permitted: credential.cap_permitted,
+        effective: credential.cap_effective,
+        ambient: credential.cap_ambient,
+    };
+    let (child_task_id, child_pid, child_tid_runtime) =
+        active_context().supervisor.create_shared_vm_clone_child(
+            flags,
+            stack,
+            parent_pid,
+            parent_tid_runtime,
+            credential.uid,
+            credential.euid,
+            credential.suid,
+            credential.gid,
+            credential.egid,
+            credential.sgid,
+            credential.supplementary_groups,
+            caps,
+        )?;
+
+    let mut parent_return = ring3::capture_user_return(frame);
+    parent_return.frame.rax = child_pid as u64;
+    let mut child_return = parent_return;
+    child_return.frame.rax = 0;
+    child_return.rsp = stack;
+    active_context().suspend_for_clone_child(
+        child_task_id,
+        child_pid,
+        child_tid_runtime,
+        parent_return,
+    );
+    active_context().supervisor.set_current_task(child_task_id);
+    ring3::install_user_return(frame, child_return);
+    Ok(0)
 }
 
 fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2407,6 +2450,14 @@ fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32
     if let Some(parent) = active_context().take_vfork_parent_for_child(pid) {
         let return_context = parent.return_context;
         active_context().restore_vfork_parent(parent);
+        let parent_task_id = active_context().task_id;
+        active_context().supervisor.set_current_task(parent_task_id);
+        ring3::install_user_return(frame, return_context);
+        return Ok(return_context.frame.rax as i64);
+    }
+    if let Some(parent) = active_context().take_clone_parent_for_child(pid) {
+        let return_context = parent.return_context;
+        active_context().restore_clone_parent(parent);
         let parent_task_id = active_context().task_id;
         active_context().supervisor.set_current_task(parent_task_id);
         ring3::install_user_return(frame, return_context);

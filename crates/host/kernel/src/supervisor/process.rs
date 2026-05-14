@@ -11,14 +11,13 @@ use super::{
 };
 
 // Linux clone flags
+const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
 const CLONE_VM: u64 = 0x100;
+const CLONE_FS: u64 = 0x200;
+const CLONE_FILES: u64 = 0x400;
 const CLONE_SIGHAND: u64 = 0x800;
-const CLONE_VFORK: u64 = 0x4000;
 const CLONE_THREAD: u64 = 0x10000;
 const CLONE_NEWNS: u64 = 0x20000;
-const CLONE_SETTLS: u64 = 0x80000;
-const CLONE_PARENT_SETTID: u64 = 0x100000;
-const CLONE_CHILD_SETTID: u64 = 0x1000000;
 const CLONE_NEWCGROUP: u64 = 0x2000000;
 const CLONE_NEWUTS: u64 = 0x4000000;
 const CLONE_NEWIPC: u64 = 0x8000000;
@@ -26,6 +25,8 @@ const CLONE_NEWUSER: u64 = 0x10000000;
 const CLONE_NEWPID: u64 = 0x20000000;
 const CLONE_NEWNET: u64 = 0x40000000;
 const CLONE_IO: u64 = 0x80000000;
+const SUPPORTED_SHARED_VM_CLONE_MASK: u64 =
+    CLONE_EXIT_SIGNAL_MASK | CLONE_VM | CLONE_FS | CLONE_FILES;
 const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
@@ -174,22 +175,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok((child_task_id, child_pid, child_tid))
     }
 
-    /// Linux clone/fork boundary.
-    ///
-    /// No mode returns success yet because a real success needs a runnable
-    /// child user context with correct parent/child return values. This method
-    /// still validates Linux flag dependency errors before reporting unsupported
-    /// execution support.
-    pub(crate) fn do_clone(
+    pub(crate) fn create_shared_vm_clone_child(
         &mut self,
         flags: u64,
-        _stack: u64,
-        _parent_tid_ptr: u64,
-        _child_tid_ptr: u64,
-        _tls: u64,
-        _parent_pid: Pid,
-    ) -> Result<i64, i32> {
-        // Namespace creation not supported
+        child_stack: u64,
+        parent_pid: Pid,
+        parent_tid: Tid,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
+    ) -> Result<(TaskId, Pid, Tid), i32> {
+        // This is the first non-vfork executable clone subset. It only returns
+        // success when all resources that are still global in the prototype are
+        // explicitly shared by Linux flags. Non-CLONE_VM fork stays ENOSYS until
+        // address-space cloning/COW exists.
         if flags & CLONE_NS_MASK != 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
@@ -199,20 +203,102 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & CLONE_THREAD != 0 && flags & CLONE_SIGHAND == 0 {
             return Err(vmos_abi::ERR_EINVAL);
         }
-        if flags & CLONE_VFORK != 0
-            || flags & CLONE_SETTLS != 0
-            || flags & CLONE_PARENT_SETTID != 0
-            || flags & CLONE_CHILD_SETTID != 0
-        {
+        if flags & !SUPPORTED_SHARED_VM_CLONE_MASK != 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
+        if flags & CLONE_VM == 0 {
+            return Err(vmos_abi::ERR_ENOSYS);
+        }
+        if flags & CLONE_FS == 0 || flags & CLONE_FILES == 0 {
+            return Err(vmos_abi::ERR_ENOSYS);
+        }
+        if child_stack == 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let exit_signal = (flags & CLONE_EXIT_SIGNAL_MASK) as u8;
+        if exit_signal > 64 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
 
-        // A successful Linux clone/fork must create a runnable child context that
-        // returns to userspace independently. The current ring3 path has one
-        // active SyscallFrame and no resume queue, so returning success would be
-        // a fake child. Keep the unsupported boundary explicit until context
-        // cloning/resume is implemented.
-        Err(vmos_abi::ERR_ENOSYS)
+        let parent = self
+            .processes
+            .iter()
+            .find(|process| process.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent.state != ProcessRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let parent_thread = self
+            .threads
+            .iter()
+            .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent_thread.state != ThreadRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+
+        let child_pid = self.next_pid.max(self.next_tid);
+        let Some(next_id) = child_pid.checked_add(1) else {
+            return Err(vmos_abi::ERR_EAGAIN);
+        };
+        let child_tid = child_pid;
+        if child_pid == 0
+            || self.processes.iter().any(|process| process.pid == child_pid)
+            || self.threads.iter().any(|thread| thread.tid == child_tid)
+        {
+            return Err(vmos_abi::ERR_EAGAIN);
+        }
+
+        let child_task_id = self.allocate_task();
+        if !self.semantic.create_process_family_root_with_credential(
+            child_pid,
+            Some(parent_pid),
+            parent.pgid,
+            parent.sid,
+            child_task_id as u64,
+            GuestAddressSpaceRef::new(1, 1),
+            uid,
+            euid,
+            suid,
+            euid,
+            gid,
+            egid,
+            sgid,
+            egid,
+            supplementary_groups,
+            capability_sets,
+        ) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+
+        self.next_pid = next_id;
+        self.next_tid = next_id;
+        self.processes.push(ProcessRuntimeState {
+            pid: child_pid,
+            ppid: parent_pid,
+            pgid: parent.pgid,
+            sid: parent.sid,
+            tgid: child_tid,
+            exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
+            state: ProcessRuntimeStateKind::Running,
+            exit_code: None,
+            sigactions: parent.sigactions,
+            rlimits: parent.rlimits,
+        });
+        self.threads.push(ThreadRuntimeState {
+            tid: child_tid,
+            task_id: child_task_id,
+            pid: child_pid,
+            state: ThreadRuntimeStateKind::Running,
+            clear_child_tid: None,
+            sigmask: parent_thread.sigmask,
+            pending_signals: Vec::new(),
+            seccomp: parent_thread.seccomp,
+        });
+
+        Ok((child_task_id, child_pid, child_tid))
     }
 
     /// Transition a process to Zombie state with the given exit code.

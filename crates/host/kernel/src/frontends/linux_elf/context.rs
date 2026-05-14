@@ -57,6 +57,7 @@ pub(crate) struct ActiveUserContext {
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
     suspended_vfork_parent: Option<SuspendedVforkParent>,
+    suspended_clone_parent: Option<SuspendedCloneParent>,
 }
 
 pub(crate) struct SuspendedVforkParent {
@@ -87,6 +88,22 @@ pub(crate) struct SuspendedVforkParent {
     alarm_seconds: u64,
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
+}
+
+pub(crate) struct SuspendedCloneParent {
+    pub(crate) task_id: TaskId,
+    pub(crate) pid: u32,
+    pub(crate) tid: u32,
+    pub(crate) child_pid: u32,
+    pub(crate) next_activation_id: u64,
+    pub(crate) return_context: UserReturnContext,
+    credential: CredentialState,
+    io_owner: i64,
+    io_owner_ex_type: u32,
+    io_owner_ex_pid: i32,
+    io_signal: u32,
+    pending_io_signal: Option<u32>,
+    alarm_seconds: u64,
 }
 
 #[derive(Clone)]
@@ -154,6 +171,7 @@ impl ActiveUserContext {
             realtime_epoch_ns: 1_000_000_000,
             realtime_epoch_tick: 0,
             suspended_vfork_parent: None,
+            suspended_clone_parent: None,
         }
     }
 
@@ -546,8 +564,42 @@ impl ActiveUserContext {
         self.next_activation_id = (child_task_id as u64) << 32 | 1;
     }
 
+    pub(crate) fn suspend_for_clone_child(
+        &mut self,
+        child_task_id: TaskId,
+        child_pid: u32,
+        child_tid: u32,
+        return_context: UserReturnContext,
+    ) {
+        debug_assert!(self.suspended_clone_parent.is_none());
+        self.suspended_clone_parent = Some(SuspendedCloneParent {
+            task_id: self.task_id,
+            pid: self.pid,
+            tid: self.tid,
+            child_pid,
+            next_activation_id: self.next_activation_id,
+            return_context,
+            credential: self.credential_state(),
+            io_owner: self.io_owner,
+            io_owner_ex_type: self.io_owner_ex_type,
+            io_owner_ex_pid: self.io_owner_ex_pid,
+            io_signal: self.io_signal,
+            pending_io_signal: self.pending_io_signal,
+            alarm_seconds: self.alarm_seconds,
+        });
+        self.task_id = child_task_id;
+        self.pid = child_pid;
+        self.tid = child_tid;
+        self.activation_id = 0;
+        self.next_activation_id = (child_task_id as u64) << 32 | 1;
+    }
+
     pub(crate) fn has_suspended_vfork_parent(&self) -> bool {
         self.suspended_vfork_parent.is_some()
+    }
+
+    pub(crate) fn has_suspended_clone_parent(&self) -> bool {
+        self.suspended_clone_parent.is_some()
     }
 
     pub(crate) fn take_vfork_parent_for_child(
@@ -618,6 +670,48 @@ impl ActiveUserContext {
         self.alarm_seconds = alarm_seconds;
         self.realtime_epoch_ns = realtime_epoch_ns;
         self.realtime_epoch_tick = realtime_epoch_tick;
+    }
+
+    pub(crate) fn take_clone_parent_for_child(
+        &mut self,
+        child_pid: u32,
+    ) -> Option<SuspendedCloneParent> {
+        if self.suspended_clone_parent.as_ref().is_some_and(|parent| parent.child_pid == child_pid)
+        {
+            self.suspended_clone_parent.take()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn restore_clone_parent(&mut self, parent: SuspendedCloneParent) {
+        let SuspendedCloneParent {
+            task_id,
+            pid,
+            tid,
+            child_pid: _,
+            next_activation_id,
+            return_context: _,
+            credential,
+            io_owner,
+            io_owner_ex_type,
+            io_owner_ex_pid,
+            io_signal,
+            pending_io_signal,
+            alarm_seconds,
+        } = parent;
+        self.task_id = task_id;
+        self.pid = pid;
+        self.tid = tid;
+        self.activation_id = 0;
+        self.next_activation_id = next_activation_id;
+        self.restore_credential_state(credential);
+        self.io_owner = io_owner;
+        self.io_owner_ex_type = io_owner_ex_type;
+        self.io_owner_ex_pid = io_owner_ex_pid;
+        self.io_signal = io_signal;
+        self.pending_io_signal = pending_io_signal;
+        self.alarm_seconds = alarm_seconds;
     }
 }
 
