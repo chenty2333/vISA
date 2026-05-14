@@ -20,11 +20,12 @@ static mut WAITERS: [Waiter; MAX_WAITERS] = [Waiter::EMPTY; MAX_WAITERS];
 struct Waiter {
     key: u64,
     wait_id: u64,
+    bitset: u32,
     active: bool,
 }
 
 impl Waiter {
-    const EMPTY: Self = Self { key: 0, wait_id: 0, active: false };
+    const EMPTY: Self = Self { key: 0, wait_id: 0, bitset: 0, active: false };
 }
 
 #[unsafe(no_mangle)]
@@ -49,12 +50,17 @@ pub extern "C" fn response_capacity() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn register_wait(key: u64, wait_id: u64) -> i32 {
+    register_wait_bitset(key, wait_id, u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn register_wait_bitset(key: u64, wait_id: u64, bitset: u32) -> i32 {
     unsafe {
         let base = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         for index in 0..MAX_WAITERS {
             let slot = base.add(index);
             if !(*slot).active {
-                *slot = Waiter { key, wait_id, active: true };
+                *slot = Waiter { key, wait_id, bitset, active: true };
                 return 0;
             }
         }
@@ -65,6 +71,11 @@ pub extern "C" fn register_wait(key: u64, wait_id: u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
+    wake_bitset(key, max_count, u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
     let max_count = max_count.max(1) as usize;
     let mut written = 0usize;
 
@@ -74,6 +85,10 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
             if !(*slot).active || (*slot).key != key {
+                continue;
+            }
+            // Bitset filter: only wake if waiter's bitset overlaps with wake bitset
+            if (*slot).bitset & bitset == 0 {
                 continue;
             }
             if written == max_count {
@@ -96,6 +111,56 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
     }
 
     (written * 8) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u32) -> i32 {
+    let count = count.max(1) as usize;
+    let wake_count = wake_count as usize;
+    let mut moved = 0usize;
+    let mut woken = 0usize;
+
+    unsafe {
+        let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
+        let response = addr_of_mut!(RESPONSE) as *mut u8;
+
+        // First pass: wake up to wake_count waiters from src_key
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != src_key {
+                continue;
+            }
+            if woken < wake_count {
+                let offset = (moved + woken) * 8;
+                if offset + 8 > RESPONSE_CAPACITY {
+                    return -ERR_EIO;
+                }
+                core::ptr::copy_nonoverlapping(
+                    (*slot).wait_id.to_le_bytes().as_ptr(),
+                    response.add(offset),
+                    8,
+                );
+                *slot = Waiter::EMPTY;
+                woken += 1;
+            }
+        }
+
+        // Second pass: requeue up to count waiters from src_key to dst_key
+        let mut requeued = 0usize;
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != src_key {
+                continue;
+            }
+            if requeued < count {
+                (*slot).key = dst_key;
+                requeued += 1;
+            }
+        }
+        moved = requeued;
+    }
+
+    ((moved + woken) * 8) as i32
 }
 
 #[unsafe(no_mangle)]
