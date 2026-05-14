@@ -291,6 +291,8 @@ fn mod_watcher(epoll_id: u32, ready_key: u64, events: u32, data: u64) -> i32 {
                 (*slot).events = events;
                 (*slot).data = data;
                 (*slot).disabled = false;
+                (*slot).edge_triggered = events & EPOLLET != 0;
+                (*slot).exclusive = events & EPOLLEXCLUSIVE != 0;
                 return 0;
             }
         }
@@ -435,7 +437,6 @@ fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
             }
 
             let mut should_wake = false;
-            let mut watcher_idx = 0usize;
             for watch_index in 0..MAX_WATCHERS {
                 let watch = watchers.add(watch_index);
                 if !(*watch).active || (*watch).epoll_id != (*slot).epoll_id {
@@ -449,7 +450,6 @@ fn signal_waiters(ready_key: u64, restart: bool) -> i32 {
                         exclusive_woken[watch_index] = 1;
                     }
                     should_wake = true;
-                    watcher_idx = watch_index;
                     break;
                 }
             }
@@ -485,6 +485,43 @@ fn has_instance(epoll_id: u32) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset() {
+        unsafe {
+            INSTANCES = [Instance::EMPTY; MAX_INSTANCES];
+            WATCHERS = [Watcher::EMPTY; MAX_WATCHERS];
+            WAITERS = [Waiter::EMPTY; MAX_WAITERS];
+            RESPONSE = [0; RESPONSE_CAPACITY];
+        }
+    }
+
+    #[test]
+    fn mod_watcher_updates_trigger_and_exclusive_flags() {
+        reset();
+        assert_eq!(create(0), 1);
+        assert_eq!(ctl(1, EPOLL_CTL_ADD, 42, EPOLLET | EPOLLEXCLUSIVE | 1, 7), 0);
+        assert_eq!(ctl(1, EPOLL_CTL_MOD, 42, 1, 9), 0);
+
+        unsafe {
+            let watchers = core::ptr::addr_of!(WATCHERS) as *const Watcher;
+            for index in 0..MAX_WATCHERS {
+                let watcher = watchers.add(index);
+                if (*watcher).active && (*watcher).epoll_id == 1 && (*watcher).ready_key == 42 {
+                    assert!(!(*watcher).edge_triggered);
+                    assert!(!(*watcher).exclusive);
+                    assert_eq!((*watcher).events, 1);
+                    assert_eq!((*watcher).data, 9);
+                    return;
+                }
+            }
+        }
+        panic!("watcher must remain registered");
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

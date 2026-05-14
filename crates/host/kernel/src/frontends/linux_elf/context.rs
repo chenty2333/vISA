@@ -117,6 +117,13 @@ impl ActiveUserContext {
         }
     }
 
+    pub(crate) fn mapped_user_bytes(&self) -> u64 {
+        self.regions
+            .iter()
+            .map(|region| region.end.saturating_sub(region.start))
+            .fold(0u64, u64::saturating_add)
+    }
+
     pub(crate) fn set_program_break(&mut self, requested: u64) -> u64 {
         if requested == 0 {
             return self.brk_current;

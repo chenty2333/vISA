@@ -76,7 +76,7 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
-    let max_count = max_count.max(1) as usize;
+    let max_count = max_count as usize;
     let mut written = 0usize;
 
     unsafe {
@@ -115,7 +115,7 @@ pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u32) -> i32 {
-    let count = count.max(1) as usize;
+    let count = count as usize;
     let wake_count = wake_count as usize;
     let mut moved = 0usize;
     let mut woken = 0usize;
@@ -183,4 +183,41 @@ pub extern "C" fn cancel_wait(wait_id: u64) -> i32 {
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     core::arch::wasm32::unreachable()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset() {
+        unsafe {
+            WAITERS = [Waiter::EMPTY; MAX_WAITERS];
+            RESPONSE = [0; RESPONSE_CAPACITY];
+        }
+    }
+
+    #[test]
+    fn wake_zero_count_wakes_no_waiters() {
+        reset();
+        assert_eq!(register_wait(11, 7), 0);
+        assert_eq!(wake(11, 0), 0);
+        unsafe {
+            let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+            assert!((*waiters).active);
+            assert_eq!((*waiters).wait_id, 7);
+        }
+    }
+
+    #[test]
+    fn requeue_zero_count_moves_no_waiters() {
+        reset();
+        assert_eq!(register_wait(11, 7), 0);
+        assert_eq!(requeue(11, 0, 22, 0), 0);
+        unsafe {
+            let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+            assert!((*waiters).active);
+            assert_eq!((*waiters).key, 11);
+            assert_eq!((*waiters).wait_id, 7);
+        }
+    }
 }

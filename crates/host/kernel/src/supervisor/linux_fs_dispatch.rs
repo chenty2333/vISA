@@ -85,22 +85,31 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if plan.args[3] & O_DIRECTORY != 0 && info.node != NodeKind::Directory {
                     return Ok(LinuxCallResult::Ret(-(ERR_ENOTDIR as i64)));
                 }
-                let fd = self.alloc_fd(FdEntry {
+                if !self.can_allocate_fds(1) {
+                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+                }
+                let fd = match self.alloc_fd(FdEntry {
                     resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
                     cursor: 0,
                     fd_flags: 0,
                     status_flags,
                     cursor_group: None,
-                });
+                }) {
+                    Ok(fd) => fd,
+                    Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                };
                 Ok(LinuxCallResult::Ret(fd as i64))
             }
             Err(ServiceCallError::Errno(ERR_ENOENT)) if plan.args[3] & 0o100 != 0 => {
                 let mode = u32::try_from(plan.args[4]).map_err(|_| "openat mode overflowed")?;
                 let uid = (plan.args[5] >> 32) as u32;
                 let gid = plan.args[5] as u32;
+                if !self.can_allocate_fds(1) {
+                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+                }
                 match self.vfs.create_file(&path, mode, uid, gid) {
                     Ok(()) => {
-                        let fd = self.alloc_fd(FdEntry {
+                        let fd = match self.alloc_fd(FdEntry {
                             resource: FdResource::ServiceNode {
                                 route: ServiceRoute::Vfs,
                                 node: NodeKind::File,
@@ -110,7 +119,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                             fd_flags: 0,
                             status_flags,
                             cursor_group: None,
-                        });
+                        }) {
+                            Ok(fd) => fd,
+                            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                        };
                         Ok(LinuxCallResult::Ret(fd as i64))
                     }
                     Err(ServiceCallError::Errno(errno)) => {

@@ -4,25 +4,25 @@ use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED,
-    ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOSYS, ERR_ENOTDIR,
-    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW,
-    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
-    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
-    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
-    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
-    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
-    SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME,
-    SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
-    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
+    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM,
+    SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
+    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
+    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
+    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
     SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     SyscallContext,
@@ -39,7 +39,10 @@ use super::{
 use crate::{
     qemu, serial_println,
     substrate::ring3::{self, SyscallFrame},
-    supervisor::{LinuxCallResult, runtime, types::SigAction},
+    supervisor::{
+        LinuxCallResult, runtime,
+        types::{RLIMIT_AS, Rlimit, SigAction},
+    },
 };
 
 const AT_FDCWD: i64 = -100;
@@ -103,13 +106,18 @@ pub(crate) extern "C" fn syscall_dispatch_from_asm(frame: *mut SyscallFrame) {
 }
 
 fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
+    let syscall_nr = frame.rax;
     let (task_id, activation_id) = {
         let context = active_context();
         (context.task_id, context.begin_activation())
     };
     active_context().supervisor.set_current_task(task_id);
+    if !active_context().supervisor.seccomp_allows_syscall(active_context().tid, syscall_nr) {
+        crate::kwarn!("seccomp strict killed syscall {}", syscall_nr);
+        handle_exit(128 + 9);
+    }
     let _activation = ActivationGuard { activation_id };
-    let result = match frame.rax {
+    let result = match syscall_nr {
         SYS_WRITE => sys_write(frame),
         SYS_WRITEV => sys_writev(frame),
         SYS_READ => sys_read(frame),
@@ -173,6 +181,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RSEQ => Ok(0),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
         SYS_PRCTL => sys_prctl(frame),
+        SYS_SECCOMP => sys_seccomp(frame),
         SYS_GETRANDOM => sys_getrandom(frame),
         SYS_GETTIMEOFDAY => sys_gettimeofday(frame),
         SYS_CLOCK_GETTIME => sys_clock_gettime(frame),
@@ -896,32 +905,81 @@ fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
-    const RLIMIT_NOFILE: u64 = 7;
-    const VMOS_NOFILE_LIMIT: u64 = 1024;
+    let pid = if frame.rdi == 0 {
+        active_context().pid
+    } else {
+        u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?
+    };
+    if active_context().supervisor.query_process(pid).is_none() {
+        return Err(ERR_ESRCH);
+    }
+    let resource = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    if resource >= 16 {
+        return Err(ERR_EINVAL);
+    }
 
     if frame.r10 != 0 {
+        let rlimit = active_context().supervisor.get_rlimit(pid, resource);
         let mut encoded = [0u8; 16];
-        let (soft, hard) = if frame.rsi == RLIMIT_NOFILE {
-            (VMOS_NOFILE_LIMIT, VMOS_NOFILE_LIMIT)
-        } else {
-            (u64::MAX, u64::MAX)
-        };
-        encoded[..8].copy_from_slice(&soft.to_le_bytes());
-        encoded[8..].copy_from_slice(&hard.to_le_bytes());
+        encoded[..8].copy_from_slice(&rlimit.cur.to_le_bytes());
+        encoded[8..].copy_from_slice(&rlimit.max.to_le_bytes());
         write_user_bytes(frame.r10, &encoded)?;
+    }
+    if frame.rdx != 0 {
+        let bytes = read_user_bytes(frame.rdx, 16)?;
+        let new_limit = Rlimit {
+            cur: u64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?),
+            max: u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?),
+        };
+        if new_limit.cur > new_limit.max {
+            return Err(ERR_EINVAL);
+        }
+        let old_limit = active_context().supervisor.get_rlimit(pid, resource);
+        if new_limit.max > old_limit.max && active_context().euid() != 0 {
+            return Err(ERR_EPERM);
+        }
+        if !active_context().supervisor.set_rlimit(pid, resource, new_limit) {
+            return Err(ERR_ESRCH);
+        }
     }
     Ok(0)
 }
 
 fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PR_SET_SECCOMP: u64 = 22;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
     const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
+    const SECCOMP_MODE_STRICT: u64 = 1;
 
     match frame.rdi {
+        PR_SET_SECCOMP => {
+            if frame.rsi != SECCOMP_MODE_STRICT || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0
+            {
+                return Err(ERR_EINVAL);
+            }
+            if active_context().supervisor.set_seccomp_strict(active_context().tid) {
+                Ok(0)
+            } else {
+                Err(ERR_ESRCH)
+            }
+        }
         PR_SET_TIMERSLACK => Ok(0),
         PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
         _ => Err(ERR_EINVAL),
+    }
+}
+
+fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
+    const SECCOMP_SET_MODE_STRICT: u64 = 0;
+
+    if frame.rdi != SECCOMP_SET_MODE_STRICT || frame.rsi != 0 || frame.rdx != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if active_context().supervisor.set_seccomp_strict(active_context().tid) {
+        Ok(0)
+    } else {
+        Err(ERR_ESRCH)
     }
 }
 
@@ -1127,7 +1185,9 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
     if set_ptr != 0 {
         let bytes = read_user_bytes(set_ptr, LINUX_SIGSET_BYTES)?;
         let set = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-        supervisor.set_sigmask(tid, how, set);
+        if supervisor.set_sigmask(tid, how, set).is_none() {
+            return Err(ERR_EINVAL);
+        }
     }
     Ok(0)
 }
@@ -1741,8 +1801,10 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
     const F_OWNER_PID: u32 = 1;
     const F_OWNER_PGRP: u32 = 2;
     const FD_CLOEXEC: u32 = 1;
-    const FLOCK_SIZE: u64 = 32;
     const F_OWNER_EX_SIZE: u64 = 8;
+    const F_RDLCK: i16 = 0;
+    const F_WRLCK: i16 = 1;
+    const F_UNLCK: i16 = 2;
 
     let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
     let _cmd = i32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
@@ -1774,15 +1836,39 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
         }
         F_GETPIPE_SZ => return Ok(active_context().supervisor.pipe_capacity(fd)? as i64),
         F_GETLK => {
-            let _ = user_lease(frame.rdx, FLOCK_SIZE, true)?;
+            let (lock_type, whence, start, len) = read_flock(frame.rdx)?;
+            let owner = active_context().pid;
+            let conflict = active_context()
+                .supervisor
+                .fcntl_getlk_fd(fd, owner, lock_type, whence, start, len)?;
+            match conflict {
+                Some((write, pid, lock_start, lock_len)) => {
+                    write_flock(
+                        frame.rdx,
+                        if write { F_WRLCK } else { F_RDLCK },
+                        0,
+                        lock_start,
+                        lock_len,
+                        pid,
+                    )?;
+                }
+                None => {
+                    write_flock_type(frame.rdx, F_UNLCK)?;
+                }
+            }
+            return Ok(0);
         }
         F_SETLK | F_SETLKW => {
-            let lease = user_lease(frame.rdx, FLOCK_SIZE, false)?;
-            let bytes = lease.bytes().map_err(map_dmw_fault)?;
-            let whence = i16::from_le_bytes(bytes[2..4].try_into().map_err(|_| ERR_EINVAL)?);
-            if !matches!(whence, 0 | 1 | 2) {
-                return Err(ERR_EINVAL);
-            }
+            let (lock_type, whence, start, len) = read_flock(frame.rdx)?;
+            active_context().supervisor.fcntl_setlk_fd(
+                fd,
+                active_context().pid,
+                lock_type,
+                whence,
+                start,
+                len,
+            )?;
+            return Ok(0);
         }
         F_GETOWN => return Ok(active_context().io_owner()),
         F_SETOWN => {
@@ -1828,6 +1914,10 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
         return Err(ERR_EINVAL);
+    }
+    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+    if as_limit != u64::MAX && active_context().mapped_user_bytes().saturating_add(len) > as_limit {
+        return Err(ERR_ENOMEM);
     }
 
     let addr = if frame.rdi != 0 {
@@ -2186,6 +2276,38 @@ fn read_epoll_event(ptr: u64) -> Result<(u32, u64), i32> {
     let events = u32::from_le_bytes(bytes[..4].try_into().map_err(|_| ERR_EINVAL)?);
     let data = u64::from_le_bytes(bytes[4..12].try_into().map_err(|_| ERR_EINVAL)?);
     Ok((events, data))
+}
+
+fn read_flock(ptr: u64) -> Result<(i16, i16, i64, i64), i32> {
+    let bytes = read_user_bytes(ptr, 32)?;
+    let lock_type = i16::from_le_bytes(bytes[0..2].try_into().map_err(|_| ERR_EINVAL)?);
+    let whence = i16::from_le_bytes(bytes[2..4].try_into().map_err(|_| ERR_EINVAL)?);
+    let start = i64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?);
+    let len = i64::from_le_bytes(bytes[16..24].try_into().map_err(|_| ERR_EINVAL)?);
+    Ok((lock_type, whence, start, len))
+}
+
+fn write_flock(
+    ptr: u64,
+    lock_type: i16,
+    whence: i16,
+    start: i64,
+    len: i64,
+    pid: u32,
+) -> Result<(), i32> {
+    let mut encoded = [0u8; 32];
+    encoded[0..2].copy_from_slice(&lock_type.to_le_bytes());
+    encoded[2..4].copy_from_slice(&whence.to_le_bytes());
+    encoded[8..16].copy_from_slice(&start.to_le_bytes());
+    encoded[16..24].copy_from_slice(&len.to_le_bytes());
+    encoded[24..28].copy_from_slice(&(pid as i32).to_le_bytes());
+    write_user_bytes(ptr, &encoded)
+}
+
+fn write_flock_type(ptr: u64, lock_type: i16) -> Result<(), i32> {
+    let mut bytes = read_user_bytes(ptr, 32)?;
+    bytes[0..2].copy_from_slice(&lock_type.to_le_bytes());
+    write_user_bytes(ptr, &bytes)
 }
 
 fn map_dmw_fault(fault: crate::substrate::dmw::DmwFault) -> i32 {

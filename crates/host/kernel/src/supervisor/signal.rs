@@ -23,6 +23,10 @@ fn signal_default_action(signo: u8) -> SignalDefaultAction {
     }
 }
 
+fn linux_signal_bit(signo: u8) -> u64 {
+    if signo == 0 || signo > 64 { 0 } else { 1u64 << (signo - 1) }
+}
+
 enum SignalDefaultAction {
     Terminate { core: bool },
     Stop,
@@ -82,7 +86,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map(|t| {
                 t.pending_signals
                     .iter()
-                    .filter(|s| sigmask & (1u64 << s.signo) == 0)
+                    .filter(|s| sigmask & linux_signal_bit(s.signo) == 0)
                     .cloned()
                     .collect()
             })
@@ -180,11 +184,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn set_sigmask(&mut self, tid: Tid, how: u32, set: u64) -> Option<u64> {
         let thread = self.threads.iter_mut().find(|t| t.tid == tid)?;
         let old = thread.sigmask;
+        let set = set & !(linux_signal_bit(9) | linux_signal_bit(19));
         match how {
-            0 => thread.sigmask = set,  // SIG_BLOCK
-            1 => thread.sigmask |= set, // SIG_UNBLOCK
-            2 => thread.sigmask = set,  // SIG_SETMASK
-            _ => return Some(old),
+            0 => thread.sigmask |= set,  // SIG_BLOCK
+            1 => thread.sigmask &= !set, // SIG_UNBLOCK
+            2 => thread.sigmask = set,   // SIG_SETMASK
+            _ => return None,
         }
         Some(old)
     }

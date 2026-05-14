@@ -130,6 +130,7 @@ pub(crate) struct LinuxUserResourceFile {
 
 include!(concat!(env!("OUT_DIR"), "/linux_user_resources.rs"));
 
+#[derive(Clone)]
 struct FileLock {
     path: Vec<u8>,
     owner_pid: u32,
@@ -607,12 +608,11 @@ impl VfsService {
             if lock.path != path || lock.owner_pid == owner {
                 continue;
             }
-            let le = if lock.len == 0 { i64::MAX } else { lock.start.saturating_add(lock.len) };
-            let re = if l == 0 { i64::MAX } else { s.saturating_add(l) };
-            if s < le && re > lock.start && (write || lock.write) {
+            if ranges_overlap(s, l, lock.start, lock.len) && (write || lock.write) {
                 return Err(vmos_abi::ERR_EAGAIN);
             }
         }
+        self.remove_owner_locks(path, owner, s, l);
         self.locks.push(FileLock {
             path: path.to_vec(),
             owner_pid: owner,
@@ -623,25 +623,69 @@ impl VfsService {
         Ok(())
     }
 
+    pub(crate) fn fcntl_unlock(&mut self, path: &[u8], owner: u32, s: i64, l: i64) {
+        self.remove_owner_locks(path, owner, s, l);
+    }
+
     pub(crate) fn fcntl_getlk(
         &self,
         path: &[u8],
+        owner: u32,
         want_write: bool,
         s: i64,
         l: i64,
     ) -> Option<(bool, u32, i64, i64)> {
-        let re = if l == 0 { i64::MAX } else { s.saturating_add(l) };
         for lock in &self.locks {
-            if lock.path != path {
+            if lock.path != path || lock.owner_pid == owner {
                 continue;
             }
-            let le = if lock.len == 0 { i64::MAX } else { lock.start.saturating_add(lock.len) };
-            if s < le && re > lock.start {
+            if ranges_overlap(s, l, lock.start, lock.len) && (want_write || lock.write) {
                 return Some((lock.write, lock.owner_pid, lock.start, lock.len));
             }
         }
         None
     }
+
+    fn remove_owner_locks(&mut self, path: &[u8], owner: u32, s: i64, l: i64) {
+        let remove_start = s;
+        let remove_end = lock_end(s, l);
+        let mut next = Vec::new();
+        for lock in core::mem::take(&mut self.locks) {
+            if lock.path != path
+                || lock.owner_pid != owner
+                || !ranges_overlap(s, l, lock.start, lock.len)
+            {
+                next.push(lock);
+                continue;
+            }
+
+            let lock_start = lock.start;
+            let stored_end = lock_end(lock.start, lock.len);
+            if lock_start < remove_start {
+                let mut left = lock.clone();
+                left.len = remove_start.saturating_sub(lock_start);
+                next.push(left);
+            }
+            if remove_end < stored_end {
+                let mut right = lock;
+                right.start = remove_end;
+                right.len =
+                    if stored_end == i64::MAX { 0 } else { stored_end.saturating_sub(remove_end) };
+                next.push(right);
+            }
+        }
+        self.locks = next;
+    }
+}
+
+fn ranges_overlap(left_start: i64, left_len: i64, right_start: i64, right_len: i64) -> bool {
+    let left_end = lock_end(left_start, left_len);
+    let right_end = lock_end(right_start, right_len);
+    left_start < right_end && left_end > right_start
+}
+
+fn lock_end(start: i64, len: i64) -> i64 {
+    if len == 0 { i64::MAX } else { start.saturating_add(len) }
 }
 
 impl VfsChunk {

@@ -18,15 +18,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let flags = u32::try_from(plan.args[0]).map_err(|_| "epoll_create1 flags overflowed")?;
+        if !self.can_allocate_fds(1) {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+        }
         match self.epoll.create(flags) {
             Ok(epoll_id) => {
-                let fd = self.alloc_fd(FdEntry {
+                let fd = match self.alloc_fd(FdEntry {
                     resource: FdResource::EpollInstance { epoll_id },
                     cursor: 0,
                     fd_flags: 0,
                     status_flags: 0,
                     cursor_group: None,
-                });
+                }) {
+                    Ok(fd) => fd,
+                    Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                };
                 Ok(LinuxCallResult::Ret(fd as i64))
             }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),

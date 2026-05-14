@@ -2,6 +2,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use core::ptr::null_mut;
 
 use semantic_core::{FrontendKind, ResourceHandle, SemanticGraph, TaskState};
+use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
 use super::{
     artifacts::ArtifactRegistry,
@@ -20,14 +21,20 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, Rlimit, SeccompMode, SigAction, SocketPairState, TaskId,
-        ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, SeccompMode, SigAction, SocketPairState,
+        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::WaitRegistry,
 };
 use crate::interrupts;
 
 static mut ACTIVE_RUNTIME: *mut PrototypeRuntime<'static> = null_mut();
+
+fn default_process_rlimits() -> [Rlimit; 16] {
+    let mut limits = [Rlimit::default(); 16];
+    limits[RLIMIT_NOFILE] = Rlimit { cur: 1024, max: 1024 };
+    limits
+}
 
 pub(crate) fn runtime() -> Result<&'static mut PrototypeRuntime<'static>, &'static str> {
     unsafe {
@@ -163,7 +170,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     state: ProcessRuntimeStateKind::Running,
                     exit_code: None,
                     sigactions: [SigAction::default(); 64],
-                    rlimits: [Rlimit::default(); 16],
+                    rlimits: default_process_rlimits(),
                 });
                 procs
             },
@@ -225,7 +232,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
             sigactions: [SigAction::default(); 64],
-            rlimits: [Rlimit::default(); 16],
+            rlimits: default_process_rlimits(),
         });
         pid
     }
@@ -281,6 +288,34 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         false
+    }
+
+    pub(crate) fn set_seccomp_strict(&mut self, tid: Tid) -> bool {
+        if let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) {
+            thread.seccomp = SeccompMode::Strict;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn seccomp_mode(&self, tid: Tid) -> SeccompMode {
+        self.threads
+            .iter()
+            .find(|thread| thread.tid == tid)
+            .map(|thread| thread.seccomp)
+            .unwrap_or(SeccompMode::Disabled)
+    }
+
+    pub(crate) fn seccomp_allows_syscall(&self, tid: Tid, syscall: u64) -> bool {
+        match self.seccomp_mode(tid) {
+            SeccompMode::Disabled => true,
+            SeccompMode::Strict => {
+                matches!(
+                    syscall,
+                    SYS_READ | SYS_WRITE | SYS_EXIT | SYS_EXIT_GROUP | SYS_RT_SIGRETURN
+                )
+            }
+        }
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {

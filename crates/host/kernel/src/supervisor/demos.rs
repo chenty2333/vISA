@@ -295,13 +295,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.linux_socket
             .register_socket(socket_id, vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0, ready_key)
             .map_err(|_| "linux_socket_service failed to register demo socket")?;
-        let fd = self.alloc_fd(FdEntry {
-            resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
-            cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
-            cursor_group: None,
-        });
+        let fd = self
+            .alloc_fd(FdEntry {
+                resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .map_err(|_| "demo socket fd allocation failed")?;
         let handle =
             self.fd_handle(fd).ok_or("demo socket fd did not publish a resource handle")?;
         self.semantic.record_socket_state_changed(handle.id, "open");

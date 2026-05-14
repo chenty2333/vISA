@@ -13,8 +13,8 @@ use super::{
     semantic::{fd_resource_kind, fd_resource_label},
     services::ProcfsService,
     types::{
-        EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, ServiceCallError,
-        SocketPairState,
+        EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE,
+        ServiceCallError, SocketPairState,
     },
 };
 use crate::interrupts;
@@ -163,6 +163,86 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(next as i64)
     }
 
+    pub(crate) fn fcntl_setlk_fd(
+        &mut self,
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> Result<(), i32> {
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const F_UNLCK: i16 = 2;
+
+        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        match lock_type {
+            F_RDLCK | F_WRLCK => {
+                self.vfs.fcntl_setlk(&path, owner, lock_type == F_WRLCK, start, len)
+            }
+            F_UNLCK => {
+                self.vfs.fcntl_unlock(&path, owner, start, len);
+                Ok(())
+            }
+            _ => Err(ERR_EINVAL),
+        }
+    }
+
+    pub(crate) fn fcntl_getlk_fd(
+        &mut self,
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> Result<Option<(bool, u32, i64, i64)>, i32> {
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const F_UNLCK: i16 = 2;
+
+        let want_write = match lock_type {
+            F_RDLCK => false,
+            F_WRLCK => true,
+            F_UNLCK => return Ok(None),
+            _ => return Err(ERR_EINVAL),
+        };
+        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len))
+    }
+
+    fn fcntl_lock_target(
+        &mut self,
+        fd: u32,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> Result<(Vec<u8>, i64, i64), i32> {
+        let (route, node, cursor, path) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        let file_len = self.len_for_service_node(route, &path);
+        let base = match whence {
+            0 => 0i128,
+            1 => cursor as i128,
+            2 => file_len as i128,
+            _ => return Err(ERR_EINVAL),
+        };
+        let mut range_start = base.checked_add(start as i128).ok_or(ERR_EINVAL)?;
+        let mut range_len = len as i128;
+        if range_len < 0 {
+            range_start = range_start.checked_add(range_len).ok_or(ERR_EINVAL)?;
+            range_len = -range_len;
+        }
+        if range_start < 0 || range_len > i64::MAX as i128 {
+            return Err(ERR_EINVAL);
+        }
+        Ok((path, range_start as i64, range_len as i64))
+    }
+
     pub(super) fn read_dir_entries(
         &mut self,
         fd: u32,
@@ -294,7 +374,32 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    pub(super) fn alloc_fd(&mut self, mut entry: FdEntry) -> u32 {
+    pub(super) fn alloc_fd(&mut self, entry: FdEntry) -> Result<u32, i32> {
+        let limit = self.fd_allocation_limit();
+        let Some(fd) =
+            (3..limit).find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
+        else {
+            return Err(ERR_EMFILE);
+        };
+        self.install_fd_at(fd, entry);
+        Ok(fd)
+    }
+
+    fn fd_allocation_limit(&self) -> u32 {
+        self.get_rlimit(self.current_pid(), RLIMIT_NOFILE).cur.min(MAX_LINUX_FD as u64) as u32
+    }
+
+    fn available_fd_slots(&self) -> usize {
+        (3..self.fd_allocation_limit())
+            .filter(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
+            .count()
+    }
+
+    pub(crate) fn can_allocate_fds(&self, count: usize) -> bool {
+        self.available_fd_slots() >= count
+    }
+
+    fn install_fd_at(&mut self, fd: u32, mut entry: FdEntry) {
         let resource_kind = fd_resource_kind(&entry.resource);
         let resource_label = fd_resource_label(&entry.resource);
         let owner_task = Some(self.scheduler.current_task());
@@ -303,17 +408,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         if entry.cursor_group.is_none() {
             entry.cursor_group = Some(resource_id);
         }
-
-        if let Some(fd) = (3..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
-            self.fd_table[fd] = Some(entry);
-            self.ensure_fd_handle_slot(fd);
-            self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
-            return fd as u32;
+        let fd = fd as usize;
+        while self.fd_table.len() <= fd {
+            self.fd_table.push(None);
         }
-
-        self.fd_table.push(Some(entry));
-        self.fd_handles.push(self.semantic.resource_handle(resource_id));
-        (self.fd_table.len() - 1) as u32
+        self.ensure_fd_handle_slot(fd);
+        self.fd_table[fd] = Some(entry);
+        self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
     }
 
     fn ensure_fd_handle_slot(&mut self, fd: usize) {
@@ -332,7 +433,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn dup_fd(&mut self, old_fd: u32) -> Result<u32, i32> {
         let entry = self.dup_source_entry(old_fd)?;
-        let new_fd = (3..MAX_LINUX_FD)
+        let new_fd = (3..self.fd_allocation_limit())
             .find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
             .ok_or(ERR_EMFILE)?;
         self.install_fd_at(new_fd, entry);
@@ -340,11 +441,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn dup_fd_from(&mut self, old_fd: u32, min_fd: u32) -> Result<u32, i32> {
-        if min_fd >= MAX_LINUX_FD {
+        let limit = self.fd_allocation_limit();
+        if min_fd >= limit {
             return Err(ERR_EINVAL);
         }
         let entry = self.dup_source_entry(old_fd)?;
-        let new_fd = (min_fd.max(3)..MAX_LINUX_FD)
+        let new_fd = (min_fd.max(3)..limit)
             .find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
             .ok_or(ERR_EMFILE)?;
         self.install_fd_at(new_fd, entry);
@@ -357,7 +459,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         new_fd: u32,
         allow_same_fd: bool,
     ) -> Result<u32, i32> {
-        if new_fd >= MAX_LINUX_FD {
+        if new_fd >= self.fd_allocation_limit() {
             return Err(ERR_EBADF);
         }
         if old_fd == new_fd {
@@ -425,6 +527,9 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
+        if self.available_fd_slots() < 2 {
+            return Err(ERR_EMFILE);
+        }
         let pipe_id = self.next_pipe_id;
         self.next_pipe_id = self.next_pipe_id.saturating_add(1);
         self.pipes.push(PipeState {
@@ -440,18 +545,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             fd_flags: 0,
             status_flags: 0,
             cursor_group: None,
-        });
+        })?;
         let write_fd = self.alloc_fd(FdEntry {
             resource: FdResource::PipeEnd { pipe_id, readable: false, writable: true },
             cursor: 0,
             fd_flags: 0,
             status_flags: 0,
             cursor_group: None,
-        });
+        })?;
         Ok((read_fd, write_fd))
     }
 
     pub(crate) fn create_socketpair(&mut self) -> Result<(u32, u32), i32> {
+        if self.available_fd_slots() < 2 {
+            return Err(ERR_EMFILE);
+        }
         let pair_id = self.next_socketpair_id;
         self.next_socketpair_id = self.next_socketpair_id.saturating_add(1);
         self.socketpairs.push(SocketPairState {
@@ -468,14 +576,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             fd_flags: 0,
             status_flags: 0,
             cursor_group: None,
-        });
+        })?;
         let fd_b = self.alloc_fd(FdEntry {
             resource: FdResource::SocketPairEnd { pair_id, endpoint: 1 },
             cursor: 0,
             fd_flags: 0,
             status_flags: 0,
             cursor_group: None,
-        });
+        })?;
         Ok((fd_a, fd_b))
     }
 
@@ -489,6 +597,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         if initval > EVENTFD_MAX_COUNTER {
             return Err(ERR_EINVAL);
+        }
+        if !self.can_allocate_fds(1) {
+            return Err(ERR_EMFILE);
         }
 
         let eventfd_id = self.next_eventfd_id;
@@ -504,7 +615,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             fd_flags: 0,
             status_flags: flags & EFD_NONBLOCK,
             cursor_group: None,
-        });
+        })?;
         if flags & EFD_CLOEXEC != 0 {
             self.set_fd_flags(fd, 1)?;
         }
@@ -1033,24 +1144,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         let entry = self.fd_table.get_mut(fd as usize).and_then(Option::as_mut).ok_or(ERR_EBADF)?;
         entry.status_flags = (entry.status_flags & O_ACCMODE) | (flags & (O_APPEND | O_NONBLOCK));
         Ok(())
-    }
-
-    fn install_fd_at(&mut self, fd: u32, mut entry: FdEntry) {
-        let resource_kind = fd_resource_kind(&entry.resource);
-        let resource_label = fd_resource_label(&entry.resource);
-        let owner_task = Some(self.scheduler.current_task());
-        let resource_id =
-            self.semantic.register_resource(resource_kind, owner_task, &resource_label);
-        if entry.cursor_group.is_none() {
-            entry.cursor_group = Some(resource_id);
-        }
-        let fd = fd as usize;
-        while self.fd_table.len() <= fd {
-            self.fd_table.push(None);
-        }
-        self.ensure_fd_handle_slot(fd);
-        self.fd_table[fd] = Some(entry);
-        self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
     }
 
     fn socket_for_ready_key(&self, ready_key: u64) -> Option<(u32, ResourceHandle)> {

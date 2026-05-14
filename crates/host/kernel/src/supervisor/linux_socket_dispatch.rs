@@ -26,10 +26,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
-
         let domain = u32::try_from(plan.args[0]).map_err(|_| "socket domain overflowed")?;
         let ty = u32::try_from(plan.args[1]).map_err(|_| "socket type overflowed")?;
         let protocol = u32::try_from(plan.args[2]).map_err(|_| "socket protocol overflowed")?;
+        if !self.can_allocate_fds(1) {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+        }
         let socket_id = match self.net_core.create_socket(domain, ty, protocol) {
             Ok(socket_id) => socket_id,
             Err(ServiceCallError::Errno(errno)) => {
@@ -64,13 +66,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
 
-        let fd = self.alloc_fd(FdEntry {
+        let fd = match self.alloc_fd(FdEntry {
             resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
             fd_flags: 0,
             status_flags: 0,
             cursor_group: None,
-        });
+        }) {
+            Ok(fd) => fd,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
         if let Some(handle) = self.fd_handle(fd) {
             self.semantic.record_socket_state_changed(handle.id, "open");
         }
