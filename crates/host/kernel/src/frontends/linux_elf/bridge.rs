@@ -44,7 +44,10 @@ use crate::{
     substrate::ring3::{self, SyscallFrame},
     supervisor::{
         LinuxCallResult, runtime,
-        types::{AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, SigAction},
+        types::{
+            AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, RobustListRegistration,
+            SigAction,
+        },
     },
 };
 
@@ -80,6 +83,11 @@ const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
+const ROBUST_LIST_HEAD_SIZE: u64 = 24;
+const ROBUST_LIST_LIMIT: usize = 2048;
+const FUTEX_WAITERS: u32 = 0x8000_0000;
+const FUTEX_OWNER_DIED: u32 = 0x4000_0000;
+const FUTEX_TID_MASK: u32 = 0x3fff_ffff;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -183,7 +191,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CAPSET => sys_capset(frame),
         SYS_BRK => Ok(active_context().set_program_break(frame.rdi) as i64),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(frame),
-        SYS_SET_ROBUST_LIST => Ok(0),
+        SYS_SET_ROBUST_LIST => sys_set_robust_list(frame),
         SYS_RSEQ => Ok(0),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
         SYS_PRCTL => sys_prctl(frame),
@@ -1698,6 +1706,21 @@ fn sys_set_tid_address(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(tid as i64)
 }
 
+fn sys_set_robust_list(frame: &SyscallFrame) -> Result<i64, i32> {
+    let head = frame.rdi;
+    let len = frame.rsi;
+    if len != ROBUST_LIST_HEAD_SIZE {
+        return Err(ERR_EINVAL);
+    }
+    if head != 0 {
+        validate_user_range(head, ROBUST_LIST_HEAD_SIZE, false)?;
+    }
+    let registration = if head == 0 { None } else { Some(RobustListRegistration { head, len }) };
+    let tid = active_context().tid;
+    active_context().supervisor.set_thread_robust_list(tid, registration)?;
+    Ok(0)
+}
+
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
     let selector = frame.rdi as i64;
     let status_ptr = frame.rsi;
@@ -2650,6 +2673,7 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32> {
     let pid = active_context().pid;
+    handle_robust_list_on_exit();
     clear_child_tid_on_exit();
     active_context().supervisor.process_exit(pid, status);
     if let Some(parent) = active_context().take_vfork_parent_for_child(pid) {
@@ -2677,6 +2701,7 @@ fn handle_exit(status: i32) -> ! {
         let context = active_context();
         (context.pid, context.activation_id)
     };
+    handle_robust_list_on_exit();
     clear_child_tid_on_exit();
     active_context().supervisor.process_exit(pid, status);
     if activation_id != 0 {
@@ -2684,6 +2709,109 @@ fn handle_exit(status: i32) -> ! {
         active_context().finish_activation(activation_id);
     }
     finish_exited_runtime(status)
+}
+
+fn handle_robust_list_on_exit() {
+    let tid = active_context().tid;
+    let Some(registration) = active_context().supervisor.take_thread_robust_list(tid) else {
+        return;
+    };
+    if registration.head == 0 {
+        return;
+    }
+    if registration.len != ROBUST_LIST_HEAD_SIZE {
+        crate::kwarn!("robust_list ignored unexpected len {}", registration.len);
+        return;
+    }
+    let futex_offset = match robust_head_field(registration.head, 8).and_then(read_user_i64) {
+        Ok(offset) => offset,
+        Err(errno) => {
+            crate::kwarn!("robust_list futex_offset read failed: errno {}", errno);
+            return;
+        }
+    };
+    let pending = match robust_head_field(registration.head, 16).and_then(read_user_u64) {
+        Ok(ptr) => ptr,
+        Err(errno) => {
+            crate::kwarn!("robust_list pending read failed: errno {}", errno);
+            return;
+        }
+    };
+    let mut entry = match read_user_u64(registration.head) {
+        Ok(ptr) => ptr,
+        Err(errno) => {
+            crate::kwarn!("robust_list head read failed: errno {}", errno);
+            return;
+        }
+    };
+
+    let mut visited = 0usize;
+    while entry != 0 && entry != registration.head && visited < ROBUST_LIST_LIMIT {
+        let next = match read_user_u64(entry) {
+            Ok(ptr) => ptr,
+            Err(errno) => {
+                crate::kwarn!("robust_list entry read failed: errno {}", errno);
+                break;
+            }
+        };
+        process_robust_list_entry(entry, futex_offset, tid);
+        entry = next;
+        visited += 1;
+    }
+    if visited == ROBUST_LIST_LIMIT {
+        crate::kwarn!("robust_list traversal hit entry limit");
+    }
+    if pending != 0 && pending != registration.head {
+        process_robust_list_entry(pending, futex_offset, tid);
+    }
+}
+
+fn robust_head_field(head: u64, offset: u64) -> Result<u64, i32> {
+    head.checked_add(offset).ok_or(ERR_EFAULT)
+}
+
+fn process_robust_list_entry(entry: u64, futex_offset: i64, tid: u32) {
+    let Some(futex_addr) = robust_futex_addr(entry, futex_offset) else {
+        crate::kwarn!("robust_list futex address overflow");
+        return;
+    };
+    mark_robust_futex_dead(futex_addr, tid);
+}
+
+fn robust_futex_addr(entry: u64, futex_offset: i64) -> Option<u64> {
+    if futex_offset >= 0 {
+        entry.checked_add(futex_offset as u64)
+    } else {
+        entry.checked_sub(futex_offset.wrapping_neg() as u64)
+    }
+}
+
+fn mark_robust_futex_dead(futex_addr: u64, tid: u32) {
+    let word = match read_user_u32(futex_addr) {
+        Ok(word) => word,
+        Err(errno) => {
+            crate::kwarn!("robust_list futex read failed: errno {}", errno);
+            return;
+        }
+    };
+    if (word & FUTEX_TID_MASK) != (tid & FUTEX_TID_MASK) {
+        return;
+    }
+    let new_word = (word & !FUTEX_TID_MASK) | FUTEX_OWNER_DIED;
+    if let Err(errno) = write_user_u32(futex_addr, new_word) {
+        crate::kwarn!("robust_list futex write failed: errno {}", errno);
+        return;
+    }
+    if word & FUTEX_WAITERS == 0 {
+        return;
+    }
+    let wake_result = active_context().supervisor.dispatch_linux_syscall(
+        "ring3_robust_list_futex_wake",
+        SyscallContext::new(SYS_FUTEX, [futex_addr, FUTEX_WAKE as u64, 1, 0, 0, 0]),
+    );
+    if wake_result.is_err() {
+        crate::kwarn!("robust_list futex wake failed");
+    }
 }
 
 fn clear_child_tid_on_exit() {
@@ -2976,6 +3104,12 @@ fn read_user_u64(ptr: u64) -> Result<u64, i32> {
     let lease = user_lease(ptr, 8, false)?;
     let bytes = lease.bytes().map_err(map_dmw_fault)?;
     Ok(u64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn read_user_i64(ptr: u64) -> Result<i64, i32> {
+    let lease = user_lease(ptr, 8, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    Ok(i64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?))
 }
 
 fn read_u32_from(bytes: &[u8], offset: usize) -> Result<u32, i32> {

@@ -5,8 +5,8 @@ use semantic_core::{CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets
 use super::{
     runtime::PrototypeRuntime,
     types::{
-        Pid, ProcessRuntimeState, ProcessRuntimeStateKind, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid,
+        Pid, ProcessRuntimeState, ProcessRuntimeStateKind, RobustListRegistration, TaskId,
+        ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
 };
 
@@ -177,6 +177,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pid: child_pid,
             state: ThreadRuntimeStateKind::Running,
             clear_child_tid: None,
+            robust_list: None,
             sigmask: parent_thread.sigmask,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
@@ -304,6 +305,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pid: child_pid,
             state: ThreadRuntimeStateKind::Running,
             clear_child_tid,
+            robust_list: None,
             sigmask: parent_thread.sigmask,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
@@ -328,6 +330,24 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter_mut()
             .find(|thread| thread.tid == tid)
             .and_then(|thread| thread.clear_child_tid.take())
+    }
+
+    pub(crate) fn set_thread_robust_list(
+        &mut self,
+        tid: Tid,
+        registration: Option<RobustListRegistration>,
+    ) -> Result<(), i32> {
+        let thread =
+            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
+        thread.robust_list = registration;
+        Ok(())
+    }
+
+    pub(crate) fn take_thread_robust_list(&mut self, tid: Tid) -> Option<RobustListRegistration> {
+        self.threads
+            .iter_mut()
+            .find(|thread| thread.tid == tid)
+            .and_then(|thread| thread.robust_list.take())
     }
 
     /// Transition a process to Zombie state with the given exit code.

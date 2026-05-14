@@ -101,9 +101,16 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) pid: Pid,
     pub(crate) state: ThreadRuntimeStateKind,
     pub(crate) clear_child_tid: Option<u64>,
+    pub(crate) robust_list: Option<RobustListRegistration>,
     pub(crate) sigmask: u64,
     pub(crate) pending_signals: Vec<PendingSignal>,
     pub(crate) seccomp: SeccompMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RobustListRegistration {
+    pub(crate) head: u64,
+    pub(crate) len: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
