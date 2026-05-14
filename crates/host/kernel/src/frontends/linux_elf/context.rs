@@ -1,7 +1,10 @@
 use alloc::vec::Vec;
 use core::ptr::null_mut;
 
-use crate::supervisor::{PrototypeRuntime, TaskId};
+use crate::{
+    substrate::ring3::UserReturnContext,
+    supervisor::{PrototypeRuntime, TaskId},
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct UserRegion {
@@ -39,6 +42,29 @@ pub(crate) struct ActiveUserContext {
     io_signal: u32,
     pending_io_signal: Option<u32>,
     next_activation_id: u64,
+    alarm_seconds: u64,
+    realtime_epoch_ns: u64,
+    realtime_epoch_tick: u64,
+    suspended_vfork_parent: Option<SuspendedVforkParent>,
+}
+
+pub(crate) struct SuspendedVforkParent {
+    pub(crate) task_id: TaskId,
+    pub(crate) pid: u32,
+    pub(crate) tid: u32,
+    pub(crate) child_pid: u32,
+    pub(crate) next_activation_id: u64,
+    pub(crate) return_context: UserReturnContext,
+    cwd: Vec<u8>,
+    uid: u32,
+    gid: u32,
+    euid: u32,
+    egid: u32,
+    io_owner: i64,
+    io_owner_ex_type: u32,
+    io_owner_ex_pid: i32,
+    io_signal: u32,
+    pending_io_signal: Option<u32>,
     alarm_seconds: u64,
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
@@ -84,6 +110,7 @@ impl ActiveUserContext {
             alarm_seconds: 0,
             realtime_epoch_ns: 1_000_000_000,
             realtime_epoch_tick: 0,
+            suspended_vfork_parent: None,
         }
     }
 
@@ -255,6 +282,100 @@ impl ActiveUserContext {
     pub(crate) fn set_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
         self.realtime_epoch_ns = now_ns;
         self.realtime_epoch_tick = tick_count;
+    }
+
+    pub(crate) fn suspend_for_vfork_child(
+        &mut self,
+        child_task_id: TaskId,
+        child_pid: u32,
+        child_tid: u32,
+        return_context: UserReturnContext,
+    ) {
+        debug_assert!(self.suspended_vfork_parent.is_none());
+        self.suspended_vfork_parent = Some(SuspendedVforkParent {
+            task_id: self.task_id,
+            pid: self.pid,
+            tid: self.tid,
+            child_pid,
+            next_activation_id: self.next_activation_id,
+            return_context,
+            cwd: self.cwd.clone(),
+            uid: self.uid,
+            gid: self.gid,
+            euid: self.euid,
+            egid: self.egid,
+            io_owner: self.io_owner,
+            io_owner_ex_type: self.io_owner_ex_type,
+            io_owner_ex_pid: self.io_owner_ex_pid,
+            io_signal: self.io_signal,
+            pending_io_signal: self.pending_io_signal,
+            alarm_seconds: self.alarm_seconds,
+            realtime_epoch_ns: self.realtime_epoch_ns,
+            realtime_epoch_tick: self.realtime_epoch_tick,
+        });
+        self.task_id = child_task_id;
+        self.pid = child_pid;
+        self.tid = child_tid;
+        self.activation_id = 0;
+        self.next_activation_id = (child_task_id as u64) << 32 | 1;
+    }
+
+    pub(crate) fn has_suspended_vfork_parent(&self) -> bool {
+        self.suspended_vfork_parent.is_some()
+    }
+
+    pub(crate) fn take_vfork_parent_for_child(
+        &mut self,
+        child_pid: u32,
+    ) -> Option<SuspendedVforkParent> {
+        if self.suspended_vfork_parent.as_ref().is_some_and(|parent| parent.child_pid == child_pid)
+        {
+            self.suspended_vfork_parent.take()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn restore_vfork_parent(&mut self, parent: SuspendedVforkParent) {
+        let SuspendedVforkParent {
+            task_id,
+            pid,
+            tid,
+            child_pid: _,
+            next_activation_id,
+            return_context: _,
+            cwd,
+            uid,
+            gid,
+            euid,
+            egid,
+            io_owner,
+            io_owner_ex_type,
+            io_owner_ex_pid,
+            io_signal,
+            pending_io_signal,
+            alarm_seconds,
+            realtime_epoch_ns,
+            realtime_epoch_tick,
+        } = parent;
+        self.task_id = task_id;
+        self.pid = pid;
+        self.tid = tid;
+        self.activation_id = 0;
+        self.next_activation_id = next_activation_id;
+        self.cwd = cwd;
+        self.uid = uid;
+        self.gid = gid;
+        self.euid = euid;
+        self.egid = egid;
+        self.io_owner = io_owner;
+        self.io_owner_ex_type = io_owner_ex_type;
+        self.io_owner_ex_pid = io_owner_ex_pid;
+        self.io_signal = io_signal;
+        self.pending_io_signal = pending_io_signal;
+        self.alarm_seconds = alarm_seconds;
+        self.realtime_epoch_ns = realtime_epoch_ns;
+        self.realtime_epoch_tick = realtime_epoch_tick;
     }
 }
 

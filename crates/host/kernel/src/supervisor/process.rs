@@ -1,8 +1,13 @@
-use semantic_core::ProcessState;
+use alloc::vec::Vec;
+
+use semantic_core::{GuestAddressSpaceRef, ProcessState};
 
 use super::{
     runtime::PrototypeRuntime,
-    types::{Pid, ProcessRuntimeStateKind, ThreadRuntimeStateKind},
+    types::{
+        Pid, ProcessRuntimeState, ProcessRuntimeStateKind, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
+    },
 };
 
 // Linux clone flags
@@ -24,6 +29,7 @@ const CLONE_IO: u64 = 0x80000000;
 const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
+const SIGCHLD: u8 = 17;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
 
 // Flags that require namespace support (currently unsupported)
@@ -37,6 +43,92 @@ const CLONE_NS_MASK: u64 = CLONE_NEWNS
     | CLONE_IO;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    /// Create the runtime and semantic records for a vfork child.
+    ///
+    /// This is intentionally narrower than general fork/clone support: the
+    /// child shares the current address space and gets resumed immediately on
+    /// the same user stack. The parent is restored only when the child exits
+    /// through the syscall path.
+    pub(crate) fn create_vfork_child(
+        &mut self,
+        parent_pid: Pid,
+        parent_tid: Tid,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(TaskId, Pid, Tid), i32> {
+        let parent = self
+            .processes
+            .iter()
+            .find(|process| process.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent.state != ProcessRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let parent_thread = self
+            .threads
+            .iter()
+            .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent_thread.state != ThreadRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+
+        let child_pid = self.next_pid.max(self.next_tid);
+        let Some(next_id) = child_pid.checked_add(1) else {
+            return Err(vmos_abi::ERR_EAGAIN);
+        };
+        let child_tid = child_pid;
+        if child_pid == 0
+            || self.processes.iter().any(|process| process.pid == child_pid)
+            || self.threads.iter().any(|thread| thread.tid == child_tid)
+        {
+            return Err(vmos_abi::ERR_EAGAIN);
+        }
+
+        let child_task_id = self.allocate_task();
+        if !self.semantic.create_process_family_root(
+            child_pid,
+            Some(parent_pid),
+            parent.pgid,
+            parent.sid,
+            child_task_id as u64,
+            GuestAddressSpaceRef::new(1, 1),
+            uid,
+            gid,
+        ) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+
+        self.next_pid = next_id;
+        self.next_tid = next_id;
+        self.processes.push(ProcessRuntimeState {
+            pid: child_pid,
+            ppid: parent_pid,
+            pgid: parent.pgid,
+            sid: parent.sid,
+            tgid: child_tid,
+            exit_signal: Some(SIGCHLD),
+            state: ProcessRuntimeStateKind::Running,
+            exit_code: None,
+            sigactions: parent.sigactions,
+            rlimits: parent.rlimits,
+        });
+        self.threads.push(ThreadRuntimeState {
+            tid: child_tid,
+            task_id: child_task_id,
+            pid: child_pid,
+            state: ThreadRuntimeStateKind::Running,
+            clear_child_tid: None,
+            sigmask: parent_thread.sigmask,
+            pending_signals: Vec::new(),
+            seccomp: parent_thread.seccomp,
+        });
+
+        Ok((child_task_id, child_pid, child_tid))
+    }
+
     /// Linux clone/fork boundary.
     ///
     /// No mode returns success yet because a real success needs a runnable

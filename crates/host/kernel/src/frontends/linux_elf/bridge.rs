@@ -112,12 +112,12 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         let context = active_context();
         (context.task_id, context.begin_activation())
     };
+    let _activation = ActivationGuard { activation_id };
     active_context().supervisor.set_current_task(task_id);
     if !active_context().supervisor.seccomp_allows_syscall(active_context().tid, syscall_nr) {
         crate::kwarn!("seccomp strict killed syscall {}", syscall_nr);
-        handle_exit(128 + 9);
+        return handle_exit_syscall(frame, 128 + 9);
     }
-    let _activation = ActivationGuard { activation_id };
     let result = match syscall_nr {
         SYS_WRITE => sys_write(frame),
         SYS_WRITEV => sys_writev(frame),
@@ -158,8 +158,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETPID => Ok(active_context().pid as i64),
         SYS_GETTID => Ok(active_context().tid as i64),
         SYS_GETPGID => Ok(active_context().pid as i64), // pgid = self (no process groups yet)
-        SYS_GETPPID => Ok(active_context().pid as i64), // parent = self (no fork yet)
-        SYS_GETSID => Ok(active_context().pid as i64),  // sid = self (no sessions yet)
+        SYS_GETPPID => Ok(current_parent_pid() as i64),
+        SYS_GETSID => Ok(active_context().pid as i64), // sid = self (no sessions yet)
         SYS_GETUID => Ok(active_context().uid() as i64),
         SYS_GETEUID => Ok(active_context().euid() as i64),
         SYS_GETGID => Ok(active_context().gid() as i64),
@@ -249,7 +249,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_UNAME => sys_uname(frame),
         SYS_NANOSLEEP => sys_nanosleep(frame),
         SYS_PIPE2 => sys_pipe(frame, frame.rsi),
-        SYS_EXIT | SYS_EXIT_GROUP => handle_exit(frame.rdi as i32),
+        SYS_EXIT | SYS_EXIT_GROUP => return handle_exit_syscall(frame, frame.rdi as i32),
         _ => {
             crate::kwarn!("ring3 unsupported syscall {}", frame.rax);
             Err(ERR_ENOSYS)
@@ -1235,13 +1235,10 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
-    let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 {
-        frame.rdi
-    } else {
-        // fork() => CLONE_CHILD_CLEARTID | SIGCHLD
-        // vfork() => CLONE_VM | CLONE_VFORK | SIGCHLD
-        if frame.rax == SYS_VFORK { CLONE_VM | CLONE_VFORK } else { 0 }
-    };
+    if frame.rax == SYS_VFORK {
+        return sys_vfork(frame);
+    }
+    let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 { frame.rdi } else { 0 };
     let stack = frame.rsi;
     let parent_tid = frame.rdx;
     let child_tid = frame.r10;
@@ -1253,9 +1250,22 @@ fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(result)
 }
 
-// CLONE flags (also used in supervisor/process.rs)
-const CLONE_VM: u64 = 0x100;
-const CLONE_VFORK: u64 = 0x4000;
+fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
+    if active_context().has_suspended_vfork_parent() {
+        return Err(ERR_ENOSYS);
+    }
+    let (parent_pid, parent_tid, uid, gid) = {
+        let context = active_context();
+        (context.pid, context.tid, context.uid(), context.gid())
+    };
+    let (child_task_id, child_pid, child_tid) =
+        active_context().supervisor.create_vfork_child(parent_pid, parent_tid, uid, gid)?;
+    let mut parent_return = ring3::capture_user_return(frame);
+    parent_return.frame.rax = child_pid as u64;
+    active_context().suspend_for_vfork_child(child_task_id, child_pid, child_tid, parent_return);
+    active_context().supervisor.set_current_task(child_task_id);
+    Ok(0)
+}
 
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
     let selector = frame.rdi as i64;
@@ -2201,6 +2211,21 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 }
 
+fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32> {
+    let pid = active_context().pid;
+    active_context().supervisor.process_exit(pid, status);
+    if let Some(parent) = active_context().take_vfork_parent_for_child(pid) {
+        let return_context = parent.return_context;
+        active_context().restore_vfork_parent(parent);
+        let parent_task_id = active_context().task_id;
+        active_context().supervisor.set_current_task(parent_task_id);
+        ring3::install_user_return(frame, return_context);
+        return Ok(return_context.frame.rax as i64);
+    }
+    finish_active_activation();
+    finish_exited_runtime(status)
+}
+
 fn handle_exit(status: i32) -> ! {
     let (pid, activation_id) = {
         let context = active_context();
@@ -2211,7 +2236,18 @@ fn handle_exit(status: i32) -> ! {
         crate::substrate::dmw::finish_activation(activation_id);
         active_context().finish_activation(activation_id);
     }
+    finish_exited_runtime(status)
+}
 
+fn finish_active_activation() {
+    let activation_id = active_context().activation_id;
+    if activation_id != 0 {
+        crate::substrate::dmw::finish_activation(activation_id);
+        active_context().finish_activation(activation_id);
+    }
+}
+
+fn finish_exited_runtime(status: i32) -> ! {
     serial_println!("== post-ring3 semantic object graph ==");
     for line in active_context().supervisor.semantic_debug_lines() {
         serial_println!("{}", line);
@@ -2227,6 +2263,11 @@ fn handle_exit(status: i32) -> ! {
     loop {
         x86_64::instructions::hlt();
     }
+}
+
+fn current_parent_pid() -> u32 {
+    let pid = active_context().pid;
+    active_context().supervisor.query_process(pid).map(|process| process.ppid).unwrap_or(pid)
 }
 
 struct ActivationGuard {

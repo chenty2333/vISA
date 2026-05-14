@@ -28,6 +28,7 @@ const KERNEL_SYSCALL_STACK_SIZE: usize = PAGE_SIZE * 16;
 
 pub(crate) type SyscallHandler = extern "C" fn(*mut SyscallFrame);
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub(crate) struct SyscallFrame {
     pub(crate) r9: u64,
@@ -39,6 +40,12 @@ pub(crate) struct SyscallFrame {
     pub(crate) rax: u64,
     pub(crate) rcx: u64,
     pub(crate) r11: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct UserReturnContext {
+    pub(crate) frame: SyscallFrame,
+    pub(crate) rsp: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -153,6 +160,17 @@ pub(crate) fn init(handler: SyscallHandler) {
     .expect("GDT selectors must satisfy STAR layout");
     LStar::write(VirtAddr::from_ptr(vmos_syscall_entry as *const ()));
     SFMask::write(RFlags::INTERRUPT_FLAG);
+}
+
+pub(crate) fn capture_user_return(frame: &SyscallFrame) -> UserReturnContext {
+    UserReturnContext { frame: *frame, rsp: unsafe { SAVED_USER_RSP } }
+}
+
+pub(crate) fn install_user_return(frame: &mut SyscallFrame, context: UserReturnContext) {
+    *frame = context.frame;
+    unsafe {
+        SAVED_USER_RSP = context.rsp;
+    }
 }
 
 pub(crate) fn enter_user_mode(entry: u64, stack_top: u64) -> ! {
