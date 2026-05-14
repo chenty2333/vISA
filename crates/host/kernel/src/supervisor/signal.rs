@@ -9,16 +9,14 @@ use crate::frontends::linux_elf::handle_user_fault;
 /// Linux signal default actions.
 fn signal_default_action(signo: u8) -> SignalDefaultAction {
     match signo {
-        // POSIX: terminate
-        1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 => SignalDefaultAction::Terminate {
-            core: signo == 3 || signo == 4 || signo == 6 || signo == 8 || signo == 11,
-        },
-        // POSIX: stop
-        17 | 19 | 20 | 22 | 23 | 24 | 25 => SignalDefaultAction::Stop,
-        // POSIX: continue
+        // Linux x86_64 default dispositions for standard signals.
+        17 | 23 | 28 => SignalDefaultAction::Ignore,
         18 => SignalDefaultAction::Continue,
-        // POSIX: ignore
-        9 | 16 | 28 | 30 | 31 => SignalDefaultAction::Terminate { core: false },
+        19..=22 => SignalDefaultAction::Stop,
+        3 | 4 | 5 | 6 | 7 | 8 | 11 | 24 | 25 | 31 => SignalDefaultAction::Terminate { core: true },
+        1 | 2 | 9 | 10 | 12 | 13 | 14 | 15 | 16 | 26 | 27 | 29 | 30 => {
+            SignalDefaultAction::Terminate { core: false }
+        }
         _ => SignalDefaultAction::Terminate { core: false },
     }
 }
