@@ -1324,12 +1324,14 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn unlink_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
+        self.check_sticky_removal_access(path, uid)?;
         self.vfs.unlink(path).map_err(errno_from_service_error)
     }
 
     pub(crate) fn rmdir_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
+        self.check_sticky_removal_access(path, uid)?;
         self.vfs.rmdir(path).map_err(errno_from_service_error)
     }
 
@@ -1427,6 +1429,20 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn path_owner(&mut self, path: &[u8]) -> Result<(u32, u32), i32> {
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         Ok(self.owner_for_service_node(info.route, path))
+    }
+
+    fn check_sticky_removal_access(&mut self, path: &[u8], uid: u32) -> Result<(), i32> {
+        let Some(parent) = parent_path_for_access(path) else {
+            return Err(ERR_EPERM);
+        };
+        let parent_info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
+        let parent_mode = self.mode_for_service_node(parent_info.route, parent_info.node, &parent);
+        if parent_mode & 0o1000 == 0 || uid == 0 {
+            return Ok(());
+        }
+        let (parent_uid, _) = self.owner_for_service_node(parent_info.route, &parent);
+        let (target_uid, _) = self.path_owner(path)?;
+        if uid == parent_uid || uid == target_uid { Ok(()) } else { Err(ERR_EPERM) }
     }
 
     fn mode_for_service_node(&self, route: ServiceRoute, node: NodeKind, path: &[u8]) -> u32 {

@@ -473,6 +473,9 @@ impl VfsService {
         if let Some(node) = self.dynamic_node(path) {
             return node.mode;
         }
+        if path == b"/tmp" {
+            return 0o041777;
+        }
         if let Some(resource) = linux_user_resource_for_path(path) {
             return 0o100000 | (resource.mode & 0o7777);
         }
