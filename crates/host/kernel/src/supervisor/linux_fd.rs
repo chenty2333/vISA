@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK, ERR_EPERM,
-    NodeKind, ServiceRoute,
+    EPOLLIN, EPOLLOUT, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK,
+    ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -27,6 +27,12 @@ const EVENTFD_READY_TAG: u64 = 0x9000_0000_0000_0000;
 const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const DEFAULT_PIPE_CAPACITY: usize = 65_536;
 const EVENTFD_MAX_COUNTER: u64 = u64::MAX - 1;
+const MAY_EXEC: u32 = 0x1;
+const MAY_WRITE: u32 = 0x2;
+const MAY_READ: u32 = 0x4;
+const O_ACCMODE: u32 = 0o3;
+const O_WRONLY: u32 = 0o1;
+const O_RDWR: u32 = 0o2;
 const POLLIN: u16 = 0x001;
 const POLLOUT: u16 = 0x004;
 
@@ -57,6 +63,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         fd: u32,
         count: u32,
     ) -> Result<Vec<u8>, ServiceCallError> {
+        self.require_fd_readable(fd)?;
         let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
         if node == NodeKind::Directory {
             return Err(ServiceCallError::Errno(vmos_abi::ERR_EISDIR));
@@ -99,6 +106,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {
+        self.require_fd_writable(fd)?;
         let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
             return Err(ServiceCallError::Errno(ERR_EBADF));
@@ -124,6 +132,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn truncate_fd(&mut self, fd: u32, len: usize) -> Result<(), i32> {
+        self.require_fd_writable(fd).map_err(errno_from_service_error)?;
         let (route, node, cursor, path) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
@@ -241,6 +250,89 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         Ok((path, range_start as i64, range_len as i64))
+    }
+
+    pub(crate) fn check_path_access(
+        &mut self,
+        path: &[u8],
+        mask: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
+        self.check_path_traversal_access(path, uid, gid)?;
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        if mask == 0 {
+            return Ok(());
+        }
+        let mode = self.mode_for_service_node(info.route, info.node, path);
+        let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, path);
+        if mode_grants_access(mode, owner_uid, owner_gid, uid, gid, mask) {
+            Ok(())
+        } else {
+            Err(ERR_EACCES)
+        }
+    }
+
+    pub(crate) fn check_parent_access(
+        &mut self,
+        path: &[u8],
+        mask: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
+        let Some(parent) = parent_path_for_access(path) else {
+            return Err(ERR_EPERM);
+        };
+        self.check_path_traversal_access(&parent, uid, gid)?;
+        let info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
+        if info.node != NodeKind::Directory {
+            return Err(vmos_abi::ERR_ENOTDIR);
+        }
+        let mode = self.mode_for_service_node(info.route, info.node, &parent);
+        let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, &parent);
+        if mode_grants_access(mode, owner_uid, owner_gid, uid, gid, mask) {
+            Ok(())
+        } else {
+            Err(ERR_EACCES)
+        }
+    }
+
+    fn check_path_traversal_access(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
+        let mut parents = Vec::new();
+        let mut current = parent_path_for_access(path);
+        while let Some(parent) = current {
+            let is_root = parent == b"/";
+            current = if is_root { None } else { parent_path_for_access(&parent) };
+            parents.push(parent);
+        }
+        for parent in parents.iter().rev() {
+            let info = self.lookup_path(parent).map_err(errno_from_service_error)?;
+            if info.node != NodeKind::Directory {
+                return Err(vmos_abi::ERR_ENOTDIR);
+            }
+            let mode = self.mode_for_service_node(info.route, info.node, parent);
+            let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, parent);
+            if !mode_grants_access(mode, owner_uid, owner_gid, uid, gid, MAY_EXEC) {
+                return Err(ERR_EACCES);
+            }
+        }
+        Ok(())
+    }
+
+    fn require_fd_readable(&self, fd: u32) -> Result<(), ServiceCallError> {
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        match entry.status_flags & O_ACCMODE {
+            O_WRONLY => Err(ServiceCallError::Errno(ERR_EBADF)),
+            _ => Ok(()),
+        }
+    }
+
+    fn require_fd_writable(&self, fd: u32) -> Result<(), ServiceCallError> {
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        match entry.status_flags & O_ACCMODE {
+            O_WRONLY | O_RDWR => Ok(()),
+            _ => Err(ServiceCallError::Errno(ERR_EBADF)),
+        }
     }
 
     pub(super) fn read_dir_entries(
@@ -1422,6 +1514,43 @@ fn join_path(base: &[u8], name: &[u8]) -> Vec<u8> {
     }
     path.extend_from_slice(name);
     path
+}
+
+fn parent_path_for_access(path: &[u8]) -> Option<Vec<u8>> {
+    if path == b"/" {
+        return None;
+    }
+    let trimmed =
+        if path.len() > 1 && path.ends_with(b"/") { &path[..path.len() - 1] } else { path };
+    let slash = trimmed.iter().rposition(|byte| *byte == b'/')?;
+    if slash == 0 { Some(b"/".to_vec()) } else { Some(trimmed[..slash].to_vec()) }
+}
+
+fn mode_grants_access(
+    mode: u32,
+    owner_uid: u32,
+    owner_gid: u32,
+    uid: u32,
+    gid: u32,
+    mask: u32,
+) -> bool {
+    if mask == 0 {
+        return true;
+    }
+    if uid == 0 {
+        return mask & MAY_EXEC == 0 || mode & 0o111 != 0;
+    }
+    let shift = if uid == owner_uid {
+        6
+    } else if gid == owner_gid {
+        3
+    } else {
+        0
+    };
+    let granted = (mode >> shift) & 0o7;
+    (mask & MAY_READ == 0 || granted & 0o4 != 0)
+        && (mask & MAY_WRITE == 0 || granted & 0o2 != 0)
+        && (mask & MAY_EXEC == 0 || granted & 0o1 != 0)
 }
 
 fn errno_from_service_error(err: ServiceCallError) -> i32 {

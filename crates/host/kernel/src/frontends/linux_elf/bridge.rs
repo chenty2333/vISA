@@ -49,6 +49,7 @@ const AT_FDCWD: i64 = -100;
 const AT_REMOVEDIR: u64 = 0x200;
 const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const AT_EMPTY_PATH: u64 = 0x1000;
+const AT_EACCESS: u64 = 0x200;
 const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
 const SYS_EXECVE: u64 = 59;
@@ -553,14 +554,48 @@ fn sys_newfstatat(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_access(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.stat_path_abi(&resolved)?;
+    let mode = u32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    if mode & !0x7 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let (uid, gid) = {
+        let context = active_context();
+        (context.uid(), context.gid())
+    };
+    active_context().supervisor.check_path_access(&resolved, mode, uid, gid)?;
     Ok(0)
 }
 
 fn sys_faccessat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const FACCESSAT_ALLOWED_FLAGS: u64 = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    let flags = if frame.rax == SYS_FACCESSAT { 0 } else { frame.r10 };
+    if flags & !FACCESSAT_ALLOWED_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
-    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    active_context().supervisor.stat_path_abi(&resolved)?;
+    if path.is_empty() && flags & AT_EMPTY_PATH == 0 {
+        return Err(ERR_ENOENT);
+    }
+    let resolved = if path.is_empty() {
+        let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+        active_context().supervisor.fd_path(fd).map_err(|_| ERR_EBADF)?
+    } else {
+        resolve_path(linux_fd_arg(frame.rdi), &path)?
+    };
+    let mode = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    if mode & !0x7 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let (uid, gid) = {
+        let context = active_context();
+        if flags & AT_EACCESS != 0 {
+            (context.euid(), context.egid())
+        } else {
+            (context.uid(), context.gid())
+        }
+    };
+    active_context().supervisor.check_path_access(&resolved, mode, uid, gid)?;
     Ok(0)
 }
 

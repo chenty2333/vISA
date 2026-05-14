@@ -10,6 +10,9 @@ use super::{
 
 const O_DIRECTORY: u64 = 0o200000;
 const O_STATUS_MASK: u64 = 0o3 | 0o2000 | 0o4000;
+const MAY_EXEC: u32 = 0x1;
+const MAY_WRITE: u32 = 0x2;
+const MAY_READ: u32 = 0x4;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn write_console_bytes(&mut self, bytes: &[u8]) -> Result<(), i32> {
@@ -79,11 +82,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         let len = u32::try_from(plan.args[2]).map_err(|_| "openat len overflowed")?;
         let path = self.linux.read_bytes(ptr, len)?;
         let status_flags = linux_status_flags_from_open_flags(plan.args[3]);
+        let access_mask = linux_open_access_mask(plan.args[3]);
+        let uid = (plan.args[5] >> 32) as u32;
+        let gid = plan.args[5] as u32;
 
         match self.lookup_path(&path) {
             Ok(info) => {
                 if plan.args[3] & O_DIRECTORY != 0 && info.node != NodeKind::Directory {
                     return Ok(LinuxCallResult::Ret(-(ERR_ENOTDIR as i64)));
+                }
+                if info.node == NodeKind::Directory && access_mask & MAY_WRITE != 0 {
+                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EISDIR as i64)));
+                }
+                if let Err(errno) = self.check_path_access(&path, access_mask, uid, gid) {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
                 }
                 if !self.can_allocate_fds(1) {
                     return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
@@ -102,8 +114,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Errno(ERR_ENOENT)) if plan.args[3] & 0o100 != 0 => {
                 let mode = u32::try_from(plan.args[4]).map_err(|_| "openat mode overflowed")?;
-                let uid = (plan.args[5] >> 32) as u32;
-                let gid = plan.args[5] as u32;
+                if let Err(errno) = self.check_parent_access(&path, MAY_WRITE | MAY_EXEC, uid, gid)
+                {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
                 if !self.can_allocate_fds(1) {
                     return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
                 }
@@ -210,4 +224,13 @@ impl<'engine> PrototypeRuntime<'engine> {
 
 fn linux_status_flags_from_open_flags(flags: u64) -> u32 {
     (flags & O_STATUS_MASK) as u32
+}
+
+fn linux_open_access_mask(flags: u64) -> u32 {
+    match flags & 0o3 {
+        0 => MAY_READ,
+        1 => MAY_WRITE,
+        2 => MAY_READ | MAY_WRITE,
+        _ => 0,
+    }
 }
