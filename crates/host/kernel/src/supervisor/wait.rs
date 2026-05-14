@@ -169,6 +169,14 @@ impl WaitRegistry {
         }
     }
 
+    pub(crate) fn is_pending(&self, token: WaitToken) -> bool {
+        self.records
+            .iter()
+            .flatten()
+            .find(|record| record.token == token)
+            .is_some_and(|record| record.state == WaitState::Pending)
+    }
+
     fn mark_ready(&mut self, token_id: u64) {
         if let Some(record) = self.find_mut(token_id) {
             record.state = WaitState::Ready;
@@ -227,5 +235,20 @@ mod tests {
             })
         );
         assert_eq!(registry.take_resolution(token), None);
+    }
+
+    #[test]
+    fn is_pending_distinguishes_ready_waits_before_resolution_is_taken() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 11 },
+            0,
+            100,
+        );
+
+        assert!(registry.is_pending(token));
+        registry.apply_event(Event::WaitReady(token.id));
+        assert!(!registry.is_pending(token));
     }
 }

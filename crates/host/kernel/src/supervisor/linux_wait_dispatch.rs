@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
 use semantic_core::{FailureEffect, TaskState};
-use vmos_abi::{ERR_EFAULT, ERR_EPERM};
+use vmos_abi::{ERR_EFAULT, ERR_EINTR, ERR_EPERM};
 
 use super::{
     events::Event,
@@ -190,6 +190,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         loop {
             self.pump_async_sources();
+            if self.waits.is_pending(token)
+                && self.has_unblocked_pending_signal_for_task(token.owner_task)
+            {
+                self.scheduler.push_event(Event::WaitCancelled(token.id, ERR_EINTR));
+                self.drain_event_queue();
+            }
 
             if let Some(resolution) = self.waits.take_resolution(token) {
                 if !matches!(resolution.outcome, WaitOutcome::Restart(_)) {

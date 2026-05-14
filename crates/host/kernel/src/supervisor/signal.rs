@@ -2,7 +2,9 @@ use alloc::vec::Vec;
 
 use super::{
     runtime::PrototypeRuntime,
-    types::{PendingSignal, Pid, SigAction, ThreadRuntimeStateKind, Tid, UserSignalDelivery},
+    types::{
+        PendingSignal, Pid, SigAction, TaskId, ThreadRuntimeStateKind, Tid, UserSignalDelivery,
+    },
 };
 use crate::frontends::linux_elf::handle_user_fault;
 
@@ -186,6 +188,33 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.threads[thread_index].sigmask = next_mask;
 
         Some(UserSignalDelivery { signal, action, old_sigmask })
+    }
+
+    pub(crate) fn has_unblocked_pending_signal_for_task(&self, task_id: TaskId) -> bool {
+        self.threads.iter().find(|thread| thread.task_id == task_id).is_some_and(|thread| {
+            let pid = thread.pid;
+            thread.pending_signals.iter().any(|signal| {
+                thread.sigmask & linux_signal_bit(signal.signo) == 0
+                    && self.signal_interrupts_wait(pid, signal.signo)
+            })
+        })
+    }
+
+    fn signal_interrupts_wait(&self, pid: Pid, signo: u8) -> bool {
+        if signo == 0 || signo >= 64 {
+            return false;
+        }
+        let action = self
+            .processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .map(|process| process.sigactions[signo as usize])
+            .unwrap_or_default();
+        match action.handler {
+            1 => false,
+            0 => !matches!(signal_default_action(signo), SignalDefaultAction::Ignore),
+            _ => true,
+        }
     }
 
     /// Set signal action for a process.
