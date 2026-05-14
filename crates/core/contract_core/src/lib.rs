@@ -247,7 +247,7 @@ pub enum ObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
-    // Process/Thread family (Phase 1)
+    // Process/Thread family
     Process,
     Thread,
     ThreadGroup,
@@ -255,27 +255,27 @@ pub enum ObjectKind {
     OpenFileDescription,
     Credential,
     CredentialTransition,
-    // Signal family (Phase 3)
+    // Signal family
     SignalDisposition,
     PendingSignal,
     SignalMask,
     SignalFrame,
     SignalDelivery,
-    // Memory expansion (Phase 2) — GuestAddressSpace, VmaRegion, PageObject already exist above
+    // Memory expansion
     PageFaultEvent,
     CowBreakEvent,
     VmaSplitEvent,
     PageAllocSubstrateEvent,
-    // Futex family (Phase 6)
+    // Futex family
     FutexKey,
     FutexWait,
     FutexWake,
     FutexRequeue,
     RobustList,
-    // Epoll readiness (Phase 5) — SocketObject, SocketWait etc. already exist above
+    // Epoll readiness
     ReadySource,
     EpollWatcher,
-    // Filesystem expansion (Phase 7)
+    // Filesystem expansion
     FileLock,
     Xattr,
     // Existing tail
@@ -720,7 +720,7 @@ typed_ref!(GuestAddressSpaceRef, ObjectKind::GuestAddressSpace);
 typed_ref!(VmaRegionRef, ObjectKind::VmaRegion);
 typed_ref!(PageObjectRef, ObjectKind::PageObject);
 typed_ref!(ExternalObjectRef, ObjectKind::External);
-// Process/Thread family (Phase 1)
+// Process/Thread family
 typed_ref!(ProcessRef, ObjectKind::Process);
 typed_ref!(ThreadRef, ObjectKind::Thread);
 typed_ref!(ThreadGroupRef, ObjectKind::ThreadGroup);
@@ -728,27 +728,27 @@ typed_ref!(FdTableRef, ObjectKind::FdTable);
 typed_ref!(OpenFileDescriptionRef, ObjectKind::OpenFileDescription);
 typed_ref!(CredentialRef, ObjectKind::Credential);
 typed_ref!(CredentialTransitionRef, ObjectKind::CredentialTransition);
-// Signal family (Phase 3)
+// Signal family
 typed_ref!(SignalDispositionRef, ObjectKind::SignalDisposition);
 typed_ref!(PendingSignalRef, ObjectKind::PendingSignal);
 typed_ref!(SignalMaskRef, ObjectKind::SignalMask);
 typed_ref!(SignalFrameRef, ObjectKind::SignalFrame);
 typed_ref!(SignalDeliveryRef, ObjectKind::SignalDelivery);
-// Memory expansion (Phase 2)
+// Memory expansion
 typed_ref!(PageFaultEventRef, ObjectKind::PageFaultEvent);
 typed_ref!(CowBreakEventRef, ObjectKind::CowBreakEvent);
 typed_ref!(VmaSplitEventRef, ObjectKind::VmaSplitEvent);
 typed_ref!(PageAllocSubstrateEventRef, ObjectKind::PageAllocSubstrateEvent);
-// Futex family (Phase 6)
+// Futex family
 typed_ref!(FutexKeyRef, ObjectKind::FutexKey);
 typed_ref!(FutexWaitRef, ObjectKind::FutexWait);
 typed_ref!(FutexWakeRef, ObjectKind::FutexWake);
 typed_ref!(FutexRequeueRef, ObjectKind::FutexRequeue);
 typed_ref!(RobustListRef, ObjectKind::RobustList);
-// Epoll readiness (Phase 5)
+// Epoll readiness
 typed_ref!(ReadySourceRef, ObjectKind::ReadySource);
 typed_ref!(EpollWatcherRef, ObjectKind::EpollWatcher);
-// Filesystem expansion (Phase 7)
+// Filesystem expansion
 typed_ref!(FileLockRef, ObjectKind::FileLock);
 typed_ref!(XattrRef, ObjectKind::Xattr);
 

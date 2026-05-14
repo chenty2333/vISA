@@ -243,28 +243,28 @@ pub enum PlanKind {
     Mmap = 26,
     Munmap = 27,
     Poll = 28,
-    // Phase 1-2: Process/Thread
+    // Process/Thread
     Clone = 29,
     Fork = 30,
     Vfork = 31,
     Execve = 32,
     Wait4 = 33,
-    // Phase 3: Signals
+    // Signals
     RtSigaction = 34,
     RtSigprocmask = 35,
     Tgkill = 36,
     RtSigreturn = 37,
     Kill = 38,
     Pause = 39,
-    // Phase 1: Exit
+    // Exit
     Exit = 40,
-    // Phase 7: Advanced FS
+    // Advanced FS
     RenameAt2 = 41,
     Fsetxattr = 42,
     Fgetxattr = 43,
     Flock = 44,
     FcntlSetlk = 45,
-    // Phase 6: Futex
+    // Futex
     FutexWaitBitset = 46,
     FutexWakeBitset = 47,
     FutexRequeue = 48,
@@ -272,7 +272,7 @@ pub enum PlanKind {
     FutexLockPi = 50,
     FutexUnlockPi = 51,
     SetRobustList = 52,
-    // Phase 8: rlimit/clock/seccomp
+    // rlimit/clock/seccomp
     Getrlimit = 53,
     Setrlimit = 54,
     Prlimit64 = 55,

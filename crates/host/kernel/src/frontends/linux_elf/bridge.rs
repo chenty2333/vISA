@@ -474,7 +474,7 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
     let mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
     let path = read_user_c_string(path_ptr, PATH_MAX)?;
     let resolved = resolve_path(dirfd, &path)?;
-    // Phase 1A: ETXTBSY enforcement deferred to Phase 2 (real fork model)
+    // ETXTBSY enforcement not yet implemented (no real fork model)
 
     let owner_ids = active_context().open_owner_ids();
     let supervisor = &mut active_context().supervisor;
@@ -585,7 +585,7 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
-    // Phase 1A: ETXTBSY enforcement deferred to Phase 2 (real fork model)
+    // ETXTBSY enforcement not yet implemented (no real fork model)
     let (kind, mode, len) = active_context().supervisor.path_metadata(resolved)?;
     if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
@@ -1114,8 +1114,6 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
-    // Phase 1B: shared-mode clone (CLONE_VM)
-    // Phase 2 will add COW fork (clone without CLONE_VM)
     let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 {
         frame.rdi
     } else {
@@ -1144,8 +1142,7 @@ const CLONE_VM: u64 = 0x100;
 const CLONE_VFORK: u64 = 0x4000;
 
 fn sys_wait4(_frame: &SyscallFrame) -> Result<i64, i32> {
-    // Phase 1A: single-process model — no children to wait for
-    // Will be implemented in Phase 2 (full fork with zombie reaping)
+    // Single-process model — no children to wait for
     Err(ERR_ECHILD)
 }
 
@@ -1161,7 +1158,7 @@ fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_ESRCH);
     }
     if pid == 0 || pid == active_context().pid {
-        // Signal to self — Phase 3 will actually deliver the signal
+        // Signal to self
         return Ok(0);
     }
     Err(ERR_ESRCH)
@@ -1360,7 +1357,7 @@ fn sys_epoll_pwait(frame: &SyscallFrame) -> Result<i64, i32> {
         let len = if frame.r9 == 0 { 8 } else { frame.r9 };
         validate_user_range(frame.r8, len, false)?;
     }
-    // Phase 1A: no fake signals; real signal delivery in Phase 3
+    // No pending signals to consume
     sys_epoll_wait(frame)
 }
 
@@ -1377,7 +1374,7 @@ fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
         let len = if frame.r9 == 0 { 8 } else { frame.r9 };
         validate_user_range(frame.r8, len, false)?;
     }
-    // Phase 1A: no fake signals; real signal delivery in Phase 3
+    // No pending signals to consume
     sys_epoll_wait(frame)
 }
 

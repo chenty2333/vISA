@@ -128,7 +128,7 @@ pub enum ContractObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
-    // Process/Thread family (Phase 1)
+    // Process/Thread family
     Process,
     Thread,
     ThreadGroup,
@@ -136,27 +136,27 @@ pub enum ContractObjectKind {
     OpenFileDescription,
     Credential,
     CredentialTransition,
-    // Signal family (Phase 3)
+    // Signal family
     SignalDisposition,
     PendingSignal,
     SignalMask,
     SignalFrame,
     SignalDelivery,
-    // Memory expansion (Phase 2)
+    // Memory expansion
     PageFaultEvent,
     CowBreakEvent,
     VmaSplitEvent,
     PageAllocSubstrateEvent,
-    // Futex family (Phase 6)
+    // Futex family
     FutexKey,
     FutexWait,
     FutexWake,
     FutexRequeue,
     RobustList,
-    // Epoll readiness (Phase 5)
+    // Epoll readiness
     ReadySource,
     EpollWatcher,
-    // Filesystem expansion (Phase 7)
+    // Filesystem expansion
     FileLock,
     Xattr,
     // Existing tail

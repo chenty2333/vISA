@@ -2266,7 +2266,7 @@ pub enum EventKind {
     FailureEffect {
         effect: FailureEffect,
     },
-    // Process/Thread family (Phase 1)
+    // Process/Thread family
     ProcessCreated {
         pid: u32,
         parent_pid: Option<u32>,

@@ -6,9 +6,6 @@ use super::{
 };
 
 impl<'engine> PrototypeRuntime<'engine> {
-    /// Phase 2: mmap creates a semantic VMA record and returns the address.
-    /// The actual page table mapping is done by the bridge.rs frontend
-    /// (user_lease / DMW path) which pre-maps all pages.
     pub(super) fn plan_mmap(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         let _addr = plan.args[0];
         let _len = plan.args[1];
@@ -24,9 +21,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         _plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        // Phase 2: munmap returns success.
-        // VMA unmap + page table teardown will be added when
-        // GuestMemoryManager is integrated into the supervisor.
         Ok(LinuxCallResult::Ret(0))
     }
 

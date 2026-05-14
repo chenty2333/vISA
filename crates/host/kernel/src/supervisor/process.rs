@@ -29,13 +29,13 @@ const CLONE_NEWPID: u64 = 0x20000000;
 const CLONE_NEWNET: u64 = 0x40000000;
 const CLONE_IO: u64 = 0x80000000;
 
-// Flags that require new namespace support (return ENOSYS in Phase 1B)
+// Flags that require namespace support (currently unsupported)
 const CLONE_NS_MASK: u64 =
     CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC
     | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET | CLONE_IO;
 
 impl<'engine> PrototypeRuntime<'engine> {
-    /// Phase 1B: shared-mode clone.
+    /// Shared-mode clone.
     ///
     /// Supported:
     /// - CLONE_VM: new thread shares parent's address space
@@ -44,8 +44,8 @@ impl<'engine> PrototypeRuntime<'engine> {
     /// - CLONE_CHILD_CLEARTID: store child tid at ctid address
     /// - CLONE_CHILD_SETTID: store child tid at ctid address
     ///
-    /// Not yet supported (Phase 2):
-    /// - clone without CLONE_VM: requires COW fork (returns ENOSYS)
+    /// Not yet supported:
+    /// - clone without CLONE_VM: requires COW fork
     /// - CLONE_VFORK: requires parent suspension
     /// - namespace flags: NEWNS, NEWCGROUP, etc.
     pub(crate) fn do_clone(
@@ -61,7 +61,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & CLONE_NS_MASK != 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
-        // Private address space (fork) not supported until Phase 2
+        // Private address space (fork) not yet supported
         if flags & CLONE_VM == 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
@@ -84,7 +84,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let child_tid = self.allocate_thread(task_id, child_pid);
 
         // If CLONE_CHILD_CLEARTID: store child_tid at child_tid_ptr
-        // (actual futex wake on clear happens in Phase 6)
+        // futex wake on clear not yet implemented
         if flags & CLONE_CHILD_CLEARTID != 0 {
             if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == child_tid) {
                 thread.clear_child_tid = Some(child_tid_ptr);

@@ -81,9 +81,6 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: x86_64::structures::idt::PageFaultErrorCode,
 ) {
     let accessed = x86_64::registers::control::Cr2::read();
-    // Phase 2: page faults are no longer immediate panics.
-    // Log the fault and exit the process with SIGSEGV.
-    // Demand paging / COW integration will be added in Phase 2 full.
     crate::kwarn!(
         "page fault va={:#018x?} error={:?} ip={:#018x}\n{:#?}",
         accessed,

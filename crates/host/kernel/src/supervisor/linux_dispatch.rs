@@ -278,7 +278,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
-            // Phase 1-8 stubs (implemented incrementally)
+            // Stubs for unimplemented PlanKind variants
             PlanKind::Clone | PlanKind::Fork | PlanKind::Vfork
             | PlanKind::Execve | PlanKind::Wait4 | PlanKind::Exit
             | PlanKind::RtSigaction | PlanKind::RtSigprocmask
