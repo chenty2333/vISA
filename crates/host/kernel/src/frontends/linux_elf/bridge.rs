@@ -1408,6 +1408,19 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
+    const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
+    const CLONE_VM: u64 = 0x100;
+    const CLONE_FS: u64 = 0x200;
+    const CLONE_FILES: u64 = 0x400;
+    const CLONE_PARENT_SETTID: u64 = 0x100000;
+    const CLONE_CHILD_SETTID: u64 = 0x1000000;
+    const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
+        | CLONE_VM
+        | CLONE_FS
+        | CLONE_FILES
+        | CLONE_PARENT_SETTID
+        | CLONE_CHILD_SETTID;
+
     if frame.rax == SYS_VFORK {
         return sys_vfork(frame);
     }
@@ -1419,9 +1432,23 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     }
     let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 { frame.rdi } else { 0 };
     let stack = frame.rsi;
-    let _parent_tid = frame.rdx;
-    let _child_tid = frame.r10;
+    let parent_tid_ptr = frame.rdx;
+    let child_tid_ptr = frame.r10;
     let _tls = frame.r8;
+    let flags_match_shared_vm_subset = flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0
+        && flags & CLONE_VM != 0
+        && flags & CLONE_FS != 0
+        && flags & CLONE_FILES != 0;
+    let mut parent_tid_lease = if flags_match_shared_vm_subset && flags & CLONE_PARENT_SETTID != 0 {
+        Some(user_lease(parent_tid_ptr, 4, true)?)
+    } else {
+        None
+    };
+    let mut child_tid_lease = if flags_match_shared_vm_subset && flags & CLONE_CHILD_SETTID != 0 {
+        Some(user_lease(child_tid_ptr, 4, true)?)
+    } else {
+        None
+    };
 
     let (parent_pid, parent_tid_runtime, credential) = {
         let context = active_context();
@@ -1449,6 +1476,20 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
             credential.supplementary_groups,
             caps,
         )?;
+    if let Some(parent_tid_lease) = parent_tid_lease.as_mut() {
+        parent_tid_lease
+            .bytes_mut()
+            .map_err(map_dmw_fault)?
+            .copy_from_slice(&child_tid_runtime.to_le_bytes());
+    }
+    if let Some(child_tid_lease) = child_tid_lease.as_mut() {
+        child_tid_lease
+            .bytes_mut()
+            .map_err(map_dmw_fault)?
+            .copy_from_slice(&child_tid_runtime.to_le_bytes());
+    }
+    drop(parent_tid_lease);
+    drop(child_tid_lease);
 
     let mut parent_return = ring3::capture_user_return(frame);
     parent_return.frame.rax = child_pid as u64;
