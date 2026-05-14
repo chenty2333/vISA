@@ -751,7 +751,11 @@ fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let uid = linux_owner_arg(frame.rsi)?;
     let gid = linux_owner_arg(frame.rdx)?;
-    active_context().supervisor.chown_path(&resolved, uid, gid)?;
+    let (caller_uid, caller_gid) = {
+        let context = active_context();
+        (context.euid(), context.egid())
+    };
+    active_context().supervisor.chown_path(&resolved, uid, gid, caller_uid, caller_gid)?;
     Ok(0)
 }
 
@@ -773,7 +777,11 @@ fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
     };
     let uid = linux_owner_arg(frame.rdx)?;
     let gid = linux_owner_arg(frame.r10)?;
-    active_context().supervisor.chown_path(&resolved, uid, gid)?;
+    let (caller_uid, caller_gid) = {
+        let context = active_context();
+        (context.euid(), context.egid())
+    };
+    active_context().supervisor.chown_path(&resolved, uid, gid, caller_uid, caller_gid)?;
     Ok(0)
 }
 
@@ -899,14 +907,22 @@ fn validate_capability_pid(pid: i32) -> Result<(), i32> {
 fn sys_chmod(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.chmod_path(&resolved, frame.rsi as u32)?;
+    let (uid, gid) = {
+        let context = active_context();
+        (context.euid(), context.egid())
+    };
+    active_context().supervisor.chmod_path(&resolved, frame.rsi as u32, uid, gid)?;
     Ok(0)
 }
 
 fn sys_fchmodat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    active_context().supervisor.chmod_path(&resolved, frame.rdx as u32)?;
+    let (uid, gid) = {
+        let context = active_context();
+        (context.euid(), context.egid())
+    };
+    active_context().supervisor.chmod_path(&resolved, frame.rdx as u32, uid, gid)?;
     Ok(0)
 }
 

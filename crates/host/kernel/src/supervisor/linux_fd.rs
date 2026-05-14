@@ -1323,8 +1323,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.rmdir(path).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn chmod_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+    pub(crate) fn chmod_path(
+        &mut self,
+        path: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_path_access(path, 0, uid, gid)?;
+        let (owner_uid, _) = self.path_owner(path)?;
+        if uid != 0 && uid != owner_uid {
+            return Err(ERR_EPERM);
+        }
         self.vfs.chmod(path, mode).map_err(errno_from_service_error)
     }
 
@@ -1333,8 +1344,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         path: &[u8],
         uid: Option<u32>,
         gid: Option<u32>,
+        caller_uid: u32,
+        caller_gid: u32,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_path_access(path, 0, caller_uid, caller_gid)?;
+        if (uid.is_some() || gid.is_some()) && caller_uid != 0 {
+            return Err(ERR_EPERM);
+        }
         self.vfs.chown(path, uid, gid).map_err(errno_from_service_error)
     }
 
@@ -1381,6 +1398,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let len = self.len_for_service_node(info.route, path);
         Ok((info.node, mode, len))
+    }
+
+    fn path_owner(&mut self, path: &[u8]) -> Result<(u32, u32), i32> {
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        Ok(self.owner_for_service_node(info.route, path))
     }
 
     fn mode_for_service_node(&self, route: ServiceRoute, node: NodeKind, path: &[u8]) -> u32 {
