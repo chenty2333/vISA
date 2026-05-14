@@ -20,7 +20,7 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, SigAction, SocketPairState, TaskId, Tid,
+        ProcessRuntimeStateKind, Rlimit, SeccompMode, SigAction, SocketPairState, TaskId, Tid,
         ThreadRuntimeState, ThreadRuntimeStateKind,
     },
     wait::WaitRegistry,
@@ -159,6 +159,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     state: ProcessRuntimeStateKind::Running,
                     exit_code: None,
                     sigactions: [SigAction::default(); 64],
+                    rlimits: [Rlimit::default(); 16],
                 });
                 procs
             },
@@ -171,6 +172,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     clear_child_tid: None,
                     sigmask: 0,
                     pending_signals: Vec::new(),
+                    seccomp: SeccompMode::Disabled,
                 });
                 thrds
             },
@@ -217,6 +219,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
             sigactions: [SigAction::default(); 64],
+            rlimits: [Rlimit::default(); 16],
         });
         pid
     }
@@ -233,6 +236,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             clear_child_tid: None,
             sigmask: 0,
             pending_signals: Vec::new(),
+            seccomp: SeccompMode::Disabled,
         });
         tid
     }
@@ -259,6 +263,23 @@ impl<'engine> PrototypeRuntime<'engine> {
             .find(|t| t.task_id == task_id)
             .map(|t| t.tid)
             .unwrap_or(1)
+    }
+
+    pub(crate) fn get_rlimit(&self, pid: Pid, resource: usize) -> Rlimit {
+        self.processes.iter()
+            .find(|p| p.pid == pid)
+            .and_then(|p| p.rlimits.get(resource).copied())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_rlimit(&mut self, pid: Pid, resource: usize, rlim: Rlimit) -> bool {
+        if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
+            if resource < 16 {
+                proc.rlimits[resource] = rlim;
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {

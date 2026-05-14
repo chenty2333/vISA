@@ -19,8 +19,28 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) exit_signal: Option<u8>,
     pub(crate) state: ProcessRuntimeStateKind,
     pub(crate) exit_code: Option<i32>,
-    // Signal dispositions shared by all threads in the process (CLONE_SIGHAND)
     pub(crate) sigactions: [SigAction; 64],
+    pub(crate) rlimits: [Rlimit; 16],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Rlimit {
+    pub(crate) cur: u64,
+    pub(crate) max: u64,
+}
+
+impl Default for Rlimit {
+    fn default() -> Self { Self { cur: u64::MAX, max: u64::MAX } }
+}
+
+pub(crate) const RLIMIT_NOFILE: usize = 7;
+pub(crate) const RLIMIT_AS: usize = 9;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompMode {
+    Disabled,
+    Strict,
+    // Filter not yet implemented
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +59,7 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) clear_child_tid: Option<u64>,
     pub(crate) sigmask: u64,
     pub(crate) pending_signals: Vec<PendingSignal>,
+    pub(crate) seccomp: SeccompMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
