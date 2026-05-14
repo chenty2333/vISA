@@ -326,4 +326,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn bootstrap_task(&self) -> TaskId {
         self.scheduler.bootstrap_task()
     }
+
+    pub(crate) fn bind_bootstrap_linux_task(&mut self) -> TaskId {
+        let task = self.scheduler.bootstrap_task();
+        self.semantic.ensure_task(task, FrontendKind::LinuxElf, "linux-elf-init");
+        self.set_current_task(task);
+        task
+    }
 }

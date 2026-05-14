@@ -5,6 +5,77 @@ use super::*;
 impl SemanticGraph {
     // ── Process ──
 
+    pub fn create_process_family_root(
+        &mut self,
+        pid: u32,
+        parent_pid: Option<u32>,
+        pgid: u32,
+        sid: u32,
+        task_id: u64,
+        aspace: GuestAddressSpaceRef,
+        uid: u32,
+        gid: u32,
+    ) -> bool {
+        if pid == 0
+            || pgid == 0
+            || sid == 0
+            || task_id == 0
+            || aspace.id() == 0
+            || aspace.generation() == 0
+            || self.domains.process.processes.iter().any(|record| record.pid == pid)
+        {
+            return false;
+        }
+
+        let leader = ContractObjectRef::new(
+            ContractObjectKind::Thread,
+            self.domains.process.next_thread_id,
+            1,
+        );
+        let Some(thread_group_id) = self.create_thread_group(pid, leader) else {
+            return false;
+        };
+        let Some(thread_group) =
+            self.query_thread_group(thread_group_id).map(|record| record.object_ref())
+        else {
+            return false;
+        };
+        let Some(process_id) = self.create_process(pid, parent_pid, pgid, sid, thread_group, None)
+        else {
+            return false;
+        };
+        let Some(process) = self.query_process(process_id).map(|record| record.object_ref()) else {
+            return false;
+        };
+        let Some(fd_table_id) = self.create_fd_table(thread_group, true) else {
+            return false;
+        };
+        let Some(fd_table) = self.query_fd_table(fd_table_id).map(|record| record.object_ref())
+        else {
+            return false;
+        };
+        let Some(credential_id) =
+            self.create_credential(process, uid, uid, uid, uid, gid, gid, gid, gid)
+        else {
+            return false;
+        };
+        let Some(credential) =
+            self.query_credential(credential_id).map(|record| record.object_ref())
+        else {
+            return false;
+        };
+        self.create_thread(
+            pid,
+            task_id,
+            process,
+            aspace.object_ref(),
+            fd_table,
+            credential,
+            thread_group,
+        )
+        .is_some()
+    }
+
     pub fn create_process(
         &mut self,
         pid: u32,
@@ -78,6 +149,29 @@ impl SemanticGraph {
         else {
             return false;
         };
+        let old_state = record.state.clone();
+        let old_str = format!("{0:?}", old_state);
+        record.state = new_state;
+        let new_str = format!("{0:?}", record.state);
+        record.generation += 1;
+        self.event_log.push(
+            "process",
+            EventKind::ProcessStateChanged {
+                pid: record.pid,
+                old_state: old_str,
+                new_state: new_str,
+            },
+        );
+        true
+    }
+
+    pub fn transition_process_state_by_pid(&mut self, pid: u32, new_state: ProcessState) -> bool {
+        let Some(record) = self.domains.process.processes.iter_mut().find(|r| r.pid == pid) else {
+            return false;
+        };
+        if record.state == new_state {
+            return true;
+        }
         let old_state = record.state.clone();
         let old_str = format!("{0:?}", old_state);
         record.state = new_state;
@@ -790,28 +884,16 @@ mod tests {
     fn graph_with_bootstrapped_process_family() -> SemanticGraph {
         let mut graph = SemanticGraph::new();
         graph.ensure_task(1, FrontendKind::LinuxElf, "init");
-
-        let leader = ContractObjectRef::new(ContractObjectKind::Thread, 1, 1);
-        let thread_group_id =
-            graph.create_thread_group(1, leader).expect("create bootstrap thread group");
-        let thread_group = graph.query_thread_group(thread_group_id).unwrap().object_ref();
-        let process_id = graph
-            .create_process(1, None, 1, 1, thread_group, None)
-            .expect("create bootstrap process");
-        let process = graph.query_process(process_id).unwrap().object_ref();
-        let fd_table_id =
-            graph.create_fd_table(thread_group, true).expect("create bootstrap fd table");
-        let fd_table = graph.query_fd_table(fd_table_id).unwrap().object_ref();
-        let credential_id = graph
-            .create_credential(process, 0, 0, 0, 0, 0, 0, 0, 0)
-            .expect("create bootstrap credential");
-        let credential = graph.query_credential(credential_id).unwrap().object_ref();
-        let aspace = ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, 1, 1);
-        let thread_id = graph
-            .create_thread(1, 1, process, aspace, fd_table, credential, thread_group)
-            .expect("create bootstrap thread");
-
-        assert_eq!(graph.query_thread(thread_id).unwrap().object_ref(), leader);
+        assert!(graph.create_process_family_root(
+            1,
+            None,
+            1,
+            1,
+            1,
+            GuestAddressSpaceRef::new(1, 1),
+            0,
+            0,
+        ));
         graph
     }
 
@@ -833,6 +915,21 @@ mod tests {
 
         let violations = validate_contract_graph(&snapshot);
         assert!(violations.is_empty(), "process refs must validate: {violations:?}");
+    }
+
+    #[test]
+    fn process_state_can_transition_by_pid() {
+        let mut graph = graph_with_bootstrapped_process_family();
+
+        assert!(graph.transition_process_state_by_pid(1, ProcessState::Zombie { exit_code: 7 }));
+        let process = graph.query_process(1).unwrap();
+        assert_eq!(process.state, ProcessState::Zombie { exit_code: 7 });
+        assert_eq!(process.generation, 2);
+
+        assert!(graph.transition_process_state_by_pid(1, ProcessState::Dead));
+        let process = graph.query_process(1).unwrap();
+        assert_eq!(process.state, ProcessState::Dead);
+        assert_eq!(process.generation, 3);
     }
 
     #[test]

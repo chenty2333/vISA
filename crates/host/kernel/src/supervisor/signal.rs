@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use super::{
     runtime::PrototypeRuntime,
-    types::{PendingSignal, Pid, ProcessRuntimeStateKind, SigAction, ThreadRuntimeStateKind, Tid},
+    types::{PendingSignal, Pid, SigAction, ThreadRuntimeStateKind, Tid},
 };
 use crate::frontends::linux_elf::handle_user_fault;
 

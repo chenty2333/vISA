@@ -5,9 +5,9 @@ use alloc::{
 };
 
 use semantic_core::{
-    ArtifactProfile, FailureEffect, FrontendKind, GenerationCheckError, GuestStateSnapshot,
-    MigrationPackage, ResourceHandle, ResourceKind, SemanticGraph, SemanticWaitKind,
-    SubstrateBoundarySnapshot, TaskState, WaitHandle,
+    ArtifactProfile, FailureEffect, FrontendKind, GenerationCheckError, GuestAddressSpaceRef,
+    GuestStateSnapshot, MigrationPackage, ResourceHandle, ResourceKind, SemanticGraph,
+    SemanticWaitKind, SubstrateBoundarySnapshot, TaskState, WaitHandle,
 };
 use supervisor_catalog::{
     DMW_LAYOUT, MACHINE_ABI_VERSION, RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION,
@@ -28,8 +28,9 @@ pub(super) fn bootstrap_graph(
     authority: &AuthorityPlane,
 ) -> Result<SemanticGraph, &'static str> {
     let mut graph = SemanticGraph::with_runtime_mode(load_plan.runtime_mode);
-    graph.ensure_task(1, FrontendKind::Supervisor, "bootstrap");
+    graph.ensure_task(1, FrontendKind::LinuxElf, "linux-elf-init");
     graph.set_task_state(1, TaskState::Running);
+    bootstrap_linux_process_family(&mut graph)?;
 
     authority.bind_substrate_authority(
         &mut graph,
@@ -58,6 +59,14 @@ pub(super) fn bootstrap_graph(
     );
 
     Ok(graph)
+}
+
+fn bootstrap_linux_process_family(graph: &mut SemanticGraph) -> Result<(), &'static str> {
+    if graph.create_process_family_root(1, None, 1, 1, 1, GuestAddressSpaceRef::new(1, 1), 0, 0) {
+        Ok(())
+    } else {
+        Err("failed to create bootstrap process family")
+    }
 }
 
 pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {

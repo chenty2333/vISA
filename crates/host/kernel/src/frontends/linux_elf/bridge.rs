@@ -3,26 +3,26 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED,
-    ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
-    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM,
-    SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
-    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
-    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
-    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
-    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
-    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
-    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
-    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
-    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ,
-    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECONNREFUSED, ERR_EFAULT,
+    ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
+    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW,
+    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
+    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
+    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
+    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
+    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
+    SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
+    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME,
+    SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
+    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
+    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
+    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
+    SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
     SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     SyscallContext,
@@ -68,6 +68,7 @@ const ERR_ENOEXEC: i32 = 8;
 const ERR_ENODEV: i32 = 19;
 const ERR_ETXTBSY: i32 = 26;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
+const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
 const LINUX_SIGACTION_BYTES: usize = 32;
@@ -79,7 +80,7 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
     let image = load_demo_program(boot_info)?;
     let supervisor = runtime()?;
-    let task_id = supervisor.allocate_task();
+    let task_id = supervisor.bind_bootstrap_linux_task();
     let mut context = ActiveUserContext::new(
         supervisor,
         image.regions,
@@ -1209,7 +1210,6 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     let tgid = frame.rdi;
     let tid = frame.rsi;
     let signal = frame.rdx;
-    let current = active_context().task_id as u64;
 
     if signal == 0 {
         return Ok(0);
@@ -1257,9 +1257,26 @@ fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
 const CLONE_VM: u64 = 0x100;
 const CLONE_VFORK: u64 = 0x4000;
 
-fn sys_wait4(_frame: &SyscallFrame) -> Result<i64, i32> {
-    // Single-process model — no children to wait for
-    Err(ERR_ECHILD)
+fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
+    let selector = frame.rdi as i64;
+    let status_ptr = frame.rsi;
+    let options = frame.rdx;
+    let rusage_ptr = frame.r10;
+    let caller_pid = active_context().pid;
+
+    match active_context().supervisor.query_wait4(caller_pid, selector, options)? {
+        Some((pid, status)) => {
+            if status_ptr != 0 {
+                write_user_u32(status_ptr, status)?;
+            }
+            if rusage_ptr != 0 {
+                write_user_bytes(rusage_ptr, &[0u8; LINUX_RUSAGE_SIZE])?;
+            }
+            active_context().supervisor.reap_wait4_child(caller_pid, pid)?;
+            Ok(pid as i64)
+        }
+        None => Ok(0),
+    }
 }
 
 fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2185,6 +2202,16 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn handle_exit(status: i32) -> ! {
+    let (pid, activation_id) = {
+        let context = active_context();
+        (context.pid, context.activation_id)
+    };
+    active_context().supervisor.process_exit(pid, status);
+    if activation_id != 0 {
+        crate::substrate::dmw::finish_activation(activation_id);
+        active_context().finish_activation(activation_id);
+    }
+
     serial_println!("== post-ring3 semantic object graph ==");
     for line in active_context().supervisor.semantic_debug_lines() {
         serial_println!("{}", line);
