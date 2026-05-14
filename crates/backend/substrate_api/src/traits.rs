@@ -155,3 +155,36 @@ pub trait PageTableAuthority {
         Err(SubstrateError::unsupported("PageTableAuthority", "flush_tlb"))
     }
 }
+
+/// Packet device backend abstraction.
+/// Provides raw Ethernet frame transmit/receive capability.
+/// Concrete implementations: TAP device (host dev), virtio-net (real substrate).
+pub trait PacketDeviceBackend {
+    fn init(&mut self, _mac: [u8; 6]) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PacketDeviceBackend", "init"))
+    }
+
+    fn submit_tx(&mut self, _frame: &[u8]) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PacketDeviceBackend", "submit_tx"))
+    }
+
+    fn poll_rx(&mut self, _out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+        Err(SubstrateError::unsupported("PacketDeviceBackend", "poll_rx"))
+    }
+
+    fn mtu(&self) -> usize {
+        1500
+    }
+}
+
+/// A slot in a caller-provided RX buffer ring for zero-copy frame reception.
+pub struct PacketFrameSlot {
+    pub data: [u8; 2048],
+    pub len: u16,
+}
+
+impl PacketFrameSlot {
+    pub const fn new() -> Self {
+        Self { data: [0u8; 2048], len: 0 }
+    }
+}
