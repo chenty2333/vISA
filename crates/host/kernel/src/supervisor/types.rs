@@ -38,6 +38,19 @@ impl Default for Rlimit {
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_AS: usize = 9;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AccessIds<'a> {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) supplementary_groups: &'a [u32],
+}
+
+impl<'a> AccessIds<'a> {
+    pub(crate) const fn new(uid: u32, gid: u32, supplementary_groups: &'a [u32]) -> Self {
+        Self { uid, gid, supplementary_groups }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
     Disabled,

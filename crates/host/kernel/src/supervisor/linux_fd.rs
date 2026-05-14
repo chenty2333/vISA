@@ -13,8 +13,8 @@ use super::{
     semantic::{fd_resource_kind, fd_resource_label},
     services::ProcfsService,
     types::{
-        EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE,
-        ServiceCallError, SocketPairState,
+        AccessIds, EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState,
+        RLIMIT_NOFILE, ServiceCallError, SocketPairState,
     },
 };
 use crate::interrupts;
@@ -256,17 +256,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         mask: u32,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
-        self.check_path_traversal_access(path, uid, gid)?;
+        self.check_path_traversal_access(path, access)?;
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         if mask == 0 {
             return Ok(());
         }
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, path);
-        if mode_grants_access(mode, owner_uid, owner_gid, uid, gid, mask) {
+        if mode_grants_access(mode, owner_uid, owner_gid, access, mask) {
             Ok(())
         } else {
             Err(ERR_EACCES)
@@ -277,27 +276,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         mask: u32,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         let Some(parent) = parent_path_for_access(path) else {
             return Err(ERR_EPERM);
         };
-        self.check_path_traversal_access(&parent, uid, gid)?;
+        self.check_path_traversal_access(&parent, access)?;
         let info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
         if info.node != NodeKind::Directory {
             return Err(vmos_abi::ERR_ENOTDIR);
         }
         let mode = self.mode_for_service_node(info.route, info.node, &parent);
         let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, &parent);
-        if mode_grants_access(mode, owner_uid, owner_gid, uid, gid, mask) {
+        if mode_grants_access(mode, owner_uid, owner_gid, access, mask) {
             Ok(())
         } else {
             Err(ERR_EACCES)
         }
     }
 
-    fn check_path_traversal_access(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
+    fn check_path_traversal_access(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
         let mut parents = Vec::new();
         let mut current = parent_path_for_access(path);
         while let Some(parent) = current {
@@ -312,7 +314,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             let mode = self.mode_for_service_node(info.route, info.node, parent);
             let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, parent);
-            if !mode_grants_access(mode, owner_uid, owner_gid, uid, gid, MAY_EXEC) {
+            if !mode_grants_access(mode, owner_uid, owner_gid, access, MAY_EXEC) {
                 return Err(ERR_EACCES);
             }
         }
@@ -614,15 +616,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         mode: u32,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         if self.lookup_path(path).is_ok() {
             return Err(vmos_abi::ERR_EEXIST);
         }
-        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
-        self.vfs.create_file(path, mode, uid, gid).map_err(errno_from_service_error)
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
+        self.vfs.create_file(path, mode, access.uid, access.gid).map_err(errno_from_service_error)
     }
 
     pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
@@ -1313,25 +1314,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         mode: u32,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
-        self.vfs.mkdir(path, mode, uid, gid).map_err(errno_from_service_error)
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
+        self.vfs.mkdir(path, mode, access.uid, access.gid).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn unlink_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
+    pub(crate) fn unlink_path(&mut self, path: &[u8], access: AccessIds<'_>) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
-        self.check_sticky_removal_access(path, uid)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
+        self.check_sticky_removal_access(path, access)?;
         self.vfs.unlink(path).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn rmdir_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
+    pub(crate) fn rmdir_path(&mut self, path: &[u8], access: AccessIds<'_>) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
-        self.check_sticky_removal_access(path, uid)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
+        self.check_sticky_removal_access(path, access)?;
         self.vfs.rmdir(path).map_err(errno_from_service_error)
     }
 
@@ -1339,13 +1339,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         mode: u32,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_path_access(path, 0, uid, gid)?;
+        self.check_path_access(path, 0, access)?;
         let (owner_uid, _) = self.path_owner(path)?;
-        if uid != 0 && uid != owner_uid {
+        if access.uid != 0 && access.uid != owner_uid {
             return Err(ERR_EPERM);
         }
         self.vfs.chmod(path, mode).map_err(errno_from_service_error)
@@ -1356,12 +1355,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         path: &[u8],
         uid: Option<u32>,
         gid: Option<u32>,
-        caller_uid: u32,
-        caller_gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_path_access(path, 0, caller_uid, caller_gid)?;
-        if (uid.is_some() || gid.is_some()) && caller_uid != 0 {
+        self.check_path_access(path, 0, access)?;
+        if (uid.is_some() || gid.is_some()) && access.uid != 0 {
             return Err(ERR_EPERM);
         }
         self.vfs.chown(path, uid, gid).map_err(errno_from_service_error)
@@ -1371,11 +1369,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         target: &[u8],
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
         self.vfs.symlink(path, target).map_err(errno_from_service_error)
     }
 
@@ -1383,11 +1380,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         path: &[u8],
         len: usize,
-        uid: u32,
-        gid: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
-        self.check_path_access(path, MAY_WRITE, uid, gid)?;
+        self.check_path_access(path, MAY_WRITE, access)?;
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
     }
 
@@ -1431,18 +1427,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(self.owner_for_service_node(info.route, path))
     }
 
-    fn check_sticky_removal_access(&mut self, path: &[u8], uid: u32) -> Result<(), i32> {
+    fn check_sticky_removal_access(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
         let Some(parent) = parent_path_for_access(path) else {
             return Err(ERR_EPERM);
         };
         let parent_info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
         let parent_mode = self.mode_for_service_node(parent_info.route, parent_info.node, &parent);
-        if parent_mode & 0o1000 == 0 || uid == 0 {
+        if parent_mode & 0o1000 == 0 || access.uid == 0 {
             return Ok(());
         }
         let (parent_uid, _) = self.owner_for_service_node(parent_info.route, &parent);
         let (target_uid, _) = self.path_owner(path)?;
-        if uid == parent_uid || uid == target_uid { Ok(()) } else { Err(ERR_EPERM) }
+        if access.uid == parent_uid || access.uid == target_uid { Ok(()) } else { Err(ERR_EPERM) }
     }
 
     fn mode_for_service_node(&self, route: ServiceRoute, node: NodeKind, path: &[u8]) -> u32 {
@@ -1592,19 +1592,18 @@ fn mode_grants_access(
     mode: u32,
     owner_uid: u32,
     owner_gid: u32,
-    uid: u32,
-    gid: u32,
+    access: AccessIds<'_>,
     mask: u32,
 ) -> bool {
     if mask == 0 {
         return true;
     }
-    if uid == 0 {
+    if access.uid == 0 {
         return mask & MAY_EXEC == 0 || mode & 0o111 != 0;
     }
-    let shift = if uid == owner_uid {
+    let shift = if access.uid == owner_uid {
         6
-    } else if gid == owner_gid {
+    } else if access.gid == owner_gid || access.supplementary_groups.contains(&owner_gid) {
         3
     } else {
         0

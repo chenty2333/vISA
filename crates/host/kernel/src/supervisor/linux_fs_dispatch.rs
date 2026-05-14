@@ -5,7 +5,7 @@ use vmos_abi::{
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{FdEntry, FdResource, ServiceCallError},
+    types::{AccessIds, FdEntry, FdResource, ServiceCallError},
 };
 
 const O_DIRECTORY: u64 = 0o200000;
@@ -85,6 +85,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let access_mask = linux_open_access_mask(plan.args[3]);
         let uid = (plan.args[5] >> 32) as u32;
         let gid = plan.args[5] as u32;
+        let access = AccessIds::new(uid, gid, &[]);
 
         match self.lookup_path(&path) {
             Ok(info) => {
@@ -94,7 +95,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if info.node == NodeKind::Directory && access_mask & MAY_WRITE != 0 {
                     return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EISDIR as i64)));
                 }
-                if let Err(errno) = self.check_path_access(&path, access_mask, uid, gid) {
+                if let Err(errno) = self.check_path_access(&path, access_mask, access) {
                     return Ok(LinuxCallResult::Ret(-(errno as i64)));
                 }
                 if !self.can_allocate_fds(1) {
@@ -114,8 +115,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Errno(ERR_ENOENT)) if plan.args[3] & 0o100 != 0 => {
                 let mode = u32::try_from(plan.args[4]).map_err(|_| "openat mode overflowed")?;
-                if let Err(errno) = self.check_parent_access(&path, MAY_WRITE | MAY_EXEC, uid, gid)
-                {
+                if let Err(errno) = self.check_parent_access(&path, MAY_WRITE | MAY_EXEC, access) {
                     return Ok(LinuxCallResult::Ret(-(errno as i64)));
                 }
                 if !self.can_allocate_fds(1) {

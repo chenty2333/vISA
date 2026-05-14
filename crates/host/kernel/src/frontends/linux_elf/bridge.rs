@@ -41,7 +41,7 @@ use crate::{
     substrate::ring3::{self, SyscallFrame},
     supervisor::{
         LinuxCallResult, runtime,
-        types::{RLIMIT_AS, Rlimit, SigAction},
+        types::{AccessIds, RLIMIT_AS, Rlimit, SigAction},
     },
 };
 
@@ -170,7 +170,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SETREUID => sys_setreuid(frame),
         SYS_SETREGID => sys_setregid(frame),
         SYS_GETGROUPS => sys_getgroups(frame),
-        SYS_SETGROUPS => Ok(0),
+        SYS_SETGROUPS => sys_setgroups(frame),
         SYS_GETRESUID => sys_getresuid(frame),
         SYS_GETRESGID => sys_getresgid(frame),
         SYS_CHOWN | SYS_LCHOWN => sys_chown(frame),
@@ -558,11 +558,8 @@ fn sys_access(frame: &SyscallFrame) -> Result<i64, i32> {
     if mode & !0x7 != 0 {
         return Err(ERR_EINVAL);
     }
-    let (uid, gid) = {
-        let context = active_context();
-        (context.uid(), context.gid())
-    };
-    active_context().supervisor.check_path_access(&resolved, mode, uid, gid)?;
+    let access = real_access_snapshot();
+    active_context().supervisor.check_path_access(&resolved, mode, access.ids())?;
     Ok(0)
 }
 
@@ -587,15 +584,9 @@ fn sys_faccessat(frame: &SyscallFrame) -> Result<i64, i32> {
     if mode & !0x7 != 0 {
         return Err(ERR_EINVAL);
     }
-    let (uid, gid) = {
-        let context = active_context();
-        if flags & AT_EACCESS != 0 {
-            (context.euid(), context.egid())
-        } else {
-            (context.uid(), context.gid())
-        }
-    };
-    active_context().supervisor.check_path_access(&resolved, mode, uid, gid)?;
+    let access =
+        if flags & AT_EACCESS != 0 { effective_access_snapshot() } else { real_access_snapshot() };
+    active_context().supervisor.check_path_access(&resolved, mode, access.ids())?;
     Ok(0)
 }
 
@@ -655,18 +646,16 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let uid = active_context().euid();
-    let gid = active_context().egid();
-    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32, access.ids())?;
     Ok(0)
 }
 
 fn sys_mkdirat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    let uid = active_context().euid();
-    let gid = active_context().egid();
-    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32, access.ids())?;
     Ok(0)
 }
 
@@ -682,27 +671,27 @@ fn sys_mknodat(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.create_fifo_path(&resolved, mode, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.create_fifo_path(&resolved, mode, access.ids())?;
     Ok(0)
 }
 
 fn sys_unlink(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.unlink_path(&resolved, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.unlink_path(&resolved, access.ids())?;
     Ok(0)
 }
 
 fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    let (uid, gid) = effective_ids();
+    let access = effective_access_snapshot();
     if frame.rdx & AT_REMOVEDIR != 0 {
-        active_context().supervisor.rmdir_path(&resolved, uid, gid)?;
+        active_context().supervisor.rmdir_path(&resolved, access.ids())?;
     } else {
-        active_context().supervisor.unlink_path(&resolved, uid, gid)?;
+        active_context().supervisor.unlink_path(&resolved, access.ids())?;
     }
     Ok(0)
 }
@@ -711,8 +700,8 @@ fn sys_symlink(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rdi, PATH_MAX)?;
     let linkpath = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &linkpath)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.symlink_path(&resolved, &target, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.symlink_path(&resolved, &target, access.ids())?;
     Ok(0)
 }
 
@@ -720,24 +709,24 @@ fn sys_symlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rdi, PATH_MAX)?;
     let linkpath = read_user_c_string(frame.rdx, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rsi), &linkpath)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.symlink_path(&resolved, &target, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.symlink_path(&resolved, &target, access.ids())?;
     Ok(0)
 }
 
 fn sys_rmdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.rmdir_path(&resolved, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.rmdir_path(&resolved, access.ids())?;
     Ok(0)
 }
 
 fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.check_path_access(&resolved, 0x1, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.check_path_access(&resolved, 0x1, access.ids())?;
     if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
         return Err(vmos_abi::ERR_ENOTDIR);
     }
@@ -759,11 +748,8 @@ fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let uid = linux_owner_arg(frame.rsi)?;
     let gid = linux_owner_arg(frame.rdx)?;
-    let (caller_uid, caller_gid) = {
-        let context = active_context();
-        (context.euid(), context.egid())
-    };
-    active_context().supervisor.chown_path(&resolved, uid, gid, caller_uid, caller_gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.chown_path(&resolved, uid, gid, access.ids())?;
     Ok(0)
 }
 
@@ -785,44 +771,84 @@ fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
     };
     let uid = linux_owner_arg(frame.rdx)?;
     let gid = linux_owner_arg(frame.r10)?;
-    let (caller_uid, caller_gid) = {
-        let context = active_context();
-        (context.euid(), context.egid())
-    };
-    active_context().supervisor.chown_path(&resolved, uid, gid, caller_uid, caller_gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.chown_path(&resolved, uid, gid, access.ids())?;
     Ok(0)
 }
 
 fn sys_setuid(frame: &SyscallFrame) -> Result<i64, i32> {
     let uid = linux_id_arg(frame.rdi)?;
-    active_context().set_uid(uid);
+    if !active_context().set_uid(uid) {
+        return Err(ERR_EPERM);
+    }
     Ok(0)
 }
 
 fn sys_setgid(frame: &SyscallFrame) -> Result<i64, i32> {
     let gid = linux_id_arg(frame.rdi)?;
-    active_context().set_gid(gid);
+    if !active_context().set_gid(gid) {
+        return Err(ERR_EPERM);
+    }
     Ok(0)
 }
 
 fn sys_setreuid(frame: &SyscallFrame) -> Result<i64, i32> {
     let ruid = optional_linux_id_arg(frame.rdi)?;
     let euid = optional_linux_id_arg(frame.rsi)?;
-    active_context().set_reuid(ruid, euid);
+    if !active_context().set_reuid(ruid, euid) {
+        return Err(ERR_EPERM);
+    }
     Ok(0)
 }
 
 fn sys_setregid(frame: &SyscallFrame) -> Result<i64, i32> {
     let rgid = optional_linux_id_arg(frame.rdi)?;
     let egid = optional_linux_id_arg(frame.rsi)?;
-    active_context().set_regid(rgid, egid);
+    if !active_context().set_regid(rgid, egid) {
+        return Err(ERR_EPERM);
+    }
     Ok(0)
 }
 
 fn sys_getgroups(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.rdi != 0 && frame.rsi == 0 {
+    let size = usize::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let groups = active_context().supplementary_groups().to_vec();
+    if size == 0 {
+        return Ok(groups.len() as i64);
+    }
+    if frame.rsi == 0 {
         return Err(ERR_EFAULT);
     }
+    if size < groups.len() {
+        return Err(ERR_EINVAL);
+    }
+    let mut encoded = Vec::with_capacity(groups.len() * 4);
+    for group in &groups {
+        encoded.extend_from_slice(&group.to_le_bytes());
+    }
+    write_user_bytes(frame.rsi, &encoded)?;
+    Ok(groups.len() as i64)
+}
+
+fn sys_setgroups(frame: &SyscallFrame) -> Result<i64, i32> {
+    const NGROUPS_MAX: usize = 65_536;
+
+    let size = usize::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if size > NGROUPS_MAX {
+        return Err(ERR_EINVAL);
+    }
+    if active_context().euid() != 0 {
+        return Err(ERR_EPERM);
+    }
+    if size != 0 && frame.rsi == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let bytes = read_user_bytes(frame.rsi, size.checked_mul(4).ok_or(ERR_EINVAL)?)?;
+    let mut groups = Vec::with_capacity(size);
+    for chunk in bytes.chunks_exact(4) {
+        groups.push(u32::from_le_bytes(chunk.try_into().map_err(|_| ERR_EINVAL)?));
+    }
+    let _ = active_context().set_groups(groups);
     Ok(0)
 }
 
@@ -831,7 +857,7 @@ fn sys_getresuid(frame: &SyscallFrame) -> Result<i64, i32> {
     let euid = active_context().euid();
     write_user_u32(frame.rdi, uid)?;
     write_user_u32(frame.rsi, euid)?;
-    write_user_u32(frame.rdx, euid)?;
+    write_user_u32(frame.rdx, active_context().suid())?;
     Ok(0)
 }
 
@@ -840,7 +866,7 @@ fn sys_getresgid(frame: &SyscallFrame) -> Result<i64, i32> {
     let egid = active_context().egid();
     write_user_u32(frame.rdi, gid)?;
     write_user_u32(frame.rsi, egid)?;
-    write_user_u32(frame.rdx, egid)?;
+    write_user_u32(frame.rdx, active_context().sgid())?;
     Ok(0)
 }
 
@@ -915,22 +941,16 @@ fn validate_capability_pid(pid: i32) -> Result<(), i32> {
 fn sys_chmod(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let (uid, gid) = {
-        let context = active_context();
-        (context.euid(), context.egid())
-    };
-    active_context().supervisor.chmod_path(&resolved, frame.rsi as u32, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.chmod_path(&resolved, frame.rsi as u32, access.ids())?;
     Ok(0)
 }
 
 fn sys_fchmodat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    let (uid, gid) = {
-        let context = active_context();
-        (context.euid(), context.egid())
-    };
-    active_context().supervisor.chmod_path(&resolved, frame.rdx as u32, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.chmod_path(&resolved, frame.rdx as u32, access.ids())?;
     Ok(0)
 }
 
@@ -953,8 +973,8 @@ fn sys_truncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    let (uid, gid) = effective_ids();
-    active_context().supervisor.truncate_path(&resolved, len, uid, gid)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.truncate_path(&resolved, len, access.ids())?;
     Ok(0)
 }
 
@@ -2330,9 +2350,34 @@ fn current_parent_pid() -> u32 {
     active_context().supervisor.query_process(pid).map(|process| process.ppid).unwrap_or(pid)
 }
 
-fn effective_ids() -> (u32, u32) {
+struct AccessSnapshot {
+    uid: u32,
+    gid: u32,
+    groups: Vec<u32>,
+}
+
+impl AccessSnapshot {
+    fn ids(&self) -> AccessIds<'_> {
+        AccessIds::new(self.uid, self.gid, &self.groups)
+    }
+}
+
+fn real_access_snapshot() -> AccessSnapshot {
     let context = active_context();
-    (context.euid(), context.egid())
+    AccessSnapshot {
+        uid: context.uid(),
+        gid: context.gid(),
+        groups: context.supplementary_groups().to_vec(),
+    }
+}
+
+fn effective_access_snapshot() -> AccessSnapshot {
+    let context = active_context();
+    AccessSnapshot {
+        uid: context.euid(),
+        gid: context.egid(),
+        groups: context.supplementary_groups().to_vec(),
+    }
 }
 
 struct ActivationGuard {

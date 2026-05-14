@@ -36,6 +36,9 @@ pub(crate) struct ActiveUserContext {
     gid: u32,
     euid: u32,
     egid: u32,
+    suid: u32,
+    sgid: u32,
+    supplementary_groups: Vec<u32>,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -60,6 +63,9 @@ pub(crate) struct SuspendedVforkParent {
     gid: u32,
     euid: u32,
     egid: u32,
+    suid: u32,
+    sgid: u32,
+    supplementary_groups: Vec<u32>,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -101,6 +107,9 @@ impl ActiveUserContext {
             gid: 0,
             euid: 0,
             egid: 0,
+            suid: 0,
+            sgid: 0,
+            supplementary_groups: Vec::new(),
             io_owner: 0,
             io_owner_ex_type: 0,
             io_owner_ex_pid: 0,
@@ -186,32 +195,106 @@ impl ActiveUserContext {
         self.egid
     }
 
-    pub(crate) fn set_uid(&mut self, uid: u32) {
-        self.uid = uid;
-        self.euid = uid;
+    pub(crate) fn suid(&self) -> u32 {
+        self.suid
     }
 
-    pub(crate) fn set_gid(&mut self, gid: u32) {
-        self.gid = gid;
-        self.egid = gid;
+    pub(crate) fn sgid(&self) -> u32 {
+        self.sgid
     }
 
-    pub(crate) fn set_reuid(&mut self, ruid: Option<u32>, euid: Option<u32>) {
+    pub(crate) fn supplementary_groups(&self) -> &[u32] {
+        &self.supplementary_groups
+    }
+
+    pub(crate) fn set_uid(&mut self, uid: u32) -> bool {
+        if self.euid == 0 {
+            self.uid = uid;
+            self.euid = uid;
+            self.suid = uid;
+            return true;
+        }
+        if uid == self.uid || uid == self.euid || uid == self.suid {
+            self.euid = uid;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn set_gid(&mut self, gid: u32) -> bool {
+        if self.euid == 0 {
+            self.gid = gid;
+            self.egid = gid;
+            self.sgid = gid;
+            return true;
+        }
+        if gid == self.gid || gid == self.egid || gid == self.sgid {
+            self.egid = gid;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn set_reuid(&mut self, ruid: Option<u32>, euid: Option<u32>) -> bool {
+        let privileged = self.euid == 0;
+        let old_ruid = self.uid;
+        let old_euid = self.euid;
+        let old_suid = self.suid;
+        if !privileged {
+            for uid in [ruid, euid].into_iter().flatten() {
+                if uid != old_ruid && uid != old_euid && uid != old_suid {
+                    return false;
+                }
+            }
+        }
         if let Some(uid) = ruid {
             self.uid = uid;
         }
         if let Some(uid) = euid {
             self.euid = uid;
         }
+        if (privileged && (ruid.is_some() || euid.is_some()))
+            || ruid.is_some()
+            || euid.is_some_and(|uid| uid != old_ruid)
+        {
+            self.suid = self.euid;
+        }
+        true
     }
 
-    pub(crate) fn set_regid(&mut self, rgid: Option<u32>, egid: Option<u32>) {
+    pub(crate) fn set_regid(&mut self, rgid: Option<u32>, egid: Option<u32>) -> bool {
+        let privileged = self.euid == 0;
+        let old_rgid = self.gid;
+        let old_egid = self.egid;
+        let old_sgid = self.sgid;
+        if !privileged {
+            for gid in [rgid, egid].into_iter().flatten() {
+                if gid != old_rgid && gid != old_egid && gid != old_sgid {
+                    return false;
+                }
+            }
+        }
         if let Some(gid) = rgid {
             self.gid = gid;
         }
         if let Some(gid) = egid {
             self.egid = gid;
         }
+        if (privileged && (rgid.is_some() || egid.is_some()))
+            || rgid.is_some()
+            || egid.is_some_and(|gid| gid != old_rgid)
+        {
+            self.sgid = self.egid;
+        }
+        true
+    }
+
+    pub(crate) fn set_groups(&mut self, groups: Vec<u32>) -> bool {
+        if self.euid != 0 {
+            return false;
+        }
+        self.supplementary_groups = groups;
+        true
     }
 
     pub(crate) fn open_owner_ids(&self) -> u64 {
@@ -304,6 +387,9 @@ impl ActiveUserContext {
             gid: self.gid,
             euid: self.euid,
             egid: self.egid,
+            suid: self.suid,
+            sgid: self.sgid,
+            supplementary_groups: self.supplementary_groups.clone(),
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
             io_owner_ex_pid: self.io_owner_ex_pid,
@@ -349,6 +435,9 @@ impl ActiveUserContext {
             gid,
             euid,
             egid,
+            suid,
+            sgid,
+            supplementary_groups,
             io_owner,
             io_owner_ex_type,
             io_owner_ex_pid,
@@ -368,6 +457,9 @@ impl ActiveUserContext {
         self.gid = gid;
         self.euid = euid;
         self.egid = egid;
+        self.suid = suid;
+        self.sgid = sgid;
+        self.supplementary_groups = supplementary_groups;
         self.io_owner = io_owner;
         self.io_owner_ex_type = io_owner_ex_type;
         self.io_owner_ex_pid = io_owner_ex_pid;
