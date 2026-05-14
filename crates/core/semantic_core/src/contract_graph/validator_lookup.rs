@@ -843,7 +843,32 @@ impl ContractGraphValidator {
             | ContractObjectKind::VmaRegion
             | ContractObjectKind::PageObject
             | ContractObjectKind::EventLog
-            | ContractObjectKind::Tombstone => None,
+            | ContractObjectKind::Tombstone
+            | ContractObjectKind::Process
+            | ContractObjectKind::Thread
+            | ContractObjectKind::ThreadGroup
+            | ContractObjectKind::FdTable
+            | ContractObjectKind::OpenFileDescription
+            | ContractObjectKind::Credential
+            | ContractObjectKind::CredentialTransition
+            | ContractObjectKind::SignalDisposition
+            | ContractObjectKind::PendingSignal
+            | ContractObjectKind::SignalMask
+            | ContractObjectKind::SignalFrame
+            | ContractObjectKind::SignalDelivery
+            | ContractObjectKind::PageFaultEvent
+            | ContractObjectKind::CowBreakEvent
+            | ContractObjectKind::VmaSplitEvent
+            | ContractObjectKind::PageAllocSubstrateEvent
+            | ContractObjectKind::FutexKey
+            | ContractObjectKind::FutexWait
+            | ContractObjectKind::FutexWake
+            | ContractObjectKind::FutexRequeue
+            | ContractObjectKind::RobustList
+            | ContractObjectKind::ReadySource
+            | ContractObjectKind::EpollWatcher
+            | ContractObjectKind::FileLock
+            | ContractObjectKind::Xattr => None,
         }
     }
 

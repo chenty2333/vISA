@@ -17,6 +17,7 @@ pub(crate) struct SemanticDomains {
     pub(crate) scheduler: SchedulerDomain,
     pub(crate) simd: SimdDomain,
     pub(crate) integrated: IntegratedDomain,
+    pub(crate) process: ProcessDomain,
     #[allow(dead_code)]
     pub(crate) memory: MemoryDomain,
 }
@@ -37,6 +38,7 @@ impl SemanticDomains {
             scheduler: SchedulerDomain::new(),
             simd: SimdDomain::new(),
             integrated: IntegratedDomain::new(),
+            process: ProcessDomain::new(),
             memory: MemoryDomain::new(),
         }
     }
@@ -661,6 +663,45 @@ impl RuntimeDomain {
             next_boundary_id: 1,
             next_artifact_id: 1,
             next_activation_id: 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProcessDomain {
+    pub(crate) processes: Vec<ProcessRecord>,
+    pub(crate) threads: Vec<ThreadRecord>,
+    pub(crate) thread_groups: Vec<ThreadGroupRecord>,
+    pub(crate) fd_tables: Vec<FdTableRecord>,
+    pub(crate) open_file_descriptions: Vec<OpenFileDescriptionRecord>,
+    pub(crate) credentials: Vec<CredentialRecord>,
+    pub(crate) credential_transitions: Vec<CredentialTransitionRecord>,
+    pub(crate) next_process_id: ProcessId,
+    pub(crate) next_thread_id: ThreadId,
+    pub(crate) next_thread_group_id: ThreadGroupId,
+    pub(crate) next_fd_table_id: FdTableId,
+    pub(crate) next_open_file_description_id: OpenFileDescriptionId,
+    pub(crate) next_credential_id: CredentialId,
+    pub(crate) next_credential_transition_id: CredentialTransitionId,
+}
+
+impl ProcessDomain {
+    fn new() -> Self {
+        Self {
+            processes: Vec::new(),
+            threads: Vec::new(),
+            thread_groups: Vec::new(),
+            fd_tables: Vec::new(),
+            open_file_descriptions: Vec::new(),
+            credentials: Vec::new(),
+            credential_transitions: Vec::new(),
+            next_process_id: 1,
+            next_thread_id: 1,
+            next_thread_group_id: 1,
+            next_fd_table_id: 1,
+            next_open_file_description_id: 1,
+            next_credential_id: 1,
+            next_credential_transition_id: 1,
         }
     }
 }

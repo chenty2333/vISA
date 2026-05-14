@@ -247,6 +247,38 @@ pub enum ObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
+    // Process/Thread family (Phase 1)
+    Process,
+    Thread,
+    ThreadGroup,
+    FdTable,
+    OpenFileDescription,
+    Credential,
+    CredentialTransition,
+    // Signal family (Phase 3)
+    SignalDisposition,
+    PendingSignal,
+    SignalMask,
+    SignalFrame,
+    SignalDelivery,
+    // Memory expansion (Phase 2) — GuestAddressSpace, VmaRegion, PageObject already exist above
+    PageFaultEvent,
+    CowBreakEvent,
+    VmaSplitEvent,
+    PageAllocSubstrateEvent,
+    // Futex family (Phase 6)
+    FutexKey,
+    FutexWait,
+    FutexWake,
+    FutexRequeue,
+    RobustList,
+    // Epoll readiness (Phase 5) — SocketObject, SocketWait etc. already exist above
+    ReadySource,
+    EpollWatcher,
+    // Filesystem expansion (Phase 7)
+    FileLock,
+    Xattr,
+    // Existing tail
     Tombstone,
     External,
 }
@@ -384,6 +416,38 @@ impl ObjectKind {
             Self::GuestAddressSpace => "guest-address-space",
             Self::VmaRegion => "vma-region",
             Self::PageObject => "page-object",
+            // Process/Thread family
+            Self::Process => "process",
+            Self::Thread => "thread",
+            Self::ThreadGroup => "thread-group",
+            Self::FdTable => "fd-table",
+            Self::OpenFileDescription => "open-file-description",
+            Self::Credential => "credential",
+            Self::CredentialTransition => "credential-transition",
+            // Signal family
+            Self::SignalDisposition => "signal-disposition",
+            Self::PendingSignal => "pending-signal",
+            Self::SignalMask => "signal-mask",
+            Self::SignalFrame => "signal-frame",
+            Self::SignalDelivery => "signal-delivery",
+            // Memory expansion
+            Self::PageFaultEvent => "page-fault-event",
+            Self::CowBreakEvent => "cow-break-event",
+            Self::VmaSplitEvent => "vma-split-event",
+            Self::PageAllocSubstrateEvent => "page-alloc-substrate-event",
+            // Futex family
+            Self::FutexKey => "futex-key",
+            Self::FutexWait => "futex-wait",
+            Self::FutexWake => "futex-wake",
+            Self::FutexRequeue => "futex-requeue",
+            Self::RobustList => "robust-list",
+            // Epoll readiness
+            Self::ReadySource => "ready-source",
+            Self::EpollWatcher => "epoll-watcher",
+            // Filesystem expansion
+            Self::FileLock => "file-lock",
+            Self::Xattr => "xattr",
+            // Existing
             Self::Tombstone => "tombstone",
             Self::External => "external",
         }
@@ -656,6 +720,37 @@ typed_ref!(GuestAddressSpaceRef, ObjectKind::GuestAddressSpace);
 typed_ref!(VmaRegionRef, ObjectKind::VmaRegion);
 typed_ref!(PageObjectRef, ObjectKind::PageObject);
 typed_ref!(ExternalObjectRef, ObjectKind::External);
+// Process/Thread family (Phase 1)
+typed_ref!(ProcessRef, ObjectKind::Process);
+typed_ref!(ThreadRef, ObjectKind::Thread);
+typed_ref!(ThreadGroupRef, ObjectKind::ThreadGroup);
+typed_ref!(FdTableRef, ObjectKind::FdTable);
+typed_ref!(OpenFileDescriptionRef, ObjectKind::OpenFileDescription);
+typed_ref!(CredentialRef, ObjectKind::Credential);
+typed_ref!(CredentialTransitionRef, ObjectKind::CredentialTransition);
+// Signal family (Phase 3)
+typed_ref!(SignalDispositionRef, ObjectKind::SignalDisposition);
+typed_ref!(PendingSignalRef, ObjectKind::PendingSignal);
+typed_ref!(SignalMaskRef, ObjectKind::SignalMask);
+typed_ref!(SignalFrameRef, ObjectKind::SignalFrame);
+typed_ref!(SignalDeliveryRef, ObjectKind::SignalDelivery);
+// Memory expansion (Phase 2)
+typed_ref!(PageFaultEventRef, ObjectKind::PageFaultEvent);
+typed_ref!(CowBreakEventRef, ObjectKind::CowBreakEvent);
+typed_ref!(VmaSplitEventRef, ObjectKind::VmaSplitEvent);
+typed_ref!(PageAllocSubstrateEventRef, ObjectKind::PageAllocSubstrateEvent);
+// Futex family (Phase 6)
+typed_ref!(FutexKeyRef, ObjectKind::FutexKey);
+typed_ref!(FutexWaitRef, ObjectKind::FutexWait);
+typed_ref!(FutexWakeRef, ObjectKind::FutexWake);
+typed_ref!(FutexRequeueRef, ObjectKind::FutexRequeue);
+typed_ref!(RobustListRef, ObjectKind::RobustList);
+// Epoll readiness (Phase 5)
+typed_ref!(ReadySourceRef, ObjectKind::ReadySource);
+typed_ref!(EpollWatcherRef, ObjectKind::EpollWatcher);
+// Filesystem expansion (Phase 7)
+typed_ref!(FileLockRef, ObjectKind::FileLock);
+typed_ref!(XattrRef, ObjectKind::Xattr);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreViewV1 {
@@ -744,9 +839,49 @@ pub const DEFAULT_HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
 pub const DEFAULT_CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
 pub const DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
 
+/// Evidence boundary for each ObjectKind.
+///
+/// - `SemanticModel`: portable across host ISAs, part of contract graph snapshot
+/// - `ReferenceService` / `ReferenceAotHarness`: reference/native service evidence
+/// - `PortableArtifactExecution`: artifact execution path evidence
+/// - `RealTargetSubstrate`: requires real substrate backend (physical frame, MMIO, etc.)
+/// - host-specific (not in portable snapshot): raw register frames, physical addresses, native page tables
+pub fn object_kind_evidence_level(kind: ObjectKind) -> EvidenceBoundaryLevel {
+    use EvidenceBoundaryLevel::*;
+    match kind {
+        // Process/Thread family — portable semantic models
+        ObjectKind::Process | ObjectKind::Thread | ObjectKind::ThreadGroup
+        | ObjectKind::FdTable | ObjectKind::OpenFileDescription
+        | ObjectKind::Credential | ObjectKind::CredentialTransition => SemanticModel,
+
+        // Signal family — dispositions, masks, deliveries are semantic; SignalFrame is arch-specific
+        ObjectKind::SignalDisposition | ObjectKind::PendingSignal
+        | ObjectKind::SignalMask | ObjectKind::SignalDelivery => SemanticModel,
+        ObjectKind::SignalFrame => PortableArtifactExecution, // contains arch regs — arch-specific evidence layer
+
+        // Memory expansion — semantic facts, NOT physical page table state
+        ObjectKind::PageFaultEvent | ObjectKind::CowBreakEvent
+        | ObjectKind::VmaSplitEvent => SemanticModel,
+        ObjectKind::PageAllocSubstrateEvent => RealTargetSubstrate, // physical frame identity
+
+        // Futex family — pure semantic
+        ObjectKind::FutexKey | ObjectKind::FutexWait | ObjectKind::FutexWake
+        | ObjectKind::FutexRequeue | ObjectKind::RobustList => SemanticModel,
+
+        // Epoll readiness — semantic models
+        ObjectKind::ReadySource | ObjectKind::EpollWatcher => SemanticModel,
+
+        // Filesystem expansion — semantic
+        ObjectKind::FileLock | ObjectKind::Xattr => SemanticModel,
+
+        // All other existing kinds — default to SemanticModel (existing behavior)
+        _ => SemanticModel,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::EvidenceBoundaryLevel;
+    use super::{object_kind_evidence_level, EvidenceBoundaryLevel, ObjectKind};
 
     #[test]
     fn evidence_boundary_levels_are_ordered_by_claim_strength() {
@@ -786,5 +921,52 @@ mod tests {
             EvidenceBoundaryLevel::parse("real-target-substrate"),
             Some(EvidenceBoundaryLevel::RealTargetSubstrate)
         );
+    }
+
+    #[test]
+    fn phase1_process_types_are_portable_semantic() {
+        use EvidenceBoundaryLevel::SemanticModel;
+        for kind in [ObjectKind::Process, ObjectKind::Thread, ObjectKind::ThreadGroup,
+                     ObjectKind::FdTable, ObjectKind::Credential] {
+            assert_eq!(object_kind_evidence_level(kind), SemanticModel,
+                "{} must be SemanticModel (portable)", kind.as_str());
+        }
+    }
+
+    #[test]
+    fn signal_frame_is_not_pure_semantic() {
+        let level = object_kind_evidence_level(ObjectKind::SignalFrame);
+        assert!(level.rank() >= EvidenceBoundaryLevel::PortableArtifactExecution.rank(),
+            "SignalFrame must be at least PortableArtifactExecution (contains arch regs)");
+    }
+
+    #[test]
+    fn page_alloc_is_substrate_evidence_only() {
+        let level = object_kind_evidence_level(ObjectKind::PageAllocSubstrateEvent);
+        assert_eq!(level, EvidenceBoundaryLevel::RealTargetSubstrate,
+            "PageAllocSubstrateEvent contains physical frame identity — substrate evidence only");
+    }
+
+    #[test]
+    fn all_new_kinds_have_explicit_evidence_boundary() {
+        let new_kinds = [
+            ObjectKind::Process, ObjectKind::Thread, ObjectKind::ThreadGroup,
+            ObjectKind::FdTable, ObjectKind::OpenFileDescription,
+            ObjectKind::Credential, ObjectKind::CredentialTransition,
+            ObjectKind::SignalDisposition, ObjectKind::PendingSignal,
+            ObjectKind::SignalMask, ObjectKind::SignalFrame, ObjectKind::SignalDelivery,
+            ObjectKind::PageFaultEvent, ObjectKind::CowBreakEvent,
+            ObjectKind::VmaSplitEvent, ObjectKind::PageAllocSubstrateEvent,
+            ObjectKind::FutexKey, ObjectKind::FutexWait, ObjectKind::FutexWake,
+            ObjectKind::FutexRequeue, ObjectKind::RobustList,
+            ObjectKind::ReadySource, ObjectKind::EpollWatcher,
+            ObjectKind::FileLock, ObjectKind::Xattr,
+        ];
+        for kind in new_kinds {
+            // Must not panic — every kind must be handled in object_kind_evidence_level()
+            let _level = object_kind_evidence_level(kind);
+            assert!(_level.rank() <= EvidenceBoundaryLevel::RealTargetSubstrate.rank(),
+                "{} has invalid evidence boundary", kind.as_str());
+        }
     }
 }

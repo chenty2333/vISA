@@ -128,6 +128,38 @@ pub enum ContractObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
+    // Process/Thread family (Phase 1)
+    Process,
+    Thread,
+    ThreadGroup,
+    FdTable,
+    OpenFileDescription,
+    Credential,
+    CredentialTransition,
+    // Signal family (Phase 3)
+    SignalDisposition,
+    PendingSignal,
+    SignalMask,
+    SignalFrame,
+    SignalDelivery,
+    // Memory expansion (Phase 2)
+    PageFaultEvent,
+    CowBreakEvent,
+    VmaSplitEvent,
+    PageAllocSubstrateEvent,
+    // Futex family (Phase 6)
+    FutexKey,
+    FutexWait,
+    FutexWake,
+    FutexRequeue,
+    RobustList,
+    // Epoll readiness (Phase 5)
+    ReadySource,
+    EpollWatcher,
+    // Filesystem expansion (Phase 7)
+    FileLock,
+    Xattr,
+    // Existing tail
     EventLog,
     Tombstone,
     ExternalObject,
@@ -263,6 +295,37 @@ impl ContractObjectKind {
             Self::VmaRegion => "vma-region",
             Self::PageObject => "page-object",
             Self::EventLog => "event-log",
+            // Process/Thread family
+            Self::Process => "process",
+            Self::Thread => "thread",
+            Self::ThreadGroup => "thread-group",
+            Self::FdTable => "fd-table",
+            Self::OpenFileDescription => "open-file-description",
+            Self::Credential => "credential",
+            Self::CredentialTransition => "credential-transition",
+            // Signal family
+            Self::SignalDisposition => "signal-disposition",
+            Self::PendingSignal => "pending-signal",
+            Self::SignalMask => "signal-mask",
+            Self::SignalFrame => "signal-frame",
+            Self::SignalDelivery => "signal-delivery",
+            // Memory expansion
+            Self::PageFaultEvent => "page-fault-event",
+            Self::CowBreakEvent => "cow-break-event",
+            Self::VmaSplitEvent => "vma-split-event",
+            Self::PageAllocSubstrateEvent => "page-alloc-substrate-event",
+            // Futex family
+            Self::FutexKey => "futex-key",
+            Self::FutexWait => "futex-wait",
+            Self::FutexWake => "futex-wake",
+            Self::FutexRequeue => "futex-requeue",
+            Self::RobustList => "robust-list",
+            // Epoll readiness
+            Self::ReadySource => "ready-source",
+            Self::EpollWatcher => "epoll-watcher",
+            // Filesystem expansion
+            Self::FileLock => "file-lock",
+            Self::Xattr => "xattr",
             Self::Tombstone => "tombstone",
             Self::ExternalObject => "external-object",
         }

@@ -2266,4 +2266,31 @@ pub enum EventKind {
     FailureEffect {
         effect: FailureEffect,
     },
+    // Process/Thread family (Phase 1)
+    ProcessCreated {
+        pid: u32,
+        parent_pid: Option<u32>,
+    },
+    ProcessStateChanged {
+        pid: u32,
+        old_state: String,
+        new_state: String,
+    },
+    ThreadCreated {
+        tid: u32,
+        task_id: u64,
+    },
+    ThreadGroupCreated {
+        tgid: u32,
+    },
+    FdTableCreated {
+        shared: bool,
+    },
+    CredentialCreated {
+        uid: u32,
+        gid: u32,
+    },
+    CredentialTransition {
+        from_id: u64,
+    },
 }

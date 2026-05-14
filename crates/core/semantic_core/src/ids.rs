@@ -132,3 +132,34 @@ pub type TargetTrapId = u64;
 pub type DmwLeaseId = u64;
 pub type HostcallTraceId = u64;
 pub type CleanupTransactionId = u64;
+// Process/Thread family
+pub type ProcessId = u64;
+pub type ThreadId = u64;
+pub type ThreadGroupId = u64;
+pub type FdTableId = u64;
+pub type OpenFileDescriptionId = u64;
+pub type CredentialId = u64;
+pub type CredentialTransitionId = u64;
+// Signal family
+pub type SignalDispositionId = u64;
+pub type PendingSignalId = u64;
+pub type SignalMaskId = u64;
+pub type SignalFrameId = u64;
+pub type SignalDeliveryId = u64;
+// Memory expansion
+pub type PageFaultEventId = u64;
+pub type CowBreakEventId = u64;
+pub type VmaSplitEventId = u64;
+pub type PageAllocSubstrateEventId = u64;
+// Futex family
+pub type FutexKeyId = u64;
+pub type FutexWaitId = u64;
+pub type FutexWakeId = u64;
+pub type FutexRequeueId = u64;
+pub type RobustListId = u64;
+// Epoll readiness
+pub type ReadySourceId = u64;
+pub type EpollWatcherId = u64;
+// Filesystem expansion
+pub type FileLockId = u64;
+pub type XattrId = u64;
