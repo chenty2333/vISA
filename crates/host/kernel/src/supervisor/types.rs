@@ -30,7 +30,9 @@ pub(crate) struct Rlimit {
 }
 
 impl Default for Rlimit {
-    fn default() -> Self { Self { cur: u64::MAX, max: u64::MAX } }
+    fn default() -> Self {
+        Self { cur: u64::MAX, max: u64::MAX }
+    }
 }
 
 pub(crate) const RLIMIT_NOFILE: usize = 7;
@@ -75,8 +77,8 @@ pub(crate) const SIG_NUM: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SigAction {
-    pub(crate) handler: u64,     // 0=SIG_DFL, 1=SIG_IGN, else=handler VA
-    pub(crate) flags: u64,       // SA_SIGINFO etc.
+    pub(crate) handler: u64, // 0=SIG_DFL, 1=SIG_IGN, else=handler VA
+    pub(crate) flags: u64,   // SA_SIGINFO etc.
     pub(crate) restorer: u64,
     pub(crate) mask: u64,
 }

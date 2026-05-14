@@ -381,6 +381,41 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id && cleanup.generation == generation)
                 .map(FaultCleanupTransaction::object_ref),
+            ContractObjectKind::Process => snapshot
+                .processes
+                .iter()
+                .find(|process| process.id == id && process.generation == generation)
+                .map(ProcessRecord::object_ref),
+            ContractObjectKind::Thread => snapshot
+                .threads
+                .iter()
+                .find(|thread| thread.id == id && thread.generation == generation)
+                .map(ThreadRecord::object_ref),
+            ContractObjectKind::ThreadGroup => snapshot
+                .thread_groups
+                .iter()
+                .find(|thread_group| thread_group.id == id && thread_group.generation == generation)
+                .map(ThreadGroupRecord::object_ref),
+            ContractObjectKind::FdTable => snapshot
+                .fd_tables
+                .iter()
+                .find(|fd_table| fd_table.id == id && fd_table.generation == generation)
+                .map(FdTableRecord::object_ref),
+            ContractObjectKind::OpenFileDescription => snapshot
+                .open_file_descriptions
+                .iter()
+                .find(|description| description.id == id && description.generation == generation)
+                .map(OpenFileDescriptionRecord::object_ref),
+            ContractObjectKind::Credential => snapshot
+                .credentials
+                .iter()
+                .find(|credential| credential.id == id && credential.generation == generation)
+                .map(CredentialRecord::object_ref),
+            ContractObjectKind::CredentialTransition => snapshot
+                .credential_transitions
+                .iter()
+                .find(|transition| transition.id == id && transition.generation == generation)
+                .map(CredentialTransitionRecord::object_ref),
             ContractObjectKind::ExternalObject => snapshot
                 .external_objects
                 .iter()
@@ -783,6 +818,39 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|cleanup| cleanup.id == id)
                 .map(FaultCleanupTransaction::object_ref),
+            ContractObjectKind::Process => snapshot
+                .processes
+                .iter()
+                .find(|process| process.id == id)
+                .map(ProcessRecord::object_ref),
+            ContractObjectKind::Thread => {
+                snapshot.threads.iter().find(|thread| thread.id == id).map(ThreadRecord::object_ref)
+            }
+            ContractObjectKind::ThreadGroup => snapshot
+                .thread_groups
+                .iter()
+                .find(|thread_group| thread_group.id == id)
+                .map(ThreadGroupRecord::object_ref),
+            ContractObjectKind::FdTable => snapshot
+                .fd_tables
+                .iter()
+                .find(|fd_table| fd_table.id == id)
+                .map(FdTableRecord::object_ref),
+            ContractObjectKind::OpenFileDescription => snapshot
+                .open_file_descriptions
+                .iter()
+                .find(|description| description.id == id)
+                .map(OpenFileDescriptionRecord::object_ref),
+            ContractObjectKind::Credential => snapshot
+                .credentials
+                .iter()
+                .find(|credential| credential.id == id)
+                .map(CredentialRecord::object_ref),
+            ContractObjectKind::CredentialTransition => snapshot
+                .credential_transitions
+                .iter()
+                .find(|transition| transition.id == id)
+                .map(CredentialTransitionRecord::object_ref),
             ContractObjectKind::ExternalObject => snapshot
                 .external_objects
                 .iter()
@@ -844,13 +912,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::PageObject
             | ContractObjectKind::EventLog
             | ContractObjectKind::Tombstone
-            | ContractObjectKind::Process
-            | ContractObjectKind::Thread
-            | ContractObjectKind::ThreadGroup
-            | ContractObjectKind::FdTable
-            | ContractObjectKind::OpenFileDescription
-            | ContractObjectKind::Credential
-            | ContractObjectKind::CredentialTransition
             | ContractObjectKind::SignalDisposition
             | ContractObjectKind::PendingSignal
             | ContractObjectKind::SignalMask

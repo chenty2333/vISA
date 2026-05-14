@@ -1,22 +1,18 @@
 use alloc::vec::Vec;
 
-use crate::frontends::linux_elf::handle_user_fault;
-
 use super::{
     runtime::PrototypeRuntime,
-    types::{
-        PendingSignal, Pid, ProcessRuntimeStateKind, SigAction, ThreadRuntimeStateKind, Tid,
-    },
+    types::{PendingSignal, Pid, ProcessRuntimeStateKind, SigAction, ThreadRuntimeStateKind, Tid},
 };
+use crate::frontends::linux_elf::handle_user_fault;
 
 /// Linux signal default actions.
 fn signal_default_action(signo: u8) -> SignalDefaultAction {
     match signo {
         // POSIX: terminate
-        1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 => {
-            SignalDefaultAction::Terminate { core: signo == 3 || signo == 4 || signo == 6
-                || signo == 8 || signo == 11 }
-        }
+        1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 => SignalDefaultAction::Terminate {
+            core: signo == 3 || signo == 4 || signo == 6 || signo == 8 || signo == 11,
+        },
         // POSIX: stop
         17 | 19 | 20 | 22 | 23 | 24 | 25 => SignalDefaultAction::Stop,
         // POSIX: continue
@@ -48,12 +44,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         }
         if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == tid) {
-            thread.pending_signals.push(PendingSignal {
-                signo,
-                si_code,
-                si_pid,
-                si_uid,
-            });
+            thread.pending_signals.push(PendingSignal { signo, si_code, si_pid, si_uid });
         }
     }
 
@@ -69,12 +60,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signo == 0 || signo >= 64 {
             return;
         }
-        let tids: Vec<Tid> = self
-            .threads
-            .iter()
-            .filter(|t| t.pid == pid)
-            .map(|t| t.tid)
-            .collect();
+        let tids: Vec<Tid> = self.threads.iter().filter(|t| t.pid == pid).map(|t| t.tid).collect();
         for tid in tids {
             self.queue_signal_to_thread(tid, signo, si_code, si_pid, si_uid);
         }
@@ -84,20 +70,10 @@ impl<'engine> PrototypeRuntime<'engine> {
     /// Called before returning to userspace (after syscall processing).
     /// Returns true if a signal was delivered (caller must re-check registers).
     pub(crate) fn deliver_pending_signals(&mut self, tid: Tid) -> bool {
-        let current_pid = self
-            .threads
-            .iter()
-            .find(|t| t.tid == tid)
-            .map(|t| t.pid)
-            .unwrap_or(1);
+        let current_pid = self.threads.iter().find(|t| t.tid == tid).map(|t| t.pid).unwrap_or(1);
 
         // Collect eligible pending signals
-        let sigmask = self
-            .threads
-            .iter()
-            .find(|t| t.tid == tid)
-            .map(|t| t.sigmask)
-            .unwrap_or(0);
+        let sigmask = self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigmask).unwrap_or(0);
 
         let pending: Vec<PendingSignal> = self
             .threads
@@ -197,10 +173,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signo == 0 || signo >= 64 {
             return None;
         }
-        self.processes
-            .iter()
-            .find(|p| p.pid == pid)
-            .map(|p| p.sigactions[signo as usize])
+        self.processes.iter().find(|p| p.pid == pid).map(|p| p.sigactions[signo as usize])
     }
 
     /// Set signal mask for a thread.
@@ -208,9 +181,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         let thread = self.threads.iter_mut().find(|t| t.tid == tid)?;
         let old = thread.sigmask;
         match how {
-            0 => thread.sigmask = set,                    // SIG_BLOCK
-            1 => thread.sigmask |= set,                   // SIG_UNBLOCK
-            2 => thread.sigmask = set,                    // SIG_SETMASK
+            0 => thread.sigmask = set,  // SIG_BLOCK
+            1 => thread.sigmask |= set, // SIG_UNBLOCK
+            2 => thread.sigmask = set,  // SIG_SETMASK
             _ => return Some(old),
         }
         Some(old)
@@ -218,9 +191,6 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     /// Get signal mask for a thread.
     pub(crate) fn get_sigmask(&self, tid: Tid) -> Option<u64> {
-        self.threads
-            .iter()
-            .find(|t| t.tid == tid)
-            .map(|t| t.sigmask)
+        self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigmask)
     }
 }

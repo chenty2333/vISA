@@ -20,8 +20,8 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, Rlimit, SeccompMode, SigAction, SocketPairState, TaskId, Tid,
-        ThreadRuntimeState, ThreadRuntimeStateKind,
+        ProcessRuntimeStateKind, Rlimit, SeccompMode, SigAction, SocketPairState, TaskId,
+        ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::WaitRegistry,
 };
@@ -154,7 +154,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let mut procs = Vec::new();
                 // Bootstrap init process (pid=1)
                 procs.push(ProcessRuntimeState {
-                    pid: 1, ppid: 0, pgid: 1, sid: 1, tgid: 1,
+                    pid: 1,
+                    ppid: 0,
+                    pgid: 1,
+                    sid: 1,
+                    tgid: 1,
                     exit_signal: None,
                     state: ProcessRuntimeStateKind::Running,
                     exit_code: None,
@@ -167,7 +171,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let mut thrds = Vec::new();
                 // Bootstrap thread (tid=1, task_id=1) for init process
                 thrds.push(ThreadRuntimeState {
-                    tid: 1, task_id: 1, pid: 1,
+                    tid: 1,
+                    task_id: 1,
+                    pid: 1,
                     state: ThreadRuntimeStateKind::Running,
                     clear_child_tid: None,
                     sigmask: 0,
@@ -251,22 +257,17 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn current_pid(&self) -> Pid {
         let task_id = self.scheduler.current_task();
-        self.threads.iter()
-            .find(|t| t.task_id == task_id)
-            .map(|t| t.pid)
-            .unwrap_or(1)
+        self.threads.iter().find(|t| t.task_id == task_id).map(|t| t.pid).unwrap_or(1)
     }
 
     pub(crate) fn current_tid(&self) -> Tid {
         let task_id = self.scheduler.current_task();
-        self.threads.iter()
-            .find(|t| t.task_id == task_id)
-            .map(|t| t.tid)
-            .unwrap_or(1)
+        self.threads.iter().find(|t| t.task_id == task_id).map(|t| t.tid).unwrap_or(1)
     }
 
     pub(crate) fn get_rlimit(&self, pid: Pid, resource: usize) -> Rlimit {
-        self.processes.iter()
+        self.processes
+            .iter()
             .find(|p| p.pid == pid)
             .and_then(|p| p.rlimits.get(resource).copied())
             .unwrap_or_default()

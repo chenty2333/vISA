@@ -1,6 +1,9 @@
 use super::{
     runtime::PrototypeRuntime,
-    types::{Pid, ProcessRuntimeState, ProcessRuntimeStateKind, TaskId, Tid, ThreadRuntimeState, ThreadRuntimeStateKind},
+    types::{
+        Pid, ProcessRuntimeState, ProcessRuntimeStateKind, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
+    },
 };
 
 // Linux clone flags
@@ -30,9 +33,14 @@ const CLONE_NEWNET: u64 = 0x40000000;
 const CLONE_IO: u64 = 0x80000000;
 
 // Flags that require namespace support (currently unsupported)
-const CLONE_NS_MASK: u64 =
-    CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC
-    | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET | CLONE_IO;
+const CLONE_NS_MASK: u64 = CLONE_NEWNS
+    | CLONE_NEWCGROUP
+    | CLONE_NEWUTS
+    | CLONE_NEWIPC
+    | CLONE_NEWUSER
+    | CLONE_NEWPID
+    | CLONE_NEWNET
+    | CLONE_IO;
 
 impl<'engine> PrototypeRuntime<'engine> {
     /// Shared-mode clone.

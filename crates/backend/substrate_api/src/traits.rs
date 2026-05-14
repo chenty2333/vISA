@@ -135,7 +135,13 @@ pub trait PageTableAuthority {
         Err(SubstrateError::unsupported("PageTableAuthority", "alloc_frame"))
     }
 
-    fn map_page(&mut self, va: u64, phys: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+    fn map_page(
+        &mut self,
+        va: u64,
+        phys: u64,
+        writable: bool,
+        executable: bool,
+    ) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "map_page"))
     }
 

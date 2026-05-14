@@ -398,8 +398,13 @@ impl GuestMemoryManager {
     }
 
     /// Find the VMA region containing a virtual address in the given address space.
-    pub fn find_region(&self, aspace: GuestAddressSpaceRef, va: GuestVa) -> Option<&VmaRegionRecord> {
-        self.regions.iter()
+    pub fn find_region(
+        &self,
+        aspace: GuestAddressSpaceRef,
+        va: GuestVa,
+    ) -> Option<&VmaRegionRecord> {
+        self.regions
+            .iter()
             .filter(|r| r.aspace == aspace && r.state == VmaState::Mapped)
             .find(|r| r.range.contains_range(va, 1))
     }
@@ -425,7 +430,9 @@ impl GuestMemoryManager {
 
     /// Find a free virtual address range of at least `len` bytes, near `hint`.
     pub fn find_gap(&self, aspace: GuestAddressSpaceRef, len: u64, hint: u64) -> Option<u64> {
-        let mut region_bounds: Vec<(u64, u64)> = self.regions.iter()
+        let mut region_bounds: Vec<(u64, u64)> = self
+            .regions
+            .iter()
             .filter(|r| r.aspace == aspace && r.state == VmaState::Mapped)
             .map(|r| {
                 let end = r.range.start.checked_add(r.range.len).unwrap_or(u64::MAX);

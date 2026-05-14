@@ -155,6 +155,14 @@ impl SemanticGraph {
         if thread_group.kind != ContractObjectKind::ThreadGroup || thread_group.id == 0 {
             return false;
         }
+        if process.generation == 0
+            || aspace.generation == 0
+            || fd_table.generation == 0
+            || credential.generation == 0
+            || thread_group.generation == 0
+        {
+            return false;
+        }
         // Validate cross-ref existence
         if !self.domains.process.processes.iter().any(|r| r.object_ref() == process) {
             return false;
@@ -222,10 +230,7 @@ impl SemanticGraph {
         if id == 0 || self.domains.process.thread_groups.iter().any(|r| r.id == id) {
             return false;
         }
-        if leader.kind != ContractObjectKind::Thread || leader.id == 0 {
-            return false;
-        }
-        if !self.domains.process.threads.iter().any(|r| r.object_ref() == leader) {
+        if leader.kind != ContractObjectKind::Thread || leader.id == 0 || leader.generation == 0 {
             return false;
         }
         let recorded_at_event =
@@ -274,6 +279,9 @@ impl SemanticGraph {
         }
         if owner_thread_group.kind != ContractObjectKind::ThreadGroup || owner_thread_group.id == 0
         {
+            return false;
+        }
+        if owner_thread_group.generation == 0 {
             return false;
         }
         if !self.domains.process.thread_groups.iter().any(|r| r.object_ref() == owner_thread_group)
@@ -351,6 +359,9 @@ impl SemanticGraph {
         if owner_process.kind != ContractObjectKind::Process || owner_process.id == 0 {
             return false;
         }
+        if owner_process.generation == 0 {
+            return false;
+        }
         if !self.domains.process.processes.iter().any(|r| r.object_ref() == owner_process) {
             return false;
         }
@@ -418,6 +429,60 @@ impl SemanticGraph {
         Some(id)
     }
 
+    // ── Restore ──
+
+    pub fn restore_process_records(
+        &mut self,
+        processes: &[ProcessRecord],
+        threads: &[ThreadRecord],
+        thread_groups: &[ThreadGroupRecord],
+        fd_tables: &[FdTableRecord],
+        open_file_descriptions: &[OpenFileDescriptionRecord],
+        credentials: &[CredentialRecord],
+        credential_transitions: &[CredentialTransitionRecord],
+    ) -> bool {
+        if !self.domains.process.processes.is_empty()
+            || !self.domains.process.threads.is_empty()
+            || !self.domains.process.thread_groups.is_empty()
+            || !self.domains.process.fd_tables.is_empty()
+            || !self.domains.process.open_file_descriptions.is_empty()
+            || !self.domains.process.credentials.is_empty()
+            || !self.domains.process.credential_transitions.is_empty()
+        {
+            return false;
+        }
+        if !process_records_are_valid(
+            processes,
+            threads,
+            thread_groups,
+            fd_tables,
+            open_file_descriptions,
+            credentials,
+            credential_transitions,
+        ) {
+            return false;
+        }
+
+        self.domains.process.next_process_id = next_id(processes, |record| record.id);
+        self.domains.process.next_thread_id = next_id(threads, |record| record.id);
+        self.domains.process.next_thread_group_id = next_id(thread_groups, |record| record.id);
+        self.domains.process.next_fd_table_id = next_id(fd_tables, |record| record.id);
+        self.domains.process.next_open_file_description_id =
+            next_id(open_file_descriptions, |record| record.id);
+        self.domains.process.next_credential_id = next_id(credentials, |record| record.id);
+        self.domains.process.next_credential_transition_id =
+            next_id(credential_transitions, |record| record.id);
+
+        self.domains.process.processes = processes.to_vec();
+        self.domains.process.threads = threads.to_vec();
+        self.domains.process.thread_groups = thread_groups.to_vec();
+        self.domains.process.fd_tables = fd_tables.to_vec();
+        self.domains.process.open_file_descriptions = open_file_descriptions.to_vec();
+        self.domains.process.credentials = credentials.to_vec();
+        self.domains.process.credential_transitions = credential_transitions.to_vec();
+        true
+    }
+
     // ── Invariants ──
 
     pub fn check_process_invariants(&self) -> Vec<String> {
@@ -429,7 +494,7 @@ impl SemanticGraph {
             if process.generation == 0 {
                 violations.push(format!("process {}: gen=0", process.pid));
             }
-            if process.thread_group.id == 0 {
+            if !valid_ref_kind(process.thread_group, ContractObjectKind::ThreadGroup) {
                 violations.push(format!("process {}: missing thread_group", process.pid));
             }
             if !self
@@ -441,6 +506,14 @@ impl SemanticGraph {
             {
                 violations.push(format!("process {}: dangling thread_group", process.pid));
             }
+            for child in &process.children {
+                if !valid_ref_kind(*child, ContractObjectKind::Process) {
+                    violations.push(format!("process {}: invalid child ref", process.pid));
+                }
+                if !self.domains.process.processes.iter().any(|p| p.object_ref() == *child) {
+                    violations.push(format!("process {}: dangling child", process.pid));
+                }
+            }
         }
         for thread in &self.domains.process.threads {
             if thread.id == 0 {
@@ -449,18 +522,62 @@ impl SemanticGraph {
             if thread.generation == 0 {
                 violations.push(format!("thread {}: gen=0", thread.tid));
             }
-            if thread.process.id == 0 {
+            if thread.task_id == 0 {
+                violations.push(format!("thread {}: task_id=0", thread.tid));
+            }
+            if !valid_ref_kind(thread.process, ContractObjectKind::Process) {
                 violations.push(format!("thread {}: missing process", thread.tid));
             }
-            if thread.credential.id == 0 {
+            if !valid_ref_kind(thread.aspace, ContractObjectKind::GuestAddressSpace) {
+                violations.push(format!("thread {}: missing address space", thread.tid));
+            }
+            if !valid_ref_kind(thread.fd_table, ContractObjectKind::FdTable) {
+                violations.push(format!("thread {}: missing fd_table", thread.tid));
+            }
+            if !valid_ref_kind(thread.credential, ContractObjectKind::Credential) {
                 violations.push(format!("thread {}: missing credential", thread.tid));
+            }
+            if !valid_ref_kind(thread.thread_group, ContractObjectKind::ThreadGroup) {
+                violations.push(format!("thread {}: missing thread_group", thread.tid));
             }
             if !self.domains.process.processes.iter().any(|p| p.object_ref() == thread.process) {
                 violations.push(format!("thread {}: dangling process", thread.tid));
             }
+            if !self.domains.process.fd_tables.iter().any(|f| f.object_ref() == thread.fd_table) {
+                violations.push(format!("thread {}: dangling fd_table", thread.tid));
+            }
             if !self.domains.process.credentials.iter().any(|c| c.object_ref() == thread.credential)
             {
                 violations.push(format!("thread {}: dangling credential", thread.tid));
+            }
+            if !self
+                .domains
+                .process
+                .thread_groups
+                .iter()
+                .any(|tg| tg.object_ref() == thread.thread_group)
+            {
+                violations.push(format!("thread {}: dangling thread_group", thread.tid));
+            }
+        }
+        for thread_group in &self.domains.process.thread_groups {
+            if thread_group.id == 0 {
+                violations.push(format!("thread_group {}: id=0", thread_group.tgid));
+            }
+            if thread_group.generation == 0 {
+                violations.push(format!("thread_group {}: gen=0", thread_group.tgid));
+            }
+            if !valid_ref_kind(thread_group.leader, ContractObjectKind::Thread) {
+                violations.push(format!("thread_group {}: missing leader", thread_group.tgid));
+            }
+            if !self
+                .domains
+                .process
+                .threads
+                .iter()
+                .any(|thread| thread.object_ref() == thread_group.leader)
+            {
+                violations.push(format!("thread_group {}: dangling leader", thread_group.tgid));
             }
         }
         for cred in &self.domains.process.credentials {
@@ -470,6 +587,18 @@ impl SemanticGraph {
             if cred.generation == 0 {
                 violations.push(format!("cred {}: gen=0", cred.id));
             }
+            if !valid_ref_kind(cred.owner_process, ContractObjectKind::Process) {
+                violations.push(format!("cred {}: missing owner_process", cred.id));
+            }
+            if !self
+                .domains
+                .process
+                .processes
+                .iter()
+                .any(|process| process.object_ref() == cred.owner_process)
+            {
+                violations.push(format!("cred {}: dangling owner_process", cred.id));
+            }
         }
         for fd_table in &self.domains.process.fd_tables {
             if fd_table.id == 0 {
@@ -478,7 +607,256 @@ impl SemanticGraph {
             if fd_table.generation == 0 {
                 violations.push(format!("fd_table {}: gen=0", fd_table.id));
             }
+            if !valid_ref_kind(fd_table.owner_thread_group, ContractObjectKind::ThreadGroup) {
+                violations.push(format!("fd_table {}: missing owner_thread_group", fd_table.id));
+            }
+            if !self
+                .domains
+                .process
+                .thread_groups
+                .iter()
+                .any(|thread_group| thread_group.object_ref() == fd_table.owner_thread_group)
+            {
+                violations.push(format!("fd_table {}: dangling owner_thread_group", fd_table.id));
+            }
+        }
+        for description in &self.domains.process.open_file_descriptions {
+            if description.id == 0 {
+                violations.push(format!("open_file_description {}: id=0", description.id));
+            }
+            if description.generation == 0 {
+                violations.push(format!("open_file_description {}: gen=0", description.id));
+            }
+            if description.inode_ref.id == 0 || description.inode_ref.generation == 0 {
+                violations
+                    .push(format!("open_file_description {}: missing inode_ref", description.id));
+            }
+        }
+        for transition in &self.domains.process.credential_transitions {
+            if transition.id == 0 {
+                violations.push(format!("credential_transition {}: id=0", transition.id));
+            }
+            if transition.generation == 0 {
+                violations.push(format!("credential_transition {}: gen=0", transition.id));
+            }
+            if !valid_ref_kind(transition.from_credential, ContractObjectKind::Credential) {
+                violations.push(format!(
+                    "credential_transition {}: missing from_credential",
+                    transition.id
+                ));
+            }
+            if !valid_ref_kind(transition.to_credential, ContractObjectKind::Credential) {
+                violations.push(format!(
+                    "credential_transition {}: missing to_credential",
+                    transition.id
+                ));
+            }
+            if !self
+                .domains
+                .process
+                .credentials
+                .iter()
+                .any(|credential| credential.object_ref() == transition.from_credential)
+            {
+                violations.push(format!(
+                    "credential_transition {}: dangling from_credential",
+                    transition.id
+                ));
+            }
+            if !self
+                .domains
+                .process
+                .credentials
+                .iter()
+                .any(|credential| credential.object_ref() == transition.to_credential)
+            {
+                violations.push(format!(
+                    "credential_transition {}: dangling to_credential",
+                    transition.id
+                ));
+            }
         }
         violations
+    }
+}
+
+fn process_records_are_valid(
+    processes: &[ProcessRecord],
+    threads: &[ThreadRecord],
+    thread_groups: &[ThreadGroupRecord],
+    fd_tables: &[FdTableRecord],
+    open_file_descriptions: &[OpenFileDescriptionRecord],
+    credentials: &[CredentialRecord],
+    credential_transitions: &[CredentialTransitionRecord],
+) -> bool {
+    if !ids_are_unique(processes, |record| record.id)
+        || !ids_are_unique(threads, |record| record.id)
+        || !ids_are_unique(thread_groups, |record| record.id)
+        || !ids_are_unique(fd_tables, |record| record.id)
+        || !ids_are_unique(open_file_descriptions, |record| record.id)
+        || !ids_are_unique(credentials, |record| record.id)
+        || !ids_are_unique(credential_transitions, |record| record.id)
+    {
+        return false;
+    }
+
+    processes.iter().all(|process| {
+        process.id != 0
+            && process.generation != 0
+            && contains_thread_group_ref(thread_groups, process.thread_group)
+            && process.children.iter().all(|child| contains_process_ref(processes, *child))
+    }) && threads.iter().all(|thread| {
+        thread.id != 0
+            && thread.generation != 0
+            && thread.task_id != 0
+            && valid_ref_kind(thread.aspace, ContractObjectKind::GuestAddressSpace)
+            && contains_process_ref(processes, thread.process)
+            && contains_fd_table_ref(fd_tables, thread.fd_table)
+            && contains_credential_ref(credentials, thread.credential)
+            && contains_thread_group_ref(thread_groups, thread.thread_group)
+    }) && thread_groups.iter().all(|thread_group| {
+        thread_group.id != 0
+            && thread_group.generation != 0
+            && contains_thread_ref(threads, thread_group.leader)
+    }) && fd_tables.iter().all(|fd_table| {
+        fd_table.id != 0
+            && fd_table.generation != 0
+            && contains_thread_group_ref(thread_groups, fd_table.owner_thread_group)
+    }) && open_file_descriptions.iter().all(|description| {
+        description.id != 0
+            && description.generation != 0
+            && description.inode_ref.id != 0
+            && description.inode_ref.generation != 0
+    }) && credentials.iter().all(|credential| {
+        credential.id != 0
+            && credential.generation != 0
+            && contains_process_ref(processes, credential.owner_process)
+    }) && credential_transitions.iter().all(|transition| {
+        transition.id != 0
+            && transition.generation != 0
+            && contains_credential_ref(credentials, transition.from_credential)
+            && contains_credential_ref(credentials, transition.to_credential)
+    })
+}
+
+fn valid_ref_kind(reference: ContractObjectRef, kind: ContractObjectKind) -> bool {
+    reference.kind == kind && reference.id != 0 && reference.generation != 0
+}
+
+fn contains_process_ref(records: &[ProcessRecord], reference: ContractObjectRef) -> bool {
+    valid_ref_kind(reference, ContractObjectKind::Process)
+        && records.iter().any(|record| record.object_ref() == reference)
+}
+
+fn contains_thread_ref(records: &[ThreadRecord], reference: ContractObjectRef) -> bool {
+    valid_ref_kind(reference, ContractObjectKind::Thread)
+        && records.iter().any(|record| record.object_ref() == reference)
+}
+
+fn contains_thread_group_ref(records: &[ThreadGroupRecord], reference: ContractObjectRef) -> bool {
+    valid_ref_kind(reference, ContractObjectKind::ThreadGroup)
+        && records.iter().any(|record| record.object_ref() == reference)
+}
+
+fn contains_fd_table_ref(records: &[FdTableRecord], reference: ContractObjectRef) -> bool {
+    valid_ref_kind(reference, ContractObjectKind::FdTable)
+        && records.iter().any(|record| record.object_ref() == reference)
+}
+
+fn contains_credential_ref(records: &[CredentialRecord], reference: ContractObjectRef) -> bool {
+    valid_ref_kind(reference, ContractObjectKind::Credential)
+        && records.iter().any(|record| record.object_ref() == reference)
+}
+
+fn ids_are_unique<T>(records: &[T], mut id_of: impl FnMut(&T) -> u64) -> bool {
+    for (index, record) in records.iter().enumerate() {
+        let id = id_of(record);
+        if id == 0 || records.iter().skip(index + 1).any(|other| id_of(other) == id) {
+            return false;
+        }
+    }
+    true
+}
+
+fn next_id<T>(records: &[T], mut id: impl FnMut(&T) -> u64) -> u64 {
+    records.iter().map(|record| id(record)).max().unwrap_or(0) + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validate_contract_graph;
+
+    fn graph_with_bootstrapped_process_family() -> SemanticGraph {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::LinuxElf, "init");
+
+        let leader = ContractObjectRef::new(ContractObjectKind::Thread, 1, 1);
+        let thread_group_id =
+            graph.create_thread_group(1, leader).expect("create bootstrap thread group");
+        let thread_group = graph.query_thread_group(thread_group_id).unwrap().object_ref();
+        let process_id = graph
+            .create_process(1, None, 1, 1, thread_group, None)
+            .expect("create bootstrap process");
+        let process = graph.query_process(process_id).unwrap().object_ref();
+        let fd_table_id =
+            graph.create_fd_table(thread_group, true).expect("create bootstrap fd table");
+        let fd_table = graph.query_fd_table(fd_table_id).unwrap().object_ref();
+        let credential_id = graph
+            .create_credential(process, 0, 0, 0, 0, 0, 0, 0, 0)
+            .expect("create bootstrap credential");
+        let credential = graph.query_credential(credential_id).unwrap().object_ref();
+        let aspace = ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, 1, 1);
+        let thread_id = graph
+            .create_thread(1, 1, process, aspace, fd_table, credential, thread_group)
+            .expect("create bootstrap thread");
+
+        assert_eq!(graph.query_thread(thread_id).unwrap().object_ref(), leader);
+        graph
+    }
+
+    #[test]
+    fn process_family_bootstrap_can_close_thread_group_cycle() {
+        let graph = graph_with_bootstrapped_process_family();
+        assert!(graph.check_invariants().is_ok());
+
+        let mut snapshot = graph.snapshot();
+        let task = snapshot.tasks[0].object_ref();
+        let process = snapshot.processes[0].object_ref();
+        snapshot.explicit_edges.push(ContractEdgeRecord::new(
+            task,
+            process,
+            ContractEdgeMode::Live,
+            "task-process",
+            1,
+        ));
+
+        let violations = validate_contract_graph(&snapshot);
+        assert!(violations.is_empty(), "process refs must validate: {violations:?}");
+    }
+
+    #[test]
+    fn process_family_restore_preserves_snapshot_records() {
+        let graph = graph_with_bootstrapped_process_family();
+        let snapshot = graph.snapshot().portable_subset();
+        let mut restored = SemanticGraph::new();
+
+        assert!(restored.restore_process_records(
+            &snapshot.processes,
+            &snapshot.threads,
+            &snapshot.thread_groups,
+            &snapshot.fd_tables,
+            &snapshot.open_file_descriptions,
+            &snapshot.credentials,
+            &snapshot.credential_transitions,
+        ));
+        assert!(restored.check_invariants().is_ok());
+
+        let restored_snapshot = restored.snapshot();
+        assert_eq!(restored_snapshot.processes, snapshot.processes);
+        assert_eq!(restored_snapshot.threads, snapshot.threads);
+        assert_eq!(restored_snapshot.thread_groups, snapshot.thread_groups);
+        assert_eq!(restored_snapshot.fd_tables, snapshot.fd_tables);
+        assert_eq!(restored_snapshot.credentials, snapshot.credentials);
     }
 }

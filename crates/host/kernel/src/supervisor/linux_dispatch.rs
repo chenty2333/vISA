@@ -279,23 +279,39 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
             // Stubs for unimplemented PlanKind variants
-            PlanKind::Clone | PlanKind::Fork | PlanKind::Vfork
-            | PlanKind::Execve | PlanKind::Wait4 | PlanKind::Exit
-            | PlanKind::RtSigaction | PlanKind::RtSigprocmask
-            | PlanKind::Tgkill | PlanKind::RtSigreturn | PlanKind::Kill
+            PlanKind::Clone
+            | PlanKind::Fork
+            | PlanKind::Vfork
+            | PlanKind::Execve
+            | PlanKind::Wait4
+            | PlanKind::Exit
+            | PlanKind::RtSigaction
+            | PlanKind::RtSigprocmask
+            | PlanKind::Tgkill
+            | PlanKind::RtSigreturn
+            | PlanKind::Kill
             | PlanKind::Pause
-            | PlanKind::RenameAt2 | PlanKind::Fsetxattr | PlanKind::Fgetxattr
-            | PlanKind::Flock | PlanKind::FcntlSetlk
-            | PlanKind::FutexWaitBitset | PlanKind::FutexWakeBitset
-            | PlanKind::FutexRequeue | PlanKind::FutexCmpRequeue
-            | PlanKind::FutexLockPi | PlanKind::FutexUnlockPi
+            | PlanKind::RenameAt2
+            | PlanKind::Fsetxattr
+            | PlanKind::Fgetxattr
+            | PlanKind::Flock
+            | PlanKind::FcntlSetlk
+            | PlanKind::FutexWaitBitset
+            | PlanKind::FutexWakeBitset
+            | PlanKind::FutexRequeue
+            | PlanKind::FutexCmpRequeue
+            | PlanKind::FutexLockPi
+            | PlanKind::FutexUnlockPi
             | PlanKind::SetRobustList
-            | PlanKind::Getrlimit | PlanKind::Setrlimit | PlanKind::Prlimit64
-            | PlanKind::TimerfdCreate | PlanKind::TimerfdSettime
-            | PlanKind::TimerfdGettime | PlanKind::ClockAdjtime
-            | PlanKind::Seccomp | PlanKind::Bpf => {
-                Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64)))
-            }
+            | PlanKind::Getrlimit
+            | PlanKind::Setrlimit
+            | PlanKind::Prlimit64
+            | PlanKind::TimerfdCreate
+            | PlanKind::TimerfdSettime
+            | PlanKind::TimerfdGettime
+            | PlanKind::ClockAdjtime
+            | PlanKind::Seccomp
+            | PlanKind::Bpf => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

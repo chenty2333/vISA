@@ -1534,6 +1534,18 @@ impl VisaRuntime {
             }
         }
 
+        if !semantic.restore_process_records(
+            &snapshot.processes,
+            &snapshot.threads,
+            &snapshot.thread_groups,
+            &snapshot.fd_tables,
+            &snapshot.open_file_descriptions,
+            &snapshot.credentials,
+            &snapshot.credential_transitions,
+        ) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid process record"));
+        }
+
         let mut ledger = CapabilityLedger::new();
         for cap in &snapshot.capabilities {
             if !ledger.restore_record(cap.clone()) {
@@ -3099,6 +3111,49 @@ mod tests {
         assert_eq!(rt.snapshot().artifacts, before.artifacts);
         assert_eq!(rt.snapshot().code_objects, before.code_objects);
         assert_eq!(rt.snapshot().stores, before.stores);
+    }
+
+    fn portable_process_family_snapshot() -> ContractGraphSnapshot {
+        let mut graph = SemanticGraph::new();
+        graph.ensure_task(1, FrontendKind::LinuxElf, "init");
+
+        let leader = ContractObjectRef::new(ContractObjectKind::Thread, 1, 1);
+        let thread_group_id = graph.create_thread_group(1, leader).expect("create thread group");
+        let thread_group = graph.query_thread_group(thread_group_id).unwrap().object_ref();
+        let process_id =
+            graph.create_process(1, None, 1, 1, thread_group, None).expect("create process");
+        let process = graph.query_process(process_id).unwrap().object_ref();
+        let fd_table_id = graph.create_fd_table(thread_group, true).expect("create fd table");
+        let fd_table = graph.query_fd_table(fd_table_id).unwrap().object_ref();
+        let credential_id =
+            graph.create_credential(process, 0, 0, 0, 0, 0, 0, 0, 0).expect("create credential");
+        let credential = graph.query_credential(credential_id).unwrap().object_ref();
+        let aspace = ContractObjectRef::new(ContractObjectKind::GuestAddressSpace, 1, 1);
+        graph
+            .create_thread(1, 1, process, aspace, fd_table, credential, thread_group)
+            .expect("create thread");
+
+        graph.snapshot().portable_subset()
+    }
+
+    #[test]
+    fn restore_portable_subset_preserves_process_family_records() {
+        let snapshot = portable_process_family_snapshot();
+        assert!(!snapshot.processes.is_empty());
+        assert!(!snapshot.threads.is_empty());
+        assert!(!snapshot.thread_groups.is_empty());
+
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        rt.restore_portable_subset(&snapshot)
+            .expect("process-family portable snapshot must restore");
+        let restored = rt.snapshot();
+
+        assert_eq!(restored.processes, snapshot.processes);
+        assert_eq!(restored.threads, snapshot.threads);
+        assert_eq!(restored.thread_groups, snapshot.thread_groups);
+        assert_eq!(restored.fd_tables, snapshot.fd_tables);
+        assert_eq!(restored.credentials, snapshot.credentials);
     }
 
     #[test]
