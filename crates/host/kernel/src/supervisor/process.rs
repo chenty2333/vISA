@@ -41,6 +41,7 @@ const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
 const SIGCHLD: u8 = 17;
+const CLD_EXITED: i32 = 1;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
 
 // Flags that require namespace support (currently unsupported)
@@ -228,7 +229,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EINVAL);
         }
         let exit_signal = (flags & CLONE_EXIT_SIGNAL_MASK) as u8;
-        if exit_signal > 64 {
+        if exit_signal >= 64 {
             return Err(vmos_abi::ERR_EINVAL);
         }
 
@@ -352,12 +353,23 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     /// Transition a process to Zombie state with the given exit code.
     pub(crate) fn process_exit(&mut self, pid: Pid, exit_code: i32) {
+        let mut parent_signal = None;
         if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
+            if proc.state != ProcessRuntimeStateKind::Zombie
+                && proc.state != ProcessRuntimeStateKind::Dead
+            {
+                parent_signal = proc.exit_signal.map(|signal| (proc.ppid, signal));
+            }
             proc.state = ProcessRuntimeStateKind::Zombie;
             proc.exit_code = Some(exit_code);
         }
         for thread in self.threads.iter_mut().filter(|thread| thread.pid == pid) {
             thread.state = ThreadRuntimeStateKind::Dead;
+        }
+        if let Some((parent_pid, signal)) = parent_signal {
+            if parent_pid != 0 && signal != 0 {
+                self.queue_signal_to_process(parent_pid, signal, CLD_EXITED, pid, 0);
+            }
         }
         self.semantic.transition_process_state_by_pid(pid, ProcessState::Zombie { exit_code });
     }
