@@ -40,6 +40,7 @@ pub(crate) struct FdEntry {
     pub(crate) resource: FdResource,
     pub(crate) cursor: usize,
     pub(crate) fd_flags: u32,
+    pub(crate) status_flags: u32,
     pub(crate) cursor_group: Option<ResourceId>,
 }
 

@@ -225,6 +225,9 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
     let random = push_bytes(&mut page_bytes, page_base, &mut cursor, b"vmos-ltp-random!")?;
     let kconfig_skip =
         push_bytes(&mut page_bytes, page_base, &mut cursor, b"KCONFIG_SKIP_CHECK=1\0")?;
+    let ltp_dev = push_bytes(&mut page_bytes, page_base, &mut cursor, b"LTP_DEV=/dev/loop0\0")?;
+    let ltp_single_fs =
+        push_bytes(&mut page_bytes, page_base, &mut cursor, b"LTP_SINGLE_FS_TYPE=tmpfs\0")?;
     cursor &= !15;
 
     let entry = elf.header.pt2.entry_point();
@@ -253,6 +256,8 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
     values.push(execfn);
     values.push(0);
     values.push(kconfig_skip);
+    values.push(ltp_dev);
+    values.push(ltp_single_fs);
     values.push(0);
     for (kind, value) in auxv {
         values.push(kind);

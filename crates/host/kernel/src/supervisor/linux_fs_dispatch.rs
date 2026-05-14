@@ -9,6 +9,7 @@ use super::{
 };
 
 const O_DIRECTORY: u64 = 0o200000;
+const O_STATUS_MASK: u64 = 0o3 | 0o2000 | 0o4000;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn write_console_bytes(&mut self, bytes: &[u8]) -> Result<(), i32> {
@@ -77,6 +78,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "openat ptr overflowed")?;
         let len = u32::try_from(plan.args[2]).map_err(|_| "openat len overflowed")?;
         let path = self.linux.read_bytes(ptr, len)?;
+        let status_flags = linux_status_flags_from_open_flags(plan.args[3]);
 
         match self.lookup_path(&path) {
             Ok(info) => {
@@ -87,13 +89,16 @@ impl<'engine> PrototypeRuntime<'engine> {
                     resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
                     cursor: 0,
                     fd_flags: 0,
+                    status_flags,
                     cursor_group: None,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
             }
             Err(ServiceCallError::Errno(ERR_ENOENT)) if plan.args[3] & 0o100 != 0 => {
                 let mode = u32::try_from(plan.args[4]).map_err(|_| "openat mode overflowed")?;
-                match self.vfs.create_file(&path, mode) {
+                let uid = (plan.args[5] >> 32) as u32;
+                let gid = plan.args[5] as u32;
+                match self.vfs.create_file(&path, mode, uid, gid) {
                     Ok(()) => {
                         let fd = self.alloc_fd(FdEntry {
                             resource: FdResource::ServiceNode {
@@ -103,6 +108,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             },
                             cursor: 0,
                             fd_flags: 0,
+                            status_flags,
                             cursor_group: None,
                         });
                         Ok(LinuxCallResult::Ret(fd as i64))
@@ -188,4 +194,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+}
+
+fn linux_status_flags_from_open_flags(flags: u64) -> u32 {
+    (flags & O_STATUS_MASK) as u32
 }

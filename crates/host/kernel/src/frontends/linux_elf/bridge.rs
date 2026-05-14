@@ -14,17 +14,17 @@ use vmos_abi::{
     SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP,
     SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPID, SYS_GETPPID,
-    SYS_GETRANDOM, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID,
-    SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR,
-    SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR,
-    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_GETAFFINITY, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
-    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
-    SyscallContext,
+    SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID,
+    SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID,
+    SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN,
+    SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT,
+    SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE,
+    SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
+    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
+    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -49,9 +49,19 @@ const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
 const SYS_EXECVE: u64 = 59;
 const SYS_SYMLINK: u64 = 88;
+const SYS_SETUID: u64 = 105;
+const SYS_SETGID: u64 = 106;
+const SYS_SETREUID: u64 = 113;
+const SYS_SETREGID: u64 = 114;
+const SYS_GETGROUPS: u64 = 115;
+const SYS_SETGROUPS: u64 = 116;
+const SYS_GETRESUID: u64 = 118;
+const SYS_GETRESGID: u64 = 120;
+const SYS_UMOUNT2: u64 = 166;
 const SYS_SYMLINKAT: u64 = 266;
 const SYS_EXECVEAT: u64 = 322;
 const ERR_ENOEXEC: i32 = 8;
+const ERR_ENODEV: i32 = 19;
 const ERR_ETXTBSY: i32 = 26;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const EPOLL_EVENT_SIZE: u64 = 12;
@@ -134,8 +144,21 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_TRUNCATE => sys_truncate(frame),
         SYS_FTRUNCATE => sys_ftruncate(frame),
         SYS_GETPID | SYS_GETTID => Ok(active_context().task_id as i64),
+        SYS_GETPGID => Ok(active_context().task_id as i64),
         SYS_GETPPID => Ok(2),
-        SYS_GETUID | SYS_GETEUID | SYS_GETGID | SYS_GETEGID => Ok(0),
+        SYS_GETSID => Ok(active_context().task_id as i64),
+        SYS_GETUID => Ok(active_context().uid() as i64),
+        SYS_GETEUID => Ok(active_context().euid() as i64),
+        SYS_GETGID => Ok(active_context().gid() as i64),
+        SYS_GETEGID => Ok(active_context().egid() as i64),
+        SYS_SETUID => sys_setuid(frame),
+        SYS_SETGID => sys_setgid(frame),
+        SYS_SETREUID => sys_setreuid(frame),
+        SYS_SETREGID => sys_setregid(frame),
+        SYS_GETGROUPS => sys_getgroups(frame),
+        SYS_SETGROUPS => Ok(0),
+        SYS_GETRESUID => sys_getresuid(frame),
+        SYS_GETRESGID => sys_getresgid(frame),
         SYS_CHOWN | SYS_LCHOWN => sys_chown(frame),
         SYS_FCHOWNAT => sys_fchownat(frame),
         SYS_CAPGET => sys_capget(frame),
@@ -155,6 +178,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(frame),
         SYS_RT_SIGACTION => sys_rt_sigaction(frame),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
+        SYS_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(frame),
         SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
@@ -163,7 +187,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_UMASK => Ok(0),
         SYS_TIME => sys_time(frame),
         SYS_UTIMENSAT => Ok(0),
-        SYS_MOUNT => Err(ERR_EPERM),
+        SYS_MOUNT => sys_mount(frame),
+        SYS_UMOUNT2 => sys_umount2(frame),
         SYS_FALLOCATE => Err(vmos_abi::ERR_EOPNOTSUPP),
         SYS_FSETXATTR | SYS_FREMOVEXATTR => Err(vmos_abi::ERR_EOPNOTSUPP),
         SYS_BPF => Err(ERR_EPERM),
@@ -173,7 +198,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_WAIT4 => sys_wait4(frame),
         SYS_SETPGID => Ok(0),
         SYS_KILL => sys_kill(frame),
-        SYS_IOCTL => Ok(0),
+        SYS_IOCTL => sys_ioctl(frame),
         SYS_PIPE => sys_pipe(frame, 0),
         SYS_EVENTFD => sys_eventfd(frame, 0),
         SYS_EVENTFD2 => sys_eventfd(frame, frame.rsi),
@@ -233,6 +258,9 @@ fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
         let count = active_context()
             .supervisor
             .write_pipe_fd_bytes(fd, bytes.bytes().map_err(map_dmw_fault)?)?;
+        if count != 0 {
+            active_context().queue_io_signal();
+        }
         return Ok(count as i64);
     }
     if active_context().supervisor.is_socketpair_fd(fd) {
@@ -327,7 +355,11 @@ fn write_fd_chunk(fd: u32, bytes: &[u8]) -> Result<usize, i32> {
         return active_context().supervisor.write_vfs_fd_bytes(fd, bytes);
     }
     if active_context().supervisor.is_pipe_fd(fd) {
-        return active_context().supervisor.write_pipe_fd_bytes(fd, bytes);
+        let written = active_context().supervisor.write_pipe_fd_bytes(fd, bytes)?;
+        if written != 0 {
+            active_context().queue_io_signal();
+        }
+        return Ok(written);
     }
     if active_context().supervisor.is_socketpair_fd(fd) {
         return active_context().supervisor.write_socketpair_fd_bytes(fd, bytes);
@@ -443,6 +475,7 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
         return Err(ERR_ETXTBSY);
     }
 
+    let owner_ids = active_context().open_owner_ids();
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
     match supervisor
@@ -450,7 +483,7 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
             "ring3_openat",
             SyscallContext::new(
                 SYS_OPENAT,
-                [dirfd as u64, ptr as u64, len as u64, flags as u64, mode as u64, 0],
+                [dirfd as u64, ptr as u64, len as u64, flags as u64, mode as u64, owner_ids],
             ),
         )
         .map_err(|_| ERR_EINVAL)?
@@ -474,6 +507,7 @@ fn sys_fstat(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_stat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
+    let resolved = resolve_final_symlink_for_stat(resolved, frame.rax != SYS_LSTAT)?;
     let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
         crate::kwarn!("ring3_stat failed path={} errno={}", display_path(&resolved), errno);
         errno
@@ -485,6 +519,8 @@ fn sys_stat(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_newfstatat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let follow_symlink = frame.r10 & AT_SYMLINK_NOFOLLOW == 0;
+    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink)?;
     let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
         crate::kwarn!(
             "ring3_newfstatat failed dirfd={} path={} errno={}",
@@ -570,14 +606,18 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32)?;
+    let uid = active_context().euid();
+    let gid = active_context().egid();
+    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32, uid, gid)?;
     Ok(0)
 }
 
 fn sys_mkdirat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32)?;
+    let uid = active_context().euid();
+    let gid = active_context().egid();
+    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32, uid, gid)?;
     Ok(0)
 }
 
@@ -660,14 +700,82 @@ fn sys_chroot(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.stat_path_abi(&resolved)?;
+    let uid = linux_owner_arg(frame.rsi)?;
+    let gid = linux_owner_arg(frame.rdx)?;
+    active_context().supervisor.chown_path(&resolved, uid, gid)?;
     Ok(0)
 }
 
 fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const FCHOWNAT_ALLOWED_FLAGS: u64 = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    if frame.r8 & !FCHOWNAT_ALLOWED_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
-    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    active_context().supervisor.stat_path_abi(&resolved)?;
+    if path.is_empty() && frame.r8 & AT_EMPTY_PATH == 0 {
+        return Err(ERR_ENOENT);
+    }
+    let resolved = if path.is_empty() {
+        let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+        active_context().supervisor.fd_path(fd).map_err(|_| ERR_EBADF)?
+    } else {
+        resolve_path(linux_fd_arg(frame.rdi), &path)?
+    };
+    let uid = linux_owner_arg(frame.rdx)?;
+    let gid = linux_owner_arg(frame.r10)?;
+    active_context().supervisor.chown_path(&resolved, uid, gid)?;
+    Ok(0)
+}
+
+fn sys_setuid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let uid = linux_id_arg(frame.rdi)?;
+    active_context().set_uid(uid);
+    Ok(0)
+}
+
+fn sys_setgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let gid = linux_id_arg(frame.rdi)?;
+    active_context().set_gid(gid);
+    Ok(0)
+}
+
+fn sys_setreuid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let ruid = optional_linux_id_arg(frame.rdi)?;
+    let euid = optional_linux_id_arg(frame.rsi)?;
+    active_context().set_reuid(ruid, euid);
+    Ok(0)
+}
+
+fn sys_setregid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let rgid = optional_linux_id_arg(frame.rdi)?;
+    let egid = optional_linux_id_arg(frame.rsi)?;
+    active_context().set_regid(rgid, egid);
+    Ok(0)
+}
+
+fn sys_getgroups(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi != 0 && frame.rsi == 0 {
+        return Err(ERR_EFAULT);
+    }
+    Ok(0)
+}
+
+fn sys_getresuid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let uid = active_context().uid();
+    let euid = active_context().euid();
+    write_user_u32(frame.rdi, uid)?;
+    write_user_u32(frame.rsi, euid)?;
+    write_user_u32(frame.rdx, euid)?;
+    Ok(0)
+}
+
+fn sys_getresgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let gid = active_context().gid();
+    let egid = active_context().egid();
+    write_user_u32(frame.rdi, gid)?;
+    write_user_u32(frame.rsi, egid)?;
+    write_user_u32(frame.rdx, egid)?;
     Ok(0)
 }
 
@@ -831,6 +939,27 @@ fn sys_time(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(now as i64)
 }
 
+fn sys_mount(frame: &SyscallFrame) -> Result<i64, i32> {
+    let target = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let target = resolve_path(AT_FDCWD, &target)?;
+    if active_context().supervisor.path_kind(&target)? != vmos_abi::NodeKind::Directory {
+        return Err(ERR_ENOTDIR);
+    }
+    let fs_type =
+        if frame.rdx == 0 { Vec::new() } else { read_user_c_string(frame.rdx, PATH_MAX)? };
+    if fs_type.as_slice() != b"tmpfs" {
+        return Err(ERR_ENODEV);
+    }
+    Ok(0)
+}
+
+fn sys_umount2(frame: &SyscallFrame) -> Result<i64, i32> {
+    let target = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let target = resolve_path(AT_FDCWD, &target)?;
+    active_context().supervisor.stat_path_abi(&target)?;
+    Ok(0)
+}
+
 fn sys_gettimeofday(frame: &SyscallFrame) -> Result<i64, i32> {
     let now_us = current_realtime_ns() / 1000;
     if frame.rdi != 0 {
@@ -952,6 +1081,19 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
         write_user_bytes(frame.rdx, &[0; LINUX_SIGSET_BYTES])?;
     }
     Ok(0)
+}
+
+fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi != 0 {
+        validate_user_range(frame.rdi, LINUX_SIGSET_BYTES as u64, false)?;
+    }
+    if frame.rdx != 0 {
+        let _ = read_user_timespec_ns(frame.rdx)?;
+    }
+    if let Some(signal) = active_context().consume_io_signal() {
+        return Ok(signal as i64);
+    }
+    Err(vmos_abi::ERR_EAGAIN)
 }
 
 fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1493,18 +1635,68 @@ fn sys_getsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
     )
 }
 
+fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const LOOP_CTL_GET_FREE: u64 = 0x4c82;
+    const BLKGETSIZE64: u64 = 0x8008_1272;
+    const VMOS_LTP_LOOP_BYTES: u64 = 300 * 1024 * 1024;
+
+    match frame.rsi {
+        LOOP_CTL_GET_FREE => Ok(0),
+        BLKGETSIZE64 => {
+            write_user_u64(frame.rdx, VMOS_LTP_LOOP_BYTES)?;
+            Ok(0)
+        }
+        _ => Ok(0),
+    }
+}
+
 fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const F_DUPFD: u64 = 0;
     const F_GETFD: u64 = 1;
     const F_SETFD: u64 = 2;
+    const F_GETFL: u64 = 3;
+    const F_SETFL: u64 = 4;
+    const F_GETLK: u64 = 5;
+    const F_SETLK: u64 = 6;
+    const F_SETLKW: u64 = 7;
+    const F_SETOWN: u64 = 8;
+    const F_GETOWN: u64 = 9;
+    const F_SETSIG: u64 = 10;
+    const F_GETSIG: u64 = 11;
+    const F_SETOWN_EX: u64 = 15;
+    const F_GETOWN_EX: u64 = 16;
+    const F_DUPFD_CLOEXEC: u64 = 1030;
     const F_SETPIPE_SZ: u64 = 1031;
     const F_GETPIPE_SZ: u64 = 1032;
+    const F_OWNER_TID: u32 = 0;
+    const F_OWNER_PID: u32 = 1;
+    const F_OWNER_PGRP: u32 = 2;
     const FD_CLOEXEC: u32 = 1;
+    const FLOCK_SIZE: u64 = 32;
+    const F_OWNER_EX_SIZE: u64 = 8;
 
     let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    let _cmd = i32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.fd_flags(fd)?;
     match frame.rsi {
+        F_DUPFD => {
+            let min_fd = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+            return Ok(active_context().supervisor.dup_fd_from(fd, min_fd)? as i64);
+        }
+        F_DUPFD_CLOEXEC => {
+            let min_fd = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+            let new_fd = active_context().supervisor.dup_fd_from(fd, min_fd)?;
+            active_context().supervisor.set_fd_flags(new_fd, FD_CLOEXEC)?;
+            return Ok(new_fd as i64);
+        }
         F_GETFD => return Ok(active_context().supervisor.fd_flags(fd)? as i64),
         F_SETFD => {
             active_context().supervisor.set_fd_flags(fd, (frame.rdx as u32) & FD_CLOEXEC)?;
+            return Ok(0);
+        }
+        F_GETFL => return Ok(active_context().supervisor.file_status_flags(fd)? as i64),
+        F_SETFL => {
+            active_context().supervisor.set_file_status_flags(fd, frame.rdx as u32)?;
             return Ok(0);
         }
         F_SETPIPE_SZ => {
@@ -1512,6 +1704,47 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
             return Ok(active_context().supervisor.set_pipe_capacity(fd, size)? as i64);
         }
         F_GETPIPE_SZ => return Ok(active_context().supervisor.pipe_capacity(fd)? as i64),
+        F_GETLK => {
+            let _ = user_lease(frame.rdx, FLOCK_SIZE, true)?;
+        }
+        F_SETLK | F_SETLKW => {
+            let lease = user_lease(frame.rdx, FLOCK_SIZE, false)?;
+            let bytes = lease.bytes().map_err(map_dmw_fault)?;
+            let whence = i16::from_le_bytes(bytes[2..4].try_into().map_err(|_| ERR_EINVAL)?);
+            if !matches!(whence, 0 | 1 | 2) {
+                return Err(ERR_EINVAL);
+            }
+        }
+        F_GETOWN => return Ok(active_context().io_owner()),
+        F_SETOWN => {
+            active_context().set_io_owner(frame.rdx as i64);
+            return Ok(0);
+        }
+        F_GETOWN_EX => {
+            let _ = user_lease(frame.rdx, F_OWNER_EX_SIZE, true)?;
+            let (owner_type, owner_pid) = active_context().io_owner_ex();
+            write_user_u32(frame.rdx, owner_type)?;
+            write_user_u32(frame.rdx + 4, owner_pid as u32)?;
+            return Ok(0);
+        }
+        F_SETOWN_EX => {
+            let lease = user_lease(frame.rdx, F_OWNER_EX_SIZE, false)?;
+            let bytes = lease.bytes().map_err(map_dmw_fault)?;
+            let owner_type = u32::from_le_bytes(bytes[..4].try_into().map_err(|_| ERR_EINVAL)?);
+            let owner_pid = i32::from_le_bytes(bytes[4..8].try_into().map_err(|_| ERR_EINVAL)?);
+            match owner_type {
+                F_OWNER_TID | F_OWNER_PID | F_OWNER_PGRP => {}
+                _ => return Err(ERR_EINVAL),
+            }
+            active_context().set_io_owner_ex(owner_type, owner_pid);
+            return Ok(0);
+        }
+        F_GETSIG => return Ok(active_context().io_signal() as i64),
+        F_SETSIG => {
+            let signal = u32::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+            active_context().set_io_signal(signal);
+            return Ok(0);
+        }
         _ => {}
     }
     dispatch_ret(
@@ -1947,6 +2180,10 @@ fn write_user_u32(ptr: u64, value: u32) -> Result<(), i32> {
     write_user_bytes(ptr, &value.to_le_bytes())
 }
 
+fn write_user_u64(ptr: u64, value: u64) -> Result<(), i32> {
+    write_user_bytes(ptr, &value.to_le_bytes())
+}
+
 fn write_user_bytes(ptr: u64, bytes: &[u8]) -> Result<(), i32> {
     let mut dest = user_lease(ptr, bytes.len() as u64, true)?;
     dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(bytes);
@@ -2027,7 +2264,13 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     let base = if dirfd == AT_FDCWD {
         active_context().cwd().to_vec()
     } else if dirfd >= 0 {
-        active_context().supervisor.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?
+        let base = active_context().supervisor.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?;
+        if !path.is_empty()
+            && active_context().supervisor.path_kind(&base)? != vmos_abi::NodeKind::Directory
+        {
+            return Err(ERR_ENOTDIR);
+        }
+        base
     } else {
         return Err(ERR_EBADF);
     };
@@ -2038,6 +2281,25 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     }
     resolved.extend_from_slice(path);
     Ok(normalize_user_path(&resolved))
+}
+
+fn resolve_final_symlink_for_stat(path: Vec<u8>, follow: bool) -> Result<Vec<u8>, i32> {
+    if !follow {
+        return Ok(path);
+    }
+    if active_context().supervisor.path_kind(&path)? != vmos_abi::NodeKind::Symlink {
+        return Ok(path);
+    }
+    let target = active_context().supervisor.read_link_path_bytes(&path)?;
+    if target.starts_with(b"/") {
+        return Ok(normalize_user_path(&target));
+    }
+    let mut base = parent_user_path(&path).unwrap_or_else(|| b"/".to_vec());
+    if !base.ends_with(b"/") {
+        base.push(b'/');
+    }
+    base.extend_from_slice(&target);
+    Ok(normalize_user_path(&base))
 }
 
 fn current_program_name() -> &'static str {
@@ -2092,8 +2354,30 @@ fn normalize_user_path(path: &[u8]) -> Vec<u8> {
     out
 }
 
+fn parent_user_path(path: &[u8]) -> Option<Vec<u8>> {
+    if path == b"/" {
+        return None;
+    }
+    let trimmed =
+        if path.len() > 1 && path.ends_with(b"/") { &path[..path.len() - 1] } else { path };
+    let slash = trimmed.iter().rposition(|byte| *byte == b'/')?;
+    if slash == 0 { Some(b"/".to_vec()) } else { Some(trimmed[..slash].to_vec()) }
+}
+
 fn linux_fd_arg(raw: u64) -> i64 {
     (raw as i32) as i64
+}
+
+fn linux_owner_arg(raw: u64) -> Result<Option<u32>, i32> {
+    if raw == u64::MAX || raw as u32 == u32::MAX { Ok(None) } else { linux_id_arg(raw).map(Some) }
+}
+
+fn linux_id_arg(raw: u64) -> Result<u32, i32> {
+    u32::try_from(raw).map_err(|_| ERR_EINVAL)
+}
+
+fn optional_linux_id_arg(raw: u64) -> Result<Option<u32>, i32> {
+    if raw == u64::MAX || raw as u32 == u32::MAX { Ok(None) } else { linux_id_arg(raw).map(Some) }
 }
 
 fn display_path(path: &[u8]) -> &str {

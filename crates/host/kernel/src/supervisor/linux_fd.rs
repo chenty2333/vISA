@@ -219,6 +219,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(crate) fn read_link_path_bytes(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
+        self.read_link_path(path).map_err(errno_from_service_error)
+    }
+
     pub(super) fn build_dirent_records(
         &mut self,
         dir_path: &[u8],
@@ -335,6 +339,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(new_fd)
     }
 
+    pub(crate) fn dup_fd_from(&mut self, old_fd: u32, min_fd: u32) -> Result<u32, i32> {
+        if min_fd >= MAX_LINUX_FD {
+            return Err(ERR_EINVAL);
+        }
+        let entry = self.dup_source_entry(old_fd)?;
+        let new_fd = (min_fd.max(3)..MAX_LINUX_FD)
+            .find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
+            .ok_or(ERR_EMFILE)?;
+        self.install_fd_at(new_fd, entry);
+        Ok(new_fd)
+    }
+
     pub(crate) fn dup_fd_to(
         &mut self,
         old_fd: u32,
@@ -405,7 +421,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.lookup_path(path).is_ok() {
             return Err(vmos_abi::ERR_EEXIST);
         }
-        self.vfs.create_file(path, mode).map_err(errno_from_service_error)
+        self.vfs.create_file(path, mode, 0, 0).map_err(errno_from_service_error)
     }
 
     pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
@@ -422,12 +438,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             resource: FdResource::PipeEnd { pipe_id, readable: true, writable: false },
             cursor: 0,
             fd_flags: 0,
+            status_flags: 0,
             cursor_group: None,
         });
         let write_fd = self.alloc_fd(FdEntry {
             resource: FdResource::PipeEnd { pipe_id, readable: false, writable: true },
             cursor: 0,
             fd_flags: 0,
+            status_flags: 0,
             cursor_group: None,
         });
         Ok((read_fd, write_fd))
@@ -448,12 +466,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             resource: FdResource::SocketPairEnd { pair_id, endpoint: 0 },
             cursor: 0,
             fd_flags: 0,
+            status_flags: 0,
             cursor_group: None,
         });
         let fd_b = self.alloc_fd(FdEntry {
             resource: FdResource::SocketPairEnd { pair_id, endpoint: 1 },
             cursor: 0,
             fd_flags: 0,
+            status_flags: 0,
             cursor_group: None,
         });
         Ok((fd_a, fd_b))
@@ -482,6 +502,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             resource: FdResource::EventFd { eventfd_id },
             cursor: 0,
             fd_flags: 0,
+            status_flags: flags & EFD_NONBLOCK,
             cursor_group: None,
         });
         if flags & EFD_CLOEXEC != 0 {
@@ -850,6 +871,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 },
                 cursor: 0,
                 fd_flags: 0,
+                status_flags: 0,
                 cursor_group: None,
             });
         }
@@ -992,6 +1014,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    pub(crate) fn file_status_flags(&self, fd: u32) -> Result<u32, i32> {
+        if fd < 3 {
+            return Ok(0);
+        }
+        self.fd_entry(fd).map(|entry| entry.status_flags).ok_or(ERR_EBADF)
+    }
+
+    pub(crate) fn set_file_status_flags(&mut self, fd: u32, flags: u32) -> Result<(), i32> {
+        const O_ACCMODE: u32 = 0o3;
+        const O_APPEND: u32 = 0o2000;
+        const O_NONBLOCK: u32 = 0o4000;
+
+        if fd < 3 {
+            return Ok(());
+        }
+        self.validate_fd_handle(fd).map_err(errno_from_service_error)?;
+        let entry = self.fd_table.get_mut(fd as usize).and_then(Option::as_mut).ok_or(ERR_EBADF)?;
+        entry.status_flags = (entry.status_flags & O_ACCMODE) | (flags & (O_APPEND | O_NONBLOCK));
+        Ok(())
+    }
+
     fn install_fd_at(&mut self, fd: u32, mut entry: FdEntry) {
         let resource_kind = fd_resource_kind(&entry.resource);
         let resource_label = fd_resource_label(&entry.resource);
@@ -1074,9 +1117,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.validate_resource_handle(handle).map_err(|_| ServiceCallError::Errno(ERR_EBADF))
     }
 
-    pub(crate) fn mkdir_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+    pub(crate) fn mkdir_path(
+        &mut self,
+        path: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
-        self.vfs.mkdir(path, mode).map_err(errno_from_service_error)
+        self.vfs.mkdir(path, mode, uid, gid).map_err(errno_from_service_error)
     }
 
     pub(crate) fn unlink_path(&mut self, path: &[u8]) -> Result<(), i32> {
@@ -1092,6 +1141,16 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn chmod_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         self.vfs.chmod(path, mode).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn chown_path(
+        &mut self,
+        path: &[u8],
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.vfs.chown(path, uid, gid).map_err(errno_from_service_error)
     }
 
     pub(crate) fn symlink_path(&mut self, path: &[u8], target: &[u8]) -> Result<(), i32> {
@@ -1113,21 +1172,23 @@ impl<'engine> PrototypeRuntime<'engine> {
                 | FdResource::SocketPairEnd { .. }
                 | FdResource::EventFd { .. }
         ) {
-            return Ok(encode_stat_abi(0o010666, 0));
+            return Ok(encode_stat_abi(0o010666, 0, 0, 0));
         }
         let FdResource::ServiceNode { route, node, path } = &entry.resource else {
             return Err(ERR_EBADF);
         };
         let mode = self.mode_for_service_node(*route, *node, path);
+        let (uid, gid) = self.owner_for_service_node(*route, path);
         let len = self.len_for_service_node(*route, path);
-        Ok(encode_stat_abi(mode, len))
+        Ok(encode_stat_abi(mode, len, uid, gid))
     }
 
     pub(crate) fn stat_path_abi(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         let mode = self.mode_for_service_node(info.route, info.node, path);
+        let (uid, gid) = self.owner_for_service_node(info.route, path);
         let len = self.len_for_service_node(info.route, path);
-        Ok(encode_stat_abi(mode, len))
+        Ok(encode_stat_abi(mode, len, uid, gid))
     }
 
     pub(crate) fn path_metadata(&mut self, path: &[u8]) -> Result<(NodeKind, u32, u64), i32> {
@@ -1146,7 +1207,14 @@ impl<'engine> PrototypeRuntime<'engine> {
                 NodeKind::Symlink => 0o120777,
                 NodeKind::CharDevice => 0o020666,
             },
-            ServiceRoute::Devfs => 0o020666,
+            ServiceRoute::Devfs => devfs_mode_for_path(path),
+        }
+    }
+
+    fn owner_for_service_node(&self, route: ServiceRoute, path: &[u8]) -> (u32, u32) {
+        match route {
+            ServiceRoute::Vfs => self.vfs.owner_for_path(path),
+            ServiceRoute::Procfs | ServiceRoute::Devfs => (0, 0),
         }
     }
 
@@ -1270,16 +1338,22 @@ fn errno_from_service_error(err: ServiceCallError) -> i32 {
     }
 }
 
-fn encode_stat_abi(mode: u32, size: u64) -> Vec<u8> {
+fn encode_stat_abi(mode: u32, size: u64, uid: u32, gid: u32) -> Vec<u8> {
     let mut out = alloc::vec![0u8; 144];
     write_u64(&mut out, 0, 1);
     write_u64(&mut out, 8, 1);
     write_u64(&mut out, 16, 1);
     write_u32(&mut out, 24, mode);
+    write_u32(&mut out, 28, uid);
+    write_u32(&mut out, 32, gid);
     write_u64(&mut out, 48, size);
     write_u64(&mut out, 56, 4096);
     write_u64(&mut out, 64, size.div_ceil(512));
     out
+}
+
+fn devfs_mode_for_path(path: &[u8]) -> u32 {
+    if path == b"/dev/loop0" { 0o060660 } else { 0o020666 }
 }
 
 fn write_u32(out: &mut [u8], offset: usize, value: u32) {

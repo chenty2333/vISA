@@ -43,6 +43,9 @@ runner_env=(VMOS_LINUX_USER_ELF="$test_elf")
 if [[ -d "$resource_dir" ]]; then
     runner_env+=(VMOS_LINUX_USER_RESOURCE_DIR="$resource_dir")
 fi
+if [[ -n "${VMOS_LTP_RUN_TIMEOUT:-}" && -z "${VMOS_QEMU_TIMEOUT:-}" && -z "${VMOS_QEMU_TIMEOUT_SECS:-}" ]]; then
+    runner_env+=(VMOS_QEMU_TIMEOUT="$VMOS_LTP_RUN_TIMEOUT")
+fi
 
 set +e
 if [[ -n "${VMOS_LTP_RUN_TIMEOUT:-}" ]]; then

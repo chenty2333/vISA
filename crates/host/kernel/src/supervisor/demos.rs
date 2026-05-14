@@ -299,6 +299,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
             fd_flags: 0,
+            status_flags: 0,
             cursor_group: None,
         });
         let handle =

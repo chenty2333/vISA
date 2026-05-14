@@ -21,7 +21,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let config = RunConfig::parse(env::args().skip(1));
+    let config = RunConfig::parse(env::args().skip(1))?;
 
     let pid = std::process::id();
     let serial_log = env::temp_dir().join(format!("vmos-qemu-serial-{pid}.log"));
@@ -116,7 +116,7 @@ fn wait_for_demo(
     debug_log: &PathBuf,
     config: &RunConfig,
 ) -> Result<(), Box<dyn Error>> {
-    let deadline = Instant::now() + QEMU_TIMEOUT;
+    let deadline = Instant::now() + config.qemu_timeout;
 
     loop {
         if let Some(status) = child.try_wait()? {
@@ -233,11 +233,12 @@ fn print_section(name: &str, content: &str) {
 
 struct RunConfig {
     verbose: bool,
+    qemu_timeout: Duration,
     extra_args: Vec<String>,
 }
 
 impl RunConfig {
-    fn parse(args: impl IntoIterator<Item = String>) -> Self {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, Box<dyn Error>> {
         let mut verbose = false;
         let mut extra_args = Vec::new();
 
@@ -248,6 +249,39 @@ impl RunConfig {
             }
         }
 
-        Self { verbose, extra_args }
+        Ok(Self { verbose, qemu_timeout: configured_qemu_timeout()?, extra_args })
     }
+}
+
+fn configured_qemu_timeout() -> Result<Duration, Box<dyn Error>> {
+    for key in ["VMOS_QEMU_TIMEOUT", "VMOS_QEMU_TIMEOUT_SECS", "VMOS_LTP_RUN_TIMEOUT"] {
+        if let Ok(raw) = env::var(key) {
+            return parse_timeout_duration(&raw)
+                .ok_or_else(|| format!("invalid {key} value: {raw}").into());
+        }
+    }
+    Ok(QEMU_TIMEOUT)
+}
+
+fn parse_timeout_duration(raw: &str) -> Option<Duration> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(ms) = value.strip_suffix("ms") {
+        return ms.trim().parse::<u64>().ok().map(Duration::from_millis);
+    }
+    if let Some(seconds) = value.strip_suffix('s') {
+        return seconds.trim().parse::<u64>().ok().map(Duration::from_secs);
+    }
+    if let Some(minutes) = value.strip_suffix('m') {
+        return minutes
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(|minutes| Duration::from_secs(minutes.saturating_mul(60)));
+    }
+
+    value.parse::<u64>().ok().map(Duration::from_secs)
 }

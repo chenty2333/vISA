@@ -62,11 +62,11 @@ const PROC_TAINTED: &[u8] = b"0\n";
 const PROC_CMDLINE: &[u8] = b"root=/dev/vmos module.sig_enforce=0\n";
 const PROC_MOUNTS: &[u8] = b"tmpfs / tmpfs rw,relatime 0 0\n\
 tmpfs /tmp tmpfs rw,relatime 0 0\n";
-const PROC_MEMINFO: &[u8] = b"MemTotal:        65536 kB\n\
-MemFree:         32768 kB\n\
-MemAvailable:    49152 kB\n\
+const PROC_MEMINFO: &[u8] = b"MemTotal:      1048576 kB\n\
+MemFree:        524288 kB\n\
+MemAvailable:   786432 kB\n\
 Buffers:             0 kB\n\
-Cached:          16384 kB\n\
+Cached:         262144 kB\n\
 SwapCached:          0 kB\n\
 Active:              0 kB\n\
 Inactive:            0 kB\n\
@@ -79,7 +79,7 @@ HugePages_Surp:      0\n\
 Hugepagesize:     2048 kB\n";
 const PROC_CWD: &[u8] = b"/sandbox";
 
-const DEV_DIR: &[u8] = b"null\nzero\npulse\n";
+const DEV_DIR: &[u8] = b"null\nzero\npulse\nloop0\nloop-control\n";
 const PULSE_BYTES: &[u8] = b"pulse\n";
 
 const WASM_APP_PTR: u32 = 0x2000;
@@ -116,6 +116,8 @@ struct VfsNode {
     path: Vec<u8>,
     kind: NodeKind,
     mode: u32,
+    uid: u32,
+    gid: u32,
     len: usize,
     chunks: Vec<VfsChunk>,
 }
@@ -182,7 +184,7 @@ impl VfsService {
             | b"/proc/sys/kernel/pid_max" => lookup(ServiceRoute::Procfs, NodeKind::File),
             b"/proc/self/cwd" => lookup(ServiceRoute::Procfs, NodeKind::Symlink),
             b"/dev" => lookup(ServiceRoute::Devfs, NodeKind::Directory),
-            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" => {
+            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" | b"/dev/loop0" | b"/dev/loop-control" => {
                 lookup(ServiceRoute::Devfs, NodeKind::CharDevice)
             }
             _ => errno(ERR_ENOENT),
@@ -278,7 +280,13 @@ impl VfsService {
         }
     }
 
-    pub(crate) fn mkdir(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
+    pub(crate) fn mkdir(
+        &mut self,
+        path: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), ServiceCallError> {
         if self.lookup(path, false).is_ok() {
             return errno(ERR_EEXIST);
         }
@@ -287,21 +295,33 @@ impl VfsService {
             path: normalize_path(path),
             kind: NodeKind::Directory,
             mode: 0o040000 | (mode & 0o7777),
+            uid,
+            gid,
             len: 0,
             chunks: Vec::new(),
         });
         Ok(())
     }
 
-    pub(crate) fn create_file(&mut self, path: &[u8], mode: u32) -> Result<(), ServiceCallError> {
+    pub(crate) fn create_file(
+        &mut self,
+        path: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), ServiceCallError> {
         if self.lookup(path, false).is_ok() {
             return Ok(());
         }
         self.require_parent_dir(path)?;
+        let normalized = normalize_path(path);
+        let (mode, gid) = self.create_file_mode_and_gid(&normalized, mode, gid);
         self.nodes.push(VfsNode {
-            path: normalize_path(path),
+            path: normalized,
             kind: NodeKind::File,
-            mode: 0o100000 | (mode & 0o7777),
+            mode: 0o100000 | mode,
+            uid,
+            gid,
             len: 0,
             chunks: Vec::new(),
         });
@@ -317,6 +337,8 @@ impl VfsService {
             normalize_path(path),
             NodeKind::Symlink,
             0o120777,
+            0,
+            0,
             target,
         ));
         Ok(())
@@ -360,6 +382,24 @@ impl VfsService {
         };
         let kind_bits = node.mode & 0o170000;
         node.mode = kind_bits | (mode & 0o7777);
+        Ok(())
+    }
+
+    pub(crate) fn chown(
+        &mut self,
+        path: &[u8],
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), ServiceCallError> {
+        let Some(node) = self.dynamic_node_mut(path) else {
+            return self.lookup(path, false).map(|_| ());
+        };
+        if let Some(uid) = uid {
+            node.uid = uid;
+        }
+        if let Some(gid) = gid {
+            node.gid = gid;
+        }
         Ok(())
     }
 
@@ -434,6 +474,10 @@ impl VfsService {
         }
     }
 
+    pub(crate) fn owner_for_path(&self, path: &[u8]) -> (u32, u32) {
+        self.dynamic_node(path).map(|node| (node.uid, node.gid)).unwrap_or((0, 0))
+    }
+
     pub(crate) fn len_for_path(&self, path: &[u8]) -> u64 {
         self.dynamic_node(path)
             .map(|node| node.len as u64)
@@ -474,6 +518,8 @@ impl VfsService {
             path: normalized,
             kind: NodeKind::Directory,
             mode: 0o040755,
+            uid: 0,
+            gid: 0,
             len: 0,
             chunks: Vec::new(),
         });
@@ -488,6 +534,8 @@ impl VfsService {
             path,
             NodeKind::File,
             0o100000 | (mode & 0o7777),
+            0,
+            0,
             bytes,
         ));
     }
@@ -498,6 +546,21 @@ impl VfsService {
 
     fn dynamic_node_mut(&mut self, path: &[u8]) -> Option<&mut VfsNode> {
         self.nodes.iter_mut().find(|node| node.path.as_slice() == path)
+    }
+
+    fn create_file_mode_and_gid(&self, path: &[u8], mode: u32, gid: u32) -> (u32, u32) {
+        let mut mode = mode & 0o7777;
+        let Some(parent) = parent_path(path) else {
+            return (mode, gid);
+        };
+        let Some(parent) = self.dynamic_node(&parent) else {
+            return (mode, gid);
+        };
+        if parent.mode & 0o2000 != 0 {
+            mode &= !0o2000;
+            return (mode, parent.gid);
+        }
+        (mode, gid)
     }
 
     fn require_parent_dir(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
@@ -537,11 +600,20 @@ impl VfsChunk {
 }
 
 impl VfsNode {
-    fn from_bytes(path: Vec<u8>, kind: NodeKind, mode: u32, bytes: &[u8]) -> Self {
+    fn from_bytes(
+        path: Vec<u8>,
+        kind: NodeKind,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+        bytes: &[u8],
+    ) -> Self {
         Self {
             path,
             kind,
             mode,
+            uid,
+            gid,
             len: bytes.len(),
             chunks: alloc::vec![VfsChunk::from_write(0, bytes)],
         }
@@ -717,7 +789,9 @@ impl DevfsService {
         }
         match path {
             b"/dev" => Ok(NodeKind::Directory),
-            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" => Ok(NodeKind::CharDevice),
+            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" | b"/dev/loop0" | b"/dev/loop-control" => {
+                Ok(NodeKind::CharDevice)
+            }
             _ => errno(ERR_ENOENT),
         }
     }
@@ -732,7 +806,9 @@ impl DevfsService {
         }
         match path {
             b"/dev" => Ok(DEV_DIR.to_vec()),
-            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" => errno(ERR_ENOTDIR),
+            b"/dev/null" | b"/dev/zero" | b"/dev/pulse" | b"/dev/loop0" | b"/dev/loop-control" => {
+                errno(ERR_ENOTDIR)
+            }
             _ => errno(ERR_ENOENT),
         }
     }
@@ -752,6 +828,8 @@ impl DevfsService {
             b"/dev/pulse" => {
                 Ok(PULSE_BYTES[..core::cmp::min(count as usize, PULSE_BYTES.len())].to_vec())
             }
+            b"/dev/loop0" => Ok(alloc::vec![0; count as usize]),
+            b"/dev/loop-control" => Ok(Vec::new()),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -766,8 +844,8 @@ impl DevfsService {
             return Err(ServiceCallError::Trap("devfs_service trapped"));
         }
         match path {
-            b"/dev/null" => Ok(data_len),
-            b"/dev/zero" | b"/dev/pulse" => errno(ERR_EINVAL),
+            b"/dev/null" | b"/dev/loop0" => Ok(data_len),
+            b"/dev/zero" | b"/dev/pulse" | b"/dev/loop-control" => errno(ERR_EINVAL),
             _ => errno(ERR_ENOENT),
         }
     }

@@ -27,6 +27,15 @@ pub(crate) struct ActiveUserContext {
     brk_end: u64,
     mmap_cursor: u64,
     mmap_end: u64,
+    uid: u32,
+    gid: u32,
+    euid: u32,
+    egid: u32,
+    io_owner: i64,
+    io_owner_ex_type: u32,
+    io_owner_ex_pid: i32,
+    io_signal: u32,
+    pending_io_signal: Option<u32>,
     next_activation_id: u64,
     alarm_seconds: u64,
     realtime_epoch_ns: u64,
@@ -61,6 +70,15 @@ impl ActiveUserContext {
             brk_end,
             mmap_cursor: mmap_base,
             mmap_end,
+            uid: 0,
+            gid: 0,
+            euid: 0,
+            egid: 0,
+            io_owner: 0,
+            io_owner_ex_type: 0,
+            io_owner_ex_pid: 0,
+            io_signal: 0,
+            pending_io_signal: None,
             next_activation_id: (task_id as u64) << 32 | 1,
             alarm_seconds: 0,
             realtime_epoch_ns: 1_000_000_000,
@@ -120,6 +138,103 @@ impl ActiveUserContext {
 
     pub(crate) fn set_cwd(&mut self, path: Vec<u8>) {
         self.cwd = path;
+    }
+
+    pub(crate) fn uid(&self) -> u32 {
+        self.uid
+    }
+
+    pub(crate) fn gid(&self) -> u32 {
+        self.gid
+    }
+
+    pub(crate) fn euid(&self) -> u32 {
+        self.euid
+    }
+
+    pub(crate) fn egid(&self) -> u32 {
+        self.egid
+    }
+
+    pub(crate) fn set_uid(&mut self, uid: u32) {
+        self.uid = uid;
+        self.euid = uid;
+    }
+
+    pub(crate) fn set_gid(&mut self, gid: u32) {
+        self.gid = gid;
+        self.egid = gid;
+    }
+
+    pub(crate) fn set_reuid(&mut self, ruid: Option<u32>, euid: Option<u32>) {
+        if let Some(uid) = ruid {
+            self.uid = uid;
+        }
+        if let Some(uid) = euid {
+            self.euid = uid;
+        }
+    }
+
+    pub(crate) fn set_regid(&mut self, rgid: Option<u32>, egid: Option<u32>) {
+        if let Some(gid) = rgid {
+            self.gid = gid;
+        }
+        if let Some(gid) = egid {
+            self.egid = gid;
+        }
+    }
+
+    pub(crate) fn open_owner_ids(&self) -> u64 {
+        ((self.euid as u64) << 32) | self.egid as u64
+    }
+
+    pub(crate) fn io_owner(&self) -> i64 {
+        self.io_owner
+    }
+
+    pub(crate) fn set_io_owner(&mut self, owner: i64) {
+        self.io_owner = owner;
+        if owner < 0 {
+            self.io_owner_ex_type = 2;
+            self.io_owner_ex_pid = owner.saturating_abs().min(i32::MAX as i64) as i32;
+        } else {
+            self.io_owner_ex_type = 1;
+            self.io_owner_ex_pid = owner.min(i32::MAX as i64) as i32;
+        }
+    }
+
+    pub(crate) fn io_owner_ex(&self) -> (u32, i32) {
+        (self.io_owner_ex_type, self.io_owner_ex_pid)
+    }
+
+    pub(crate) fn set_io_owner_ex(&mut self, owner_type: u32, pid: i32) {
+        self.io_owner_ex_type = owner_type;
+        self.io_owner_ex_pid = pid;
+        self.io_owner = match owner_type {
+            2 => -(pid as i64),
+            _ => pid as i64,
+        };
+    }
+
+    pub(crate) fn io_signal(&self) -> u32 {
+        self.io_signal
+    }
+
+    pub(crate) fn set_io_signal(&mut self, signal: u32) {
+        self.io_signal = signal;
+    }
+
+    pub(crate) fn queue_io_signal(&mut self) {
+        if self.io_owner == 0 && self.io_owner_ex_pid == 0 {
+            return;
+        }
+        if self.io_signal != 0 {
+            self.pending_io_signal = Some(self.io_signal);
+        }
+    }
+
+    pub(crate) fn consume_io_signal(&mut self) -> Option<u32> {
+        self.pending_io_signal.take()
     }
 
     pub(crate) fn replace_alarm(&mut self, seconds: u64) -> u64 {

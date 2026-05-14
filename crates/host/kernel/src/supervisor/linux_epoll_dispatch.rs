@@ -24,6 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     resource: FdResource::EpollInstance { epoll_id },
                     cursor: 0,
                     fd_flags: 0,
+                    status_flags: 0,
                     cursor_group: None,
                 });
                 Ok(LinuxCallResult::Ret(fd as i64))
