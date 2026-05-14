@@ -372,6 +372,13 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "linux.socket",
             operation: "poll",
         },
+        // Future phases — unbound operations default to unsupported pure-query
+        _ => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "unsupported",
+            operation: "unsupported",
+        },
     }
 }
 
