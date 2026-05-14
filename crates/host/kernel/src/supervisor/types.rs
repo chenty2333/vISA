@@ -4,6 +4,46 @@ use semantic_core::ResourceId;
 use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
 
 pub(crate) type TaskId = u32;
+// ProcessId / ThreadId from semantic_core (u64) — use for semantic records
+// Supervisor runtime uses u32 pid/tid for performance
+pub(crate) type Pid = u32;
+pub(crate) type Tid = u32;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProcessRuntimeState {
+    pub(crate) pid: Pid,
+    pub(crate) ppid: Pid,
+    pub(crate) pgid: Pid,
+    pub(crate) sid: Pid,
+    pub(crate) tgid: Tid,
+    pub(crate) exit_signal: Option<u8>,
+    pub(crate) state: ProcessRuntimeStateKind,
+    pub(crate) exit_code: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ProcessRuntimeStateKind {
+    Running,
+    Zombie,
+    Dead,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ThreadRuntimeState {
+    pub(crate) tid: Tid,
+    pub(crate) task_id: TaskId,
+    pub(crate) pid: Pid,
+    pub(crate) state: ThreadRuntimeStateKind,
+    pub(crate) clear_child_tid: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ThreadRuntimeStateKind {
+    Running,
+    Blocked,
+    Stopped,
+    Dead,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InjectedFault {

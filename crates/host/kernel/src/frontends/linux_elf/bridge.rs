@@ -5,7 +5,7 @@ use semantic_core::ResourceHandle;
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECHILD, ERR_ECONNREFUSED,
     ERR_EFAULT, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOSYS, ERR_ENOTDIR,
-    ERR_EPERM, ERR_EPROTONOSUPPORT, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
+    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM,
     SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF,
     SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT,
     SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
@@ -80,6 +80,8 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
         supervisor,
         image.regions,
         task_id,
+        1,  // pid: bootstrap init process
+        1,  // tid: bootstrap thread
         USER_BRK_BASE,
         USER_BRK_END,
         USER_MMAP_ALLOC_BASE,
@@ -143,10 +145,11 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FSTATFS => sys_fstatfs(frame),
         SYS_TRUNCATE => sys_truncate(frame),
         SYS_FTRUNCATE => sys_ftruncate(frame),
-        SYS_GETPID | SYS_GETTID => Ok(active_context().task_id as i64),
-        SYS_GETPGID => Ok(active_context().task_id as i64),
-        SYS_GETPPID => Ok(2),
-        SYS_GETSID => Ok(active_context().task_id as i64),
+        SYS_GETPID => Ok(active_context().pid as i64),
+        SYS_GETTID => Ok(active_context().tid as i64),
+        SYS_GETPGID => Ok(active_context().pid as i64), // pgid = self (no process groups yet)
+        SYS_GETPPID => Ok(active_context().pid as i64), // parent = self (no fork yet)
+        SYS_GETSID => Ok(active_context().pid as i64),  // sid = self (no sessions yet)
         SYS_GETUID => Ok(active_context().uid() as i64),
         SYS_GETEUID => Ok(active_context().euid() as i64),
         SYS_GETGID => Ok(active_context().gid() as i64),
@@ -471,9 +474,7 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
     let mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
     let path = read_user_c_string(path_ptr, PATH_MAX)?;
     let resolved = resolve_path(dirfd, &path)?;
-    if flags & 0x201 != 0 && active_context().is_fake_executable_busy(&resolved) {
-        return Err(ERR_ETXTBSY);
-    }
+    // Phase 1A: ETXTBSY enforcement deferred to Phase 2 (real fork model)
 
     let owner_ids = active_context().open_owner_ids();
     let supervisor = &mut active_context().supervisor;
@@ -584,9 +585,7 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
-    if active_context().is_fake_executable_busy(resolved) {
-        return Err(ERR_ETXTBSY);
-    }
+    // Phase 1A: ETXTBSY enforcement deferred to Phase 2 (real fork model)
     let (kind, mode, len) = active_context().supervisor.path_metadata(resolved)?;
     if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
@@ -1115,44 +1114,33 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
-    let wait_status = fake_child_wait_status_for_current_program();
-    mark_fake_child_effects_for_current_program()?;
-    let child_pid = active_context().spawn_fake_child(wait_status);
-    active_context().supervisor.simulate_socketpair_peer_activity();
-    active_context().supervisor.simulate_eventfd_child_activity();
-    Ok(child_pid as i64)
+    // Phase 1A: fork/clone without CLONE_VM not yet implemented
+    // Will be implemented in Phase 1B (shared-mode clone) and Phase 2 (COW fork)
+    Err(ERR_ENOSYS)
 }
 
-fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
-    if let Some((child_pid, wait_status)) = active_context().reap_fake_child() {
-        if frame.rsi != 0 {
-            write_user_bytes(frame.rsi, &wait_status.to_le_bytes())?;
-        }
-        return Ok(child_pid as i64);
-    }
+fn sys_wait4(_frame: &SyscallFrame) -> Result<i64, i32> {
+    // Phase 1A: single-process model — no children to wait for
+    // Will be implemented in Phase 2 (full fork with zombie reaping)
     Err(ERR_ECHILD)
 }
 
-fn sys_kill(_frame: &SyscallFrame) -> Result<i64, i32> {
-    active_context().clear_fake_executable_busy();
-    Ok(0)
-}
-
-fn fake_child_wait_status_for_current_program() -> i32 {
-    if current_program_name() == "exit01" { 1 << 8 } else { 0 }
-}
-
-fn mark_fake_child_effects_for_current_program() -> Result<(), i32> {
-    let busy_name = match current_program_name() {
-        "creat07" => Some(b"creat07_child".as_slice()),
-        "execve04" => Some(b"execve_child".as_slice()),
-        _ => None,
-    };
-    if let Some(name) = busy_name {
-        let path = resolve_path(AT_FDCWD, name)?;
-        active_context().mark_fake_executable_busy(path);
+fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
+    let pid = frame.rdi as u32;
+    let sig = frame.rsi as u32;
+    if sig == 0 {
+        // Existence check
+        let current_pid = active_context().pid;
+        if pid == 0 || pid == current_pid || pid == u32::MAX.wrapping_neg() {
+            return Ok(0);
+        }
+        return Err(ERR_ESRCH);
     }
-    Ok(())
+    if pid == 0 || pid == active_context().pid {
+        // Signal to self — Phase 3 will actually deliver the signal
+        return Ok(0);
+    }
+    Err(ERR_ESRCH)
 }
 
 fn sys_close(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -1347,9 +1335,8 @@ fn sys_epoll_pwait(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.r8 != 0 {
         let len = if frame.r9 == 0 { 8 } else { frame.r9 };
         validate_user_range(frame.r8, len, false)?;
-    } else if active_context().consume_fake_signal() {
-        return Err(vmos_abi::ERR_EINTR);
     }
+    // Phase 1A: no fake signals; real signal delivery in Phase 3
     sys_epoll_wait(frame)
 }
 
@@ -1365,9 +1352,8 @@ fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.r8 != 0 {
         let len = if frame.r9 == 0 { 8 } else { frame.r9 };
         validate_user_range(frame.r8, len, false)?;
-    } else if active_context().consume_fake_signal() {
-        return Err(vmos_abi::ERR_EINTR);
     }
+    // Phase 1A: no fake signals; real signal delivery in Phase 3
     sys_epoll_wait(frame)
 }
 

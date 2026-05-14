@@ -18,7 +18,11 @@ use super::{
         WasmApp,
     },
     store_manager::StoreManager,
-    types::{EventFdState, FdEntry, InjectedFault, PipeState, SocketPairState, TaskId},
+    types::{
+        EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
+        ProcessRuntimeStateKind, SocketPairState, TaskId, Tid, ThreadRuntimeState,
+        ThreadRuntimeStateKind,
+    },
     wait::WaitRegistry,
 };
 use crate::interrupts;
@@ -56,6 +60,10 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) replay_snapshot: ReplaySnapshotService,
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
+    pub(super) processes: Vec<ProcessRuntimeState>,
+    pub(super) threads: Vec<ThreadRuntimeState>,
+    pub(super) next_pid: Pid,
+    pub(super) next_tid: Tid,
     pub(super) fd_table: Vec<Option<FdEntry>>,
     pub(super) fd_handles: Vec<Option<ResourceHandle>>,
     pub(super) pipes: Vec<PipeState>,
@@ -142,6 +150,29 @@ impl<'engine> PrototypeRuntime<'engine> {
             replay_snapshot,
             linux,
             app,
+            processes: {
+                let mut procs = Vec::new();
+                // Bootstrap init process (pid=1)
+                procs.push(ProcessRuntimeState {
+                    pid: 1, ppid: 0, pgid: 1, sid: 1, tgid: 1,
+                    exit_signal: None,
+                    state: ProcessRuntimeStateKind::Running,
+                    exit_code: None,
+                });
+                procs
+            },
+            threads: {
+                let mut thrds = Vec::new();
+                // Bootstrap thread (tid=1, task_id=1) for init process
+                thrds.push(ThreadRuntimeState {
+                    tid: 1, task_id: 1, pid: 1,
+                    state: ThreadRuntimeStateKind::Running,
+                    clear_child_tid: None,
+                });
+                thrds
+            },
+            next_pid: 2,
+            next_tid: 2,
             fd_table: vec![None, None, None],
             fd_handles: vec![None, None, None],
             pipes: Vec::new(),
@@ -167,6 +198,61 @@ impl<'engine> PrototypeRuntime<'engine> {
         let task = self.scheduler.allocate_task();
         self.semantic.ensure_task(task, FrontendKind::LinuxElf, "linux-elf-task");
         task
+    }
+
+    /// Allocate a new process (fork-style). Returns the new PID.
+    pub(crate) fn allocate_process(&mut self, ppid: Pid, pgid: Pid, sid: Pid) -> Pid {
+        let pid = self.next_pid;
+        self.next_pid = pid.wrapping_add(1);
+        self.processes.push(ProcessRuntimeState {
+            pid,
+            ppid,
+            pgid,
+            sid,
+            tgid: pid as Tid,  // new thread group for the process
+            exit_signal: None,
+            state: ProcessRuntimeStateKind::Running,
+            exit_code: None,
+        });
+        pid
+    }
+
+    /// Allocate a new thread within a process. Returns the new TID.
+    pub(crate) fn allocate_thread(&mut self, task_id: TaskId, pid: Pid) -> Tid {
+        let tid = self.next_tid;
+        self.next_tid = tid.wrapping_add(1);
+        self.threads.push(ThreadRuntimeState {
+            tid,
+            task_id,
+            pid,
+            state: ThreadRuntimeStateKind::Running,
+            clear_child_tid: None,
+        });
+        tid
+    }
+
+    pub(crate) fn query_thread(&self, tid: Tid) -> Option<&ThreadRuntimeState> {
+        self.threads.iter().find(|t| t.tid == tid)
+    }
+
+    pub(crate) fn query_process(&self, pid: Pid) -> Option<&ProcessRuntimeState> {
+        self.processes.iter().find(|p| p.pid == pid)
+    }
+
+    pub(crate) fn current_pid(&self) -> Pid {
+        let task_id = self.scheduler.current_task();
+        self.threads.iter()
+            .find(|t| t.task_id == task_id)
+            .map(|t| t.pid)
+            .unwrap_or(1)
+    }
+
+    pub(crate) fn current_tid(&self) -> Tid {
+        let task_id = self.scheduler.current_task();
+        self.threads.iter()
+            .find(|t| t.task_id == task_id)
+            .map(|t| t.tid)
+            .unwrap_or(1)
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {

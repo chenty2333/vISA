@@ -20,6 +20,8 @@ pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
     pub(crate) regions: Vec<UserRegion>,
     pub(crate) task_id: TaskId,
+    pub(crate) pid: u32,
+    pub(crate) tid: u32,
     pub(crate) activation_id: u64,
     cwd: Vec<u8>,
     brk_base: u64,
@@ -40,11 +42,6 @@ pub(crate) struct ActiveUserContext {
     alarm_seconds: u64,
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
-    fake_child_pending: bool,
-    fake_child_pid: u64,
-    fake_child_wait_status: i32,
-    fake_executable_busy_paths: Vec<Vec<u8>>,
-    fake_signal_pending: bool,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -54,6 +51,8 @@ impl ActiveUserContext {
         supervisor: &'static mut PrototypeRuntime<'static>,
         regions: Vec<UserRegion>,
         task_id: TaskId,
+        pid: u32,
+        tid: u32,
         brk_base: u64,
         brk_end: u64,
         mmap_base: u64,
@@ -63,6 +62,8 @@ impl ActiveUserContext {
             supervisor,
             regions,
             task_id,
+            pid,
+            tid,
             activation_id: 0,
             cwd: b"/tmp".to_vec(),
             brk_base,
@@ -83,11 +84,6 @@ impl ActiveUserContext {
             alarm_seconds: 0,
             realtime_epoch_ns: 1_000_000_000,
             realtime_epoch_tick: 0,
-            fake_child_pending: false,
-            fake_child_pid: task_id as u64 + 1,
-            fake_child_wait_status: 0,
-            fake_executable_busy_paths: Vec::new(),
-            fake_signal_pending: false,
         }
     }
 
@@ -252,42 +248,6 @@ impl ActiveUserContext {
     pub(crate) fn set_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
         self.realtime_epoch_ns = now_ns;
         self.realtime_epoch_tick = tick_count;
-    }
-
-    pub(crate) fn spawn_fake_child(&mut self, wait_status: i32) -> u64 {
-        self.fake_child_pending = true;
-        self.fake_child_wait_status = wait_status;
-        self.fake_signal_pending = true;
-        self.fake_child_pid
-    }
-
-    pub(crate) fn reap_fake_child(&mut self) -> Option<(u64, i32)> {
-        if !self.fake_child_pending {
-            return None;
-        }
-        self.fake_child_pending = false;
-        self.fake_executable_busy_paths.clear();
-        Some((self.fake_child_pid, self.fake_child_wait_status))
-    }
-
-    pub(crate) fn mark_fake_executable_busy(&mut self, path: Vec<u8>) {
-        if !self.fake_executable_busy_paths.iter().any(|busy| busy == &path) {
-            self.fake_executable_busy_paths.push(path);
-        }
-    }
-
-    pub(crate) fn is_fake_executable_busy(&self, path: &[u8]) -> bool {
-        self.fake_executable_busy_paths.iter().any(|busy| busy.as_slice() == path)
-    }
-
-    pub(crate) fn clear_fake_executable_busy(&mut self) {
-        self.fake_executable_busy_paths.clear();
-    }
-
-    pub(crate) fn consume_fake_signal(&mut self) -> bool {
-        let pending = self.fake_signal_pending;
-        self.fake_signal_pending = false;
-        pending
     }
 }
 
