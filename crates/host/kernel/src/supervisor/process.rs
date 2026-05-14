@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use semantic_core::{GuestAddressSpaceRef, ProcessState};
+use semantic_core::{CredentialTransitionKind, GuestAddressSpaceRef, ProcessState};
 
 use super::{
     runtime::PrototypeRuntime,
@@ -43,6 +43,35 @@ const CLONE_NS_MASK: u64 = CLONE_NEWNS
     | CLONE_IO;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(crate) fn record_credential_transition(
+        &mut self,
+        pid: Pid,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        supplementary_groups: Vec<u32>,
+        kind: CredentialTransitionKind,
+    ) -> bool {
+        self.semantic
+            .transition_process_credential_by_pid(
+                pid,
+                uid,
+                euid,
+                suid,
+                euid,
+                gid,
+                egid,
+                sgid,
+                egid,
+                supplementary_groups,
+                kind,
+            )
+            .is_some()
+    }
+
     /// Create the runtime and semantic records for a vfork child.
     ///
     /// This is intentionally narrower than general fork/clone support: the

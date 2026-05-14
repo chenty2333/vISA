@@ -76,6 +76,17 @@ pub(crate) struct SuspendedVforkParent {
     realtime_epoch_tick: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct CredentialState {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) euid: u32,
+    pub(crate) egid: u32,
+    pub(crate) suid: u32,
+    pub(crate) sgid: u32,
+    pub(crate) supplementary_groups: Vec<u32>,
+}
+
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
 
 impl ActiveUserContext {
@@ -205,6 +216,28 @@ impl ActiveUserContext {
 
     pub(crate) fn supplementary_groups(&self) -> &[u32] {
         &self.supplementary_groups
+    }
+
+    pub(crate) fn credential_state(&self) -> CredentialState {
+        CredentialState {
+            uid: self.uid,
+            gid: self.gid,
+            euid: self.euid,
+            egid: self.egid,
+            suid: self.suid,
+            sgid: self.sgid,
+            supplementary_groups: self.supplementary_groups.clone(),
+        }
+    }
+
+    pub(crate) fn restore_credential_state(&mut self, state: CredentialState) {
+        self.uid = state.uid;
+        self.gid = state.gid;
+        self.euid = state.euid;
+        self.egid = state.egid;
+        self.suid = state.suid;
+        self.sgid = state.sgid;
+        self.supplementary_groups = state.supplementary_groups;
     }
 
     pub(crate) fn set_uid(&mut self, uid: u32) -> bool {

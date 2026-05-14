@@ -413,9 +413,36 @@ impl SemanticGraph {
         sgid: u32,
         fsgid: u32,
     ) -> Option<CredentialId> {
+        self.create_credential_with_groups(
+            owner_process,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            Vec::new(),
+        )
+    }
+
+    pub fn create_credential_with_groups(
+        &mut self,
+        owner_process: ContractObjectRef,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        fsuid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        fsgid: u32,
+        supplementary_groups: Vec<u32>,
+    ) -> Option<CredentialId> {
         let id = self.domains.process.next_credential_id;
         self.domains.process.next_credential_id = id.max(id + 1);
-        if self.create_credential_with_id(
+        if self.create_credential_with_id_and_groups(
             id,
             owner_process,
             uid,
@@ -426,6 +453,7 @@ impl SemanticGraph {
             egid,
             sgid,
             fsgid,
+            supplementary_groups,
         ) {
             Some(id)
         } else {
@@ -446,6 +474,35 @@ impl SemanticGraph {
         egid: u32,
         sgid: u32,
         fsgid: u32,
+    ) -> bool {
+        self.create_credential_with_id_and_groups(
+            id,
+            owner_process,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            Vec::new(),
+        )
+    }
+
+    fn create_credential_with_id_and_groups(
+        &mut self,
+        id: CredentialId,
+        owner_process: ContractObjectRef,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        fsuid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        fsgid: u32,
+        supplementary_groups: Vec<u32>,
     ) -> bool {
         if id == 0 || self.domains.process.credentials.iter().any(|r| r.id == id) {
             return false;
@@ -472,7 +529,7 @@ impl SemanticGraph {
             egid,
             sgid,
             fsgid,
-            supplementary_groups: Vec::new(),
+            supplementary_groups,
             capability_sets: LinuxCapSets::default(),
             recorded_at_event,
             generation: 1,
@@ -483,6 +540,66 @@ impl SemanticGraph {
 
     pub fn query_credential(&self, id: CredentialId) -> Option<&CredentialRecord> {
         self.domains.process.credentials.iter().find(|r| r.id == id)
+    }
+
+    pub fn transition_process_credential_by_pid(
+        &mut self,
+        pid: u32,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        fsuid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        fsgid: u32,
+        supplementary_groups: Vec<u32>,
+        kind: CredentialTransitionKind,
+    ) -> Option<CredentialId> {
+        let process = self.domains.process.processes.iter().find(|record| record.pid == pid)?;
+        let process_ref = process.object_ref();
+        let from_credential = self
+            .domains
+            .process
+            .threads
+            .iter()
+            .find(|thread| thread.process.id == process_ref.id)
+            .map(|thread| thread.credential)?;
+        let to_id = self.create_credential_with_groups(
+            process_ref,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            supplementary_groups,
+        )?;
+        let to_credential = self.query_credential(to_id)?.object_ref();
+        self.record_credential_transition(from_credential, to_credential, kind, true)?;
+
+        let mut updated_threads = Vec::new();
+        for thread in self
+            .domains
+            .process
+            .threads
+            .iter_mut()
+            .filter(|thread| thread.process.id == process_ref.id)
+        {
+            thread.credential = to_credential;
+            thread.generation += 1;
+            updated_threads.push(thread.object_ref());
+        }
+        for thread_group in &mut self.domains.process.thread_groups {
+            if let Some(updated) =
+                updated_threads.iter().find(|thread_ref| thread_ref.id == thread_group.leader.id)
+            {
+                thread_group.leader = *updated;
+            }
+        }
+        Some(to_id)
     }
 
     // ── CredentialTransition ──
@@ -930,6 +1047,42 @@ mod tests {
         let process = graph.query_process(1).unwrap();
         assert_eq!(process.state, ProcessState::Dead);
         assert_eq!(process.generation, 3);
+    }
+
+    #[test]
+    fn credential_transition_updates_thread_refs_and_preserves_invariants() {
+        let mut graph = graph_with_bootstrapped_process_family();
+        let before = graph.snapshot();
+        let before_thread = before.threads[0].object_ref();
+
+        let mut groups = Vec::new();
+        groups.push(200);
+        groups.push(300);
+        let credential_id = graph
+            .transition_process_credential_by_pid(
+                1,
+                1000,
+                1001,
+                1002,
+                1001,
+                100,
+                101,
+                102,
+                101,
+                groups,
+                CredentialTransitionKind::SetGroups { old_len: 0, new_len: 2 },
+            )
+            .expect("credential transition should be recorded");
+
+        let snapshot = graph.snapshot();
+        let credential = graph.query_credential(credential_id).unwrap();
+        assert_eq!(credential.supplementary_groups, [200, 300]);
+        assert_eq!(snapshot.credentials.len(), 2);
+        assert_eq!(snapshot.credential_transitions.len(), 1);
+        assert_eq!(snapshot.threads[0].credential, credential.object_ref());
+        assert_eq!(snapshot.threads[0].generation, before_thread.generation + 1);
+        assert_eq!(snapshot.thread_groups[0].leader, snapshot.threads[0].object_ref());
+        assert!(graph.check_invariants().is_ok());
     }
 
     #[test]

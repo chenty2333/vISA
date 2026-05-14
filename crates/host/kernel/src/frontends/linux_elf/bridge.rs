@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
-use semantic_core::ResourceHandle;
+use semantic_core::{CredentialTransitionKind, ResourceHandle};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECONNREFUSED, ERR_EFAULT,
     ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
@@ -30,7 +30,7 @@ use vmos_abi::{
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
 use super::{
-    context::{ActiveUserContext, active_context, install_active_context},
+    context::{ActiveUserContext, CredentialState, active_context, install_active_context},
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, demo_program_host_path,
         load_demo_program,
@@ -778,16 +778,34 @@ fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_setuid(frame: &SyscallFrame) -> Result<i64, i32> {
     let uid = linux_id_arg(frame.rdi)?;
+    let before = active_context().credential_state();
+    let old = before.uid;
     if !active_context().set_uid(uid) {
         return Err(ERR_EPERM);
+    }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetUid {
+        old,
+        new: active_context().uid(),
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
     }
     Ok(0)
 }
 
 fn sys_setgid(frame: &SyscallFrame) -> Result<i64, i32> {
     let gid = linux_id_arg(frame.rdi)?;
+    let before = active_context().credential_state();
+    let old = before.gid;
     if !active_context().set_gid(gid) {
         return Err(ERR_EPERM);
+    }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetGid {
+        old,
+        new: active_context().gid(),
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
     }
     Ok(0)
 }
@@ -795,8 +813,17 @@ fn sys_setgid(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_setreuid(frame: &SyscallFrame) -> Result<i64, i32> {
     let ruid = optional_linux_id_arg(frame.rdi)?;
     let euid = optional_linux_id_arg(frame.rsi)?;
+    let before = active_context().credential_state();
     if !active_context().set_reuid(ruid, euid) {
         return Err(ERR_EPERM);
+    }
+    let after = active_context().credential_state();
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetReUid {
+        ruid: after.uid,
+        euid: after.euid,
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
     }
     Ok(0)
 }
@@ -804,8 +831,17 @@ fn sys_setreuid(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_setregid(frame: &SyscallFrame) -> Result<i64, i32> {
     let rgid = optional_linux_id_arg(frame.rdi)?;
     let egid = optional_linux_id_arg(frame.rsi)?;
+    let before = active_context().credential_state();
     if !active_context().set_regid(rgid, egid) {
         return Err(ERR_EPERM);
+    }
+    let after = active_context().credential_state();
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetReGid {
+        rgid: after.gid,
+        egid: after.egid,
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
     }
     Ok(0)
 }
@@ -848,7 +884,16 @@ fn sys_setgroups(frame: &SyscallFrame) -> Result<i64, i32> {
     for chunk in bytes.chunks_exact(4) {
         groups.push(u32::from_le_bytes(chunk.try_into().map_err(|_| ERR_EINVAL)?));
     }
+    let before = active_context().credential_state();
+    let old_len = before.supplementary_groups.len();
     let _ = active_context().set_groups(groups);
+    let new_len = active_context().supplementary_groups().len();
+    if let Err(errno) =
+        record_credential_transition(CredentialTransitionKind::SetGroups { old_len, new_len })
+    {
+        restore_credential_state(before);
+        return Err(errno);
+    }
     Ok(0)
 }
 
@@ -2378,6 +2423,32 @@ fn effective_access_snapshot() -> AccessSnapshot {
         gid: context.egid(),
         groups: context.supplementary_groups().to_vec(),
     }
+}
+
+fn record_credential_transition(kind: CredentialTransitionKind) -> Result<(), i32> {
+    let (pid, state) = {
+        let context = active_context();
+        (context.pid, context.credential_state())
+    };
+    if active_context().supervisor.record_credential_transition(
+        pid,
+        state.uid,
+        state.euid,
+        state.suid,
+        state.gid,
+        state.egid,
+        state.sgid,
+        state.supplementary_groups,
+        kind,
+    ) {
+        Ok(())
+    } else {
+        Err(ERR_EINVAL)
+    }
+}
+
+fn restore_credential_state(state: CredentialState) {
+    active_context().restore_credential_state(state);
 }
 
 struct ActivationGuard {
