@@ -24,10 +24,11 @@ use vmos_abi::{
     SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
     SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
     SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
-    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
-    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_RT_SIGRETURN, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -43,12 +44,12 @@ use super::{
 };
 use crate::{
     qemu, serial_println,
-    substrate::ring3::{self, SyscallFrame},
+    substrate::ring3::{self, SyscallFrame, UserReturnContext},
     supervisor::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, RobustListRegistration,
-            SigAction,
+            SigAction, UserSignalDelivery,
         },
     },
 };
@@ -91,6 +92,11 @@ const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const ROBUST_LIST_HEAD_SIZE: u64 = 24;
 const ROBUST_LIST_LIMIT: usize = 2048;
+const SA_SIGINFO: u64 = 0x4;
+const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
+const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
+const LINUX_SIGINFO_SIZE: usize = 128;
+const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -116,9 +122,13 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
 
 pub(crate) extern "C" fn syscall_dispatch_from_asm(frame: *mut SyscallFrame) {
     let frame = unsafe { &mut *frame };
+    let syscall_nr = frame.rax;
     match dispatch_syscall(frame) {
         Ok(ret) => frame.rax = ret as u64,
         Err(errno) => frame.rax = (-(errno as i64)) as u64,
+    }
+    if syscall_nr != SYS_RT_SIGRETURN {
+        deliver_pending_signal_to_user(frame);
     }
 }
 
@@ -211,6 +221,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(frame),
         SYS_RT_SIGACTION => sys_rt_sigaction(frame),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
+        SYS_RT_SIGRETURN => sys_rt_sigreturn(frame),
         SYS_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(frame),
         SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
@@ -274,9 +285,6 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
             Err(ERR_ENOSYS)
         }
     };
-    // Check pending signals before returning to userspace
-    let tid = active_context().tid;
-    active_context().supervisor.deliver_pending_signals(tid);
     result
 }
 
@@ -1508,8 +1516,8 @@ fn sys_sched_getaffinity(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_rt_sigaction(frame: &SyscallFrame) -> Result<i64, i32> {
-    let signo = frame.rdi as u8;
-    if signo == 0 || signo > 64 || frame.r10 != LINUX_SIGSET_BYTES as u64 {
+    let signo = u8::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    if signo == 0 || signo >= 64 || frame.r10 != LINUX_SIGSET_BYTES as u64 {
         return Err(ERR_EINVAL);
     }
     // Read new action from userspace (if provided)
@@ -1566,6 +1574,146 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
+fn sys_rt_sigreturn(frame: &mut SyscallFrame) -> Result<i64, i32> {
+    match restore_from_signal_frame(frame) {
+        Ok(ret) => Ok(ret),
+        Err(errno) => {
+            crate::kwarn!("rt_sigreturn failed errno={}", errno);
+            let pid = active_context().pid;
+            active_context().supervisor.process_exit(pid, 128 + 11);
+            handle_user_fault(11);
+        }
+    }
+}
+
+fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
+    let current = ring3::capture_user_return(frame);
+    let bytes = read_user_bytes(current.rsp, VMOS_SIGNAL_FRAME_SIZE)?;
+    if read_u64_from(&bytes, 0)? != VMOS_SIGNAL_FRAME_MAGIC {
+        return Err(ERR_EINVAL);
+    }
+
+    let old_sigmask = read_u64_from(&bytes, 16)?;
+    let saved_rsp = read_u64_from(&bytes, 24)?;
+    let saved_fs_base = read_u64_from(&bytes, 32)?;
+    let saved_frame = SyscallFrame {
+        r9: read_u64_from(&bytes, 40)?,
+        r8: read_u64_from(&bytes, 48)?,
+        r10: read_u64_from(&bytes, 56)?,
+        rdx: read_u64_from(&bytes, 64)?,
+        rsi: read_u64_from(&bytes, 72)?,
+        rdi: read_u64_from(&bytes, 80)?,
+        rax: read_u64_from(&bytes, 88)?,
+        rcx: read_u64_from(&bytes, 96)?,
+        r11: read_u64_from(&bytes, 104)?,
+    };
+    let tid = active_context().tid;
+    let _ = active_context().supervisor.set_sigmask(tid, 2, old_sigmask);
+    ring3::install_user_return(
+        frame,
+        UserReturnContext { frame: saved_frame, rsp: saved_rsp, fs_base: saved_fs_base },
+    );
+    Ok(saved_frame.rax as i64)
+}
+
+fn deliver_pending_signal_to_user(frame: &mut SyscallFrame) {
+    let tid = active_context().tid;
+    if let Some(delivery) = active_context().supervisor.take_pending_user_handler_signal(tid) {
+        if let Err(errno) = install_user_signal_frame(frame, delivery) {
+            crate::kwarn!("signal frame install failed errno={}", errno);
+            let pid = active_context().pid;
+            active_context().supervisor.process_exit(pid, 128 + 11);
+            handle_user_fault(11);
+        }
+    } else {
+        active_context().supervisor.deliver_pending_signals(tid);
+    }
+}
+
+fn install_user_signal_frame(
+    frame: &mut SyscallFrame,
+    delivery: UserSignalDelivery,
+) -> Result<(), i32> {
+    if delivery.action.restorer == 0 {
+        return Err(ERR_ENOSYS);
+    }
+    validate_user_range(delivery.action.handler, 1, false)?;
+    validate_user_range(delivery.action.restorer, 1, false)?;
+
+    let saved = ring3::capture_user_return(frame);
+    let total_len = 8 + VMOS_SIGNAL_FRAME_SIZE + LINUX_SIGINFO_SIZE + LINUX_UCONTEXT_MIN_SIZE;
+    let base = saved.rsp.checked_sub(total_len as u64 + 16).ok_or(ERR_EFAULT)?;
+    let frame_sp = (base & !15).checked_add(8).ok_or(ERR_EFAULT)?;
+    let record_sp = frame_sp.checked_add(8).ok_or(ERR_EFAULT)?;
+    let siginfo_sp = record_sp.checked_add(VMOS_SIGNAL_FRAME_SIZE as u64).ok_or(ERR_EFAULT)?;
+    let ucontext_sp = siginfo_sp.checked_add(LINUX_SIGINFO_SIZE as u64).ok_or(ERR_EFAULT)?;
+
+    write_user_u64(frame_sp, delivery.action.restorer)?;
+    write_user_bytes(
+        record_sp,
+        &encode_vmos_signal_frame(&saved, delivery.old_sigmask, delivery.signal.signo),
+    )?;
+    write_user_bytes(siginfo_sp, &encode_linux_siginfo(&delivery.signal))?;
+    write_user_bytes(ucontext_sp, &encode_min_ucontext(&saved))?;
+
+    let mut next = saved;
+    next.rsp = frame_sp;
+    next.frame.rcx = delivery.action.handler;
+    next.frame.rdi = delivery.signal.signo as u64;
+    if delivery.action.flags & SA_SIGINFO != 0 {
+        next.frame.rsi = siginfo_sp;
+        next.frame.rdx = ucontext_sp;
+    } else {
+        next.frame.rsi = 0;
+        next.frame.rdx = 0;
+    }
+    next.frame.rax = 0;
+    ring3::install_user_return(frame, next);
+    Ok(())
+}
+
+fn encode_vmos_signal_frame(
+    saved: &UserReturnContext,
+    old_sigmask: u64,
+    signo: u8,
+) -> [u8; VMOS_SIGNAL_FRAME_SIZE] {
+    let mut out = [0u8; VMOS_SIGNAL_FRAME_SIZE];
+    write_u64(&mut out, 0, VMOS_SIGNAL_FRAME_MAGIC);
+    write_u64(&mut out, 8, signo as u64);
+    write_u64(&mut out, 16, old_sigmask);
+    write_u64(&mut out, 24, saved.rsp);
+    write_u64(&mut out, 32, saved.fs_base);
+    write_u64(&mut out, 40, saved.frame.r9);
+    write_u64(&mut out, 48, saved.frame.r8);
+    write_u64(&mut out, 56, saved.frame.r10);
+    write_u64(&mut out, 64, saved.frame.rdx);
+    write_u64(&mut out, 72, saved.frame.rsi);
+    write_u64(&mut out, 80, saved.frame.rdi);
+    write_u64(&mut out, 88, saved.frame.rax);
+    write_u64(&mut out, 96, saved.frame.rcx);
+    write_u64(&mut out, 104, saved.frame.r11);
+    out
+}
+
+fn encode_linux_siginfo(
+    signal: &crate::supervisor::types::PendingSignal,
+) -> [u8; LINUX_SIGINFO_SIZE] {
+    let mut out = [0u8; LINUX_SIGINFO_SIZE];
+    write_i32(&mut out, 0, signal.signo as i32);
+    write_i32(&mut out, 8, signal.si_code);
+    write_u32(&mut out, 16, signal.si_pid);
+    write_u32(&mut out, 20, signal.si_uid);
+    out
+}
+
+fn encode_min_ucontext(saved: &UserReturnContext) -> [u8; LINUX_UCONTEXT_MIN_SIZE] {
+    let mut out = [0u8; LINUX_UCONTEXT_MIN_SIZE];
+    write_u64(&mut out, 0, saved.frame.rcx);
+    write_u64(&mut out, 8, saved.rsp);
+    write_u64(&mut out, 16, saved.frame.r11);
+    out
+}
+
 fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.rdi != 0 {
         validate_user_range(frame.rdi, LINUX_SIGSET_BYTES as u64, false)?;
@@ -1587,7 +1735,7 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     if signal == 0 {
         return Ok(0);
     }
-    if signal > 64 {
+    if signal >= 64 {
         return Err(ERR_EINVAL);
     }
     let supervisor = &mut active_context().supervisor;
@@ -1602,8 +1750,6 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     };
     let sender_pid = active_context().pid;
     supervisor.queue_signal_to_thread(target_tid, signal as u8, 0, sender_pid, 0);
-    let current_tid = active_context().tid;
-    supervisor.deliver_pending_signals(current_tid);
     Ok(0)
 }
 
@@ -1804,14 +1950,14 @@ fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
     let pid = frame.rdi as u32;
-    let sig = frame.rsi as u32;
+    let sig = frame.rsi;
     if sig == 0 {
         // Existence check
         let supervisor = &active_context().supervisor;
         let found = supervisor.processes.iter().any(|p| p.pid == pid || pid == 0);
         return if found { Ok(0) } else { Err(ERR_ESRCH) };
     }
-    if sig > 64 {
+    if sig >= 64 {
         return Err(ERR_EINVAL);
     }
     let supervisor = &mut active_context().supervisor;
@@ -1821,8 +1967,6 @@ fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         supervisor.queue_signal_to_process(pid, sig as u8, 0, current_pid, 0);
     }
-    let tid = active_context().tid;
-    supervisor.deliver_pending_signals(tid);
     Ok(0)
 }
 
@@ -3273,6 +3417,10 @@ fn read_i32_from(bytes: &[u8], offset: usize) -> Result<i32, i32> {
 
 fn read_i64_from(bytes: &[u8], offset: usize) -> Result<i64, i32> {
     Ok(i64::from_le_bytes(bytes[offset..offset + 8].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn read_u64_from(bytes: &[u8], offset: usize) -> Result<u64, i32> {
+    Ok(u64::from_le_bytes(bytes[offset..offset + 8].try_into().map_err(|_| ERR_EINVAL)?))
 }
 
 fn write_user_u32(ptr: u64, value: u32) -> Result<(), i32> {

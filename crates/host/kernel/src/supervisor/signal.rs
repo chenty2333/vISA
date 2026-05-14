@@ -2,9 +2,11 @@ use alloc::vec::Vec;
 
 use super::{
     runtime::PrototypeRuntime,
-    types::{PendingSignal, Pid, SigAction, ThreadRuntimeStateKind, Tid},
+    types::{PendingSignal, Pid, SigAction, ThreadRuntimeStateKind, Tid, UserSignalDelivery},
 };
 use crate::frontends::linux_elf::handle_user_fault;
+
+const SA_NODEFER: u64 = 0x4000_0000;
 
 /// Linux signal default actions.
 fn signal_default_action(signo: u8) -> SignalDefaultAction {
@@ -151,6 +153,39 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         true
+    }
+
+    pub(crate) fn take_pending_user_handler_signal(
+        &mut self,
+        tid: Tid,
+    ) -> Option<UserSignalDelivery> {
+        let thread_index = self.threads.iter().position(|thread| thread.tid == tid)?;
+        let pid = self.threads[thread_index].pid;
+        let old_sigmask = self.threads[thread_index].sigmask;
+        let pending_index = self.threads[thread_index]
+            .pending_signals
+            .iter()
+            .position(|signal| old_sigmask & linux_signal_bit(signal.signo) == 0)?;
+        let signal = self.threads[thread_index].pending_signals[pending_index].clone();
+        let action = self
+            .processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .map(|process| process.sigactions[signal.signo as usize])
+            .unwrap_or_default();
+        if action.handler == 0 || action.handler == 1 {
+            return None;
+        }
+
+        let signal = self.threads[thread_index].pending_signals.remove(pending_index);
+        let mut next_mask =
+            old_sigmask | (action.mask & !linux_signal_bit(9) & !linux_signal_bit(19));
+        if action.flags & SA_NODEFER == 0 {
+            next_mask |= linux_signal_bit(signal.signo);
+        }
+        self.threads[thread_index].sigmask = next_mask;
+
+        Some(UserSignalDelivery { signal, action, old_sigmask })
     }
 
     /// Set signal action for a process.

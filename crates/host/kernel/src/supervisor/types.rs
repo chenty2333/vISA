@@ -146,6 +146,13 @@ pub(crate) struct PendingSignal {
     pub(crate) si_uid: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UserSignalDelivery {
+    pub(crate) signal: PendingSignal,
+    pub(crate) action: SigAction,
+    pub(crate) old_sigmask: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InjectedFault {
     ProcfsRead,
