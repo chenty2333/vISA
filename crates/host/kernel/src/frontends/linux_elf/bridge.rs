@@ -1113,11 +1113,35 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     handle_exit(128 + signal as i32)
 }
 
-fn sys_fork_like(_frame: &SyscallFrame) -> Result<i64, i32> {
-    // Phase 1A: fork/clone without CLONE_VM not yet implemented
-    // Will be implemented in Phase 1B (shared-mode clone) and Phase 2 (COW fork)
-    Err(ERR_ENOSYS)
+fn sys_fork_like(frame: &SyscallFrame) -> Result<i64, i32> {
+    // Phase 1B: shared-mode clone (CLONE_VM)
+    // Phase 2 will add COW fork (clone without CLONE_VM)
+    let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 {
+        frame.rdi
+    } else {
+        // fork() => CLONE_CHILD_CLEARTID | SIGCHLD
+        // vfork() => CLONE_VM | CLONE_VFORK | SIGCHLD
+        if frame.rax == SYS_VFORK {
+            CLONE_VM | CLONE_VFORK
+        } else {
+            0
+        }
+    };
+    let stack = frame.rsi;
+    let parent_tid = frame.rdx;
+    let child_tid = frame.r10;
+    let tls = frame.r8;
+
+    let pid = active_context().pid;
+    let result = active_context().supervisor.do_clone(
+        flags, stack, parent_tid, child_tid, tls, pid,
+    )?;
+    Ok(result)
 }
+
+// CLONE flags (also used in supervisor/process.rs)
+const CLONE_VM: u64 = 0x100;
+const CLONE_VFORK: u64 = 0x4000;
 
 fn sys_wait4(_frame: &SyscallFrame) -> Result<i64, i32> {
     // Phase 1A: single-process model — no children to wait for
