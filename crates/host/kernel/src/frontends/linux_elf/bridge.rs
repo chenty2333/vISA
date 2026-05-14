@@ -76,6 +76,7 @@ const LINUX_SIGACTION_BYTES: usize = 32;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
+const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -1412,12 +1413,14 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     const CLONE_VM: u64 = 0x100;
     const CLONE_FS: u64 = 0x200;
     const CLONE_FILES: u64 = 0x400;
+    const CLONE_SETTLS: u64 = 0x80000;
     const CLONE_PARENT_SETTID: u64 = 0x100000;
     const CLONE_CHILD_SETTID: u64 = 0x1000000;
     const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
         | CLONE_VM
         | CLONE_FS
         | CLONE_FILES
+        | CLONE_SETTLS
         | CLONE_PARENT_SETTID
         | CLONE_CHILD_SETTID;
 
@@ -1434,17 +1437,24 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let stack = frame.rsi;
     let parent_tid_ptr = frame.rdx;
     let child_tid_ptr = frame.r10;
-    let _tls = frame.r8;
-    let flags_match_shared_vm_subset = flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0
+    let tls_base = frame.r8;
+    let shared_vm_flags_supported = flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0
         && flags & CLONE_VM != 0
         && flags & CLONE_FS != 0
         && flags & CLONE_FILES != 0;
-    let mut parent_tid_lease = if flags_match_shared_vm_subset && flags & CLONE_PARENT_SETTID != 0 {
+    let shared_vm_preflight_ok =
+        shared_vm_flags_supported && stack != 0 && flags & CLONE_EXIT_SIGNAL_MASK <= 64;
+    let child_fs_base = if shared_vm_preflight_ok && flags & CLONE_SETTLS != 0 {
+        Some(user_fs_base(tls_base)?)
+    } else {
+        None
+    };
+    let mut parent_tid_lease = if shared_vm_preflight_ok && flags & CLONE_PARENT_SETTID != 0 {
         Some(user_lease(parent_tid_ptr, 4, true)?)
     } else {
         None
     };
-    let mut child_tid_lease = if flags_match_shared_vm_subset && flags & CLONE_CHILD_SETTID != 0 {
+    let mut child_tid_lease = if shared_vm_preflight_ok && flags & CLONE_CHILD_SETTID != 0 {
         Some(user_lease(child_tid_ptr, 4, true)?)
     } else {
         None
@@ -1496,6 +1506,9 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let mut child_return = parent_return;
     child_return.frame.rax = 0;
     child_return.rsp = stack;
+    if let Some(fs_base) = child_fs_base {
+        child_return.fs_base = fs_base.as_u64();
+    }
     active_context().suspend_for_clone_child(
         child_task_id,
         child_pid,
@@ -2259,8 +2272,7 @@ fn sys_arch_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
 
     match frame.rdi {
         ARCH_SET_FS => {
-            validate_user_range(frame.rsi, 1, false)?;
-            FsBase::write(VirtAddr::new(frame.rsi));
+            FsBase::write(user_fs_base(frame.rsi)?);
             Ok(0)
         }
         ARCH_GET_FS => {
@@ -2271,6 +2283,13 @@ fn sys_arch_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
         }
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn user_fs_base(base: u64) -> Result<VirtAddr, i32> {
+    if base >= X86_64_USER_CANONICAL_LIMIT {
+        return Err(ERR_EPERM);
+    }
+    VirtAddr::try_new(base).map_err(|_| ERR_EPERM)
 }
 
 fn dispatch_ret(label: &str, ctx: SyscallContext) -> Result<i64, i32> {

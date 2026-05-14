@@ -11,7 +11,7 @@ use x86_64::{
         tables::load_tss,
     },
     registers::{
-        model_specific::{Efer, EferFlags, LStar, SFMask, Star},
+        model_specific::{Efer, EferFlags, FsBase, LStar, SFMask, Star},
         rflags::RFlags,
     },
     structures::{
@@ -46,6 +46,7 @@ pub(crate) struct SyscallFrame {
 pub(crate) struct UserReturnContext {
     pub(crate) frame: SyscallFrame,
     pub(crate) rsp: u64,
+    pub(crate) fs_base: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -163,11 +164,16 @@ pub(crate) fn init(handler: SyscallHandler) {
 }
 
 pub(crate) fn capture_user_return(frame: &SyscallFrame) -> UserReturnContext {
-    UserReturnContext { frame: *frame, rsp: unsafe { SAVED_USER_RSP } }
+    UserReturnContext {
+        frame: *frame,
+        rsp: unsafe { SAVED_USER_RSP },
+        fs_base: FsBase::read().as_u64(),
+    }
 }
 
 pub(crate) fn install_user_return(frame: &mut SyscallFrame, context: UserReturnContext) {
     *frame = context.frame;
+    FsBase::write(VirtAddr::new(context.fs_base));
     unsafe {
         SAVED_USER_RSP = context.rsp;
     }
