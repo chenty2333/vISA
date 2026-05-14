@@ -6,6 +6,19 @@ use alloc::{
 
 use super::*;
 
+/// Result of classifying a page fault — semantic policy, not substrate execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageFaultResolution {
+    /// A COW page was written — must copy the physical page and update PTEs
+    CowCopy { page: PageObjectRef },
+    /// A valid mapped page needs its physical frame installed (demand paging)
+    DemandMapping { page: PageObjectRef },
+    /// No VMA found at this address — SIGSEGV
+    NoMapping,
+    /// Protection violation (write to read-only, execute to NX) — SIGSEGV
+    ProtectionViolation,
+}
+
 pub type GuestAddressSpaceId = u64;
 pub type VmaRegionId = u64;
 pub type PageObjectId = u64;
@@ -382,6 +395,61 @@ impl GuestMemoryManager {
             state: PageObjectState::Live,
         });
         page
+    }
+
+    /// Find the VMA region containing a virtual address in the given address space.
+    pub fn find_region(&self, aspace: GuestAddressSpaceRef, va: GuestVa) -> Option<&VmaRegionRecord> {
+        self.regions.iter()
+            .filter(|r| r.aspace == aspace && r.state == VmaState::Mapped)
+            .find(|r| r.range.contains_range(va, 1))
+    }
+
+    /// Classify a page fault into resolution strategy.
+    /// This is semantic policy — the substrate executes it.
+    pub fn classify_fault(
+        &self,
+        vma: &VmaRegionRecord,
+        _va: GuestVa,
+        write: bool,
+    ) -> PageFaultResolution {
+        if write && vma.flags.cow {
+            PageFaultResolution::CowCopy { page: vma.backing }
+        } else if write && !vma.perms.contains(GuestPerms::WRITE) {
+            PageFaultResolution::ProtectionViolation
+        } else if !vma.perms.contains(GuestPerms::READ) {
+            PageFaultResolution::ProtectionViolation
+        } else {
+            PageFaultResolution::DemandMapping { page: vma.backing }
+        }
+    }
+
+    /// Find a free virtual address range of at least `len` bytes, near `hint`.
+    pub fn find_gap(&self, aspace: GuestAddressSpaceRef, len: u64, hint: u64) -> Option<u64> {
+        let mut region_bounds: Vec<(u64, u64)> = self.regions.iter()
+            .filter(|r| r.aspace == aspace && r.state == VmaState::Mapped)
+            .map(|r| {
+                let end = r.range.start.checked_add(r.range.len).unwrap_or(u64::MAX);
+                (r.range.start, end)
+            })
+            .collect();
+        region_bounds.sort_by_key(|(start, _)| *start);
+
+        if region_bounds.is_empty() {
+            return Some(hint.max(0x1000));
+        }
+
+        if !region_bounds.iter().any(|(s, e)| hint < *e && (hint + len) > *s) {
+            return Some(hint);
+        }
+
+        let mut cursor = 0x1000u64;
+        for (start, end) in region_bounds {
+            if cursor + len <= start {
+                return Some(cursor);
+            }
+            cursor = cursor.max(end);
+        }
+        Some(cursor)
     }
 
     pub fn map_region(

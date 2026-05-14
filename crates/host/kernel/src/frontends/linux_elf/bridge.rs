@@ -2390,6 +2390,13 @@ fn optional_linux_id_arg(raw: u64) -> Result<Option<u32>, i32> {
     if raw == u64::MAX || raw as u32 == u32::MAX { Ok(None) } else { linux_id_arg(raw).map(Some) }
 }
 
+/// Called from the page fault handler when a user-space memory access
+/// cannot be resolved. Exits the current process with the given signal.
+pub(crate) fn handle_user_fault(signal: u8) -> ! {
+    crate::kdebug!("user fault signal={signal}, exiting process");
+    handle_exit(128 + signal as i32)
+}
+
 fn display_path(path: &[u8]) -> &str {
     core::str::from_utf8(path).unwrap_or("<non-utf8>")
 }

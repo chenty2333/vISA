@@ -125,3 +125,33 @@ pub trait SnapshotAuthority {
         Err(SubstrateError::unsupported("SnapshotAuthority", "exit_snapshot_barrier"))
     }
 }
+
+/// Page table management authority.
+/// Provides low-level physical frame allocation, mapping, and TLB operations.
+/// This is substrate capability — semantic policy (COW vs SIGSEGV vs demand page)
+/// is decided by GuestMemoryManager::classify_fault(), NOT by this trait.
+pub trait PageTableAuthority {
+    fn alloc_frame(&mut self) -> SubstrateResult<u64> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "alloc_frame"))
+    }
+
+    fn map_page(&mut self, va: u64, phys: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "map_page"))
+    }
+
+    fn unmap_page(&mut self, va: u64) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "unmap_page"))
+    }
+
+    fn protect_page(&mut self, va: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "protect_page"))
+    }
+
+    fn copy_frame(&mut self, src_phys: u64, dst_phys: u64, len: usize) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "copy_frame"))
+    }
+
+    fn flush_tlb(&mut self, va: u64) -> SubstrateResult<()> {
+        Err(SubstrateError::unsupported("PageTableAuthority", "flush_tlb"))
+    }
+}

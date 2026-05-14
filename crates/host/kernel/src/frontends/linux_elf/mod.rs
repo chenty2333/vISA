@@ -2,4 +2,4 @@ mod bridge;
 mod context;
 mod loader;
 
-pub(crate) use bridge::{run_demo, syscall_dispatch_from_asm};
+pub(crate) use bridge::{handle_user_fault, run_demo, syscall_dispatch_from_asm};
