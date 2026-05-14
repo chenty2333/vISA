@@ -20,6 +20,7 @@ const CLONE_SETTLS: u64 = 0x80000;
 const CLONE_THREAD: u64 = 0x10000;
 const CLONE_NEWNS: u64 = 0x20000;
 const CLONE_PARENT_SETTID: u64 = 0x100000;
+const CLONE_CHILD_CLEARTID: u64 = 0x200000;
 const CLONE_NEWCGROUP: u64 = 0x2000000;
 const CLONE_NEWUTS: u64 = 0x4000000;
 const CLONE_NEWIPC: u64 = 0x8000000;
@@ -34,6 +35,7 @@ const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
     | CLONE_FILES
     | CLONE_SETTLS
     | CLONE_PARENT_SETTID
+    | CLONE_CHILD_CLEARTID
     | CLONE_CHILD_SETTID;
 const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
@@ -197,6 +199,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         sgid: u32,
         supplementary_groups: Vec<u32>,
         capability_sets: LinuxCapSets,
+        clear_child_tid: Option<u64>,
     ) -> Result<(TaskId, Pid, Tid), i32> {
         // This is the first non-vfork executable clone subset. It only returns
         // success when all resources that are still global in the prototype are
@@ -300,13 +303,31 @@ impl<'engine> PrototypeRuntime<'engine> {
             task_id: child_task_id,
             pid: child_pid,
             state: ThreadRuntimeStateKind::Running,
-            clear_child_tid: None,
+            clear_child_tid,
             sigmask: parent_thread.sigmask,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
         });
 
         Ok((child_task_id, child_pid, child_tid))
+    }
+
+    pub(crate) fn set_thread_clear_child_tid(
+        &mut self,
+        tid: Tid,
+        clear_child_tid: Option<u64>,
+    ) -> Result<(), i32> {
+        let thread =
+            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
+        thread.clear_child_tid = clear_child_tid;
+        Ok(())
+    }
+
+    pub(crate) fn take_thread_clear_child_tid(&mut self, tid: Tid) -> Option<u64> {
+        self.threads
+            .iter_mut()
+            .find(|thread| thread.tid == tid)
+            .and_then(|thread| thread.clear_child_tid.take())
     }
 
     /// Transition a process to Zombie state with the given exit code.

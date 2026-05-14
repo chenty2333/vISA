@@ -5,24 +5,24 @@ use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECONNREFUSED, ERR_EFAULT,
     ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
-    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, SOCK_DGRAM, SOCK_RAW,
-    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
-    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
-    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
-    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
-    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
-    SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME,
-    SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
-    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_WAKE, SOCK_DGRAM,
+    SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
+    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
+    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
+    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RMDIR, SYS_RSEQ,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
     SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     SyscallContext,
@@ -179,7 +179,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CAPGET => sys_capget(frame),
         SYS_CAPSET => sys_capset(frame),
         SYS_BRK => Ok(active_context().set_program_break(frame.rdi) as i64),
-        SYS_SET_TID_ADDRESS => Ok(active_context().task_id as i64),
+        SYS_SET_TID_ADDRESS => sys_set_tid_address(frame),
         SYS_SET_ROBUST_LIST => Ok(0),
         SYS_RSEQ => Ok(0),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
@@ -1415,6 +1415,7 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     const CLONE_FILES: u64 = 0x400;
     const CLONE_SETTLS: u64 = 0x80000;
     const CLONE_PARENT_SETTID: u64 = 0x100000;
+    const CLONE_CHILD_CLEARTID: u64 = 0x200000;
     const CLONE_CHILD_SETTID: u64 = 0x1000000;
     const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
         | CLONE_VM
@@ -1422,6 +1423,7 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
         | CLONE_FILES
         | CLONE_SETTLS
         | CLONE_PARENT_SETTID
+        | CLONE_CHILD_CLEARTID
         | CLONE_CHILD_SETTID;
 
     if frame.rax == SYS_VFORK {
@@ -1459,6 +1461,8 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     } else {
         None
     };
+    let clear_child_tid =
+        if flags & CLONE_CHILD_CLEARTID != 0 { Some(child_tid_ptr) } else { None };
 
     let (parent_pid, parent_tid_runtime, credential) = {
         let context = active_context();
@@ -1485,6 +1489,7 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
             credential.sgid,
             credential.supplementary_groups,
             caps,
+            clear_child_tid,
         )?;
     if let Some(parent_tid_lease) = parent_tid_lease.as_mut() {
         parent_tid_lease
@@ -1552,6 +1557,13 @@ fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context().suspend_for_vfork_child(child_task_id, child_pid, child_tid, parent_return);
     active_context().supervisor.set_current_task(child_task_id);
     Ok(0)
+}
+
+fn sys_set_tid_address(frame: &SyscallFrame) -> Result<i64, i32> {
+    let tid = active_context().tid;
+    let clear_child_tid = if frame.rdi == 0 { None } else { Some(frame.rdi) };
+    active_context().supervisor.set_thread_clear_child_tid(tid, clear_child_tid)?;
+    Ok(tid as i64)
 }
 
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2506,6 +2518,7 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32> {
     let pid = active_context().pid;
+    clear_child_tid_on_exit();
     active_context().supervisor.process_exit(pid, status);
     if let Some(parent) = active_context().take_vfork_parent_for_child(pid) {
         let return_context = parent.return_context;
@@ -2532,12 +2545,34 @@ fn handle_exit(status: i32) -> ! {
         let context = active_context();
         (context.pid, context.activation_id)
     };
+    clear_child_tid_on_exit();
     active_context().supervisor.process_exit(pid, status);
     if activation_id != 0 {
         crate::substrate::dmw::finish_activation(activation_id);
         active_context().finish_activation(activation_id);
     }
     finish_exited_runtime(status)
+}
+
+fn clear_child_tid_on_exit() {
+    let tid = active_context().tid;
+    let Some(clear_child_tid) = active_context().supervisor.take_thread_clear_child_tid(tid) else {
+        return;
+    };
+    if clear_child_tid == 0 {
+        return;
+    }
+    if let Err(errno) = write_user_u32(clear_child_tid, 0) {
+        crate::kwarn!("clear_child_tid write failed: errno {}", errno);
+        return;
+    }
+    let wake_result = active_context().supervisor.dispatch_linux_syscall(
+        "ring3_clear_child_tid",
+        SyscallContext::new(SYS_FUTEX, [clear_child_tid, FUTEX_WAKE as u64, 1, 0, 0, 0]),
+    );
+    if wake_result.is_err() {
+        crate::kwarn!("clear_child_tid futex wake failed");
+    }
 }
 
 fn finish_active_activation() {
