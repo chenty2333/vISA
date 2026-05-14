@@ -38,16 +38,45 @@ impl Default for Rlimit {
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_AS: usize = 9;
 
+pub(crate) const CAP_CHOWN: u64 = 1 << 0;
+pub(crate) const CAP_DAC_OVERRIDE: u64 = 1 << 1;
+pub(crate) const CAP_DAC_READ_SEARCH: u64 = 1 << 2;
+pub(crate) const CAP_FOWNER: u64 = 1 << 3;
+pub(crate) const CAP_SETGID: u64 = 1 << 6;
+pub(crate) const CAP_SETUID: u64 = 1 << 7;
+pub(crate) const CAP_SYS_RESOURCE: u64 = 1 << 24;
+pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
+    | CAP_DAC_OVERRIDE
+    | CAP_DAC_READ_SEARCH
+    | CAP_FOWNER
+    | CAP_SETGID
+    | CAP_SETUID
+    | CAP_SYS_RESOURCE;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccessIds<'a> {
     pub(crate) uid: u32,
     pub(crate) gid: u32,
     pub(crate) supplementary_groups: &'a [u32],
+    pub(crate) cap_effective: u64,
 }
 
 impl<'a> AccessIds<'a> {
     pub(crate) const fn new(uid: u32, gid: u32, supplementary_groups: &'a [u32]) -> Self {
-        Self { uid, gid, supplementary_groups }
+        Self { uid, gid, supplementary_groups, cap_effective: 0 }
+    }
+
+    pub(crate) const fn with_caps(
+        uid: u32,
+        gid: u32,
+        supplementary_groups: &'a [u32],
+        cap_effective: u64,
+    ) -> Self {
+        Self { uid, gid, supplementary_groups, cap_effective }
+    }
+
+    pub(crate) const fn has_capability(self, capability: u64) -> bool {
+        self.cap_effective & capability != 0
     }
 }
 

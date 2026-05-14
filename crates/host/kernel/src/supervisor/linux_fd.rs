@@ -13,8 +13,9 @@ use super::{
     semantic::{fd_resource_kind, fd_resource_label},
     services::ProcfsService,
     types::{
-        AccessIds, EventFdState, FdEntry, FdResource, InjectedFault, LookupInfo, PipeState,
-        RLIMIT_NOFILE, ServiceCallError, SocketPairState,
+        AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, EventFdState,
+        FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE, ServiceCallError,
+        SocketPairState,
     },
 };
 use crate::interrupts;
@@ -1344,7 +1345,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         self.check_path_access(path, 0, access)?;
         let (owner_uid, _) = self.path_owner(path)?;
-        if access.uid != 0 && access.uid != owner_uid {
+        if access.uid != owner_uid && !access.has_capability(CAP_FOWNER) {
             return Err(ERR_EPERM);
         }
         self.vfs.chmod(path, mode).map_err(errno_from_service_error)
@@ -1359,7 +1360,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         self.check_path_access(path, 0, access)?;
-        if (uid.is_some() || gid.is_some()) && access.uid != 0 {
+        if (uid.is_some() || gid.is_some()) && !access.has_capability(CAP_CHOWN) {
             return Err(ERR_EPERM);
         }
         self.vfs.chown(path, uid, gid).map_err(errno_from_service_error)
@@ -1437,7 +1438,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let parent_info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
         let parent_mode = self.mode_for_service_node(parent_info.route, parent_info.node, &parent);
-        if parent_mode & 0o1000 == 0 || access.uid == 0 {
+        if parent_mode & 0o1000 == 0 || access.has_capability(CAP_FOWNER) {
             return Ok(());
         }
         let (parent_uid, _) = self.owner_for_service_node(parent_info.route, &parent);
@@ -1598,8 +1599,15 @@ fn mode_grants_access(
     if mask == 0 {
         return true;
     }
-    if access.uid == 0 {
+    let is_directory = mode & 0o170000 == 0o040000;
+    if access.has_capability(CAP_DAC_OVERRIDE) {
         return mask & MAY_EXEC == 0 || mode & 0o111 != 0;
+    }
+    if access.has_capability(CAP_DAC_READ_SEARCH)
+        && mask & MAY_WRITE == 0
+        && (mask & MAY_EXEC == 0 || is_directory)
+    {
+        return true;
     }
     let shift = if access.uid == owner_uid {
         6

@@ -3,7 +3,10 @@ use core::ptr::null_mut;
 
 use crate::{
     substrate::ring3::UserReturnContext,
-    supervisor::{PrototypeRuntime, TaskId},
+    supervisor::{
+        PrototypeRuntime, TaskId,
+        types::{CAP_SETGID, CAP_SETUID, LINUX_KNOWN_CAPS},
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -39,6 +42,11 @@ pub(crate) struct ActiveUserContext {
     suid: u32,
     sgid: u32,
     supplementary_groups: Vec<u32>,
+    cap_bounding: u64,
+    cap_inheritable: u64,
+    cap_permitted: u64,
+    cap_effective: u64,
+    cap_ambient: u64,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -66,6 +74,11 @@ pub(crate) struct SuspendedVforkParent {
     suid: u32,
     sgid: u32,
     supplementary_groups: Vec<u32>,
+    cap_bounding: u64,
+    cap_inheritable: u64,
+    cap_permitted: u64,
+    cap_effective: u64,
+    cap_ambient: u64,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -85,6 +98,11 @@ pub(crate) struct CredentialState {
     pub(crate) suid: u32,
     pub(crate) sgid: u32,
     pub(crate) supplementary_groups: Vec<u32>,
+    pub(crate) cap_bounding: u64,
+    pub(crate) cap_inheritable: u64,
+    pub(crate) cap_permitted: u64,
+    pub(crate) cap_effective: u64,
+    pub(crate) cap_ambient: u64,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -121,6 +139,11 @@ impl ActiveUserContext {
             suid: 0,
             sgid: 0,
             supplementary_groups: Vec::new(),
+            cap_bounding: LINUX_KNOWN_CAPS,
+            cap_inheritable: 0,
+            cap_permitted: LINUX_KNOWN_CAPS,
+            cap_effective: LINUX_KNOWN_CAPS,
+            cap_ambient: 0,
             io_owner: 0,
             io_owner_ex_type: 0,
             io_owner_ex_pid: 0,
@@ -218,6 +241,26 @@ impl ActiveUserContext {
         &self.supplementary_groups
     }
 
+    pub(crate) fn cap_inheritable(&self) -> u64 {
+        self.cap_inheritable
+    }
+
+    pub(crate) fn cap_permitted(&self) -> u64 {
+        self.cap_permitted
+    }
+
+    pub(crate) fn cap_effective(&self) -> u64 {
+        self.cap_effective
+    }
+
+    pub(crate) fn cap_ambient(&self) -> u64 {
+        self.cap_ambient
+    }
+
+    pub(crate) fn has_effective_capability(&self, capability: u64) -> bool {
+        self.cap_effective & capability != 0
+    }
+
     pub(crate) fn credential_state(&self) -> CredentialState {
         CredentialState {
             uid: self.uid,
@@ -227,6 +270,11 @@ impl ActiveUserContext {
             suid: self.suid,
             sgid: self.sgid,
             supplementary_groups: self.supplementary_groups.clone(),
+            cap_bounding: self.cap_bounding,
+            cap_inheritable: self.cap_inheritable,
+            cap_permitted: self.cap_permitted,
+            cap_effective: self.cap_effective,
+            cap_ambient: self.cap_ambient,
         }
     }
 
@@ -238,24 +286,34 @@ impl ActiveUserContext {
         self.suid = state.suid;
         self.sgid = state.sgid;
         self.supplementary_groups = state.supplementary_groups;
+        self.cap_bounding = state.cap_bounding;
+        self.cap_inheritable = state.cap_inheritable;
+        self.cap_permitted = state.cap_permitted;
+        self.cap_effective = state.cap_effective;
+        self.cap_ambient = state.cap_ambient;
     }
 
     pub(crate) fn set_uid(&mut self, uid: u32) -> bool {
-        if self.euid == 0 {
+        let old_uid = self.uid;
+        let old_euid = self.euid;
+        let old_suid = self.suid;
+        if self.has_effective_capability(CAP_SETUID) {
             self.uid = uid;
             self.euid = uid;
             self.suid = uid;
+            self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
             return true;
         }
         if uid == self.uid || uid == self.euid || uid == self.suid {
             self.euid = uid;
+            self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
             return true;
         }
         false
     }
 
     pub(crate) fn set_gid(&mut self, gid: u32) -> bool {
-        if self.euid == 0 {
+        if self.has_effective_capability(CAP_SETGID) {
             self.gid = gid;
             self.egid = gid;
             self.sgid = gid;
@@ -269,7 +327,7 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn set_reuid(&mut self, ruid: Option<u32>, euid: Option<u32>) -> bool {
-        let privileged = self.euid == 0;
+        let privileged = self.has_effective_capability(CAP_SETUID);
         let old_ruid = self.uid;
         let old_euid = self.euid;
         let old_suid = self.suid;
@@ -292,11 +350,12 @@ impl ActiveUserContext {
         {
             self.suid = self.euid;
         }
+        self.fixup_capabilities_after_uid_change(old_ruid, old_euid, old_suid);
         true
     }
 
     pub(crate) fn set_regid(&mut self, rgid: Option<u32>, egid: Option<u32>) -> bool {
-        let privileged = self.euid == 0;
+        let privileged = self.has_effective_capability(CAP_SETGID);
         let old_rgid = self.gid;
         let old_egid = self.egid;
         let old_sgid = self.sgid;
@@ -323,11 +382,54 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn set_groups(&mut self, groups: Vec<u32>) -> bool {
-        if self.euid != 0 {
+        if !self.has_effective_capability(CAP_SETGID) {
             return false;
         }
         self.supplementary_groups = groups;
         true
+    }
+
+    pub(crate) fn set_capability_sets(
+        &mut self,
+        permitted: u64,
+        effective: u64,
+        inheritable: u64,
+        ambient: u64,
+    ) -> bool {
+        let permitted = permitted & LINUX_KNOWN_CAPS;
+        let effective = effective & LINUX_KNOWN_CAPS;
+        let inheritable = inheritable & LINUX_KNOWN_CAPS;
+        let ambient = ambient & LINUX_KNOWN_CAPS;
+        if permitted & !self.cap_bounding != 0
+            || permitted & !self.cap_permitted != 0
+            || effective & !permitted != 0
+            || ambient & !permitted != 0
+        {
+            return false;
+        }
+        self.cap_permitted = permitted;
+        self.cap_effective = effective;
+        self.cap_inheritable = inheritable;
+        self.cap_ambient = ambient;
+        true
+    }
+
+    fn fixup_capabilities_after_uid_change(&mut self, old_uid: u32, old_euid: u32, old_suid: u32) {
+        let had_root_uid = old_uid == 0 || old_euid == 0 || old_suid == 0;
+        let has_root_uid = self.uid == 0 || self.euid == 0 || self.suid == 0;
+        if had_root_uid && !has_root_uid {
+            self.cap_effective = 0;
+            self.cap_permitted = 0;
+            self.cap_ambient = 0;
+            return;
+        }
+        if old_euid == 0 && self.euid != 0 {
+            self.cap_effective = 0;
+            return;
+        }
+        if old_euid != 0 && self.euid == 0 {
+            self.cap_effective = self.cap_permitted & self.cap_bounding;
+        }
     }
 
     pub(crate) fn open_owner_ids(&self) -> u64 {
@@ -423,6 +525,11 @@ impl ActiveUserContext {
             suid: self.suid,
             sgid: self.sgid,
             supplementary_groups: self.supplementary_groups.clone(),
+            cap_bounding: self.cap_bounding,
+            cap_inheritable: self.cap_inheritable,
+            cap_permitted: self.cap_permitted,
+            cap_effective: self.cap_effective,
+            cap_ambient: self.cap_ambient,
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
             io_owner_ex_pid: self.io_owner_ex_pid,
@@ -471,6 +578,11 @@ impl ActiveUserContext {
             suid,
             sgid,
             supplementary_groups,
+            cap_bounding,
+            cap_inheritable,
+            cap_permitted,
+            cap_effective,
+            cap_ambient,
             io_owner,
             io_owner_ex_type,
             io_owner_ex_pid,
@@ -493,6 +605,11 @@ impl ActiveUserContext {
         self.suid = suid;
         self.sgid = sgid;
         self.supplementary_groups = supplementary_groups;
+        self.cap_bounding = cap_bounding;
+        self.cap_inheritable = cap_inheritable;
+        self.cap_permitted = cap_permitted;
+        self.cap_effective = cap_effective;
+        self.cap_ambient = cap_ambient;
         self.io_owner = io_owner;
         self.io_owner_ex_type = io_owner_ex_type;
         self.io_owner_ex_pid = io_owner_ex_pid;

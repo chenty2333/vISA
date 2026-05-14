@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
-use semantic_core::{CredentialTransitionKind, ResourceHandle};
+use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_ECONNREFUSED, ERR_EFAULT,
     ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
@@ -41,7 +41,7 @@ use crate::{
     substrate::ring3::{self, SyscallFrame},
     supervisor::{
         LinuxCallResult, runtime,
-        types::{AccessIds, RLIMIT_AS, Rlimit, SigAction},
+        types::{AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, SigAction},
     },
 };
 
@@ -873,7 +873,7 @@ fn sys_setgroups(frame: &SyscallFrame) -> Result<i64, i32> {
     if size > NGROUPS_MAX {
         return Err(ERR_EINVAL);
     }
-    if active_context().euid() != 0 {
+    if !active_context().has_effective_capability(CAP_SETGID) {
         return Err(ERR_EPERM);
     }
     if size != 0 && frame.rsi == 0 {
@@ -934,8 +934,13 @@ fn sys_capget(frame: &SyscallFrame) -> Result<i64, i32> {
         }
     };
     if frame.rsi != 0 {
-        let zeros = [0u8; 24];
-        write_user_bytes(frame.rsi, &zeros[..u32_count * 4])?;
+        let context = active_context();
+        let encoded = encode_capability_data(
+            context.cap_effective(),
+            context.cap_permitted(),
+            context.cap_inheritable(),
+        );
+        write_user_bytes(frame.rsi, &encoded[..u32_count * 4])?;
     }
     Ok(0)
 }
@@ -950,7 +955,7 @@ fn sys_capset(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let (version, pid) = read_capability_header(frame.rdi)?;
     validate_capability_pid(pid)?;
-    let len: u64 = match version {
+    let len: usize = match version {
         LINUX_CAPABILITY_VERSION_1 => 12,
         LINUX_CAPABILITY_VERSION_2 | LINUX_CAPABILITY_VERSION_3 => 24,
         _ => {
@@ -958,11 +963,52 @@ fn sys_capset(frame: &SyscallFrame) -> Result<i64, i32> {
             return Err(ERR_EINVAL);
         }
     };
-    let data = user_lease(frame.rsi, len, false)?;
-    if data.bytes().map_err(map_dmw_fault)?.iter().any(|byte| *byte != 0) {
+    let bytes = read_user_bytes(frame.rsi, len)?;
+    let (effective, permitted, inheritable) = decode_capability_data(&bytes)?;
+    let before = active_context().credential_state();
+    if !active_context().set_capability_sets(permitted, effective, inheritable, 0) {
         return Err(ERR_EPERM);
     }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+        bounding: false,
+        inheritable: before.cap_inheritable != active_context().cap_inheritable(),
+        permitted: before.cap_permitted != active_context().cap_permitted(),
+        effective: before.cap_effective != active_context().cap_effective(),
+        ambient: before.cap_ambient != active_context().cap_ambient(),
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
+    }
     Ok(0)
+}
+
+fn encode_capability_data(effective: u64, permitted: u64, inheritable: u64) -> [u8; 24] {
+    let words = [
+        effective as u32,
+        permitted as u32,
+        inheritable as u32,
+        (effective >> 32) as u32,
+        (permitted >> 32) as u32,
+        (inheritable >> 32) as u32,
+    ];
+    let mut out = [0u8; 24];
+    for (index, word) in words.iter().enumerate() {
+        out[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    out
+}
+
+fn decode_capability_data(bytes: &[u8]) -> Result<(u64, u64, u64), i32> {
+    if bytes.len() != 12 && bytes.len() != 24 {
+        return Err(ERR_EINVAL);
+    }
+    let read = |index: usize| -> Result<u32, i32> {
+        Ok(u32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().map_err(|_| ERR_EINVAL)?))
+    };
+    let effective = read(0)? as u64 | if bytes.len() == 24 { (read(3)? as u64) << 32 } else { 0 };
+    let permitted = read(1)? as u64 | if bytes.len() == 24 { (read(4)? as u64) << 32 } else { 0 };
+    let inheritable = read(2)? as u64 | if bytes.len() == 24 { (read(5)? as u64) << 32 } else { 0 };
+    Ok((effective, permitted, inheritable))
 }
 
 fn read_capability_header(ptr: u64) -> Result<(u32, i32), i32> {
@@ -977,7 +1023,7 @@ fn validate_capability_pid(pid: i32) -> Result<(), i32> {
     if pid < 0 {
         return Err(ERR_EINVAL);
     }
-    if pid != 0 && pid as u64 != active_context().task_id as u64 {
+    if pid != 0 && pid as u32 != active_context().pid {
         return Err(vmos_abi::ERR_ESRCH);
     }
     Ok(())
@@ -1061,7 +1107,9 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
             return Err(ERR_EINVAL);
         }
         let old_limit = active_context().supervisor.get_rlimit(pid, resource);
-        if new_limit.max > old_limit.max && active_context().euid() != 0 {
+        if new_limit.max > old_limit.max
+            && !active_context().has_effective_capability(CAP_SYS_RESOURCE)
+        {
             return Err(ERR_EPERM);
         }
         if !active_context().supervisor.set_rlimit(pid, resource, new_limit) {
@@ -1379,12 +1427,29 @@ fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
     if active_context().has_suspended_vfork_parent() {
         return Err(ERR_ENOSYS);
     }
-    let (parent_pid, parent_tid, uid, gid) = {
+    let (parent_pid, parent_tid, credential) = {
         let context = active_context();
-        (context.pid, context.tid, context.uid(), context.gid())
+        (context.pid, context.tid, context.credential_state())
     };
-    let (child_task_id, child_pid, child_tid) =
-        active_context().supervisor.create_vfork_child(parent_pid, parent_tid, uid, gid)?;
+    let caps = LinuxCapSets {
+        bounding: credential.cap_bounding,
+        inheritable: credential.cap_inheritable,
+        permitted: credential.cap_permitted,
+        effective: credential.cap_effective,
+        ambient: credential.cap_ambient,
+    };
+    let (child_task_id, child_pid, child_tid) = active_context().supervisor.create_vfork_child(
+        parent_pid,
+        parent_tid,
+        credential.uid,
+        credential.euid,
+        credential.suid,
+        credential.gid,
+        credential.egid,
+        credential.sgid,
+        credential.supplementary_groups,
+        caps,
+    )?;
     let mut parent_return = ring3::capture_user_return(frame);
     parent_return.frame.rax = child_pid as u64;
     active_context().suspend_for_vfork_child(child_task_id, child_pid, child_tid, parent_return);
@@ -2399,11 +2464,12 @@ struct AccessSnapshot {
     uid: u32,
     gid: u32,
     groups: Vec<u32>,
+    cap_effective: u64,
 }
 
 impl AccessSnapshot {
     fn ids(&self) -> AccessIds<'_> {
-        AccessIds::new(self.uid, self.gid, &self.groups)
+        AccessIds::with_caps(self.uid, self.gid, &self.groups, self.cap_effective)
     }
 }
 
@@ -2413,6 +2479,7 @@ fn real_access_snapshot() -> AccessSnapshot {
         uid: context.uid(),
         gid: context.gid(),
         groups: context.supplementary_groups().to_vec(),
+        cap_effective: if context.uid() == 0 { context.cap_permitted() } else { 0 },
     }
 }
 
@@ -2422,6 +2489,7 @@ fn effective_access_snapshot() -> AccessSnapshot {
         uid: context.euid(),
         gid: context.egid(),
         groups: context.supplementary_groups().to_vec(),
+        cap_effective: context.cap_effective(),
     }
 }
 
@@ -2439,6 +2507,13 @@ fn record_credential_transition(kind: CredentialTransitionKind) -> Result<(), i3
         state.egid,
         state.sgid,
         state.supplementary_groups,
+        LinuxCapSets {
+            bounding: state.cap_bounding,
+            inheritable: state.cap_inheritable,
+            permitted: state.cap_permitted,
+            effective: state.cap_effective,
+            ambient: state.cap_ambient,
+        },
         kind,
     ) {
         Ok(())

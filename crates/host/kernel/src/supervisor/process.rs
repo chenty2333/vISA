@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use semantic_core::{CredentialTransitionKind, GuestAddressSpaceRef, ProcessState};
+use semantic_core::{CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets, ProcessState};
 
 use super::{
     runtime::PrototypeRuntime,
@@ -53,6 +53,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         egid: u32,
         sgid: u32,
         supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
         kind: CredentialTransitionKind,
     ) -> bool {
         self.semantic
@@ -67,6 +68,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 sgid,
                 egid,
                 supplementary_groups,
+                capability_sets,
                 kind,
             )
             .is_some()
@@ -83,7 +85,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         parent_pid: Pid,
         parent_tid: Tid,
         uid: u32,
+        euid: u32,
+        suid: u32,
         gid: u32,
+        egid: u32,
+        sgid: u32,
+        supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
     ) -> Result<(TaskId, Pid, Tid), i32> {
         let parent = self
             .processes
@@ -117,7 +125,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let child_task_id = self.allocate_task();
-        if !self.semantic.create_process_family_root(
+        if !self.semantic.create_process_family_root_with_credential(
             child_pid,
             Some(parent_pid),
             parent.pgid,
@@ -125,7 +133,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             child_task_id as u64,
             GuestAddressSpaceRef::new(1, 1),
             uid,
+            euid,
+            suid,
+            euid,
             gid,
+            egid,
+            sgid,
+            egid,
+            supplementary_groups,
+            capability_sets,
         ) {
             return Err(vmos_abi::ERR_EINVAL);
         }

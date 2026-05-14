@@ -16,6 +16,45 @@ impl SemanticGraph {
         uid: u32,
         gid: u32,
     ) -> bool {
+        self.create_process_family_root_with_credential(
+            pid,
+            parent_pid,
+            pgid,
+            sid,
+            task_id,
+            aspace,
+            uid,
+            uid,
+            uid,
+            uid,
+            gid,
+            gid,
+            gid,
+            gid,
+            Vec::new(),
+            LinuxCapSets::default(),
+        )
+    }
+
+    pub fn create_process_family_root_with_credential(
+        &mut self,
+        pid: u32,
+        parent_pid: Option<u32>,
+        pgid: u32,
+        sid: u32,
+        task_id: u64,
+        aspace: GuestAddressSpaceRef,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        fsuid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        fsgid: u32,
+        supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
+    ) -> bool {
         if pid == 0
             || pgid == 0
             || sid == 0
@@ -54,9 +93,19 @@ impl SemanticGraph {
         else {
             return false;
         };
-        let Some(credential_id) =
-            self.create_credential(process, uid, uid, uid, uid, gid, gid, gid, gid)
-        else {
+        let Some(credential_id) = self.create_credential_with_groups_and_caps(
+            process,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            supplementary_groups,
+            capability_sets,
+        ) else {
             return false;
         };
         let Some(credential) =
@@ -413,7 +462,7 @@ impl SemanticGraph {
         sgid: u32,
         fsgid: u32,
     ) -> Option<CredentialId> {
-        self.create_credential_with_groups(
+        self.create_credential_with_groups_and_caps(
             owner_process,
             uid,
             euid,
@@ -424,6 +473,7 @@ impl SemanticGraph {
             sgid,
             fsgid,
             Vec::new(),
+            LinuxCapSets::default(),
         )
     }
 
@@ -440,6 +490,35 @@ impl SemanticGraph {
         fsgid: u32,
         supplementary_groups: Vec<u32>,
     ) -> Option<CredentialId> {
+        self.create_credential_with_groups_and_caps(
+            owner_process,
+            uid,
+            euid,
+            suid,
+            fsuid,
+            gid,
+            egid,
+            sgid,
+            fsgid,
+            supplementary_groups,
+            LinuxCapSets::default(),
+        )
+    }
+
+    pub fn create_credential_with_groups_and_caps(
+        &mut self,
+        owner_process: ContractObjectRef,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        fsuid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        fsgid: u32,
+        supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
+    ) -> Option<CredentialId> {
         let id = self.domains.process.next_credential_id;
         self.domains.process.next_credential_id = id.max(id + 1);
         if self.create_credential_with_id_and_groups(
@@ -454,6 +533,7 @@ impl SemanticGraph {
             sgid,
             fsgid,
             supplementary_groups,
+            capability_sets,
         ) {
             Some(id)
         } else {
@@ -487,6 +567,7 @@ impl SemanticGraph {
             sgid,
             fsgid,
             Vec::new(),
+            LinuxCapSets::default(),
         )
     }
 
@@ -503,6 +584,7 @@ impl SemanticGraph {
         sgid: u32,
         fsgid: u32,
         supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
     ) -> bool {
         if id == 0 || self.domains.process.credentials.iter().any(|r| r.id == id) {
             return false;
@@ -530,7 +612,7 @@ impl SemanticGraph {
             sgid,
             fsgid,
             supplementary_groups,
-            capability_sets: LinuxCapSets::default(),
+            capability_sets,
             recorded_at_event,
             generation: 1,
             note: String::new(),
@@ -554,6 +636,7 @@ impl SemanticGraph {
         sgid: u32,
         fsgid: u32,
         supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
         kind: CredentialTransitionKind,
     ) -> Option<CredentialId> {
         let process = self.domains.process.processes.iter().find(|record| record.pid == pid)?;
@@ -565,7 +648,7 @@ impl SemanticGraph {
             .iter()
             .find(|thread| thread.process.id == process_ref.id)
             .map(|thread| thread.credential)?;
-        let to_id = self.create_credential_with_groups(
+        let to_id = self.create_credential_with_groups_and_caps(
             process_ref,
             uid,
             euid,
@@ -576,6 +659,7 @@ impl SemanticGraph {
             sgid,
             fsgid,
             supplementary_groups,
+            capability_sets,
         )?;
         let to_credential = self.query_credential(to_id)?.object_ref();
         self.record_credential_transition(from_credential, to_credential, kind, true)?;
@@ -1058,6 +1142,13 @@ mod tests {
         let mut groups = Vec::new();
         groups.push(200);
         groups.push(300);
+        let capability_sets = LinuxCapSets {
+            bounding: 0b111,
+            inheritable: 0b010,
+            permitted: 0b011,
+            effective: 0b001,
+            ambient: 0,
+        };
         let credential_id = graph
             .transition_process_credential_by_pid(
                 1,
@@ -1070,6 +1161,7 @@ mod tests {
                 102,
                 101,
                 groups,
+                capability_sets.clone(),
                 CredentialTransitionKind::SetGroups { old_len: 0, new_len: 2 },
             )
             .expect("credential transition should be recorded");
@@ -1077,6 +1169,7 @@ mod tests {
         let snapshot = graph.snapshot();
         let credential = graph.query_credential(credential_id).unwrap();
         assert_eq!(credential.supplementary_groups, [200, 300]);
+        assert_eq!(credential.capability_sets, capability_sets);
         assert_eq!(snapshot.credentials.len(), 2);
         assert_eq!(snapshot.credential_transitions.len(), 1);
         assert_eq!(snapshot.threads[0].credential, credential.object_ref());

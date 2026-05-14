@@ -6,8 +6,8 @@ use alloc::{
 
 use semantic_core::{
     ArtifactProfile, FailureEffect, FrontendKind, GenerationCheckError, GuestAddressSpaceRef,
-    GuestStateSnapshot, MigrationPackage, ResourceHandle, ResourceKind, SemanticGraph,
-    SemanticWaitKind, SubstrateBoundarySnapshot, TaskState, WaitHandle,
+    GuestStateSnapshot, LinuxCapSets, MigrationPackage, ResourceHandle, ResourceKind,
+    SemanticGraph, SemanticWaitKind, SubstrateBoundarySnapshot, TaskState, WaitHandle,
 };
 use supervisor_catalog::{
     DMW_LAYOUT, MACHINE_ABI_VERSION, RUNTIME_ONLY_EXECUTOR_ABI, SUPERVISOR_ABI_VERSION,
@@ -20,7 +20,7 @@ use super::{
     authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec},
     events::Event,
     runtime::PrototypeRuntime,
-    types::{FdResource, WaitKind, WaitRestartClass, WaitToken},
+    types::{FdResource, LINUX_KNOWN_CAPS, WaitKind, WaitRestartClass, WaitToken},
 };
 
 pub(super) fn bootstrap_graph(
@@ -62,7 +62,31 @@ pub(super) fn bootstrap_graph(
 }
 
 fn bootstrap_linux_process_family(graph: &mut SemanticGraph) -> Result<(), &'static str> {
-    if graph.create_process_family_root(1, None, 1, 1, 1, GuestAddressSpaceRef::new(1, 1), 0, 0) {
+    let caps = LinuxCapSets {
+        bounding: LINUX_KNOWN_CAPS,
+        inheritable: 0,
+        permitted: LINUX_KNOWN_CAPS,
+        effective: LINUX_KNOWN_CAPS,
+        ambient: 0,
+    };
+    if graph.create_process_family_root_with_credential(
+        1,
+        None,
+        1,
+        1,
+        1,
+        GuestAddressSpaceRef::new(1, 1),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        Vec::new(),
+        caps,
+    ) {
         Ok(())
     } else {
         Err("failed to create bootstrap process family")
