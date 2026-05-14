@@ -682,24 +682,27 @@ fn sys_mknodat(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    active_context().supervisor.create_fifo_path(&resolved, mode)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.create_fifo_path(&resolved, mode, uid, gid)?;
     Ok(0)
 }
 
 fn sys_unlink(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.unlink_path(&resolved)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.unlink_path(&resolved, uid, gid)?;
     Ok(0)
 }
 
 fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let (uid, gid) = effective_ids();
     if frame.rdx & AT_REMOVEDIR != 0 {
-        active_context().supervisor.rmdir_path(&resolved)?;
+        active_context().supervisor.rmdir_path(&resolved, uid, gid)?;
     } else {
-        active_context().supervisor.unlink_path(&resolved)?;
+        active_context().supervisor.unlink_path(&resolved, uid, gid)?;
     }
     Ok(0)
 }
@@ -708,7 +711,8 @@ fn sys_symlink(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rdi, PATH_MAX)?;
     let linkpath = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &linkpath)?;
-    active_context().supervisor.symlink_path(&resolved, &target)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.symlink_path(&resolved, &target, uid, gid)?;
     Ok(0)
 }
 
@@ -716,20 +720,24 @@ fn sys_symlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rdi, PATH_MAX)?;
     let linkpath = read_user_c_string(frame.rdx, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rsi), &linkpath)?;
-    active_context().supervisor.symlink_path(&resolved, &target)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.symlink_path(&resolved, &target, uid, gid)?;
     Ok(0)
 }
 
 fn sys_rmdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.rmdir_path(&resolved)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.rmdir_path(&resolved, uid, gid)?;
     Ok(0)
 }
 
 fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.check_path_access(&resolved, 0x1, uid, gid)?;
     if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
         return Err(vmos_abi::ERR_ENOTDIR);
     }
@@ -945,7 +953,8 @@ fn sys_truncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    active_context().supervisor.truncate_path(&resolved, len)?;
+    let (uid, gid) = effective_ids();
+    active_context().supervisor.truncate_path(&resolved, len, uid, gid)?;
     Ok(0)
 }
 
@@ -2319,6 +2328,11 @@ fn finish_exited_runtime(status: i32) -> ! {
 fn current_parent_pid() -> u32 {
     let pid = active_context().pid;
     active_context().supervisor.query_process(pid).map(|process| process.ppid).unwrap_or(pid)
+}
+
+fn effective_ids() -> (u32, u32) {
+    let context = active_context();
+    (context.euid(), context.egid())
 }
 
 struct ActivationGuard {

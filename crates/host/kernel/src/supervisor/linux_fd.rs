@@ -610,12 +610,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
-    pub(crate) fn create_fifo_path(&mut self, path: &[u8], mode: u32) -> Result<(), i32> {
+    pub(crate) fn create_fifo_path(
+        &mut self,
+        path: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         if self.lookup_path(path).is_ok() {
             return Err(vmos_abi::ERR_EEXIST);
         }
-        self.vfs.create_file(path, mode, 0, 0).map_err(errno_from_service_error)
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
+        self.vfs.create_file(path, mode, uid, gid).map_err(errno_from_service_error)
     }
 
     pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
@@ -1310,16 +1317,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         gid: u32,
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
         self.vfs.mkdir(path, mode, uid, gid).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn unlink_path(&mut self, path: &[u8]) -> Result<(), i32> {
+    pub(crate) fn unlink_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
         self.vfs.unlink(path).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn rmdir_path(&mut self, path: &[u8]) -> Result<(), i32> {
+    pub(crate) fn rmdir_path(&mut self, path: &[u8], uid: u32, gid: u32) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
         self.vfs.rmdir(path).map_err(errno_from_service_error)
     }
 
@@ -1355,13 +1365,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.chown(path, uid, gid).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn symlink_path(&mut self, path: &[u8], target: &[u8]) -> Result<(), i32> {
+    pub(crate) fn symlink_path(
+        &mut self,
+        path: &[u8],
+        target: &[u8],
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_parent_access(path, MAY_WRITE | MAY_EXEC, uid, gid)?;
         self.vfs.symlink(path, target).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn truncate_path(&mut self, path: &[u8], len: usize) -> Result<(), i32> {
+    pub(crate) fn truncate_path(
+        &mut self,
+        path: &[u8],
+        len: usize,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.check_path_access(path, MAY_WRITE, uid, gid)?;
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
     }
 
