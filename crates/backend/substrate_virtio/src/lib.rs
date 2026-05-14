@@ -1,6 +1,6 @@
 #![no_std]
 
-#[cfg(test)]
+#[cfg(any(test, feature = "host-tap"))]
 extern crate std;
 
 pub mod block;

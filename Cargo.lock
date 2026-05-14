@@ -1533,6 +1533,10 @@ dependencies = [
 [[package]]
 name = "substrate_virtio"
 version = "0.1.0"
+dependencies = [
+ "libc",
+ "substrate_api",
+]
 
 [[package]]
 name = "supervisor_catalog"

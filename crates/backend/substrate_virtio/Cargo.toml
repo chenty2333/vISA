@@ -4,4 +4,10 @@ version = "0.1.0"
 publish = false
 edition = "2024"
 
+[features]
+default = []
+host-tap = ["dep:libc"]
+
 [dependencies]
+libc = { version = "0.2", optional = true }
+substrate_api.workspace = true
