@@ -292,6 +292,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     record_block_runtime_b23_evidence(&mut semantic)?;
     record_simd_runtime_v0_evidence(&mut semantic)?;
     record_substrate_conformance_evidence(&mut semantic);
+    record_page_table_backend_evidence(&mut semantic)?;
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
     maybe_run_host_tap_runtime_probe(&mut semantic)?;

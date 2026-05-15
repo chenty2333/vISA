@@ -1,3 +1,9 @@
+use substrate_api::PageTableAuthority;
+use substrate_virtio::page_table::{
+    InMemoryPageTableBackend, PAGE_TABLE_BACKEND_MODEL, PAGE_TABLE_BACKEND_PROFILE,
+    PAGE_TABLE_BACKEND_PROVIDER,
+};
+
 use super::super::*;
 
 pub(crate) fn record_simd_runtime_v0_evidence(
@@ -115,6 +121,85 @@ pub(crate) fn record_substrate_conformance_evidence(semantic: &mut SemanticGraph
             Some(SubstrateRequester::new("target-executor-substrate-probe")),
         ),
     );
+}
+
+pub(crate) fn record_page_table_backend_evidence(
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    const TEST_VA: u64 = 0x40_0000;
+    const COPY_LEN: usize = 4;
+    const COPY_SENTINEL: &[u8; COPY_LEN] = b"VMOS";
+
+    let mut backend = InMemoryPageTableBackend::default();
+    let source_frame = backend
+        .alloc_frame()
+        .map_err(|error| format!("page-table backend alloc source failed: {error:?}"))?;
+    let destination_frame = backend
+        .alloc_frame()
+        .map_err(|error| format!("page-table backend alloc destination failed: {error:?}"))?;
+    backend
+        .frame_mut(source_frame)
+        .ok_or("page-table backend source frame missing after allocation")?
+        .bytes_mut()[..COPY_LEN]
+        .copy_from_slice(COPY_SENTINEL);
+    backend
+        .map_page(TEST_VA, source_frame, true, false)
+        .map_err(|error| format!("page-table backend map failed: {error:?}"))?;
+    backend
+        .protect_page(TEST_VA, false, false)
+        .map_err(|error| format!("page-table backend protect failed: {error:?}"))?;
+    backend
+        .copy_frame(source_frame, destination_frame, COPY_LEN)
+        .map_err(|error| format!("page-table backend frame copy failed: {error:?}"))?;
+    backend
+        .flush_tlb(TEST_VA)
+        .map_err(|error| format!("page-table backend TLB flush failed: {error:?}"))?;
+    backend
+        .unmap_page(TEST_VA)
+        .map_err(|error| format!("page-table backend unmap failed: {error:?}"))?;
+
+    let copied = backend
+        .frame(destination_frame)
+        .ok_or("page-table backend destination frame missing after copy")?;
+    if &copied.bytes()[..COPY_LEN] != COPY_SENTINEL {
+        return Err("page-table backend copy evidence did not preserve frame bytes".into());
+    }
+
+    let evidence = backend.evidence();
+    if evidence.provider != PAGE_TABLE_BACKEND_PROVIDER
+        || evidence.profile != PAGE_TABLE_BACKEND_PROFILE
+        || evidence.model != PAGE_TABLE_BACKEND_MODEL
+        || evidence.frame_count != 2
+        || evidence.mapping_count != 0
+        || evidence.tlb_flush_count != 1
+    {
+        return Err(format!("unexpected page-table backend evidence: {evidence:?}").into());
+    }
+
+    semantic.publish_boundary(
+        "page-table-authority",
+        BoundaryKind::AuthorityPlane,
+        BoundaryStatus::HostSide,
+        EvidenceBoundaryLevel::ReferenceService,
+        PAGE_TABLE_BACKEND_PROFILE,
+        Some("kernel-page-fault-runtime-wiring"),
+    );
+    let requester = Some("target-executor-page-table-probe".to_owned());
+    for operation in
+        ["alloc_frame", "map_page", "protect_page", "copy_frame", "flush_tlb", "unmap_page"]
+    {
+        semantic.record_substrate_authority_extracted(
+            "PageTableAuthority",
+            operation,
+            requester.clone(),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+
+    Ok(())
 }
 
 pub(crate) fn record_command_surface_evidence(semantic: &mut SemanticGraph) {
@@ -1465,4 +1550,47 @@ pub(crate) fn substrate_requester_parts(
         requester.artifact.map(|artifact| artifact.id),
         requester.store.map(|store| store.id),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_table_backend_evidence_records_reference_service_boundary_and_operations() {
+        let mut semantic = SemanticGraph::new();
+
+        record_page_table_backend_evidence(&mut semantic).unwrap();
+
+        let boundary = semantic
+            .boundaries()
+            .iter()
+            .find(|boundary| boundary.name == "page-table-authority")
+            .expect("page-table authority boundary should be published");
+        assert_eq!(boundary.kind, BoundaryKind::AuthorityPlane);
+        assert_eq!(boundary.status, BoundaryStatus::HostSide);
+        assert_eq!(boundary.evidence, EvidenceBoundaryLevel::ReferenceService);
+        assert_eq!(boundary.backend, PAGE_TABLE_BACKEND_PROFILE);
+        assert_eq!(boundary.blocked_by.as_deref(), Some("kernel-page-fault-runtime-wiring"));
+
+        let operations = semantic
+            .event_log()
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateAuthorityExtracted {
+                    authority, operation, requester, ..
+                } if authority == "PageTableAuthority"
+                    && requester.as_deref() == Some("target-executor-page-table-probe") =>
+                {
+                    Some(operation.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operations,
+            ["alloc_frame", "map_page", "protect_page", "copy_frame", "flush_tlb", "unmap_page"]
+        );
+    }
 }
