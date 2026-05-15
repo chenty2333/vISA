@@ -11,3 +11,6 @@ host-tap = ["dep:libc"]
 [dependencies]
 libc = { version = "0.2", optional = true }
 substrate_api.workspace = true
+
+[dev-dependencies]
+substrate_api = { workspace = true, features = ["conformance"] }
