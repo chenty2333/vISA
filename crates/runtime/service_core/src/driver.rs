@@ -6,6 +6,7 @@ pub const REQUEST_CAPACITY: usize = PACKET_FRAME_CAPACITY;
 pub const RESPONSE_CAPACITY: usize = PACKET_FRAME_CAPACITY;
 pub const FIRST_RX_DELAY_TICKS: u64 = 7;
 pub const NEXT_RX_DELAY_TICKS: u64 = 20;
+pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,15 +71,18 @@ impl DriverVirtioNetState {
     }
 
     pub fn submit_tx_frame(&mut self, now_ticks: u64, frame: &[u8]) -> Result<u32, i32> {
-        let (meta, payload) = decode_frame(frame)?;
-        if meta.protocol != PROTO_DEMO_TCP || payload.is_empty() {
-            return Ok(0);
+        match decode_frame(frame) {
+            Ok((meta, payload)) if meta.protocol == PROTO_DEMO_TCP && !payload.is_empty() => {
+                self.tx_pending = true;
+                self.ready = false;
+                self.phase = DriverNetEventKind::None;
+                self.next_tick = now_ticks.saturating_add(FIRST_RX_DELAY_TICKS);
+                Ok(payload.len() as u32)
+            }
+            _ if frame.len() >= ETHERNET_HEADER_LEN => Ok(frame.len() as u32),
+            Ok(_) => Ok(0),
+            Err(errno) => Err(errno),
         }
-        self.tx_pending = true;
-        self.ready = false;
-        self.phase = DriverNetEventKind::None;
-        self.next_tick = now_ticks.saturating_add(FIRST_RX_DELAY_TICKS);
-        Ok(payload.len() as u32)
     }
 
     pub fn poll_device(&mut self, now_ticks: u64) -> DriverNetEvent {
@@ -182,5 +186,25 @@ mod tests {
             crate::packet::decode_frame(&response[..response_len as usize]).unwrap();
         assert_eq!(payload, DEMO_HTTP_RESPONSE);
         assert_eq!(driver.poll_device(10 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
+    }
+
+    #[test]
+    fn raw_ethernet_tx_is_accepted_without_synthetic_rx() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut frame = [0u8; 42];
+        frame[..6].copy_from_slice(&[0xff; 6]);
+        frame[6..12].copy_from_slice(&[0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01]);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+
+        assert_eq!(driver.submit_tx_frame(5, &frame).unwrap(), frame.len() as u32);
+        assert_eq!(driver.poll_device(5 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
+        assert_eq!(driver.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn short_tx_frame_is_rejected() {
+        let mut driver = DriverVirtioNetState::new();
+
+        assert_eq!(driver.submit_tx_frame(0, &[0u8; 4]), Err(vmos_abi::ERR_EINVAL));
     }
 }
