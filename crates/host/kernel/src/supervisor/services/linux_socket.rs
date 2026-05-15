@@ -10,6 +10,7 @@ const LINUX_SOCKET_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SOCKET_
 pub(crate) struct LinuxSocketService {
     io: BufferedModule,
     register_socket: WasmFn<(u32, u32, u32, u32, u64), i32>,
+    register_connected_socket: WasmFn<(u32, u32, u32, u32, u64), i32>,
     close_socket: WasmFn<u32, i32>,
     bind_socket: WasmFn<(u32, u32), i32>,
     connect_socket: WasmFn<(u32, u32), i32>,
@@ -34,6 +35,10 @@ impl LinuxSocketService {
         )?;
         let register_socket =
             io.bind("register_socket", "missing linux_socket register_socket export")?;
+        let register_connected_socket = io.bind(
+            "register_connected_socket",
+            "missing linux_socket register_connected_socket export",
+        )?;
         let close_socket = io.bind("close_socket", "missing linux_socket close_socket export")?;
         let bind_socket = io.bind("bind_socket", "missing linux_socket bind_socket export")?;
         let connect_socket =
@@ -62,6 +67,7 @@ impl LinuxSocketService {
         let mut service = Self {
             io,
             register_socket,
+            register_connected_socket,
             close_socket,
             bind_socket,
             connect_socket,
@@ -99,6 +105,25 @@ impl LinuxSocketService {
             self.io
                 .call(
                     &self.register_socket,
+                    (socket_id, domain, ty, protocol, ready_key),
+                    "linux_socket_service trapped",
+                )
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn register_connected_socket(
+        &mut self,
+        socket_id: u32,
+        domain: u32,
+        ty: u32,
+        protocol: u32,
+        ready_key: u64,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(
+                    &self.register_connected_socket,
                     (socket_id, domain, ty, protocol, ready_key),
                     "linux_socket_service trapped",
                 )

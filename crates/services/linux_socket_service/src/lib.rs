@@ -53,6 +53,19 @@ pub extern "C" fn register_socket(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn register_connected_socket(
+    socket_id: u32,
+    domain: u32,
+    ty: u32,
+    protocol: u32,
+    ready_key: u64,
+) -> i32 {
+    result_unit(unsafe {
+        state().register_connected_socket(socket_id, domain, ty, protocol, ready_key)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn close_socket(socket_id: u32) -> i32 {
     result_unit(unsafe { state().close_socket(socket_id) })
 }

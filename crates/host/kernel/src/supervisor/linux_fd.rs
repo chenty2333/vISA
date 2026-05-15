@@ -1496,6 +1496,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some((socket_id, handle)) = self.socket_for_ready_key(ready_key) else {
             return false;
         };
+        if self
+            .net_stack_socket_accept_ready(socket_id, ready_key, handle)
+            .is_some_and(|ready| ready)
+        {
+            return true;
+        }
         if self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0) {
             return true;
         }
@@ -1506,9 +1512,15 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn socket_accept_fd_is_ready(&mut self, fd: u32) -> bool {
-        let Ok((socket_id, _, _)) = self.socket_fd_snapshot(fd) else {
+        let Ok((socket_id, ready_key, handle)) = self.socket_fd_snapshot(fd) else {
             return false;
         };
+        if self
+            .net_stack_socket_accept_ready(socket_id, ready_key, handle)
+            .is_some_and(|ready| ready)
+        {
+            return true;
+        }
         self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0)
     }
 

@@ -109,6 +109,17 @@ impl LinuxSocketService {
         map_errno(self.state.register_socket(socket_id, domain, ty, protocol, ready_key))
     }
 
+    pub(crate) fn register_connected_socket(
+        &mut self,
+        socket_id: u32,
+        domain: u32,
+        ty: u32,
+        protocol: u32,
+        ready_key: u64,
+    ) -> Result<(), ServiceCallError> {
+        map_errno(self.state.register_connected_socket(socket_id, domain, ty, protocol, ready_key))
+    }
+
     pub(crate) fn close_socket(&mut self, socket_id: u32) -> Result<(), ServiceCallError> {
         map_errno(self.state.close_socket(socket_id))
     }

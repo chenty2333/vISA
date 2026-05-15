@@ -2395,9 +2395,25 @@ fn linux_socket_create_error(domain: u32, ty: u32, protocol: u32) -> Option<i32>
 }
 
 fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    active_context().supervisor.require_socket_fd(fd)?;
+    let sockaddr = read_socket_sockaddr(frame.rsi, frame.rdx)?;
+    if sockaddr.family != AF_INET as u16 && sockaddr.family != AF_UNIX as u16 {
+        return Err(ERR_EAFNOSUPPORT);
+    }
     dispatch_ret(
         "ring3_bind",
-        SyscallContext::new(SYS_BIND, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
+        SyscallContext::new(
+            SYS_BIND,
+            [
+                frame.rdi,
+                frame.rsi,
+                frame.rdx,
+                sockaddr.family as u64,
+                sockaddr.ipv4_be as u64,
+                sockaddr.port as u64,
+            ],
+        ),
     )
 }
 
@@ -2439,8 +2455,27 @@ struct ConnectSockaddr {
 }
 
 fn read_connect_sockaddr(addr_ptr: u64, addr_len: u64) -> Result<ConnectSockaddr, i32> {
+    let sockaddr = read_socket_sockaddr(addr_ptr, addr_len)?;
+    if sockaddr.family == AF_INET as u16 && addr_len < 16 {
+        return Err(ERR_EINVAL);
+    }
+    Ok(sockaddr)
+}
+
+fn read_socket_sockaddr(addr_ptr: u64, addr_len: u64) -> Result<ConnectSockaddr, i32> {
     if addr_ptr == 0 {
         return Err(ERR_EFAULT);
+    }
+    if addr_len < 2 {
+        return Err(ERR_EINVAL);
+    }
+    let family = {
+        let header = user_lease(addr_ptr, 2, false)?;
+        let header_bytes = header.bytes().map_err(map_dmw_fault)?;
+        u16::from_le_bytes(header_bytes[..2].try_into().map_err(|_| ERR_EINVAL)?)
+    };
+    if family != AF_INET as u16 {
+        return Ok(ConnectSockaddr { family, ipv4_be: 0, port: 0 });
     }
     if addr_len < 16 {
         return Err(ERR_EINVAL);
@@ -2448,7 +2483,7 @@ fn read_connect_sockaddr(addr_ptr: u64, addr_len: u64) -> Result<ConnectSockaddr
     let lease = user_lease(addr_ptr, 16, false)?;
     let bytes = lease.bytes().map_err(map_dmw_fault)?;
     Ok(ConnectSockaddr {
-        family: u16::from_le_bytes(bytes[..2].try_into().map_err(|_| ERR_EINVAL)?),
+        family,
         port: u16::from_be_bytes(bytes[2..4].try_into().map_err(|_| ERR_EINVAL)?),
         ipv4_be: u32::from_be_bytes(bytes[4..8].try_into().map_err(|_| ERR_EINVAL)?),
     })

@@ -1,8 +1,9 @@
+use net_stack_adapter::DEFAULT_IPV4_ADDR;
 use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
 use service_core::net_contract::PROTO_TCP;
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EISCONN, ERR_ENOTCONN, ERR_EOPNOTSUPP,
-    SOCK_STREAM,
+    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN,
+    ERR_EOPNOTSUPP, SOCK_STREAM,
 };
 
 use super::{
@@ -20,6 +21,8 @@ const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NetStackSocketMode {
     Idle,
+    TcpListening,
+    TcpListenEstablished,
     TcpConnectInProgress,
     TcpEstablished,
 }
@@ -29,6 +32,8 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) socket_id: u32,
     pub(crate) stack_socket_id: u32,
     pub(crate) mode: NetStackSocketMode,
+    pub(crate) local_ipv4: [u8; 4],
+    pub(crate) local_port: u16,
     pub(crate) remote_ipv4: [u8; 4],
     pub(crate) remote_port: u16,
 }
@@ -39,6 +44,8 @@ impl NetStackSocketBinding {
             socket_id,
             stack_socket_id,
             mode: NetStackSocketMode::Idle,
+            local_ipv4: [0; 4],
+            local_port: 0,
             remote_ipv4: [0; 4],
             remote_port: 0,
         }
@@ -261,6 +268,9 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         match self.net_stack_sockets[index].mode {
             NetStackSocketMode::Idle => {}
+            NetStackSocketMode::TcpListening | NetStackSocketMode::TcpListenEstablished => {
+                return Ok(LinuxCallResult::Ret(-(ERR_EOPNOTSUPP as i64)));
+            }
             NetStackSocketMode::TcpConnectInProgress => {
                 self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
                 self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
@@ -293,6 +303,67 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(0));
         }
         Ok(LinuxCallResult::Ret(-(ERR_EINPROGRESS as i64)))
+    }
+
+    pub(super) fn bind_net_stack_tcp(
+        &mut self,
+        socket_id: u32,
+        local_ipv4: [u8; 4],
+        local_port: u16,
+    ) -> Result<Option<LinuxCallResult>, &'static str> {
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(None);
+        };
+        match self.net_stack_sockets[index].mode {
+            NetStackSocketMode::Idle => {
+                if local_ipv4 != [0; 4] && local_ipv4 != DEFAULT_IPV4_ADDR {
+                    return Ok(Some(LinuxCallResult::Ret(-(ERR_EINVAL as i64))));
+                }
+                self.net_stack_sockets[index].local_ipv4 = local_ipv4;
+                self.net_stack_sockets[index].local_port = local_port;
+                Ok(None)
+            }
+            NetStackSocketMode::TcpListening
+            | NetStackSocketMode::TcpListenEstablished
+            | NetStackSocketMode::TcpConnectInProgress
+            | NetStackSocketMode::TcpEstablished => {
+                Ok(Some(LinuxCallResult::Ret(-(ERR_EINVAL as i64))))
+            }
+        }
+    }
+
+    pub(super) fn listen_net_stack_tcp(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Result<Option<LinuxCallResult>, &'static str> {
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(None);
+        };
+        if self.net_stack_sockets[index].local_port == 0 {
+            return Ok(None);
+        }
+        match self.net_stack_sockets[index].mode {
+            NetStackSocketMode::Idle => {}
+            NetStackSocketMode::TcpListening | NetStackSocketMode::TcpListenEstablished => {
+                return Ok(Some(LinuxCallResult::Ret(0)));
+            }
+            NetStackSocketMode::TcpConnectInProgress | NetStackSocketMode::TcpEstablished => {
+                return Ok(Some(LinuxCallResult::Ret(-(ERR_EISCONN as i64))));
+            }
+        }
+
+        let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        let local_port = self.net_stack_sockets[index].local_port;
+        if let Err(err) = self.net_stack.listen_tcp(stack_socket_id, local_port) {
+            crate::kwarn!("smoltcp listen socket {}: {}", socket_id, err);
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
+        }
+        self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
+        self.semantic.record_socket_state_changed(socket_resource.id, "listen");
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        Ok(Some(LinuxCallResult::Ret(0)))
     }
 
     pub(super) fn net_stack_send_socket(
@@ -409,6 +480,82 @@ impl<'engine> PrototypeRuntime<'engine> {
         Some(self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished)
     }
 
+    pub(super) fn net_stack_socket_accept_ready(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Option<bool> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        if !matches!(
+            self.net_stack_sockets[index].mode,
+            NetStackSocketMode::TcpListening | NetStackSocketMode::TcpListenEstablished
+        ) {
+            return None;
+        }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        Some(self.net_stack_sockets[index].mode == NetStackSocketMode::TcpListenEstablished)
+    }
+
+    pub(super) fn accept_net_stack_tcp(
+        &mut self,
+        listen_socket_id: u32,
+        listen_ready_key: u64,
+        listen_resource: ResourceHandle,
+        accepted_socket_id: u32,
+        _accepted_ready_key: u64,
+    ) -> Result<Option<LinuxCallResult>, &'static str> {
+        let Some(index) = self.net_stack_socket_index(listen_socket_id) else {
+            return Ok(None);
+        };
+        if !matches!(
+            self.net_stack_sockets[index].mode,
+            NetStackSocketMode::TcpListening | NetStackSocketMode::TcpListenEstablished
+        ) {
+            return Ok(None);
+        }
+        self.poll_net_stack_socket(listen_socket_id, listen_ready_key, Some(listen_resource.id));
+        let Some(index) = self.net_stack_socket_index(listen_socket_id) else {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
+        };
+        self.refresh_net_stack_socket_state(index, listen_ready_key, listen_resource);
+        if self.net_stack_sockets[index].mode != NetStackSocketMode::TcpListenEstablished {
+            return Ok(None);
+        }
+
+        let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        let local_ipv4 = self.net_stack_sockets[index].local_ipv4;
+        let local_port = self.net_stack_sockets[index].local_port;
+        let accepted_snapshot = self
+            .net_stack
+            .tcp_snapshot(old_stack_socket_id)
+            .map_err(|_| "smoltcp accepted socket snapshot failed")?;
+        let new_listener_stack_socket_id =
+            self.net_stack.create_tcp_socket().map_err(|_| "smoltcp listener socket exhausted")?;
+        if let Err(err) = self.net_stack.listen_tcp(new_listener_stack_socket_id, local_port) {
+            let _ = self.net_stack.close_tcp_socket(new_listener_stack_socket_id);
+            crate::kwarn!("smoltcp relisten socket {}: {}", listen_socket_id, err);
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
+        }
+
+        self.net_stack_sockets[index].stack_socket_id = new_listener_stack_socket_id;
+        self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
+        self.net_stack_sockets[index].remote_ipv4 = [0; 4];
+        self.net_stack_sockets[index].remote_port = 0;
+        self.net_stack_sockets.push(NetStackSocketBinding {
+            socket_id: accepted_socket_id,
+            stack_socket_id: old_stack_socket_id,
+            mode: NetStackSocketMode::TcpEstablished,
+            local_ipv4,
+            local_port: accepted_snapshot.local_port,
+            remote_ipv4: [0; 4],
+            remote_port: accepted_snapshot.remote_port,
+        });
+        Ok(Some(LinuxCallResult::Ret(0)))
+    }
+
     pub(super) fn has_net_stack_socket(&self, socket_id: u32) -> bool {
         self.net_stack_socket_index(socket_id).is_some()
     }
@@ -516,11 +663,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         };
         if snapshot.state == "established"
-            && self.net_stack_sockets[index].mode != NetStackSocketMode::TcpEstablished
+            && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpConnectInProgress
         {
             self.net_stack_sockets[index].mode = NetStackSocketMode::TcpEstablished;
             self.semantic.record_socket_state_changed(socket_resource.id, "connected");
             self.notify_ready_key(ready_key, "smoltcp socket ready");
+        }
+        if snapshot.state == "established"
+            && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpListening
+        {
+            self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListenEstablished;
+            self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
+            self.notify_ready_key(ready_key, "smoltcp listener ready");
         }
     }
 }

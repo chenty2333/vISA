@@ -179,11 +179,42 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Bind => {
                 let addr_len =
                     u32::try_from(plan.args[2]).map_err(|_| "bind addr_len overflowed")?;
+                let family = u32::try_from(plan.args[3]).map_err(|_| "bind family overflowed")?;
+                if family == AF_INET && self.has_net_stack_socket(socket_id) {
+                    let local_ipv4 = u32::try_from(plan.args[4])
+                        .map_err(|_| "bind ipv4 overflowed")?
+                        .to_be_bytes();
+                    let local_port =
+                        u16::try_from(plan.args[5]).map_err(|_| "bind port overflowed")?;
+                    if let Some(result) =
+                        self.bind_net_stack_tcp(socket_id, local_ipv4, local_port)?
+                    {
+                        return Ok(result);
+                    }
+                }
                 self.linux_socket.bind_socket(socket_id, addr_len)
             }
             PlanKind::Listen => {
                 let backlog =
                     u32::try_from(plan.args[1]).map_err(|_| "listen backlog overflowed")?;
+                if let Some(result) = self.listen_net_stack_tcp(socket_id, ready_key, handle)? {
+                    if matches!(result, LinuxCallResult::Ret(0)) {
+                        match self.linux_socket.listen_socket(socket_id, backlog) {
+                            Ok(()) | Err(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP)) => {}
+                            Err(ServiceCallError::Errno(errno)) => {
+                                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                            }
+                            Err(ServiceCallError::Trap(reason)) => {
+                                crate::kwarn!("linux_socket listen: {}", reason);
+                                return Err(
+                                    "linux_socket_service trapped during socket state change",
+                                );
+                            }
+                            Err(ServiceCallError::Invalid(err)) => return Err(err),
+                        }
+                    }
+                    return Ok(result);
+                }
                 self.linux_socket.listen_socket(socket_id, backlog)
             }
             PlanKind::Connect => {
@@ -261,7 +292,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         if !self.can_allocate_fds(1) {
             return Ok(LinuxCallResult::Ret(-(ERR_EMFILE as i64)));
         }
-        let (listen_socket_id, _, listen_handle) = match self.socket_fd_snapshot(fd) {
+        let (listen_socket_id, listen_ready_key, listen_handle) = match self.socket_fd_snapshot(fd)
+        {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -299,6 +331,21 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return Err(err);
             }
         };
+        if let Some(result) = self.accept_net_stack_tcp(
+            listen_socket_id,
+            listen_ready_key,
+            listen_handle,
+            accepted_socket_id,
+            accepted_ready_key,
+        )? {
+            return self.finish_net_stack_accept_fd(
+                accepted_socket_id,
+                accepted_ready_key,
+                flags,
+                listen_handle,
+                result,
+            );
+        }
         match self.linux_socket.accept_socket(
             listen_socket_id,
             accepted_socket_id,
@@ -333,6 +380,70 @@ impl<'engine> PrototypeRuntime<'engine> {
         }) {
             Ok(fd) => fd,
             Err(errno) => {
+                let _ = self.linux_socket.close_socket(accepted_socket_id);
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+        };
+        self.semantic.record_socket_state_changed(listen_handle.id, "accept");
+        if let Some(handle) = self.fd_handle(accepted_fd) {
+            self.semantic.record_socket_state_changed(handle.id, "connected");
+        }
+        Ok(LinuxCallResult::Ret(accepted_fd as i64))
+    }
+
+    fn finish_net_stack_accept_fd(
+        &mut self,
+        accepted_socket_id: u32,
+        accepted_ready_key: u64,
+        flags: u32,
+        listen_handle: semantic_core::ResourceHandle,
+        accept_result: LinuxCallResult,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if !matches!(accept_result, LinuxCallResult::Ret(0)) {
+            let _ = self.net_core.close_socket(accepted_socket_id);
+            return Ok(accept_result);
+        }
+        match self.linux_socket.register_connected_socket(
+            accepted_socket_id,
+            AF_INET,
+            SOCK_STREAM,
+            0,
+            accepted_ready_key,
+        ) {
+            Ok(()) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                self.close_net_stack_socket(accepted_socket_id);
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                self.close_net_stack_socket(accepted_socket_id);
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                crate::kwarn!("linux_socket register accepted socket: {}", reason);
+                return Err("linux_socket_service trapped during smoltcp accept");
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                self.close_net_stack_socket(accepted_socket_id);
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Err(err);
+            }
+        }
+        let fd_flags = if flags & SOCK_CLOEXEC != 0 { FD_CLOEXEC } else { 0 };
+        let status_flags = if flags & SOCK_NONBLOCK != 0 { O_NONBLOCK } else { 0 };
+        let accepted_fd = match self.alloc_fd(FdEntry {
+            resource: FdResource::Socket {
+                socket_id: accepted_socket_id as u64,
+                ready_key: accepted_ready_key,
+            },
+            cursor: 0,
+            fd_flags,
+            status_flags,
+            cursor_group: None,
+        }) {
+            Ok(fd) => fd,
+            Err(errno) => {
+                self.close_net_stack_socket(accepted_socket_id);
                 let _ = self.linux_socket.close_socket(accepted_socket_id);
                 let _ = self.net_core.close_socket(accepted_socket_id);
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));

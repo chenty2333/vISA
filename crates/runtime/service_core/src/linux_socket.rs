@@ -80,6 +80,37 @@ impl LinuxSocketState {
         Err(ERR_EIO)
     }
 
+    pub fn register_connected_socket(
+        &mut self,
+        socket_id: u32,
+        domain: u32,
+        ty: u32,
+        protocol: u32,
+        ready_key: u64,
+    ) -> Result<(), i32> {
+        if !validate_linux_socket_contract(domain, ty, protocol) {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        let protocol = canonical_socket_protocol(protocol) as u32;
+        for socket in &mut self.sockets {
+            if !socket.active {
+                *socket = LinuxSocket {
+                    socket_id,
+                    domain,
+                    ty,
+                    protocol,
+                    ready_key,
+                    state: SOCKET_CONNECTED,
+                    backlog: 0,
+                    pending_accepts: 0,
+                    active: true,
+                };
+                return Ok(());
+            }
+        }
+        Err(ERR_EIO)
+    }
+
     pub fn close_socket(&mut self, socket_id: u32) -> Result<(), i32> {
         let index = self.socket_index(socket_id)?;
         self.sockets[index] = LinuxSocket::EMPTY;
@@ -293,6 +324,15 @@ mod tests {
         assert_eq!(state.connect_socket(1, 16), Ok(()));
         assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
         assert_eq!(state.connect_socket(7, 16), Err(ERR_EISCONN));
+    }
+
+    #[test]
+    fn register_connected_socket_installs_accepted_stream_state() {
+        let mut state = LinuxSocketState::new();
+
+        assert_eq!(state.register_connected_socket(7, AF_INET, SOCK_STREAM, 0, 99), Ok(()));
+        assert_eq!(state.connect_socket(7, 16), Err(ERR_EISCONN));
+        assert_eq!(state.pending_accept_count(7), Err(ERR_EINVAL));
     }
 
     #[test]
