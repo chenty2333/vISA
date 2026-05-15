@@ -379,6 +379,7 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
         WaitKind::Timer => SemanticWaitKind::Timer,
         WaitKind::Futex => SemanticWaitKind::Futex,
         WaitKind::Epoll => SemanticWaitKind::Epoll,
+        WaitKind::SocketConnect => SemanticWaitKind::SocketWritable,
         WaitKind::SocketAccept => SemanticWaitKind::SocketAccept,
         WaitKind::FileLock => SemanticWaitKind::FileLock,
     }

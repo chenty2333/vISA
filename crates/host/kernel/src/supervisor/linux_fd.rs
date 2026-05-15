@@ -1512,6 +1512,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0)
     }
 
+    pub(super) fn socket_connect_fd_is_ready(&mut self, fd: u32) -> bool {
+        let Ok((socket_id, ready_key, handle)) = self.socket_fd_snapshot(fd) else {
+            return false;
+        };
+        self.net_stack_socket_connected(socket_id, ready_key, handle).unwrap_or(false)
+    }
+
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
         match self.epoll.notify_ready(ready_key) {
             Ok(wait_ids) => {

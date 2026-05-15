@@ -163,6 +163,7 @@ pub(crate) enum WaitKind {
     Timer,
     Futex,
     Epoll,
+    SocketConnect,
     SocketAccept,
     FileLock,
 }

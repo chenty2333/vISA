@@ -189,7 +189,17 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(err);
         }
         loop {
-            self.pump_async_sources();
+            let mut connect_ready = false;
+            if let Some(WaitSource::SocketConnect { fd }) = self.waits.pending_source(token)
+                && self.socket_connect_fd_is_ready(fd)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+                connect_ready = true;
+            }
+            if !connect_ready {
+                self.pump_async_sources();
+            }
             if let Some(WaitSource::SocketAccept { fd, .. }) = self.waits.pending_source(token)
                 && self.socket_accept_fd_is_ready(fd)
             {
@@ -222,6 +232,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             let _ = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.collect_epoll_ready(epoll_id, max_events)
                         }
+                        WaitSource::SocketConnect { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         _ => {
@@ -258,12 +269,15 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 }
                             }
                             super::types::WaitKind::Timer => {}
+                            super::types::WaitKind::SocketConnect => {}
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::FileLock => {}
                         }
                         if matches!(
                             resolution.source,
-                            WaitSource::SocketAccept { .. } | WaitSource::FileLock { .. }
+                            WaitSource::SocketConnect { .. }
+                                | WaitSource::SocketAccept { .. }
+                                | WaitSource::FileLock { .. }
                         ) {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }

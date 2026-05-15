@@ -12,6 +12,7 @@ pub(crate) enum WaitRegistration {
     Timer { delay_ms: u32, resume_cookie: u32 },
     Futex { timeout_ms: Option<u32>, resume_cookie: u32 },
     Epoll { epoll_id: u32, max_events: u32, timeout_ms: Option<u32>, resume_cookie: u32 },
+    SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
 }
@@ -43,6 +44,7 @@ pub(crate) enum WaitSource {
     Timer,
     Futex,
     Epoll { epoll_id: u32, max_events: u32 },
+    SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
 }
@@ -94,6 +96,9 @@ impl WaitRegistry {
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
+            WaitRegistration::SocketConnect { fd } => {
+                (WaitKind::SocketConnect, WaitSource::SocketConnect { fd }, 0, None)
+            }
             WaitRegistration::SocketAccept { fd, flags } => {
                 (WaitKind::SocketAccept, WaitSource::SocketAccept { fd, flags }, 0, None)
             }
@@ -141,6 +146,7 @@ impl WaitRegistry {
                     events.push(Event::WaitCancelled(record.token.id, ERR_ETIMEDOUT))
                 }
                 WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
+                WaitSource::SocketConnect { .. } => {}
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::FileLock { .. } => {}
             }
@@ -307,6 +313,25 @@ mod tests {
                 outcome: WaitOutcome::Ready,
                 resume_cookie: 0,
                 source: WaitSource::SocketAccept { fd: 4, flags: 0o2000000 },
+            })
+        );
+    }
+
+    #[test]
+    fn socket_connect_registration_carries_fd() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(7, WaitRegistration::SocketConnect { fd: 4 }, 0, 100);
+
+        assert_eq!(token.kind, WaitKind::SocketConnect);
+        assert_eq!(registry.pending_source(token), Some(WaitSource::SocketConnect { fd: 4 }));
+
+        registry.apply_event(Event::WaitReady(token.id));
+        assert_eq!(
+            registry.take_resolution(token),
+            Some(WaitResolution {
+                outcome: WaitOutcome::Ready,
+                resume_cookie: 0,
+                source: WaitSource::SocketConnect { fd: 4 },
             })
         );
     }

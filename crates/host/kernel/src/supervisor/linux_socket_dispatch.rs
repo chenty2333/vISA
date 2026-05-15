@@ -1,5 +1,6 @@
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
+    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS,
+    ERR_EPERM, PlanKind, SOCK_STREAM,
 };
 
 use super::{
@@ -23,7 +24,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let domain = u32::try_from(plan.args[0]).map_err(|_| "socket domain overflowed")?;
-        let ty = u32::try_from(plan.args[1]).map_err(|_| "socket type overflowed")?;
+        let raw_ty = u32::try_from(plan.args[1]).map_err(|_| "socket type overflowed")?;
+        let socket_flags = raw_ty & (SOCK_CLOEXEC | SOCK_NONBLOCK);
+        let ty = raw_ty & !(SOCK_CLOEXEC | SOCK_NONBLOCK);
         let protocol = u32::try_from(plan.args[2]).map_err(|_| "socket protocol overflowed")?;
         if !self.can_allocate_fds(1) {
             return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
@@ -90,8 +93,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = match self.alloc_fd(FdEntry {
             resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
             cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
+            fd_flags: if socket_flags & SOCK_CLOEXEC != 0 { FD_CLOEXEC } else { 0 },
+            status_flags: if socket_flags & SOCK_NONBLOCK != 0 { O_NONBLOCK } else { 0 },
             cursor_group: None,
         }) {
             Ok(fd) => fd,
@@ -140,13 +143,36 @@ impl<'engine> PrototypeRuntime<'engine> {
                 u32::try_from(plan.args[4]).map_err(|_| "connect ipv4 overflowed")?.to_be_bytes();
             let remote_port = u16::try_from(plan.args[5]).map_err(|_| "connect port overflowed")?;
             if family == AF_INET && remote_port != 0 && self.has_net_stack_socket(socket_id) {
-                return self.connect_net_stack_tcp(
+                let result = self.connect_net_stack_tcp(
                     socket_id,
                     ready_key,
                     handle,
                     remote_ipv4,
                     remote_port,
+                )?;
+                let should_wait = matches!(
+                    result,
+                    LinuxCallResult::Ret(ret)
+                        if ret == -(ERR_EINPROGRESS as i64) || ret == -(ERR_EALREADY as i64)
                 );
+                if !should_wait {
+                    return Ok(result);
+                }
+                let status_flags = match self.file_status_flags(fd) {
+                    Ok(flags) => flags,
+                    Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                };
+                if status_flags & O_NONBLOCK != 0 {
+                    return Ok(result);
+                }
+                let token = self.waits.register(
+                    self.scheduler.current_task(),
+                    WaitRegistration::SocketConnect { fd },
+                    interrupts::tick_count(),
+                    interrupts::TIMER_HZ,
+                );
+                self.record_wait_token(token);
+                return Ok(LinuxCallResult::Pending(token));
             }
         }
         let result = match plan.kind {

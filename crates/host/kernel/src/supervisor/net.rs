@@ -285,6 +285,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].remote_port = remote_port;
         self.semantic.record_socket_state_changed(socket_resource.id, "syn-sent");
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
+        };
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
+            return Ok(LinuxCallResult::Ret(0));
+        }
         Ok(LinuxCallResult::Ret(-(ERR_EINPROGRESS as i64)))
     }
 
@@ -384,6 +391,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_recv)
+    }
+
+    pub(super) fn net_stack_socket_connected(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Option<bool> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
+            return None;
+        }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        Some(self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished)
     }
 
     pub(super) fn has_net_stack_socket(&self, socket_id: u32) -> bool {
