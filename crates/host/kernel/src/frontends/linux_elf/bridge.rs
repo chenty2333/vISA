@@ -1298,13 +1298,18 @@ fn sys_gettimeofday(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_clock_gettime(frame: &SyscallFrame) -> Result<i64, i32> {
+    const CLOCK_REALTIME: u64 = 0;
+    const CLOCK_REALTIME_COARSE: u64 = 5;
+    const CLOCK_REALTIME_ALARM: u64 = 8;
+    const CLOCK_TAI: u64 = 11;
+
     if frame.rdi > 11 {
         return Err(ERR_EINVAL);
     }
-    let now_ns = if frame.rdi == 0 || frame.rdi == 5 || frame.rdi == 8 {
-        current_realtime_ns()
-    } else {
-        current_monotonic_ns()
+    let now_ns = match frame.rdi {
+        CLOCK_REALTIME | CLOCK_REALTIME_COARSE | CLOCK_REALTIME_ALARM => current_realtime_ns(),
+        CLOCK_TAI => current_tai_ns(),
+        _ => current_monotonic_ns(),
     };
     let mut encoded = [0u8; 16];
     encoded[..8].copy_from_slice(&(now_ns / 1_000_000_000).to_le_bytes());
@@ -3123,6 +3128,16 @@ fn current_monotonic_ns() -> u64 {
 fn current_realtime_ns() -> u64 {
     active_context()
         .realtime_now_ns(crate::interrupts::tick_count(), crate::interrupts::TIMER_HZ as u64)
+}
+
+fn current_tai_ns() -> u64 {
+    let realtime_ns = current_realtime_ns();
+    let tai_offset_ns = active_context().clock_adj_state().tai as i128 * 1_000_000_000i128;
+    if tai_offset_ns >= 0 {
+        realtime_ns.saturating_add(tai_offset_ns as u64)
+    } else {
+        realtime_ns.saturating_sub((-tai_offset_ns) as u64)
+    }
 }
 
 fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
