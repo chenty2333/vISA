@@ -743,6 +743,18 @@ impl VfsService {
         self.remove_owner_locks(path, owner, s, l);
     }
 
+    pub(crate) fn fcntl_unlock_owner_path(&mut self, path: &[u8], owner: u32) -> bool {
+        let before = self.locks.len();
+        self.locks.retain(|lock| lock.path != path || lock.owner_pid != owner);
+        before != self.locks.len()
+    }
+
+    pub(crate) fn fcntl_unlock_owner(&mut self, owner: u32) -> bool {
+        let before = self.locks.len();
+        self.locks.retain(|lock| lock.owner_pid != owner);
+        before != self.locks.len()
+    }
+
     pub(crate) fn fcntl_getlk(
         &self,
         path: &[u8],

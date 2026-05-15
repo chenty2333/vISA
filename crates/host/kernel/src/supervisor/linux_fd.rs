@@ -295,7 +295,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len).is_none())
     }
 
-    fn wake_ready_file_lock_waits(&mut self) {
+    pub(super) fn wake_ready_file_lock_waits(&mut self) {
         let pending = self.waits.pending_sources();
         for (token, source) in pending {
             let WaitSource::FileLock { fd, owner, lock_type, whence, start, len } = source else {
@@ -306,6 +306,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         self.drain_event_queue();
+    }
+
+    pub(crate) fn release_file_locks_for_pid(&mut self, pid: u32) {
+        if self.vfs.fcntl_unlock_owner(pid) {
+            self.wake_ready_file_lock_waits();
+        }
     }
 
     fn fcntl_lock_target(
@@ -1208,6 +1214,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::SocketPairEnd { pair_id, endpoint } => Some((*pair_id, *endpoint)),
             _ => None,
         });
+        let closing_vfs_file_path = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::ServiceNode { route: ServiceRoute::Vfs, node: NodeKind::File, path } => {
+                Some(path.clone())
+            }
+            _ => None,
+        });
         if let Some(socket_id) = closing_socket {
             if self.require_capability("linux_syscall", "linux.socket", "close").is_err()
                 || self.require_capability("net_core", "net.socket", "close").is_err()
@@ -1243,6 +1255,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         let slot = self.fd_table.get_mut(fd as usize).ok_or(ERR_EBADF)?;
         if slot.take().is_none() {
             return Err(ERR_EBADF);
+        }
+        let owner = self.current_pid();
+        if let Some(path) = closing_vfs_file_path
+            && self.vfs.fcntl_unlock_owner_path(&path, owner)
+        {
+            self.wake_ready_file_lock_waits();
         }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()

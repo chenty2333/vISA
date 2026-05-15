@@ -366,6 +366,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         for thread in self.threads.iter_mut().filter(|thread| thread.pid == pid) {
             thread.state = ThreadRuntimeStateKind::Dead;
         }
+        self.release_file_locks_for_pid(pid);
         if let Some((parent_pid, signal)) = parent_signal {
             if parent_pid != 0 && signal != 0 {
                 self.queue_signal_to_process(parent_pid, signal, CLD_EXITED, pid, 0);
