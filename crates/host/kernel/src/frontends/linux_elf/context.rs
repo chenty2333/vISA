@@ -17,10 +17,18 @@ pub(crate) struct UserRegion {
     pub(crate) writable: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct UserPageMapping {
+    pub(crate) va: u64,
+    pub(crate) frame_start: u64,
+    pub(crate) present: bool,
+}
+
 pub(crate) struct LoadedUserImage {
     pub(crate) entry: u64,
     pub(crate) stack_top: u64,
     pub(crate) regions: Vec<UserRegion>,
+    pub(crate) page_mappings: Vec<UserPageMapping>,
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +46,7 @@ pub(crate) struct ClockAdjustmentState {
 pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
     pub(crate) regions: Vec<UserRegion>,
+    pub(crate) page_mappings: Vec<UserPageMapping>,
     pub(crate) task_id: TaskId,
     pub(crate) pid: u32,
     pub(crate) tid: u32,
@@ -148,6 +157,7 @@ impl ActiveUserContext {
     pub(crate) fn new(
         supervisor: &'static mut PrototypeRuntime<'static>,
         regions: Vec<UserRegion>,
+        page_mappings: Vec<UserPageMapping>,
         task_id: TaskId,
         pid: u32,
         tid: u32,
@@ -160,6 +170,7 @@ impl ActiveUserContext {
         Self {
             supervisor,
             regions,
+            page_mappings,
             task_id,
             pid,
             tid,

@@ -112,6 +112,7 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     let mut context = ActiveUserContext::new(
         supervisor,
         image.regions,
+        image.page_mappings,
         task_id,
         1, // pid: bootstrap init process
         1, // tid: bootstrap thread
@@ -2652,8 +2653,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
     };
 
-    protect_user_page_range(active_context().physical_memory_offset(), addr, len, frame.rdx)
-        .map_err(|_| ERR_EFAULT)?;
+    protect_active_user_page_range(addr, len, frame.rdx)?;
     let _ = dispatch_ret(
         "ring3_mmap",
         SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
@@ -2669,8 +2669,7 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     validate_mapped_user_range(frame.rdi, len)?;
-    protect_user_page_range(active_context().physical_memory_offset(), frame.rdi, len, frame.rdx)
-        .map_err(|_| ERR_EFAULT)?;
+    protect_active_user_page_range(frame.rdi, len, frame.rdx)?;
     let (readable, writable) = prot_user_region_permissions(frame.rdx);
     active_context().record_user_region(frame.rdi, len, readable, writable);
     Ok(0)
@@ -2685,11 +2684,9 @@ fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EINVAL);
     }
     validate_lower_user_address_range(frame.rdi, len)?;
-    let physical_memory_offset = active_context().physical_memory_offset();
     let mapped_ranges = active_context().mapped_user_subranges(frame.rdi, len);
     for (start, end) in mapped_ranges {
-        unmap_user_page_range(physical_memory_offset, start, end - start)
-            .map_err(|_| ERR_EFAULT)?;
+        unmap_active_user_page_range(start, end - start)?;
     }
     let _ =
         dispatch_ret("ring3_munmap", SyscallContext::new(SYS_MUNMAP, [frame.rdi, len, 0, 0, 0, 0]));
@@ -3613,6 +3610,24 @@ fn validate_lower_user_address_range(ptr: u64, len: u64) -> Result<(), i32> {
         return Err(ERR_EINVAL);
     }
     Ok(())
+}
+
+fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(), i32> {
+    let context = active_context();
+    protect_user_page_range(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        start,
+        len,
+        prot,
+    )
+    .map_err(|_| ERR_EFAULT)
+}
+
+fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
+    let context = active_context();
+    unmap_user_page_range(context.physical_memory_offset(), &mut context.page_mappings, start, len)
+        .map_err(|_| ERR_EFAULT)
 }
 
 fn prot_user_region_permissions(prot: u64) -> (bool, bool) {
