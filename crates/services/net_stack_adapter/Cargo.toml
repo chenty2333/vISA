@@ -8,3 +8,4 @@ edition = "2024"
 service_core.workspace = true
 smoltcp.workspace = true
 substrate_api.workspace = true
+vmos_abi.workspace = true

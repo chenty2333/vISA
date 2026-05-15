@@ -7,8 +7,9 @@ extern crate std;
 
 use alloc::{vec, vec::Vec};
 
-use service_core::net_contract::{
-    PacketDeviceContract, VIRTIO_NET0_CONTRACT, validate_packet_device_contract,
+use service_core::{
+    driver::{DriverVirtioNetState, RESPONSE_CAPACITY},
+    net_contract::{PacketDeviceContract, VIRTIO_NET0_CONTRACT, validate_packet_device_contract},
 };
 use smoltcp::{
     iface::{Config, Interface, PollResult, SocketHandle, SocketSet},
@@ -30,6 +31,7 @@ pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const DEFAULT_TCP_BUFFER_LEN: usize = 4096;
 pub const DEFAULT_EPHEMERAL_PORT_BASE: u16 = 49152;
 pub const BACKEND_RX_BATCH: usize = 8;
+pub const DRIVER_BACKEND_RX_BATCH: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmoltcpAdapterConfig {
@@ -83,6 +85,12 @@ pub struct BackendPumpEvidence {
     pub rx_frames_delivered: usize,
     pub tx_frames_submitted: usize,
     pub poll: SmoltcpPollEvidence,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriverBackendPumpEvidence {
+    pub rx_frames_delivered: usize,
+    pub tx_frames_submitted: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -354,6 +362,58 @@ pub fn build_smoltcp_adapter_evidence(
     })
 }
 
+pub fn pump_driver_backend<B: PacketDeviceBackend>(
+    driver: &mut DriverVirtioNetState,
+    backend: &mut B,
+    now_ticks: u64,
+) -> SubstrateResult<DriverBackendPumpEvidence> {
+    let mut rx_slots: [PacketFrameSlot; DRIVER_BACKEND_RX_BATCH] =
+        core::array::from_fn(|_| PacketFrameSlot::new());
+    let rx_frames = backend.poll_rx(&mut rx_slots)?;
+    let mut rx_frames_delivered = 0usize;
+    for slot in rx_slots.iter().take(rx_frames) {
+        let len = slot.len as usize;
+        if len > slot.data.len() {
+            return Err(SubstrateError::ContractViolation {
+                detail: "packet backend returned an invalid frame slot length",
+            });
+        }
+        driver.deliver_rx_frame(now_ticks, &slot.data[..len]).map_err(driver_errno_to_substrate)?;
+        rx_frames_delivered += 1;
+    }
+
+    let mut tx_frames_submitted = 0usize;
+    loop {
+        let mut frame = [0u8; RESPONSE_CAPACITY];
+        let len = driver.take_tx_frame(&mut frame).map_err(driver_errno_to_substrate)?;
+        if len == 0 {
+            break;
+        }
+        backend.submit_tx(&frame[..len as usize])?;
+        tx_frames_submitted += 1;
+    }
+
+    Ok(DriverBackendPumpEvidence { rx_frames_delivered, tx_frames_submitted })
+}
+
+fn driver_errno_to_substrate(errno: i32) -> SubstrateError {
+    match errno {
+        vmos_abi::ERR_EAGAIN => {
+            SubstrateError::ContractViolation { detail: "driver packet queue is full" }
+        }
+        vmos_abi::ERR_EINVAL => {
+            SubstrateError::ContractViolation { detail: "driver rejected invalid packet frame" }
+        }
+        vmos_abi::ERR_EIO => {
+            SubstrateError::ContractViolation { detail: "driver packet buffer contract violation" }
+        }
+        _ => SubstrateError::HardwareFault {
+            authority: "DriverVirtioNetState",
+            detail: "driver returned unexpected packet errno",
+        },
+    }
+}
+
 pub struct PacketQueueDevice {
     rx_queue: Vec<Vec<u8>>,
     tx_queue: Vec<Vec<u8>>,
@@ -612,6 +672,38 @@ mod tests {
         assert_eq!(&reply[6..12], &VIRTIO_NET0_CONTRACT.mac);
         assert_eq!(&reply[12..14], &[0x08, 0x06]);
         assert_eq!(&reply[20..22], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn driver_backend_pump_moves_rx_and_tx_frames() {
+        let mut driver = DriverVirtioNetState::new();
+        let remote_mac = [0x02, 0, 0, 0, 0, 2];
+        let rx =
+            arp_request(remote_mac, [10, 0, 2, 2], VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
+        let mut tx = [0u8; 42];
+        tx[..6].copy_from_slice(&remote_mac);
+        tx[6..12].copy_from_slice(&VIRTIO_NET0_CONTRACT.mac);
+        tx[12..14].copy_from_slice(&[0x08, 0x06]);
+
+        assert_eq!(driver.submit_tx_frame(3, &tx).unwrap(), tx.len() as u32);
+        let mut backend = InMemoryPacketBackend::new();
+        backend.rx.push(rx.to_vec());
+
+        let evidence = pump_driver_backend(&mut driver, &mut backend, 7).expect("pump driver");
+        assert_eq!(evidence.rx_frames_delivered, 1);
+        assert_eq!(evidence.tx_frames_submitted, 1);
+        assert_eq!(backend.tx.len(), 1);
+        assert_eq!(&backend.tx[0], &tx);
+        assert_eq!(driver.pending_rx_frames(), 1);
+        assert_eq!(driver.pending_tx_frames(), 0);
+
+        for _ in 0..5 {
+            driver.poll_device(7);
+        }
+        let mut out = [0u8; RESPONSE_CAPACITY];
+        let len = driver.dequeue_rx_frame(&mut out).unwrap();
+        assert_eq!(len, rx.len() as u32);
+        assert_eq!(&out[..rx.len()], &rx);
     }
 
     #[test]
