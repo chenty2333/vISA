@@ -951,6 +951,7 @@ dependencies = [
  "service_core",
  "sha2",
  "spin",
+ "substrate_api",
  "supervisor_catalog",
  "uart_16550",
  "vmos_abi",

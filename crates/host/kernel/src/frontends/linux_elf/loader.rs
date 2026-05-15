@@ -2,6 +2,7 @@ use alloc::{vec, vec::Vec};
 use core::slice;
 
 use bootloader_api::BootInfo;
+use substrate_api::{PageTableAuthority, SubstrateError, SubstrateResult};
 use x86_64::{
     PhysAddr, VirtAddr,
     registers::control::Cr3,
@@ -15,6 +16,7 @@ use xmas_elf::{ElfFile, program::Type as ProgramType};
 
 use super::context::{LoadedUserImage, UserFrameAllocator, UserPageMapping, UserRegion};
 
+const LIVE_PAGE_TABLE_AUTHORITY: &str = "LiveUserPageTableAuthority";
 const PAGE_SIZE: usize = 4096;
 const USER_STACK_PAGES: usize = 2048;
 const USER_STACK_TOP: u64 = 0x0000_0000_7000_0000;
@@ -75,6 +77,159 @@ fn prot_allows_write(prot: u64) -> bool {
     prot & 0x2 != 0
 }
 
+struct LiveUserPageTableAuthority<'a, 'mapper> {
+    mapper: &'a mut OffsetPageTable<'mapper>,
+    frame_allocator: &'a mut UserFrameAllocator,
+    phys_offset: VirtAddr,
+}
+
+impl PageTableAuthority for LiveUserPageTableAuthority<'_, '_> {
+    fn alloc_frame(&mut self) -> SubstrateResult<u64> {
+        self.frame_allocator.allocate_frame().map(|frame| frame.start_address().as_u64()).ok_or(
+            SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "out of usable frames",
+            },
+        )
+    }
+
+    fn map_page(
+        &mut self,
+        va: u64,
+        phys: u64,
+        writable: bool,
+        executable: bool,
+    ) -> SubstrateResult<()> {
+        validate_page_aligned(va, "page")?;
+        validate_page_aligned(phys, "page-frame")?;
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
+        let frame = PhysFrame::containing_address(PhysAddr::new(phys));
+        let flags = page_flags_from_attrs(writable, executable);
+        match unsafe { self.mapper.map_to(page, frame, flags, self.frame_allocator) } {
+            Ok(flush) => {
+                flush.flush();
+                Ok(())
+            }
+            Err(MapToError::PageAlreadyMapped(_)) => {
+                Err(SubstrateError::ContractViolation { detail: "virtual page already mapped" })
+            }
+            Err(MapToError::ParentEntryHugePage) => Err(SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "page parent entry is a huge page",
+            }),
+            Err(MapToError::FrameAllocationFailed) => Err(SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "page table frame allocation failed",
+            }),
+        }
+    }
+
+    fn unmap_page(&mut self, va: u64) -> SubstrateResult<()> {
+        validate_page_aligned(va, "page")?;
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
+        match self.mapper.unmap(page) {
+            Ok((_frame, flush)) => {
+                flush.flush();
+                Ok(())
+            }
+            Err(UnmapError::PageNotMapped) => {
+                Err(SubstrateError::InvalidObject { object: "page-mapping" })
+            }
+            Err(UnmapError::ParentEntryHugePage) => Err(SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "page parent entry is a huge page",
+            }),
+            Err(UnmapError::InvalidFrameAddress(_)) => Err(SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "page has an invalid frame address",
+            }),
+        }
+    }
+
+    fn protect_page(&mut self, va: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+        validate_page_aligned(va, "page")?;
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
+        let flags = page_flags_from_attrs(writable, executable);
+        match unsafe { self.mapper.update_flags(page, flags) } {
+            Ok(flush) => {
+                flush.flush();
+                Ok(())
+            }
+            Err(FlagUpdateError::PageNotMapped) => {
+                Err(SubstrateError::InvalidObject { object: "page-mapping" })
+            }
+            Err(FlagUpdateError::ParentEntryHugePage) => Err(SubstrateError::HardwareFault {
+                authority: LIVE_PAGE_TABLE_AUTHORITY,
+                detail: "page parent entry is a huge page",
+            }),
+        }
+    }
+
+    fn copy_frame(&mut self, src_phys: u64, dst_phys: u64, len: usize) -> SubstrateResult<()> {
+        validate_page_aligned(src_phys, "page-frame")?;
+        validate_page_aligned(dst_phys, "page-frame")?;
+        if len > PAGE_SIZE {
+            return Err(SubstrateError::ContractViolation {
+                detail: "page frame copy exceeds frame size",
+            });
+        }
+        if len == 0 || src_phys == dst_phys {
+            return Ok(());
+        }
+        let src_frame = PhysFrame::containing_address(PhysAddr::new(src_phys));
+        let dst_frame = PhysFrame::containing_address(PhysAddr::new(dst_phys));
+        let bytes = frame_bytes(src_frame, self.phys_offset)[..len].to_vec();
+        frame_bytes(dst_frame, self.phys_offset)[..len].copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    fn flush_tlb(&mut self, va: u64) -> SubstrateResult<()> {
+        validate_page_aligned(va, "page")?;
+        x86_64::instructions::tlb::flush(VirtAddr::new(va));
+        Ok(())
+    }
+}
+
+fn validate_page_aligned(value: u64, object: &'static str) -> SubstrateResult<()> {
+    if value == 0 || value % PAGE_SIZE as u64 != 0 {
+        Err(SubstrateError::InvalidObject { object })
+    } else {
+        Ok(())
+    }
+}
+
+fn page_flags_from_attrs(writable: bool, executable: bool) -> PageTableFlags {
+    let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+    if writable {
+        flags |= PageTableFlags::WRITABLE;
+    }
+    if !executable {
+        flags |= PageTableFlags::NO_EXECUTE;
+    }
+    flags
+}
+
+fn page_attrs_from_flags(flags: PageTableFlags) -> (bool, bool) {
+    (flags.contains(PageTableFlags::WRITABLE), !flags.contains(PageTableFlags::NO_EXECUTE))
+}
+
+fn map_page_table_error(err: SubstrateError) -> &'static str {
+    match err {
+        SubstrateError::InvalidObject { object: "page-mapping" } => "user page is not mapped",
+        SubstrateError::InvalidObject { object: "page" } => "user page range is not page aligned",
+        SubstrateError::InvalidObject { object: "page-frame" } => {
+            "user page has an invalid frame address"
+        }
+        SubstrateError::ContractViolation { detail } => detail,
+        SubstrateError::HardwareFault { detail, .. } => detail,
+        _ => "page table authority operation failed",
+    }
+}
+
+fn is_page_not_mapped(err: &SubstrateError) -> bool {
+    matches!(err, SubstrateError::InvalidObject { object: "page-mapping" })
+}
+
 pub(crate) fn protect_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,
@@ -86,25 +241,21 @@ pub(crate) fn protect_user_page_range(
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    let mut authority =
+        LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
     let flags = user_page_flags(prot);
     for page_addr in user_page_iter(start, len)? {
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
         if prot_is_none(prot) {
             if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr)
                 && mapping.present
             {
-                match mapper.unmap(page) {
-                    Ok((frame, flush)) => {
-                        mapping.frame_start = frame.start_address().as_u64();
+                match authority.unmap_page(page_addr) {
+                    Ok(()) => {
                         mapping.present = false;
-                        flush.flush();
                     }
-                    Err(UnmapError::PageNotMapped) => mapping.present = false,
-                    Err(UnmapError::ParentEntryHugePage) => {
-                        return Err("user page parent entry is a huge page");
-                    }
-                    Err(UnmapError::InvalidFrameAddress(_)) => {
-                        return Err("user page has an invalid frame address");
+                    Err(err) if is_page_not_mapped(&err) => mapping.present = false,
+                    Err(err) => {
+                        return Err(map_page_table_error(err));
                     }
                 }
             }
@@ -113,40 +264,27 @@ pub(crate) fn protect_user_page_range(
 
         if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr) {
             if mapping.cow && prot_allows_write(prot) {
-                break_user_cow_page_with_mapper(
-                    &mut mapper,
-                    phys_offset,
-                    page,
-                    mapping,
-                    frame_allocator,
-                    flags,
-                )?;
+                break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)?;
                 continue;
             }
             let mapping_flags = user_page_flags_for_mapping(prot, mapping);
             if !mapping.present {
-                remap_user_page(&mut mapper, page, mapping, mapping_flags, frame_allocator)?;
+                remap_user_page(&mut authority, page_addr, mapping, mapping_flags)?;
                 continue;
             }
-            match unsafe { mapper.update_flags(page, mapping_flags) } {
-                Ok(flush) => flush.flush(),
-                Err(FlagUpdateError::PageNotMapped) => {
+            let (writable, executable) = page_attrs_from_flags(mapping_flags);
+            match authority.protect_page(page_addr, writable, executable) {
+                Ok(()) => {}
+                Err(err) if is_page_not_mapped(&err) => {
                     mapping.present = false;
-                    remap_user_page(&mut mapper, page, mapping, mapping_flags, frame_allocator)?;
+                    remap_user_page(&mut authority, page_addr, mapping, mapping_flags)?;
                 }
-                Err(FlagUpdateError::ParentEntryHugePage) => {
-                    return Err("user page parent entry is a huge page");
+                Err(err) => {
+                    return Err(map_page_table_error(err));
                 }
             }
         } else {
-            map_new_user_page(
-                &mut mapper,
-                page_mappings,
-                frame_allocator,
-                phys_offset,
-                page,
-                flags,
-            )?;
+            map_new_user_page(&mut authority, page_mappings, page_addr, flags)?;
         }
     }
     Ok(())
@@ -163,16 +301,16 @@ pub(crate) fn unmap_user_page_range(
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
-    for page_addr in user_page_iter(start, len)? {
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
-        match mapper.unmap(page) {
-            Ok((_frame, flush)) => flush.flush(),
-            Err(UnmapError::PageNotMapped) => {}
-            Err(UnmapError::ParentEntryHugePage) => {
-                return Err("user page parent entry is a huge page");
-            }
-            Err(UnmapError::InvalidFrameAddress(_)) => {
-                return Err("user page has an invalid frame address");
+    {
+        let mut authority =
+            LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
+        for page_addr in user_page_iter(start, len)? {
+            match authority.unmap_page(page_addr) {
+                Ok(()) => {}
+                Err(err) if is_page_not_mapped(&err) => {}
+                Err(err) => {
+                    return Err(map_page_table_error(err));
+                }
             }
         }
     }
@@ -219,6 +357,8 @@ pub(crate) fn switch_user_page_mappings(
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    let mut authority =
+        LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
 
     for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
         if user_page_region_prot(next_regions, mapping.va).is_none() {
@@ -227,46 +367,32 @@ pub(crate) fn switch_user_page_mappings(
     }
 
     for mapping in current_mappings.iter().filter(|mapping| mapping.present) {
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mapping.va));
-        match mapper.unmap(page) {
-            Ok((_frame, flush)) => flush.flush(),
-            Err(UnmapError::PageNotMapped) => {}
-            Err(UnmapError::ParentEntryHugePage) => {
-                return Err("user page parent entry is a huge page");
-            }
-            Err(UnmapError::InvalidFrameAddress(_)) => {
-                return Err("user page has an invalid frame address");
+        match authority.unmap_page(mapping.va) {
+            Ok(()) => {}
+            Err(err) if is_page_not_mapped(&err) => {}
+            Err(err) => {
+                return Err(map_page_table_error(err));
             }
         }
     }
     if reclaim_current {
         for mapping in current_mappings {
             if mapping.owned {
-                frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
-                    mapping.frame_start,
-                )));
+                authority.frame_allocator.deallocate_frame(PhysFrame::containing_address(
+                    PhysAddr::new(mapping.frame_start),
+                ));
             }
         }
     }
 
     for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mapping.va));
-        let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
         let prot = user_page_region_prot(next_regions, mapping.va)
             .ok_or("forked user page has no region")?;
         let flags = user_page_flags_for_mapping(prot, mapping);
-        match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
-            Ok(flush) => flush.flush(),
-            Err(MapToError::PageAlreadyMapped(_)) => {
-                return Err("user page is already mapped during address-space switch");
-            }
-            Err(MapToError::ParentEntryHugePage) => {
-                return Err("user page parent entry is a huge page");
-            }
-            Err(MapToError::FrameAllocationFailed) => {
-                return Err("user page table frame allocation failed");
-            }
-        }
+        let (writable, executable) = page_attrs_from_flags(flags);
+        authority
+            .map_page(mapping.va, mapping.frame_start, writable, executable)
+            .map_err(map_page_table_error)?;
     }
     Ok(())
 }
@@ -281,18 +407,17 @@ pub(crate) fn cow_break_user_page(
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
-    let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+    let mut authority =
+        LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
     let mapping = user_page_mapping_mut(page_mappings, page_addr).ok_or("missing COW page")?;
     let flags = user_page_flags(prot);
-    break_user_cow_page_with_mapper(&mut mapper, phys_offset, page, mapping, frame_allocator, flags)
+    break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)
 }
 
-fn break_user_cow_page_with_mapper(
-    mapper: &mut OffsetPageTable<'_>,
-    phys_offset: VirtAddr,
-    page: Page<Size4KiB>,
+fn break_user_cow_page_with_authority(
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    page_addr: u64,
     mapping: &mut UserPageMapping,
-    frame_allocator: &mut UserFrameAllocator,
     flags: PageTableFlags,
 ) -> Result<(), &'static str> {
     if !mapping.cow {
@@ -303,32 +428,30 @@ fn break_user_cow_page_with_mapper(
     let old_present = mapping.present;
     let old_owned = mapping.owned;
     let old_cow = mapping.cow;
-    let old_frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
-    let new_frame = frame_allocator.allocate_frame().ok_or("out of usable frames for COW break")?;
-    let bytes = frame_bytes(old_frame, phys_offset).to_vec();
-    frame_bytes(new_frame, phys_offset).copy_from_slice(&bytes);
+    let new_frame = authority.alloc_frame().map_err(map_page_table_error)?;
+    authority.copy_frame(old_frame_start, new_frame, PAGE_SIZE).map_err(map_page_table_error)?;
 
     if old_present {
-        match mapper.unmap(page) {
-            Ok((_frame, flush)) => flush.flush(),
-            Err(UnmapError::PageNotMapped) => {}
-            Err(UnmapError::ParentEntryHugePage) => {
-                frame_allocator.deallocate_frame(new_frame);
-                return Err("user page parent entry is a huge page");
-            }
-            Err(UnmapError::InvalidFrameAddress(_)) => {
-                frame_allocator.deallocate_frame(new_frame);
-                return Err("user page has an invalid frame address");
+        match authority.unmap_page(page_addr) {
+            Ok(()) => {}
+            Err(err) if is_page_not_mapped(&err) => {}
+            Err(err) => {
+                authority
+                    .frame_allocator
+                    .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(new_frame)));
+                return Err(map_page_table_error(err));
             }
         }
     }
 
-    mapping.frame_start = new_frame.start_address().as_u64();
+    mapping.frame_start = new_frame;
     mapping.present = false;
     mapping.owned = true;
     mapping.cow = false;
-    if let Err(err) = remap_user_page(mapper, page, mapping, flags, frame_allocator) {
-        frame_allocator.deallocate_frame(new_frame);
+    if let Err(err) = remap_user_page(authority, page_addr, mapping, flags) {
+        authority
+            .frame_allocator
+            .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(new_frame)));
         mapping.frame_start = old_frame_start;
         mapping.present = false;
         mapping.owned = old_owned;
@@ -373,62 +496,58 @@ fn user_page_mapping_mut(
 }
 
 fn remap_user_page(
-    mapper: &mut OffsetPageTable<'_>,
-    page: Page<Size4KiB>,
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    page_addr: u64,
     mapping: &mut UserPageMapping,
     flags: PageTableFlags,
-    frame_allocator: &mut UserFrameAllocator,
 ) -> Result<(), &'static str> {
-    let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
-    match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
-        Ok(flush) => {
+    let (writable, executable) = page_attrs_from_flags(flags);
+    match authority.map_page(page_addr, mapping.frame_start, writable, executable) {
+        Ok(()) => {
             mapping.present = true;
-            flush.flush();
             Ok(())
         }
-        Err(MapToError::PageAlreadyMapped(_)) => {
+        Err(SubstrateError::ContractViolation { detail: "virtual page already mapped" }) => {
             mapping.present = true;
-            match unsafe { mapper.update_flags(page, flags) } {
-                Ok(flush) => {
-                    flush.flush();
-                    Ok(())
-                }
-                Err(FlagUpdateError::PageNotMapped) => Err("user page is not mapped"),
-                Err(FlagUpdateError::ParentEntryHugePage) => {
-                    Err("user page parent entry is a huge page")
-                }
+            match authority.protect_page(page_addr, writable, executable) {
+                Ok(()) => Ok(()),
+                Err(err) => Err(map_page_table_error(err)),
             }
         }
-        Err(MapToError::ParentEntryHugePage) => Err("user page parent entry is a huge page"),
-        Err(MapToError::FrameAllocationFailed) => Err("user page table frame allocation failed"),
+        Err(err) => Err(map_page_table_error(err)),
     }
 }
 
 fn map_new_user_page(
-    mapper: &mut OffsetPageTable<'_>,
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
     page_mappings: &mut Vec<UserPageMapping>,
-    frame_allocator: &mut UserFrameAllocator,
-    phys_offset: VirtAddr,
-    page: Page<Size4KiB>,
+    page_addr: u64,
     flags: PageTableFlags,
 ) -> Result<(), &'static str> {
-    let frame = frame_allocator.allocate_frame().ok_or("out of usable frames for user page")?;
-    match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
-        Ok(flush) => {
-            flush.flush();
-            frame_bytes(frame, phys_offset).fill(0);
+    let frame_start = authority.alloc_frame().map_err(map_page_table_error)?;
+    let (writable, executable) = page_attrs_from_flags(flags);
+    match authority.map_page(page_addr, frame_start, writable, executable) {
+        Ok(()) => {
+            frame_bytes(
+                PhysFrame::containing_address(PhysAddr::new(frame_start)),
+                authority.phys_offset,
+            )
+            .fill(0);
             page_mappings.push(UserPageMapping {
-                va: page.start_address().as_u64(),
-                frame_start: frame.start_address().as_u64(),
+                va: page_addr,
+                frame_start,
                 present: true,
                 owned: true,
                 cow: false,
             });
             Ok(())
         }
-        Err(MapToError::PageAlreadyMapped(_)) => Err("user page is already mapped"),
-        Err(MapToError::ParentEntryHugePage) => Err("user page parent entry is a huge page"),
-        Err(MapToError::FrameAllocationFailed) => Err("user page table frame allocation failed"),
+        Err(err) => {
+            authority
+                .frame_allocator
+                .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(frame_start)));
+            Err(map_page_table_error(err))
+        }
     }
 }
 

@@ -17,6 +17,7 @@ pic8259.workspace = true
 semantic_core.workspace = true
 service_core.workspace = true
 spin.workspace = true
+substrate_api.workspace = true
 supervisor_catalog.workspace = true
 uart_16550.workspace = true
 vmos_abi.workspace = true
