@@ -272,7 +272,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_ACCEPT => sys_accept(frame),
         SYS_ACCEPT4 => sys_accept4(frame),
         SYS_GETSOCKNAME => sys_getsockname(frame),
-        SYS_GETPEERNAME => Err(vmos_abi::ERR_ENOTCONN),
+        SYS_GETPEERNAME => sys_getpeername(frame),
         SYS_SENDTO => sys_sendto(frame),
         SYS_RECVFROM => sys_recvfrom(frame),
         SYS_SETSOCKOPT => sys_setsockopt(frame),
@@ -2500,7 +2500,12 @@ fn sys_accept_with_flags(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
         SyscallContext::new(SYS_ACCEPT, [frame.rdi, frame.rsi, frame.rdx, flags, 0, 0]),
     )?;
     if fd >= 0 {
-        write_optional_sockaddr_in(frame.rsi, frame.rdx)?;
+        let endpoint = u32::try_from(fd).ok().and_then(|fd| {
+            active_context().supervisor.socket_ipv4_endpoint(fd, true).ok().flatten()
+        });
+        let (addr, port) =
+            endpoint.map(|endpoint| (endpoint.addr, endpoint.port)).unwrap_or(([0; 4], 0));
+        write_optional_sockaddr_in_endpoint(frame.rsi, frame.rdx, addr, port)?;
     }
     Ok(fd)
 }
@@ -2515,11 +2520,22 @@ fn sys_accept4(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_getsockname(frame: &SyscallFrame) -> Result<i64, i32> {
-    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
-    if fd < 3 {
-        return Err(ERR_EBADF);
-    }
-    write_sockaddr_in(frame.rsi, frame.rdx)
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let endpoint = active_context()
+        .supervisor
+        .socket_ipv4_endpoint(fd, false)?
+        .map(|endpoint| (endpoint.addr, endpoint.port))
+        .unwrap_or(([0; 4], 0));
+    write_sockaddr_in_endpoint(frame.rsi, frame.rdx, endpoint.0, endpoint.1)
+}
+
+fn sys_getpeername(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let endpoint = active_context()
+        .supervisor
+        .socket_ipv4_endpoint(fd, true)?
+        .ok_or(vmos_abi::ERR_ENOTCONN)?;
+    write_sockaddr_in_endpoint(frame.rsi, frame.rdx, endpoint.addr, endpoint.port)
 }
 
 fn validate_optional_sockaddr(addr_ptr: u64, len_ptr: u64, writable: bool) -> Result<(), i32> {
@@ -2537,7 +2553,12 @@ fn validate_optional_sockaddr(addr_ptr: u64, len_ptr: u64, writable: bool) -> Re
     Ok(())
 }
 
-fn write_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<i64, i32> {
+fn write_sockaddr_in_endpoint(
+    addr_ptr: u64,
+    len_ptr: u64,
+    ipv4_addr: [u8; 4],
+    port: u16,
+) -> Result<i64, i32> {
     if addr_ptr == 0 || len_ptr == 0 {
         return Err(ERR_EFAULT);
     }
@@ -2547,16 +2568,23 @@ fn write_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<i64, i32> {
     }
     let mut sockaddr = [0u8; 16];
     sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
+    sockaddr[2..4].copy_from_slice(&port.to_be_bytes());
+    sockaddr[4..8].copy_from_slice(&ipv4_addr);
     write_user_bytes(addr_ptr, &sockaddr)?;
     write_user_u32(len_ptr, 16)?;
     Ok(0)
 }
 
-fn write_optional_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<(), i32> {
+fn write_optional_sockaddr_in_endpoint(
+    addr_ptr: u64,
+    len_ptr: u64,
+    ipv4_addr: [u8; 4],
+    port: u16,
+) -> Result<(), i32> {
     if addr_ptr == 0 && len_ptr == 0 {
         return Ok(());
     }
-    write_sockaddr_in(addr_ptr, len_ptr).map(|_| ())
+    write_sockaddr_in_endpoint(addr_ptr, len_ptr, ipv4_addr, port).map(|_| ())
 }
 
 fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {

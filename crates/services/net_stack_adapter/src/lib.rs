@@ -112,7 +112,9 @@ pub struct TcpSocketSnapshot {
     pub can_recv: bool,
     pub may_send: bool,
     pub may_recv: bool,
+    pub local_ipv4: [u8; 4],
     pub local_port: u16,
+    pub remote_ipv4: [u8; 4],
     pub remote_port: u16,
 }
 
@@ -310,11 +312,18 @@ impl SmoltcpPacketStack {
     pub fn tcp_snapshot(&self, socket_id: u32) -> Result<TcpSocketSnapshot, &'static str> {
         let handle = self.tcp_socket_handle(socket_id)?;
         let socket = self.sockets.get::<tcp::Socket>(handle);
-        let local_port = socket
-            .local_endpoint()
-            .map(|endpoint| endpoint.port)
-            .unwrap_or_else(|| socket.listen_endpoint().port);
-        let remote_port = socket.remote_endpoint().map(|endpoint| endpoint.port).unwrap_or(0);
+        let local_endpoint = socket.local_endpoint();
+        let remote_endpoint = socket.remote_endpoint();
+        let listen_endpoint = socket.listen_endpoint();
+        let local_ipv4 = local_endpoint
+            .map(|endpoint| ipv4_bytes(endpoint.addr))
+            .or_else(|| listen_endpoint.addr.map(ipv4_bytes))
+            .unwrap_or([0; 4]);
+        let local_port =
+            local_endpoint.map(|endpoint| endpoint.port).unwrap_or(listen_endpoint.port);
+        let remote_ipv4 =
+            remote_endpoint.map(|endpoint| ipv4_bytes(endpoint.addr)).unwrap_or([0; 4]);
+        let remote_port = remote_endpoint.map(|endpoint| endpoint.port).unwrap_or(0);
         Ok(TcpSocketSnapshot {
             socket_id,
             state: tcp_state_name(socket.state()),
@@ -322,7 +331,9 @@ impl SmoltcpPacketStack {
             can_recv: socket.can_recv(),
             may_send: socket.may_send(),
             may_recv: socket.may_recv(),
+            local_ipv4,
             local_port,
+            remote_ipv4,
             remote_port,
         })
     }
@@ -670,6 +681,14 @@ const fn tcp_state_name(state: tcp::State) -> &'static str {
     }
 }
 
+fn ipv4_bytes(addr: IpAddress) -> [u8; 4] {
+    #[allow(unreachable_patterns)]
+    match addr {
+        IpAddress::Ipv4(addr) => addr.octets(),
+        _ => [0; 4],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,7 +903,9 @@ mod tests {
         assert_eq!(local_port, DEFAULT_EPHEMERAL_PORT_BASE);
         let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
         assert_eq!(snapshot.state, "syn-sent");
+        assert_eq!(snapshot.local_ipv4, DEFAULT_IPV4_ADDR);
         assert_eq!(snapshot.local_port, DEFAULT_EPHEMERAL_PORT_BASE);
+        assert_eq!(snapshot.remote_ipv4, remote_ip);
         assert_eq!(snapshot.remote_port, 80);
 
         let arp_poll = stack.poll(1);
@@ -939,6 +960,8 @@ mod tests {
 
         let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
         assert_eq!(snapshot.state, "established");
+        assert_eq!(snapshot.local_ipv4, DEFAULT_IPV4_ADDR);
+        assert_eq!(snapshot.remote_ipv4, remote_ip);
         assert!(snapshot.can_send);
         assert!(snapshot.may_recv);
 
@@ -985,7 +1008,9 @@ mod tests {
 
         let snapshot = stack.tcp_snapshot(socket).expect("established snapshot");
         assert_eq!(snapshot.state, "established");
+        assert_eq!(snapshot.local_ipv4, DEFAULT_IPV4_ADDR);
         assert_eq!(snapshot.local_port, local_port);
+        assert_eq!(snapshot.remote_ipv4, remote_ip);
         assert_eq!(snapshot.remote_port, remote_port);
         assert!(snapshot.can_send);
         assert!(snapshot.may_recv);

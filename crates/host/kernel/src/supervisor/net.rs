@@ -19,6 +19,12 @@ const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
 const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ipv4SocketEndpoint {
+    pub(crate) addr: [u8; 4],
+    pub(crate) port: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NetStackSocketMode {
     Idle,
     TcpListening,
@@ -285,12 +291,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
-        if let Err(err) = self.net_stack.connect_tcp_ipv4(stack_socket_id, remote_ipv4, remote_port)
-        {
-            crate::kwarn!("smoltcp connect socket {}: {}", socket_id, err);
-            return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
-        }
+        let local_port =
+            match self.net_stack.connect_tcp_ipv4(stack_socket_id, remote_ipv4, remote_port) {
+                Ok(port) => port,
+                Err(err) => {
+                    crate::kwarn!("smoltcp connect socket {}: {}", socket_id, err);
+                    return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
+                }
+            };
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpConnectInProgress;
+        self.net_stack_sockets[index].local_ipv4 = DEFAULT_IPV4_ADDR;
+        self.net_stack_sockets[index].local_port = local_port;
         self.net_stack_sockets[index].remote_ipv4 = remote_ipv4;
         self.net_stack_sockets[index].remote_port = remote_port;
         self.semantic.record_socket_state_changed(socket_resource.id, "syn-sent");
@@ -526,7 +537,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
-        let local_ipv4 = self.net_stack_sockets[index].local_ipv4;
         let local_port = self.net_stack_sockets[index].local_port;
         let accepted_snapshot = self
             .net_stack
@@ -548,12 +558,33 @@ impl<'engine> PrototypeRuntime<'engine> {
             socket_id: accepted_socket_id,
             stack_socket_id: old_stack_socket_id,
             mode: NetStackSocketMode::TcpEstablished,
-            local_ipv4,
+            local_ipv4: accepted_snapshot.local_ipv4,
             local_port: accepted_snapshot.local_port,
-            remote_ipv4: [0; 4],
+            remote_ipv4: accepted_snapshot.remote_ipv4,
             remote_port: accepted_snapshot.remote_port,
         });
         Ok(Some(LinuxCallResult::Ret(0)))
+    }
+
+    pub(crate) fn net_stack_socket_ipv4_endpoint(
+        &self,
+        socket_id: u32,
+        peer: bool,
+    ) -> Option<Ipv4SocketEndpoint> {
+        let binding = self.net_stack_sockets.get(self.net_stack_socket_index(socket_id)?)?;
+        if peer {
+            if binding.mode != NetStackSocketMode::TcpEstablished || binding.remote_port == 0 {
+                return None;
+            }
+            return Some(Ipv4SocketEndpoint {
+                addr: binding.remote_ipv4,
+                port: binding.remote_port,
+            });
+        }
+        if binding.local_port == 0 {
+            return None;
+        }
+        Some(Ipv4SocketEndpoint { addr: binding.local_ipv4, port: binding.local_port })
     }
 
     pub(super) fn has_net_stack_socket(&self, socket_id: u32) -> bool {

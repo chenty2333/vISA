@@ -9,6 +9,7 @@ use vmos_abi::{
 use super::{
     events::Event,
     linux::LinuxCallResult,
+    net::Ipv4SocketEndpoint,
     pulse::PulseDevice,
     runtime::PrototypeRuntime,
     semantic::{fd_resource_kind, fd_resource_label},
@@ -872,6 +873,20 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn require_socket_fd(&self, fd: u32) -> Result<(), i32> {
         let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
         if matches!(entry.resource, FdResource::Socket { .. }) { Ok(()) } else { Err(ERR_ENOTSOCK) }
+    }
+
+    pub(crate) fn socket_ipv4_endpoint(
+        &self,
+        fd: u32,
+        peer: bool,
+    ) -> Result<Option<Ipv4SocketEndpoint>, i32> {
+        let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
+        let socket_id = match &entry.resource {
+            FdResource::Socket { socket_id, .. } => *socket_id as u32,
+            FdResource::SocketPairEnd { .. } => return Ok(None),
+            _ => return Err(ERR_ENOTSOCK),
+        };
+        Ok(self.net_stack_socket_ipv4_endpoint(socket_id, peer))
     }
 
     pub(crate) fn is_eventfd_fd(&self, fd: u32) -> bool {
