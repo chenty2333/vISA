@@ -213,7 +213,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FCHOWNAT => sys_fchownat(frame),
         SYS_CAPGET => sys_capget(frame),
         SYS_CAPSET => sys_capset(frame),
-        SYS_BRK => Ok(active_context().set_program_break(frame.rdi) as i64),
+        SYS_BRK => sys_brk(frame),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(frame),
         SYS_SET_ROBUST_LIST => sys_set_robust_list(frame),
         SYS_RSEQ => Ok(0),
@@ -2647,7 +2647,10 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 
     let addr = if frame.rdi != 0 {
-        validate_mapped_user_range(frame.rdi, len)?;
+        if frame.rdi & 4095 != 0 {
+            return Err(ERR_EINVAL);
+        }
+        validate_user_page_metadata_range(frame.rdi, len)?;
         frame.rdi
     } else {
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
@@ -2661,6 +2664,38 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let (readable, writable) = prot_user_region_permissions(frame.rdx);
     active_context().record_user_region(addr, len, readable, writable);
     Ok(addr as i64)
+}
+
+fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
+    let requested = frame.rdi;
+    let current = active_context().program_break();
+    if requested == 0 {
+        return Ok(current as i64);
+    }
+
+    let (brk_base, brk_end) = active_context().program_break_bounds();
+    if requested < brk_base || requested > brk_end {
+        return Ok(current as i64);
+    }
+
+    if requested > current {
+        let start = align_page(current).ok_or(ERR_EINVAL)?;
+        let end = align_page(requested).ok_or(ERR_EINVAL)?;
+        if end > start {
+            protect_active_user_page_range(start, end - start, PROT_READ | PROT_WRITE)?;
+            active_context().record_user_region(start, end - start, true, true);
+        }
+    } else if requested < current {
+        let start = align_page(requested).ok_or(ERR_EINVAL)?;
+        let end = align_page(current).ok_or(ERR_EINVAL)?;
+        if end > start {
+            protect_active_user_page_range(start, end - start, 0)?;
+            active_context().unmap_user_region(start, end - start);
+        }
+    }
+
+    active_context().commit_program_break(requested);
+    Ok(requested as i64)
 }
 
 fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3562,6 +3597,28 @@ fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
 
 fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
     validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
+}
+
+fn validate_user_page_metadata_range(ptr: u64, len: u64) -> Result<(), i32> {
+    if len == 0 {
+        return Ok(());
+    }
+    let end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
+    if ptr & 4095 != 0 || end & 4095 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if ptr < USER_BRK_BASE || end > USER_MMAP_END {
+        return Err(ERR_EFAULT);
+    }
+    let mappings = &active_context().page_mappings;
+    let mut page = ptr;
+    while page < end {
+        if !mappings.iter().any(|mapping| mapping.va == page) {
+            return Err(ERR_EFAULT);
+        }
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
+    }
+    Ok(())
 }
 
 fn validate_user_range_access(ptr: u64, len: u64, access: UserRangeAccess) -> Result<(), i32> {

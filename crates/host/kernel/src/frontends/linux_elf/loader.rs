@@ -190,6 +190,37 @@ fn remap_user_page(
     }
 }
 
+fn unmap_reserved_user_pages(
+    mapper: &mut OffsetPageTable<'_>,
+    page_mappings: &mut [UserPageMapping],
+    start: u64,
+    len: u64,
+) -> Result<(), &'static str> {
+    for page_addr in user_page_iter(start, len)? {
+        let mapping =
+            user_page_mapping_mut(page_mappings, page_addr).ok_or("user page metadata missing")?;
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+        if !mapping.present {
+            continue;
+        }
+        match mapper.unmap(page) {
+            Ok((frame, flush)) => {
+                mapping.frame_start = frame.start_address().as_u64();
+                mapping.present = false;
+                flush.flush();
+            }
+            Err(UnmapError::PageNotMapped) => mapping.present = false,
+            Err(UnmapError::ParentEntryHugePage) => {
+                return Err("user page parent entry is a huge page");
+            }
+            Err(UnmapError::InvalidFrameAddress(_)) => {
+                return Err("user page has an invalid frame address");
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn load_demo_program(boot_info: &BootInfo) -> Result<LoadedUserImage, &'static str> {
     load_user_program(boot_info, &LINUX_USER_DEMO_ELF.0)
 }
@@ -265,12 +296,12 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         &[],
         anon_flags,
     )?;
-    regions.push(UserRegion {
-        start: USER_MMAP_BASE,
-        end: USER_MMAP_END,
-        readable: true,
-        writable: true,
-    });
+    unmap_reserved_user_pages(
+        &mut mapper,
+        &mut page_mappings,
+        USER_MMAP_BASE,
+        USER_MMAP_END - USER_MMAP_BASE,
+    )?;
 
     let initial_stack = build_initial_stack(&elf)?;
     map_user_stack(

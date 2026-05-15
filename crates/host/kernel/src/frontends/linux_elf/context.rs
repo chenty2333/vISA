@@ -276,15 +276,16 @@ impl ActiveUserContext {
         self.physical_memory_offset
     }
 
-    pub(crate) fn set_program_break(&mut self, requested: u64) -> u64 {
-        if requested == 0 {
-            return self.brk_current;
-        }
-        if requested < self.brk_base || requested > self.brk_end {
-            return self.brk_current;
-        }
-        self.brk_current = requested;
+    pub(crate) fn program_break(&self) -> u64 {
         self.brk_current
+    }
+
+    pub(crate) fn program_break_bounds(&self) -> (u64, u64) {
+        (self.brk_base, self.brk_end)
+    }
+
+    pub(crate) fn commit_program_break(&mut self, requested: u64) {
+        self.brk_current = requested;
     }
 
     pub(crate) fn cwd(&self) -> &[u8] {
