@@ -14,6 +14,7 @@ pub(super) fn network_events_are_recorded_as_semantic_state() {
     graph.record_dma_submitted(dma, device, 64);
     graph.record_dma_completed(dma, device, 64);
     graph.record_packet_received(interface, Some(socket), 0x6e6574307278, 64);
+    graph.record_packet_queued_for_transmit(interface, Some(socket), 0x6e6574307478, 128);
 
     assert!(graph.event_log_tail(8).iter().any(|event| matches!(
         event.kind,
@@ -21,6 +22,15 @@ pub(super) fn network_events_are_recorded_as_semantic_state() {
             interface: recorded_interface,
             socket: Some(recorded_socket),
             len: 64,
+            ..
+        } if recorded_interface == interface && recorded_socket == socket
+    )));
+    assert!(graph.event_log_tail(8).iter().any(|event| matches!(
+        event.kind,
+        EventKind::PacketQueuedForTransmit {
+            interface: recorded_interface,
+            socket: Some(recorded_socket),
+            len: 128,
             ..
         } if recorded_interface == interface && recorded_socket == socket
     )));

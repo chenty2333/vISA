@@ -405,10 +405,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.poll_net_stack_driver_events(now_ticks);
         let _ = self.net_stack.poll(now_ms);
         while let Some(frame) = self.net_stack.take_tx_frame() {
-            // PacketTransmitted is only valid after the backend accepts the frame.
             match self.net_driver.submit_tx_frame(now_ticks, &frame) {
                 Ok(submitted) if submitted > 0 => {
-                    self.semantic.record_packet_transmitted(
+                    self.semantic.record_packet_queued_for_transmit(
                         self.net.interface.id,
                         socket_resource,
                         ready_key,

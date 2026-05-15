@@ -378,7 +378,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     }
                     Err(ServiceCallError::Invalid(err)) => return Err(err),
                 }
-                self.semantic.record_packet_transmitted(
+                self.semantic.record_packet_queued_for_transmit(
                     self.net.interface.id,
                     Some(handle.id),
                     ready_key,

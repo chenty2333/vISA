@@ -2135,6 +2135,12 @@ pub enum EventKind {
         ready_key: u64,
         len: usize,
     },
+    PacketQueuedForTransmit {
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    },
     NetInterfaceStateChanged {
         interface: ResourceId,
         up: bool,

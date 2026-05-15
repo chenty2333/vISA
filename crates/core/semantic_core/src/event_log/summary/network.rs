@@ -552,6 +552,13 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
                 "PacketTransmitted interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
             )
         }
+        EventKind::PacketQueuedForTransmit { interface, socket, ready_key, len } => {
+            let socket =
+                socket.map(|socket| socket.to_string()).unwrap_or_else(|| "none".to_string());
+            format!(
+                "PacketQueuedForTransmit interface={interface} socket={socket} ready_key=0x{ready_key:x} len={len}"
+            )
+        }
         EventKind::NetInterfaceStateChanged { interface, up } => {
             let state = if *up { "up" } else { "down" };
             format!("NetInterfaceStateChanged interface={interface} state={state}")

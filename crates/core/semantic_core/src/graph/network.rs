@@ -20,6 +20,16 @@ impl SemanticGraph {
         self.event_log
             .push("net", EventKind::PacketTransmitted { interface, socket, ready_key, len });
     }
+    pub fn record_packet_queued_for_transmit(
+        &mut self,
+        interface: ResourceId,
+        socket: Option<ResourceId>,
+        ready_key: u64,
+        len: usize,
+    ) {
+        self.event_log
+            .push("net", EventKind::PacketQueuedForTransmit { interface, socket, ready_key, len });
+    }
     pub fn record_net_interface_state_changed(&mut self, interface: ResourceId, up: bool) {
         self.event_log.push("net", EventKind::NetInterfaceStateChanged { interface, up });
     }
