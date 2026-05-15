@@ -1212,6 +1212,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::Socket { socket_id, .. } => Some(*socket_id as u32),
             _ => None,
         });
+        let closing_socket_last_ref = closing_socket
+            .map(|socket_id| !self.has_other_socket_fd_ref(fd, socket_id))
+            .unwrap_or(false);
         let closing_pipe = self.fd_entry(fd).and_then(|entry| match &entry.resource {
             FdResource::PipeEnd { pipe_id, readable, writable } => {
                 Some((*pipe_id, *readable, *writable))
@@ -1231,7 +1234,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             } => Some((*vfs_node_id, path.clone())),
             _ => None,
         });
-        if let Some(socket_id) = closing_socket {
+        if let Some(socket_id) = closing_socket
+            && closing_socket_last_ref
+        {
             if self.require_capability("linux_syscall", "linux.socket", "close").is_err()
                 || self.require_capability("net_core", "net.socket", "close").is_err()
             {
@@ -1277,7 +1282,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
         {
-            if closing_socket.is_some() {
+            if closing_socket_last_ref {
                 self.semantic.record_socket_state_changed(handle.id, "closed");
             }
             self.semantic.close_resource(handle.id);
@@ -1323,6 +1328,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             );
         }
         Ok(())
+    }
+
+    fn has_other_socket_fd_ref(&self, closing_fd: u32, socket_id: u32) -> bool {
+        self.fd_table.iter().enumerate().any(|(fd, entry)| {
+            fd != closing_fd as usize
+                && matches!(
+                    entry.as_ref().map(|entry| &entry.resource),
+                    Some(FdResource::Socket { socket_id: other, .. }) if *other as u32 == socket_id
+                )
+        })
     }
 
     pub(crate) fn fd_flags(&self, fd: u32) -> Result<u32, i32> {
