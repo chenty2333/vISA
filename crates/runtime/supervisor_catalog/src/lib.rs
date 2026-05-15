@@ -440,7 +440,9 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "poll_device",
             "event_len",
             "dequeue_rx_frame",
+            "take_tx_frame",
             "pending_rx_frames",
+            "pending_tx_frames",
         ],
     },
     WasmModuleSpec {

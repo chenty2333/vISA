@@ -114,8 +114,24 @@ pub extern "C" fn dequeue_rx_frame() -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn take_tx_frame() -> i32 {
+    let response = unsafe {
+        core::slice::from_raw_parts_mut(addr_of_mut!(RESPONSE) as *mut u8, RESPONSE_CAPACITY)
+    };
+    match unsafe { state().take_tx_frame(response) } {
+        Ok(len) => len as i32,
+        Err(errno) => -errno,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn pending_rx_frames() -> u32 {
     unsafe { state().pending_rx_frames() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pending_tx_frames() -> u32 {
+    unsafe { state().pending_tx_frames() }
 }
 
 unsafe fn state() -> &'static mut DriverVirtioNetState {

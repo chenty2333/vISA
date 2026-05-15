@@ -12,6 +12,7 @@ pub const RAW_ETHERNET_FRAME_CAPACITY: usize = VIRTIO_NET0_MTU as usize + ETHERN
 pub const REQUEST_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
 pub const RESPONSE_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
 pub const RAW_RX_QUEUE_DEPTH: usize = 4;
+pub const RAW_TX_QUEUE_DEPTH: usize = 4;
 pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +55,9 @@ pub struct DriverVirtioNetState {
     raw_rx: [RawRxSlot; RAW_RX_QUEUE_DEPTH],
     raw_rx_head: usize,
     raw_rx_len: usize,
+    raw_tx: [RawFrameSlot; RAW_TX_QUEUE_DEPTH],
+    raw_tx_head: usize,
+    raw_tx_len: usize,
     tx_pending: bool,
 }
 
@@ -68,6 +72,17 @@ impl RawRxSlot {
     const EMPTY: Self = Self { data: [0; REQUEST_CAPACITY], len: 0, active: false };
 }
 
+#[derive(Clone, Copy)]
+struct RawFrameSlot {
+    data: [u8; RAW_ETHERNET_FRAME_CAPACITY],
+    len: usize,
+    active: bool,
+}
+
+impl RawFrameSlot {
+    const EMPTY: Self = Self { data: [0; RAW_ETHERNET_FRAME_CAPACITY], len: 0, active: false };
+}
+
 impl DriverVirtioNetState {
     pub const fn new() -> Self {
         Self {
@@ -79,6 +94,9 @@ impl DriverVirtioNetState {
             raw_rx: [RawRxSlot::EMPTY; RAW_RX_QUEUE_DEPTH],
             raw_rx_head: 0,
             raw_rx_len: 0,
+            raw_tx: [RawFrameSlot::EMPTY; RAW_TX_QUEUE_DEPTH],
+            raw_tx_head: 0,
+            raw_tx_len: 0,
             tx_pending: false,
         }
     }
@@ -92,6 +110,9 @@ impl DriverVirtioNetState {
         self.raw_rx = [RawRxSlot::EMPTY; RAW_RX_QUEUE_DEPTH];
         self.raw_rx_head = 0;
         self.raw_rx_len = 0;
+        self.raw_tx = [RawFrameSlot::EMPTY; RAW_TX_QUEUE_DEPTH];
+        self.raw_tx_head = 0;
+        self.raw_tx_len = 0;
         self.tx_pending = false;
     }
 
@@ -104,7 +125,7 @@ impl DriverVirtioNetState {
                 self.next_tick = now_ticks.saturating_add(FIRST_RX_DELAY_TICKS);
                 Ok(payload.len() as u32)
             }
-            _ if frame.len() >= ETHERNET_HEADER_LEN => Ok(frame.len() as u32),
+            _ if frame.len() >= ETHERNET_HEADER_LEN => self.enqueue_raw_tx_frame(frame),
             Ok(_) => Ok(0),
             Err(errno) => Err(errno),
         }
@@ -194,6 +215,45 @@ impl DriverVirtioNetState {
         self.device.pending_rx_frames().saturating_add(self.raw_rx_len as u32)
     }
 
+    pub fn pending_tx_frames(&self) -> u32 {
+        self.raw_tx_len as u32
+    }
+
+    pub fn take_tx_frame(&mut self, out: &mut [u8]) -> Result<u32, i32> {
+        if self.raw_tx_len == 0 {
+            return Ok(0);
+        }
+        let index = self.raw_tx_head;
+        if !self.raw_tx[index].active {
+            return Err(ERR_EIO);
+        }
+        let len = self.raw_tx[index].len;
+        if out.len() < len {
+            return Err(ERR_EIO);
+        }
+        out[..len].copy_from_slice(&self.raw_tx[index].data[..len]);
+        self.raw_tx[index] = RawFrameSlot::EMPTY;
+        self.raw_tx_head = (self.raw_tx_head + 1) % RAW_TX_QUEUE_DEPTH;
+        self.raw_tx_len -= 1;
+        Ok(len as u32)
+    }
+
+    fn enqueue_raw_tx_frame(&mut self, frame: &[u8]) -> Result<u32, i32> {
+        if frame.len() > RAW_ETHERNET_FRAME_CAPACITY {
+            return Err(ERR_EIO);
+        }
+        if self.raw_tx_len == RAW_TX_QUEUE_DEPTH {
+            return Err(ERR_EAGAIN);
+        }
+
+        let tail = (self.raw_tx_head + self.raw_tx_len) % RAW_TX_QUEUE_DEPTH;
+        self.raw_tx[tail].data[..frame.len()].copy_from_slice(frame);
+        self.raw_tx[tail].len = frame.len();
+        self.raw_tx[tail].active = true;
+        self.raw_tx_len += 1;
+        Ok(frame.len() as u32)
+    }
+
     fn peek_raw_rx_frame_len(&self) -> u32 {
         if self.raw_rx_len == 0 {
             return 0;
@@ -270,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_ethernet_tx_is_accepted_without_synthetic_rx() {
+    fn raw_ethernet_tx_is_queued_without_synthetic_rx() {
         let mut driver = DriverVirtioNetState::new();
         let mut frame = [0u8; 42];
         frame[..6].copy_from_slice(&[0xff; 6]);
@@ -278,8 +338,29 @@ mod tests {
         frame[12..14].copy_from_slice(&[0x08, 0x06]);
 
         assert_eq!(driver.submit_tx_frame(5, &frame).unwrap(), frame.len() as u32);
+        assert_eq!(driver.pending_tx_frames(), 1);
         assert_eq!(driver.poll_device(5 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
         assert_eq!(driver.pending_rx_frames(), 0);
+
+        let mut out = [0u8; RESPONSE_CAPACITY];
+        let len = driver.take_tx_frame(&mut out).unwrap();
+        assert_eq!(len, frame.len() as u32);
+        assert_eq!(&out[..frame.len()], &frame);
+        assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
+    fn raw_ethernet_tx_rejects_full_queue() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut frame = [0u8; 42];
+        frame[..6].copy_from_slice(&[0xff; 6]);
+        frame[6..12].copy_from_slice(&[0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01]);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+
+        for _ in 0..RAW_TX_QUEUE_DEPTH {
+            assert_eq!(driver.submit_tx_frame(5, &frame).unwrap(), frame.len() as u32);
+        }
+        assert_eq!(driver.submit_tx_frame(5, &frame), Err(vmos_abi::ERR_EAGAIN));
     }
 
     #[test]
