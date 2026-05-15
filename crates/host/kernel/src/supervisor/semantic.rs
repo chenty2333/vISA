@@ -380,6 +380,7 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
         WaitKind::Futex => SemanticWaitKind::Futex,
         WaitKind::Epoll => SemanticWaitKind::Epoll,
         WaitKind::SocketAccept => SemanticWaitKind::SocketAccept,
+        WaitKind::FileLock => SemanticWaitKind::FileLock,
     }
 }
 

@@ -164,6 +164,7 @@ pub(crate) enum WaitKind {
     Futex,
     Epoll,
     SocketAccept,
+    FileLock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

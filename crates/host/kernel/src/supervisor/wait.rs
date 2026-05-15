@@ -13,6 +13,7 @@ pub(crate) enum WaitRegistration {
     Futex { timeout_ms: Option<u32>, resume_cookie: u32 },
     Epoll { epoll_id: u32, max_events: u32, timeout_ms: Option<u32>, resume_cookie: u32 },
     SocketAccept { fd: u32, flags: u32 },
+    FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub(crate) enum WaitSource {
     Futex,
     Epoll { epoll_id: u32, max_events: u32 },
     SocketAccept { fd: u32, flags: u32 },
+    FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,6 +97,12 @@ impl WaitRegistry {
             WaitRegistration::SocketAccept { fd, flags } => {
                 (WaitKind::SocketAccept, WaitSource::SocketAccept { fd, flags }, 0, None)
             }
+            WaitRegistration::FileLock { fd, owner, lock_type, whence, start, len } => (
+                WaitKind::FileLock,
+                WaitSource::FileLock { fd, owner, lock_type, whence, start, len },
+                0,
+                None,
+            ),
         };
 
         let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
@@ -134,6 +142,7 @@ impl WaitRegistry {
                 }
                 WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
                 WaitSource::SocketAccept { .. } => {}
+                WaitSource::FileLock { .. } => {}
             }
         }
     }
@@ -189,6 +198,15 @@ impl WaitRegistry {
             .flatten()
             .find(|record| record.token == token && record.state == WaitState::Pending)
             .map(|record| record.source)
+    }
+
+    pub(crate) fn pending_sources(&self) -> Vec<(WaitToken, WaitSource)> {
+        self.records
+            .iter()
+            .flatten()
+            .filter(|record| record.state == WaitState::Pending)
+            .map(|record| (record.token, record.source))
+            .collect()
     }
 
     fn mark_ready(&mut self, token_id: u64) {
@@ -291,5 +309,29 @@ mod tests {
                 source: WaitSource::SocketAccept { fd: 4, flags: 0o2000000 },
             })
         );
+    }
+
+    #[test]
+    fn file_lock_registration_carries_lock_request() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::FileLock {
+                fd: 5,
+                owner: 42,
+                lock_type: 1,
+                whence: 0,
+                start: 16,
+                len: 8,
+            },
+            0,
+            100,
+        );
+
+        let source =
+            WaitSource::FileLock { fd: 5, owner: 42, lock_type: 1, whence: 0, start: 16, len: 8 };
+        assert_eq!(token.kind, WaitKind::FileLock);
+        assert_eq!(registry.pending_source(token), Some(source));
+        assert_eq!(registry.pending_sources(), alloc::vec![(token, source)]);
     }
 }

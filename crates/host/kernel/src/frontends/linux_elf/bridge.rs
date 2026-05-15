@@ -2547,9 +2547,21 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
             }
             return Ok(0);
         }
-        F_SETLK | F_SETLKW => {
+        F_SETLK => {
             let (lock_type, whence, start, len) = read_flock(frame.rdx)?;
             active_context().supervisor.fcntl_setlk_fd(
+                fd,
+                active_context().pid,
+                lock_type,
+                whence,
+                start,
+                len,
+            )?;
+            return Ok(0);
+        }
+        F_SETLKW => {
+            let (lock_type, whence, start, len) = read_flock(frame.rdx)?;
+            active_context().supervisor.fcntl_setlkw_fd(
                 fd,
                 active_context().pid,
                 lock_type,

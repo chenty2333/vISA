@@ -196,6 +196,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::FileLock { fd, owner, lock_type, whence, start, len }) =
+                self.waits.pending_source(token)
+                && self.file_lock_wait_is_ready(fd, owner, lock_type, whence, start, len)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if self.waits.is_pending(token)
                 && self.has_unblocked_pending_signal_for_task(token.owner_task)
             {
@@ -216,6 +223,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             self.collect_epoll_ready(epoll_id, max_events)
                         }
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
+                        WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         _ => {
                             let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.execute_linux_step("linux_resume", resumed)
@@ -251,8 +259,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                             }
                             super::types::WaitKind::Timer => {}
                             super::types::WaitKind::SocketAccept => {}
+                            super::types::WaitKind::FileLock => {}
                         }
-                        if matches!(resolution.source, WaitSource::SocketAccept { .. }) {
+                        if matches!(
+                            resolution.source,
+                            WaitSource::SocketAccept { .. } | WaitSource::FileLock { .. }
+                        ) {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }
                         let cancelled = self.linux.cancel_wait(resolution.resume_cookie, errno)?;

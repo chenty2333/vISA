@@ -8,6 +8,7 @@ use vmos_abi::{
 
 use super::{
     events::Event,
+    linux::LinuxCallResult,
     pulse::PulseDevice,
     runtime::PrototypeRuntime,
     semantic::{fd_resource_kind, fd_resource_label},
@@ -17,6 +18,7 @@ use super::{
         FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE, ServiceCallError,
         SocketPairState,
     },
+    wait::{WaitRegistration, WaitSource},
 };
 use crate::interrupts;
 
@@ -189,14 +191,62 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
         match lock_type {
             F_RDLCK | F_WRLCK => {
-                self.vfs.fcntl_setlk(&path, owner, lock_type == F_WRLCK, start, len)
+                let result = self.vfs.fcntl_setlk(&path, owner, lock_type == F_WRLCK, start, len);
+                if result.is_ok() {
+                    self.wake_ready_file_lock_waits();
+                }
+                result
             }
             F_UNLCK => {
                 self.vfs.fcntl_unlock(&path, owner, start, len);
+                self.wake_ready_file_lock_waits();
                 Ok(())
             }
             _ => Err(ERR_EINVAL),
         }
+    }
+
+    pub(crate) fn fcntl_setlkw_fd(
+        &mut self,
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> Result<(), i32> {
+        loop {
+            match self.fcntl_setlk_fd(fd, owner, lock_type, whence, start, len) {
+                Ok(()) => return Ok(()),
+                Err(ERR_EAGAIN) => {
+                    let token = self.waits.register(
+                        self.scheduler.current_task(),
+                        WaitRegistration::FileLock { fd, owner, lock_type, whence, start, len },
+                        interrupts::tick_count(),
+                        interrupts::TIMER_HZ,
+                    );
+                    self.record_wait_token(token);
+                    match self.block_on_wait("ring3_fcntl_setlkw", token).map_err(|_| ERR_EINVAL)? {
+                        LinuxCallResult::Ret(0) => {}
+                        LinuxCallResult::Ret(ret) if ret < 0 => return Err((-ret) as i32),
+                        _ => return Err(ERR_EINVAL),
+                    }
+                }
+                Err(errno) => return Err(errno),
+            }
+        }
+    }
+
+    pub(super) fn file_lock_wait_is_ready(
+        &mut self,
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> bool {
+        self.fcntl_lock_available_fd(fd, owner, lock_type, whence, start, len).unwrap_or(false)
     }
 
     pub(crate) fn fcntl_getlk_fd(
@@ -220,6 +270,42 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
         Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len))
+    }
+
+    fn fcntl_lock_available_fd(
+        &mut self,
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> Result<bool, i32> {
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const F_UNLCK: i16 = 2;
+
+        let want_write = match lock_type {
+            F_RDLCK => false,
+            F_WRLCK => true,
+            F_UNLCK => return Ok(true),
+            _ => return Err(ERR_EINVAL),
+        };
+        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len).is_none())
+    }
+
+    fn wake_ready_file_lock_waits(&mut self) {
+        let pending = self.waits.pending_sources();
+        for (token, source) in pending {
+            let WaitSource::FileLock { fd, owner, lock_type, whence, start, len } = source else {
+                continue;
+            };
+            if self.file_lock_wait_is_ready(fd, owner, lock_type, whence, start, len) {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+            }
+        }
+        self.drain_event_queue();
     }
 
     fn fcntl_lock_target(
