@@ -98,9 +98,11 @@ pub struct SubstrateCapabilitySet {
     pub guest_memory: bool,
     pub artifact_loading: bool,
     pub dmw: DmwSupport,
+    pub page_table: bool,
     pub mmio: bool,
     pub irq: bool,
     pub dma: DmaSupport,
+    pub packet_device: bool,
     pub snapshot: SnapshotSupport,
     pub code_publish: CodePublishSupport,
 }
@@ -114,9 +116,11 @@ impl SubstrateCapabilitySet {
             guest_memory: false,
             artifact_loading: false,
             dmw: DmwSupport::None,
+            page_table: false,
             mmio: false,
             irq: false,
             dma: DmaSupport::None,
+            packet_device: false,
             snapshot: SnapshotSupport::None,
             code_publish: CodePublishSupport::None,
         }
@@ -130,9 +134,11 @@ impl SubstrateCapabilitySet {
             guest_memory: true,
             artifact_loading: false,
             dmw: DmwSupport::None,
+            page_table: false,
             mmio: false,
             irq: false,
             dma: DmaSupport::None,
+            packet_device: false,
             snapshot: SnapshotSupport::None,
             code_publish: CodePublishSupport::None,
         }
@@ -148,9 +154,11 @@ impl SubstrateCapabilitySet {
                 guest_memory: false,
                 artifact_loading: true,
                 dmw: DmwSupport::None,
+                page_table: false,
                 mmio: false,
                 irq: false,
                 dma: DmaSupport::None,
+                packet_device: false,
                 snapshot: SnapshotSupport::None,
                 code_publish: CodePublishSupport::MetadataOnly,
             },
@@ -161,9 +169,11 @@ impl SubstrateCapabilitySet {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwSupport::Logical,
+                page_table: false,
                 mmio: false,
                 irq: false,
                 dma: DmaSupport::None,
+                packet_device: false,
                 snapshot: SnapshotSupport::None,
                 code_publish: CodePublishSupport::MetadataOnly,
             },
@@ -174,9 +184,11 @@ impl SubstrateCapabilitySet {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwSupport::Logical,
+                page_table: false,
                 mmio: true,
                 irq: true,
                 dma: DmaSupport::Mediated,
+                packet_device: false,
                 snapshot: SnapshotSupport::None,
                 code_publish: CodePublishSupport::MetadataOnly,
             },
@@ -187,9 +199,11 @@ impl SubstrateCapabilitySet {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwSupport::Logical,
+                page_table: false,
                 mmio: true,
                 irq: true,
                 dma: DmaSupport::Mediated,
+                packet_device: false,
                 snapshot: SnapshotSupport::DeterministicReplay,
                 code_publish: CodePublishSupport::MetadataOnly,
             },
@@ -204,9 +218,11 @@ impl SubstrateCapabilitySet {
             guest_memory: true,
             artifact_loading: true,
             dmw: DmwSupport::Logical,
+            page_table: true,
             mmio: true,
             irq: true,
             dma: DmaSupport::Mediated,
+            packet_device: true,
             snapshot: SnapshotSupport::DeterministicReplay,
             code_publish: CodePublishSupport::MetadataOnly,
         }
@@ -309,9 +325,11 @@ impl SubstrateProfile {
                 guest_memory: false,
                 artifact_loading: false,
                 dmw: DmwRequirement::None,
+                page_table: false,
                 mmio: false,
                 irq: false,
                 dma: DmaRequirement::None,
+                packet_device: false,
                 snapshot: SnapshotRequirement::None,
                 code_publish: CodePublishRequirement::None,
             },
@@ -322,9 +340,11 @@ impl SubstrateProfile {
                 guest_memory: false,
                 artifact_loading: true,
                 dmw: DmwRequirement::None,
+                page_table: false,
                 mmio: false,
                 irq: false,
                 dma: DmaRequirement::None,
+                packet_device: false,
                 snapshot: SnapshotRequirement::None,
                 code_publish: CodePublishRequirement::MetadataOnly,
             },
@@ -335,9 +355,11 @@ impl SubstrateProfile {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwRequirement::LogicalOrBetter,
+                page_table: false,
                 mmio: false,
                 irq: false,
                 dma: DmaRequirement::None,
+                packet_device: false,
                 snapshot: SnapshotRequirement::None,
                 code_publish: CodePublishRequirement::MetadataOnly,
             },
@@ -348,9 +370,11 @@ impl SubstrateProfile {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwRequirement::LogicalOrBetter,
+                page_table: false,
                 mmio: true,
                 irq: true,
                 dma: DmaRequirement::MediatedOrBetter,
+                packet_device: false,
                 snapshot: SnapshotRequirement::None,
                 code_publish: CodePublishRequirement::MetadataOnly,
             },
@@ -361,9 +385,11 @@ impl SubstrateProfile {
                 guest_memory: true,
                 artifact_loading: true,
                 dmw: DmwRequirement::LogicalOrBetter,
+                page_table: false,
                 mmio: true,
                 irq: true,
                 dma: DmaRequirement::MediatedOrBetter,
+                packet_device: false,
                 snapshot: SnapshotRequirement::DeterministicReplay,
                 code_publish: CodePublishRequirement::MetadataOnly,
             },
@@ -379,9 +405,11 @@ pub struct AuthorityRequirementSet {
     pub guest_memory: bool,
     pub artifact_loading: bool,
     pub dmw: DmwRequirement,
+    pub page_table: bool,
     pub mmio: bool,
     pub irq: bool,
     pub dma: DmaRequirement,
+    pub packet_device: bool,
     pub snapshot: SnapshotRequirement,
     pub code_publish: CodePublishRequirement,
 }
@@ -404,8 +432,10 @@ impl AuthorityRequirementSet {
             "event-queue" => self.event_queue = true,
             "guest-memory" => self.guest_memory = true,
             "artifact-loading" => self.artifact_loading = true,
+            "page-table" => self.page_table = true,
             "mmio" => self.mmio = true,
             "irq" => self.irq = true,
+            "packet-device" => self.packet_device = true,
             _ => {
                 let Some((authority, requirement)) = token.split_once(':') else {
                     return Err(AuthorityRequirementParseError::unknown(token));
@@ -431,9 +461,11 @@ impl AuthorityRequirementSet {
             && (!self.guest_memory || capabilities.guest_memory)
             && (!self.artifact_loading || capabilities.artifact_loading)
             && self.dmw.is_satisfied_by(capabilities.dmw)
+            && (!self.page_table || capabilities.page_table)
             && (!self.mmio || capabilities.mmio)
             && (!self.irq || capabilities.irq)
             && self.dma.is_satisfied_by(capabilities.dma)
+            && (!self.packet_device || capabilities.packet_device)
             && self.snapshot.is_satisfied_by(capabilities.snapshot)
             && self.code_publish.is_satisfied_by(capabilities.code_publish)
     }
@@ -445,9 +477,11 @@ impl AuthorityRequirementSet {
             || (self.guest_memory && capabilities.guest_memory)
             || (self.artifact_loading && capabilities.artifact_loading)
             || self.dmw.is_present_in(capabilities.dmw)
+            || (self.page_table && capabilities.page_table)
             || (self.mmio && capabilities.mmio)
             || (self.irq && capabilities.irq)
             || self.dma.is_present_in(capabilities.dma)
+            || (self.packet_device && capabilities.packet_device)
             || self.snapshot.is_present_in(capabilities.snapshot)
             || self.code_publish.is_present_in(capabilities.code_publish)
     }
@@ -460,9 +494,11 @@ impl AuthorityRequirementSet {
             guest_memory: self.guest_memory || other.guest_memory,
             artifact_loading: self.artifact_loading || other.artifact_loading,
             dmw: core::cmp::max(self.dmw, other.dmw),
+            page_table: self.page_table || other.page_table,
             mmio: self.mmio || other.mmio,
             irq: self.irq || other.irq,
             dma: core::cmp::max(self.dma, other.dma),
+            packet_device: self.packet_device || other.packet_device,
             snapshot: core::cmp::max(self.snapshot, other.snapshot),
             code_publish: core::cmp::max(self.code_publish, other.code_publish),
         }
@@ -483,11 +519,18 @@ impl AuthorityRequirementSet {
         if !self.dmw.is_satisfied_by(capabilities.dmw) {
             out.push(AuthorityMismatch::new("dmw", self.dmw.as_str(), capabilities.dmw.as_str()));
         }
+        push_bool_missing(&mut out, "page-table", self.page_table, capabilities.page_table);
         push_bool_missing(&mut out, "mmio", self.mmio, capabilities.mmio);
         push_bool_missing(&mut out, "irq", self.irq, capabilities.irq);
         if !self.dma.is_satisfied_by(capabilities.dma) {
             out.push(AuthorityMismatch::new("dma", self.dma.as_str(), capabilities.dma.as_str()));
         }
+        push_bool_missing(
+            &mut out,
+            "packet-device",
+            self.packet_device,
+            capabilities.packet_device,
+        );
         if !self.snapshot.is_satisfied_by(capabilities.snapshot) {
             out.push(AuthorityMismatch::new(
                 "snapshot",
@@ -520,11 +563,18 @@ impl AuthorityRequirementSet {
         if self.dmw.is_present_in(capabilities.dmw) {
             out.push(AuthorityPresent::new("dmw", capabilities.dmw.as_str()));
         }
+        push_bool_present(&mut out, "page-table", self.page_table, capabilities.page_table);
         push_bool_present(&mut out, "mmio", self.mmio, capabilities.mmio);
         push_bool_present(&mut out, "irq", self.irq, capabilities.irq);
         if self.dma.is_present_in(capabilities.dma) {
             out.push(AuthorityPresent::new("dma", capabilities.dma.as_str()));
         }
+        push_bool_present(
+            &mut out,
+            "packet-device",
+            self.packet_device,
+            capabilities.packet_device,
+        );
         if self.snapshot.is_present_in(capabilities.snapshot) {
             out.push(AuthorityPresent::new("snapshot", capabilities.snapshot.as_str()));
         }

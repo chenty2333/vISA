@@ -137,27 +137,32 @@ pub trait PageTableAuthority {
 
     fn map_page(
         &mut self,
-        va: u64,
-        phys: u64,
-        writable: bool,
-        executable: bool,
+        _va: u64,
+        _phys: u64,
+        _writable: bool,
+        _executable: bool,
     ) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "map_page"))
     }
 
-    fn unmap_page(&mut self, va: u64) -> SubstrateResult<()> {
+    fn unmap_page(&mut self, _va: u64) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "unmap_page"))
     }
 
-    fn protect_page(&mut self, va: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+    fn protect_page(
+        &mut self,
+        _va: u64,
+        _writable: bool,
+        _executable: bool,
+    ) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "protect_page"))
     }
 
-    fn copy_frame(&mut self, src_phys: u64, dst_phys: u64, len: usize) -> SubstrateResult<()> {
+    fn copy_frame(&mut self, _src_phys: u64, _dst_phys: u64, _len: usize) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "copy_frame"))
     }
 
-    fn flush_tlb(&mut self, va: u64) -> SubstrateResult<()> {
+    fn flush_tlb(&mut self, _va: u64) -> SubstrateResult<()> {
         Err(SubstrateError::unsupported("PageTableAuthority", "flush_tlb"))
     }
 }
@@ -192,5 +197,11 @@ pub struct PacketFrameSlot {
 impl PacketFrameSlot {
     pub const fn new() -> Self {
         Self { data: [0u8; 2048], len: 0 }
+    }
+}
+
+impl Default for PacketFrameSlot {
+    fn default() -> Self {
+        Self::new()
     }
 }

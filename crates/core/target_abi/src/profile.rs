@@ -103,6 +103,7 @@ impl TargetSubstrateProfileV1 {
                 DmwProfileV1::Logical => DmwSupport::Logical,
                 DmwProfileV1::RealMmuWindow { .. } => DmwSupport::RealMmuWindow,
             },
+            page_table: false,
             mmio: self.mmio_authority,
             irq: self.irq_authority,
             dma: match self.dma {
@@ -111,6 +112,7 @@ impl TargetSubstrateProfileV1 {
                 DmaProfileV1::Mediated => DmaSupport::Mediated,
                 DmaProfileV1::IommuStrict => DmaSupport::IommuStrict,
             },
+            packet_device: false,
             snapshot: SnapshotSupport::None,
             code_publish: if !self.code_publish.supported {
                 CodePublishSupport::None

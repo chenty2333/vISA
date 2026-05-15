@@ -517,9 +517,11 @@ fn substrate_capabilities_json(capabilities: SubstrateCapabilitySet) -> serde_js
         "guest_memory": capabilities.guest_memory,
         "artifact_loading": capabilities.artifact_loading,
         "dmw": capabilities.dmw.as_str(),
+        "page_table": capabilities.page_table,
         "mmio": capabilities.mmio,
         "irq": capabilities.irq,
         "dma": capabilities.dma.as_str(),
+        "packet_device": capabilities.packet_device,
         "snapshot": capabilities.snapshot.as_str(),
         "code_publish": capabilities.code_publish.as_str()
     })

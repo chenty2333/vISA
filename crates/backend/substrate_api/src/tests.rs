@@ -16,6 +16,20 @@ impl ConsoleAuthority for BufferConsole {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TestPageFrame {
+    phys: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TestPageMapping {
+    va: u64,
+    phys: u64,
+    writable: bool,
+    executable: bool,
+}
+
 #[derive(Default)]
 struct FullConformanceBackend {
     console: Vec<u8>,
@@ -23,8 +37,15 @@ struct FullConformanceBackend {
     memory: Vec<u8>,
     loaded: Vec<ArtifactImageRef>,
     published: Vec<(ArtifactImageRef, CodeObjectRef)>,
+    next_frame_phys: u64,
+    page_frames: Vec<TestPageFrame>,
+    page_mappings: Vec<TestPageMapping>,
+    tlb_flushes: Vec<u64>,
     mmio: u32,
     dma_live: bool,
+    packet_mac: Option<[u8; 6]>,
+    packet_tx: Vec<Vec<u8>>,
+    packet_rx: Vec<Vec<u8>>,
     snapshot_live: bool,
 }
 
@@ -85,6 +106,82 @@ impl DmwAuthority for FullConformanceBackend {
         } else {
             Err(SubstrateError::InvalidObject { object: "window-lease" })
         }
+    }
+}
+
+impl PageTableAuthority for FullConformanceBackend {
+    fn alloc_frame(&mut self) -> SubstrateResult<u64> {
+        if self.next_frame_phys == 0 {
+            self.next_frame_phys = 0x10_0000;
+        }
+        let phys = self.next_frame_phys;
+        self.next_frame_phys += 4096;
+        let seed = phys.to_le_bytes();
+        let mut bytes = vec![0u8; 4096];
+        bytes[..seed.len()].copy_from_slice(&seed);
+        self.page_frames.push(TestPageFrame { phys, bytes });
+        Ok(phys)
+    }
+
+    fn map_page(
+        &mut self,
+        va: u64,
+        phys: u64,
+        writable: bool,
+        executable: bool,
+    ) -> SubstrateResult<()> {
+        if va == 0 || va % 4096 != 0 || phys == 0 || phys % 4096 != 0 {
+            return Err(SubstrateError::InvalidObject { object: "page" });
+        }
+        if !self.page_frames.iter().any(|frame| frame.phys == phys) {
+            return Err(SubstrateError::InvalidObject { object: "page-frame" });
+        }
+        if self.page_mappings.iter().any(|mapping| mapping.va == va) {
+            return Err(SubstrateError::ContractViolation {
+                detail: "virtual page already mapped",
+            });
+        }
+        self.page_mappings.push(TestPageMapping { va, phys, writable, executable });
+        Ok(())
+    }
+
+    fn unmap_page(&mut self, va: u64) -> SubstrateResult<()> {
+        let Some(index) = self.page_mappings.iter().position(|mapping| mapping.va == va) else {
+            return Err(SubstrateError::InvalidObject { object: "page-mapping" });
+        };
+        self.page_mappings.remove(index);
+        Ok(())
+    }
+
+    fn protect_page(&mut self, va: u64, writable: bool, executable: bool) -> SubstrateResult<()> {
+        let Some(mapping) = self.page_mappings.iter_mut().find(|mapping| mapping.va == va) else {
+            return Err(SubstrateError::InvalidObject { object: "page-mapping" });
+        };
+        mapping.writable = writable;
+        mapping.executable = executable;
+        Ok(())
+    }
+
+    fn copy_frame(&mut self, src_phys: u64, dst_phys: u64, len: usize) -> SubstrateResult<()> {
+        if len > 4096 {
+            return Err(SubstrateError::InvalidObject { object: "page-copy-len" });
+        }
+        let Some(src_index) = self.page_frames.iter().position(|frame| frame.phys == src_phys)
+        else {
+            return Err(SubstrateError::InvalidObject { object: "source-page-frame" });
+        };
+        let Some(dst_index) = self.page_frames.iter().position(|frame| frame.phys == dst_phys)
+        else {
+            return Err(SubstrateError::InvalidObject { object: "destination-page-frame" });
+        };
+        let copied = self.page_frames[src_index].bytes[..len].to_vec();
+        self.page_frames[dst_index].bytes[..len].copy_from_slice(&copied);
+        Ok(())
+    }
+
+    fn flush_tlb(&mut self, va: u64) -> SubstrateResult<()> {
+        self.tlb_flushes.push(va);
+        Ok(())
     }
 }
 
@@ -152,6 +249,35 @@ impl IrqAuthority for FullConformanceBackend {
     }
 }
 
+impl PacketDeviceBackend for FullConformanceBackend {
+    fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
+        self.packet_mac = Some(mac);
+        Ok(())
+    }
+
+    fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
+        if self.packet_mac.is_none() {
+            return Err(SubstrateError::InvalidObject { object: "packet-device" });
+        }
+        if frame.len() < 14 || frame.len() > PacketFrameSlot::new().data.len() {
+            return Err(SubstrateError::InvalidObject { object: "packet-frame" });
+        }
+        self.packet_tx.push(frame.to_vec());
+        self.packet_rx.push(frame.to_vec());
+        Ok(())
+    }
+
+    fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+        let count = core::cmp::min(out.len(), self.packet_rx.len());
+        for (slot, frame) in out.iter_mut().zip(self.packet_rx.drain(..count)) {
+            slot.len = u16::try_from(frame.len())
+                .map_err(|_| SubstrateError::InvalidObject { object: "packet-frame" })?;
+            slot.data[..frame.len()].copy_from_slice(&frame);
+        }
+        Ok(count)
+    }
+}
+
 impl SnapshotAuthority for FullConformanceBackend {
     fn enter_snapshot_barrier(&mut self) -> SubstrateResult<SnapshotBarrierRef> {
         self.snapshot_live = true;
@@ -175,11 +301,13 @@ impl TimerAuthority for UnsupportedConformanceBackend {}
 impl EventQueueAuthority for UnsupportedConformanceBackend {}
 impl GuestMemoryAuthority for UnsupportedConformanceBackend {}
 impl DmwAuthority for UnsupportedConformanceBackend {}
+impl PageTableAuthority for UnsupportedConformanceBackend {}
 impl ArtifactAuthority for UnsupportedConformanceBackend {}
 impl CodePublisherAuthority for UnsupportedConformanceBackend {}
 impl MmioAuthority for UnsupportedConformanceBackend {}
 impl DmaAuthority for UnsupportedConformanceBackend {}
 impl IrqAuthority for UnsupportedConformanceBackend {}
+impl PacketDeviceBackend for UnsupportedConformanceBackend {}
 impl SnapshotAuthority for UnsupportedConformanceBackend {}
 
 #[test]
@@ -227,14 +355,18 @@ fn authority_requirements_parse_manifest_tokens() {
         "guest-memory",
         "artifact-loading",
         "dmw:logical-or-better",
+        "page-table",
         "mmio",
         "irq",
         "dma:mediated-or-better",
+        "packet-device",
         "snapshot:deterministic-replay",
         "code-publish:metadata-only",
     ])
     .unwrap();
 
+    assert!(requirements.page_table);
+    assert!(requirements.packet_device);
     assert!(requirements.is_satisfied_by(SubstrateCapabilitySet::host_validation()));
     assert_eq!(AuthorityRequirementSet::from_tokens(["raw-mmio"]).unwrap_err().token, "raw-mmio");
 }
@@ -274,9 +406,13 @@ fn missing_optional_and_forbidden_authorities_are_reported() {
 fn default_unsupported_errors_name_authority_and_operation() {
     let mut dma = NoDma;
     let mut dmw = NoDmw;
+    let mut page_table = NoPageTable;
+    let mut packet_device = NoPacketDevice;
 
     conformance::dma_unsupported_is_reported(&mut dma).unwrap();
     conformance::dmw_unsupported_is_reported(&mut dmw).unwrap();
+    conformance::page_table_unsupported_is_reported(&mut page_table).unwrap();
+    conformance::packet_device_unsupported_is_reported(&mut packet_device).unwrap();
 }
 
 #[test]
@@ -364,6 +500,44 @@ fn profile_conformance_suite_passes_snapshot_replay_backend() {
     assert_eq!(unsupported_arch.real_target_concrete_arch, Some("banana64"));
     assert!(unsupported_arch.real_target_extraction_events_observed);
     assert!(!unsupported_arch.can_claim_real_target_substrate);
+}
+
+#[test]
+fn policy_can_require_page_table_and_packet_device_authorities() {
+    let mut backend = FullConformanceBackend::default();
+    let fixtures = conformance::ConformanceFixtures::default();
+    let mut policy = ConformancePolicy::for_profile(SubstrateProfile::SemanticHarness);
+    policy.required.page_table = true;
+    policy.required.packet_device = true;
+
+    let report = conformance::check_substrate_profile_with_policy(
+        &mut backend,
+        SubstrateProfile::SemanticHarness,
+        SubstrateCapabilitySet::host_validation(),
+        &policy,
+        &fixtures,
+    );
+
+    assert!(report.ok);
+    assert!(report.checks.iter().any(|check| {
+        check.check == "page_table_map_protect_copy_unmap_smoke"
+            && check.required
+            && check.status == conformance::ConformanceStatus::Passed
+    }));
+    assert!(report.checks.iter().any(|check| {
+        check.check == "packet_device_tx_poll_smoke"
+            && check.required
+            && check.status == conformance::ConformanceStatus::Passed
+    }));
+    assert_eq!(backend.page_frames.len(), 2);
+    assert_eq!(
+        backend.page_frames[0].bytes[..fixtures.page_copy_len],
+        backend.page_frames[1].bytes[..fixtures.page_copy_len]
+    );
+    assert!(backend.page_mappings.is_empty());
+    assert_eq!(backend.tlb_flushes, vec![fixtures.page_va]);
+    assert_eq!(backend.packet_mac, Some(fixtures.packet_mac));
+    assert_eq!(backend.packet_tx, vec![fixtures.packet_frame.clone()]);
 }
 
 #[test]

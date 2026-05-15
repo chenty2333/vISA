@@ -14,6 +14,9 @@ impl GuestMemoryAuthority for NoGuestMemory {}
 pub struct NoDmw;
 impl DmwAuthority for NoDmw {}
 
+pub struct NoPageTable;
+impl PageTableAuthority for NoPageTable {}
+
 pub struct NoArtifactAuthority;
 impl ArtifactAuthority for NoArtifactAuthority {}
 
@@ -28,6 +31,9 @@ impl DmaAuthority for NoDma {}
 
 pub struct NoIrq;
 impl IrqAuthority for NoIrq {}
+
+pub struct NoPacketDevice;
+impl PacketDeviceBackend for NoPacketDevice {}
 
 pub struct NoSnapshot;
 impl SnapshotAuthority for NoSnapshot {}

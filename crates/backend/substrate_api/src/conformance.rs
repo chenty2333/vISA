@@ -22,11 +22,13 @@ pub trait SubstrateConformanceBackend:
     + EventQueueAuthority
     + GuestMemoryAuthority
     + DmwAuthority
+    + PageTableAuthority
     + ArtifactAuthority
     + CodePublisherAuthority
     + MmioAuthority
     + DmaAuthority
     + IrqAuthority
+    + PacketDeviceBackend
     + SnapshotAuthority
 {
 }
@@ -37,11 +39,13 @@ impl<T> SubstrateConformanceBackend for T where
         + EventQueueAuthority
         + GuestMemoryAuthority
         + DmwAuthority
+        + PageTableAuthority
         + ArtifactAuthority
         + CodePublisherAuthority
         + MmioAuthority
         + DmaAuthority
         + IrqAuthority
+        + PacketDeviceBackend
         + SnapshotAuthority
 {
 }
@@ -54,9 +58,13 @@ pub struct ConformanceFixtures {
     pub user_ptr: u64,
     pub user_bytes: GuestBytes,
     pub wait_token: WaitTokenRef,
+    pub page_va: u64,
+    pub page_copy_len: usize,
     pub mmio_region: MmioRegionRef,
     pub irq: IrqLine,
     pub dma_request: DmaAllocRequest,
+    pub packet_mac: [u8; 6],
+    pub packet_frame: GuestBytes,
 }
 
 impl Default for ConformanceFixtures {
@@ -68,9 +76,20 @@ impl Default for ConformanceFixtures {
             user_ptr: 0x1000,
             user_bytes: alloc::vec![0x76, 0x49, 0x53, 0x41],
             wait_token: WaitTokenRef::new(1, 1),
+            page_va: 0x4000,
+            page_copy_len: 64,
             mmio_region: MmioRegionRef::new(1, 1),
             irq: IrqLine::new(1, 1),
             dma_request: DmaAllocRequest::new(1, 4096, 4096),
+            packet_mac: [0x02, 0x56, 0x4d, 0x4f, 0x53, 0x01],
+            packet_frame: alloc::vec![
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst
+                0x02, 0x56, 0x4d, 0x4f, 0x53, 0x01, // src
+                0x08, 0x00, // ethertype IPv4
+                0x45, 0x00, 0x00, 0x2e, 0x00, 0x01, 0x00, 0x00, 0x40, 0x11, 0, 0, 192, 0, 2, 1,
+                192, 0, 2, 2, // compact IPv4/UDP fixture payload
+                0, 7, 0, 7, 0, 10, 0, 0, b'v', b'm',
+            ],
         }
     }
 }
@@ -402,6 +421,15 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
     );
     push_policy_check(
         &mut checks,
+        "page_table_map_protect_copy_unmap_smoke",
+        policy,
+        req.page_table,
+        policy.required.page_table,
+        policy.optional.page_table,
+        || page_table_map_protect_copy_unmap_smoke(backend, fixtures),
+    );
+    push_policy_check(
+        &mut checks,
         "mmio_read_write_smoke",
         policy,
         req.mmio,
@@ -426,6 +454,15 @@ pub fn check_substrate_profile_with_policy<B: SubstrateConformanceBackend>(
         !matches!(policy.required.dma, DmaRequirement::None),
         !matches!(policy.optional.dma, DmaRequirement::None),
         || dma_alloc_free_smoke(backend, fixtures),
+    );
+    push_policy_check(
+        &mut checks,
+        "packet_device_tx_poll_smoke",
+        policy,
+        req.packet_device,
+        policy.required.packet_device,
+        policy.optional.packet_device,
+        || packet_device_tx_poll_smoke(backend, fixtures),
     );
     push_policy_check(
         &mut checks,
@@ -471,11 +508,17 @@ fn forbidden_policy_checks<B: SubstrateConformanceBackend>(
         !matches!(f.dmw, DmwRequirement::None),
         dmw_unsupported_is_reported,
     );
+    try_forbidden("page_table_unsupported_is_reported", f.page_table, |b| {
+        page_table_unsupported_is_reported(b)
+    });
     try_forbidden(
         "dma_unsupported_is_reported",
         !matches!(f.dma, DmaRequirement::None),
         dma_unsupported_is_reported,
     );
+    try_forbidden("packet_device_unsupported_is_reported", f.packet_device, |b| {
+        packet_device_unsupported_is_reported(b)
+    });
     try_forbidden("console_unsupported_is_reported", f.console, |b| {
         unsupported_is_reported(
             "console_unsupported",
@@ -732,6 +775,42 @@ pub fn dmw_window_smoke<A: DmwAuthority>(
         .map_err(|_| ConformanceError::new("dmw_window_smoke", "unmap_user_window failed"))
 }
 
+pub fn page_table_map_protect_copy_unmap_smoke<A: PageTableAuthority>(
+    authority: &mut A,
+    fixtures: &ConformanceFixtures,
+) -> ConformanceResult {
+    let src = authority
+        .alloc_frame()
+        .map_err(|_| ConformanceError::new("page_table_smoke", "source frame allocation failed"))?;
+    if src == 0 {
+        return Err(ConformanceError::new("page_table_smoke", "source frame is zero"));
+    }
+    let dst = authority.alloc_frame().map_err(|_| {
+        ConformanceError::new("page_table_smoke", "destination frame allocation failed")
+    })?;
+    if dst == 0 || dst == src {
+        return Err(ConformanceError::new(
+            "page_table_smoke",
+            "destination frame identity is invalid",
+        ));
+    }
+    authority
+        .map_page(fixtures.page_va, src, true, false)
+        .map_err(|_| ConformanceError::new("page_table_smoke", "map_page failed"))?;
+    authority
+        .protect_page(fixtures.page_va, false, false)
+        .map_err(|_| ConformanceError::new("page_table_smoke", "protect_page failed"))?;
+    authority
+        .copy_frame(src, dst, fixtures.page_copy_len)
+        .map_err(|_| ConformanceError::new("page_table_smoke", "copy_frame failed"))?;
+    authority
+        .flush_tlb(fixtures.page_va)
+        .map_err(|_| ConformanceError::new("page_table_smoke", "flush_tlb failed"))?;
+    authority
+        .unmap_page(fixtures.page_va)
+        .map_err(|_| ConformanceError::new("page_table_smoke", "unmap_page failed"))
+}
+
 pub fn mmio_read_write_smoke<A: MmioAuthority>(
     authority: &mut A,
     fixtures: &ConformanceFixtures,
@@ -789,6 +868,38 @@ pub fn dma_alloc_free_smoke<A: DmaAuthority>(
         .map_err(|_| ConformanceError::new("dma_alloc_free_smoke", "dma_free failed"))
 }
 
+pub fn packet_device_tx_poll_smoke<A: PacketDeviceBackend>(
+    authority: &mut A,
+    fixtures: &ConformanceFixtures,
+) -> ConformanceResult {
+    authority
+        .init(fixtures.packet_mac)
+        .map_err(|_| ConformanceError::new("packet_device_smoke", "packet device init failed"))?;
+    if authority.mtu() == 0 || authority.mtu() > PacketFrameSlot::new().data.len() {
+        return Err(ConformanceError::new("packet_device_smoke", "packet device MTU is invalid"));
+    }
+    authority
+        .submit_tx(&fixtures.packet_frame)
+        .map_err(|_| ConformanceError::new("packet_device_smoke", "packet TX failed"))?;
+    let mut slots = [PacketFrameSlot::new(), PacketFrameSlot::new()];
+    let count = authority
+        .poll_rx(&mut slots)
+        .map_err(|_| ConformanceError::new("packet_device_smoke", "packet RX poll failed"))?;
+    if count > slots.len() {
+        return Err(ConformanceError::new(
+            "packet_device_smoke",
+            "packet RX poll over-reported filled slots",
+        ));
+    }
+    if slots.iter().take(count).any(|slot| usize::from(slot.len) > slot.data.len()) {
+        return Err(ConformanceError::new(
+            "packet_device_smoke",
+            "packet RX slot length overflowed",
+        ));
+    }
+    Ok(())
+}
+
 pub fn snapshot_barrier_smoke<A: SnapshotAuthority>(authority: &mut A) -> ConformanceResult {
     let barrier = authority
         .enter_snapshot_barrier()
@@ -813,12 +924,34 @@ pub fn dmw_unsupported_is_reported<A: DmwAuthority>(authority: &mut A) -> Confor
     )
 }
 
+pub fn page_table_unsupported_is_reported<A: PageTableAuthority>(
+    authority: &mut A,
+) -> ConformanceResult {
+    unsupported_is_reported(
+        "page_table_unsupported",
+        authority.alloc_frame(),
+        "PageTableAuthority",
+        "alloc_frame",
+    )
+}
+
 pub fn dma_unsupported_is_reported<A: DmaAuthority>(authority: &mut A) -> ConformanceResult {
     unsupported_is_reported(
         "dma_unsupported",
         authority.dma_alloc(DmaAllocRequest::new(1, 4096, 4096)),
         "DmaAuthority",
         "dma_alloc",
+    )
+}
+
+pub fn packet_device_unsupported_is_reported<A: PacketDeviceBackend>(
+    authority: &mut A,
+) -> ConformanceResult {
+    unsupported_is_reported(
+        "packet_device_unsupported",
+        authority.init([0x02, 0x56, 0x4d, 0x4f, 0x53, 0x01]),
+        "PacketDeviceBackend",
+        "init",
     )
 }
 
