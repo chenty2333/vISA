@@ -13,6 +13,7 @@ use crate::{
 pub(crate) struct UserRegion {
     pub(crate) start: u64,
     pub(crate) end: u64,
+    pub(crate) readable: bool,
     pub(crate) writable: bool,
 }
 
@@ -221,9 +222,15 @@ impl ActiveUserContext {
         Some(start)
     }
 
-    pub(crate) fn record_user_region(&mut self, start: u64, len: u64, writable: bool) {
+    pub(crate) fn record_user_region(
+        &mut self,
+        start: u64,
+        len: u64,
+        readable: bool,
+        writable: bool,
+    ) {
         if let Some(end) = start.checked_add(len) {
-            replace_user_region_range(&mut self.regions, start, end, Some(writable));
+            replace_user_region_range(&mut self.regions, start, end, Some((readable, writable)));
         }
     }
 
@@ -836,7 +843,7 @@ fn replace_user_region_range(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement_writable: Option<bool>,
+    replacement: Option<(bool, bool)>,
 ) {
     if start >= end {
         return;
@@ -849,15 +856,25 @@ fn replace_user_region_range(
             continue;
         }
         if region.start < start {
-            updated.push(UserRegion { start: region.start, end: start, writable: region.writable });
+            updated.push(UserRegion {
+                start: region.start,
+                end: start,
+                readable: region.readable,
+                writable: region.writable,
+            });
         }
         if region.end > end {
-            updated.push(UserRegion { start: end, end: region.end, writable: region.writable });
+            updated.push(UserRegion {
+                start: end,
+                end: region.end,
+                readable: region.readable,
+                writable: region.writable,
+            });
         }
     }
 
-    if let Some(writable) = replacement_writable {
-        updated.push(UserRegion { start, end, writable });
+    if let Some((readable, writable)) = replacement {
+        updated.push(UserRegion { start, end, readable, writable });
     }
 
     updated.sort_by_key(|region| (region.start, region.end));
@@ -866,6 +883,7 @@ fn replace_user_region_range(
             continue;
         }
         if let Some(last) = regions.last_mut()
+            && last.readable == region.readable
             && last.writable == region.writable
             && last.end >= region.start
         {

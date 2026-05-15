@@ -168,6 +168,7 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         regions.push(UserRegion {
             start: virt_start & !(PAGE_SIZE as u64 - 1),
             end: align_up(virt_end as usize, PAGE_SIZE) as u64,
+            readable: ph.flags().is_read(),
             writable: ph.flags().is_write(),
         });
     }
@@ -185,11 +186,21 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         &[],
         anon_flags,
     )?;
-    regions.push(UserRegion { start: USER_MMAP_BASE, end: USER_MMAP_END, writable: true });
+    regions.push(UserRegion {
+        start: USER_MMAP_BASE,
+        end: USER_MMAP_END,
+        readable: true,
+        writable: true,
+    });
 
     let initial_stack = build_initial_stack(&elf)?;
     map_user_stack(&mut mapper, &mut frame_allocator, phys_offset, &initial_stack)?;
-    regions.push(UserRegion { start: USER_STACK_BASE, end: USER_STACK_TOP, writable: true });
+    regions.push(UserRegion {
+        start: USER_STACK_BASE,
+        end: USER_STACK_TOP,
+        readable: true,
+        writable: true,
+    });
 
     Ok(LoadedUserImage {
         entry: elf.header.pt2.entry_point(),

@@ -96,6 +96,8 @@ const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
 const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
 const LINUX_SIGINFO_SIZE: usize = 128;
 const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
+const PROT_READ: u64 = 0x1;
+const PROT_WRITE: u64 = 0x2;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -2634,8 +2636,6 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
-    const PROT_WRITE: u64 = 0x2;
-
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
         return Err(ERR_EINVAL);
@@ -2646,31 +2646,33 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 
     let addr = if frame.rdi != 0 {
-        validate_user_range(frame.rdi, len, true)?;
+        validate_mapped_user_range(frame.rdi, len)?;
         frame.rdi
     } else {
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
     };
 
+    protect_user_page_range(active_context().physical_memory_offset(), addr, len, frame.rdx)
+        .map_err(|_| ERR_EFAULT)?;
     let _ = dispatch_ret(
         "ring3_mmap",
         SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
     );
-    active_context().record_user_region(addr, len, frame.rdx & PROT_WRITE != 0);
+    let (readable, writable) = prot_user_region_permissions(frame.rdx);
+    active_context().record_user_region(addr, len, readable, writable);
     Ok(addr as i64)
 }
 
 fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
-    const PROT_WRITE: u64 = 0x2;
-
     if frame.rdi & 4095 != 0 {
         return Err(ERR_EINVAL);
     }
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
-    validate_user_range(frame.rdi, len, false)?;
+    validate_mapped_user_range(frame.rdi, len)?;
     protect_user_page_range(active_context().physical_memory_offset(), frame.rdi, len, frame.rdx)
         .map_err(|_| ERR_EFAULT)?;
-    active_context().record_user_region(frame.rdi, len, frame.rdx & PROT_WRITE != 0);
+    let (readable, writable) = prot_user_region_permissions(frame.rdx);
+    active_context().record_user_region(frame.rdi, len, readable, writable);
     Ok(0)
 }
 
@@ -3457,6 +3459,9 @@ fn readable_user_chunk_len(ptr: u64, max_len: usize) -> Result<u64, i32> {
         .rev()
         .find(|region| ptr >= region.start && ptr < region.end)
         .ok_or(ERR_EFAULT)?;
+    if !region.readable {
+        return Err(ERR_EFAULT);
+    }
     let region_remaining = region.end.saturating_sub(ptr);
     let max_len = u64::try_from(max_len).map_err(|_| ERR_EINVAL)?;
     Ok(region_remaining.min(max_len))
@@ -3546,7 +3551,23 @@ fn write_u64(out: &mut [u8], offset: usize, value: u64) {
     out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+#[derive(Clone, Copy)]
+enum UserRangeAccess {
+    Mapped,
+    Read,
+    Write,
+}
+
 fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
+    let access = if write { UserRangeAccess::Write } else { UserRangeAccess::Read };
+    validate_user_range_access(ptr, len, access)
+}
+
+fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
+    validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
+}
+
+fn validate_user_range_access(ptr: u64, len: u64, access: UserRangeAccess) -> Result<(), i32> {
     if len == 0 {
         return Ok(());
     }
@@ -3562,8 +3583,11 @@ fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
         else {
             return Err(ERR_EFAULT);
         };
-        if write && !region.writable {
-            return Err(ERR_EFAULT);
+        match access {
+            UserRangeAccess::Mapped => {}
+            UserRangeAccess::Read if !region.readable => return Err(ERR_EFAULT),
+            UserRangeAccess::Write if !region.writable => return Err(ERR_EFAULT),
+            UserRangeAccess::Read | UserRangeAccess::Write => {}
         }
 
         let mut covered_end = core::cmp::min(region.end, end);
@@ -3589,6 +3613,12 @@ fn validate_lower_user_address_range(ptr: u64, len: u64) -> Result<(), i32> {
         return Err(ERR_EINVAL);
     }
     Ok(())
+}
+
+fn prot_user_region_permissions(prot: u64) -> (bool, bool) {
+    let writable = prot & PROT_WRITE != 0;
+    let readable = writable || prot & PROT_READ != 0;
+    (readable, writable)
 }
 
 fn align_page(value: u64) -> Option<u64> {
