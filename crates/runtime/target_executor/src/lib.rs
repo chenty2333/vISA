@@ -242,6 +242,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n14_evidence(&mut semantic)?;
     record_linux_wait_service_d1_evidence(&mut semantic)?;
     record_network_runtime_n15_evidence(&mut semantic)?;
+    record_network_runtime_n22_evidence(&mut semantic)?;
     record_network_runtime_n17_evidence(&mut semantic)?;
     record_network_runtime_n18_evidence(&mut semantic)?;
     record_network_runtime_n16_evidence(&mut semantic)?;

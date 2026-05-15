@@ -8,7 +8,7 @@ extern crate std;
 use alloc::{vec, vec::Vec};
 
 use service_core::{
-    driver::{DriverVirtioNetState, RESPONSE_CAPACITY},
+    driver::{DriverNetEventKind, DriverVirtioNetState, RAW_RX_QUEUE_DEPTH, RESPONSE_CAPACITY},
     net_contract::{PacketDeviceContract, VIRTIO_NET0_CONTRACT, validate_packet_device_contract},
 };
 use smoltcp::{
@@ -31,7 +31,9 @@ pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const DEFAULT_TCP_BUFFER_LEN: usize = 4096;
 pub const DEFAULT_EPHEMERAL_PORT_BASE: u16 = 49152;
 pub const BACKEND_RX_BATCH: usize = 8;
-pub const DRIVER_BACKEND_RX_BATCH: usize = 8;
+pub const DRIVER_BACKEND_RX_BATCH: usize = RAW_RX_QUEUE_DEPTH;
+pub const DRIVER_RX_EVENT_SEQUENCE_LEN: usize = 5;
+pub const STACK_DRIVER_EVENT_LIMIT: usize = DRIVER_BACKEND_RX_BATCH * DRIVER_RX_EVENT_SEQUENCE_LEN;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmoltcpAdapterConfig {
@@ -91,6 +93,15 @@ pub struct BackendPumpEvidence {
 pub struct DriverBackendPumpEvidence {
     pub rx_frames_delivered: usize,
     pub tx_frames_submitted: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StackDriverBackendPumpEvidence {
+    pub backend_rx_frames_delivered_to_driver: usize,
+    pub driver_rx_frames_delivered_to_stack: usize,
+    pub stack_poll: SmoltcpPollEvidence,
+    pub stack_tx_frames_submitted_to_driver: usize,
+    pub driver_tx_frames_submitted_to_backend: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +206,11 @@ impl SmoltcpPacketStack {
         let mut rx_slots: [PacketFrameSlot; BACKEND_RX_BATCH] =
             core::array::from_fn(|_| PacketFrameSlot::new());
         let rx_frames = backend.poll_rx(&mut rx_slots)?;
+        if rx_frames > rx_slots.len() {
+            return Err(SubstrateError::ContractViolation {
+                detail: "packet backend returned more rx frames than provided slots",
+            });
+        }
         for slot in rx_slots.iter().take(rx_frames) {
             let len = slot.len as usize;
             if len > slot.data.len() {
@@ -370,6 +386,11 @@ pub fn pump_driver_backend<B: PacketDeviceBackend>(
     let mut rx_slots: [PacketFrameSlot; DRIVER_BACKEND_RX_BATCH] =
         core::array::from_fn(|_| PacketFrameSlot::new());
     let rx_frames = backend.poll_rx(&mut rx_slots)?;
+    if rx_frames > rx_slots.len() {
+        return Err(SubstrateError::ContractViolation {
+            detail: "packet backend returned more rx frames than provided slots",
+        });
+    }
     let mut rx_frames_delivered = 0usize;
     for slot in rx_slots.iter().take(rx_frames) {
         let len = slot.len as usize;
@@ -394,6 +415,68 @@ pub fn pump_driver_backend<B: PacketDeviceBackend>(
     }
 
     Ok(DriverBackendPumpEvidence { rx_frames_delivered, tx_frames_submitted })
+}
+
+pub fn pump_stack_driver_backend<B: PacketDeviceBackend>(
+    stack: &mut SmoltcpPacketStack,
+    driver: &mut DriverVirtioNetState,
+    backend: &mut B,
+    now_ms: i64,
+    now_ticks: u64,
+) -> SubstrateResult<StackDriverBackendPumpEvidence> {
+    let inbound_driver_pump = pump_driver_backend(driver, backend, now_ticks)?;
+    let driver_rx_frames_delivered_to_stack = pump_driver_rx_to_stack(stack, driver, now_ticks)?;
+    let stack_poll = stack.poll(now_ms);
+
+    let mut stack_tx_frames_submitted_to_driver = 0usize;
+    while let Some(frame) = stack.take_tx_frame() {
+        driver.submit_tx_frame(now_ticks, &frame).map_err(driver_errno_to_substrate)?;
+        stack_tx_frames_submitted_to_driver += 1;
+    }
+
+    let outbound_driver_pump = pump_driver_backend(driver, backend, now_ticks)?;
+    Ok(StackDriverBackendPumpEvidence {
+        backend_rx_frames_delivered_to_driver: inbound_driver_pump.rx_frames_delivered,
+        driver_rx_frames_delivered_to_stack,
+        stack_poll,
+        stack_tx_frames_submitted_to_driver,
+        driver_tx_frames_submitted_to_backend: inbound_driver_pump
+            .tx_frames_submitted
+            .saturating_add(outbound_driver_pump.tx_frames_submitted),
+    })
+}
+
+fn pump_driver_rx_to_stack(
+    stack: &mut SmoltcpPacketStack,
+    driver: &mut DriverVirtioNetState,
+    now_ticks: u64,
+) -> SubstrateResult<usize> {
+    let mut delivered = 0usize;
+    for _ in 0..STACK_DRIVER_EVENT_LIMIT {
+        let event = driver.poll_device(now_ticks);
+        match event.kind {
+            DriverNetEventKind::None => break,
+            DriverNetEventKind::PacketRx => {
+                let mut frame = [0u8; RESPONSE_CAPACITY];
+                let len = driver.dequeue_rx_frame(&mut frame).map_err(driver_errno_to_substrate)?;
+                if len == 0 {
+                    continue;
+                }
+                let len = len as usize;
+                stack.enqueue_rx_frame(&frame[..len]).map_err(|_| {
+                    SubstrateError::ContractViolation {
+                        detail: "driver delivered frame rejected by smoltcp queue",
+                    }
+                })?;
+                delivered += 1;
+            }
+            DriverNetEventKind::Irq
+            | DriverNetEventKind::DmaSubmitted
+            | DriverNetEventKind::DmaCompleted
+            | DriverNetEventKind::DriverCompletion => {}
+        }
+    }
+    Ok(delivered)
 }
 
 fn driver_errno_to_substrate(errno: i32) -> SubstrateError {
@@ -707,6 +790,89 @@ mod tests {
     }
 
     #[test]
+    fn driver_backend_pump_rejects_overreported_rx_count() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut backend = OverreportingPacketBackend;
+
+        assert_eq!(
+            pump_driver_backend(&mut driver, &mut backend, 1),
+            Err(SubstrateError::ContractViolation {
+                detail: "packet backend returned more rx frames than provided slots",
+            })
+        );
+
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        assert_eq!(
+            stack.pump_backend(&mut backend, 1),
+            Err(SubstrateError::ContractViolation {
+                detail: "packet backend returned more rx frames than provided slots",
+            })
+        );
+    }
+
+    #[test]
+    fn stack_driver_backend_pump_moves_frames_across_full_runtime_boundary() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let mut driver = DriverVirtioNetState::new();
+        let remote_mac = [0x02, 0, 0, 0, 0, 2];
+        let request =
+            arp_request(remote_mac, [10, 0, 2, 2], VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
+        let mut backend = InMemoryPacketBackend::new();
+        backend.rx.push(request.to_vec());
+
+        stack.init_backend(&mut backend).expect("init backend");
+        let evidence = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 1, 1)
+            .expect("pump full stack/driver/backend loop");
+
+        assert_eq!(evidence.backend_rx_frames_delivered_to_driver, 1);
+        assert_eq!(evidence.driver_rx_frames_delivered_to_stack, 1);
+        assert_eq!(evidence.stack_poll.rx_frames_before, 1);
+        assert_eq!(evidence.stack_poll.rx_frames_after, 0);
+        assert_eq!(evidence.stack_tx_frames_submitted_to_driver, 1);
+        assert_eq!(evidence.driver_tx_frames_submitted_to_backend, 1);
+        assert_eq!(backend.tx.len(), 1);
+        let reply = &backend.tx[0];
+        assert_eq!(&reply[0..6], &remote_mac);
+        assert_eq!(&reply[6..12], &VIRTIO_NET0_CONTRACT.mac);
+        assert_eq!(&reply[12..14], &[0x08, 0x06]);
+        assert_eq!(&reply[20..22], &[0x00, 0x02]);
+        assert_eq!(driver.pending_rx_frames(), 0);
+        assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
+    fn stack_driver_backend_pump_preserves_backpressured_driver_rx_queue() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let mut driver = DriverVirtioNetState::new();
+        let mut backend = InMemoryPacketBackend::new();
+        for index in 0..RAW_RX_QUEUE_DEPTH {
+            let remote_mac = [0x02, 0, 0, 0, 0, index as u8 + 2];
+            let remote_ip = [10, 0, 2, index as u8 + 2];
+            backend.rx.push(
+                arp_request(remote_mac, remote_ip, VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR)
+                    .to_vec(),
+            );
+        }
+
+        stack.init_backend(&mut backend).expect("init backend");
+        let evidence = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 1, 1)
+            .expect("pump full rx queue");
+
+        assert_eq!(evidence.backend_rx_frames_delivered_to_driver, RAW_RX_QUEUE_DEPTH);
+        assert_eq!(evidence.driver_rx_frames_delivered_to_stack, 1);
+        assert_eq!(evidence.stack_poll.rx_frames_before, 1);
+        assert_eq!(evidence.stack_poll.rx_frames_after, 0);
+        assert_eq!(evidence.stack_tx_frames_submitted_to_driver, 1);
+        assert_eq!(evidence.driver_tx_frames_submitted_to_backend, 1);
+        assert_eq!(backend.tx.len(), 1);
+        assert_eq!(driver.pending_rx_frames(), (RAW_RX_QUEUE_DEPTH - 1) as u32);
+        assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
     fn tcp_connect_resolves_arp_and_emits_syn_frame() {
         let mut stack =
             SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
@@ -829,6 +995,14 @@ mod tests {
 
         fn mtu(&self) -> usize {
             self.mtu
+        }
+    }
+
+    struct OverreportingPacketBackend;
+
+    impl PacketDeviceBackend for OverreportingPacketBackend {
+        fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+            Ok(out.len() + 1)
         }
     }
 
