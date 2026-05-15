@@ -1,3 +1,5 @@
+use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
+
 use crate::packet::{
     PACKET_FRAME_CAPACITY, PROTO_DEMO_TCP, PacketDeviceState, PacketFrameMeta, decode_frame,
 };
@@ -7,6 +9,7 @@ pub const RESPONSE_CAPACITY: usize = PACKET_FRAME_CAPACITY;
 pub const FIRST_RX_DELAY_TICKS: u64 = 7;
 pub const NEXT_RX_DELAY_TICKS: u64 = 20;
 pub const ETHERNET_HEADER_LEN: usize = 14;
+pub const RAW_RX_QUEUE_DEPTH: usize = 4;
 pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +49,21 @@ pub struct DriverVirtioNetState {
     ready: bool,
     last_len: u32,
     device: PacketDeviceState,
+    raw_rx: [RawRxSlot; RAW_RX_QUEUE_DEPTH],
+    raw_rx_head: usize,
+    raw_rx_len: usize,
     tx_pending: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RawRxSlot {
+    data: [u8; REQUEST_CAPACITY],
+    len: usize,
+    active: bool,
+}
+
+impl RawRxSlot {
+    const EMPTY: Self = Self { data: [0; REQUEST_CAPACITY], len: 0, active: false };
 }
 
 impl DriverVirtioNetState {
@@ -57,6 +74,9 @@ impl DriverVirtioNetState {
             ready: false,
             last_len: 0,
             device: PacketDeviceState::new(),
+            raw_rx: [RawRxSlot::EMPTY; RAW_RX_QUEUE_DEPTH],
+            raw_rx_head: 0,
+            raw_rx_len: 0,
             tx_pending: false,
         }
     }
@@ -67,6 +87,9 @@ impl DriverVirtioNetState {
         self.ready = false;
         self.last_len = 0;
         self.device.reset();
+        self.raw_rx = [RawRxSlot::EMPTY; RAW_RX_QUEUE_DEPTH];
+        self.raw_rx_head = 0;
+        self.raw_rx_len = 0;
         self.tx_pending = false;
     }
 
@@ -85,8 +108,30 @@ impl DriverVirtioNetState {
         }
     }
 
+    pub fn deliver_rx_frame(&mut self, now_ticks: u64, frame: &[u8]) -> Result<u32, i32> {
+        if frame.len() < ETHERNET_HEADER_LEN {
+            return Err(ERR_EINVAL);
+        }
+        if frame.len() > REQUEST_CAPACITY {
+            return Err(ERR_EIO);
+        }
+        if self.raw_rx_len == RAW_RX_QUEUE_DEPTH {
+            return Err(ERR_EAGAIN);
+        }
+
+        let tail = (self.raw_rx_head + self.raw_rx_len) % RAW_RX_QUEUE_DEPTH;
+        self.raw_rx[tail].data[..frame.len()].copy_from_slice(frame);
+        self.raw_rx[tail].len = frame.len();
+        self.raw_rx[tail].active = true;
+        self.raw_rx_len += 1;
+        self.ready = false;
+        self.phase = DriverNetEventKind::None;
+        self.next_tick = now_ticks;
+        Ok(frame.len() as u32)
+    }
+
     pub fn poll_device(&mut self, now_ticks: u64) -> DriverNetEvent {
-        if !self.tx_pending && self.device.pending_rx_frames() == 0 {
+        if !self.tx_pending && self.pending_rx_frames() == 0 {
             self.last_len = 0;
             return DriverNetEvent { kind: DriverNetEventKind::None, len: 0 };
         }
@@ -106,14 +151,17 @@ impl DriverVirtioNetState {
         };
 
         if self.phase == DriverNetEventKind::PacketRx {
-            if self.device.pending_rx_frames() == 0 {
+            if self.raw_rx_len != 0 {
+                self.last_len = self.peek_raw_rx_frame_len();
+            } else if self.device.pending_rx_frames() == 0 {
                 let sequence = self.device.next_sequence();
                 let meta = PacketFrameMeta::demo_http_response(sequence, DEMO_HTTP_RESPONSE.len());
                 self.last_len = self.device.enqueue_rx(meta, DEMO_HTTP_RESPONSE).unwrap_or(0);
+                self.tx_pending = false;
             } else {
                 self.last_len = self.device.peek_rx_frame_len();
+                self.tx_pending = false;
             }
-            self.tx_pending = false;
             self.ready = true;
             self.next_tick = now_ticks.saturating_add(NEXT_RX_DELAY_TICKS);
         } else {
@@ -128,7 +176,11 @@ impl DriverVirtioNetState {
     }
 
     pub fn dequeue_rx_frame(&mut self, out: &mut [u8]) -> Result<u32, i32> {
-        let len = self.device.dequeue_rx_frame(out)?;
+        let len = if self.raw_rx_len != 0 {
+            self.dequeue_raw_rx_frame(out)?
+        } else {
+            self.device.dequeue_rx_frame(out)?
+        };
         if len != 0 {
             self.ready = false;
             self.phase = DriverNetEventKind::None;
@@ -137,7 +189,33 @@ impl DriverVirtioNetState {
     }
 
     pub fn pending_rx_frames(&self) -> u32 {
-        self.device.pending_rx_frames()
+        self.device.pending_rx_frames().saturating_add(self.raw_rx_len as u32)
+    }
+
+    fn peek_raw_rx_frame_len(&self) -> u32 {
+        if self.raw_rx_len == 0 {
+            return 0;
+        }
+        let slot = self.raw_rx[self.raw_rx_head];
+        if slot.active { slot.len as u32 } else { 0 }
+    }
+
+    fn dequeue_raw_rx_frame(&mut self, out: &mut [u8]) -> Result<u32, i32> {
+        if self.raw_rx_len == 0 {
+            return Ok(0);
+        }
+        let slot = self.raw_rx[self.raw_rx_head];
+        if !slot.active {
+            return Err(ERR_EIO);
+        }
+        if out.len() < slot.len {
+            return Err(ERR_EIO);
+        }
+        out[..slot.len].copy_from_slice(&slot.data[..slot.len]);
+        self.raw_rx[self.raw_rx_head] = RawRxSlot::EMPTY;
+        self.raw_rx_head = (self.raw_rx_head + 1) % RAW_RX_QUEUE_DEPTH;
+        self.raw_rx_len -= 1;
+        Ok(slot.len as u32)
     }
 }
 
@@ -199,6 +277,46 @@ mod tests {
         assert_eq!(driver.submit_tx_frame(5, &frame).unwrap(), frame.len() as u32);
         assert_eq!(driver.poll_device(5 + FIRST_RX_DELAY_TICKS).kind, DriverNetEventKind::None);
         assert_eq!(driver.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn delivered_raw_ethernet_rx_drives_rx_event_sequence() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut frame = [0u8; 42];
+        frame[..6].copy_from_slice(&[0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01]);
+        frame[6..12].copy_from_slice(&[0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+
+        assert_eq!(driver.deliver_rx_frame(12, &frame).unwrap(), frame.len() as u32);
+        assert_eq!(driver.pending_rx_frames(), 1);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::Irq);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DmaSubmitted);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DmaCompleted);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DriverCompletion);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::PacketRx);
+        assert_eq!(driver.event_len(), frame.len() as u32);
+
+        let mut out = [0u8; PACKET_FRAME_CAPACITY];
+        let len = driver.dequeue_rx_frame(&mut out).unwrap();
+        assert_eq!(len, frame.len() as u32);
+        assert_eq!(&out[..frame.len()], &frame);
+        assert_eq!(driver.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn delivered_raw_ethernet_rx_rejects_short_or_full_queue() {
+        let mut driver = DriverVirtioNetState::new();
+        let frame = [0xff; 42];
+
+        assert_eq!(driver.deliver_rx_frame(0, &[0u8; 4]), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(
+            driver.deliver_rx_frame(0, &[0u8; REQUEST_CAPACITY + 1]),
+            Err(vmos_abi::ERR_EIO)
+        );
+        for _ in 0..RAW_RX_QUEUE_DEPTH {
+            assert_eq!(driver.deliver_rx_frame(0, &frame).unwrap(), frame.len() as u32);
+        }
+        assert_eq!(driver.deliver_rx_frame(0, &frame), Err(vmos_abi::ERR_EAGAIN));
     }
 
     #[test]

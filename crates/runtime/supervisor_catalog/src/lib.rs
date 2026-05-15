@@ -436,6 +436,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "packet_tx_queue_depth",
             "reset_sequence",
             "submit_tx_frame",
+            "deliver_rx_frame",
             "poll_device",
             "event_len",
             "dequeue_rx_frame",

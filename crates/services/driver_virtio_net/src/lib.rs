@@ -15,6 +15,7 @@ use service_core::{
         VIRTIO_NET0_TX_QUEUE_DEPTH,
     },
 };
+use vmos_abi::ERR_EIO;
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];
@@ -69,9 +70,23 @@ pub extern "C" fn reset_sequence(now_ticks: u64) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn submit_tx_frame(now_ticks: u64, len: u32) -> i32 {
-    let len = (len as usize).min(REQUEST_CAPACITY);
-    let request = unsafe { core::slice::from_raw_parts(addr_of_mut!(REQUEST) as *const u8, len) };
+    let request = match request_slice(len) {
+        Ok(request) => request,
+        Err(errno) => return -errno,
+    };
     match unsafe { state().submit_tx_frame(now_ticks, request) } {
+        Ok(len) => len as i32,
+        Err(errno) => -errno,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn deliver_rx_frame(now_ticks: u64, len: u32) -> i32 {
+    let request = match request_slice(len) {
+        Ok(request) => request,
+        Err(errno) => return -errno,
+    };
+    match unsafe { state().deliver_rx_frame(now_ticks, request) } {
         Ok(len) => len as i32,
         Err(errno) => -errno,
     }
@@ -105,6 +120,14 @@ pub extern "C" fn pending_rx_frames() -> u32 {
 
 unsafe fn state() -> &'static mut DriverVirtioNetState {
     unsafe { &mut *addr_of_mut!(STATE) }
+}
+
+fn request_slice(len: u32) -> Result<&'static [u8], i32> {
+    let len = len as usize;
+    if len > REQUEST_CAPACITY {
+        return Err(ERR_EIO);
+    }
+    Ok(unsafe { core::slice::from_raw_parts(addr_of_mut!(REQUEST) as *const u8, len) })
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -618,6 +618,7 @@ name = "driver_virtio_net"
 version = "0.1.0"
 dependencies = [
  "service_core",
+ "vmos_abi",
 ]
 
 [[package]]
