@@ -2621,12 +2621,33 @@ fn sys_recvfrom(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Bytes(bytes) => {
             let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
             dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+            let endpoint = supervisor
+                .socket_ipv4_endpoint(fd, true)
+                .ok()
+                .flatten()
+                .map(|endpoint| (endpoint.addr, endpoint.port));
+            write_recvfrom_sockaddr_if_requested(frame.r8, frame.r9, endpoint)?;
             Ok(bytes.len() as i64)
         }
         LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn write_recvfrom_sockaddr_if_requested(
+    addr_ptr: u64,
+    len_ptr: u64,
+    endpoint: Option<([u8; 4], u16)>,
+) -> Result<(), i32> {
+    if addr_ptr == 0 {
+        return Ok(());
+    }
+    if len_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let (addr, port) = endpoint.unwrap_or(([0; 4], 0));
+    write_sockaddr_in_endpoint(addr_ptr, len_ptr, addr, port).map(|_| ())
 }
 
 fn sys_setsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
