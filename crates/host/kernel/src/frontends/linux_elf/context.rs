@@ -920,3 +920,7 @@ pub(crate) fn active_context() -> &'static mut ActiveUserContext {
         &mut *ACTIVE_CONTEXT
     }
 }
+
+pub(crate) fn try_active_context() -> Option<&'static mut ActiveUserContext> {
+    unsafe { if ACTIVE_CONTEXT.is_null() { None } else { Some(&mut *ACTIVE_CONTEXT) } }
+}

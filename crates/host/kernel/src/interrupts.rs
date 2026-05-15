@@ -4,7 +4,7 @@ use pic8259::ChainedPics;
 use spin::{Lazy, Mutex};
 use x86_64::{
     instructions::{interrupts, port::Port},
-    structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
+    structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
 };
 
 const PIC_1_OFFSET: u8 = 32;
@@ -80,9 +80,24 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: x86_64::structures::idt::PageFaultErrorCode,
 ) {
-    let accessed = x86_64::registers::control::Cr2::read();
+    let accessed = x86_64::registers::control::Cr2::read_raw();
+    let user_mode = error_code.contains(PageFaultErrorCode::USER_MODE);
+    let protection = error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION);
+    let write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
+    let instruction_fetch = error_code.contains(PageFaultErrorCode::INSTRUCTION_FETCH);
+    if user_mode
+        && !protection
+        && crate::frontends::linux_elf::try_handle_user_page_fault(
+            accessed,
+            write,
+            instruction_fetch,
+        )
+    {
+        crate::kdebug!("page fault demand-mapped va={:#018x}", accessed);
+        return;
+    }
     crate::kwarn!(
-        "page fault va={:#018x?} error={:?} ip={:#018x}\n{:#?}",
+        "page fault va={:#018x} error={:?} ip={:#018x}\n{:#?}",
         accessed,
         error_code,
         stack_frame.instruction_pointer,

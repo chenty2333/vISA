@@ -34,7 +34,7 @@ use x86_64::{VirtAddr, registers::model_specific::FsBase};
 use super::{
     context::{
         ActiveUserContext, ClockAdjustmentState, CredentialState, active_context,
-        install_active_context,
+        install_active_context, try_active_context,
     },
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, demo_program_host_path,
@@ -98,6 +98,7 @@ const LINUX_SIGINFO_SIZE: usize = 128;
 const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
+const PROT_EXEC: u64 = 0x4;
 
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -2656,7 +2657,14 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
     };
 
-    protect_active_user_page_range(addr, len, frame.rdx)?;
+    let existing_ranges = active_context().mapped_user_subranges(addr, len);
+    let had_existing_mapping = !existing_ranges.is_empty();
+    for (start, end) in existing_ranges {
+        protect_active_user_page_range(start, end - start, frame.rdx)?;
+    }
+    if !had_existing_mapping && frame.rdx & PROT_EXEC != 0 {
+        protect_active_user_page_range(addr, len, frame.rdx)?;
+    }
     let _ = dispatch_ret(
         "ring3_mmap",
         SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
@@ -2682,7 +2690,6 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let start = align_page(current).ok_or(ERR_EINVAL)?;
         let end = align_page(requested).ok_or(ERR_EINVAL)?;
         if end > start {
-            protect_active_user_page_range(start, end - start, PROT_READ | PROT_WRITE)?;
             active_context().record_user_region(start, end - start, true, true);
         }
     } else if requested < current {
@@ -3388,6 +3395,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
         .require_capability("linux_elf_frontend", "dmw.window", "acquire")
         .map_err(|_| ERR_EPERM)?;
     validate_user_range(ptr, len, writable)?;
+    ensure_active_user_pages_present(ptr, len)?;
     let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
         .map_err(map_dmw_fault)?;
     let generation = lease.generation();
@@ -3685,6 +3693,63 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     let context = active_context();
     unmap_user_page_range(context.physical_memory_offset(), &mut context.page_mappings, start, len)
         .map_err(|_| ERR_EFAULT)
+}
+
+fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
+    if len == 0 {
+        return Ok(());
+    }
+    let raw_end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
+    let start = ptr & !4095;
+    let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
+    let mut page = start;
+    while page < end {
+        let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
+        protect_active_user_page_range(page, 4096, prot)?;
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
+    }
+    Ok(())
+}
+
+fn user_page_region_prot(page: u64) -> Option<u64> {
+    let region = active_context().regions.iter().rev().find(|region| {
+        page >= region.start && page < region.end && (region.readable || region.writable)
+    })?;
+    let mut prot = PROT_READ;
+    if region.writable {
+        prot |= PROT_WRITE;
+    }
+    Some(prot)
+}
+
+pub(crate) fn try_handle_user_page_fault(
+    fault_va: u64,
+    write: bool,
+    instruction_fetch: bool,
+) -> bool {
+    if instruction_fetch {
+        return false;
+    }
+    let Some(context) = try_active_context() else {
+        return false;
+    };
+    let page = fault_va & !4095;
+    let Some(region) = context.regions.iter().rev().find(|region| {
+        fault_va >= region.start && fault_va < region.end && (region.readable || region.writable)
+    }) else {
+        return false;
+    };
+    if write && !region.writable {
+        return false;
+    }
+    if !write && !region.readable {
+        return false;
+    }
+    let mut prot = PROT_READ;
+    if region.writable {
+        prot |= PROT_WRITE;
+    }
+    protect_active_user_page_range(page, 4096, prot).is_ok()
 }
 
 fn prot_user_region_permissions(prot: u64) -> (bool, bool) {
