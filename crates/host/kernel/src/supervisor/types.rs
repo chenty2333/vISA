@@ -177,7 +177,7 @@ pub(crate) struct WaitToken {
 
 #[derive(Clone, Debug)]
 pub(crate) enum FdResource {
-    ServiceNode { route: ServiceRoute, node: NodeKind, path: Vec<u8> },
+    ServiceNode { route: ServiceRoute, node: NodeKind, path: Vec<u8>, vfs_node_id: Option<u64> },
     EpollInstance { epoll_id: u32 },
     Socket { socket_id: u64, ready_key: u64 },
     PipeEnd { pipe_id: u64, readable: bool, writable: bool },

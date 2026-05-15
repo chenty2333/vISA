@@ -101,8 +101,18 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if !self.can_allocate_fds(1) {
                     return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
                 }
+                let vfs_node_id = if info.route == ServiceRoute::Vfs {
+                    self.vfs.node_id_for_path(&path)
+                } else {
+                    None
+                };
                 let fd = match self.alloc_fd(FdEntry {
-                    resource: FdResource::ServiceNode { route: info.route, node: info.node, path },
+                    resource: FdResource::ServiceNode {
+                        route: info.route,
+                        node: info.node,
+                        path,
+                        vfs_node_id,
+                    },
                     cursor: 0,
                     fd_flags: 0,
                     status_flags,
@@ -123,11 +133,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
                 match self.vfs.create_file(&path, mode, uid, gid) {
                     Ok(()) => {
+                        let vfs_node_id = self.vfs.node_id_for_path(&path);
                         let fd = match self.alloc_fd(FdEntry {
                             resource: FdResource::ServiceNode {
                                 route: ServiceRoute::Vfs,
                                 node: NodeKind::File,
                                 path,
+                                vfs_node_id,
                             },
                             cursor: 0,
                             fd_flags: 0,

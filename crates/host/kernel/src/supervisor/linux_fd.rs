@@ -188,17 +188,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         const F_WRLCK: i16 = 1;
         const F_UNLCK: i16 = 2;
 
-        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        let (vfs_node_id, path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
         match lock_type {
             F_RDLCK | F_WRLCK => {
-                let result = self.vfs.fcntl_setlk(&path, owner, lock_type == F_WRLCK, start, len);
+                let result = self.vfs.fcntl_setlk(
+                    vfs_node_id,
+                    &path,
+                    owner,
+                    lock_type == F_WRLCK,
+                    start,
+                    len,
+                );
                 if result.is_ok() {
                     self.wake_ready_file_lock_waits();
                 }
                 result
             }
             F_UNLCK => {
-                self.vfs.fcntl_unlock(&path, owner, start, len);
+                self.vfs.fcntl_unlock(vfs_node_id, &path, owner, start, len);
                 self.wake_ready_file_lock_waits();
                 Ok(())
             }
@@ -268,8 +275,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             F_UNLCK => return Ok(None),
             _ => return Err(ERR_EINVAL),
         };
-        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
-        Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len))
+        let (vfs_node_id, path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        Ok(self.vfs.fcntl_getlk(vfs_node_id, &path, owner, want_write, start, len))
     }
 
     fn fcntl_lock_available_fd(
@@ -291,8 +298,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             F_UNLCK => return Ok(true),
             _ => return Err(ERR_EINVAL),
         };
-        let (path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
-        Ok(self.vfs.fcntl_getlk(&path, owner, want_write, start, len).is_none())
+        let (vfs_node_id, path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
+        Ok(self.vfs.fcntl_getlk(vfs_node_id, &path, owner, want_write, start, len).is_none())
     }
 
     pub(super) fn wake_ready_file_lock_waits(&mut self) {
@@ -320,9 +327,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         whence: i16,
         start: i64,
         len: i64,
-    ) -> Result<(Vec<u8>, i64, i64), i32> {
-        let (route, node, cursor, path) =
-            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+    ) -> Result<(Option<u64>, Vec<u8>, i64, i64), i32> {
+        let (route, node, cursor, path, vfs_node_id) =
+            self.service_fd_lock_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
             return Err(ERR_EBADF);
         }
@@ -342,7 +349,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if range_start < 0 || range_len > i64::MAX as i128 {
             return Err(ERR_EINVAL);
         }
-        Ok((path, range_start as i64, range_len as i64))
+        Ok((vfs_node_id, path, range_start as i64, range_len as i64))
     }
 
     pub(crate) fn check_path_access(
@@ -1172,6 +1179,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     route: ServiceRoute::Devfs,
                     node: NodeKind::CharDevice,
                     path: b"/dev/null".to_vec(),
+                    vfs_node_id: None,
                 },
                 cursor: 0,
                 fd_flags: 0,
@@ -1214,10 +1222,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::SocketPairEnd { pair_id, endpoint } => Some((*pair_id, *endpoint)),
             _ => None,
         });
-        let closing_vfs_file_path = self.fd_entry(fd).and_then(|entry| match &entry.resource {
-            FdResource::ServiceNode { route: ServiceRoute::Vfs, node: NodeKind::File, path } => {
-                Some(path.clone())
-            }
+        let closing_vfs_file = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::ServiceNode {
+                route: ServiceRoute::Vfs,
+                node: NodeKind::File,
+                path,
+                vfs_node_id,
+            } => Some((*vfs_node_id, path.clone())),
             _ => None,
         });
         if let Some(socket_id) = closing_socket {
@@ -1257,8 +1268,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         }
         let owner = self.current_pid();
-        if let Some(path) = closing_vfs_file_path
-            && self.vfs.fcntl_unlock_owner_path(&path, owner)
+        if let Some((vfs_node_id, path)) = closing_vfs_file
+            && self.vfs.fcntl_unlock_owner_file(vfs_node_id, &path, owner)
         {
             self.wake_ready_file_lock_waits();
         }
@@ -1530,7 +1541,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         ) {
             return Ok(encode_stat_abi(0o010666, 0, 0, 0));
         }
-        let FdResource::ServiceNode { route, node, path } = &entry.resource else {
+        let FdResource::ServiceNode { route, node, path, .. } = &entry.resource else {
             return Err(ERR_EBADF);
         };
         let mode = self.mode_for_service_node(*route, *node, path);
@@ -1611,8 +1622,26 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.validate_fd_handle(fd)?;
         let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
         match &entry.resource {
-            FdResource::ServiceNode { route, node, path } => {
+            FdResource::ServiceNode { route, node, path, .. } => {
                 Ok((*route, *node, entry.cursor, path.clone()))
+            }
+            FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::Socket { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+        }
+    }
+
+    fn service_fd_lock_snapshot(
+        &mut self,
+        fd: u32,
+    ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>, Option<u64>), ServiceCallError> {
+        self.validate_fd_handle(fd)?;
+        let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
+        match &entry.resource {
+            FdResource::ServiceNode { route, node, path, vfs_node_id } => {
+                Ok((*route, *node, entry.cursor, path.clone(), *vfs_node_id))
             }
             FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::Socket { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),

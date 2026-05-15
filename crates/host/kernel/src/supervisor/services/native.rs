@@ -116,6 +116,7 @@ struct VfsChunk {
 }
 
 struct VfsNode {
+    id: u64,
     path: Vec<u8>,
     kind: NodeKind,
     mode: u32,
@@ -133,9 +134,15 @@ pub(crate) struct LinuxUserResourceFile {
 
 include!(concat!(env!("OUT_DIR"), "/linux_user_resources.rs"));
 
+#[derive(Clone, PartialEq, Eq)]
+enum FileLockKey {
+    Node(u64),
+    Path(Vec<u8>),
+}
+
 #[derive(Clone)]
 struct FileLock {
-    path: Vec<u8>,
+    key: FileLockKey,
     owner_pid: u32,
     write: bool,
     start: i64,
@@ -145,11 +152,12 @@ struct FileLock {
 pub(crate) struct VfsService {
     nodes: Vec<VfsNode>,
     locks: Vec<FileLock>,
+    next_node_id: u64,
 }
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        let mut service = Self { nodes: Vec::new(), locks: Vec::new() };
+        let mut service = Self { nodes: Vec::new(), locks: Vec::new(), next_node_id: 1 };
         service.install_linux_user_resources();
         Ok(service)
     }
@@ -304,7 +312,9 @@ impl VfsService {
             return errno(ERR_EEXIST);
         }
         self.require_parent_dir(path)?;
+        let id = self.allocate_node_id();
         self.nodes.push(VfsNode {
+            id,
             path: normalize_path(path),
             kind: NodeKind::Directory,
             mode: 0o040000 | (mode & 0o7777),
@@ -329,7 +339,9 @@ impl VfsService {
         self.require_parent_dir(path)?;
         let normalized = normalize_path(path);
         let (mode, gid) = self.create_file_mode_and_gid(&normalized, mode, gid);
+        let id = self.allocate_node_id();
         self.nodes.push(VfsNode {
+            id,
             path: normalized,
             kind: NodeKind::File,
             mode: 0o100000 | mode,
@@ -346,7 +358,9 @@ impl VfsService {
             return errno(ERR_EEXIST);
         }
         self.require_parent_dir(path)?;
+        let id = self.allocate_node_id();
         self.nodes.push(VfsNode::from_bytes(
+            id,
             normalize_path(path),
             NodeKind::Symlink,
             0o120777,
@@ -583,6 +597,14 @@ impl VfsService {
             .unwrap_or(0)
     }
 
+    pub(crate) fn node_id_for_path(&self, path: &[u8]) -> Option<u64> {
+        if let Some(node) = self.dynamic_node(path) {
+            return Some(node.id);
+        }
+        let normalized = normalize_path(path);
+        self.dynamic_node(&normalized).map(|node| node.id)
+    }
+
     fn install_linux_user_resources(&mut self) {
         if LINUX_USER_RESOURCE_FILES.is_empty() {
             return;
@@ -610,7 +632,9 @@ impl VfsService {
         if self.nodes.iter().any(|node| node.path == normalized) {
             return;
         }
+        let id = self.allocate_node_id();
         self.nodes.push(VfsNode {
+            id,
             path: normalized,
             kind: NodeKind::Directory,
             mode: 0o040755,
@@ -626,7 +650,9 @@ impl VfsService {
         if self.nodes.iter().any(|node| node.path == path) {
             return;
         }
+        let id = self.allocate_node_id();
         self.nodes.push(VfsNode::from_bytes(
+            id,
             path,
             NodeKind::File,
             0o100000 | (mode & 0o7777),
@@ -642,6 +668,12 @@ impl VfsService {
 
     fn dynamic_node_mut(&mut self, path: &[u8]) -> Option<&mut VfsNode> {
         self.nodes.iter_mut().find(|node| node.path.as_slice() == path)
+    }
+
+    fn allocate_node_id(&mut self) -> u64 {
+        let id = self.next_node_id;
+        self.next_node_id = self.next_node_id.saturating_add(1).max(1);
+        id
     }
 
     fn create_file_mode_and_gid(&self, path: &[u8], mode: u32, gid: u32) -> (u32, u32) {
@@ -689,8 +721,10 @@ impl VfsService {
             }
         }
         for lock in &mut self.locks {
-            if let Some(path) = replace_path_prefix(&lock.path, old_prefix, new_prefix) {
-                lock.path = path;
+            if let FileLockKey::Path(path) = &mut lock.key
+                && let Some(next_path) = replace_path_prefix(path, old_prefix, new_prefix)
+            {
+                *path = next_path;
             }
         }
     }
@@ -704,48 +738,60 @@ impl VfsService {
             }
         }
         for lock in &mut self.locks {
-            if let Some(path) = replace_path_prefix(&lock.path, left, right) {
-                lock.path = path;
-            } else if let Some(path) = replace_path_prefix(&lock.path, right, left) {
-                lock.path = path;
+            if let FileLockKey::Path(path) = &mut lock.key {
+                if let Some(next_path) = replace_path_prefix(path, left, right) {
+                    *path = next_path;
+                } else if let Some(next_path) = replace_path_prefix(path, right, left) {
+                    *path = next_path;
+                }
             }
         }
     }
 
     pub(crate) fn fcntl_setlk(
         &mut self,
+        node_id: Option<u64>,
         path: &[u8],
         owner: u32,
         write: bool,
         s: i64,
         l: i64,
     ) -> Result<(), i32> {
+        let key = file_lock_key(node_id, path);
         for lock in &self.locks {
-            if lock.path != path || lock.owner_pid == owner {
+            if lock.key != key || lock.owner_pid == owner {
                 continue;
             }
             if ranges_overlap(s, l, lock.start, lock.len) && (write || lock.write) {
                 return Err(vmos_abi::ERR_EAGAIN);
             }
         }
-        self.remove_owner_locks(path, owner, s, l);
-        self.locks.push(FileLock {
-            path: path.to_vec(),
-            owner_pid: owner,
-            write,
-            start: s,
-            len: l,
-        });
+        self.remove_owner_locks(&key, owner, s, l);
+        self.locks.push(FileLock { key, owner_pid: owner, write, start: s, len: l });
         Ok(())
     }
 
-    pub(crate) fn fcntl_unlock(&mut self, path: &[u8], owner: u32, s: i64, l: i64) {
-        self.remove_owner_locks(path, owner, s, l);
+    pub(crate) fn fcntl_unlock(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        owner: u32,
+        s: i64,
+        l: i64,
+    ) {
+        let key = file_lock_key(node_id, path);
+        self.remove_owner_locks(&key, owner, s, l);
     }
 
-    pub(crate) fn fcntl_unlock_owner_path(&mut self, path: &[u8], owner: u32) -> bool {
+    pub(crate) fn fcntl_unlock_owner_file(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        owner: u32,
+    ) -> bool {
+        let key = file_lock_key(node_id, path);
         let before = self.locks.len();
-        self.locks.retain(|lock| lock.path != path || lock.owner_pid != owner);
+        self.locks.retain(|lock| lock.key != key || lock.owner_pid != owner);
         before != self.locks.len()
     }
 
@@ -757,14 +803,16 @@ impl VfsService {
 
     pub(crate) fn fcntl_getlk(
         &self,
+        node_id: Option<u64>,
         path: &[u8],
         owner: u32,
         want_write: bool,
         s: i64,
         l: i64,
     ) -> Option<(bool, u32, i64, i64)> {
+        let key = file_lock_key(node_id, path);
         for lock in &self.locks {
-            if lock.path != path || lock.owner_pid == owner {
+            if lock.key != key || lock.owner_pid == owner {
                 continue;
             }
             if ranges_overlap(s, l, lock.start, lock.len) && (want_write || lock.write) {
@@ -774,12 +822,12 @@ impl VfsService {
         None
     }
 
-    fn remove_owner_locks(&mut self, path: &[u8], owner: u32, s: i64, l: i64) {
+    fn remove_owner_locks(&mut self, key: &FileLockKey, owner: u32, s: i64, l: i64) {
         let remove_start = s;
         let remove_end = lock_end(s, l);
         let mut next = Vec::new();
         for lock in core::mem::take(&mut self.locks) {
-            if lock.path != path
+            if &lock.key != key
                 || lock.owner_pid != owner
                 || !ranges_overlap(s, l, lock.start, lock.len)
             {
@@ -803,6 +851,14 @@ impl VfsService {
             }
         }
         self.locks = next;
+    }
+}
+
+fn file_lock_key(node_id: Option<u64>, path: &[u8]) -> FileLockKey {
+    if let Some(id) = node_id {
+        FileLockKey::Node(id)
+    } else {
+        FileLockKey::Path(normalize_path(path))
     }
 }
 
@@ -830,6 +886,7 @@ impl VfsChunk {
 
 impl VfsNode {
     fn from_bytes(
+        id: u64,
         path: Vec<u8>,
         kind: NodeKind,
         mode: u32,
@@ -838,6 +895,7 @@ impl VfsNode {
         bytes: &[u8],
     ) -> Self {
         Self {
+            id,
             path,
             kind,
             mode,
