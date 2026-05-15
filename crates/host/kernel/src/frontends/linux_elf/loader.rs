@@ -71,6 +71,10 @@ fn prot_is_none(prot: u64) -> bool {
     prot & 0x7 == 0
 }
 
+fn prot_allows_write(prot: u64) -> bool {
+    prot & 0x2 != 0
+}
+
 pub(crate) fn protect_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,
@@ -108,15 +112,27 @@ pub(crate) fn protect_user_page_range(
         }
 
         if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr) {
-            if !mapping.present {
-                remap_user_page(&mut mapper, page, mapping, flags, frame_allocator)?;
+            if mapping.cow && prot_allows_write(prot) {
+                break_user_cow_page_with_mapper(
+                    &mut mapper,
+                    phys_offset,
+                    page,
+                    mapping,
+                    frame_allocator,
+                    flags,
+                )?;
                 continue;
             }
-            match unsafe { mapper.update_flags(page, flags) } {
+            let mapping_flags = user_page_flags_for_mapping(prot, mapping);
+            if !mapping.present {
+                remap_user_page(&mut mapper, page, mapping, mapping_flags, frame_allocator)?;
+                continue;
+            }
+            match unsafe { mapper.update_flags(page, mapping_flags) } {
                 Ok(flush) => flush.flush(),
                 Err(FlagUpdateError::PageNotMapped) => {
                     mapping.present = false;
-                    remap_user_page(&mut mapper, page, mapping, flags, frame_allocator)?;
+                    remap_user_page(&mut mapper, page, mapping, mapping_flags, frame_allocator)?;
                 }
                 Err(FlagUpdateError::ParentEntryHugePage) => {
                     return Err("user page parent entry is a huge page");
@@ -163,9 +179,11 @@ pub(crate) fn unmap_user_page_range(
     let mut retained = Vec::new();
     for mapping in page_mappings.drain(..) {
         if mapping.va >= start && mapping.va < end {
-            frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
-                mapping.frame_start,
-            )));
+            if mapping.owned {
+                frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                    mapping.frame_start,
+                )));
+            }
         } else {
             retained.push(mapping);
         }
@@ -175,22 +193,16 @@ pub(crate) fn unmap_user_page_range(
 }
 
 pub(crate) fn clone_user_page_mappings(
-    physical_memory_offset: u64,
     page_mappings: &[UserPageMapping],
-    child_allocator: &mut UserFrameAllocator,
 ) -> Result<Vec<UserPageMapping>, &'static str> {
-    let phys_offset = VirtAddr::new(physical_memory_offset);
     let mut cloned = Vec::with_capacity(page_mappings.len());
     for mapping in page_mappings {
-        let child_frame =
-            child_allocator.allocate_frame().ok_or("out of usable frames for forked user page")?;
-        let parent_frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
-        let bytes = frame_bytes(parent_frame, phys_offset).to_vec();
-        frame_bytes(child_frame, phys_offset).copy_from_slice(&bytes);
         cloned.push(UserPageMapping {
             va: mapping.va,
-            frame_start: child_frame.start_address().as_u64(),
+            frame_start: mapping.frame_start,
             present: mapping.present,
+            owned: false,
+            cow: true,
         });
     }
     Ok(cloned)
@@ -229,9 +241,11 @@ pub(crate) fn switch_user_page_mappings(
     }
     if reclaim_current {
         for mapping in current_mappings {
-            frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
-                mapping.frame_start,
-            )));
+            if mapping.owned {
+                frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                    mapping.frame_start,
+                )));
+            }
         }
     }
 
@@ -240,7 +254,7 @@ pub(crate) fn switch_user_page_mappings(
         let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
         let prot = user_page_region_prot(next_regions, mapping.va)
             .ok_or("forked user page has no region")?;
-        let flags = user_page_flags(prot);
+        let flags = user_page_flags_for_mapping(prot, mapping);
         match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
             Ok(flush) => flush.flush(),
             Err(MapToError::PageAlreadyMapped(_)) => {
@@ -255,6 +269,81 @@ pub(crate) fn switch_user_page_mappings(
         }
     }
     Ok(())
+}
+
+pub(crate) fn cow_break_user_page(
+    physical_memory_offset: u64,
+    page_mappings: &mut [UserPageMapping],
+    frame_allocator: &mut UserFrameAllocator,
+    page_addr: u64,
+    prot: u64,
+) -> Result<(), &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+    let mapping = user_page_mapping_mut(page_mappings, page_addr).ok_or("missing COW page")?;
+    let flags = user_page_flags(prot);
+    break_user_cow_page_with_mapper(&mut mapper, phys_offset, page, mapping, frame_allocator, flags)
+}
+
+fn break_user_cow_page_with_mapper(
+    mapper: &mut OffsetPageTable<'_>,
+    phys_offset: VirtAddr,
+    page: Page<Size4KiB>,
+    mapping: &mut UserPageMapping,
+    frame_allocator: &mut UserFrameAllocator,
+    flags: PageTableFlags,
+) -> Result<(), &'static str> {
+    if !mapping.cow {
+        return Err("user page is not COW");
+    }
+
+    let old_frame_start = mapping.frame_start;
+    let old_present = mapping.present;
+    let old_owned = mapping.owned;
+    let old_cow = mapping.cow;
+    let old_frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
+    let new_frame = frame_allocator.allocate_frame().ok_or("out of usable frames for COW break")?;
+    let bytes = frame_bytes(old_frame, phys_offset).to_vec();
+    frame_bytes(new_frame, phys_offset).copy_from_slice(&bytes);
+
+    if old_present {
+        match mapper.unmap(page) {
+            Ok((_frame, flush)) => flush.flush(),
+            Err(UnmapError::PageNotMapped) => {}
+            Err(UnmapError::ParentEntryHugePage) => {
+                frame_allocator.deallocate_frame(new_frame);
+                return Err("user page parent entry is a huge page");
+            }
+            Err(UnmapError::InvalidFrameAddress(_)) => {
+                frame_allocator.deallocate_frame(new_frame);
+                return Err("user page has an invalid frame address");
+            }
+        }
+    }
+
+    mapping.frame_start = new_frame.start_address().as_u64();
+    mapping.present = false;
+    mapping.owned = true;
+    mapping.cow = false;
+    if let Err(err) = remap_user_page(mapper, page, mapping, flags, frame_allocator) {
+        frame_allocator.deallocate_frame(new_frame);
+        mapping.frame_start = old_frame_start;
+        mapping.present = false;
+        mapping.owned = old_owned;
+        mapping.cow = old_cow;
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn user_page_flags_for_mapping(prot: u64, mapping: &UserPageMapping) -> PageTableFlags {
+    let mut flags = user_page_flags(prot);
+    if mapping.cow {
+        flags.remove(PageTableFlags::WRITABLE);
+    }
+    flags
 }
 
 fn user_page_region_prot(regions: &[UserRegion], page: u64) -> Option<u64> {
@@ -332,6 +421,8 @@ fn map_new_user_page(
                 va: page.start_address().as_u64(),
                 frame_start: frame.start_address().as_u64(),
                 present: true,
+                owned: true,
+                cow: false,
             });
             Ok(())
         }
@@ -460,6 +551,8 @@ fn map_user_pages(
             va: page_addr,
             frame_start: frame.start_address().as_u64(),
             present: true,
+            owned: true,
+            cow: false,
         });
 
         let dest = frame_bytes(frame, phys_offset);
@@ -507,6 +600,8 @@ fn map_user_stack(
             va: addr,
             frame_start: frame.start_address().as_u64(),
             present: true,
+            owned: true,
+            cow: false,
         });
         let dest = frame_bytes(frame, phys_offset);
         dest.fill(0);

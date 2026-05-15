@@ -29,6 +29,8 @@ pub(crate) struct UserPageMapping {
     pub(crate) va: u64,
     pub(crate) frame_start: u64,
     pub(crate) present: bool,
+    pub(crate) owned: bool,
+    pub(crate) cow: bool,
 }
 
 pub(crate) struct LoadedUserImage {

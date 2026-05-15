@@ -38,7 +38,7 @@ use super::{
     },
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, clone_user_page_mappings,
-        demo_program_host_path, load_demo_program, protect_user_page_range,
+        cow_break_user_page, demo_program_host_path, load_demo_program, protect_user_page_range,
         switch_user_page_mappings, unmap_user_page_range,
     },
 };
@@ -1932,8 +1932,8 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     }
 
     // The current ring3 runner is child-runs-first. This gives fork/clone an
-    // independent VM by eagerly copying frames and switching PTEs, but it is
-    // intentionally not claimed as COW.
+    // independent VM by sharing tracked user frames read-only and breaking COW
+    // when the child writes, but it is still not a general runnable scheduler.
     let mut child_address_space = clone_active_user_address_space()?;
     let (child_task_id, child_pid, child_tid_runtime) =
         active_context().supervisor.create_independent_vm_clone_child(
@@ -3800,13 +3800,8 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
 
 fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
     let context = active_context();
-    let mut child_allocator = context.frame_allocator.fork_child_allocator();
-    let page_mappings = clone_user_page_mappings(
-        context.physical_memory_offset(),
-        &context.page_mappings,
-        &mut child_allocator,
-    )
-    .map_err(|_| ERR_ENOMEM)?;
+    let child_allocator = context.frame_allocator.fork_child_allocator();
+    let page_mappings = clone_user_page_mappings(&context.page_mappings).map_err(|_| ERR_ENOMEM)?;
     Ok(UserAddressSpaceState {
         regions: context.regions.clone(),
         page_mappings,
@@ -3845,6 +3840,18 @@ fn restore_independent_clone_parent_address_space(
         &parent_address_space.regions,
         &mut context.frame_allocator,
         true,
+    )
+    .map_err(|_| ERR_EFAULT)
+}
+
+fn cow_break_active_user_page(page: u64, prot: u64) -> Result<(), i32> {
+    let context = active_context();
+    cow_break_user_page(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        page,
+        prot,
     )
     .map_err(|_| ERR_EFAULT)
 }
@@ -3888,6 +3895,7 @@ pub(crate) fn try_handle_user_page_fault(
     fault_va: u64,
     write: bool,
     instruction_fetch: bool,
+    protection: bool,
 ) -> bool {
     let Some(context) = try_active_context() else {
         return false;
@@ -3918,6 +3926,12 @@ pub(crate) fn try_handle_user_page_fault(
     }
     if region.executable {
         prot |= PROT_EXEC;
+    }
+    if protection {
+        if !write || instruction_fetch {
+            return false;
+        }
+        return cow_break_active_user_page(page, prot).is_ok();
     }
     protect_active_user_page_range(page, 4096, prot).is_ok()
 }

@@ -86,14 +86,14 @@ extern "x86-interrupt" fn page_fault_handler(
     let write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
     let instruction_fetch = error_code.contains(PageFaultErrorCode::INSTRUCTION_FETCH);
     if user_mode
-        && !protection
         && crate::frontends::linux_elf::try_handle_user_page_fault(
             accessed,
             write,
             instruction_fetch,
+            protection,
         )
     {
-        crate::kdebug!("page fault demand-mapped va={:#018x}", accessed);
+        crate::kdebug!("page fault handled va={:#018x}", accessed);
         return;
     }
     crate::kwarn!(
