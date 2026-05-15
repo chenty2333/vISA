@@ -8,6 +8,7 @@ use x86_64::{
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
         Size4KiB,
+        mapper::{FlagUpdateError, UnmapError},
     },
 };
 use xmas_elf::{ElfFile, program::Type as ProgramType};
@@ -50,6 +51,67 @@ static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VMOS_LINUX_USER_DE
 
 pub(crate) fn demo_program_host_path() -> &'static str {
     env!("VMOS_LINUX_USER_DEMO_ELF")
+}
+
+pub(crate) fn user_page_flags(prot: u64) -> PageTableFlags {
+    const PROT_WRITE: u64 = 0x2;
+    const PROT_EXEC: u64 = 0x4;
+
+    let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+    if prot & PROT_WRITE != 0 {
+        flags |= PageTableFlags::WRITABLE;
+    }
+    if prot & PROT_EXEC == 0 {
+        flags |= PageTableFlags::NO_EXECUTE;
+    }
+    flags
+}
+
+pub(crate) fn protect_user_page_range(
+    physical_memory_offset: u64,
+    start: u64,
+    len: u64,
+    prot: u64,
+) -> Result<(), &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    let flags = user_page_flags(prot);
+    for page_addr in user_page_iter(start, len)? {
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+        match unsafe { mapper.update_flags(page, flags) } {
+            Ok(flush) => flush.flush(),
+            Err(FlagUpdateError::PageNotMapped) => return Err("user page is not mapped"),
+            Err(FlagUpdateError::ParentEntryHugePage) => {
+                return Err("user page parent entry is a huge page");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn unmap_user_page_range(
+    physical_memory_offset: u64,
+    start: u64,
+    len: u64,
+) -> Result<(), &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    for page_addr in user_page_iter(start, len)? {
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+        match mapper.unmap(page) {
+            Ok((_frame, flush)) => flush.flush(),
+            Err(UnmapError::PageNotMapped) => {}
+            Err(UnmapError::ParentEntryHugePage) => {
+                return Err("user page parent entry is a huge page");
+            }
+            Err(UnmapError::InvalidFrameAddress(_)) => {
+                return Err("user page has an invalid frame address");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn load_demo_program(boot_info: &BootInfo) -> Result<LoadedUserImage, &'static str> {
@@ -360,4 +422,12 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator<'_> {
 
 fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
+}
+
+fn user_page_iter(start: u64, len: u64) -> Result<impl Iterator<Item = u64>, &'static str> {
+    let end = start.checked_add(len).ok_or("user page range overflowed")?;
+    if start & (PAGE_SIZE as u64 - 1) != 0 || end & (PAGE_SIZE as u64 - 1) != 0 {
+        return Err("user page range is not page aligned");
+    }
+    Ok((start..end).step_by(PAGE_SIZE))
 }

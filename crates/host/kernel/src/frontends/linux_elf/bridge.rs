@@ -38,7 +38,7 @@ use super::{
     },
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, demo_program_host_path,
-        load_demo_program,
+        load_demo_program, protect_user_page_range, unmap_user_page_range,
     },
 };
 use crate::{
@@ -100,6 +100,11 @@ const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
 pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
     let image = load_demo_program(boot_info)?;
+    let physical_memory_offset = boot_info
+        .physical_memory_offset
+        .as_ref()
+        .copied()
+        .ok_or("bootloader did not provide physical_memory_offset")?;
     let supervisor = runtime()?;
     let task_id = supervisor.bind_bootstrap_linux_task();
     let mut context = ActiveUserContext::new(
@@ -112,6 +117,7 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
         USER_BRK_END,
         USER_MMAP_ALLOC_BASE,
         USER_MMAP_END,
+        physical_memory_offset,
     );
     install_active_context(&mut context);
 
@@ -2662,6 +2668,8 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     validate_user_range(frame.rdi, len, false)?;
+    protect_user_page_range(active_context().physical_memory_offset(), frame.rdi, len, frame.rdx)
+        .map_err(|_| ERR_EFAULT)?;
     active_context().record_user_region(frame.rdi, len, frame.rdx & PROT_WRITE != 0);
     Ok(0)
 }
@@ -2673,6 +2681,13 @@ fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
         return Err(ERR_EINVAL);
+    }
+    validate_lower_user_address_range(frame.rdi, len)?;
+    let physical_memory_offset = active_context().physical_memory_offset();
+    let mapped_ranges = active_context().mapped_user_subranges(frame.rdi, len);
+    for (start, end) in mapped_ranges {
+        unmap_user_page_range(physical_memory_offset, start, end - start)
+            .map_err(|_| ERR_EFAULT)?;
     }
     let _ =
         dispatch_ret("ring3_munmap", SyscallContext::new(SYS_MUNMAP, [frame.rdi, len, 0, 0, 0, 0]));
@@ -3561,6 +3576,17 @@ fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
             return Err(ERR_EFAULT);
         }
         cursor = covered_end;
+    }
+    Ok(())
+}
+
+fn validate_lower_user_address_range(ptr: u64, len: u64) -> Result<(), i32> {
+    if len == 0 {
+        return Ok(());
+    }
+    let end = ptr.checked_add(len).ok_or(ERR_EINVAL)?;
+    if ptr >= X86_64_USER_CANONICAL_LIMIT || end > X86_64_USER_CANONICAL_LIMIT {
+        return Err(ERR_EINVAL);
     }
     Ok(())
 }

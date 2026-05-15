@@ -69,6 +69,7 @@ pub(crate) struct ActiveUserContext {
     realtime_epoch_ns: u64,
     realtime_epoch_tick: u64,
     clock_adj: ClockAdjustmentState,
+    physical_memory_offset: u64,
     suspended_vfork_parent: Option<SuspendedVforkParent>,
     suspended_clone_parent: Option<SuspendedCloneParent>,
 }
@@ -153,6 +154,7 @@ impl ActiveUserContext {
         brk_end: u64,
         mmap_base: u64,
         mmap_end: u64,
+        physical_memory_offset: u64,
     ) -> Self {
         Self {
             supervisor,
@@ -189,6 +191,7 @@ impl ActiveUserContext {
             realtime_epoch_ns: 1_000_000_000,
             realtime_epoch_tick: 0,
             clock_adj: ClockAdjustmentState::default(),
+            physical_memory_offset,
             suspended_vfork_parent: None,
             suspended_clone_parent: None,
         }
@@ -235,6 +238,24 @@ impl ActiveUserContext {
             .iter()
             .map(|region| region.end.saturating_sub(region.start))
             .fold(0u64, u64::saturating_add)
+    }
+
+    pub(crate) fn mapped_user_subranges(&self, start: u64, len: u64) -> Vec<(u64, u64)> {
+        let Some(end) = start.checked_add(len) else {
+            return Vec::new();
+        };
+        self.regions
+            .iter()
+            .filter_map(|region| {
+                let range_start = core::cmp::max(start, region.start);
+                let range_end = core::cmp::min(end, region.end);
+                (range_start < range_end).then_some((range_start, range_end))
+            })
+            .collect()
+    }
+
+    pub(crate) fn physical_memory_offset(&self) -> u64 {
+        self.physical_memory_offset
     }
 
     pub(crate) fn set_program_break(&mut self, requested: u64) -> u64 {
