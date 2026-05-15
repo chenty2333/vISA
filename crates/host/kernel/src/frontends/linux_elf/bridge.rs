@@ -2967,10 +2967,7 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
     let owner = word & FUTEX_TID_MASK;
 
     if owner == 0 {
-        if word & FUTEX_WAITERS != 0 {
-            return Err(ERR_ENOSYS);
-        }
-        let new_word = (word & FUTEX_OWNER_DIED) | tid;
+        let new_word = (word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)) | tid;
         write_user_u32(uaddr, new_word)?;
         return Ok(0);
     }
@@ -2995,7 +2992,19 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EPERM);
     }
     if word & FUTEX_WAITERS != 0 {
-        return Err(ERR_ENOSYS);
+        write_user_u32(uaddr, 0)?;
+        let result = active_context()
+            .supervisor
+            .dispatch_linux_syscall(
+                "ring3_futex_unlock_pi_wake",
+                SyscallContext::new(SYS_FUTEX, [uaddr, FUTEX_WAKE as u64, 1, 0, 0, 0]),
+            )
+            .map_err(|_| ERR_EINVAL)?;
+        return match result {
+            LinuxCallResult::Ret(ret) if ret >= 0 => Ok(0),
+            LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+            _ => Err(ERR_EINVAL),
+        };
     }
     write_user_u32(uaddr, 0)?;
     Ok(0)
