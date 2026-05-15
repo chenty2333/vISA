@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use semantic_core::ResourceId;
+use semantic_core::{ResourceHandle, ResourceId};
 use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
 
 pub(crate) type TaskId = u32;
@@ -192,6 +192,12 @@ pub(crate) struct FdEntry {
     pub(crate) fd_flags: u32,
     pub(crate) status_flags: u32,
     pub(crate) cursor_group: Option<ResourceId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FdTableSnapshot {
+    pub(crate) fd_table: Vec<Option<FdEntry>>,
+    pub(crate) fd_handles: Vec<Option<ResourceHandle>>,
 }
 
 #[derive(Debug)]

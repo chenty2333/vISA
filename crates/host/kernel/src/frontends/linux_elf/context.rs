@@ -5,7 +5,7 @@ use crate::{
     substrate::ring3::UserReturnContext,
     supervisor::{
         PrototypeRuntime, TaskId,
-        types::{CAP_SETGID, CAP_SETUID, LINUX_KNOWN_CAPS},
+        types::{CAP_SETGID, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS},
     },
 };
 
@@ -113,6 +113,8 @@ pub(crate) struct SuspendedCloneParent {
     pub(crate) return_context: UserReturnContext,
     fs_shared: bool,
     cwd: Vec<u8>,
+    files_shared: bool,
+    fd_snapshot: Option<FdTableSnapshot>,
     credential: CredentialState,
     io_owner: i64,
     io_owner_ex_type: u32,
@@ -616,6 +618,8 @@ impl ActiveUserContext {
         child_tid: u32,
         return_context: UserReturnContext,
         fs_shared: bool,
+        files_shared: bool,
+        fd_snapshot: Option<FdTableSnapshot>,
     ) {
         debug_assert!(self.suspended_clone_parent.is_none());
         self.suspended_clone_parent = Some(SuspendedCloneParent {
@@ -627,6 +631,8 @@ impl ActiveUserContext {
             return_context,
             fs_shared,
             cwd: self.cwd.clone(),
+            files_shared,
+            fd_snapshot,
             credential: self.credential_state(),
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
@@ -744,6 +750,8 @@ impl ActiveUserContext {
             return_context: _,
             fs_shared,
             cwd,
+            files_shared,
+            fd_snapshot,
             credential,
             io_owner,
             io_owner_ex_type,
@@ -752,6 +760,13 @@ impl ActiveUserContext {
             pending_io_signal,
             alarm_seconds,
         } = parent;
+        if !files_shared {
+            self.supervisor.close_active_fd_table_for_process_exit();
+            self.supervisor.pop_hidden_fd_table_refs();
+            if let Some(fd_snapshot) = fd_snapshot {
+                self.supervisor.restore_fd_table_snapshot(fd_snapshot);
+            }
+        }
         self.task_id = task_id;
         self.pid = pid;
         self.tid = tid;

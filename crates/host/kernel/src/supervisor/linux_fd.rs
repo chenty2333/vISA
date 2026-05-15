@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
@@ -15,8 +15,8 @@ use super::{
     services::ProcfsService,
     types::{
         AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, EventFdState,
-        FdEntry, FdResource, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE, ServiceCallError,
-        SocketPairState,
+        FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE,
+        ServiceCallError, SocketPairState, TaskId,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -593,10 +593,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.available_fd_slots() >= count
     }
 
-    fn install_fd_at(&mut self, fd: u32, mut entry: FdEntry) {
+    fn install_fd_at(&mut self, entry_fd: u32, entry: FdEntry) {
+        let owner_task = Some(self.scheduler.current_task());
+        self.install_fd_at_for_owner(entry_fd, entry, owner_task);
+    }
+
+    fn install_fd_at_for_owner(&mut self, fd: u32, mut entry: FdEntry, owner_task: Option<TaskId>) {
         let resource_kind = fd_resource_kind(&entry.resource);
         let resource_label = fd_resource_label(&entry.resource);
-        let owner_task = Some(self.scheduler.current_task());
         let resource_id =
             self.semantic.register_resource(resource_kind, owner_task, &resource_label);
         if entry.cursor_group.is_none() {
@@ -609,6 +613,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.ensure_fd_handle_slot(fd);
         self.fd_table[fd] = Some(entry);
         self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
+    }
+
+    pub(crate) fn fork_fd_table_for_owner(&mut self, owner_task: TaskId) -> FdTableSnapshot {
+        let snapshot = self.capture_fd_table_snapshot();
+        self.hidden_fd_table_refs.push(snapshot.fd_table.clone());
+        let child_entries = snapshot.fd_table.clone();
+        self.fd_table = vec![None; child_entries.len()];
+        self.fd_handles = vec![None; child_entries.len()];
+        for (fd, entry) in child_entries.into_iter().enumerate() {
+            if let Some(entry) = entry {
+                self.install_fd_at_for_owner(fd as u32, entry, Some(owner_task));
+            }
+        }
+        snapshot
+    }
+
+    pub(crate) fn restore_fd_table_snapshot(&mut self, snapshot: FdTableSnapshot) {
+        self.fd_table = snapshot.fd_table;
+        self.fd_handles = snapshot.fd_handles;
+    }
+
+    pub(crate) fn pop_hidden_fd_table_refs(&mut self) {
+        let _ = self.hidden_fd_table_refs.pop();
+    }
+
+    pub(crate) fn close_active_fd_table_for_process_exit(&mut self) {
+        let len = self.fd_table.len();
+        for fd in 3..len {
+            let _ = self.close_fd_slot(fd as u32, false);
+        }
+    }
+
+    fn capture_fd_table_snapshot(&self) -> FdTableSnapshot {
+        FdTableSnapshot { fd_table: self.fd_table.clone(), fd_handles: self.fd_handles.clone() }
     }
 
     fn ensure_fd_handle_slot(&mut self, fd: usize) {
@@ -1288,18 +1326,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.close_resource(handle.id);
         }
         if let Some((pipe_id, readable, writable)) = closing_pipe {
-            let other_read_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
-                matches!(
-                    entry.resource,
-                    FdResource::PipeEnd { pipe_id: id, readable: true, .. } if id == pipe_id
-                )
-            });
-            let other_write_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
-                matches!(
-                    entry.resource,
-                    FdResource::PipeEnd { pipe_id: id, writable: true, .. } if id == pipe_id
-                )
-            });
+            let other_read_open = self.has_pipe_read_fd_ref(pipe_id);
+            let other_write_open = self.has_pipe_write_fd_ref(pipe_id);
             let pipe = self.pipe_mut(pipe_id)?;
             if readable {
                 pipe.read_open = other_read_open;
@@ -1309,13 +1337,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         if let Some((pair_id, endpoint)) = closing_socketpair {
-            let same_endpoint_open = self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
-                matches!(
-                    entry.resource,
-                    FdResource::SocketPairEnd { pair_id: id, endpoint: ep }
-                        if id == pair_id && ep == endpoint
-                )
-            });
+            let same_endpoint_open = self.has_socketpair_endpoint_fd_ref(pair_id, endpoint);
             let pair = self.socketpair_mut(pair_id)?;
             if endpoint == 0 {
                 pair.open_a = same_endpoint_open;
@@ -1331,12 +1353,71 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn has_other_socket_fd_ref(&self, closing_fd: u32, socket_id: u32) -> bool {
-        self.fd_table.iter().enumerate().any(|(fd, entry)| {
+        let active_ref = self.fd_table.iter().enumerate().any(|(fd, entry)| {
             fd != closing_fd as usize
                 && matches!(
                     entry.as_ref().map(|entry| &entry.resource),
                     Some(FdResource::Socket { socket_id: other, .. }) if *other as u32 == socket_id
                 )
+        });
+        active_ref
+            || self.hidden_fd_table_refs.iter().any(|table| {
+                table.iter().filter_map(Option::as_ref).any(|entry| {
+                    matches!(
+                        entry.resource,
+                        FdResource::Socket { socket_id: other, .. } if other as u32 == socket_id
+                    )
+                })
+            })
+    }
+
+    fn has_pipe_read_fd_ref(&self, pipe_id: u64) -> bool {
+        self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+            matches!(
+                entry.resource,
+                FdResource::PipeEnd { pipe_id: id, readable: true, .. } if id == pipe_id
+            )
+        }) || self.hidden_fd_table_refs.iter().any(|table| {
+            table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::PipeEnd { pipe_id: id, readable: true, .. } if id == pipe_id
+                )
+            })
+        })
+    }
+
+    fn has_pipe_write_fd_ref(&self, pipe_id: u64) -> bool {
+        self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+            matches!(
+                entry.resource,
+                FdResource::PipeEnd { pipe_id: id, writable: true, .. } if id == pipe_id
+            )
+        }) || self.hidden_fd_table_refs.iter().any(|table| {
+            table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::PipeEnd { pipe_id: id, writable: true, .. } if id == pipe_id
+                )
+            })
+        })
+    }
+
+    fn has_socketpair_endpoint_fd_ref(&self, pair_id: u64, endpoint: u8) -> bool {
+        self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
+            matches!(
+                entry.resource,
+                FdResource::SocketPairEnd { pair_id: id, endpoint: ep }
+                    if id == pair_id && ep == endpoint
+            )
+        }) || self.hidden_fd_table_refs.iter().any(|table| {
+            table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(
+                    entry.resource,
+                    FdResource::SocketPairEnd { pair_id: id, endpoint: ep }
+                        if id == pair_id && ep == endpoint
+                )
+            })
         })
     }
 
