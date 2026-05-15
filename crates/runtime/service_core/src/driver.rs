@@ -1,14 +1,16 @@
 use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
 
-use crate::packet::{
-    PACKET_FRAME_CAPACITY, PROTO_DEMO_TCP, PacketDeviceState, PacketFrameMeta, decode_frame,
+use crate::{
+    net_contract::VIRTIO_NET0_MTU,
+    packet::{PROTO_DEMO_TCP, PacketDeviceState, PacketFrameMeta, decode_frame},
 };
 
-pub const REQUEST_CAPACITY: usize = PACKET_FRAME_CAPACITY;
-pub const RESPONSE_CAPACITY: usize = PACKET_FRAME_CAPACITY;
 pub const FIRST_RX_DELAY_TICKS: u64 = 7;
 pub const NEXT_RX_DELAY_TICKS: u64 = 20;
 pub const ETHERNET_HEADER_LEN: usize = 14;
+pub const RAW_ETHERNET_FRAME_CAPACITY: usize = VIRTIO_NET0_MTU as usize + ETHERNET_HEADER_LEN;
+pub const REQUEST_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
+pub const RESPONSE_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
 pub const RAW_RX_QUEUE_DEPTH: usize = 4;
 pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
 
@@ -196,7 +198,7 @@ impl DriverVirtioNetState {
         if self.raw_rx_len == 0 {
             return 0;
         }
-        let slot = self.raw_rx[self.raw_rx_head];
+        let slot = &self.raw_rx[self.raw_rx_head];
         if slot.active { slot.len as u32 } else { 0 }
     }
 
@@ -204,18 +206,19 @@ impl DriverVirtioNetState {
         if self.raw_rx_len == 0 {
             return Ok(0);
         }
-        let slot = self.raw_rx[self.raw_rx_head];
-        if !slot.active {
+        let index = self.raw_rx_head;
+        if !self.raw_rx[index].active {
             return Err(ERR_EIO);
         }
-        if out.len() < slot.len {
+        let len = self.raw_rx[index].len;
+        if out.len() < len {
             return Err(ERR_EIO);
         }
-        out[..slot.len].copy_from_slice(&slot.data[..slot.len]);
-        self.raw_rx[self.raw_rx_head] = RawRxSlot::EMPTY;
+        out[..len].copy_from_slice(&self.raw_rx[index].data[..len]);
+        self.raw_rx[index] = RawRxSlot::EMPTY;
         self.raw_rx_head = (self.raw_rx_head + 1) % RAW_RX_QUEUE_DEPTH;
         self.raw_rx_len -= 1;
-        Ok(slot.len as u32)
+        Ok(len as u32)
     }
 }
 
@@ -228,7 +231,7 @@ impl Default for DriverVirtioNetState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::{PacketFrameMeta, encode_frame};
+    use crate::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
 
     #[test]
     fn tx_submission_drives_rx_event_sequence() {
@@ -301,6 +304,25 @@ mod tests {
         assert_eq!(len, frame.len() as u32);
         assert_eq!(&out[..frame.len()], &frame);
         assert_eq!(driver.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn delivered_raw_ethernet_rx_accepts_full_mtu_frame() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut frame = [0u8; RAW_ETHERNET_FRAME_CAPACITY];
+        frame[..6].copy_from_slice(&[0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01]);
+        frame[6..12].copy_from_slice(&[0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        assert_eq!(driver.deliver_rx_frame(12, &frame).unwrap(), frame.len() as u32);
+        for _ in 0..5 {
+            driver.poll_device(12);
+        }
+
+        let mut out = [0u8; RESPONSE_CAPACITY];
+        let len = driver.dequeue_rx_frame(&mut out).unwrap();
+        assert_eq!(len, frame.len() as u32);
+        assert_eq!(&out[..frame.len()], &frame);
     }
 
     #[test]
