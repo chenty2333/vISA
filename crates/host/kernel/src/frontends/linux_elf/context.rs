@@ -220,7 +220,13 @@ impl ActiveUserContext {
 
     pub(crate) fn record_user_region(&mut self, start: u64, len: u64, writable: bool) {
         if let Some(end) = start.checked_add(len) {
-            self.regions.push(UserRegion { start, end, writable });
+            replace_user_region_range(&mut self.regions, start, end, Some(writable));
+        }
+    }
+
+    pub(crate) fn unmap_user_region(&mut self, start: u64, len: u64) {
+        if let Some(end) = start.checked_add(len) {
+            replace_user_region_range(&mut self.regions, start, end, None);
         }
     }
 
@@ -803,6 +809,50 @@ impl ClockAdjustmentState {
 fn align_up(value: u64, align: u64) -> Option<u64> {
     let mask = align.checked_sub(1)?;
     value.checked_add(mask).map(|value| value & !mask)
+}
+
+fn replace_user_region_range(
+    regions: &mut Vec<UserRegion>,
+    start: u64,
+    end: u64,
+    replacement_writable: Option<bool>,
+) {
+    if start >= end {
+        return;
+    }
+
+    let mut updated = Vec::with_capacity(regions.len().saturating_add(1));
+    for region in regions.drain(..) {
+        if region.end <= start || region.start >= end {
+            updated.push(region);
+            continue;
+        }
+        if region.start < start {
+            updated.push(UserRegion { start: region.start, end: start, writable: region.writable });
+        }
+        if region.end > end {
+            updated.push(UserRegion { start: end, end: region.end, writable: region.writable });
+        }
+    }
+
+    if let Some(writable) = replacement_writable {
+        updated.push(UserRegion { start, end, writable });
+    }
+
+    updated.sort_by_key(|region| (region.start, region.end));
+    for region in updated {
+        if region.start >= region.end {
+            continue;
+        }
+        if let Some(last) = regions.last_mut()
+            && last.writable == region.writable
+            && last.end >= region.start
+        {
+            last.end = last.end.max(region.end);
+            continue;
+        }
+        regions.push(region);
+    }
 }
 
 pub(crate) fn install_active_context(context: &mut ActiveUserContext) {

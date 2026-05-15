@@ -2657,6 +2657,9 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     const PROT_WRITE: u64 = 0x2;
 
+    if frame.rdi & 4095 != 0 {
+        return Err(ERR_EINVAL);
+    }
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     validate_user_range(frame.rdi, len, false)?;
     active_context().record_user_region(frame.rdi, len, frame.rdx & PROT_WRITE != 0);
@@ -2664,10 +2667,16 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
-    let _ = dispatch_ret(
-        "ring3_munmap",
-        SyscallContext::new(SYS_MUNMAP, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
-    );
+    if frame.rdi & 4095 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
+    if len == 0 {
+        return Err(ERR_EINVAL);
+    }
+    let _ =
+        dispatch_ret("ring3_munmap", SyscallContext::new(SYS_MUNMAP, [frame.rdi, len, 0, 0, 0, 0]));
+    active_context().unmap_user_region(frame.rdi, len);
     Ok(0)
 }
 
