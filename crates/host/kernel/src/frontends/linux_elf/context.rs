@@ -42,11 +42,12 @@ pub(crate) struct LoadedUserImage {
 pub(crate) struct UserFrameAllocator {
     memory_regions: &'static [MemoryRegion],
     next: usize,
+    free_frames: Vec<PhysFrame>,
 }
 
 impl UserFrameAllocator {
     pub(crate) fn new(memory_regions: &'static [MemoryRegion]) -> Self {
-        Self { memory_regions, next: 0 }
+        Self { memory_regions, next: 0, free_frames: Vec::new() }
     }
 
     fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
@@ -56,10 +57,17 @@ impl UserFrameAllocator {
             .flat_map(|region| (region.start..region.end).step_by(4096))
             .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
     }
+
+    pub(crate) fn deallocate_frame(&mut self, frame: PhysFrame) {
+        self.free_frames.push(frame);
+    }
 }
 
 unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        if let Some(frame) = self.free_frames.pop() {
+            return Some(frame);
+        }
         let frame = self.usable_frames().nth(self.next);
         self.next += 1;
         frame

@@ -2693,7 +2693,7 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let start = align_page(requested).ok_or(ERR_EINVAL)?;
         let end = align_page(current).ok_or(ERR_EINVAL)?;
         if end > start {
-            protect_active_user_page_range(start, end - start, 0)?;
+            unmap_active_user_page_range(start, end - start)?;
             active_context().unmap_user_region(start, end - start);
         }
     }
@@ -3681,8 +3681,14 @@ fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(),
 
 fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     let context = active_context();
-    unmap_user_page_range(context.physical_memory_offset(), &mut context.page_mappings, start, len)
-        .map_err(|_| ERR_EFAULT)
+    unmap_user_page_range(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        start,
+        len,
+    )
+    .map_err(|_| ERR_EFAULT)
 }
 
 fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {

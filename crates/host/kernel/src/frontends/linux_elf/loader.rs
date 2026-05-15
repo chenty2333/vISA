@@ -139,6 +139,7 @@ pub(crate) fn protect_user_page_range(
 pub(crate) fn unmap_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
     start: u64,
     len: u64,
 ) -> Result<(), &'static str> {
@@ -159,7 +160,17 @@ pub(crate) fn unmap_user_page_range(
             }
         }
     }
-    page_mappings.retain(|mapping| mapping.va < start || mapping.va >= end);
+    let mut retained = Vec::new();
+    for mapping in page_mappings.drain(..) {
+        if mapping.va >= start && mapping.va < end {
+            frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                mapping.frame_start,
+            )));
+        } else {
+            retained.push(mapping);
+        }
+    }
+    *page_mappings = retained;
     Ok(())
 }
 
