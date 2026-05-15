@@ -11,8 +11,9 @@ use service_core::net_contract::{
     PacketDeviceContract, VIRTIO_NET0_CONTRACT, validate_packet_device_contract,
 };
 use smoltcp::{
-    iface::{Config, Interface, PollResult, SocketSet},
+    iface::{Config, Interface, PollResult, SocketHandle, SocketSet},
     phy::{Device, DeviceCapabilities, Loopback, Medium, RxToken, TxToken},
+    socket::tcp,
     time::Instant,
     wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr},
 };
@@ -25,6 +26,8 @@ pub const DEFAULT_IPV4_ADDR: [u8; 4] = [10, 0, 2, 15];
 pub const DEFAULT_IPV4_PREFIX_LEN: u8 = 24;
 pub const DEFAULT_SOCKET_CAPACITY: u16 = 0;
 pub const ETHERNET_HEADER_LEN: usize = 14;
+pub const DEFAULT_TCP_BUFFER_LEN: usize = 4096;
+pub const DEFAULT_EPHEMERAL_PORT_BASE: u16 = 49152;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmoltcpAdapterConfig {
@@ -73,10 +76,31 @@ pub struct SmoltcpPollEvidence {
     pub tx_frames_after: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TcpSocketSnapshot {
+    pub socket_id: u32,
+    pub state: &'static str,
+    pub can_send: bool,
+    pub can_recv: bool,
+    pub may_send: bool,
+    pub may_recv: bool,
+    pub local_port: u16,
+    pub remote_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TcpSocketMapping {
+    socket_id: u32,
+    handle: SocketHandle,
+}
+
 pub struct SmoltcpPacketStack {
     iface: Interface,
     sockets: SocketSet<'static>,
     device: PacketQueueDevice,
+    tcp_sockets: Vec<TcpSocketMapping>,
+    next_tcp_socket_id: u32,
+    next_ephemeral_port: u16,
 }
 
 impl SmoltcpPacketStack {
@@ -94,7 +118,14 @@ impl SmoltcpPacketStack {
         let mut iface = Interface::new(iface_config, &mut device, Instant::from_millis(0));
         install_ipv4_addr(&mut iface, config.ipv4_addr, config.ipv4_prefix_len)?;
 
-        Ok(Self { iface, sockets: SocketSet::new(Vec::new()), device })
+        Ok(Self {
+            iface,
+            sockets: SocketSet::new(Vec::new()),
+            device,
+            tcp_sockets: Vec::new(),
+            next_tcp_socket_id: 1,
+            next_ephemeral_port: DEFAULT_EPHEMERAL_PORT_BASE,
+        })
     }
 
     pub fn enqueue_rx_frame(&mut self, frame: &[u8]) -> Result<(), &'static str> {
@@ -125,6 +156,112 @@ impl SmoltcpPacketStack {
             tx_frames_before,
             tx_frames_after: self.device.pending_tx_frames(),
         }
+    }
+
+    pub fn create_tcp_socket(&mut self) -> Result<u32, &'static str> {
+        let socket_id = self.next_tcp_socket_id;
+        let next_socket_id =
+            self.next_tcp_socket_id.checked_add(1).ok_or("smoltcp tcp socket id exhausted")?;
+        let rx_buffer = tcp::SocketBuffer::new(vec![0; DEFAULT_TCP_BUFFER_LEN]);
+        let tx_buffer = tcp::SocketBuffer::new(vec![0; DEFAULT_TCP_BUFFER_LEN]);
+        let socket = tcp::Socket::new(rx_buffer, tx_buffer);
+        let handle = self.sockets.add(socket);
+        self.next_tcp_socket_id = next_socket_id;
+        self.tcp_sockets.push(TcpSocketMapping { socket_id, handle });
+        Ok(socket_id)
+    }
+
+    pub fn close_tcp_socket(&mut self, socket_id: u32) -> Result<(), &'static str> {
+        let index = self.tcp_socket_index(socket_id)?;
+        let handle = self.tcp_sockets.remove(index).handle;
+        let _ = self.sockets.remove(handle);
+        Ok(())
+    }
+
+    pub fn listen_tcp(&mut self, socket_id: u32, local_port: u16) -> Result<(), &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        self.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .listen(local_port)
+            .map_err(|_| "smoltcp tcp listen failed")
+    }
+
+    pub fn connect_tcp_ipv4(
+        &mut self,
+        socket_id: u32,
+        remote_addr: [u8; 4],
+        remote_port: u16,
+    ) -> Result<u16, &'static str> {
+        if remote_port == 0 {
+            return Err("smoltcp tcp remote port is zero");
+        }
+        let handle = self.tcp_socket_handle(socket_id)?;
+        let local_port = self.allocate_ephemeral_port()?;
+        let remote_addr = IpAddress::Ipv4(Ipv4Address::new(
+            remote_addr[0],
+            remote_addr[1],
+            remote_addr[2],
+            remote_addr[3],
+        ));
+        self.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .connect(self.iface.context(), (remote_addr, remote_port), local_port)
+            .map_err(|_| "smoltcp tcp connect failed")?;
+        Ok(local_port)
+    }
+
+    pub fn send_tcp(&mut self, socket_id: u32, bytes: &[u8]) -> Result<usize, &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        self.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .send_slice(bytes)
+            .map_err(|_| "smoltcp tcp send failed")
+    }
+
+    pub fn recv_tcp(&mut self, socket_id: u32, out: &mut [u8]) -> Result<usize, &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        self.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .recv_slice(out)
+            .map_err(|_| "smoltcp tcp recv failed")
+    }
+
+    pub fn tcp_snapshot(&self, socket_id: u32) -> Result<TcpSocketSnapshot, &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        let socket = self.sockets.get::<tcp::Socket>(handle);
+        let local_port = socket
+            .local_endpoint()
+            .map(|endpoint| endpoint.port)
+            .unwrap_or_else(|| socket.listen_endpoint().port);
+        let remote_port = socket.remote_endpoint().map(|endpoint| endpoint.port).unwrap_or(0);
+        Ok(TcpSocketSnapshot {
+            socket_id,
+            state: tcp_state_name(socket.state()),
+            can_send: socket.can_send(),
+            can_recv: socket.can_recv(),
+            may_send: socket.may_send(),
+            may_recv: socket.may_recv(),
+            local_port,
+            remote_port,
+        })
+    }
+
+    fn tcp_socket_index(&self, socket_id: u32) -> Result<usize, &'static str> {
+        self.tcp_sockets
+            .iter()
+            .position(|mapping| mapping.socket_id == socket_id)
+            .ok_or("smoltcp tcp socket not found")
+    }
+
+    fn tcp_socket_handle(&self, socket_id: u32) -> Result<SocketHandle, &'static str> {
+        Ok(self.tcp_sockets[self.tcp_socket_index(socket_id)?].handle)
+    }
+
+    fn allocate_ephemeral_port(&mut self) -> Result<u16, &'static str> {
+        let port = self.next_ephemeral_port;
+        self.next_ephemeral_port =
+            self.next_ephemeral_port.checked_add(1).ok_or("smoltcp ephemeral port exhausted")?;
+        Ok(port)
     }
 }
 
@@ -317,6 +454,22 @@ const fn poll_result_name(result: PollResult) -> &'static str {
     }
 }
 
+const fn tcp_state_name(state: tcp::State) -> &'static str {
+    match state {
+        tcp::State::Closed => "closed",
+        tcp::State::Listen => "listen",
+        tcp::State::SynSent => "syn-sent",
+        tcp::State::SynReceived => "syn-received",
+        tcp::State::Established => "established",
+        tcp::State::FinWait1 => "fin-wait-1",
+        tcp::State::FinWait2 => "fin-wait-2",
+        tcp::State::CloseWait => "close-wait",
+        tcp::State::Closing => "closing",
+        tcp::State::LastAck => "last-ack",
+        tcp::State::TimeWait => "time-wait",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +532,48 @@ mod tests {
     }
 
     #[test]
+    fn tcp_connect_resolves_arp_and_emits_syn_frame() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let socket = stack.create_tcp_socket().expect("tcp socket");
+        let remote_mac = [0x02, 0, 0, 0, 0, 2];
+        let remote_ip = [10, 0, 2, 2];
+
+        let local_port = stack.connect_tcp_ipv4(socket, remote_ip, 80).expect("connect tcp");
+        assert_eq!(local_port, DEFAULT_EPHEMERAL_PORT_BASE);
+        let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
+        assert_eq!(snapshot.state, "syn-sent");
+        assert_eq!(snapshot.local_port, DEFAULT_EPHEMERAL_PORT_BASE);
+        assert_eq!(snapshot.remote_port, 80);
+
+        let arp_poll = stack.poll(1);
+        assert_eq!(arp_poll.tx_frames_after, 1);
+        let arp = stack.take_tx_frame().expect("arp request");
+        assert_eq!(&arp[0..6], &[0xff; 6]);
+        assert_eq!(&arp[6..12], &VIRTIO_NET0_CONTRACT.mac);
+        assert_eq!(&arp[12..14], &[0x08, 0x06]);
+        assert_eq!(&arp[20..22], &[0x00, 0x01]);
+        assert_eq!(&arp[38..42], &remote_ip);
+
+        let reply = arp_reply(remote_mac, remote_ip, VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
+        stack.enqueue_rx_frame(&reply).expect("enqueue arp reply");
+        let syn_poll = stack.poll(2);
+        assert_eq!(syn_poll.rx_frames_after, 0);
+        assert_eq!(syn_poll.tx_frames_after, 1);
+
+        let syn = stack.take_tx_frame().expect("tcp syn");
+        assert_eq!(&syn[0..6], &remote_mac);
+        assert_eq!(&syn[6..12], &VIRTIO_NET0_CONTRACT.mac);
+        assert_eq!(&syn[12..14], &[0x08, 0x00]);
+        assert_eq!(&syn[26..30], &DEFAULT_IPV4_ADDR);
+        assert_eq!(&syn[30..34], &remote_ip);
+        assert_eq!(syn[23], 0x06);
+        assert_eq!(u16::from_be_bytes([syn[34], syn[35]]), local_port);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), 80);
+        assert_eq!(syn[47] & 0x02, 0x02);
+    }
+
+    #[test]
     fn packet_queue_device_drops_oversized_or_overflow_tx_without_allocating_frame() {
         let mut device = PacketQueueDevice::new(4, 1, 1);
         let token = device.transmit(Instant::from_millis(0)).expect("tx token");
@@ -408,6 +603,28 @@ mod tests {
         frame[18] = 6;
         frame[19] = 4;
         frame[20..22].copy_from_slice(&[0x00, 0x01]);
+        frame[22..28].copy_from_slice(&sender_mac);
+        frame[28..32].copy_from_slice(&sender_ip);
+        frame[32..38].copy_from_slice(&target_mac);
+        frame[38..42].copy_from_slice(&target_ip);
+        frame
+    }
+
+    fn arp_reply(
+        sender_mac: [u8; 6],
+        sender_ip: [u8; 4],
+        target_mac: [u8; 6],
+        target_ip: [u8; 4],
+    ) -> [u8; 42] {
+        let mut frame = [0u8; 42];
+        frame[0..6].copy_from_slice(&target_mac);
+        frame[6..12].copy_from_slice(&sender_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+        frame[14..16].copy_from_slice(&[0x00, 0x01]);
+        frame[16..18].copy_from_slice(&[0x08, 0x00]);
+        frame[18] = 6;
+        frame[19] = 4;
+        frame[20..22].copy_from_slice(&[0x00, 0x02]);
         frame[22..28].copy_from_slice(&sender_mac);
         frame[28..32].copy_from_slice(&sender_ip);
         frame[32..38].copy_from_slice(&target_mac);
