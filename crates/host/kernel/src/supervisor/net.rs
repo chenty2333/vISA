@@ -9,11 +9,13 @@ use super::{
     authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec},
     linux::LinuxCallResult,
     runtime::PrototypeRuntime,
+    services::DriverNetEventKind,
     types::ServiceCallError,
 };
 use crate::interrupts;
 
 const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
+const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NetStackSocketMode {
@@ -367,11 +369,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(Some(LinuxCallResult::Bytes(out)))
     }
 
-    pub(super) fn net_stack_socket_readable(&mut self, socket_id: u32) -> Option<bool> {
+    pub(super) fn net_stack_socket_readable(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Option<bool> {
         let index = self.net_stack_socket_index(socket_id)?;
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return None;
         }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_recv)
     }
@@ -390,15 +400,86 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: Option<ResourceId>,
     ) {
+        let now_ticks = interrupts::tick_count();
         let now_ms = net_stack_now_ms();
+        self.poll_net_stack_driver_events(now_ticks);
         let _ = self.net_stack.poll(now_ms);
         while let Some(frame) = self.net_stack.take_tx_frame() {
-            self.semantic.record_packet_transmitted(
-                self.net.interface.id,
-                socket_resource,
-                ready_key,
-                frame.len(),
-            );
+            // PacketTransmitted is only valid after the backend accepts the frame.
+            match self.net_driver.submit_tx_frame(now_ticks, &frame) {
+                Ok(submitted) if submitted > 0 => {
+                    self.semantic.record_packet_transmitted(
+                        self.net.interface.id,
+                        socket_resource,
+                        ready_key,
+                        frame.len(),
+                    );
+                }
+                Ok(_) => {
+                    crate::kwarn!("driver_virtio_net ignored smoltcp tx frame");
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", reason);
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", err);
+                }
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx errno={}", errno);
+                }
+            }
+        }
+    }
+
+    fn poll_net_stack_driver_events(&mut self, now_ticks: u64) {
+        for _ in 0..NET_STACK_DRIVER_EVENT_LIMIT {
+            let event = match self.net_driver.poll_device(now_ticks) {
+                Ok(event) => event,
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("driver_virtio_net poll for smoltcp: {}", reason);
+                    break;
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("driver_virtio_net poll for smoltcp: {}", err);
+                    break;
+                }
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("driver_virtio_net poll for smoltcp errno={}", errno);
+                    break;
+                }
+            };
+            match event.kind {
+                DriverNetEventKind::None => break,
+                DriverNetEventKind::Irq => self.semantic.record_device_irq_delivered(
+                    self.net.irq.id,
+                    self.net.device.id,
+                    "virtio-net-rx",
+                ),
+                DriverNetEventKind::DmaSubmitted => self.semantic.record_dma_submitted(
+                    self.net.dma_buffer.id,
+                    self.net.device.id,
+                    event.len as usize,
+                ),
+                DriverNetEventKind::DmaCompleted => self.semantic.record_dma_completed(
+                    self.net.dma_buffer.id,
+                    self.net.device.id,
+                    event.len as usize,
+                ),
+                DriverNetEventKind::DriverCompletion => {
+                    self.semantic.record_driver_completion(self.net.device.id, "virtio-net-rx")
+                }
+                DriverNetEventKind::PacketRx => {
+                    self.semantic.record_packet_received(
+                        self.net.interface.id,
+                        None,
+                        0,
+                        event.frame.len(),
+                    );
+                    if let Err(err) = self.net_stack.enqueue_rx_frame(&event.frame) {
+                        crate::kwarn!("smoltcp enqueue driver rx frame: {}", err);
+                    }
+                }
+            }
         }
     }
 

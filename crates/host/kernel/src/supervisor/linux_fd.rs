@@ -1493,13 +1493,13 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn socket_ready_key_is_readable(&mut self, ready_key: u64) -> bool {
-        let Some((socket_id, _)) = self.socket_for_ready_key(ready_key) else {
+        let Some((socket_id, handle)) = self.socket_for_ready_key(ready_key) else {
             return false;
         };
         if self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0) {
             return true;
         }
-        if let Some(readable) = self.net_stack_socket_readable(socket_id) {
+        if let Some(readable) = self.net_stack_socket_readable(socket_id, ready_key, handle) {
             return readable;
         }
         self.net_core.poll_socket(socket_id).map(|events| events & EPOLLIN != 0).unwrap_or(false)
