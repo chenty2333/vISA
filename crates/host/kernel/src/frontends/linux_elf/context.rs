@@ -111,6 +111,8 @@ pub(crate) struct SuspendedCloneParent {
     pub(crate) child_pid: u32,
     pub(crate) next_activation_id: u64,
     pub(crate) return_context: UserReturnContext,
+    fs_shared: bool,
+    cwd: Vec<u8>,
     credential: CredentialState,
     io_owner: i64,
     io_owner_ex_type: u32,
@@ -613,6 +615,7 @@ impl ActiveUserContext {
         child_pid: u32,
         child_tid: u32,
         return_context: UserReturnContext,
+        fs_shared: bool,
     ) {
         debug_assert!(self.suspended_clone_parent.is_none());
         self.suspended_clone_parent = Some(SuspendedCloneParent {
@@ -622,6 +625,8 @@ impl ActiveUserContext {
             child_pid,
             next_activation_id: self.next_activation_id,
             return_context,
+            fs_shared,
+            cwd: self.cwd.clone(),
             credential: self.credential_state(),
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
@@ -737,6 +742,8 @@ impl ActiveUserContext {
             child_pid: _,
             next_activation_id,
             return_context: _,
+            fs_shared,
+            cwd,
             credential,
             io_owner,
             io_owner_ex_type,
@@ -750,6 +757,9 @@ impl ActiveUserContext {
         self.tid = tid;
         self.activation_id = 0;
         self.next_activation_id = next_activation_id;
+        if !fs_shared {
+            self.cwd = cwd;
+        }
         self.restore_credential_state(credential);
         self.io_owner = io_owner;
         self.io_owner_ex_type = io_owner_ex_type;

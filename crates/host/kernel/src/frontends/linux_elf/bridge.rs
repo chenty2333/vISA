@@ -1786,7 +1786,6 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let tls_base = frame.r8;
     let shared_vm_flags_supported = flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0
         && flags & CLONE_VM != 0
-        && flags & CLONE_FS != 0
         && flags & CLONE_FILES != 0;
     let shared_vm_preflight_ok =
         shared_vm_flags_supported && stack != 0 && flags & CLONE_EXIT_SIGNAL_MASK <= 64;
@@ -1866,6 +1865,7 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
         child_pid,
         child_tid_runtime,
         parent_return,
+        flags & CLONE_FS != 0,
     );
     active_context().supervisor.set_current_task(child_task_id);
     ring3::install_user_return(frame, child_return);

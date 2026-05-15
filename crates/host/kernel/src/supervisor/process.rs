@@ -202,10 +202,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         capability_sets: LinuxCapSets,
         clear_child_tid: Option<u64>,
     ) -> Result<(TaskId, Pid, Tid), i32> {
-        // This is the first non-vfork executable clone subset. It only returns
-        // success when all resources that are still global in the prototype are
-        // explicitly shared by Linux flags. Non-CLONE_VM fork stays ENOSYS until
-        // address-space cloning/COW exists.
+        // This is the first non-vfork executable clone subset. It still
+        // requires a shared fd table because fd resource lifetimes are global
+        // in the prototype; the Linux ELF context snapshots cwd when CLONE_FS
+        // is not requested. Non-CLONE_VM fork stays ENOSYS until address-space
+        // cloning/COW exists.
         if flags & CLONE_NS_MASK != 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
@@ -221,7 +222,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & CLONE_VM == 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
-        if flags & CLONE_FS == 0 || flags & CLONE_FILES == 0 {
+        if flags & CLONE_FILES == 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
         if child_stack == 0 {
