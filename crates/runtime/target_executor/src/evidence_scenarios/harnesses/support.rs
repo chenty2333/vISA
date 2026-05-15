@@ -145,16 +145,17 @@ pub(crate) fn declared_authority_objects(
     declarations
 }
 
-pub(crate) fn append_cwasm_smoke_hostcalls(
-    code: &mut CodeObject,
+pub(crate) fn append_cwasm_smoke_hostcall_specs(
+    hostcalls: &mut Vec<HostcallSpec>,
     module_index: usize,
+    package: &str,
     smoke_trace: &[HostValidationSmokeTrace],
 ) {
     for (index, trace) in smoke_trace.iter().enumerate() {
         let number = cwasm_smoke_hostcall_number(module_index, index);
         let name = format!("cwasm.host-validation.{}", trace.export);
-        let object = format!("host-validation.{}", code.package);
-        code.hostcalls.push(HostcallSpec::new(
+        let object = format!("host-validation.{package}");
+        hostcalls.push(HostcallSpec::new(
             number,
             &name,
             HostcallCategory::Service,
@@ -175,11 +176,7 @@ pub(crate) fn run_cwasm_smoke_evidence(
 ) -> Result<(), Box<dyn Error>> {
     for (index, trace) in smoke_trace.iter().enumerate() {
         let activation = executor
-            .start_activation(
-                &store.store,
-                code,
-                ActivationEntry::Symbol(format!("cwasm-smoke:{}", trace.export)),
-            )
+            .start_activation(&store.store, code, ActivationEntry::Symbol(trace.export.clone()))
             .map_err(|error| error.message())?;
         if trace.trap.is_some() {
             executor.synthetic_trap(

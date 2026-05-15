@@ -730,9 +730,19 @@ fn extern_kind(ty: ExternType) -> &'static str {
 }
 
 fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
-    let manifest_dir =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest dir")?);
-    Ok(manifest_dir.parent().ok_or("aotc must live in workspace root")?.to_path_buf())
+    let mut dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest dir")?);
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if fs::read_to_string(&cargo_toml)
+            .map(|contents| contents.contains("[workspace]"))
+            .unwrap_or(false)
+        {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            return Err("aotc could not locate workspace root".into());
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

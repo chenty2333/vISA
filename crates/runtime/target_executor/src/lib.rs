@@ -234,6 +234,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     record_network_runtime_n7_evidence(&mut semantic)?;
     record_network_runtime_n8_evidence(&mut semantic)?;
     record_network_runtime_n9_evidence(&mut semantic)?;
+    record_network_runtime_n21_evidence(&mut semantic)?;
     record_network_runtime_n10_evidence(&mut semantic)?;
     record_network_runtime_n11_evidence(&mut semantic)?;
     record_network_runtime_n12_evidence(&mut semantic)?;
@@ -476,7 +477,16 @@ fn build_target_executor_v1(
     let mut verified_artifacts = Vec::new();
 
     for (index, entry) in plan.modules.iter().enumerate() {
-        let image = target_artifact_image((index + 1) as u64, entry, plan);
+        let mut image = target_artifact_image((index + 1) as u64, entry, plan);
+        let runtime_store = runtime_stores.iter().find(|store| store.package == entry.package);
+        if let Some(runtime_store) = runtime_store {
+            append_cwasm_smoke_hostcall_specs(
+                &mut image.hostcalls,
+                index,
+                &entry.package,
+                &runtime_store.smoke_trace,
+            );
+        }
         report.target_artifacts.push(target_artifact_manifest(&image));
         let verified = registry.verify(image).map_err(|error| error.message())?;
         verified_artifacts.push(verified.clone());
@@ -497,19 +507,11 @@ fn build_target_executor_v1(
             store_manager.record(store_id).ok_or("store manager lost store after register")?;
         grant_verified_capabilities(&mut ledger, &verified, store_id, store.store.generation)?;
         publisher.bind_to_store(code_id, &store.store).map_err(|error| error.message())?;
-        if let Some(runtime_store) =
-            runtime_stores.iter().find(|store| store.package == entry.package)
-        {
-            let code_object = publisher.object_mut(code_id).map_err(|error| error.message())?;
-            append_cwasm_smoke_hostcalls(code_object, index, &runtime_store.smoke_trace);
-        }
         let code =
             publisher.object(code_id).ok_or("publisher lost code object after bind")?.clone();
 
         run_activation_harness(index, &mut executor, store, &code, &ledger)?;
-        if let Some(runtime_store) =
-            runtime_stores.iter().find(|store| store.package == entry.package)
-        {
+        if let Some(runtime_store) = runtime_store {
             run_cwasm_smoke_evidence(
                 index,
                 &mut executor,
@@ -672,14 +674,16 @@ fn build_target_executor_v1(
     run_integrated_display_panic_harness(semantic)?;
     run_integrated_osctl_trace_replay_harness(semantic)?;
 
-    let snapshot_validation =
-        SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state());
+    let snapshot_validation = portable_artifact_validation_report(
+        SnapshotBarrierValidator::validate(&executor.snapshot_barrier_validation_state()),
+    );
     report.snapshot_validation = boundary_validation_report_manifest(&snapshot_validation);
     executor.snapshot_barrier().map_err(|error| error.message())?;
     let replay_record_modes =
         executor.hostcall_trace().iter().map(|trace| trace.record_mode).collect::<Vec<_>>();
     let replay_state = ReplayPackageValidationState::clean(replay_record_modes);
-    let replay_validation = PackageReplayValidator::validate(&replay_state);
+    let replay_validation =
+        portable_artifact_validation_report(PackageReplayValidator::validate(&replay_state));
     report.replay_validation = boundary_validation_report_manifest(&replay_validation);
     for policy in memory_class_policies() {
         report.memory_policies.push(memory_policy_manifest(policy));
@@ -764,6 +768,16 @@ fn build_target_executor_v1(
     Ok(report)
 }
 
+fn portable_artifact_validation_report(
+    report: BoundaryValidationReport,
+) -> BoundaryValidationReport {
+    BoundaryValidationReport::with_evidence_boundary(
+        report.validator,
+        EvidenceBoundaryLevel::PortableArtifactExecution,
+        report.violations,
+    )
+}
+
 fn target_artifact_image(
     id: u64,
     entry: &ValidatedArtifactEntry,
@@ -791,6 +805,9 @@ fn target_artifact_image(
     image.signature_verified = entry.signature_verified;
     image.signer = entry.signer.clone();
     image.exports = entry.expected_exports.clone();
+    if !image.exports.iter().any(|export| export == "vmos_service_entry") {
+        image.exports.push("vmos_service_entry".to_owned());
+    }
     image.payload_len = entry.cwasm_sha256.len();
     image.address_map.push(TargetAddressMapEntry::new("vmos_service_entry", 0, 64));
     image.trap_metadata.push(TargetTrapMetadata::new(
