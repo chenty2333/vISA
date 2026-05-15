@@ -1249,6 +1249,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     return Err(ERR_EINVAL);
                 }
             }
+            self.close_net_stack_socket(socket_id);
             match self.net_core.close_socket(socket_id) {
                 Ok(()) | Err(ServiceCallError::Errno(ERR_EBADF)) => {}
                 Err(ServiceCallError::Errno(errno)) => return Err(errno),
@@ -1401,6 +1402,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         if self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0) {
             return true;
+        }
+        if let Some(readable) = self.net_stack_socket_readable(socket_id) {
+            return readable;
         }
         self.net_core.poll_socket(socket_id).map(|events| events & EPOLLIN != 0).unwrap_or(false)
     }

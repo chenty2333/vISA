@@ -944,6 +944,7 @@ dependencies = [
  "contract_validate",
  "hex",
  "linked_list_allocator",
+ "net_stack_adapter",
  "pic8259",
  "semantic_core",
  "service_core",

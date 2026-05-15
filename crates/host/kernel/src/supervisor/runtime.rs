@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::ptr::null_mut;
 
+use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
 use semantic_core::{FrontendKind, ResourceHandle, SemanticGraph, TaskState};
 use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
@@ -9,7 +10,7 @@ use super::{
     authority::AuthorityPlane,
     engine::RuntimeOnlyExecutor,
     linux::LinuxFrontend,
-    net::NetworkPlane,
+    net::{NetStackSocketBinding, NetworkPlane},
     pulse::PulseDevice,
     scheduler::Scheduler,
     semantic::bootstrap_graph,
@@ -63,6 +64,8 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) futex: FutexService,
     pub(super) net_core: NetCoreService,
     pub(super) linux_socket: LinuxSocketService,
+    pub(super) net_stack: SmoltcpPacketStack,
+    pub(super) net_stack_sockets: Vec<NetStackSocketBinding>,
     pub(super) net_driver: DriverVirtioNetService,
     pub(super) replay_snapshot: ReplaySnapshotService,
     pub(super) linux: LinuxFrontend,
@@ -131,6 +134,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let net_core = NetCoreService::new(engine)?;
         crate::kdebug!("instantiating linux_socket_service");
         let linux_socket = LinuxSocketService::new(engine)?;
+        crate::kdebug!("instantiating smoltcp packet stack");
+        let net_stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())?;
         crate::kdebug!("instantiating driver_virtio_net");
         let net_driver = DriverVirtioNetService::new(engine)?;
         crate::kdebug!("instantiating replay_snapshot");
@@ -152,6 +157,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             futex,
             net_core,
             linux_socket,
+            net_stack,
+            net_stack_sockets: Vec::new(),
             net_driver,
             replay_snapshot,
             linux,

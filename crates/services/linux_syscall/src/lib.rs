@@ -71,7 +71,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_EPOLL_WAIT => plan_epoll_wait(a0, a1, a2),
         SYS_SOCKET => plan_socket(a0, a1, a2),
         SYS_BIND => plan_bind(a0, a1, a2),
-        SYS_CONNECT => plan_connect(a0, a1, a2),
+        SYS_CONNECT => plan_connect(a0, a1, a2, a3, a4, a5),
         SYS_LISTEN => plan_listen(a0, a1),
         SYS_ACCEPT => plan_accept(a0, a1, a2),
         SYS_SENDTO => plan_sendto(a0, a1, a2, a3, a4, a5),
@@ -372,8 +372,15 @@ fn plan_bind(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Bind)
 }
 
-fn plan_connect(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
-    reset_plan(PlanKind::Connect, [fd, addr, addr_len, 0, 0, 0]);
+fn plan_connect(
+    fd: u64,
+    addr: u64,
+    addr_len: u64,
+    family: u64,
+    ipv4_addr: u64,
+    port: u64,
+) -> PackedStep {
+    reset_plan(PlanKind::Connect, [fd, addr, addr_len, family, ipv4_addr, port]);
     PackedStep::plan(PlanKind::Connect)
 }
 
@@ -667,6 +674,27 @@ fn c_field(value: &[u8]) -> [u8; UTS_FIELD_LEN] {
 
 fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_plan_preserves_sockaddr_metadata() {
+        let ipv4 = u32::from_be_bytes([10, 0, 2, 2]);
+        let raw = dispatch(SYS_CONNECT, 7, 0x1000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 80);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Connect));
+        assert_eq!(plan_arg(0), 7);
+        assert_eq!(plan_arg(1), 0x1000);
+        assert_eq!(plan_arg(2), 16);
+        assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
+        assert_eq!(plan_arg(4), ipv4 as u64);
+        assert_eq!(plan_arg(5), 80);
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

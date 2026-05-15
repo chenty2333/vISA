@@ -190,6 +190,8 @@ pub const ERR_EISCONN: i32 = 106;
 pub const ERR_ENOTCONN: i32 = 107;
 pub const ERR_ETIMEDOUT: i32 = 110;
 pub const ERR_ECONNREFUSED: i32 = 111;
+pub const ERR_EALREADY: i32 = 114;
+pub const ERR_EINPROGRESS: i32 = 115;
 
 const TAG_SHIFT: u64 = 60;
 const AUX_SHIFT: u64 = 32;

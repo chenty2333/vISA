@@ -42,24 +42,49 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ready_key = match self.net_core.ready_key(socket_id) {
             Ok(key) => key,
             Err(ServiceCallError::Errno(errno)) => {
+                let _ = self.net_core.close_socket(socket_id);
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
+                let _ = self.net_core.close_socket(socket_id);
                 crate::kwarn!("net_core ready_key: {}", reason);
                 return Err("net_core trapped while creating socket");
             }
-            Err(ServiceCallError::Invalid(err)) => return Err(err),
+            Err(ServiceCallError::Invalid(err)) => {
+                let _ = self.net_core.close_socket(socket_id);
+                return Err(err);
+            }
+        };
+        if let Err(err) = self.create_net_stack_socket_if_supported(socket_id, domain, ty, protocol)
+        {
+            let _ = self.net_core.close_socket(socket_id);
+            return match err {
+                ServiceCallError::Errno(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+                ServiceCallError::Trap(reason) => {
+                    crate::kwarn!("smoltcp create socket: {}", reason);
+                    Err("smoltcp trapped during socket")
+                }
+                ServiceCallError::Invalid(err) => Err(err),
+            };
         };
         match self.linux_socket.register_socket(socket_id, domain, ty, protocol, ready_key) {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
+                self.close_net_stack_socket(socket_id);
+                let _ = self.net_core.close_socket(socket_id);
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
+                self.close_net_stack_socket(socket_id);
+                let _ = self.net_core.close_socket(socket_id);
                 crate::kwarn!("linux_socket register_socket: {}", reason);
                 return Err("linux_socket_service trapped during socket");
             }
-            Err(ServiceCallError::Invalid(err)) => return Err(err),
+            Err(ServiceCallError::Invalid(err)) => {
+                self.close_net_stack_socket(socket_id);
+                let _ = self.net_core.close_socket(socket_id);
+                return Err(err);
+            }
         }
 
         let fd = match self.alloc_fd(FdEntry {
@@ -70,7 +95,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             cursor_group: None,
         }) {
             Ok(fd) => fd,
-            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(errno) => {
+                let _ = self.linux_socket.close_socket(socket_id);
+                self.close_net_stack_socket(socket_id);
+                let _ = self.net_core.close_socket(socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
         };
         if let Some(handle) = self.fd_handle(fd) {
             self.semantic.record_socket_state_changed(handle.id, "open");
@@ -93,7 +123,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let fd = u32::try_from(plan.args[0]).map_err(|_| "socket fd overflowed")?;
-        let (socket_id, _, handle) = match self.socket_fd_snapshot(fd) {
+        let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -104,6 +134,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
+        if matches!(plan.kind, PlanKind::Connect) {
+            let family = u32::try_from(plan.args[3]).map_err(|_| "connect family overflowed")?;
+            let remote_ipv4 =
+                u32::try_from(plan.args[4]).map_err(|_| "connect ipv4 overflowed")?.to_be_bytes();
+            let remote_port = u16::try_from(plan.args[5]).map_err(|_| "connect port overflowed")?;
+            if family == AF_INET && remote_port != 0 && self.has_net_stack_socket(socket_id) {
+                return self.connect_net_stack_tcp(
+                    socket_id,
+                    ready_key,
+                    handle,
+                    remote_ipv4,
+                    remote_port,
+                );
+            }
+        }
         let result = match plan.kind {
             PlanKind::Bind => {
                 let addr_len =
@@ -295,6 +340,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
+        if let Some(result) = self.net_stack_send_socket(socket_id, ready_key, handle, &bytes)? {
+            return Ok(result);
+        }
         match self.linux_socket.send_socket(socket_id, len) {
             Ok(_) => {}
             Err(ServiceCallError::Errno(errno)) => {
@@ -358,7 +406,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let fd = u32::try_from(plan.args[0]).map_err(|_| "recvfrom fd overflowed")?;
         let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
-        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+        let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -369,6 +417,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
+        if let Some(result) = self.net_stack_recv_socket(socket_id, ready_key, handle, count)? {
+            return Ok(result);
+        }
         match self.net_core.recv_socket(socket_id, count) {
             Ok(bytes) => {
                 let _ = self.linux_socket.recv_socket(socket_id, bytes.len() as u32);

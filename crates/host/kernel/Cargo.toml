@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 bootloader_api.workspace = true
 linked_list_allocator.workspace = true
+net_stack_adapter.workspace = true
 pic8259.workspace = true
 semantic_core.workspace = true
 service_core.workspace = true
