@@ -14,6 +14,7 @@ use super::super::{
 };
 
 const DRIVER_VIRTIO_NET_WASM: &[u8] = include_bytes!(env!("VMOS_DRIVER_VIRTIO_NET_WASM"));
+const ETHERNET_HEADER_LEN: usize = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DriverNetEventKind {
@@ -137,15 +138,24 @@ impl DriverVirtioNetService {
             }
             let frame =
                 self.io.read_response(frame_len as u32).map_err(ServiceCallError::Invalid)?;
-            let payload_len = decode_frame(&frame)
-                .map(|(meta, _)| meta.payload_len)
-                .map_err(|_| ServiceCallError::Invalid("driver returned an invalid frame"))?;
+            let payload_len = driver_rx_len(&frame)?;
             (frame, payload_len)
         } else {
             (Vec::new(), len)
         };
         Ok(DriverNetEvent { kind, len: payload_len, frame })
     }
+}
+
+fn driver_rx_len(frame: &[u8]) -> Result<u32, ServiceCallError> {
+    if let Ok((meta, _)) = decode_frame(frame) {
+        return Ok(meta.payload_len);
+    }
+    if frame.len() >= ETHERNET_HEADER_LEN {
+        return u32::try_from(frame.len())
+            .map_err(|_| ServiceCallError::Invalid("driver returned an oversized raw frame"));
+    }
+    Err(ServiceCallError::Invalid("driver returned an invalid frame"))
 }
 
 fn validate_network_contract(

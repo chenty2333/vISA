@@ -12,6 +12,8 @@ use service_core::{
 
 use crate::supervisor::{engine::SupervisorEngine, types::ServiceCallError};
 
+const ETHERNET_HEADER_LEN: usize = 14;
+
 pub(crate) struct NetCoreService {
     state: &'static mut NetCoreState,
 }
@@ -242,13 +244,23 @@ impl DriverVirtioNetService {
         if event.kind == DriverNetEventKind::PacketRx {
             let frame_len = map_errno(self.state.dequeue_rx_frame(&mut frame))?;
             frame.truncate(frame_len as usize);
-            payload_len =
-                decode_frame(&frame).map(|(meta, _)| meta.payload_len).unwrap_or(frame_len);
+            payload_len = driver_rx_len(&frame)?;
         } else {
             frame.clear();
         }
         Ok(DriverNetEvent { kind: event.kind, len: payload_len, frame })
     }
+}
+
+fn driver_rx_len(frame: &[u8]) -> Result<u32, ServiceCallError> {
+    if let Ok((meta, _)) = decode_frame(frame) {
+        return Ok(meta.payload_len);
+    }
+    if frame.len() >= ETHERNET_HEADER_LEN {
+        return u32::try_from(frame.len())
+            .map_err(|_| ServiceCallError::Invalid("driver returned an oversized raw frame"));
+    }
+    Err(ServiceCallError::Invalid("driver returned an invalid frame"))
 }
 
 pub(crate) struct ReplaySnapshotService {
