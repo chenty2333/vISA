@@ -179,6 +179,45 @@ pub(crate) fn install_user_return(frame: &mut SyscallFrame, context: UserReturnC
     }
 }
 
+pub(crate) fn resume_user_return(context: UserReturnContext) -> ! {
+    FsBase::write(VirtAddr::new(context.fs_base));
+    unsafe {
+        SAVED_USER_RSP = context.rsp;
+    }
+
+    let selectors = &GDT.1;
+    let user_code = selectors.user_code.0 as u64;
+    let user_data = selectors.user_data.0 as u64;
+    let user_rflags = context.frame.r11 | 0x202;
+    let user_entry = context.frame.rcx;
+    let user_stack = context.rsp;
+    let frame = context.frame;
+
+    unsafe {
+        asm!(
+            "push {user_data}",
+            "push {user_stack}",
+            "push {user_rflags}",
+            "push {user_code}",
+            "push {user_entry}",
+            "iretq",
+            user_data = in(reg) user_data,
+            user_stack = in(reg) user_stack,
+            user_rflags = in(reg) user_rflags,
+            user_code = in(reg) user_code,
+            user_entry = in(reg) user_entry,
+            in("r9") frame.r9,
+            in("r8") frame.r8,
+            in("r10") frame.r10,
+            in("rdx") frame.rdx,
+            in("rsi") frame.rsi,
+            in("rdi") frame.rdi,
+            in("rax") frame.rax,
+            options(noreturn),
+        );
+    }
+}
+
 pub(crate) fn enter_user_mode(entry: u64, stack_top: u64) -> ! {
     let selectors = &GDT.1;
     let user_code = selectors.user_code.0 as u64;

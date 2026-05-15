@@ -3002,23 +3002,8 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32> {
-    let pid = active_context().pid;
-    handle_robust_list_on_exit();
-    clear_child_tid_on_exit();
-    active_context().supervisor.process_exit(pid, status);
-    if let Some(parent) = active_context().take_vfork_parent_for_child(pid) {
-        let return_context = parent.return_context;
-        active_context().restore_vfork_parent(parent);
-        let parent_task_id = active_context().task_id;
-        active_context().supervisor.set_current_task(parent_task_id);
-        ring3::install_user_return(frame, return_context);
-        return Ok(return_context.frame.rax as i64);
-    }
-    if let Some(parent) = active_context().take_clone_parent_for_child(pid) {
-        let return_context = parent.return_context;
-        active_context().restore_clone_parent(parent);
-        let parent_task_id = active_context().task_id;
-        active_context().supervisor.set_current_task(parent_task_id);
+    let pid = complete_current_process_exit(status);
+    if let Some(return_context) = restore_suspended_parent_after_child_exit(pid) {
         ring3::install_user_return(frame, return_context);
         return Ok(return_context.frame.rax as i64);
     }
@@ -3027,18 +3012,38 @@ fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32
 }
 
 fn handle_exit(status: i32) -> ! {
-    let (pid, activation_id) = {
-        let context = active_context();
-        (context.pid, context.activation_id)
-    };
+    let pid = complete_current_process_exit(status);
+    finish_active_activation();
+    if let Some(return_context) = restore_suspended_parent_after_child_exit(pid) {
+        ring3::resume_user_return(return_context);
+    }
+    finish_exited_runtime(status)
+}
+
+fn complete_current_process_exit(status: i32) -> u32 {
+    let pid = active_context().pid;
     handle_robust_list_on_exit();
     clear_child_tid_on_exit();
     active_context().supervisor.process_exit(pid, status);
-    if activation_id != 0 {
-        crate::substrate::dmw::finish_activation(activation_id);
-        active_context().finish_activation(activation_id);
+    pid
+}
+
+fn restore_suspended_parent_after_child_exit(child_pid: u32) -> Option<UserReturnContext> {
+    if let Some(parent) = active_context().take_vfork_parent_for_child(child_pid) {
+        let return_context = parent.return_context;
+        active_context().restore_vfork_parent(parent);
+        let parent_task_id = active_context().task_id;
+        active_context().supervisor.set_current_task(parent_task_id);
+        return Some(return_context);
     }
-    finish_exited_runtime(status)
+    if let Some(parent) = active_context().take_clone_parent_for_child(child_pid) {
+        let return_context = parent.return_context;
+        active_context().restore_clone_parent(parent);
+        let parent_task_id = active_context().task_id;
+        active_context().supervisor.set_current_task(parent_task_id);
+        return Some(return_context);
+    }
+    None
 }
 
 fn handle_robust_list_on_exit() {
