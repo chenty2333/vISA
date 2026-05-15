@@ -13,7 +13,7 @@ use x86_64::{
 };
 use xmas_elf::{ElfFile, program::Type as ProgramType};
 
-use super::context::{LoadedUserImage, UserPageMapping, UserRegion};
+use super::context::{LoadedUserImage, UserFrameAllocator, UserPageMapping, UserRegion};
 
 const PAGE_SIZE: usize = 4096;
 const USER_STACK_PAGES: usize = 2048;
@@ -73,7 +73,8 @@ fn prot_is_none(prot: u64) -> bool {
 
 pub(crate) fn protect_user_page_range(
     physical_memory_offset: u64,
-    page_mappings: &mut [UserPageMapping],
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
     start: u64,
     len: u64,
     prot: u64,
@@ -83,11 +84,11 @@ pub(crate) fn protect_user_page_range(
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let flags = user_page_flags(prot);
     for page_addr in user_page_iter(start, len)? {
-        let mapping =
-            user_page_mapping_mut(page_mappings, page_addr).ok_or("user page metadata missing")?;
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
         if prot_is_none(prot) {
-            if mapping.present {
+            if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr)
+                && mapping.present
+            {
                 match mapper.unmap(page) {
                     Ok((frame, flush)) => {
                         mapping.frame_start = frame.start_address().as_u64();
@@ -106,19 +107,30 @@ pub(crate) fn protect_user_page_range(
             continue;
         }
 
-        if mapping.present {
+        if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr) {
+            if !mapping.present {
+                remap_user_page(&mut mapper, page, mapping, flags, frame_allocator)?;
+                continue;
+            }
             match unsafe { mapper.update_flags(page, flags) } {
                 Ok(flush) => flush.flush(),
                 Err(FlagUpdateError::PageNotMapped) => {
                     mapping.present = false;
-                    remap_user_page(&mut mapper, page, mapping, flags)?;
+                    remap_user_page(&mut mapper, page, mapping, flags, frame_allocator)?;
                 }
                 Err(FlagUpdateError::ParentEntryHugePage) => {
                     return Err("user page parent entry is a huge page");
                 }
             }
         } else {
-            remap_user_page(&mut mapper, page, mapping, flags)?;
+            map_new_user_page(
+                &mut mapper,
+                page_mappings,
+                frame_allocator,
+                phys_offset,
+                page,
+                flags,
+            )?;
         }
     }
     Ok(())
@@ -163,10 +175,10 @@ fn remap_user_page(
     page: Page<Size4KiB>,
     mapping: &mut UserPageMapping,
     flags: PageTableFlags,
+    frame_allocator: &mut UserFrameAllocator,
 ) -> Result<(), &'static str> {
     let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
-    let mut allocator = NoFrameAllocator;
-    match unsafe { mapper.map_to(page, frame, flags, &mut allocator) } {
+    match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
         Ok(flush) => {
             mapping.present = true;
             flush.flush();
@@ -190,42 +202,42 @@ fn remap_user_page(
     }
 }
 
-fn unmap_reserved_user_pages(
+fn map_new_user_page(
     mapper: &mut OffsetPageTable<'_>,
-    page_mappings: &mut [UserPageMapping],
-    start: u64,
-    len: u64,
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
+    phys_offset: VirtAddr,
+    page: Page<Size4KiB>,
+    flags: PageTableFlags,
 ) -> Result<(), &'static str> {
-    for page_addr in user_page_iter(start, len)? {
-        let mapping =
-            user_page_mapping_mut(page_mappings, page_addr).ok_or("user page metadata missing")?;
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
-        if !mapping.present {
-            continue;
+    let frame = frame_allocator.allocate_frame().ok_or("out of usable frames for user page")?;
+    match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
+        Ok(flush) => {
+            flush.flush();
+            frame_bytes(frame, phys_offset).fill(0);
+            page_mappings.push(UserPageMapping {
+                va: page.start_address().as_u64(),
+                frame_start: frame.start_address().as_u64(),
+                present: true,
+            });
+            Ok(())
         }
-        match mapper.unmap(page) {
-            Ok((frame, flush)) => {
-                mapping.frame_start = frame.start_address().as_u64();
-                mapping.present = false;
-                flush.flush();
-            }
-            Err(UnmapError::PageNotMapped) => mapping.present = false,
-            Err(UnmapError::ParentEntryHugePage) => {
-                return Err("user page parent entry is a huge page");
-            }
-            Err(UnmapError::InvalidFrameAddress(_)) => {
-                return Err("user page has an invalid frame address");
-            }
-        }
+        Err(MapToError::PageAlreadyMapped(_)) => Err("user page is already mapped"),
+        Err(MapToError::ParentEntryHugePage) => Err("user page parent entry is a huge page"),
+        Err(MapToError::FrameAllocationFailed) => Err("user page table frame allocation failed"),
     }
-    Ok(())
 }
 
-pub(crate) fn load_demo_program(boot_info: &BootInfo) -> Result<LoadedUserImage, &'static str> {
+pub(crate) fn load_demo_program(
+    boot_info: &'static BootInfo,
+) -> Result<LoadedUserImage, &'static str> {
     load_user_program(boot_info, &LINUX_USER_DEMO_ELF.0)
 }
 
-fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserImage, &'static str> {
+fn load_user_program(
+    boot_info: &'static BootInfo,
+    bytes: &[u8],
+) -> Result<LoadedUserImage, &'static str> {
     let phys_offset = boot_info
         .physical_memory_offset
         .as_ref()
@@ -236,7 +248,7 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
     let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
-    let mut frame_allocator = BootInfoFrameAllocator::new(&boot_info.memory_regions);
+    let mut frame_allocator = UserFrameAllocator::new(&boot_info.memory_regions);
     let mut regions = Vec::new();
     let mut page_mappings = Vec::new();
 
@@ -283,27 +295,6 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         });
     }
 
-    let anon_flags = PageTableFlags::PRESENT
-        | PageTableFlags::WRITABLE
-        | PageTableFlags::USER_ACCESSIBLE
-        | PageTableFlags::NO_EXECUTE;
-    map_user_pages(
-        &mut mapper,
-        &mut frame_allocator,
-        &mut page_mappings,
-        phys_offset,
-        USER_MMAP_BASE,
-        USER_MMAP_END,
-        &[],
-        anon_flags,
-    )?;
-    unmap_reserved_user_pages(
-        &mut mapper,
-        &mut page_mappings,
-        USER_MMAP_BASE,
-        USER_MMAP_END - USER_MMAP_BASE,
-    )?;
-
     let initial_stack = build_initial_stack(&elf)?;
     map_user_stack(
         &mut mapper,
@@ -325,12 +316,13 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         stack_top: initial_stack.stack_pointer,
         regions,
         page_mappings,
+        frame_allocator,
     })
 }
 
 fn map_user_pages(
     mapper: &mut OffsetPageTable<'_>,
-    frame_allocator: &mut BootInfoFrameAllocator<'_>,
+    frame_allocator: &mut UserFrameAllocator,
     page_mappings: &mut Vec<UserPageMapping>,
     phys_offset: VirtAddr,
     virt_start: u64,
@@ -377,7 +369,7 @@ fn map_user_pages(
 
 fn map_user_stack(
     mapper: &mut OffsetPageTable<'_>,
-    frame_allocator: &mut BootInfoFrameAllocator<'_>,
+    frame_allocator: &mut UserFrameAllocator,
     page_mappings: &mut Vec<UserPageMapping>,
     phys_offset: VirtAddr,
     initial_stack: &InitialStack,
@@ -533,41 +525,6 @@ unsafe fn active_level_4_table(phys_offset: VirtAddr) -> &'static mut PageTable 
     let (frame, _) = Cr3::read();
     let virt = phys_offset + frame.start_address().as_u64();
     unsafe { &mut *virt.as_mut_ptr() }
-}
-
-struct BootInfoFrameAllocator<'a> {
-    memory_regions: &'a [bootloader_api::info::MemoryRegion],
-    next: usize,
-}
-
-impl<'a> BootInfoFrameAllocator<'a> {
-    fn new(memory_regions: &'a [bootloader_api::info::MemoryRegion]) -> Self {
-        Self { memory_regions, next: 0 }
-    }
-
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
-        self.memory_regions
-            .iter()
-            .filter(|region| region.kind == bootloader_api::info::MemoryRegionKind::Usable)
-            .flat_map(|region| (region.start..region.end).step_by(PAGE_SIZE))
-            .map(|addr| PhysFrame::containing_address(x86_64::PhysAddr::new(addr)))
-    }
-}
-
-unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator<'_> {
-    fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.usable_frames().nth(self.next);
-        self.next += 1;
-        frame
-    }
-}
-
-struct NoFrameAllocator;
-
-unsafe impl FrameAllocator<Size4KiB> for NoFrameAllocator {
-    fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        None
-    }
 }
 
 fn align_up(value: usize, align: usize) -> usize {

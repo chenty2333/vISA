@@ -100,7 +100,7 @@ const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
 
-pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
+pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
     let image = load_demo_program(boot_info)?;
     let physical_memory_offset = boot_info
@@ -114,6 +114,7 @@ pub(crate) fn run_demo(boot_info: &BootInfo) -> Result<(), &'static str> {
         supervisor,
         image.regions,
         image.page_mappings,
+        image.frame_allocator,
         task_id,
         1, // pid: bootstrap init process
         1, // tid: bootstrap thread
@@ -2651,7 +2652,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         if frame.rdi & 4095 != 0 {
             return Err(ERR_EINVAL);
         }
-        validate_user_page_metadata_range(frame.rdi, len)?;
+        validate_reserved_user_page_range(frame.rdi, len)?;
         frame.rdi
     } else {
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
@@ -3603,7 +3604,7 @@ fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
     validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
 }
 
-fn validate_user_page_metadata_range(ptr: u64, len: u64) -> Result<(), i32> {
+fn validate_reserved_user_page_range(ptr: u64, len: u64) -> Result<(), i32> {
     if len == 0 {
         return Ok(());
     }
@@ -3613,14 +3614,6 @@ fn validate_user_page_metadata_range(ptr: u64, len: u64) -> Result<(), i32> {
     }
     if ptr < USER_BRK_BASE || end > USER_MMAP_END {
         return Err(ERR_EFAULT);
-    }
-    let mappings = &active_context().page_mappings;
-    let mut page = ptr;
-    while page < end {
-        if !mappings.iter().any(|mapping| mapping.va == page) {
-            return Err(ERR_EFAULT);
-        }
-        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
     Ok(())
 }
@@ -3678,6 +3671,7 @@ fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(),
     protect_user_page_range(
         context.physical_memory_offset(),
         &mut context.page_mappings,
+        &mut context.frame_allocator,
         start,
         len,
         prot,

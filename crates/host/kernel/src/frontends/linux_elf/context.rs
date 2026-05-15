@@ -1,6 +1,12 @@
 use alloc::vec::Vec;
 use core::ptr::null_mut;
 
+use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
+use x86_64::{
+    PhysAddr,
+    structures::paging::{FrameAllocator, PhysFrame, Size4KiB},
+};
+
 use crate::{
     substrate::ring3::UserReturnContext,
     supervisor::{
@@ -30,6 +36,34 @@ pub(crate) struct LoadedUserImage {
     pub(crate) stack_top: u64,
     pub(crate) regions: Vec<UserRegion>,
     pub(crate) page_mappings: Vec<UserPageMapping>,
+    pub(crate) frame_allocator: UserFrameAllocator,
+}
+
+pub(crate) struct UserFrameAllocator {
+    memory_regions: &'static [MemoryRegion],
+    next: usize,
+}
+
+impl UserFrameAllocator {
+    pub(crate) fn new(memory_regions: &'static [MemoryRegion]) -> Self {
+        Self { memory_regions, next: 0 }
+    }
+
+    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
+        self.memory_regions
+            .iter()
+            .filter(|region| region.kind == MemoryRegionKind::Usable)
+            .flat_map(|region| (region.start..region.end).step_by(4096))
+            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+    }
+}
+
+unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        let frame = self.usable_frames().nth(self.next);
+        self.next += 1;
+        frame
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -48,6 +82,7 @@ pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
     pub(crate) regions: Vec<UserRegion>,
     pub(crate) page_mappings: Vec<UserPageMapping>,
+    pub(crate) frame_allocator: UserFrameAllocator,
     pub(crate) task_id: TaskId,
     pub(crate) pid: u32,
     pub(crate) tid: u32,
@@ -159,6 +194,7 @@ impl ActiveUserContext {
         supervisor: &'static mut PrototypeRuntime<'static>,
         regions: Vec<UserRegion>,
         page_mappings: Vec<UserPageMapping>,
+        frame_allocator: UserFrameAllocator,
         task_id: TaskId,
         pid: u32,
         tid: u32,
@@ -172,6 +208,7 @@ impl ActiveUserContext {
             supervisor,
             regions,
             page_mappings,
+            frame_allocator,
             task_id,
             pid,
             tid,
