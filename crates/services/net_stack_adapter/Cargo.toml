@@ -7,3 +7,4 @@ edition = "2024"
 [dependencies]
 service_core.workspace = true
 smoltcp.workspace = true
+substrate_api.workspace = true

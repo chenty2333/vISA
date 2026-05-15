@@ -17,6 +17,7 @@ use smoltcp::{
     time::Instant,
     wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr},
 };
+use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
 
 pub const SMOLTCP_ADAPTER_IMPLEMENTATION: &str = "smoltcp";
 pub const SMOLTCP_ADAPTER_VERSION: &str = "0.13.0";
@@ -28,6 +29,7 @@ pub const DEFAULT_SOCKET_CAPACITY: u16 = 0;
 pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const DEFAULT_TCP_BUFFER_LEN: usize = 4096;
 pub const DEFAULT_EPHEMERAL_PORT_BASE: u16 = 49152;
+pub const BACKEND_RX_BATCH: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmoltcpAdapterConfig {
@@ -76,6 +78,13 @@ pub struct SmoltcpPollEvidence {
     pub tx_frames_after: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackendPumpEvidence {
+    pub rx_frames_delivered: usize,
+    pub tx_frames_submitted: usize,
+    pub poll: SmoltcpPollEvidence,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TcpSocketSnapshot {
     pub socket_id: u32,
@@ -98,6 +107,7 @@ pub struct SmoltcpPacketStack {
     iface: Interface,
     sockets: SocketSet<'static>,
     device: PacketQueueDevice,
+    contract: PacketDeviceContract,
     tcp_sockets: Vec<TcpSocketMapping>,
     next_tcp_socket_id: u32,
     next_ephemeral_port: u16,
@@ -122,6 +132,7 @@ impl SmoltcpPacketStack {
             iface,
             sockets: SocketSet::new(Vec::new()),
             device,
+            contract: config.contract,
             tcp_sockets: Vec::new(),
             next_tcp_socket_id: 1,
             next_ephemeral_port: DEFAULT_EPHEMERAL_PORT_BASE,
@@ -156,6 +167,52 @@ impl SmoltcpPacketStack {
             tx_frames_before,
             tx_frames_after: self.device.pending_tx_frames(),
         }
+    }
+
+    pub fn init_backend<B: PacketDeviceBackend>(&self, backend: &mut B) -> SubstrateResult<()> {
+        backend.init(self.contract.mac)?;
+        if backend.mtu() < self.contract.mtu as usize {
+            return Err(SubstrateError::ContractViolation {
+                detail: "packet backend mtu is smaller than smoltcp contract mtu",
+            });
+        }
+        Ok(())
+    }
+
+    pub fn pump_backend<B: PacketDeviceBackend>(
+        &mut self,
+        backend: &mut B,
+        now_ms: i64,
+    ) -> SubstrateResult<BackendPumpEvidence> {
+        let mut rx_slots: [PacketFrameSlot; BACKEND_RX_BATCH] =
+            core::array::from_fn(|_| PacketFrameSlot::new());
+        let rx_frames = backend.poll_rx(&mut rx_slots)?;
+        for slot in rx_slots.iter().take(rx_frames) {
+            let len = slot.len as usize;
+            if len > slot.data.len() {
+                return Err(SubstrateError::ContractViolation {
+                    detail: "packet backend returned an invalid frame slot length",
+                });
+            }
+            self.enqueue_rx_frame(&slot.data[..len]).map_err(|_| {
+                SubstrateError::ContractViolation {
+                    detail: "packet backend delivered frame rejected by smoltcp queue",
+                }
+            })?;
+        }
+
+        let poll = self.poll(now_ms);
+        let mut tx_frames = 0usize;
+        while let Some(frame) = self.take_tx_frame() {
+            backend.submit_tx(&frame)?;
+            tx_frames += 1;
+        }
+
+        Ok(BackendPumpEvidence {
+            rx_frames_delivered: rx_frames,
+            tx_frames_submitted: tx_frames,
+            poll,
+        })
     }
 
     pub fn create_tcp_socket(&mut self) -> Result<u32, &'static str> {
@@ -532,6 +589,32 @@ mod tests {
     }
 
     #[test]
+    fn packet_backend_pump_bridges_raw_frames_into_smoltcp() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let remote_mac = [0x02, 0, 0, 0, 0, 2];
+        let request =
+            arp_request(remote_mac, [10, 0, 2, 2], VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
+        let mut backend = InMemoryPacketBackend::new();
+        backend.rx.push(request.to_vec());
+
+        stack.init_backend(&mut backend).expect("init backend");
+        assert_eq!(backend.init_mac, Some(VIRTIO_NET0_CONTRACT.mac));
+        let evidence = stack.pump_backend(&mut backend, 1).expect("pump backend");
+
+        assert_eq!(evidence.rx_frames_delivered, 1);
+        assert_eq!(evidence.poll.rx_frames_before, 1);
+        assert_eq!(evidence.poll.rx_frames_after, 0);
+        assert_eq!(evidence.tx_frames_submitted, 1);
+        assert_eq!(backend.tx.len(), 1);
+        let reply = &backend.tx[0];
+        assert_eq!(&reply[0..6], &remote_mac);
+        assert_eq!(&reply[6..12], &VIRTIO_NET0_CONTRACT.mac);
+        assert_eq!(&reply[12..14], &[0x08, 0x06]);
+        assert_eq!(&reply[20..22], &[0x00, 0x02]);
+    }
+
+    #[test]
     fn tcp_connect_resolves_arp_and_emits_syn_frame() {
         let mut stack =
             SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
@@ -608,6 +691,53 @@ mod tests {
         frame[32..38].copy_from_slice(&target_mac);
         frame[38..42].copy_from_slice(&target_ip);
         frame
+    }
+
+    struct InMemoryPacketBackend {
+        init_mac: Option<[u8; 6]>,
+        rx: Vec<Vec<u8>>,
+        tx: Vec<Vec<u8>>,
+        mtu: usize,
+    }
+
+    impl InMemoryPacketBackend {
+        fn new() -> Self {
+            Self { init_mac: None, rx: Vec::new(), tx: Vec::new(), mtu: 1500 }
+        }
+    }
+
+    impl PacketDeviceBackend for InMemoryPacketBackend {
+        fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
+            self.init_mac = Some(mac);
+            Ok(())
+        }
+
+        fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
+            self.tx.push(frame.to_vec());
+            Ok(())
+        }
+
+        fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+            let count = self.rx.len().min(out.len());
+            for slot in out.iter_mut().take(count) {
+                let frame = self.rx.remove(0);
+                if frame.len() > slot.data.len() {
+                    return Err(SubstrateError::ContractViolation {
+                        detail: "test packet frame exceeds slot capacity",
+                    });
+                }
+                slot.len =
+                    u16::try_from(frame.len()).map_err(|_| SubstrateError::ContractViolation {
+                        detail: "test packet frame length overflow",
+                    })?;
+                slot.data[..frame.len()].copy_from_slice(&frame);
+            }
+            Ok(count)
+        }
+
+        fn mtu(&self) -> usize {
+            self.mtu
+        }
     }
 
     fn arp_reply(
