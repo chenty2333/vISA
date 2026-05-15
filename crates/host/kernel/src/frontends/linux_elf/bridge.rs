@@ -1806,8 +1806,11 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     } else {
         None
     };
-    let clear_child_tid =
-        if flags & CLONE_CHILD_CLEARTID != 0 { Some(child_tid_ptr) } else { None };
+    let clear_child_tid = if flags & CLONE_CHILD_CLEARTID != 0 && child_tid_ptr != 0 {
+        Some(child_tid_ptr)
+    } else {
+        None
+    };
 
     let (parent_pid, parent_tid_runtime, credential) = {
         let context = active_context();

@@ -2280,6 +2280,15 @@ pub enum EventKind {
         tid: u32,
         task_id: u64,
     },
+    ThreadClearChildTidChanged {
+        tid: u32,
+        clear_child_tid: Option<u64>,
+    },
+    ThreadRobustListChanged {
+        tid: u32,
+        head: Option<u64>,
+        len: usize,
+    },
     ThreadGroupCreated {
         tgid: u32,
     },

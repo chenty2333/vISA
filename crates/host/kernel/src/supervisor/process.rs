@@ -157,7 +157,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         ) {
             return Err(vmos_abi::ERR_EINVAL);
         }
-
         self.next_pid = next_id;
         self.next_tid = next_id;
         self.processes.push(ProcessRuntimeState {
@@ -285,6 +284,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         ) {
             return Err(vmos_abi::ERR_EINVAL);
         }
+        if clear_child_tid.is_some()
+            && !self.semantic.set_thread_clear_child_tid_by_tid(child_tid, clear_child_tid)
+        {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
 
         self.next_pid = next_id;
         self.next_tid = next_id;
@@ -320,6 +324,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         tid: Tid,
         clear_child_tid: Option<u64>,
     ) -> Result<(), i32> {
+        if !self.threads.iter().any(|thread| thread.tid == tid) {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        if clear_child_tid == Some(0) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if !self.semantic.set_thread_clear_child_tid_by_tid(tid, clear_child_tid) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
         let thread =
             self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
         thread.clear_child_tid = clear_child_tid;
@@ -327,10 +340,15 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn take_thread_clear_child_tid(&mut self, tid: Tid) -> Option<u64> {
-        self.threads
+        let clear_child_tid = self
+            .threads
             .iter_mut()
             .find(|thread| thread.tid == tid)
-            .and_then(|thread| thread.clear_child_tid.take())
+            .and_then(|thread| thread.clear_child_tid.take());
+        if clear_child_tid.is_some() {
+            let _ = self.semantic.set_thread_clear_child_tid_by_tid(tid, None);
+        }
+        clear_child_tid
     }
 
     pub(crate) fn set_thread_robust_list(
@@ -338,6 +356,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         tid: Tid,
         registration: Option<RobustListRegistration>,
     ) -> Result<(), i32> {
+        if !self.threads.iter().any(|thread| thread.tid == tid) {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let (head, len) = match registration {
+            Some(registration) => {
+                if registration.head == 0 {
+                    return Err(vmos_abi::ERR_EINVAL);
+                }
+                let len = usize::try_from(registration.len).map_err(|_| vmos_abi::ERR_EINVAL)?;
+                (Some(registration.head), len)
+            }
+            None => (None, 0),
+        };
+        if !self.semantic.set_thread_robust_list_by_tid(tid, head, len) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
         let thread =
             self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
         thread.robust_list = registration;
@@ -345,10 +379,15 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn take_thread_robust_list(&mut self, tid: Tid) -> Option<RobustListRegistration> {
-        self.threads
+        let registration = self
+            .threads
             .iter_mut()
             .find(|thread| thread.tid == tid)
-            .and_then(|thread| thread.robust_list.take())
+            .and_then(|thread| thread.robust_list.take());
+        if registration.is_some() {
+            let _ = self.semantic.set_thread_robust_list_by_tid(tid, None, 0);
+        }
+        registration
     }
 
     /// Transition a process to Zombie state with the given exit code.

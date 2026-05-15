@@ -347,6 +347,64 @@ impl SemanticGraph {
         self.domains.process.threads.iter().find(|r| r.id == id)
     }
 
+    pub fn set_thread_clear_child_tid_by_tid(
+        &mut self,
+        tid: u32,
+        clear_child_tid: Option<u64>,
+    ) -> bool {
+        if clear_child_tid == Some(0) {
+            return false;
+        }
+        let Some(thread) = self.domains.process.threads.iter_mut().find(|r| r.tid == tid) else {
+            return false;
+        };
+        if thread.clear_child_tid == clear_child_tid {
+            return true;
+        }
+
+        thread.clear_child_tid = clear_child_tid;
+        thread.generation += 1;
+        let thread_ref = thread.object_ref();
+        for thread_group in &mut self.domains.process.thread_groups {
+            if thread_group.leader.id == thread_ref.id {
+                thread_group.leader = thread_ref;
+            }
+        }
+        self.event_log
+            .push("thread", EventKind::ThreadClearChildTidChanged { tid, clear_child_tid });
+        true
+    }
+
+    pub fn set_thread_robust_list_by_tid(
+        &mut self,
+        tid: u32,
+        head: Option<u64>,
+        len: usize,
+    ) -> bool {
+        if head.is_none() && len != 0 {
+            return false;
+        }
+
+        let Some(thread) = self.domains.process.threads.iter_mut().find(|r| r.tid == tid) else {
+            return false;
+        };
+        if thread.robust_list_head == head && thread.robust_list_len == len {
+            return true;
+        }
+
+        thread.robust_list_head = head;
+        thread.robust_list_len = len;
+        thread.generation += 1;
+        let thread_ref = thread.object_ref();
+        for thread_group in &mut self.domains.process.thread_groups {
+            if thread_group.leader.id == thread_ref.id {
+                thread_group.leader = thread_ref;
+            }
+        }
+        self.event_log.push("thread", EventKind::ThreadRobustListChanged { tid, head, len });
+        true
+    }
+
     // ── ThreadGroup ──
 
     pub fn create_thread_group(
@@ -854,6 +912,12 @@ impl SemanticGraph {
             {
                 violations.push(format!("thread {}: dangling thread_group", thread.tid));
             }
+            if thread.clear_child_tid == Some(0) {
+                violations.push(format!("thread {}: clear_child_tid is null", thread.tid));
+            }
+            if thread.robust_list_head.is_none() && thread.robust_list_len != 0 {
+                violations.push(format!("thread {}: robust_list_len without head", thread.tid));
+            }
         }
         for thread_group in &self.domains.process.thread_groups {
             if thread_group.id == 0 {
@@ -1009,6 +1073,8 @@ fn process_records_are_valid(
             && contains_fd_table_ref(fd_tables, thread.fd_table)
             && contains_credential_ref(credentials, thread.credential)
             && contains_thread_group_ref(thread_groups, thread.thread_group)
+            && thread.clear_child_tid != Some(0)
+            && (thread.robust_list_head.is_some() || thread.robust_list_len == 0)
     }) && thread_groups.iter().all(|thread_group| {
         thread_group.id != 0
             && thread_group.generation != 0
@@ -1175,6 +1241,39 @@ mod tests {
         assert_eq!(snapshot.threads[0].credential, credential.object_ref());
         assert_eq!(snapshot.threads[0].generation, before_thread.generation + 1);
         assert_eq!(snapshot.thread_groups[0].leader, snapshot.threads[0].object_ref());
+        assert!(graph.check_invariants().is_ok());
+    }
+
+    #[test]
+    fn robust_list_registration_updates_thread_generation_and_snapshot() {
+        let mut graph = graph_with_bootstrapped_process_family();
+        let before = graph.snapshot();
+        let before_thread = before.threads[0].object_ref();
+
+        assert!(!graph.set_thread_clear_child_tid_by_tid(1, Some(0)));
+        assert!(graph.set_thread_clear_child_tid_by_tid(1, Some(0x3000)));
+        let snapshot = graph.snapshot();
+        assert_eq!(snapshot.threads[0].clear_child_tid, Some(0x3000));
+        assert_eq!(snapshot.threads[0].generation, before_thread.generation + 1);
+        assert_eq!(snapshot.thread_groups[0].leader, snapshot.threads[0].object_ref());
+        assert!(graph.check_invariants().is_ok());
+
+        assert!(graph.set_thread_robust_list_by_tid(1, Some(0x4000), 24));
+
+        let snapshot = graph.snapshot();
+        assert_eq!(snapshot.threads[0].robust_list_head, Some(0x4000));
+        assert_eq!(snapshot.threads[0].robust_list_len, 24);
+        assert_eq!(snapshot.threads[0].clear_child_tid, Some(0x3000));
+        assert_eq!(snapshot.threads[0].generation, before_thread.generation + 2);
+        assert_eq!(snapshot.thread_groups[0].leader, snapshot.threads[0].object_ref());
+        assert!(graph.check_invariants().is_ok());
+
+        assert!(graph.set_thread_clear_child_tid_by_tid(1, None));
+        assert!(graph.set_thread_robust_list_by_tid(1, None, 0));
+        let snapshot = graph.snapshot();
+        assert_eq!(snapshot.threads[0].clear_child_tid, None);
+        assert_eq!(snapshot.threads[0].robust_list_head, None);
+        assert_eq!(snapshot.threads[0].robust_list_len, 0);
         assert!(graph.check_invariants().is_ok());
     }
 
