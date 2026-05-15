@@ -15,6 +15,7 @@ pub(crate) struct UserRegion {
     pub(crate) end: u64,
     pub(crate) readable: bool,
     pub(crate) writable: bool,
+    pub(crate) executable: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -239,9 +240,15 @@ impl ActiveUserContext {
         len: u64,
         readable: bool,
         writable: bool,
+        executable: bool,
     ) {
         if let Some(end) = start.checked_add(len) {
-            replace_user_region_range(&mut self.regions, start, end, Some((readable, writable)));
+            replace_user_region_range(
+                &mut self.regions,
+                start,
+                end,
+                Some((readable, writable, executable)),
+            );
         }
     }
 
@@ -855,7 +862,7 @@ fn replace_user_region_range(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement: Option<(bool, bool)>,
+    replacement: Option<(bool, bool, bool)>,
 ) {
     if start >= end {
         return;
@@ -873,6 +880,7 @@ fn replace_user_region_range(
                 end: start,
                 readable: region.readable,
                 writable: region.writable,
+                executable: region.executable,
             });
         }
         if region.end > end {
@@ -881,12 +889,13 @@ fn replace_user_region_range(
                 end: region.end,
                 readable: region.readable,
                 writable: region.writable,
+                executable: region.executable,
             });
         }
     }
 
-    if let Some((readable, writable)) = replacement {
-        updated.push(UserRegion { start, end, readable, writable });
+    if let Some((readable, writable, executable)) = replacement {
+        updated.push(UserRegion { start, end, readable, writable, executable });
     }
 
     updated.sort_by_key(|region| (region.start, region.end));
@@ -897,6 +906,7 @@ fn replace_user_region_range(
         if let Some(last) = regions.last_mut()
             && last.readable == region.readable
             && last.writable == region.writable
+            && last.executable == region.executable
             && last.end >= region.start
         {
             last.end = last.end.max(region.end);

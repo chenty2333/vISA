@@ -2658,19 +2658,15 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     };
 
     let existing_ranges = active_context().mapped_user_subranges(addr, len);
-    let had_existing_mapping = !existing_ranges.is_empty();
     for (start, end) in existing_ranges {
         protect_active_user_page_range(start, end - start, frame.rdx)?;
-    }
-    if !had_existing_mapping && frame.rdx & PROT_EXEC != 0 {
-        protect_active_user_page_range(addr, len, frame.rdx)?;
     }
     let _ = dispatch_ret(
         "ring3_mmap",
         SyscallContext::new(SYS_MMAP, [addr, len, frame.rdx, frame.r10, frame.r8, frame.r9]),
     );
-    let (readable, writable) = prot_user_region_permissions(frame.rdx);
-    active_context().record_user_region(addr, len, readable, writable);
+    let (readable, writable, executable) = prot_user_region_permissions(frame.rdx);
+    active_context().record_user_region(addr, len, readable, writable, executable);
     Ok(addr as i64)
 }
 
@@ -2690,7 +2686,7 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let start = align_page(current).ok_or(ERR_EINVAL)?;
         let end = align_page(requested).ok_or(ERR_EINVAL)?;
         if end > start {
-            active_context().record_user_region(start, end - start, true, true);
+            active_context().record_user_region(start, end - start, true, true, false);
         }
     } else if requested < current {
         let start = align_page(requested).ok_or(ERR_EINVAL)?;
@@ -2712,8 +2708,8 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     validate_mapped_user_range(frame.rdi, len)?;
     protect_active_user_page_range(frame.rdi, len, frame.rdx)?;
-    let (readable, writable) = prot_user_region_permissions(frame.rdx);
-    active_context().record_user_region(frame.rdi, len, readable, writable);
+    let (readable, writable, executable) = prot_user_region_permissions(frame.rdx);
+    active_context().record_user_region(frame.rdi, len, readable, writable, executable);
     Ok(0)
 }
 
@@ -3713,11 +3709,19 @@ fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
 
 fn user_page_region_prot(page: u64) -> Option<u64> {
     let region = active_context().regions.iter().rev().find(|region| {
-        page >= region.start && page < region.end && (region.readable || region.writable)
+        page >= region.start
+            && page < region.end
+            && (region.readable || region.writable || region.executable)
     })?;
-    let mut prot = PROT_READ;
+    let mut prot = 0;
+    if region.readable || region.writable {
+        prot |= PROT_READ;
+    }
     if region.writable {
         prot |= PROT_WRITE;
+    }
+    if region.executable {
+        prot |= PROT_EXEC;
     }
     Some(prot)
 }
@@ -3727,35 +3731,44 @@ pub(crate) fn try_handle_user_page_fault(
     write: bool,
     instruction_fetch: bool,
 ) -> bool {
-    if instruction_fetch {
-        return false;
-    }
     let Some(context) = try_active_context() else {
         return false;
     };
     let page = fault_va & !4095;
     let Some(region) = context.regions.iter().rev().find(|region| {
-        fault_va >= region.start && fault_va < region.end && (region.readable || region.writable)
+        fault_va >= region.start
+            && fault_va < region.end
+            && (region.readable || region.writable || region.executable)
     }) else {
         return false;
     };
+    if instruction_fetch && !region.executable {
+        return false;
+    }
     if write && !region.writable {
         return false;
     }
-    if !write && !region.readable {
+    if !write && !instruction_fetch && !region.readable {
         return false;
     }
-    let mut prot = PROT_READ;
+    let mut prot = 0;
+    if region.readable || region.writable {
+        prot |= PROT_READ;
+    }
     if region.writable {
         prot |= PROT_WRITE;
+    }
+    if region.executable {
+        prot |= PROT_EXEC;
     }
     protect_active_user_page_range(page, 4096, prot).is_ok()
 }
 
-fn prot_user_region_permissions(prot: u64) -> (bool, bool) {
+fn prot_user_region_permissions(prot: u64) -> (bool, bool, bool) {
     let writable = prot & PROT_WRITE != 0;
     let readable = writable || prot & PROT_READ != 0;
-    (readable, writable)
+    let executable = prot & PROT_EXEC != 0;
+    (readable, writable, executable)
 }
 
 fn align_page(value: u64) -> Option<u64> {

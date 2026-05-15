@@ -279,6 +279,7 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
             end: align_up(virt_end as usize, PAGE_SIZE) as u64,
             readable: ph.flags().is_read(),
             writable: ph.flags().is_write(),
+            executable: ph.flags().is_execute(),
         });
     }
 
@@ -316,6 +317,7 @@ fn load_user_program(boot_info: &BootInfo, bytes: &[u8]) -> Result<LoadedUserIma
         end: USER_STACK_TOP,
         readable: true,
         writable: true,
+        executable: false,
     });
 
     Ok(LoadedUserImage {
