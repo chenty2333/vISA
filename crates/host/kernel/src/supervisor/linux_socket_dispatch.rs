@@ -1,11 +1,19 @@
-use vmos_abi::{AF_INET, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM};
+use vmos_abi::{
+    AF_INET, ERR_EAGAIN, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
+};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{FdEntry, FdResource, ServiceCallError},
+    wait::WaitRegistration,
 };
 use crate::interrupts;
+
+const SOCK_CLOEXEC: u32 = 0o2000000;
+const SOCK_NONBLOCK: u32 = 0o0004000;
+const FD_CLOEXEC: u32 = 1;
+const O_NONBLOCK: u32 = 0o4000;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -117,6 +125,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         match result {
             Ok(()) => {
                 self.semantic.record_socket_state_changed(handle.id, state);
+                if matches!(plan.kind, PlanKind::Connect) {
+                    match self.linux_socket.accept_ready_key_for_client(socket_id) {
+                        Ok(Some(ready_key)) => {
+                            self.notify_ready_key(ready_key, "socket accept readiness");
+                            self.drain_event_queue();
+                        }
+                        Ok(None) | Err(ServiceCallError::Errno(_)) => {}
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("linux_socket accept ready key: {}", reason);
+                        }
+                        Err(ServiceCallError::Invalid(err)) => {
+                            crate::kwarn!("linux_socket accept ready key: {}", err);
+                        }
+                    }
+                }
                 Ok(LinuxCallResult::Ret(0))
             }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
@@ -128,18 +151,42 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn plan_accept(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self.require_capability("linux_syscall", "linux.socket", "accept").is_err() {
+        if self.require_capability("linux_syscall", "linux.socket", "accept").is_err()
+            || self.require_capability("net_core", "net.socket", "create").is_err()
+        {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "accept fd overflowed")?;
         let flags = u32::try_from(plan.args[3]).map_err(|_| "accept flags overflowed")?;
-        const SOCK_CLOEXEC: u32 = 0o2000000;
-        const SOCK_NONBLOCK: u32 = 0o0004000;
-        const FD_CLOEXEC: u32 = 1;
-        const O_NONBLOCK: u32 = 0o4000;
         if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
             return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
         }
+        let result = self.try_accept_fd(fd, flags)?;
+        if !matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EAGAIN as i64)) {
+            return Ok(result);
+        }
+        let status_flags = match self.file_status_flags(fd) {
+            Ok(flags) => flags,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if status_flags & O_NONBLOCK != 0 {
+            return Ok(result);
+        }
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::SocketAccept { fd, flags },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        Ok(LinuxCallResult::Pending(token))
+    }
+
+    pub(super) fn try_accept_fd(
+        &mut self,
+        fd: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         if !self.can_allocate_fds(1) {
             return Ok(LinuxCallResult::Ret(-(ERR_EMFILE as i64)));
         }

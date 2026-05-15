@@ -1284,7 +1284,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some((socket_id, _)) = self.socket_for_ready_key(ready_key) else {
             return false;
         };
+        if self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0) {
+            return true;
+        }
         self.net_core.poll_socket(socket_id).map(|events| events & EPOLLIN != 0).unwrap_or(false)
+    }
+
+    pub(super) fn socket_accept_fd_is_ready(&mut self, fd: u32) -> bool {
+        let Ok((socket_id, _, _)) = self.socket_fd_snapshot(fd) else {
+            return false;
+        };
+        self.linux_socket.pending_accept_count(socket_id).is_ok_and(|pending| pending > 0)
     }
 
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {

@@ -144,6 +144,17 @@ impl LinuxSocketService {
         map_errno(self.state.accept_socket(socket_id, accepted_socket_id, ready_key))
     }
 
+    pub(crate) fn pending_accept_count(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
+        map_errno(self.state.pending_accept_count(socket_id))
+    }
+
+    pub(crate) fn accept_ready_key_for_client(
+        &mut self,
+        socket_id: u32,
+    ) -> Result<Option<u64>, ServiceCallError> {
+        map_errno(self.state.accept_ready_key_for_client(socket_id))
+    }
+
     pub(crate) fn send_socket(
         &mut self,
         socket_id: u32,

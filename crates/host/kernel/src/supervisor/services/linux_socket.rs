@@ -15,6 +15,8 @@ pub(crate) struct LinuxSocketService {
     connect_socket: WasmFn<(u32, u32), i32>,
     listen_socket: WasmFn<(u32, u32), i32>,
     accept_socket: WasmFn<(u32, u32, u64), i32>,
+    pending_accept_count: WasmFn<u32, i32>,
+    accept_ready_key_for_client: WasmFn<u32, u64>,
     send_socket: WasmFn<(u32, u32), i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
     setsockopt: WasmFn<(u32, u32, u32, u32), i32>,
@@ -40,6 +42,12 @@ impl LinuxSocketService {
             io.bind("listen_socket", "missing linux_socket listen_socket export")?;
         let accept_socket =
             io.bind("accept_socket", "missing linux_socket accept_socket export")?;
+        let pending_accept_count =
+            io.bind("pending_accept_count", "missing linux_socket pending_accept_count export")?;
+        let accept_ready_key_for_client = io.bind(
+            "accept_ready_key_for_client",
+            "missing linux_socket accept_ready_key_for_client export",
+        )?;
         let send_socket = io.bind("send_socket", "missing linux_socket send_socket export")?;
         let recv_socket = io.bind("recv_socket", "missing linux_socket recv_socket export")?;
         let setsockopt = io.bind("setsockopt", "missing linux_socket setsockopt export")?;
@@ -59,6 +67,8 @@ impl LinuxSocketService {
             connect_socket,
             listen_socket,
             accept_socket,
+            pending_accept_count,
+            accept_ready_key_for_client,
             send_socket,
             recv_socket,
             setsockopt,
@@ -155,6 +165,25 @@ impl LinuxSocketService {
                 )
                 .map_err(ServiceCallError::Trap)?,
         )
+    }
+
+    pub(crate) fn pending_accept_count(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
+        expect_len(
+            self.io
+                .call(&self.pending_accept_count, socket_id, "linux_socket_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn accept_ready_key_for_client(
+        &mut self,
+        socket_id: u32,
+    ) -> Result<Option<u64>, ServiceCallError> {
+        let key = self
+            .io
+            .call(&self.accept_ready_key_for_client, socket_id, "linux_socket_service trapped")
+            .map_err(ServiceCallError::Trap)?;
+        if key == 0 { Ok(None) } else { Ok(Some(key)) }
     }
 
     pub(crate) fn send_socket(

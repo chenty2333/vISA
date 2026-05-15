@@ -153,6 +153,28 @@ impl LinuxSocketState {
         Ok(accepted_socket_id)
     }
 
+    pub fn pending_accept_count(&self, socket_id: u32) -> Result<u32, i32> {
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].state != SOCKET_LISTENING {
+            return Err(ERR_EINVAL);
+        }
+        Ok(self.sockets[index].pending_accepts)
+    }
+
+    pub fn accept_ready_key_for_client(&self, socket_id: u32) -> Result<Option<u64>, i32> {
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
+            return Ok(None);
+        }
+        let Some(listener_index) = self.listener_index_for(index) else {
+            return Ok(None);
+        };
+        if self.sockets[listener_index].pending_accepts == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.sockets[listener_index].ready_key))
+    }
+
     pub fn send_socket(&self, socket_id: u32, len: u32) -> Result<u32, i32> {
         self.socket_index(socket_id)?;
         Ok(len)
@@ -279,5 +301,32 @@ mod tests {
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.fcntl(1, 3, 0), Err(ERR_EOPNOTSUPP));
+    }
+
+    #[test]
+    fn pending_accept_count_tracks_listen_backlog() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.pending_accept_count(1), Err(ERR_EINVAL));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 2), Ok(()));
+        assert_eq!(state.pending_accept_count(2), Ok(0));
+        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(state.pending_accept_count(2), Ok(1));
+        assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
+        assert_eq!(state.pending_accept_count(2), Ok(0));
+    }
+
+    #[test]
+    fn connect_exposes_listener_ready_key_for_accept_waiters() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.accept_ready_key_for_client(1), Ok(None));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 1), Ok(()));
+        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(state.accept_ready_key_for_client(1), Ok(Some(43)));
     }
 }

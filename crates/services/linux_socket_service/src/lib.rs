@@ -78,6 +78,16 @@ pub extern "C" fn accept_socket(socket_id: u32, accepted_socket_id: u32, ready_k
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn pending_accept_count(socket_id: u32) -> i32 {
+    result_i32(unsafe { state().pending_accept_count(socket_id) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn accept_ready_key_for_client(socket_id: u32) -> u64 {
+    unsafe { state().accept_ready_key_for_client(socket_id).ok().flatten().unwrap_or(0) }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn send_socket(socket_id: u32, len: u32) -> i32 {
     result_i32(unsafe { state().send_socket(socket_id, len) })
 }

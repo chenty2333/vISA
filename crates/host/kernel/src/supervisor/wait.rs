@@ -12,6 +12,7 @@ pub(crate) enum WaitRegistration {
     Timer { delay_ms: u32, resume_cookie: u32 },
     Futex { timeout_ms: Option<u32>, resume_cookie: u32 },
     Epoll { epoll_id: u32, max_events: u32, timeout_ms: Option<u32>, resume_cookie: u32 },
+    SocketAccept { fd: u32, flags: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +42,7 @@ pub(crate) enum WaitSource {
     Timer,
     Futex,
     Epoll { epoll_id: u32, max_events: u32 },
+    SocketAccept { fd: u32, flags: u32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -90,6 +92,9 @@ impl WaitRegistry {
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
+            WaitRegistration::SocketAccept { fd, flags } => {
+                (WaitKind::SocketAccept, WaitSource::SocketAccept { fd, flags }, 0, None)
+            }
         };
 
         let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
@@ -128,6 +133,7 @@ impl WaitRegistry {
                     events.push(Event::WaitCancelled(record.token.id, ERR_ETIMEDOUT))
                 }
                 WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
+                WaitSource::SocketAccept { .. } => {}
             }
         }
     }
@@ -175,6 +181,14 @@ impl WaitRegistry {
             .flatten()
             .find(|record| record.token == token)
             .is_some_and(|record| record.state == WaitState::Pending)
+    }
+
+    pub(crate) fn pending_source(&self, token: WaitToken) -> Option<WaitSource> {
+        self.records
+            .iter()
+            .flatten()
+            .find(|record| record.token == token && record.state == WaitState::Pending)
+            .map(|record| record.source)
     }
 
     fn mark_ready(&mut self, token_id: u64) {
@@ -250,5 +264,32 @@ mod tests {
         assert!(registry.is_pending(token));
         registry.apply_event(Event::WaitReady(token.id));
         assert!(!registry.is_pending(token));
+    }
+
+    #[test]
+    fn socket_accept_registration_carries_fd_and_flags() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::SocketAccept { fd: 4, flags: 0o2000000 },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::SocketAccept);
+        assert_eq!(
+            registry.pending_source(token),
+            Some(WaitSource::SocketAccept { fd: 4, flags: 0o2000000 })
+        );
+
+        registry.apply_event(Event::WaitReady(token.id));
+        assert_eq!(
+            registry.take_resolution(token),
+            Some(WaitResolution {
+                outcome: WaitOutcome::Ready,
+                resume_cookie: 0,
+                source: WaitSource::SocketAccept { fd: 4, flags: 0o2000000 },
+            })
+        );
     }
 }
