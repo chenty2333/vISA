@@ -4,6 +4,10 @@ version = "0.1.0"
 publish = false
 edition = "2024"
 
+[features]
+default = []
+host-tap = ["substrate_virtio/host-tap"]
+
 [[bin]]
 name = "target_executor"
 path = "src/main.rs"

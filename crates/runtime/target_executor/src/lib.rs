@@ -85,6 +85,8 @@ use fs_adapter::{
     build_fat_read_write_evidence,
 };
 use net_stack_adapter::{SmoltcpAdapterConfig, build_smoltcp_adapter_evidence};
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+use net_stack_adapter::{SmoltcpPacketStack, pump_stack_driver_backend};
 use package_projection::*;
 pub use package_projection::{
     RuntimeEvidenceTargetRuntimeManifests, runtime_evidence_substrate_event_manifests,
@@ -119,12 +121,18 @@ use semantic_core::{
     },
     validate_contract_graph,
 };
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+use service_core::driver::DriverVirtioNetState;
 use service_core::{
     fake_block::{FAKE_BLOCK_BACKEND_PROFILE, FAKE_BLOCK_BACKEND_PROVIDER, FakeBlockBackendConfig},
     fake_net::{FAKE_NET_BACKEND_PROFILE, FAKE_NET_BACKEND_PROVIDER, FAKE_NET_BACKEND_SEED},
     net_contract::{PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT},
 };
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateResult};
 use substrate_api::{SubstrateEvent, SubstrateRequester};
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+use substrate_virtio::net::HostTapPacketDeviceBackend;
 use substrate_virtio::{
     block::{
         VIRTIO_BLK_BACKEND_MODEL, VIRTIO_BLK_BACKEND_PROFILE, VIRTIO_BLK_BACKEND_PROVIDER,
@@ -141,6 +149,15 @@ use target_abi::{
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
+const HOST_TAP_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_REMOTE_IPV4_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_IPV4";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_REMOTE_PORT_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_PORT";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_DEFAULT_REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_DEFAULT_REMOTE_PORT: u16 = 80;
 const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
     "i7-device-capability",
     "n17-dma-generation-capability",
@@ -277,6 +294,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     record_substrate_conformance_evidence(&mut semantic);
     record_command_surface_evidence(&mut semantic);
     record_interface_boundary_evidence(&mut semantic);
+    maybe_run_host_tap_runtime_probe(&mut semantic)?;
     let target_v1 = build_target_executor_v1(&plan, &mut semantic, &stores)?;
 
     println!(
@@ -322,6 +340,150 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     restore_migration_package(&migration, &semantic, &plan)?;
 
     Ok(())
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    let Some(tap_name) = env::var_os(HOST_TAP_ENV) else {
+        return Ok(());
+    };
+    let tap_name =
+        tap_name.into_string().map_err(|_| format!("{HOST_TAP_ENV} must be valid UTF-8"))?;
+
+    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
+        .map_err(|error| format!("host TAP smoltcp stack init failed: {error}"))?;
+    let mut driver = DriverVirtioNetState::new();
+    let mut backend = CountingHostTapBackend::open(&tap_name)?;
+    stack
+        .init_backend(&mut backend)
+        .map_err(|error| format!("host TAP backend init failed: {error:?}"))?;
+
+    let socket_id = stack
+        .create_tcp_socket()
+        .map_err(|error| format!("host TAP probe tcp socket creation failed: {error}"))?;
+    stack
+        .connect_tcp_ipv4(socket_id, host_tap_remote_ipv4()?, host_tap_remote_port()?)
+        .map_err(|error| format!("host TAP probe tcp connect setup failed: {error}"))?;
+
+    let pump = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 1, 1)
+        .map_err(|error| format!("host TAP stack/driver/backend pump failed: {error:?}"))?;
+    if backend.tx_frames == 0 {
+        return Err("host TAP probe produced no backend TX frame".into());
+    }
+
+    let interface = semantic.register_resource(
+        ResourceKind::NetInterface,
+        None,
+        &format!("host-tap:{tap_name}"),
+    );
+    semantic.record_net_interface_state_changed(interface, true);
+    semantic.record_packet_transmitted(interface, None, 0, backend.last_tx_len);
+    println!(
+        "host TAP runtime probe tap={} tx_frames={} tx_bytes={} rx_frames={} pump_backend_rx={} pump_stack_tx={} pump_driver_tx={}",
+        tap_name,
+        backend.tx_frames,
+        backend.tx_bytes,
+        backend.rx_frames,
+        pump.backend_rx_frames_delivered_to_driver,
+        pump.stack_tx_frames_submitted_to_driver,
+        pump.driver_tx_frames_submitted_to_backend
+    );
+    Ok(())
+}
+
+#[cfg(not(all(feature = "host-tap", target_os = "linux")))]
+fn maybe_run_host_tap_runtime_probe(_semantic: &mut SemanticGraph) -> Result<(), Box<dyn Error>> {
+    if env::var_os(HOST_TAP_ENV).is_some() {
+        return Err(format!(
+            "{HOST_TAP_ENV} requires target_executor built with --features host-tap on Linux"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+struct CountingHostTapBackend {
+    inner: HostTapPacketDeviceBackend,
+    tx_frames: usize,
+    tx_bytes: usize,
+    last_tx_len: usize,
+    rx_frames: usize,
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+impl CountingHostTapBackend {
+    fn open(name: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            inner: HostTapPacketDeviceBackend::open(name)
+                .map_err(|error| format!("host TAP open failed: {error:?}"))?,
+            tx_frames: 0,
+            tx_bytes: 0,
+            last_tx_len: 0,
+            rx_frames: 0,
+        })
+    }
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+impl PacketDeviceBackend for CountingHostTapBackend {
+    fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
+        self.inner.init(mac)
+    }
+
+    fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
+        self.inner.submit_tx(frame)?;
+        self.tx_frames += 1;
+        self.tx_bytes = self.tx_bytes.saturating_add(frame.len());
+        self.last_tx_len = frame.len();
+        Ok(())
+    }
+
+    fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+        let count = self.inner.poll_rx(out)?;
+        self.rx_frames = self.rx_frames.saturating_add(count);
+        Ok(count)
+    }
+
+    fn mtu(&self) -> usize {
+        self.inner.mtu()
+    }
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn host_tap_remote_ipv4() -> Result<[u8; 4], Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_REMOTE_IPV4_ENV) else {
+        return Ok(HOST_TAP_DEFAULT_REMOTE_IPV4);
+    };
+    let mut out = [0u8; 4];
+    let mut count = 0usize;
+    for (index, part) in raw.split('.').enumerate() {
+        if index >= out.len() {
+            return Err(format!("{HOST_TAP_REMOTE_IPV4_ENV} has too many octets").into());
+        }
+        out[index] = part
+            .parse::<u8>()
+            .map_err(|_| format!("{HOST_TAP_REMOTE_IPV4_ENV} contains invalid octet"))?;
+        count += 1;
+    }
+    if count != out.len() {
+        return Err(format!("{HOST_TAP_REMOTE_IPV4_ENV} must contain four octets").into());
+    }
+    Ok(out)
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn host_tap_remote_port() -> Result<u16, Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_REMOTE_PORT_ENV) else {
+        return Ok(HOST_TAP_DEFAULT_REMOTE_PORT);
+    };
+    let port = raw
+        .parse::<u16>()
+        .map_err(|_| format!("{HOST_TAP_REMOTE_PORT_ENV} must be a u16 TCP port"))?;
+    if port == 0 {
+        return Err(format!("{HOST_TAP_REMOTE_PORT_ENV} must be nonzero").into());
+    }
+    Ok(port)
 }
 
 fn validate_external_audit(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
