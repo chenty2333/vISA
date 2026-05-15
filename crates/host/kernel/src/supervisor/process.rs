@@ -37,6 +37,13 @@ const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
     | CLONE_PARENT_SETTID
     | CLONE_CHILD_CLEARTID
     | CLONE_CHILD_SETTID;
+const SUPPORTED_INDEPENDENT_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
+    | CLONE_FS
+    | CLONE_FILES
+    | CLONE_SETTLS
+    | CLONE_PARENT_SETTID
+    | CLONE_CHILD_CLEARTID
+    | CLONE_CHILD_SETTID;
 const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
@@ -268,6 +275,128 @@ impl<'engine> PrototypeRuntime<'engine> {
             parent.sid,
             child_task_id as u64,
             GuestAddressSpaceRef::new(1, 1),
+            uid,
+            euid,
+            suid,
+            euid,
+            gid,
+            egid,
+            sgid,
+            egid,
+            supplementary_groups,
+            capability_sets,
+        ) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if clear_child_tid.is_some()
+            && !self.semantic.set_thread_clear_child_tid_by_tid(child_tid, clear_child_tid)
+        {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+
+        self.next_pid = next_id;
+        self.next_tid = next_id;
+        self.processes.push(ProcessRuntimeState {
+            pid: child_pid,
+            ppid: parent_pid,
+            pgid: parent.pgid,
+            sid: parent.sid,
+            tgid: child_tid,
+            exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
+            state: ProcessRuntimeStateKind::Running,
+            exit_code: None,
+            sigactions: parent.sigactions,
+            rlimits: parent.rlimits,
+        });
+        self.threads.push(ThreadRuntimeState {
+            tid: child_tid,
+            task_id: child_task_id,
+            pid: child_pid,
+            state: ThreadRuntimeStateKind::Running,
+            clear_child_tid,
+            robust_list: None,
+            sigmask: parent_thread.sigmask,
+            pending_signals: Vec::new(),
+            seccomp: parent_thread.seccomp,
+        });
+
+        Ok((child_task_id, child_pid, child_tid))
+    }
+
+    pub(crate) fn create_independent_vm_clone_child(
+        &mut self,
+        flags: u64,
+        parent_pid: Pid,
+        parent_tid: Tid,
+        uid: u32,
+        euid: u32,
+        suid: u32,
+        gid: u32,
+        egid: u32,
+        sgid: u32,
+        supplementary_groups: Vec<u32>,
+        capability_sets: LinuxCapSets,
+        clear_child_tid: Option<u64>,
+    ) -> Result<(TaskId, Pid, Tid), i32> {
+        if flags & CLONE_NS_MASK != 0 {
+            return Err(vmos_abi::ERR_ENOSYS);
+        }
+        if flags & CLONE_VM != 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if flags & CLONE_SIGHAND != 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if flags & CLONE_THREAD != 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if flags & !SUPPORTED_INDEPENDENT_VM_CLONE_MASK != 0 {
+            return Err(vmos_abi::ERR_ENOSYS);
+        }
+        let exit_signal = (flags & CLONE_EXIT_SIGNAL_MASK) as u8;
+        if exit_signal >= 64 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+
+        let parent = self
+            .processes
+            .iter()
+            .find(|process| process.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent.state != ProcessRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let parent_thread = self
+            .threads
+            .iter()
+            .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?
+            .clone();
+        if parent_thread.state != ThreadRuntimeStateKind::Running {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+
+        let child_pid = self.next_pid.max(self.next_tid);
+        let Some(next_id) = child_pid.checked_add(1) else {
+            return Err(vmos_abi::ERR_EAGAIN);
+        };
+        let child_tid = child_pid;
+        if child_pid == 0
+            || self.processes.iter().any(|process| process.pid == child_pid)
+            || self.threads.iter().any(|thread| thread.tid == child_tid)
+        {
+            return Err(vmos_abi::ERR_EAGAIN);
+        }
+
+        let child_task_id = self.allocate_task();
+        if !self.semantic.create_process_family_root_with_credential(
+            child_pid,
+            Some(parent_pid),
+            parent.pgid,
+            parent.sid,
+            child_task_id as u64,
+            GuestAddressSpaceRef::new(child_pid as u64, 1),
             uid,
             euid,
             suid,

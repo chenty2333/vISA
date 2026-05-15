@@ -33,12 +33,13 @@ use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
 use super::{
     context::{
-        ActiveUserContext, ClockAdjustmentState, CredentialState, active_context,
-        install_active_context, try_active_context,
+        ActiveUserContext, ClockAdjustmentState, CredentialState, UserAddressSpaceState,
+        active_context, install_active_context, try_active_context,
     },
     loader::{
-        USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, demo_program_host_path,
-        load_demo_program, protect_user_page_range, unmap_user_page_range,
+        USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, clone_user_page_mappings,
+        demo_program_host_path, load_demo_program, protect_user_page_range,
+        switch_user_page_mappings, unmap_user_page_range,
     },
 };
 use crate::{
@@ -1765,15 +1766,25 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
+    const SIGCHLD_FLAG: u64 = 17;
     const CLONE_VM: u64 = 0x100;
     const CLONE_FS: u64 = 0x200;
     const CLONE_FILES: u64 = 0x400;
+    const CLONE_SIGHAND: u64 = 0x800;
+    const CLONE_THREAD: u64 = 0x10000;
     const CLONE_SETTLS: u64 = 0x80000;
     const CLONE_PARENT_SETTID: u64 = 0x100000;
     const CLONE_CHILD_CLEARTID: u64 = 0x200000;
     const CLONE_CHILD_SETTID: u64 = 0x1000000;
     const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
         | CLONE_VM
+        | CLONE_FS
+        | CLONE_FILES
+        | CLONE_SETTLS
+        | CLONE_PARENT_SETTID
+        | CLONE_CHILD_CLEARTID
+        | CLONE_CHILD_SETTID;
+    const SUPPORTED_INDEPENDENT_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
         | CLONE_FS
         | CLONE_FILES
         | CLONE_SETTLS
@@ -1790,21 +1801,42 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     if active_context().has_suspended_clone_parent() {
         return Err(ERR_ENOSYS);
     }
-    let flags = if frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3 { frame.rdi } else { 0 };
-    let stack = frame.rsi;
+    let raw_clone = frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3;
+    let flags = if raw_clone { frame.rdi } else { SIGCHLD_FLAG };
+    let stack = if raw_clone { frame.rsi } else { 0 };
     let parent_tid_ptr = frame.rdx;
     let child_tid_ptr = frame.r10;
     let tls_base = frame.r8;
-    let shared_vm_flags_supported =
-        flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0 && flags & CLONE_VM != 0;
-    let shared_vm_preflight_ok =
-        shared_vm_flags_supported && stack != 0 && flags & CLONE_EXIT_SIGNAL_MASK < 64;
+    if flags & CLONE_SIGHAND != 0 && flags & CLONE_VM == 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & CLONE_THREAD != 0 && flags & CLONE_SIGHAND == 0 {
+        return Err(ERR_EINVAL);
+    }
+    let shared_vm_flags_supported = flags & CLONE_VM != 0;
+    let shared_vm_preflight_ok = flags & !SUPPORTED_SHARED_VM_CLONE_MASK == 0
+        && shared_vm_flags_supported
+        && stack != 0
+        && flags & CLONE_EXIT_SIGNAL_MASK < 64;
+    let independent_vm_preflight_ok = flags & CLONE_VM == 0
+        && flags & !SUPPORTED_INDEPENDENT_VM_CLONE_MASK == 0
+        && flags & CLONE_EXIT_SIGNAL_MASK < 64;
+    if flags & CLONE_VM == 0 && !independent_vm_preflight_ok {
+        if flags & CLONE_EXIT_SIGNAL_MASK >= 64 {
+            return Err(ERR_EINVAL);
+        }
+        return Err(ERR_ENOSYS);
+    }
     let child_fs_base = if shared_vm_preflight_ok && flags & CLONE_SETTLS != 0 {
+        Some(user_fs_base(tls_base)?)
+    } else if independent_vm_preflight_ok && flags & CLONE_SETTLS != 0 {
         Some(user_fs_base(tls_base)?)
     } else {
         None
     };
     let mut parent_tid_lease = if shared_vm_preflight_ok && flags & CLONE_PARENT_SETTID != 0 {
+        Some(user_lease(parent_tid_ptr, 4, true)?)
+    } else if independent_vm_preflight_ok && flags & CLONE_PARENT_SETTID != 0 {
         Some(user_lease(parent_tid_ptr, 4, true)?)
     } else {
         None
@@ -1814,6 +1846,12 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     } else {
         None
     };
+    let child_tid_preflight_lease =
+        if independent_vm_preflight_ok && flags & CLONE_CHILD_SETTID != 0 {
+            Some(user_lease(child_tid_ptr, 4, true)?)
+        } else {
+            None
+        };
     let clear_child_tid = if flags & CLONE_CHILD_CLEARTID != 0 && child_tid_ptr != 0 {
         Some(child_tid_ptr)
     } else {
@@ -1831,10 +1869,75 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
         effective: credential.cap_effective,
         ambient: credential.cap_ambient,
     };
+
+    if shared_vm_flags_supported {
+        let (child_task_id, child_pid, child_tid_runtime) =
+            active_context().supervisor.create_shared_vm_clone_child(
+                flags,
+                stack,
+                parent_pid,
+                parent_tid_runtime,
+                credential.uid,
+                credential.euid,
+                credential.suid,
+                credential.gid,
+                credential.egid,
+                credential.sgid,
+                credential.supplementary_groups,
+                caps,
+                clear_child_tid,
+            )?;
+        if let Some(parent_tid_lease) = parent_tid_lease.as_mut() {
+            parent_tid_lease
+                .bytes_mut()
+                .map_err(map_dmw_fault)?
+                .copy_from_slice(&child_tid_runtime.to_le_bytes());
+        }
+        if let Some(child_tid_lease) = child_tid_lease.as_mut() {
+            child_tid_lease
+                .bytes_mut()
+                .map_err(map_dmw_fault)?
+                .copy_from_slice(&child_tid_runtime.to_le_bytes());
+        }
+        drop(parent_tid_lease);
+        drop(child_tid_lease);
+
+        let files_shared = flags & CLONE_FILES != 0;
+        let fd_snapshot = if files_shared {
+            None
+        } else {
+            Some(active_context().supervisor.fork_fd_table_for_owner(child_task_id))
+        };
+        let mut parent_return = ring3::capture_user_return(frame);
+        parent_return.frame.rax = child_pid as u64;
+        let mut child_return = parent_return;
+        child_return.frame.rax = 0;
+        child_return.rsp = stack;
+        if let Some(fs_base) = child_fs_base {
+            child_return.fs_base = fs_base.as_u64();
+        }
+        active_context().suspend_for_clone_child(
+            child_task_id,
+            child_pid,
+            child_tid_runtime,
+            parent_return,
+            flags & CLONE_FS != 0,
+            files_shared,
+            fd_snapshot,
+            None,
+        );
+        active_context().supervisor.set_current_task(child_task_id);
+        ring3::install_user_return(frame, child_return);
+        return Ok(0);
+    }
+
+    // The current ring3 runner is child-runs-first. This gives fork/clone an
+    // independent VM by eagerly copying frames and switching PTEs, but it is
+    // intentionally not claimed as COW.
+    let mut child_address_space = clone_active_user_address_space()?;
     let (child_task_id, child_pid, child_tid_runtime) =
-        active_context().supervisor.create_shared_vm_clone_child(
+        active_context().supervisor.create_independent_vm_clone_child(
             flags,
-            stack,
             parent_pid,
             parent_tid_runtime,
             credential.uid,
@@ -1853,14 +1956,8 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
             .map_err(map_dmw_fault)?
             .copy_from_slice(&child_tid_runtime.to_le_bytes());
     }
-    if let Some(child_tid_lease) = child_tid_lease.as_mut() {
-        child_tid_lease
-            .bytes_mut()
-            .map_err(map_dmw_fault)?
-            .copy_from_slice(&child_tid_runtime.to_le_bytes());
-    }
     drop(parent_tid_lease);
-    drop(child_tid_lease);
+    drop(child_tid_preflight_lease);
 
     let files_shared = flags & CLONE_FILES != 0;
     let fd_snapshot = if files_shared {
@@ -1872,10 +1969,13 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     parent_return.frame.rax = child_pid as u64;
     let mut child_return = parent_return;
     child_return.frame.rax = 0;
-    child_return.rsp = stack;
+    if stack != 0 {
+        child_return.rsp = stack;
+    }
     if let Some(fs_base) = child_fs_base {
         child_return.fs_base = fs_base.as_u64();
     }
+    switch_active_user_address_space_to_child(&mut child_address_space)?;
     active_context().suspend_for_clone_child(
         child_task_id,
         child_pid,
@@ -1884,7 +1984,11 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
         flags & CLONE_FS != 0,
         files_shared,
         fd_snapshot,
+        Some(child_address_space),
     );
+    if flags & CLONE_CHILD_SETTID != 0 {
+        write_user_u32(child_tid_ptr, child_tid_runtime)?;
+    }
     active_context().supervisor.set_current_task(child_task_id);
     ring3::install_user_return(frame, child_return);
     Ok(0)
@@ -3107,8 +3211,11 @@ fn restore_suspended_parent_after_child_exit(child_pid: u32) -> Option<UserRetur
         active_context().supervisor.set_current_task(parent_task_id);
         return Some(return_context);
     }
-    if let Some(parent) = active_context().take_clone_parent_for_child(child_pid) {
+    if let Some(mut parent) = active_context().take_clone_parent_for_child(child_pid) {
         let return_context = parent.return_context;
+        if parent.address_space.is_some() {
+            restore_independent_clone_parent_address_space(&mut parent).ok()?;
+        }
         active_context().restore_clone_parent(parent);
         let parent_task_id = active_context().task_id;
         active_context().supervisor.set_current_task(parent_task_id);
@@ -3687,6 +3794,57 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
         &mut context.frame_allocator,
         start,
         len,
+    )
+    .map_err(|_| ERR_EFAULT)
+}
+
+fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
+    let context = active_context();
+    let mut child_allocator = context.frame_allocator.fork_child_allocator();
+    let page_mappings = clone_user_page_mappings(
+        context.physical_memory_offset(),
+        &context.page_mappings,
+        &mut child_allocator,
+    )
+    .map_err(|_| ERR_ENOMEM)?;
+    Ok(UserAddressSpaceState {
+        regions: context.regions.clone(),
+        page_mappings,
+        frame_allocator: child_allocator,
+    })
+}
+
+fn switch_active_user_address_space_to_child(
+    child_address_space: &mut UserAddressSpaceState,
+) -> Result<(), i32> {
+    let context = active_context();
+    let current_mappings = context.page_mappings.clone();
+    switch_user_page_mappings(
+        context.physical_memory_offset(),
+        &current_mappings,
+        &child_address_space.page_mappings,
+        &child_address_space.regions,
+        &mut child_address_space.frame_allocator,
+        false,
+    )
+    .map_err(|_| ERR_EFAULT)
+}
+
+fn restore_independent_clone_parent_address_space(
+    parent: &mut crate::frontends::linux_elf::context::SuspendedCloneParent,
+) -> Result<(), i32> {
+    let Some(parent_address_space) = parent.address_space.as_mut() else {
+        return Ok(());
+    };
+    let context = active_context();
+    let child_mappings = context.page_mappings.clone();
+    switch_user_page_mappings(
+        context.physical_memory_offset(),
+        &child_mappings,
+        &parent_address_space.page_mappings,
+        &parent_address_space.regions,
+        &mut context.frame_allocator,
+        true,
     )
     .map_err(|_| ERR_EFAULT)
 }

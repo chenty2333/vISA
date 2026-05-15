@@ -39,6 +39,12 @@ pub(crate) struct LoadedUserImage {
     pub(crate) frame_allocator: UserFrameAllocator,
 }
 
+pub(crate) struct UserAddressSpaceState {
+    pub(crate) regions: Vec<UserRegion>,
+    pub(crate) page_mappings: Vec<UserPageMapping>,
+    pub(crate) frame_allocator: UserFrameAllocator,
+}
+
 pub(crate) struct UserFrameAllocator {
     memory_regions: &'static [MemoryRegion],
     next: usize,
@@ -60,6 +66,15 @@ impl UserFrameAllocator {
 
     pub(crate) fn deallocate_frame(&mut self, frame: PhysFrame) {
         self.free_frames.push(frame);
+    }
+
+    pub(crate) fn fork_child_allocator(&self) -> Self {
+        Self { memory_regions: self.memory_regions, next: self.next, free_frames: Vec::new() }
+    }
+
+    pub(crate) fn absorb_child_allocator(&mut self, mut child: Self) {
+        self.next = self.next.max(child.next);
+        self.free_frames.append(&mut child.free_frames);
     }
 }
 
@@ -177,6 +192,7 @@ pub(crate) struct SuspendedCloneParent {
     io_signal: u32,
     pending_io_signal: Option<u32>,
     alarm_seconds: u64,
+    pub(crate) address_space: Option<UserAddressSpaceState>,
 }
 
 #[derive(Clone)]
@@ -718,8 +734,24 @@ impl ActiveUserContext {
         fs_shared: bool,
         files_shared: bool,
         fd_snapshot: Option<FdTableSnapshot>,
+        child_address_space: Option<UserAddressSpaceState>,
     ) {
         debug_assert!(self.suspended_clone_parent.is_none());
+        let address_space = child_address_space.map(|child_address_space| {
+            let UserAddressSpaceState {
+                regions: child_regions,
+                page_mappings: child_page_mappings,
+                frame_allocator: child_frame_allocator,
+            } = child_address_space;
+            UserAddressSpaceState {
+                regions: core::mem::replace(&mut self.regions, child_regions),
+                page_mappings: core::mem::replace(&mut self.page_mappings, child_page_mappings),
+                frame_allocator: core::mem::replace(
+                    &mut self.frame_allocator,
+                    child_frame_allocator,
+                ),
+            }
+        });
         self.suspended_clone_parent = Some(SuspendedCloneParent {
             task_id: self.task_id,
             pid: self.pid,
@@ -738,6 +770,7 @@ impl ActiveUserContext {
             io_signal: self.io_signal,
             pending_io_signal: self.pending_io_signal,
             alarm_seconds: self.alarm_seconds,
+            address_space,
         });
         self.task_id = child_task_id;
         self.pid = child_pid;
@@ -857,7 +890,15 @@ impl ActiveUserContext {
             io_signal,
             pending_io_signal,
             alarm_seconds,
+            address_space,
         } = parent;
+        if let Some(address_space) = address_space {
+            let child_allocator =
+                core::mem::replace(&mut self.frame_allocator, address_space.frame_allocator);
+            self.frame_allocator.absorb_child_allocator(child_allocator);
+            self.regions = address_space.regions;
+            self.page_mappings = address_space.page_mappings;
+        }
         if !files_shared {
             self.supervisor.close_active_fd_table_for_process_exit();
             self.supervisor.pop_hidden_fd_table_refs();

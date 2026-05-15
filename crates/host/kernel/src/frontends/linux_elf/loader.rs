@@ -174,6 +174,108 @@ pub(crate) fn unmap_user_page_range(
     Ok(())
 }
 
+pub(crate) fn clone_user_page_mappings(
+    physical_memory_offset: u64,
+    page_mappings: &[UserPageMapping],
+    child_allocator: &mut UserFrameAllocator,
+) -> Result<Vec<UserPageMapping>, &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let mut cloned = Vec::with_capacity(page_mappings.len());
+    for mapping in page_mappings {
+        let child_frame =
+            child_allocator.allocate_frame().ok_or("out of usable frames for forked user page")?;
+        let parent_frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
+        let bytes = frame_bytes(parent_frame, phys_offset).to_vec();
+        frame_bytes(child_frame, phys_offset).copy_from_slice(&bytes);
+        cloned.push(UserPageMapping {
+            va: mapping.va,
+            frame_start: child_frame.start_address().as_u64(),
+            present: mapping.present,
+        });
+    }
+    Ok(cloned)
+}
+
+pub(crate) fn switch_user_page_mappings(
+    physical_memory_offset: u64,
+    current_mappings: &[UserPageMapping],
+    next_mappings: &[UserPageMapping],
+    next_regions: &[UserRegion],
+    frame_allocator: &mut UserFrameAllocator,
+    reclaim_current: bool,
+) -> Result<(), &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+
+    for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
+        if user_page_region_prot(next_regions, mapping.va).is_none() {
+            return Err("forked user page has no region");
+        }
+    }
+
+    for mapping in current_mappings.iter().filter(|mapping| mapping.present) {
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mapping.va));
+        match mapper.unmap(page) {
+            Ok((_frame, flush)) => flush.flush(),
+            Err(UnmapError::PageNotMapped) => {}
+            Err(UnmapError::ParentEntryHugePage) => {
+                return Err("user page parent entry is a huge page");
+            }
+            Err(UnmapError::InvalidFrameAddress(_)) => {
+                return Err("user page has an invalid frame address");
+            }
+        }
+    }
+    if reclaim_current {
+        for mapping in current_mappings {
+            frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                mapping.frame_start,
+            )));
+        }
+    }
+
+    for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mapping.va));
+        let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
+        let prot = user_page_region_prot(next_regions, mapping.va)
+            .ok_or("forked user page has no region")?;
+        let flags = user_page_flags(prot);
+        match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
+            Ok(flush) => flush.flush(),
+            Err(MapToError::PageAlreadyMapped(_)) => {
+                return Err("user page is already mapped during address-space switch");
+            }
+            Err(MapToError::ParentEntryHugePage) => {
+                return Err("user page parent entry is a huge page");
+            }
+            Err(MapToError::FrameAllocationFailed) => {
+                return Err("user page table frame allocation failed");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn user_page_region_prot(regions: &[UserRegion], page: u64) -> Option<u64> {
+    let region = regions.iter().rev().find(|region| {
+        page >= region.start
+            && page < region.end
+            && (region.readable || region.writable || region.executable)
+    })?;
+    let mut prot = 0;
+    if region.readable || region.writable {
+        prot |= 0x1;
+    }
+    if region.writable {
+        prot |= 0x2;
+    }
+    if region.executable {
+        prot |= 0x4;
+    }
+    Some(prot)
+}
+
 fn user_page_mapping_mut(
     page_mappings: &mut [UserPageMapping],
     page_addr: u64,
