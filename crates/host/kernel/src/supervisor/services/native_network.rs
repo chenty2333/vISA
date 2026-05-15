@@ -135,8 +135,13 @@ impl LinuxSocketService {
         map_errno(self.state.listen_socket(socket_id, backlog))
     }
 
-    pub(crate) fn accept_socket(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
-        map_errno(self.state.accept_socket(socket_id))
+    pub(crate) fn accept_socket(
+        &mut self,
+        socket_id: u32,
+        accepted_socket_id: u32,
+        ready_key: u64,
+    ) -> Result<u32, ServiceCallError> {
+        map_errno(self.state.accept_socket(socket_id, accepted_socket_id, ready_key))
     }
 
     pub(crate) fn send_socket(

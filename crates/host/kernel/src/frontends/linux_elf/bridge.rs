@@ -2278,14 +2278,10 @@ fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_listen(frame: &SyscallFrame) -> Result<i64, i32> {
-    let ret = dispatch_ret(
+    dispatch_ret(
         "ring3_listen",
         SyscallContext::new(SYS_LISTEN, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
-    )?;
-    if ret == 0 {
-        active_context().supervisor.note_synthetic_listener(frame.rsi);
-    }
-    Ok(ret)
+    )
 }
 
 fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2302,12 +2298,6 @@ fn sys_connect(frame: &SyscallFrame) -> Result<i64, i32> {
         "ring3_connect",
         SyscallContext::new(SYS_CONNECT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
     )?;
-    if sockaddr.family == AF_INET as u16
-        && ret == 0
-        && !active_context().supervisor.consume_synthetic_listener_connect()
-    {
-        return Err(ERR_ECONNREFUSED);
-    }
     Ok(ret)
 }
 
@@ -2332,11 +2322,19 @@ fn read_connect_sockaddr(addr_ptr: u64, addr_len: u64) -> Result<ConnectSockaddr
 }
 
 fn sys_accept(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_accept_with_flags(frame, 0)
+}
+
+fn sys_accept_with_flags(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
     validate_optional_sockaddr(frame.rsi, frame.rdx, true)?;
-    dispatch_ret(
+    let fd = dispatch_ret(
         "ring3_accept",
-        SyscallContext::new(SYS_ACCEPT, [frame.rdi, frame.rsi, frame.rdx, 0, 0, 0]),
-    )
+        SyscallContext::new(SYS_ACCEPT, [frame.rdi, frame.rsi, frame.rdx, flags, 0, 0]),
+    )?;
+    if fd >= 0 {
+        write_optional_sockaddr_in(frame.rsi, frame.rdx)?;
+    }
+    Ok(fd)
 }
 
 fn sys_accept4(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2345,7 +2343,7 @@ fn sys_accept4(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.r10 & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
         return Err(ERR_EINVAL);
     }
-    sys_accept(frame)
+    sys_accept_with_flags(frame, frame.r10)
 }
 
 fn sys_getsockname(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2384,6 +2382,13 @@ fn write_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<i64, i32> {
     write_user_bytes(addr_ptr, &sockaddr)?;
     write_user_u32(len_ptr, 16)?;
     Ok(0)
+}
+
+fn write_optional_sockaddr_in(addr_ptr: u64, len_ptr: u64) -> Result<(), i32> {
+    if addr_ptr == 0 && len_ptr == 0 {
+        return Ok(());
+    }
+    write_sockaddr_in(addr_ptr, len_ptr).map(|_| ())
 }
 
 fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {

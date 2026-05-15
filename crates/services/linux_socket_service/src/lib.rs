@@ -73,8 +73,8 @@ pub extern "C" fn listen_socket(socket_id: u32, backlog: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn accept_socket(socket_id: u32) -> i32 {
-    result_i32(unsafe { state().accept_socket(socket_id) })
+pub extern "C" fn accept_socket(socket_id: u32, accepted_socket_id: u32, ready_key: u64) -> i32 {
+    result_i32(unsafe { state().accept_socket(socket_id, accepted_socket_id, ready_key) })
 }
 
 #[unsafe(no_mangle)]

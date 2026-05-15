@@ -1,4 +1,7 @@
-use vmos_abi::{ERR_EBADF, ERR_EIO, ERR_EISCONN, ERR_EOPNOTSUPP};
+use vmos_abi::{
+    AF_INET, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO, ERR_EISCONN,
+    ERR_EOPNOTSUPP, SOCK_STREAM,
+};
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 
@@ -13,13 +16,29 @@ struct LinuxSocket {
     protocol: u32,
     ready_key: u64,
     state: u32,
+    backlog: u32,
+    pending_accepts: u32,
     active: bool,
 }
 
 impl LinuxSocket {
-    const EMPTY: Self =
-        Self { socket_id: 0, domain: 0, ty: 0, protocol: 0, ready_key: 0, state: 0, active: false };
+    const EMPTY: Self = Self {
+        socket_id: 0,
+        domain: 0,
+        ty: 0,
+        protocol: 0,
+        ready_key: 0,
+        state: 0,
+        backlog: 0,
+        pending_accepts: 0,
+        active: false,
+    };
 }
+
+const SOCKET_OPEN: u32 = 1;
+const SOCKET_BOUND: u32 = 2;
+const SOCKET_CONNECTED: u32 = 3;
+const SOCKET_LISTENING: u32 = 4;
 
 pub struct LinuxSocketState {
     sockets: [LinuxSocket; MAX_SOCKETS],
@@ -50,7 +69,9 @@ impl LinuxSocketState {
                     ty,
                     protocol,
                     ready_key,
-                    state: 1,
+                    state: SOCKET_OPEN,
+                    backlog: 0,
+                    pending_accepts: 0,
                     active: true,
                 };
                 return Ok(());
@@ -66,23 +87,70 @@ impl LinuxSocketState {
     }
 
     pub fn bind_socket(&mut self, socket_id: u32, _addr_len: u32) -> Result<(), i32> {
-        self.set_state(socket_id, 2)
+        self.set_state(socket_id, SOCKET_BOUND)
     }
 
     pub fn connect_socket(&mut self, socket_id: u32, _addr_len: u32) -> Result<(), i32> {
         let index = self.socket_index(socket_id)?;
-        if self.sockets[index].state == 3 {
+        if self.sockets[index].state == SOCKET_CONNECTED {
             return Err(ERR_EISCONN);
         }
-        self.set_state(socket_id, 3)
+        if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
+            self.sockets[index].state = SOCKET_CONNECTED;
+            return Ok(());
+        }
+        let Some(listener_index) = self.listener_index_for(index) else {
+            return Err(ERR_ECONNREFUSED);
+        };
+        if self.sockets[listener_index].pending_accepts >= self.sockets[listener_index].backlog {
+            return Err(ERR_ECONNREFUSED);
+        }
+        self.sockets[listener_index].pending_accepts =
+            self.sockets[listener_index].pending_accepts.saturating_add(1);
+        self.sockets[index].state = SOCKET_CONNECTED;
+        Ok(())
     }
 
-    pub fn listen_socket(&mut self, socket_id: u32, _backlog: u32) -> Result<(), i32> {
-        self.set_state(socket_id, 4)
+    pub fn listen_socket(&mut self, socket_id: u32, backlog: u32) -> Result<(), i32> {
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        self.sockets[index].state = SOCKET_LISTENING;
+        self.sockets[index].backlog = backlog.max(1);
+        self.sockets[index].pending_accepts = 0;
+        Ok(())
     }
 
-    pub fn accept_socket(&self, _socket_id: u32) -> Result<u32, i32> {
-        Err(ERR_EOPNOTSUPP)
+    pub fn accept_socket(
+        &mut self,
+        socket_id: u32,
+        accepted_socket_id: u32,
+        accepted_ready_key: u64,
+    ) -> Result<u32, i32> {
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].state != SOCKET_LISTENING {
+            return Err(ERR_EINVAL);
+        }
+        if self.sockets[index].pending_accepts == 0 {
+            return Err(ERR_EAGAIN);
+        }
+        let Some(accepted_index) = self.sockets.iter().position(|socket| !socket.active) else {
+            return Err(ERR_EIO);
+        };
+        self.sockets[accepted_index] = LinuxSocket {
+            socket_id: accepted_socket_id,
+            domain: self.sockets[index].domain,
+            ty: self.sockets[index].ty,
+            protocol: self.sockets[index].protocol,
+            ready_key: accepted_ready_key,
+            state: SOCKET_CONNECTED,
+            backlog: 0,
+            pending_accepts: 0,
+            active: true,
+        };
+        self.sockets[index].pending_accepts -= 1;
+        Ok(accepted_socket_id)
     }
 
     pub fn send_socket(&self, socket_id: u32, len: u32) -> Result<u32, i32> {
@@ -132,6 +200,18 @@ impl LinuxSocketState {
             .position(|socket| socket.active && socket.socket_id == socket_id)
             .ok_or(ERR_EBADF)
     }
+
+    fn listener_index_for(&self, client_index: usize) -> Option<usize> {
+        let client = self.sockets[client_index];
+        self.sockets.iter().enumerate().position(|(index, socket)| {
+            index != client_index
+                && socket.active
+                && socket.state == SOCKET_LISTENING
+                && socket.domain == client.domain
+                && socket.ty == client.ty
+                && socket.protocol == client.protocol
+        })
+    }
 }
 
 impl Default for LinuxSocketState {
@@ -142,7 +222,7 @@ impl Default for LinuxSocketState {
 
 #[cfg(test)]
 mod tests {
-    use vmos_abi::{AF_INET, SOCK_DGRAM, SOCK_STREAM};
+    use vmos_abi::{AF_INET, ERR_EAGAIN, ERR_ECONNREFUSED, ERR_EINVAL, SOCK_DGRAM, SOCK_STREAM};
 
     use super::*;
 
@@ -159,9 +239,38 @@ mod tests {
     fn connect_reports_already_connected() {
         let mut state = LinuxSocketState::new();
 
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 1), Ok(()));
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.connect_socket(1, 16), Ok(()));
         assert_eq!(state.connect_socket(1, 16), Err(ERR_EISCONN));
+    }
+
+    #[test]
+    fn connect_requires_a_listening_stream_socket_and_queues_accept() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.accept_socket(1, 3, 44), Err(ERR_EINVAL));
+        assert_eq!(state.connect_socket(1, 16), Err(ERR_ECONNREFUSED));
+
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 1), Ok(()));
+        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(state.accept_socket(2, 3, 44), Ok(3));
+        assert_eq!(state.accept_socket(2, 4, 45), Err(ERR_EAGAIN));
+    }
+
+    #[test]
+    fn accept_registers_child_socket_as_connected() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 1), Ok(()));
+        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
+        assert_eq!(state.connect_socket(7, 16), Err(ERR_EISCONN));
     }
 
     #[test]

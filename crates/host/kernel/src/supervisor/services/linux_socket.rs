@@ -14,7 +14,7 @@ pub(crate) struct LinuxSocketService {
     bind_socket: WasmFn<(u32, u32), i32>,
     connect_socket: WasmFn<(u32, u32), i32>,
     listen_socket: WasmFn<(u32, u32), i32>,
-    accept_socket: WasmFn<u32, i32>,
+    accept_socket: WasmFn<(u32, u32, u64), i32>,
     send_socket: WasmFn<(u32, u32), i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
     setsockopt: WasmFn<(u32, u32, u32, u32), i32>,
@@ -140,10 +140,19 @@ impl LinuxSocketService {
         )
     }
 
-    pub(crate) fn accept_socket(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {
+    pub(crate) fn accept_socket(
+        &mut self,
+        socket_id: u32,
+        accepted_socket_id: u32,
+        ready_key: u64,
+    ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(&self.accept_socket, socket_id, "linux_socket_service trapped")
+                .call(
+                    &self.accept_socket,
+                    (socket_id, accepted_socket_id, ready_key),
+                    "linux_socket_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }

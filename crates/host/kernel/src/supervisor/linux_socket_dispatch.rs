@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_EPERM, PlanKind};
+use vmos_abi::{AF_INET, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -8,18 +8,6 @@ use super::{
 use crate::interrupts;
 
 impl<'engine> PrototypeRuntime<'engine> {
-    pub(crate) fn note_synthetic_listener(&mut self, _backlog: u64) {
-        self.synthetic_listener_connects = self.synthetic_listener_connects.saturating_add(1);
-    }
-
-    pub(crate) fn consume_synthetic_listener_connect(&mut self) -> bool {
-        if self.synthetic_listener_connects == 0 {
-            return false;
-        }
-        self.synthetic_listener_connects -= 1;
-        true
-    }
-
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("linux_syscall", "linux.socket", "socket").is_err()
             || self.require_capability("net_core", "net.socket", "create").is_err()
@@ -144,7 +132,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "accept fd overflowed")?;
-        let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
+        let flags = u32::try_from(plan.args[3]).map_err(|_| "accept flags overflowed")?;
+        const SOCK_CLOEXEC: u32 = 0o2000000;
+        const SOCK_NONBLOCK: u32 = 0o0004000;
+        const FD_CLOEXEC: u32 = 1;
+        const O_NONBLOCK: u32 = 0o4000;
+        if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        if !self.can_allocate_fds(1) {
+            return Ok(LinuxCallResult::Ret(-(ERR_EMFILE as i64)));
+        }
+        let (listen_socket_id, _, listen_handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -155,15 +154,77 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
-        match self.linux_socket.accept_socket(socket_id) {
-            Ok(_) => Ok(LinuxCallResult::Ret(-(ERR_EOPNOTSUPP as i64))),
-            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
-            Err(ServiceCallError::Trap(reason)) => {
-                crate::kwarn!("linux_socket accept: {}", reason);
-                Err("linux_socket_service trapped during accept")
+        let accepted_socket_id = match self.net_core.create_socket(AF_INET, SOCK_STREAM, 0) {
+            Ok(socket_id) => socket_id,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
-            Err(ServiceCallError::Invalid(err)) => Err(err),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core accept create_socket: {}", reason);
+                return Err("net_core trapped during accept");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        let accepted_ready_key = match self.net_core.ready_key(accepted_socket_id) {
+            Ok(key) => key,
+            Err(ServiceCallError::Errno(errno)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                crate::kwarn!("net_core accept ready_key: {}", reason);
+                return Err("net_core trapped during accept");
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Err(err);
+            }
+        };
+        match self.linux_socket.accept_socket(
+            listen_socket_id,
+            accepted_socket_id,
+            accepted_ready_key,
+        ) {
+            Ok(_) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                crate::kwarn!("linux_socket accept: {}", reason);
+                return Err("linux_socket_service trapped during accept");
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Err(err);
+            }
         }
+        let fd_flags = if flags & SOCK_CLOEXEC != 0 { FD_CLOEXEC } else { 0 };
+        let status_flags = if flags & SOCK_NONBLOCK != 0 { O_NONBLOCK } else { 0 };
+        let accepted_fd = match self.alloc_fd(FdEntry {
+            resource: FdResource::Socket {
+                socket_id: accepted_socket_id as u64,
+                ready_key: accepted_ready_key,
+            },
+            cursor: 0,
+            fd_flags,
+            status_flags,
+            cursor_group: None,
+        }) {
+            Ok(fd) => fd,
+            Err(errno) => {
+                let _ = self.linux_socket.close_socket(accepted_socket_id);
+                let _ = self.net_core.close_socket(accepted_socket_id);
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+        };
+        self.semantic.record_socket_state_changed(listen_handle.id, "accept");
+        if let Some(handle) = self.fd_handle(accepted_fd) {
+            self.semantic.record_socket_state_changed(handle.id, "connected");
+        }
+        Ok(LinuxCallResult::Ret(accepted_fd as i64))
     }
     pub(super) fn plan_sendto(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("linux_syscall", "linux.socket", "send").is_err()
