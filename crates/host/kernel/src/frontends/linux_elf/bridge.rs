@@ -2248,7 +2248,7 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_rt_sigreturn(frame: &mut SyscallFrame) -> Result<i64, i32> {
     match restore_from_signal_frame(frame) {
-        Ok(ret) => Ok(ret),
+        Ok(restored) => ring3::resume_user_return(restored),
         Err(errno) => {
             crate::kwarn!("rt_sigreturn failed errno={}", errno);
             let pid = active_context().pid;
@@ -2344,7 +2344,7 @@ fn encode_linux_stack_t(out: &mut [u8], offset: usize, stack: SignalAltStack, on
     write_u64(out, offset + 16, stack.size);
 }
 
-fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
+fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<UserReturnContext, i32> {
     let current = ring3::capture_user_return(frame);
     let bytes = read_user_bytes(current.rsp, VMOS_SIGNAL_FRAME_SIZE)?;
     if read_u64_from(&bytes, 0)? != VMOS_SIGNAL_FRAME_MAGIC {
@@ -2374,8 +2374,7 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
             crate::kwarn!("rt_sigreturn could not restore altstack for tid {}", tid);
         }
     }
-    ring3::install_user_return(frame, restored);
-    Ok(restored.frame.rax as i64)
+    Ok(restored)
 }
 
 fn deliver_pending_signal_to_user(frame: &mut SyscallFrame, syscall_nr: u64) {
@@ -2579,12 +2578,12 @@ fn encode_linux_ucontext(
     write_linux_greg(&mut out, LINUX_GREG_R8, saved.frame.r8);
     write_linux_greg(&mut out, LINUX_GREG_R9, saved.frame.r9);
     write_linux_greg(&mut out, LINUX_GREG_R10, saved.frame.r10);
-    write_linux_greg(&mut out, LINUX_GREG_R11, saved.frame.r11);
+    write_linux_greg(&mut out, LINUX_GREG_R11, saved.user_r11);
     write_linux_greg(&mut out, LINUX_GREG_RDI, saved.frame.rdi);
     write_linux_greg(&mut out, LINUX_GREG_RSI, saved.frame.rsi);
     write_linux_greg(&mut out, LINUX_GREG_RDX, saved.frame.rdx);
     write_linux_greg(&mut out, LINUX_GREG_RAX, saved.frame.rax);
-    write_linux_greg(&mut out, LINUX_GREG_RCX, saved.frame.rcx);
+    write_linux_greg(&mut out, LINUX_GREG_RCX, saved.user_rcx);
     write_linux_greg(&mut out, LINUX_GREG_RSP, saved.rsp);
     write_linux_greg(&mut out, LINUX_GREG_RIP, saved.frame.rcx);
     write_linux_greg(&mut out, LINUX_GREG_EFL, saved.frame.r11);
@@ -2604,6 +2603,8 @@ fn decode_linux_ucontext_return(
 ) -> Result<UserReturnContext, i32> {
     let rip = read_linux_greg(bytes, LINUX_GREG_RIP)?;
     let rsp = read_linux_greg(bytes, LINUX_GREG_RSP)?;
+    let rcx = read_linux_greg(bytes, LINUX_GREG_RCX)?;
+    let r11 = read_linux_greg(bytes, LINUX_GREG_R11)?;
     validate_lower_user_address_range(rip, 1)?;
     validate_lower_user_address_range(rsp, 1)?;
     Ok(UserReturnContext {
@@ -2620,6 +2621,8 @@ fn decode_linux_ucontext_return(
         },
         rsp,
         fs_base: saved_fs_base,
+        user_rcx: rcx,
+        user_r11: r11,
     })
 }
 
@@ -4978,9 +4981,12 @@ mod tests {
     use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
 
     use super::{
-        CloneRequest, futex_pi_handoff_word, futex_pi_owner_word, futex_pi_restore_wait_word,
-        futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
-        sanitize_restored_rflags,
+        CloneRequest, LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP,
+        LINUX_GREG_RSP, SignalAltStack, SyscallFrame, UserReturnContext,
+        decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
+        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
+        futex_pi_wait_word, parse_clone3_request_bytes, read_linux_greg, sanitize_restored_rflags,
+        write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -5058,6 +5064,47 @@ mod tests {
 
         assert_eq!(restored & user_flags, user_flags);
         assert_eq!(restored & 0x202, 0x202);
+    }
+
+    #[test]
+    fn signal_ucontext_keeps_syscall_clobbered_regs_separate_from_rip_and_rflags() {
+        let saved = UserReturnContext {
+            frame: SyscallFrame {
+                r9: 0x91,
+                r8: 0x81,
+                r10: 0x10,
+                rdx: 0x22,
+                rsi: 0x33,
+                rdi: 0x44,
+                rax: 0x55,
+                rcx: 0x4000_1234,
+                r11: 0x202,
+            },
+            rsp: 0x7fff_0000,
+            fs_base: 0x7000_0000,
+            user_rcx: 0xaaaa_bbbb_cccc_dddd,
+            user_r11: 0x1111_2222_3333_4444,
+        };
+
+        let mut encoded = encode_linux_ucontext(&saved, 0x55, SignalAltStack::disabled(), 0x8000);
+
+        assert_eq!(read_linux_greg(&encoded, LINUX_GREG_RIP), Ok(saved.frame.rcx));
+        assert_eq!(read_linux_greg(&encoded, LINUX_GREG_RCX), Ok(saved.user_rcx));
+        assert_eq!(read_linux_greg(&encoded, LINUX_GREG_EFL), Ok(saved.frame.r11));
+        assert_eq!(read_linux_greg(&encoded, LINUX_GREG_R11), Ok(saved.user_r11));
+
+        write_linux_greg(&mut encoded, LINUX_GREG_RIP, 0x4000_5678);
+        write_linux_greg(&mut encoded, LINUX_GREG_RSP, 0x7fff_1000);
+        write_linux_greg(&mut encoded, LINUX_GREG_RCX, 0x1234_5678_9abc_def0);
+        write_linux_greg(&mut encoded, LINUX_GREG_R11, 0xfedc_ba98_7654_3210);
+        write_linux_greg(&mut encoded, LINUX_GREG_EFL, 0x8000_0000_0003_ffff);
+
+        let restored = decode_linux_ucontext_return(&encoded, saved.fs_base).unwrap();
+        assert_eq!(restored.frame.rcx, 0x4000_5678);
+        assert_eq!(restored.rsp, 0x7fff_1000);
+        assert_eq!(restored.user_rcx, 0x1234_5678_9abc_def0);
+        assert_eq!(restored.user_r11, 0xfedc_ba98_7654_3210);
+        assert_eq!(restored.frame.r11, sanitize_restored_rflags(0x8000_0000_0003_ffff));
     }
 
     #[test]

@@ -47,6 +47,8 @@ pub(crate) struct UserReturnContext {
     pub(crate) frame: SyscallFrame,
     pub(crate) rsp: u64,
     pub(crate) fs_base: u64,
+    pub(crate) user_rcx: u64,
+    pub(crate) user_r11: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -168,6 +170,12 @@ pub(crate) fn capture_user_return(frame: &SyscallFrame) -> UserReturnContext {
         frame: *frame,
         rsp: unsafe { SAVED_USER_RSP },
         fs_base: FsBase::read().as_u64(),
+        // syscall/sysret clobbers userspace RCX/R11 with return RIP/RFLAGS.
+        // Keep these separately so signal ucontext restore through iretq can
+        // honor handler-edited REG_RCX/REG_R11 without confusing them with
+        // RIP/EFLAGS.
+        user_rcx: frame.rcx,
+        user_r11: frame.r11,
     }
 }
 
@@ -191,6 +199,8 @@ pub(crate) fn resume_user_return(context: UserReturnContext) -> ! {
     let user_rflags = context.frame.r11 | 0x202;
     let user_entry = context.frame.rcx;
     let user_stack = context.rsp;
+    let user_rcx = context.user_rcx;
+    let user_r11 = context.user_r11;
     let frame = context.frame;
 
     unsafe {
@@ -213,6 +223,8 @@ pub(crate) fn resume_user_return(context: UserReturnContext) -> ! {
             in("rsi") frame.rsi,
             in("rdi") frame.rdi,
             in("rax") frame.rax,
+            in("rcx") user_rcx,
+            in("r11") user_r11,
             options(noreturn),
         );
     }
