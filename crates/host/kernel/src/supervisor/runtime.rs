@@ -3,6 +3,9 @@ use core::ptr::null_mut;
 
 use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
 use semantic_core::{FrontendKind, GuestMemoryManager, ResourceHandle, SemanticGraph, TaskState};
+use service_core::seccomp::{
+    AUDIT_ARCH_X86_64, SeccompData, SeccompDecision, SeccompFilterProgram,
+};
 use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
 use super::{
@@ -224,6 +227,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     sigsuspend_restore_mask: None,
                     pending_signals: Vec::new(),
                     seccomp: SeccompMode::Disabled,
+                    no_new_privs: false,
                 });
                 thrds
             },
@@ -293,6 +297,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: SeccompMode::Disabled,
+            no_new_privs: false,
         });
         tid
     }
@@ -542,30 +547,86 @@ impl<'engine> PrototypeRuntime<'engine> {
         false
     }
 
-    pub(crate) fn set_seccomp_strict(&mut self, tid: Tid) -> bool {
+    pub(crate) fn set_seccomp_strict(&mut self, tid: Tid) -> Result<(), i32> {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        match thread.seccomp {
+            SeccompMode::Disabled | SeccompMode::Strict => {
+                thread.seccomp = SeccompMode::Strict;
+                Ok(())
+            }
+            SeccompMode::Filter(_) => Err(vmos_abi::ERR_EINVAL),
+        }
+    }
+
+    pub(crate) fn set_seccomp_filter(
+        &mut self,
+        tid: Tid,
+        program: SeccompFilterProgram,
+    ) -> Result<(), i32> {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        if !matches!(thread.seccomp, SeccompMode::Disabled) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if !thread.no_new_privs {
+            return Err(vmos_abi::ERR_EACCES);
+        }
+        thread.seccomp = SeccompMode::Filter(program);
+        Ok(())
+    }
+
+    pub(crate) fn set_no_new_privs(&mut self, tid: Tid, enabled: bool) -> bool {
+        if !enabled {
+            return false;
+        }
         if let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) {
-            thread.seccomp = SeccompMode::Strict;
+            thread.no_new_privs = true;
             return true;
         }
         false
     }
 
-    pub(crate) fn seccomp_mode(&self, tid: Tid) -> SeccompMode {
+    pub(crate) fn no_new_privs(&self, tid: Tid) -> bool {
         self.threads
             .iter()
             .find(|thread| thread.tid == tid)
-            .map(|thread| thread.seccomp)
-            .unwrap_or(SeccompMode::Disabled)
+            .map(|thread| thread.no_new_privs)
+            .unwrap_or(false)
     }
 
-    pub(crate) fn seccomp_allows_syscall(&self, tid: Tid, syscall: u64) -> bool {
-        match self.seccomp_mode(tid) {
-            SeccompMode::Disabled => true,
-            SeccompMode::Strict => {
-                matches!(
+    pub(crate) fn check_seccomp_syscall(
+        &self,
+        tid: Tid,
+        syscall: u64,
+        instruction_pointer: u64,
+        args: [u64; 6],
+    ) -> SeccompDecision {
+        match self.threads.iter().find(|thread| thread.tid == tid).map(|thread| &thread.seccomp) {
+            None | Some(SeccompMode::Disabled) => SeccompDecision::Allow,
+            Some(SeccompMode::Strict) => {
+                if matches!(
                     syscall,
                     SYS_READ | SYS_WRITE | SYS_EXIT | SYS_EXIT_GROUP | SYS_RT_SIGRETURN
-                )
+                ) {
+                    SeccompDecision::Allow
+                } else {
+                    SeccompDecision::Kill { signal: 9 }
+                }
+            }
+            Some(SeccompMode::Filter(program)) => {
+                let syscall_nr = syscall.min(u32::MAX as u64) as u32;
+                match program.evaluate(SeccompData {
+                    nr: syscall_nr,
+                    arch: AUDIT_ARCH_X86_64,
+                    instruction_pointer,
+                    args,
+                }) {
+                    Ok(decision) => decision,
+                    Err(_) => SeccompDecision::Kill { signal: 31 },
+                }
             }
         }
     }

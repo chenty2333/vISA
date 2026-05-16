@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(feature = "seccomp-filter")]
+extern crate alloc;
+
 #[cfg(test)]
 extern crate std;
 
@@ -11,3 +14,5 @@ pub mod net;
 pub mod net_contract;
 pub mod packet;
 pub mod replay;
+#[cfg(feature = "seccomp-filter")]
+pub mod seccomp;

@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 
 use semantic_core::{ResourceHandle, ResourceId};
+use service_core::seccomp::SeccompFilterProgram;
 use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
 
 pub(crate) type TaskId = u32;
@@ -80,11 +81,11 @@ impl<'a> AccessIds<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
     Disabled,
     Strict,
-    // Filter not yet implemented
+    Filter(SeccompFilterProgram),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +108,7 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) sigsuspend_restore_mask: Option<u64>,
     pub(crate) pending_signals: Vec<PendingSignal>,
     pub(crate) seccomp: SeccompMode,
+    pub(crate) no_new_privs: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

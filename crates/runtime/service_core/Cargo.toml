@@ -4,5 +4,9 @@ version = "0.1.0"
 publish = false
 edition = "2024"
 
+[features]
+default = []
+seccomp-filter = []
+
 [dependencies]
 vmos_abi.workspace = true

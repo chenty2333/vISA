@@ -195,7 +195,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigmask: parent_thread.sigmask,
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
-            seccomp: parent_thread.seccomp,
+            seccomp: parent_thread.seccomp.clone(),
+            no_new_privs: parent_thread.no_new_privs,
         });
 
         Ok((child_task_id, child_pid, child_tid))
@@ -327,7 +328,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigmask: parent_thread.sigmask,
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
-            seccomp: parent_thread.seccomp,
+            seccomp: parent_thread.seccomp.clone(),
+            no_new_privs: parent_thread.no_new_privs,
         });
 
         Ok((child_task_id, child_pid, child_tid))
@@ -451,7 +453,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigmask: parent_thread.sigmask,
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
-            seccomp: parent_thread.seccomp,
+            seccomp: parent_thread.seccomp.clone(),
+            no_new_privs: parent_thread.no_new_privs,
         });
 
         Ok((child_task_id, child_pid, child_tid))

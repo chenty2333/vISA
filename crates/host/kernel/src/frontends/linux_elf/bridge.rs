@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
+use service_core::seccomp::{SeccompDecision, SeccompFilterProgram, SeccompInstruction};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
     ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
@@ -206,9 +207,18 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     };
     let _activation = ActivationGuard { activation_id };
     active_context().supervisor.set_current_task(task_id);
-    if !active_context().supervisor.seccomp_allows_syscall(active_context().tid, syscall_nr) {
-        crate::kwarn!("seccomp strict killed syscall {}", syscall_nr);
-        return handle_exit_syscall(frame, 128 + 9);
+    match active_context().supervisor.check_seccomp_syscall(
+        active_context().tid,
+        syscall_nr,
+        frame.rcx,
+        [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
+    ) {
+        SeccompDecision::Allow => {}
+        SeccompDecision::Errno(errno) => return Ok(-(errno as i64)),
+        SeccompDecision::Kill { signal } => {
+            crate::kwarn!("seccomp killed syscall {}", syscall_nr);
+            return handle_exit_syscall(frame, 128 + signal as i32);
+        }
     }
     let result = match syscall_nr {
         SYS_WRITE => sys_write(frame),
@@ -1269,23 +1279,35 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PR_SET_NO_NEW_PRIVS: u64 = 38;
+    const PR_GET_NO_NEW_PRIVS: u64 = 39;
     const PR_SET_SECCOMP: u64 = 22;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
     const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
-    const SECCOMP_MODE_STRICT: u64 = 1;
 
     match frame.rdi {
-        PR_SET_SECCOMP => {
-            if frame.rsi != SECCOMP_MODE_STRICT || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0
-            {
+        PR_SET_NO_NEW_PRIVS => {
+            if frame.rsi != 1 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
                 return Err(ERR_EINVAL);
             }
-            if active_context().supervisor.set_seccomp_strict(active_context().tid) {
+            if active_context().supervisor.set_no_new_privs(active_context().tid, true) {
                 Ok(0)
             } else {
                 Err(ERR_ESRCH)
             }
+        }
+        PR_GET_NO_NEW_PRIVS => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            Ok(active_context().supervisor.no_new_privs(active_context().tid) as i64)
+        }
+        PR_SET_SECCOMP => {
+            if frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            install_seccomp_mode(frame.rsi, frame.rdx)
         }
         PR_SET_TIMERSLACK => Ok(0),
         PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
@@ -1295,15 +1317,69 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
     const SECCOMP_SET_MODE_STRICT: u64 = 0;
+    const SECCOMP_SET_MODE_FILTER: u64 = 1;
 
-    if frame.rdi != SECCOMP_SET_MODE_STRICT || frame.rsi != 0 || frame.rdx != 0 {
+    if frame.rsi != 0 {
         return Err(ERR_EINVAL);
     }
-    if active_context().supervisor.set_seccomp_strict(active_context().tid) {
-        Ok(0)
-    } else {
-        Err(ERR_ESRCH)
+    match frame.rdi {
+        SECCOMP_SET_MODE_STRICT => install_seccomp_mode(1, 0),
+        SECCOMP_SET_MODE_FILTER => install_seccomp_mode(2, frame.rdx),
+        _ => Err(ERR_EINVAL),
     }
+}
+
+fn install_seccomp_mode(mode: u64, arg: u64) -> Result<i64, i32> {
+    const SECCOMP_MODE_STRICT: u64 = 1;
+    const SECCOMP_MODE_FILTER: u64 = 2;
+
+    match mode {
+        SECCOMP_MODE_STRICT => {
+            if arg != 0 {
+                return Err(ERR_EINVAL);
+            }
+            active_context().supervisor.set_seccomp_strict(active_context().tid).map(|()| 0)
+        }
+        SECCOMP_MODE_FILTER => {
+            if !active_context().supervisor.no_new_privs(active_context().tid) {
+                return Err(ERR_EACCES);
+            }
+            let program = read_seccomp_filter_program(arg)?;
+            active_context()
+                .supervisor
+                .set_seccomp_filter(active_context().tid, program)
+                .map(|()| 0)
+        }
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn read_seccomp_filter_program(ptr: u64) -> Result<SeccompFilterProgram, i32> {
+    const SOCK_FPROG_SIZE: usize = 16;
+    const SOCK_FILTER_SIZE: usize = 8;
+    const MAX_FILTER_INSTRUCTIONS: usize = 4096;
+
+    let fprog = read_user_bytes(ptr, SOCK_FPROG_SIZE)?;
+    let len = u16::from_le_bytes(fprog[0..2].try_into().map_err(|_| ERR_EINVAL)?) as usize;
+    let filter_ptr = u64::from_le_bytes(fprog[8..16].try_into().map_err(|_| ERR_EINVAL)?);
+    if len == 0 || len > MAX_FILTER_INSTRUCTIONS {
+        return Err(ERR_EINVAL);
+    }
+    if filter_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let byte_len = len.checked_mul(SOCK_FILTER_SIZE).ok_or(ERR_EINVAL)?;
+    let raw_filter = read_user_bytes(filter_ptr, byte_len)?;
+    let mut instructions = Vec::with_capacity(len);
+    for chunk in raw_filter.chunks_exact(SOCK_FILTER_SIZE) {
+        instructions.push(SeccompInstruction::new(
+            u16::from_le_bytes(chunk[0..2].try_into().map_err(|_| ERR_EINVAL)?),
+            chunk[2],
+            chunk[3],
+            u32::from_le_bytes(chunk[4..8].try_into().map_err(|_| ERR_EINVAL)?),
+        ));
+    }
+    SeccompFilterProgram::new(instructions).map_err(|_| ERR_EINVAL)
 }
 
 fn sys_getrandom(frame: &SyscallFrame) -> Result<i64, i32> {
