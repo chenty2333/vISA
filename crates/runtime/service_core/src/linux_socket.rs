@@ -233,8 +233,16 @@ impl LinuxSocketState {
         if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
             return Err(ERR_EOPNOTSUPP);
         }
+        if self.sockets[index].state == SOCKET_CONNECTED {
+            return Err(ERR_EINVAL);
+        }
+        let backlog = backlog.max(1).min(MAX_PENDING_ACCEPTS as u32);
+        if self.sockets[index].state == SOCKET_LISTENING {
+            self.sockets[index].backlog = backlog;
+            return Ok(());
+        }
         self.sockets[index].state = SOCKET_LISTENING;
-        self.sockets[index].backlog = backlog.max(1).min(MAX_PENDING_ACCEPTS as u32);
+        self.sockets[index].backlog = backlog;
         self.sockets[index].pending_accepts = 0;
         self.sockets[index].pending_accept_queue = [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS];
         Ok(())
@@ -518,6 +526,18 @@ mod tests {
     }
 
     #[test]
+    fn listen_rejects_connected_stream_socket() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.listen_socket(2, 1), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
+
+        assert_eq!(state.listen_socket(1, 1), Err(ERR_EINVAL));
+    }
+
+    #[test]
     fn connect_requires_a_listening_stream_socket_and_queues_accept() {
         let mut state = LinuxSocketState::new();
 
@@ -702,6 +722,23 @@ mod tests {
         assert_eq!(state.pending_accept_count(2), Ok(1));
         assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
         assert_eq!(state.pending_accept_count(2), Ok(0));
+    }
+
+    #[test]
+    fn relisten_preserves_pending_accept_queue() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 1), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 2, ALT_LOOPBACK, 9090), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+
+        assert_eq!(state.listen_socket(1, 4), Ok(()));
+        assert_eq!(state.pending_accept_count(1), Ok(1));
+        assert_eq!(state.accept_socket(1, 7, 99), Ok(7));
+        assert_eq!(state.ipv4_endpoint(7, true), Ok(Some((ALT_LOOPBACK, 9090))));
     }
 
     #[test]
