@@ -8,9 +8,9 @@ use service_core::seccomp::{
     SeccompFilterProgram, SeccompInstruction,
 };
 use vmos_abi::{
-    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
-    ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
-    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT,
+    AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK,
+    ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM,
+    ERR_ENOSYS, ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT,
     FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI,
     FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_REQUEUE, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI,
     FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS,
@@ -346,7 +346,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_BPF => Err(ERR_EPERM),
         SYS_ADD_KEY | SYS_KEYCTL => Err(ERR_EPERM),
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
-        SYS_CLONE3 => Err(ERR_ENOSYS),
+        SYS_CLONE3 => sys_clone3(frame),
         SYS_WAIT4 => sys_wait4(frame),
         SYS_SETPGID => sys_setpgid(frame),
         SYS_SETSID => sys_setsid(),
@@ -2302,9 +2302,49 @@ fn sys_setsid() -> Result<i64, i32> {
     context.supervisor.create_session_for_process(current_pid).map(|sid| sid as i64)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CloneRequest {
+    flags: u64,
+    stack: u64,
+    parent_tid_ptr: u64,
+    child_tid_ptr: u64,
+    tls_base: u64,
+}
+
 fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
-    const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
     const SIGCHLD_FLAG: u64 = 17;
+
+    if frame.rax == SYS_VFORK {
+        return sys_vfork(frame);
+    }
+    let request = if frame.rax == SYS_CLONE {
+        CloneRequest {
+            flags: frame.rdi,
+            stack: frame.rsi,
+            parent_tid_ptr: frame.rdx,
+            child_tid_ptr: frame.r10,
+            tls_base: frame.r8,
+        }
+    } else {
+        CloneRequest {
+            flags: SIGCHLD_FLAG,
+            stack: 0,
+            parent_tid_ptr: 0,
+            child_tid_ptr: 0,
+            tls_base: 0,
+        }
+    };
+    sys_clone_request(frame, request)
+}
+
+fn sys_clone3(frame: &mut SyscallFrame) -> Result<i64, i32> {
+    let size = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let request = read_clone3_request(frame.rdi, size)?;
+    sys_clone_request(frame, request)
+}
+
+fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<i64, i32> {
+    const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
     const CLONE_VM: u64 = 0x100;
     const CLONE_FS: u64 = 0x200;
     const CLONE_FILES: u64 = 0x400;
@@ -2330,21 +2370,14 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
         | CLONE_CHILD_CLEARTID
         | CLONE_CHILD_SETTID;
 
-    if frame.rax == SYS_VFORK {
-        return sys_vfork(frame);
-    }
-    if frame.rax == SYS_CLONE3 {
-        return Err(ERR_ENOSYS);
-    }
     if active_context().has_suspended_clone_parent() {
         return Err(ERR_ENOSYS);
     }
-    let raw_clone = frame.rax == SYS_CLONE || frame.rax == SYS_CLONE3;
-    let flags = if raw_clone { frame.rdi } else { SIGCHLD_FLAG };
-    let stack = if raw_clone { frame.rsi } else { 0 };
-    let parent_tid_ptr = frame.rdx;
-    let child_tid_ptr = frame.r10;
-    let tls_base = frame.r8;
+    let flags = request.flags;
+    let stack = request.stack;
+    let parent_tid_ptr = request.parent_tid_ptr;
+    let child_tid_ptr = request.child_tid_ptr;
+    let tls_base = request.tls_base;
     if flags & CLONE_SIGHAND != 0 && flags & CLONE_VM == 0 {
         return Err(ERR_EINVAL);
     }
@@ -2530,6 +2563,83 @@ fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
     active_context().supervisor.set_current_task(child_task_id);
     ring3::install_user_return(frame, child_return);
     Ok(0)
+}
+
+fn read_clone3_request(ptr: u64, size: usize) -> Result<CloneRequest, i32> {
+    const CLONE3_ARGS_SIZE_V0: usize = 64;
+    const CLONE3_ARGS_SIZE_V1: usize = 80;
+    const CLONE3_ARGS_SIZE_V2: usize = 88;
+
+    match size {
+        CLONE3_ARGS_SIZE_V0 | CLONE3_ARGS_SIZE_V1 | CLONE3_ARGS_SIZE_V2 => {}
+        _ if size > CLONE3_ARGS_SIZE_V2 => return Err(ERR_E2BIG),
+        _ => return Err(ERR_EINVAL),
+    }
+    let bytes = read_user_bytes(ptr, size)?;
+    parse_clone3_request_bytes(&bytes, size)
+}
+
+fn parse_clone3_request_bytes(bytes: &[u8], size: usize) -> Result<CloneRequest, i32> {
+    const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
+    const CLONE3_ARGS_SIZE_V0: usize = 64;
+    const CLONE3_ARGS_SIZE_V1: usize = 80;
+    const CLONE3_ARGS_SIZE_V2: usize = 88;
+    const CLONE3_FLAGS: usize = 0;
+    const CLONE3_PIDFD: usize = 8;
+    const CLONE3_CHILD_TID: usize = 16;
+    const CLONE3_PARENT_TID: usize = 24;
+    const CLONE3_EXIT_SIGNAL: usize = 32;
+    const CLONE3_STACK: usize = 40;
+    const CLONE3_STACK_SIZE: usize = 48;
+    const CLONE3_TLS: usize = 56;
+    const CLONE3_SET_TID: usize = 64;
+    const CLONE3_SET_TID_SIZE: usize = 72;
+    const CLONE3_CGROUP: usize = 80;
+
+    match size {
+        CLONE3_ARGS_SIZE_V0 | CLONE3_ARGS_SIZE_V1 | CLONE3_ARGS_SIZE_V2 => {}
+        _ if size > CLONE3_ARGS_SIZE_V2 => return Err(ERR_E2BIG),
+        _ => return Err(ERR_EINVAL),
+    }
+    if bytes.len() != size {
+        return Err(ERR_EINVAL);
+    }
+
+    let flags = read_u64_from(bytes, CLONE3_FLAGS)?;
+    let pidfd = read_u64_from(bytes, CLONE3_PIDFD)?;
+    let child_tid = read_u64_from(bytes, CLONE3_CHILD_TID)?;
+    let parent_tid = read_u64_from(bytes, CLONE3_PARENT_TID)?;
+    let exit_signal = read_u64_from(bytes, CLONE3_EXIT_SIGNAL)?;
+    let stack = read_u64_from(bytes, CLONE3_STACK)?;
+    let stack_size = read_u64_from(bytes, CLONE3_STACK_SIZE)?;
+    let tls = read_u64_from(bytes, CLONE3_TLS)?;
+    let set_tid =
+        if size >= CLONE3_ARGS_SIZE_V1 { read_u64_from(bytes, CLONE3_SET_TID)? } else { 0 };
+    let set_tid_size =
+        if size >= CLONE3_ARGS_SIZE_V1 { read_u64_from(bytes, CLONE3_SET_TID_SIZE)? } else { 0 };
+    let cgroup = if size >= CLONE3_ARGS_SIZE_V2 { read_u64_from(bytes, CLONE3_CGROUP)? } else { 0 };
+
+    if flags & CLONE_EXIT_SIGNAL_MASK != 0 || exit_signal >= 64 {
+        return Err(ERR_EINVAL);
+    }
+    if stack == 0 && stack_size != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if stack != 0 && stack_size == 0 {
+        return Err(ERR_EINVAL);
+    }
+    if pidfd != 0 || set_tid != 0 || set_tid_size != 0 || cgroup != 0 {
+        return Err(ERR_ENOSYS);
+    }
+
+    let stack = if stack == 0 { 0 } else { stack.checked_add(stack_size).ok_or(ERR_EINVAL)? };
+    Ok(CloneRequest {
+        flags: flags | exit_signal,
+        stack,
+        parent_tid_ptr: parent_tid,
+        child_tid_ptr: child_tid,
+        tls_base: tls,
+    })
 }
 
 fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -4406,9 +4516,13 @@ mod tests {
     use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
 
     use super::{
-        futex_pi_handoff_word, futex_pi_owner_word, futex_pi_restore_wait_word,
-        futex_pi_unlock_empty_word, futex_pi_wait_word,
+        CloneRequest, futex_pi_handoff_word, futex_pi_owner_word, futex_pi_restore_wait_word,
+        futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
     };
+
+    fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
 
     #[test]
     fn futex_pi_owner_word_preserves_state_bits() {
@@ -4457,6 +4571,44 @@ mod tests {
             futex_pi_restore_wait_word(original, FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x5678),
             None
         );
+    }
+
+    #[test]
+    fn clone3_parser_maps_v0_args_to_legacy_clone_request() {
+        let mut bytes = [0u8; 64];
+        write_u64_at(&mut bytes, 16, 0x1000);
+        write_u64_at(&mut bytes, 24, 0x2000);
+        write_u64_at(&mut bytes, 32, 17);
+        write_u64_at(&mut bytes, 40, 0x7000_0000);
+        write_u64_at(&mut bytes, 48, 0x4000);
+        write_u64_at(&mut bytes, 56, 0x1234_5000);
+
+        assert_eq!(
+            parse_clone3_request_bytes(&bytes, 64),
+            Ok(CloneRequest {
+                flags: 17,
+                stack: 0x7000_4000,
+                parent_tid_ptr: 0x2000,
+                child_tid_ptr: 0x1000,
+                tls_base: 0x1234_5000,
+            })
+        );
+    }
+
+    #[test]
+    fn clone3_parser_rejects_signal_bits_in_flags() {
+        let mut bytes = [0u8; 64];
+        write_u64_at(&mut bytes, 0, 17);
+
+        assert_eq!(parse_clone3_request_bytes(&bytes, 64), Err(vmos_abi::ERR_EINVAL));
+    }
+
+    #[test]
+    fn clone3_parser_rejects_unsupported_extension_fields() {
+        let mut bytes = [0u8; 80];
+        write_u64_at(&mut bytes, 72, 1);
+
+        assert_eq!(parse_clone3_request_bytes(&bytes, 80), Err(vmos_abi::ERR_ENOSYS));
     }
 }
 

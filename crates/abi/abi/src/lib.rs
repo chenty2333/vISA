@@ -175,6 +175,7 @@ pub const ERR_ENOENT: i32 = 2;
 pub const ERR_ESRCH: i32 = 3;
 pub const ERR_EINTR: i32 = 4;
 pub const ERR_EIO: i32 = 5;
+pub const ERR_E2BIG: i32 = 7;
 pub const ERR_EBADF: i32 = 9;
 pub const ERR_ECHILD: i32 = 10;
 pub const ERR_EAGAIN: i32 = 11;

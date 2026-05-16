@@ -220,8 +220,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(TaskId, Pid, Tid), i32> {
         // This is the first non-vfork executable clone subset. The Linux ELF
         // context snapshots cwd/fd-table state when CLONE_FS/CLONE_FILES are
-        // not requested. Non-CLONE_VM fork stays ENOSYS until address-space
-        // cloning/COW exists.
+        // not requested; independent-VM fork/clone uses the sibling helper.
         if flags & CLONE_NS_MASK != 0 {
             return Err(vmos_abi::ERR_ENOSYS);
         }
