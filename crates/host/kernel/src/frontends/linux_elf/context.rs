@@ -457,6 +457,10 @@ impl ActiveUserContext {
         self.cap_ambient
     }
 
+    pub(crate) fn cap_ambient_is_set(&self, capability: u64) -> bool {
+        self.cap_ambient & capability != 0
+    }
+
     pub(crate) fn has_effective_capability(&self, capability: u64) -> bool {
         self.cap_effective & capability != 0
     }
@@ -604,6 +608,7 @@ impl ActiveUserContext {
             || permitted & !self.cap_permitted != 0
             || effective & !permitted != 0
             || ambient & !permitted != 0
+            || ambient & !inheritable != 0
         {
             return false;
         }
@@ -612,6 +617,32 @@ impl ActiveUserContext {
         self.cap_inheritable = inheritable;
         self.cap_ambient = ambient;
         true
+    }
+
+    pub(crate) fn set_capability_sets_from_capset(
+        &mut self,
+        permitted: u64,
+        effective: u64,
+        inheritable: u64,
+    ) -> bool {
+        let ambient = self.cap_ambient & permitted & inheritable;
+        self.set_capability_sets(permitted, effective, inheritable, ambient)
+    }
+
+    pub(crate) fn raise_ambient_capability(&mut self, capability: u64) -> bool {
+        if self.cap_permitted & capability == 0 || self.cap_inheritable & capability == 0 {
+            return false;
+        }
+        self.cap_ambient |= capability & LINUX_KNOWN_CAPS;
+        true
+    }
+
+    pub(crate) fn lower_ambient_capability(&mut self, capability: u64) {
+        self.cap_ambient &= !capability;
+    }
+
+    pub(crate) fn clear_ambient_capabilities(&mut self) {
+        self.cap_ambient = 0;
     }
 
     fn fixup_capabilities_after_uid_change(&mut self, old_uid: u32, old_euid: u32, old_suid: u32) {

@@ -57,10 +57,10 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS,
-            Rlimit, RobustListRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
-            SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
-            UserSignalDelivery,
+            AccessIds, CAP_SETGID, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
+            PendingSignal, RLIMIT_AS, Rlimit, RobustListRegistration, SIGALTSTACK_SS_AUTODISARM,
+            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction,
+            SignalAltStack, UserSignalDelivery,
         },
     },
 };
@@ -1183,7 +1183,7 @@ fn sys_capset(frame: &SyscallFrame) -> Result<i64, i32> {
     let bytes = read_user_bytes(frame.rsi, len)?;
     let (effective, permitted, inheritable) = decode_capability_data(&bytes)?;
     let before = active_context().credential_state();
-    if !active_context().set_capability_sets(permitted, effective, inheritable, 0) {
+    if !active_context().set_capability_sets_from_capset(permitted, effective, inheritable) {
         return Err(ERR_EPERM);
     }
     if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
@@ -1406,6 +1406,7 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const PR_SET_SECCOMP: u64 = 22;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
+    const PR_CAP_AMBIENT: u64 = 47;
     const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
 
     match frame.rdi {
@@ -1443,8 +1444,102 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
         }
         PR_SET_TIMERSLACK => Ok(0),
         PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
+        PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_prctl_cap_ambient(op: u64, cap: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    const PR_CAP_AMBIENT_IS_SET: u64 = 1;
+    const PR_CAP_AMBIENT_RAISE: u64 = 2;
+    const PR_CAP_AMBIENT_LOWER: u64 = 3;
+    const PR_CAP_AMBIENT_CLEAR_ALL: u64 = 4;
+
+    match op {
+        PR_CAP_AMBIENT_IS_SET => {
+            if arg4 != 0 || arg5 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            let capability = capability_bit_from_prctl_arg(cap)?;
+            Ok(active_context().cap_ambient_is_set(capability) as i64)
+        }
+        PR_CAP_AMBIENT_RAISE => {
+            if arg4 != 0 || arg5 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            let capability = capability_bit_from_prctl_arg(cap)?;
+            let before = active_context().credential_state();
+            if !active_context().raise_ambient_capability(capability) {
+                return Err(ERR_EPERM);
+            }
+            if before.cap_ambient != active_context().cap_ambient() {
+                if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+                    bounding: false,
+                    inheritable: false,
+                    permitted: false,
+                    effective: false,
+                    ambient: true,
+                }) {
+                    restore_credential_state(before);
+                    return Err(errno);
+                }
+            }
+            Ok(0)
+        }
+        PR_CAP_AMBIENT_LOWER => {
+            if arg4 != 0 || arg5 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            let capability = capability_bit_from_prctl_arg(cap)?;
+            let before = active_context().credential_state();
+            active_context().lower_ambient_capability(capability);
+            if before.cap_ambient != active_context().cap_ambient() {
+                if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+                    bounding: false,
+                    inheritable: false,
+                    permitted: false,
+                    effective: false,
+                    ambient: true,
+                }) {
+                    restore_credential_state(before);
+                    return Err(errno);
+                }
+            }
+            Ok(0)
+        }
+        PR_CAP_AMBIENT_CLEAR_ALL => {
+            if cap != 0 || arg4 != 0 || arg5 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            let before = active_context().credential_state();
+            active_context().clear_ambient_capabilities();
+            if before.cap_ambient != active_context().cap_ambient() {
+                if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+                    bounding: false,
+                    inheritable: false,
+                    permitted: false,
+                    effective: false,
+                    ambient: true,
+                }) {
+                    restore_credential_state(before);
+                    return Err(errno);
+                }
+            }
+            Ok(0)
+        }
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn capability_bit_from_prctl_arg(cap: u64) -> Result<u64, i32> {
+    if cap >= u64::BITS as u64 {
+        return Err(ERR_EINVAL);
+    }
+    let capability = 1u64 << cap;
+    if capability & LINUX_KNOWN_CAPS == 0 {
+        return Err(ERR_EINVAL);
+    }
+    Ok(capability)
 }
 
 fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
