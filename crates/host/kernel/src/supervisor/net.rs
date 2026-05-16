@@ -627,10 +627,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: Option<ResourceId>,
     ) {
-        let now_ms = net_stack_now_ms();
         self.poll_network_driver_events();
-        let _ = self.net_stack.poll(now_ms);
-        self.flush_net_stack_tx_frames(socket_resource, ready_key);
+        self.poll_active_net_stack(socket_resource, ready_key);
+    }
+
+    pub(super) fn pump_network_runtime(&mut self) {
+        self.poll_network_driver_events();
+        self.poll_active_net_stack(None, 0);
     }
 
     pub(super) fn poll_network_driver_events(&mut self) {
@@ -685,9 +688,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 crate::kwarn!("smoltcp enqueue driver rx frame: {}", err);
                 return;
             }
-            let _ = self.net_stack.poll(net_stack_now_ms());
-            self.refresh_active_net_stack_sockets();
-            self.flush_net_stack_tx_frames(None, 0);
+            self.poll_active_net_stack(None, 0);
             return;
         }
 
@@ -725,6 +726,15 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn has_active_net_stack_socket(&self) -> bool {
         self.net_stack_sockets.iter().any(|binding| binding.mode != NetStackSocketMode::Idle)
+    }
+
+    fn poll_active_net_stack(&mut self, socket_resource: Option<ResourceId>, ready_key: u64) {
+        if !self.has_active_net_stack_socket() {
+            return;
+        }
+        let _ = self.net_stack.poll(net_stack_now_ms());
+        self.refresh_active_net_stack_sockets();
+        self.flush_net_stack_tx_frames(socket_resource, ready_key);
     }
 
     fn refresh_active_net_stack_sockets(&mut self) {

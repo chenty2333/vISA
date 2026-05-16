@@ -448,7 +448,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
 
-        self.poll_network_driver_events();
+        self.pump_network_runtime();
         self.drain_event_queue();
     }
 }
