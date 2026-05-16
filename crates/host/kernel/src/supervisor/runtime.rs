@@ -2,13 +2,14 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use core::ptr::null_mut;
 
 use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
-use semantic_core::{FrontendKind, ResourceHandle, SemanticGraph, TaskState};
+use semantic_core::{FrontendKind, GuestMemoryManager, ResourceHandle, SemanticGraph, TaskState};
 use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
 use super::{
     artifacts::ArtifactRegistry,
     authority::AuthorityPlane,
     engine::RuntimeOnlyExecutor,
+    guest_memory::GuestMemoryProjection,
     linux::LinuxFrontend,
     net::{NetStackSocketBinding, NetworkPlane},
     pulse::PulseDevice,
@@ -89,6 +90,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) pulse: PulseDevice,
     pub(super) net: NetworkPlane,
     pub(super) store_manager: StoreManager,
+    pub(super) guest_memory: GuestMemoryProjection,
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
@@ -145,6 +147,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         let linux = LinuxFrontend::new(engine)?;
         crate::kdebug!("instantiating wasm_app");
         let app = WasmApp::new(engine)?;
+        let guest_memory_store = store_manager
+            .records()
+            .first()
+            .ok_or("store manager was empty while bootstrapping guest memory projection")?
+            .store;
+        let guest_memory_owner = semantic
+            .stores()
+            .iter()
+            .find(|store| store.id == guest_memory_store)
+            .ok_or("semantic store was missing while bootstrapping guest memory projection")?
+            .object_ref();
+        crate::kdebug!("bootstrapping guest memory projection");
+        let mut guest_memory_manager = GuestMemoryManager::new();
+        let guest_memory_aspace = guest_memory_manager.create_address_space(guest_memory_owner);
+        let guest_memory = GuestMemoryProjection::new(guest_memory_manager, guest_memory_aspace);
         Ok(Self {
             artifacts,
             authority,
@@ -214,6 +231,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pulse: PulseDevice::new(interrupts::tick_count()),
             net,
             store_manager,
+            guest_memory,
             restart_count: 0,
             semantic,
             next_snapshot_barrier: 1,
@@ -330,6 +348,21 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
         self.scheduler.set_current_task(task);
         self.semantic.set_task_state(task, TaskState::Running);
+    }
+
+    pub(crate) fn record_guest_memory_region(
+        &mut self,
+        start: u64,
+        len: u64,
+        readable: bool,
+        writable: bool,
+        executable: bool,
+    ) {
+        self.guest_memory.record_region(start, len, readable, writable, executable);
+    }
+
+    pub(crate) fn record_guest_memory_unmap(&mut self, start: u64, len: u64) {
+        self.guest_memory.remove_region(start, len);
     }
 
     pub(crate) fn bootstrap_task(&self) -> TaskId {

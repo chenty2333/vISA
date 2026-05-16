@@ -6,6 +6,7 @@ mod demos;
 mod engine;
 mod events;
 mod fault;
+mod guest_memory;
 mod linux;
 mod linux_dispatch;
 mod linux_epoll_dispatch;

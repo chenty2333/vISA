@@ -2862,6 +2862,9 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     );
     let (readable, writable, executable) = prot_user_region_permissions(frame.rdx);
     active_context().record_user_region(addr, len, readable, writable, executable);
+    active_context()
+        .supervisor
+        .record_guest_memory_region(addr, len, readable, writable, executable);
     Ok(addr as i64)
 }
 
@@ -2882,6 +2885,13 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let end = align_page(requested).ok_or(ERR_EINVAL)?;
         if end > start {
             active_context().record_user_region(start, end - start, true, true, false);
+            active_context().supervisor.record_guest_memory_region(
+                start,
+                end - start,
+                true,
+                true,
+                false,
+            );
         }
     } else if requested < current {
         let start = align_page(requested).ok_or(ERR_EINVAL)?;
@@ -2889,6 +2899,7 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         if end > start {
             unmap_active_user_page_range(start, end - start)?;
             active_context().unmap_user_region(start, end - start);
+            active_context().supervisor.record_guest_memory_unmap(start, end - start);
         }
     }
 
@@ -2905,6 +2916,9 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     protect_active_user_page_range(frame.rdi, len, frame.rdx)?;
     let (readable, writable, executable) = prot_user_region_permissions(frame.rdx);
     active_context().record_user_region(frame.rdi, len, readable, writable, executable);
+    active_context()
+        .supervisor
+        .record_guest_memory_region(frame.rdi, len, readable, writable, executable);
     Ok(0)
 }
 
@@ -2924,6 +2938,7 @@ fn sys_munmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let _ =
         dispatch_ret("ring3_munmap", SyscallContext::new(SYS_MUNMAP, [frame.rdi, len, 0, 0, 0, 0]));
     active_context().unmap_user_region(frame.rdi, len);
+    active_context().supervisor.record_guest_memory_unmap(frame.rdi, len);
     Ok(0)
 }
 

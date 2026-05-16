@@ -164,14 +164,30 @@ pub struct GuestPerms {
 }
 
 impl GuestPerms {
+    pub const NONE: Self = Self { bits: 0 };
     pub const READ: Self = Self { bits: 0b001 };
     pub const WRITE: Self = Self { bits: 0b010 };
     pub const EXEC: Self = Self { bits: 0b100 };
     pub const READ_WRITE: Self = Self { bits: 0b011 };
     pub const READ_EXECUTE: Self = Self { bits: 0b101 };
+    pub const READ_WRITE_EXECUTE: Self = Self { bits: 0b111 };
 
     pub const fn contains(self, required: Self) -> bool {
         self.bits & required.bits == required.bits
+    }
+
+    pub const fn from_rwx(readable: bool, writable: bool, executable: bool) -> Self {
+        let mut bits = 0;
+        if readable {
+            bits |= Self::READ.bits;
+        }
+        if writable {
+            bits |= Self::WRITE.bits;
+        }
+        if executable {
+            bits |= Self::EXEC.bits;
+        }
+        Self { bits }
     }
 }
 
@@ -1044,6 +1060,15 @@ mod tests {
             h.memory.copyout(&fast_path, SUBJECT, h.authority, &h.handle, &h.ledger),
             Err(GuestMemoryError::PermissionDenied)
         );
+    }
+
+    #[test]
+    fn guest_perms_from_rwx_matches_expected_masks() {
+        assert_eq!(GuestPerms::from_rwx(false, false, false), GuestPerms::NONE);
+        assert_eq!(GuestPerms::from_rwx(true, false, false), GuestPerms::READ);
+        assert_eq!(GuestPerms::from_rwx(true, true, false), GuestPerms::READ_WRITE);
+        assert_eq!(GuestPerms::from_rwx(true, false, true), GuestPerms::READ_EXECUTE);
+        assert_eq!(GuestPerms::from_rwx(true, true, true), GuestPerms::READ_WRITE_EXECUTE);
     }
 
     #[test]
