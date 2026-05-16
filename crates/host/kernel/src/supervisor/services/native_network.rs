@@ -174,6 +174,14 @@ impl LinuxSocketService {
         map_errno(self.state.accept_ready_key_for_client(socket_id))
     }
 
+    pub(crate) fn ipv4_endpoint(
+        &mut self,
+        socket_id: u32,
+        peer: bool,
+    ) -> Result<Option<(u32, u16)>, ServiceCallError> {
+        map_errno(self.state.ipv4_endpoint(socket_id, peer))
+    }
+
     pub(crate) fn send_socket(
         &mut self,
         socket_id: u32,

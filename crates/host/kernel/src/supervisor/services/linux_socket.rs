@@ -18,6 +18,7 @@ pub(crate) struct LinuxSocketService {
     accept_socket: WasmFn<(u32, u32, u64), i32>,
     pending_accept_count: WasmFn<u32, i32>,
     accept_ready_key_for_client: WasmFn<u32, u64>,
+    ipv4_endpoint: WasmFn<(u32, u32), u64>,
     send_socket: WasmFn<(u32, u32), i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
     setsockopt: WasmFn<(u32, u32, u32, u32), i32>,
@@ -53,6 +54,8 @@ impl LinuxSocketService {
             "accept_ready_key_for_client",
             "missing linux_socket accept_ready_key_for_client export",
         )?;
+        let ipv4_endpoint =
+            io.bind("ipv4_endpoint", "missing linux_socket ipv4_endpoint export")?;
         let send_socket = io.bind("send_socket", "missing linux_socket send_socket export")?;
         let recv_socket = io.bind("recv_socket", "missing linux_socket recv_socket export")?;
         let setsockopt = io.bind("setsockopt", "missing linux_socket setsockopt export")?;
@@ -75,6 +78,7 @@ impl LinuxSocketService {
             accept_socket,
             pending_accept_count,
             accept_ready_key_for_client,
+            ipv4_endpoint,
             send_socket,
             recv_socket,
             setsockopt,
@@ -225,6 +229,18 @@ impl LinuxSocketService {
         if key == 0 { Ok(None) } else { Ok(Some(key)) }
     }
 
+    pub(crate) fn ipv4_endpoint(
+        &mut self,
+        socket_id: u32,
+        peer: bool,
+    ) -> Result<Option<(u32, u16)>, ServiceCallError> {
+        let packed = self
+            .io
+            .call(&self.ipv4_endpoint, (socket_id, u32::from(peer)), "linux_socket_service trapped")
+            .map_err(ServiceCallError::Trap)?;
+        Ok(unpack_ipv4_endpoint(packed))
+    }
+
     pub(crate) fn send_socket(
         &mut self,
         socket_id: u32,
@@ -293,4 +309,11 @@ impl LinuxSocketService {
             .call(&self.socket_count, (), "linux_socket_service trapped")
             .map_err(ServiceCallError::Trap)
     }
+}
+
+fn unpack_ipv4_endpoint(packed: u64) -> Option<(u32, u16)> {
+    if packed == 0 {
+        return None;
+    }
+    Some(((packed >> 16) as u32, packed as u16))
 }

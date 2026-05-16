@@ -6,6 +6,20 @@ use vmos_abi::{
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
 
 pub const MAX_SOCKETS: usize = 16;
+const MAX_PENDING_ACCEPTS: usize = MAX_SOCKETS;
+const EPHEMERAL_PORT_START: u16 = 49152;
+
+#[derive(Clone, Copy)]
+struct PendingAccept {
+    local_ipv4: u32,
+    local_port: u16,
+    remote_ipv4: u32,
+    remote_port: u16,
+}
+
+impl PendingAccept {
+    const EMPTY: Self = Self { local_ipv4: 0, local_port: 0, remote_ipv4: 0, remote_port: 0 };
+}
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -22,6 +36,7 @@ struct LinuxSocket {
     local_port: u16,
     remote_ipv4: u32,
     remote_port: u16,
+    pending_accept_queue: [PendingAccept; MAX_PENDING_ACCEPTS],
     active: bool,
 }
 
@@ -39,6 +54,7 @@ impl LinuxSocket {
         local_port: 0,
         remote_ipv4: 0,
         remote_port: 0,
+        pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
         active: false,
     };
 }
@@ -84,6 +100,7 @@ impl LinuxSocketState {
                     local_port: 0,
                     remote_ipv4: 0,
                     remote_port: 0,
+                    pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
                 return Ok(());
@@ -119,6 +136,7 @@ impl LinuxSocketState {
                     local_port: 0,
                     remote_ipv4: 0,
                     remote_port: 0,
+                    pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
                 return Ok(());
@@ -187,8 +205,23 @@ impl LinuxSocketState {
         if self.sockets[listener_index].pending_accepts >= self.sockets[listener_index].backlog {
             return Err(ERR_ECONNREFUSED);
         }
-        self.sockets[listener_index].pending_accepts =
-            self.sockets[listener_index].pending_accepts.saturating_add(1);
+        let pending_index = self.sockets[listener_index].pending_accepts as usize;
+        if pending_index >= MAX_PENDING_ACCEPTS {
+            return Err(ERR_ECONNREFUSED);
+        }
+        let (client_ipv4, client_port) = self.ensure_client_local_endpoint(index, remote_ipv4)?;
+        let listener = self.sockets[listener_index];
+        let accepted_local_ipv4 =
+            if listener.local_ipv4 == 0 { remote_ipv4 } else { listener.local_ipv4 };
+        let accepted_local_port =
+            if listener.local_port == 0 { remote_port } else { listener.local_port };
+        self.sockets[listener_index].pending_accept_queue[pending_index] = PendingAccept {
+            local_ipv4: accepted_local_ipv4,
+            local_port: accepted_local_port,
+            remote_ipv4: client_ipv4,
+            remote_port: client_port,
+        };
+        self.sockets[listener_index].pending_accepts += 1;
         self.sockets[index].remote_ipv4 = remote_ipv4;
         self.sockets[index].remote_port = remote_port;
         self.sockets[index].state = SOCKET_CONNECTED;
@@ -201,8 +234,9 @@ impl LinuxSocketState {
             return Err(ERR_EOPNOTSUPP);
         }
         self.sockets[index].state = SOCKET_LISTENING;
-        self.sockets[index].backlog = backlog.max(1);
+        self.sockets[index].backlog = backlog.max(1).min(MAX_PENDING_ACCEPTS as u32);
         self.sockets[index].pending_accepts = 0;
+        self.sockets[index].pending_accept_queue = [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS];
         Ok(())
     }
 
@@ -222,6 +256,7 @@ impl LinuxSocketState {
         let Some(accepted_index) = self.sockets.iter().position(|socket| !socket.active) else {
             return Err(ERR_EIO);
         };
+        let pending = self.dequeue_pending_accept(index);
         self.sockets[accepted_index] = LinuxSocket {
             socket_id: accepted_socket_id,
             domain: self.sockets[index].domain,
@@ -233,11 +268,13 @@ impl LinuxSocketState {
             pending_accepts: 0,
             local_ipv4: self.sockets[index].local_ipv4,
             local_port: self.sockets[index].local_port,
-            remote_ipv4: 0,
-            remote_port: 0,
+            remote_ipv4: pending.remote_ipv4,
+            remote_port: pending.remote_port,
+            pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
             active: true,
         };
-        self.sockets[index].pending_accepts -= 1;
+        self.sockets[accepted_index].local_ipv4 = pending.local_ipv4;
+        self.sockets[accepted_index].local_port = pending.local_port;
         Ok(accepted_socket_id)
     }
 
@@ -264,6 +301,24 @@ impl LinuxSocketState {
             return Ok(None);
         }
         Ok(Some(self.sockets[listener_index].ready_key))
+    }
+
+    pub fn ipv4_endpoint(&self, socket_id: u32, peer: bool) -> Result<Option<(u32, u16)>, i32> {
+        let index = self.socket_index(socket_id)?;
+        let socket = self.sockets[index];
+        if socket.domain != AF_INET || socket.ty != SOCK_STREAM {
+            return Ok(None);
+        }
+        if peer {
+            if socket.state != SOCKET_CONNECTED || socket.remote_port == 0 {
+                return Ok(None);
+            }
+            return Ok(Some((socket.remote_ipv4, socket.remote_port)));
+        }
+        if socket.local_port == 0 {
+            return Ok(None);
+        }
+        Ok(Some((socket.local_ipv4, socket.local_port)))
     }
 
     pub fn send_socket(&self, socket_id: u32, len: u32) -> Result<u32, i32> {
@@ -354,6 +409,53 @@ impl LinuxSocketState {
                 && ipv4_matches_bound_pair(socket.local_ipv4, ipv4)
         })
     }
+
+    fn ensure_client_local_endpoint(
+        &mut self,
+        socket_index: usize,
+        remote_ipv4: u32,
+    ) -> Result<(u32, u16), i32> {
+        let local_ipv4 = if self.sockets[socket_index].local_ipv4 == 0 {
+            remote_ipv4
+        } else {
+            self.sockets[socket_index].local_ipv4
+        };
+        let local_port = if self.sockets[socket_index].local_port == 0 {
+            self.allocate_ephemeral_port(socket_index, local_ipv4).ok_or(ERR_EADDRINUSE)?
+        } else {
+            self.sockets[socket_index].local_port
+        };
+        self.sockets[socket_index].local_ipv4 = local_ipv4;
+        self.sockets[socket_index].local_port = local_port;
+        Ok((local_ipv4, local_port))
+    }
+
+    fn allocate_ephemeral_port(&self, socket_index: usize, ipv4: u32) -> Option<u16> {
+        let mut port = EPHEMERAL_PORT_START;
+        loop {
+            if !self.bound_port_conflicts(socket_index, ipv4, port) {
+                return Some(port);
+            }
+            if port == u16::MAX {
+                return None;
+            }
+            port += 1;
+        }
+    }
+
+    fn dequeue_pending_accept(&mut self, socket_index: usize) -> PendingAccept {
+        let pending = self.sockets[socket_index].pending_accept_queue[0];
+        let count = self.sockets[socket_index].pending_accepts as usize;
+        for idx in 1..count {
+            self.sockets[socket_index].pending_accept_queue[idx - 1] =
+                self.sockets[socket_index].pending_accept_queue[idx];
+        }
+        if count > 0 {
+            self.sockets[socket_index].pending_accept_queue[count - 1] = PendingAccept::EMPTY;
+            self.sockets[socket_index].pending_accepts -= 1;
+        }
+        pending
+    }
 }
 
 fn ipv4_matches_bound_pair(bound_ipv4: u32, target_ipv4: u32) -> bool {
@@ -440,6 +542,65 @@ mod tests {
         assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
         assert_eq!(connect_ipv4(&mut state, 7, LOOPBACK, 80), Err(ERR_EISCONN));
+    }
+
+    #[test]
+    fn accept_preserves_legacy_peer_identity() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 2), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 2, ALT_LOOPBACK, 9090), Ok(()));
+
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.accept_socket(1, 7, 99), Ok(7));
+
+        assert_eq!(state.ipv4_endpoint(7, false), Ok(Some((LOOPBACK, 8080))));
+        assert_eq!(state.ipv4_endpoint(7, true), Ok(Some((ALT_LOOPBACK, 9090))));
+        assert_eq!(state.ipv4_endpoint(2, false), Ok(Some((ALT_LOOPBACK, 9090))));
+        assert_eq!(state.ipv4_endpoint(2, true), Ok(Some((LOOPBACK, 8080))));
+    }
+
+    #[test]
+    fn accept_keeps_pending_peer_when_socket_table_is_full() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 1), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        for socket_id in 3..=MAX_SOCKETS as u32 {
+            assert!(
+                state
+                    .register_socket(socket_id, AF_INET, SOCK_STREAM, 0, u64::from(40 + socket_id))
+                    .is_ok()
+            );
+        }
+
+        assert_eq!(state.accept_socket(1, 99, 99), Err(ERR_EIO));
+        assert_eq!(state.pending_accept_count(1), Ok(1));
+        assert_eq!(state.close_socket(16), Ok(()));
+        assert_eq!(state.accept_socket(1, 99, 99), Ok(99));
+        assert_eq!(state.ipv4_endpoint(99, true), Ok(Some((LOOPBACK, EPHEMERAL_PORT_START))));
+    }
+
+    #[test]
+    fn unbound_client_gets_bounded_ephemeral_peer_port() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 1), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.accept_socket(1, 7, 99), Ok(7));
+
+        assert_eq!(state.ipv4_endpoint(2, false), Ok(Some((LOOPBACK, EPHEMERAL_PORT_START))));
+        assert_eq!(state.ipv4_endpoint(7, true), Ok(Some((LOOPBACK, EPHEMERAL_PORT_START))));
     }
 
     #[test]

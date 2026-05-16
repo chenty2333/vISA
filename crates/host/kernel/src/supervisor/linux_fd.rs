@@ -883,7 +883,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn socket_ipv4_endpoint(
-        &self,
+        &mut self,
         fd: u32,
         peer: bool,
     ) -> Result<Option<Ipv4SocketEndpoint>, i32> {
@@ -893,7 +893,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::SocketPairEnd { .. } => return Ok(None),
             _ => return Err(ERR_ENOTSOCK),
         };
-        Ok(self.net_stack_socket_ipv4_endpoint(socket_id, peer))
+        if let Some(endpoint) = self.net_stack_socket_ipv4_endpoint(socket_id, peer) {
+            return Ok(Some(endpoint));
+        }
+        self.linux_socket
+            .ipv4_endpoint(socket_id, peer)
+            .map(|endpoint| {
+                endpoint.map(|(ipv4, port)| Ipv4SocketEndpoint { addr: ipv4.to_be_bytes(), port })
+            })
+            .map_err(errno_from_service_error)
     }
 
     pub(crate) fn is_eventfd_fd(&self, fd: u32) -> bool {

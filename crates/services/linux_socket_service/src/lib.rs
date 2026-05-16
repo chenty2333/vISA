@@ -113,6 +113,18 @@ pub extern "C" fn accept_ready_key_for_client(socket_id: u32) -> u64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn ipv4_endpoint(socket_id: u32, peer: u32) -> u64 {
+    unsafe {
+        state()
+            .ipv4_endpoint(socket_id, peer != 0)
+            .ok()
+            .flatten()
+            .map(pack_ipv4_endpoint)
+            .unwrap_or(0)
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn send_socket(socket_id: u32, len: u32) -> i32 {
     result_i32(unsafe { state().send_socket(socket_id, len) })
 }
@@ -158,6 +170,10 @@ fn result_unit(result: Result<(), i32>) -> i32 {
         Ok(()) => 0,
         Err(errno) => -errno,
     }
+}
+
+fn pack_ipv4_endpoint((ipv4, port): (u32, u16)) -> u64 {
+    ((ipv4 as u64) << 16) | port as u64
 }
 
 #[cfg(target_arch = "wasm32")]

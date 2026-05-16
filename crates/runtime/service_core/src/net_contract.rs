@@ -1,7 +1,7 @@
 use vmos_abi::{AF_INET, AF_UNIX, SOCK_DGRAM, SOCK_STREAM};
 
 pub const NETWORK_CONTRACT_VERSION: &str = "vmos-network-contract-v2";
-pub const NETWORK_CONTRACT_ABI_VERSION: u32 = 2;
+pub const NETWORK_CONTRACT_ABI_VERSION: u32 = 3;
 pub const PACKET_FRAME_FORMAT_VERSION: u32 = 2;
 pub const PACKET_EVENT_POLICY_DEVICE_NEEDS_POLL: u32 = 1;
 pub const PACKET_MAX_PAYLOAD_LEN: u32 = 512;
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn packet_device_contract_matches_v2_constants() {
         assert_eq!(NETWORK_CONTRACT_VERSION, "vmos-network-contract-v2");
-        assert_eq!(NETWORK_CONTRACT_ABI_VERSION, 2);
+        assert_eq!(NETWORK_CONTRACT_ABI_VERSION, 3);
         assert!(validate_packet_device_contract(VIRTIO_NET0_CONTRACT));
     }
 
