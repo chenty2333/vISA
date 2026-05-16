@@ -2321,6 +2321,7 @@ fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
     let total_len = frame.rsi.checked_mul(POLLFD_SIZE).ok_or(ERR_EINVAL)?;
     let mut lease = user_lease(frame.rdi, total_len, true)?;
     let bytes = lease.bytes_mut().map_err(map_dmw_fault)?;
+    let supervisor = &mut active_context().supervisor;
     let mut ready = 0i64;
     for index in 0..nfds {
         let offset = index * POLLFD_SIZE as usize;
@@ -2331,7 +2332,7 @@ fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
             0
         } else {
             let fd = fd as u32;
-            active_context().supervisor.fd_poll_revents(fd, events)?
+            supervisor.fd_poll_revents(fd, events)?
         };
         bytes[offset + 6..offset + 8].copy_from_slice(&revents.to_le_bytes());
         if revents != 0 {
@@ -3117,6 +3118,7 @@ fn filter_fdset(ptr: u64, nfds: usize, events: u16) -> Result<i64, i32> {
     let len = nfds.div_ceil(8);
     let mut set = user_lease(ptr, len as u64, true)?;
     let bytes = set.bytes_mut().map_err(map_dmw_fault)?;
+    let supervisor = &mut active_context().supervisor;
     let mut ready = 0i64;
     for fd in 0..nfds {
         let byte = fd / 8;
@@ -3124,7 +3126,7 @@ fn filter_fdset(ptr: u64, nfds: usize, events: u16) -> Result<i64, i32> {
         if bytes[byte] & mask == 0 {
             continue;
         }
-        let revents = active_context().supervisor.fd_poll_revents(fd as u32, events)?;
+        let revents = supervisor.fd_poll_revents(fd as u32, events)?;
         if revents & events != 0 {
             ready += 1;
         } else {

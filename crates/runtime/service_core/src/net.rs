@@ -237,6 +237,28 @@ mod tests {
     }
 
     #[test]
+    fn poll_socket_reports_writable_and_readable_after_rx_delivery() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+
+        let initial = state.poll_socket(socket).unwrap();
+        assert_eq!(initial & EPOLLOUT, EPOLLOUT);
+        assert_eq!(initial & EPOLLIN, 0);
+
+        state.send_socket(socket, b"GET / HTTP/1.0\r\n\r\n").unwrap();
+        let payload = b"HTTP/1.0 200 OK\r\n\r\n";
+        let meta = PacketFrameMeta::demo_http_response(2, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, payload, &mut frame).unwrap();
+        let ready_key = state.deliver_packet_frame(&frame[..frame_len]).unwrap();
+
+        assert_eq!(ready_key, Some(READY_KEY_BASE | socket as u64));
+        let ready = state.poll_socket(socket).unwrap();
+        assert_eq!(ready & EPOLLOUT, EPOLLOUT);
+        assert_eq!(ready & EPOLLIN, EPOLLIN);
+    }
+
+    #[test]
     fn socket_creation_enforces_network_contract() {
         let mut state = NetCoreState::new();
 

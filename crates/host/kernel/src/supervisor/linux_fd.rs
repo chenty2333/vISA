@@ -1181,16 +1181,32 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    pub(crate) fn fd_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
+    pub(crate) fn fd_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
         let Some(entry) = self.fd_entry(fd) else {
             return Err(ERR_EBADF);
         };
         match entry.resource {
             FdResource::PipeEnd { .. } => self.pipe_poll_revents(fd, events),
             FdResource::SocketPairEnd { .. } => self.socketpair_poll_revents(fd, events),
+            FdResource::Socket { .. } => self.socket_poll_revents(fd, events),
             FdResource::EventFd { .. } => self.eventfd_poll_revents(fd, events),
             _ => Ok(0),
         }
+    }
+
+    fn socket_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
+        let (socket_id, ready_key, _) =
+            self.socket_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        let mut revents = 0u16;
+        if events & POLLIN != 0 && self.socket_ready_key_is_readable(ready_key) {
+            revents |= POLLIN;
+        }
+        let writable =
+            self.net_core.poll_socket(socket_id).map_err(errno_from_service_error)? & EPOLLOUT != 0;
+        if events & POLLOUT != 0 && writable {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
     }
 
     pub(crate) fn eventfd_poll_revents(&self, fd: u32, events: u16) -> Result<u16, i32> {
