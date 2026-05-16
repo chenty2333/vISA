@@ -404,6 +404,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "time.clock",
             operation: "adjust",
         },
+        PlanKind::Seccomp | PlanKind::Prctl => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.seccomp",
+            operation: "configure",
+        },
         // Future phases — unbound operations default to unsupported pure-query
         _ => HostcallBinding {
             class: HostcallClass::PureQuery,

@@ -15,9 +15,9 @@ use vmos_abi::{
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
     SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
     SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT,
-    SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -111,6 +111,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         ),
         SYS_RENAMEAT => plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
         SYS_RENAMEAT2 => plan_renameat2(a0, a1, a2, a3, a4, a5),
+        SYS_PRCTL => plan_prctl(a0, a1, a2, a3, a4),
         SYS_SECCOMP => plan_seccomp(a0, a1, a2),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
@@ -530,6 +531,11 @@ fn plan_clock_getres(clock_id: u64, timespec_ptr: u64) -> PackedStep {
 fn plan_seccomp(operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
     reset_plan(PlanKind::Seccomp, [operation, flags, args_ptr, 0, 0, 0]);
     PackedStep::plan(PlanKind::Seccomp)
+}
+
+fn plan_prctl(option: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> PackedStep {
+    reset_plan(PlanKind::Prctl, [option, arg2, arg3, arg4, arg5, 0]);
+    PackedStep::plan(PlanKind::Prctl)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
@@ -1127,6 +1133,20 @@ mod tests {
         assert_eq!(plan_arg(0), 2);
         assert_eq!(plan_arg(1), 0);
         assert_eq!(plan_arg(2), 0x1234);
+    }
+
+    #[test]
+    fn prctl_plan_preserves_option_and_arguments() {
+        let raw = dispatch(SYS_PRCTL, 38, 1, 0x1234, 0x5678, 0x9abc, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Prctl));
+        assert_eq!(plan_arg(0), 38);
+        assert_eq!(plan_arg(1), 1);
+        assert_eq!(plan_arg(2), 0x1234);
+        assert_eq!(plan_arg(3), 0x5678);
+        assert_eq!(plan_arg(4), 0x9abc);
     }
 
     #[test]

@@ -8,9 +8,9 @@ use vmos_abi::{
     SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
     SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE,
-    SyscallContext, is_stdio_fd,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
+    SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -98,6 +98,7 @@ impl LinuxFrontend {
             ),
             SYS_RENAMEAT => self.plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
             SYS_RENAMEAT2 => self.plan_renameat2(a0, a1, a2, a3, a4, a5),
+            SYS_PRCTL => self.plan_prctl(a0, a1, a2, a3, a4),
             SYS_SECCOMP => self.plan_seccomp(a0, a1, a2),
             SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
             _ => PackedStep::error(-ERR_ENOSYS),
@@ -594,6 +595,18 @@ impl LinuxFrontend {
     fn plan_seccomp(&mut self, operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
         self.reset_plan(PlanKind::Seccomp, [operation, flags, args_ptr, 0, 0, 0]);
         PackedStep::plan(PlanKind::Seccomp)
+    }
+
+    fn plan_prctl(
+        &mut self,
+        option: u64,
+        arg2: u64,
+        arg3: u64,
+        arg4: u64,
+        arg5: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::Prctl, [option, arg2, arg3, arg4, arg5, 0]);
+        PackedStep::plan(PlanKind::Prctl)
     }
 
     fn plan_write(&mut self, fd: u64, ptr: u64, len: u64) -> PackedStep {

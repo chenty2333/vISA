@@ -296,6 +296,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
+            PlanKind::Prctl => self.plan_prctl(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
             PlanKind::ClockGettime => self.plan_clock_gettime(plan),

@@ -1,8 +1,10 @@
+use alloc::vec::Vec;
+
 use service_core::seccomp::{
     SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD,
-    SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
+    SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
 };
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP};
+use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -12,6 +14,13 @@ use super::{
 const SECCOMP_SET_MODE_STRICT: u64 = 0;
 const SECCOMP_SET_MODE_FILTER: u64 = 1;
 const SECCOMP_GET_ACTION_AVAIL: u64 = 2;
+const SECCOMP_MODE_STRICT: u64 = 1;
+const SECCOMP_MODE_FILTER: u64 = 2;
+
+const PR_GET_SECCOMP: u64 = 21;
+const PR_SET_SECCOMP: u64 = 22;
+const PR_SET_NO_NEW_PRIVS: u64 = 38;
+const PR_GET_NO_NEW_PRIVS: u64 = 39;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn apply_generic_seccomp_decision(
@@ -58,13 +67,84 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if args_ptr != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
                 }
+                self.install_generic_seccomp_mode(SECCOMP_MODE_STRICT, args_ptr)
+            }
+            SECCOMP_SET_MODE_FILTER => {
+                self.install_generic_seccomp_mode(SECCOMP_MODE_FILTER, args_ptr)
+            }
+            SECCOMP_GET_ACTION_AVAIL => self.seccomp_get_action_avail(args_ptr),
+            _ => Ok(errno_ret(ERR_EINVAL)),
+        }
+    }
+
+    pub(super) fn plan_prctl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let option = plan.args[0];
+        let arg2 = plan.args[1];
+        let arg3 = plan.args[2];
+        let arg4 = plan.args[3];
+        let arg5 = plan.args[4];
+
+        match option {
+            PR_SET_NO_NEW_PRIVS => {
+                if arg2 != 1 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                if self.set_no_new_privs(self.current_tid(), true) {
+                    Ok(LinuxCallResult::Ret(0))
+                } else {
+                    Ok(errno_ret(ERR_ESRCH))
+                }
+            }
+            PR_GET_NO_NEW_PRIVS => {
+                if arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                Ok(LinuxCallResult::Ret(self.no_new_privs(self.current_tid()) as i64))
+            }
+            PR_GET_SECCOMP => {
+                if arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                match self.seccomp_mode(self.current_tid()) {
+                    Some(mode) => Ok(LinuxCallResult::Ret(mode as i64)),
+                    None => Ok(errno_ret(ERR_ESRCH)),
+                }
+            }
+            PR_SET_SECCOMP => {
+                if arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                self.install_generic_seccomp_mode(arg2, arg3)
+            }
+            _ => Ok(errno_ret(ERR_EINVAL)),
+        }
+    }
+
+    fn install_generic_seccomp_mode(
+        &mut self,
+        mode: u64,
+        arg: u64,
+    ) -> Result<LinuxCallResult, &'static str> {
+        match mode {
+            SECCOMP_MODE_STRICT => {
+                if arg != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
                 match self.set_seccomp_strict(self.current_tid()) {
                     Ok(()) => Ok(LinuxCallResult::Ret(0)),
                     Err(errno) => Ok(errno_ret(errno)),
                 }
             }
-            SECCOMP_SET_MODE_FILTER => Ok(errno_ret(ERR_ENOSYS)),
-            SECCOMP_GET_ACTION_AVAIL => self.seccomp_get_action_avail(args_ptr),
+            SECCOMP_MODE_FILTER => {
+                let program = match self.read_generic_seccomp_filter_program(arg) {
+                    Ok(program) => program,
+                    Err(errno) => return Ok(errno_ret(errno)),
+                };
+                match self.set_seccomp_filter(self.current_tid(), program, false) {
+                    Ok(()) => Ok(LinuxCallResult::Ret(0)),
+                    Err(errno) => Ok(errno_ret(errno)),
+                }
+            }
             _ => Ok(errno_ret(ERR_EINVAL)),
         }
     }
@@ -85,6 +165,43 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             Ok(errno_ret(ERR_EOPNOTSUPP))
         }
+    }
+
+    fn read_generic_seccomp_filter_program(
+        &mut self,
+        args_ptr: u64,
+    ) -> Result<SeccompFilterProgram, i32> {
+        const SOCK_FPROG_SIZE: usize = 16;
+        const SOCK_FILTER_SIZE: usize = 8;
+        const MAX_FILTER_INSTRUCTIONS: usize = 4096;
+
+        let ptr = u32::try_from(args_ptr).map_err(|_| ERR_EFAULT)?;
+        if ptr == 0 {
+            return Err(ERR_EFAULT);
+        }
+        let fprog = self.linux.read_bytes(ptr, SOCK_FPROG_SIZE as u32).map_err(|_| ERR_EFAULT)?;
+        let len = u16::from_le_bytes(fprog[0..2].try_into().map_err(|_| ERR_EINVAL)?) as usize;
+        let filter_ptr = u64::from_le_bytes(fprog[8..16].try_into().map_err(|_| ERR_EINVAL)?);
+        if len == 0 || len > MAX_FILTER_INSTRUCTIONS {
+            return Err(ERR_EINVAL);
+        }
+        let filter_ptr = u32::try_from(filter_ptr).map_err(|_| ERR_EFAULT)?;
+        if filter_ptr == 0 {
+            return Err(ERR_EFAULT);
+        }
+        let byte_len = len.checked_mul(SOCK_FILTER_SIZE).ok_or(ERR_EINVAL)?;
+        let byte_len_u32 = u32::try_from(byte_len).map_err(|_| ERR_EINVAL)?;
+        let raw_filter = self.linux.read_bytes(filter_ptr, byte_len_u32).map_err(|_| ERR_EFAULT)?;
+        let mut instructions = Vec::with_capacity(len);
+        for chunk in raw_filter.chunks_exact(SOCK_FILTER_SIZE) {
+            instructions.push(SeccompInstruction::new(
+                u16::from_le_bytes(chunk[0..2].try_into().map_err(|_| ERR_EINVAL)?),
+                chunk[2],
+                chunk[3],
+                u32::from_le_bytes(chunk[4..8].try_into().map_err(|_| ERR_EINVAL)?),
+            ));
+        }
+        SeccompFilterProgram::new(instructions).map_err(|_| ERR_EINVAL)
     }
 }
 
