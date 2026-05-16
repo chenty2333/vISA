@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 
 use service_core::seccomp::{
-    SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD,
-    SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
-    linux_seccomp_notif_sizes_bytes,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
+    SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
+    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
@@ -60,22 +60,31 @@ impl<'engine> PrototypeRuntime<'engine> {
         let flags = plan.args[1];
         let args_ptr = plan.args[2];
 
-        if flags != 0 {
-            return Ok(errno_ret(ERR_EINVAL));
-        }
-
         match operation {
             SECCOMP_SET_MODE_STRICT => {
+                if flags != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
                 if args_ptr != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
                 }
-                self.install_generic_seccomp_mode(SECCOMP_MODE_STRICT, args_ptr)
+                self.install_generic_seccomp_mode(SECCOMP_MODE_STRICT, args_ptr, flags)
             }
             SECCOMP_SET_MODE_FILTER => {
-                self.install_generic_seccomp_mode(SECCOMP_MODE_FILTER, args_ptr)
+                self.install_generic_seccomp_mode(SECCOMP_MODE_FILTER, args_ptr, flags)
             }
-            SECCOMP_GET_ACTION_AVAIL => self.seccomp_get_action_avail(args_ptr),
-            SECCOMP_GET_NOTIF_SIZES => self.seccomp_get_notif_sizes(args_ptr),
+            SECCOMP_GET_ACTION_AVAIL => {
+                if flags != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                self.seccomp_get_action_avail(args_ptr)
+            }
+            SECCOMP_GET_NOTIF_SIZES => {
+                if flags != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                self.seccomp_get_notif_sizes(args_ptr)
+            }
             _ => Ok(errno_ret(ERR_EINVAL)),
         }
     }
@@ -117,7 +126,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if arg4 != 0 || arg5 != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
                 }
-                self.install_generic_seccomp_mode(arg2, arg3)
+                self.install_generic_seccomp_mode(arg2, arg3, 0)
             }
             _ => Ok(errno_ret(ERR_EINVAL)),
         }
@@ -127,10 +136,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         mode: u64,
         arg: u64,
+        flags: u64,
     ) -> Result<LinuxCallResult, &'static str> {
         match mode {
             SECCOMP_MODE_STRICT => {
-                if arg != 0 {
+                if flags != 0 || arg != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
                 }
                 match self.set_seccomp_strict(self.current_tid()) {
@@ -139,11 +149,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
             SECCOMP_MODE_FILTER => {
+                if flags & !SECCOMP_FILTER_FLAG_LOG != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
                 let program = match self.read_generic_seccomp_filter_program(arg) {
                     Ok(program) => program,
                     Err(errno) => return Ok(errno_ret(errno)),
                 };
-                match self.set_seccomp_filter(self.current_tid(), program, false) {
+                match self.set_seccomp_filter(
+                    self.current_tid(),
+                    program,
+                    false,
+                    flags & SECCOMP_FILTER_FLAG_LOG != 0,
+                ) {
                     Ok(()) => Ok(LinuxCallResult::Ret(0)),
                     Err(errno) => Ok(errno_ret(errno)),
                 }

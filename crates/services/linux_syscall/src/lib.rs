@@ -1125,13 +1125,13 @@ mod tests {
 
     #[test]
     fn seccomp_plan_preserves_operation_flags_and_args_pointer() {
-        let raw = dispatch(SYS_SECCOMP, 2, 0, 0x1234, 0, 0, 0);
+        let raw = dispatch(SYS_SECCOMP, 1, 2, 0x1234, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
         assert_eq!(step.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Seccomp));
-        assert_eq!(plan_arg(0), 2);
-        assert_eq!(plan_arg(1), 0);
+        assert_eq!(plan_arg(0), 1);
+        assert_eq!(plan_arg(1), 2);
         assert_eq!(plan_arg(2), 0x1234);
     }
 

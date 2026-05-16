@@ -3,9 +3,9 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
-    SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
-    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO,
+    SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP,
+    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK,
@@ -1454,7 +1454,7 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
             if frame.r10 != 0 || frame.r8 != 0 {
                 return Err(ERR_EINVAL);
             }
-            install_seccomp_mode(frame.rsi, frame.rdx)
+            install_seccomp_mode(frame.rsi, frame.rdx, 0)
         }
         PR_CAPBSET_READ => sys_prctl_capbset_read(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_CAPBSET_DROP => sys_prctl_capbset_drop(frame.rsi, frame.rdx, frame.r10, frame.r8),
@@ -1654,14 +1654,26 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
     const SECCOMP_GET_ACTION_AVAIL: u64 = 2;
     const SECCOMP_GET_NOTIF_SIZES: u64 = 3;
 
-    if frame.rsi != 0 {
-        return Err(ERR_EINVAL);
-    }
     match frame.rdi {
-        SECCOMP_SET_MODE_STRICT => install_seccomp_mode(1, 0),
-        SECCOMP_SET_MODE_FILTER => install_seccomp_mode(2, frame.rdx),
-        SECCOMP_GET_ACTION_AVAIL => seccomp_get_action_avail(frame.rdx),
-        SECCOMP_GET_NOTIF_SIZES => seccomp_get_notif_sizes(frame.rdx),
+        SECCOMP_SET_MODE_STRICT => {
+            if frame.rsi != 0 {
+                return Err(ERR_EINVAL);
+            }
+            install_seccomp_mode(1, 0, 0)
+        }
+        SECCOMP_SET_MODE_FILTER => install_seccomp_mode(2, frame.rdx, frame.rsi),
+        SECCOMP_GET_ACTION_AVAIL => {
+            if frame.rsi != 0 {
+                return Err(ERR_EINVAL);
+            }
+            seccomp_get_action_avail(frame.rdx)
+        }
+        SECCOMP_GET_NOTIF_SIZES => {
+            if frame.rsi != 0 {
+                return Err(ERR_EINVAL);
+            }
+            seccomp_get_notif_sizes(frame.rdx)
+        }
         _ => Err(ERR_EINVAL),
     }
 }
@@ -1688,18 +1700,21 @@ fn seccomp_get_notif_sizes(ptr: u64) -> Result<i64, i32> {
     Ok(0)
 }
 
-fn install_seccomp_mode(mode: u64, arg: u64) -> Result<i64, i32> {
+fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
     const SECCOMP_MODE_STRICT: u64 = 1;
     const SECCOMP_MODE_FILTER: u64 = 2;
 
     match mode {
         SECCOMP_MODE_STRICT => {
-            if arg != 0 {
+            if flags != 0 || arg != 0 {
                 return Err(ERR_EINVAL);
             }
             active_context().supervisor.set_seccomp_strict(active_context().tid).map(|()| 0)
         }
         SECCOMP_MODE_FILTER => {
+            if flags & !SECCOMP_FILTER_FLAG_LOG != 0 {
+                return Err(ERR_EINVAL);
+            }
             let privileged = active_context().has_effective_capability(CAP_SYS_ADMIN);
             if !privileged && !active_context().supervisor.no_new_privs(active_context().tid) {
                 return Err(ERR_EACCES);
@@ -1707,7 +1722,12 @@ fn install_seccomp_mode(mode: u64, arg: u64) -> Result<i64, i32> {
             let program = read_seccomp_filter_program(arg)?;
             active_context()
                 .supervisor
-                .set_seccomp_filter(active_context().tid, program, privileged)
+                .set_seccomp_filter(
+                    active_context().tid,
+                    program,
+                    privileged,
+                    flags & SECCOMP_FILTER_FLAG_LOG != 0,
+                )
                 .map(|()| 0)
         }
         _ => Err(ERR_EINVAL),

@@ -588,6 +588,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         tid: Tid,
         program: SeccompFilterProgram,
         privileged: bool,
+        log_non_allow: bool,
     ) -> Result<(), i32> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
             return Err(vmos_abi::ERR_ESRCH);
@@ -598,12 +599,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         match &mut thread.seccomp {
             SeccompMode::Disabled => {}
             SeccompMode::Filter(chain) => {
-                chain.push(program);
+                chain.push_with_log(program, log_non_allow);
                 return Ok(());
             }
             SeccompMode::Strict => return Err(vmos_abi::ERR_EINVAL),
         }
-        thread.seccomp = SeccompMode::Filter(SeccompFilterChain::new(program));
+        thread.seccomp =
+            SeccompMode::Filter(SeccompFilterChain::new_with_log(program, log_non_allow));
         Ok(())
     }
 
@@ -655,13 +657,23 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Some(SeccompMode::Filter(program)) => {
                 let syscall_nr = syscall.min(u32::MAX as u64) as u32;
-                match program.evaluate(SeccompData {
+                match program.evaluate_with_log(SeccompData {
                     nr: syscall_nr,
                     arch: AUDIT_ARCH_X86_64,
                     instruction_pointer,
                     args,
                 }) {
-                    Ok(decision) => decision,
+                    Ok((decision, log_non_allow)) => {
+                        if log_non_allow && seccomp_filter_flag_should_log(decision) {
+                            crate::kinfo!(
+                                "seccomp filter-log syscall={} tid={} decision={}",
+                                syscall,
+                                tid,
+                                seccomp_decision_name(decision)
+                            );
+                        }
+                        decision
+                    }
                     Err(_) => SeccompDecision::Kill { signal: 31 },
                 }
             }
@@ -757,5 +769,21 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn set_runtime_clock_adj_state(&mut self, clock_adj: RuntimeClockAdjustmentState) {
         self.clock_adj = clock_adj;
+    }
+}
+
+fn seccomp_filter_flag_should_log(decision: SeccompDecision) -> bool {
+    !matches!(decision, SeccompDecision::Allow | SeccompDecision::Log { .. })
+}
+
+fn seccomp_decision_name(decision: SeccompDecision) -> &'static str {
+    match decision {
+        SeccompDecision::Allow => "allow",
+        SeccompDecision::Log { .. } => "log",
+        SeccompDecision::Errno(_) => "errno",
+        SeccompDecision::Trap { .. } => "trap",
+        SeccompDecision::Trace => "trace",
+        SeccompDecision::UserNotif => "user-notif",
+        SeccompDecision::Kill { .. } => "kill",
     }
 }

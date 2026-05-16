@@ -11,6 +11,8 @@ pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc0_0000;
 pub const SECCOMP_RET_LOG: u32 = 0x7ffc_0000;
 pub const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 
+pub const SECCOMP_FILTER_FLAG_LOG: u64 = 1 << 1;
+
 const SECCOMP_RET_ACTION_FULL: u32 = 0xffff_0000;
 const SECCOMP_RET_DATA: u32 = 0x0000_ffff;
 const SECCOMP_DATA_LEN: u32 = 64;
@@ -92,7 +94,13 @@ pub struct SeccompFilterProgram {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SeccompFilterChain {
-    programs: Vec<SeccompFilterProgram>,
+    entries: Vec<SeccompFilterEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SeccompFilterEntry {
+    program: SeccompFilterProgram,
+    log_non_allow: bool,
 }
 
 pub fn linux_seccomp_notif_sizes_bytes() -> [u8; 6] {
@@ -151,26 +159,43 @@ impl SeccompFilterProgram {
 
 impl SeccompFilterChain {
     pub fn new(program: SeccompFilterProgram) -> Self {
-        Self { programs: vec![program] }
+        Self::new_with_log(program, false)
+    }
+
+    pub fn new_with_log(program: SeccompFilterProgram, log_non_allow: bool) -> Self {
+        Self { entries: vec![SeccompFilterEntry { program, log_non_allow }] }
     }
 
     pub fn push(&mut self, program: SeccompFilterProgram) {
-        self.programs.push(program);
+        self.push_with_log(program, false);
+    }
+
+    pub fn push_with_log(&mut self, program: SeccompFilterProgram, log_non_allow: bool) {
+        self.entries.push(SeccompFilterEntry { program, log_non_allow });
     }
 
     pub fn evaluate(&self, data: SeccompData) -> Result<SeccompDecision, SeccompFilterError> {
-        if self.programs.is_empty() {
+        self.evaluate_with_log(data).map(|(decision, _)| decision)
+    }
+
+    pub fn evaluate_with_log(
+        &self,
+        data: SeccompData,
+    ) -> Result<(SeccompDecision, bool), SeccompFilterError> {
+        if self.entries.is_empty() {
             return Err(SeccompFilterError::Empty);
         }
-        let mut selected = None::<(u8, u32)>;
-        for program in self.programs.iter().rev() {
-            let ret = program.evaluate_raw(data)?;
+        let mut selected = None::<(u8, u32, bool)>;
+        for entry in self.entries.iter().rev() {
+            let ret = entry.program.evaluate_raw(data)?;
             let precedence = seccomp_action_precedence(ret);
-            if selected.is_none_or(|(best, _)| precedence > best) {
-                selected = Some((precedence, ret));
+            if selected.is_none_or(|(best, _, _)| precedence > best) {
+                selected = Some((precedence, ret, entry.log_non_allow));
             }
         }
-        selected.map(|(_, ret)| seccomp_return_to_decision(ret)).ok_or(SeccompFilterError::Empty)
+        selected
+            .map(|(_, ret, log_non_allow)| (seccomp_return_to_decision(ret), log_non_allow))
+            .ok_or(SeccompFilterError::Empty)
     }
 }
 
@@ -665,6 +690,29 @@ mod tests {
         chain.push(log);
 
         assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Log { data: 44 }));
+    }
+
+    #[test]
+    fn chain_preserves_log_flag_for_selected_non_allow_filter() {
+        let allow = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ALLOW,
+        )])
+        .expect("allow filter");
+        let errno = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ERRNO | 22,
+        )])
+        .expect("errno filter");
+
+        let mut chain = SeccompFilterChain::new(allow);
+        chain.push_with_log(errno, true);
+
+        assert_eq!(chain.evaluate_with_log(data(1)), Ok((SeccompDecision::Errno(22), true)));
     }
 
     #[test]
