@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use vmos_abi::{
     ERR_EBADF, ERR_ENOENT, ERR_ENOTDIR, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind, ServiceRoute,
 };
@@ -13,6 +15,8 @@ const O_STATUS_MASK: u64 = 0o3 | 0o2000 | 0o4000;
 const MAY_EXEC: u32 = 0x1;
 const MAY_WRITE: u32 = 0x2;
 const MAY_READ: u32 = 0x4;
+const AT_FDCWD: i64 = -100;
+const GENERIC_CWD: &[u8] = b"/sandbox";
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn write_console_bytes(&mut self, bytes: &[u8]) -> Result<(), i32> {
@@ -232,6 +236,64 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    pub(super) fn plan_renameat2(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let old_dirfd = plan.args[0] as i64;
+        let old_ptr = u32::try_from(plan.args[1]).map_err(|_| "rename old ptr overflowed")?;
+        let old_len = u32::try_from(plan.args[2]).map_err(|_| "rename old len overflowed")?;
+        let new_dirfd = plan.args[3] as i64;
+        let new_ptr = u32::try_from(plan.args[4]).map_err(|_| "rename new ptr overflowed")?;
+        let new_len =
+            u32::try_from(plan.args[5] & 0xffff_ffff).map_err(|_| "rename new len overflowed")?;
+        let flags = u32::try_from(plan.args[5] >> 32).map_err(|_| "rename flags overflowed")?;
+        let old_path = self.linux.read_bytes(old_ptr, old_len)?;
+        let new_path = self.linux.read_bytes(new_ptr, new_len)?;
+        let old_path = match self.resolve_plan_path(old_dirfd, &old_path) {
+            Ok(path) => path,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let new_path = match self.resolve_plan_path(new_dirfd, &new_path) {
+            Ok(path) => path,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let access = AccessIds::new(0, 0, &[]);
+
+        match self.rename_path(&old_path, &new_path, flags, access) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    fn resolve_plan_path(&mut self, dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
+        if path.is_empty() {
+            return Err(ERR_ENOENT);
+        }
+        if path.starts_with(b"/") {
+            return Ok(normalize_plan_path(path));
+        }
+
+        let base = if dirfd == AT_FDCWD {
+            GENERIC_CWD.to_vec()
+        } else if dirfd >= 0 {
+            let base = self.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?;
+            if self.path_kind(&base)? != NodeKind::Directory {
+                return Err(ERR_ENOTDIR);
+            }
+            base
+        } else {
+            return Err(ERR_EBADF);
+        };
+
+        let mut resolved = base;
+        if !resolved.ends_with(b"/") {
+            resolved.push(b'/');
+        }
+        resolved.extend_from_slice(path);
+        Ok(normalize_plan_path(&resolved))
+    }
 }
 
 fn linux_status_flags_from_open_flags(flags: u64) -> u32 {
@@ -245,4 +307,26 @@ fn linux_open_access_mask(flags: u64) -> u32 {
         2 => MAY_READ | MAY_WRITE,
         _ => 0,
     }
+}
+
+fn normalize_plan_path(path: &[u8]) -> Vec<u8> {
+    let mut components: Vec<&[u8]> = Vec::new();
+    for component in path.split(|byte| *byte == b'/') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                let _ = components.pop();
+            }
+            _ => components.push(component),
+        }
+    }
+    let mut out = Vec::new();
+    out.push(b'/');
+    for (index, component) in components.iter().enumerate() {
+        if index > 0 {
+            out.push(b'/');
+        }
+        out.extend_from_slice(component);
+    }
+    out
 }

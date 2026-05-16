@@ -14,13 +14,15 @@ use vmos_abi::{
     SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
     SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN,
     SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
 const RESULT_BUFFER_CAPACITY: usize = 1024;
 const PENDING_SLOTS: usize = 8;
 const UTS_FIELD_LEN: usize = 65;
+const AT_FDCWD_ENCODED: u64 = -100i64 as u64;
 
 static mut ARG_BUFFER: [u8; ARG_BUFFER_CAPACITY] = [0; ARG_BUFFER_CAPACITY];
 static mut RESULT_BUFFER: [u8; RESULT_BUFFER_CAPACITY] = [0; RESULT_BUFFER_CAPACITY];
@@ -87,6 +89,16 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETDENTS64 => plan_getdents(a0, a2),
         SYS_OPENAT => plan_openat(a0, a1, a2, a3, a4),
         SYS_READLINKAT => plan_readlinkat(a0, a1, a2),
+        SYS_RENAME => plan_renameat2(
+            AT_FDCWD_ENCODED,
+            a0,
+            a1,
+            AT_FDCWD_ENCODED,
+            a2,
+            pack_rename_len_flags(a3, 0),
+        ),
+        SYS_RENAMEAT => plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
+        SYS_RENAMEAT2 => plan_renameat2(a0, a1, a2, a3, a4, a5),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
@@ -529,6 +541,30 @@ fn plan_readlinkat(dirfd: u64, ptr: u64, len: u64) -> PackedStep {
     PackedStep::plan(PlanKind::ReadLinkAt)
 }
 
+fn plan_renameat2(
+    old_dirfd: u64,
+    old_ptr: u64,
+    old_len: u64,
+    new_dirfd: u64,
+    new_ptr: u64,
+    new_len_flags: u64,
+) -> PackedStep {
+    let new_len = new_len_flags & 0xffff_ffff;
+    if old_len == 0 || new_len == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+
+    reset_plan(
+        PlanKind::RenameAt2,
+        [old_dirfd, old_ptr, old_len, new_dirfd, new_ptr, new_len_flags],
+    );
+    PackedStep::plan(PlanKind::RenameAt2)
+}
+
+fn pack_rename_len_flags(new_len: u64, flags: u64) -> u64 {
+    ((flags & 0xffff_ffff) << 32) | (new_len & 0xffff_ffff)
+}
+
 fn plan_getcwd(size: u64) -> PackedStep {
     reset_plan(PlanKind::GetCwd, [size, 0, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::GetCwd)
@@ -856,6 +892,96 @@ mod tests {
         assert_eq!(plan_arg(3) as i16, SEEK_SET);
         assert_eq!(plan_arg(4) as i64, 16);
         assert_eq!(plan_arg(5) as i64, 8);
+    }
+
+    #[test]
+    fn renameat2_plan_preserves_paths_and_flags() {
+        const RENAME_NOREPLACE: u64 = 1;
+
+        let old = b"/sandbox/old";
+        let new = b"/sandbox/new";
+        let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+        let old_ptr = base as usize as u32;
+        let new_ptr = old_ptr + old.len() as u32;
+        unsafe {
+            core::ptr::copy_nonoverlapping(old.as_ptr(), base, old.len());
+            core::ptr::copy_nonoverlapping(new.as_ptr(), base.add(old.len()), new.len());
+        }
+
+        let packed = pack_rename_len_flags(new.len() as u64, RENAME_NOREPLACE);
+        let raw = dispatch(
+            SYS_RENAMEAT2,
+            AT_FDCWD_ENCODED,
+            old_ptr as u64,
+            old.len() as u64,
+            AT_FDCWD_ENCODED,
+            new_ptr as u64,
+            packed,
+        );
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
+        assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(1), old_ptr as u64);
+        assert_eq!(plan_arg(2), old.len() as u64);
+        assert_eq!(plan_arg(3), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(4), new_ptr as u64);
+        assert_eq!(plan_arg(5) & 0xffff_ffff, new.len() as u64);
+        assert_eq!(plan_arg(5) >> 32, RENAME_NOREPLACE);
+    }
+
+    #[test]
+    fn rename_and_renameat_pack_lengths_without_flags() {
+        let old = b"/sandbox/a";
+        let new = b"/sandbox/b";
+        let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+        let old_ptr = base as usize as u32;
+        let new_ptr = old_ptr + old.len() as u32;
+        unsafe {
+            core::ptr::copy_nonoverlapping(old.as_ptr(), base, old.len());
+            core::ptr::copy_nonoverlapping(new.as_ptr(), base.add(old.len()), new.len());
+        }
+
+        let raw = dispatch(
+            SYS_RENAME,
+            old_ptr as u64,
+            old.len() as u64,
+            new_ptr as u64,
+            new.len() as u64,
+            0,
+            0,
+        );
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
+        assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(1), old_ptr as u64);
+        assert_eq!(plan_arg(2), old.len() as u64);
+        assert_eq!(plan_arg(3), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(4), new_ptr as u64);
+        assert_eq!(plan_arg(5) & 0xffff_ffff, new.len() as u64);
+        assert_eq!(plan_arg(5) >> 32, 0);
+
+        let raw = dispatch(
+            SYS_RENAMEAT,
+            AT_FDCWD_ENCODED,
+            old_ptr as u64,
+            old.len() as u64,
+            AT_FDCWD_ENCODED,
+            new_ptr as u64,
+            new.len() as u64,
+        );
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
+        assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(1), old_ptr as u64);
+        assert_eq!(plan_arg(2), old.len() as u64);
+        assert_eq!(plan_arg(3), AT_FDCWD_ENCODED);
+        assert_eq!(plan_arg(4), new_ptr as u64);
+        assert_eq!(plan_arg(5) & 0xffff_ffff, new.len() as u64);
+        assert_eq!(plan_arg(5) >> 32, 0);
     }
 }
 

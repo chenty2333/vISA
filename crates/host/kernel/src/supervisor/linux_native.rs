@@ -7,7 +7,8 @@ use vmos_abi::{
     SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
     SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP,
     SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
+    SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -19,6 +20,7 @@ const ARG_BUFFER_BASE: u32 = 0x1000;
 const RESULT_BUFFER_CAPACITY: usize = 1024;
 const PENDING_SLOTS: usize = 8;
 const UTS_FIELD_LEN: usize = 65;
+const AT_FDCWD_ENCODED: u64 = -100i64 as u64;
 
 #[derive(Clone, Copy, Debug)]
 enum PendingOp {
@@ -74,6 +76,16 @@ impl LinuxFrontend {
             SYS_GETDENTS64 => self.plan_getdents(a0, a2),
             SYS_OPENAT => self.plan_openat(a0, a1, a2, a3, a4),
             SYS_READLINKAT => self.plan_readlinkat(a0, a1, a2),
+            SYS_RENAME => self.plan_renameat2(
+                AT_FDCWD_ENCODED,
+                a0,
+                a1,
+                AT_FDCWD_ENCODED,
+                a2,
+                pack_rename_len_flags(a3, 0),
+            ),
+            SYS_RENAMEAT => self.plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
+            SYS_RENAMEAT2 => self.plan_renameat2(a0, a1, a2, a3, a4, a5),
             SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
             _ => PackedStep::error(-ERR_ENOSYS),
         };
@@ -590,6 +602,26 @@ impl LinuxFrontend {
         PackedStep::plan(PlanKind::ReadLinkAt)
     }
 
+    fn plan_renameat2(
+        &mut self,
+        old_dirfd: u64,
+        old_ptr: u64,
+        old_len: u64,
+        new_dirfd: u64,
+        new_ptr: u64,
+        new_len_flags: u64,
+    ) -> PackedStep {
+        let new_len = new_len_flags & 0xffff_ffff;
+        if old_len == 0 || new_len == 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        self.reset_plan(
+            PlanKind::RenameAt2,
+            [old_dirfd, old_ptr, old_len, new_dirfd, new_ptr, new_len_flags],
+        );
+        PackedStep::plan(PlanKind::RenameAt2)
+    }
+
     fn plan_getcwd(&mut self, size: u64) -> PackedStep {
         self.reset_plan(PlanKind::GetCwd, [size, 0, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::GetCwd)
@@ -748,6 +780,10 @@ fn pack_epoll_events(records: &[u8], max_events: usize) -> Result<Vec<u8>, &'sta
         out.extend_from_slice(&data_bytes);
     }
     Ok(out)
+}
+
+fn pack_rename_len_flags(new_len: u64, flags: u64) -> u64 {
+    ((flags & 0xffff_ffff) << 32) | (new_len & 0xffff_ffff)
 }
 
 fn align_up(value: usize, align: usize) -> usize {

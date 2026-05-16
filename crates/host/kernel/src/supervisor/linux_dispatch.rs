@@ -281,6 +281,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Fcntl => self.plan_fcntl(plan),
             PlanKind::FcntlGetlk => self.plan_fcntl_getlk(plan),
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
+            PlanKind::RenameAt2 => self.plan_renameat2(plan),
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
@@ -297,7 +298,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::RtSigreturn
             | PlanKind::Kill
             | PlanKind::Pause
-            | PlanKind::RenameAt2
             | PlanKind::Fsetxattr
             | PlanKind::Fgetxattr
             | PlanKind::Flock
