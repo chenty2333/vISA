@@ -80,7 +80,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.epoll.ctl(epoll_id, op, ready_key, events, data) {
             Ok(()) => {
                 if self.pulse.is_ready_key(ready_key)
-                    || self.socket_ready_key_is_readable(ready_key)
+                    || self.socket_ready_key_matches_events(ready_key, events)
                     || self.pipe_ready_key_matches_events(ready_key, events)
                     || self.socketpair_ready_key_matches_events(ready_key, events)
                     || self.eventfd_ready_key_matches_events(ready_key, events)

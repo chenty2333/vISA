@@ -475,6 +475,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_recv)
     }
 
+    pub(super) fn net_stack_socket_writable(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Option<bool> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
+            return None;
+        }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_send)
+    }
+
     pub(super) fn net_stack_socket_connected(
         &mut self,
         socket_id: u32,

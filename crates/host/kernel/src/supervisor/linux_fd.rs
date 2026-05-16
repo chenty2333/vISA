@@ -1195,16 +1195,24 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn socket_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
-        let (socket_id, ready_key, _) =
+        let (socket_id, ready_key, handle) =
             self.socket_fd_snapshot(fd).map_err(errno_from_service_error)?;
         let mut revents = 0u16;
         if events & POLLIN != 0 && self.socket_ready_key_is_readable(ready_key) {
             revents |= POLLIN;
         }
-        let writable =
-            self.net_core.poll_socket(socket_id).map_err(errno_from_service_error)? & EPOLLOUT != 0;
-        if events & POLLOUT != 0 && writable {
-            revents |= POLLOUT;
+        if events & POLLOUT != 0 {
+            let writable = if let Some(writable) =
+                self.net_stack_socket_writable(socket_id, ready_key, handle)
+            {
+                writable
+            } else {
+                self.net_core.poll_socket(socket_id).map_err(errno_from_service_error)? & EPOLLOUT
+                    != 0
+            };
+            if writable {
+                revents |= POLLOUT;
+            }
         }
         Ok(revents)
     }
@@ -1540,6 +1548,24 @@ impl<'engine> PrototypeRuntime<'engine> {
             return readable;
         }
         self.net_core.poll_socket(socket_id).map(|events| events & EPOLLIN != 0).unwrap_or(false)
+    }
+
+    pub(super) fn socket_ready_key_matches_events(&mut self, ready_key: u64, events: u32) -> bool {
+        let Some((socket_id, handle)) = self.socket_for_ready_key(ready_key) else {
+            return false;
+        };
+        let readable = events & EPOLLIN != 0 && self.socket_ready_key_is_readable(ready_key);
+        let writable = events & EPOLLOUT != 0 && {
+            if let Some(writable) = self.net_stack_socket_writable(socket_id, ready_key, handle) {
+                writable
+            } else {
+                self.net_core
+                    .poll_socket(socket_id)
+                    .map(|events| events & EPOLLOUT != 0)
+                    .unwrap_or(false)
+            }
+        };
+        readable || writable
     }
 
     pub(super) fn socket_accept_fd_is_ready(&mut self, fd: u32) -> bool {
