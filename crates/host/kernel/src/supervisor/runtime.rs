@@ -536,7 +536,13 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
         self.scheduler.set_current_task(task);
-        self.semantic.set_task_state(task, TaskState::Running);
+        let should_mark_running = match self.threads.iter().find(|thread| thread.task_id == task) {
+            Some(thread) => thread.state == ThreadRuntimeStateKind::Running,
+            None => true,
+        };
+        if should_mark_running {
+            self.semantic.set_task_state(task, TaskState::Running);
+        }
     }
 
     pub(crate) fn record_guest_memory_region(
