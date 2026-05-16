@@ -409,6 +409,7 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
         WaitKind::SocketAccept => SemanticWaitKind::SocketAccept,
         WaitKind::FileLock => SemanticWaitKind::FileLock,
         WaitKind::ChildExit => SemanticWaitKind::ChildExit,
+        WaitKind::Signal => SemanticWaitKind::Signal,
     }
 }
 

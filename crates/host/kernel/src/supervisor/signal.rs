@@ -1,12 +1,14 @@
 use alloc::vec::Vec;
 
 use super::{
+    linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     types::{
         PendingSignal, Pid, SigAction, TaskId, ThreadRuntimeStateKind, Tid, UserSignalDelivery,
     },
+    wait::WaitRegistration,
 };
-use crate::frontends::linux_elf::handle_user_fault;
+use crate::{frontends::linux_elf::handle_user_fault, interrupts};
 
 const SA_NODEFER: u64 = 0x4000_0000;
 
@@ -198,6 +200,21 @@ impl<'engine> PrototypeRuntime<'engine> {
                     && self.signal_interrupts_wait(pid, signal.signo)
             })
         })
+    }
+
+    pub(crate) fn block_on_signal_wait(&mut self) -> Result<(), i32> {
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Signal,
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        match self.block_on_wait("ring3_pause", token).map_err(|_| vmos_abi::ERR_EINVAL)? {
+            LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
+            LinuxCallResult::Ret(_) => Err(vmos_abi::ERR_EINTR),
+            _ => Err(vmos_abi::ERR_EINVAL),
+        }
     }
 
     fn signal_interrupts_wait(&self, pid: Pid, signo: u8) -> bool {

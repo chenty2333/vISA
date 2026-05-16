@@ -16,6 +16,7 @@ pub(crate) enum WaitRegistration {
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
+    Signal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +50,7 @@ pub(crate) enum WaitSource {
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
+    Signal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -113,6 +115,7 @@ impl WaitRegistry {
             WaitRegistration::ChildExit { caller_pid, selector } => {
                 (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
             }
+            WaitRegistration::Signal => (WaitKind::Signal, WaitSource::Signal, 0, None),
         };
 
         let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
@@ -155,6 +158,7 @@ impl WaitRegistry {
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::FileLock { .. } => {}
                 WaitSource::ChildExit { .. } => {}
+                WaitSource::Signal => {}
             }
         }
     }
@@ -397,6 +401,25 @@ mod tests {
                 outcome: WaitOutcome::Ready,
                 resume_cookie: 0,
                 source: WaitSource::ChildExit { caller_pid: 3, selector: -1 },
+            })
+        );
+    }
+
+    #[test]
+    fn signal_registration_has_signal_source() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(7, WaitRegistration::Signal, 0, 100);
+
+        assert_eq!(token.kind, WaitKind::Signal);
+        assert_eq!(registry.pending_source(token), Some(WaitSource::Signal));
+
+        registry.apply_event(Event::WaitCancelled(token.id, 4));
+        assert_eq!(
+            registry.take_resolution(token),
+            Some(WaitResolution {
+                outcome: WaitOutcome::Cancelled(4),
+                resume_cookie: 0,
+                source: WaitSource::Signal,
             })
         );
     }

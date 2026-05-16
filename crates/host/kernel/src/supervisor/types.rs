@@ -167,6 +167,7 @@ pub(crate) enum WaitKind {
     SocketAccept,
     FileLock,
     ChildExit,
+    Signal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

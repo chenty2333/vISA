@@ -262,6 +262,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
                         _ => {
                             let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.execute_linux_step("linux_resume", resumed)
@@ -300,6 +301,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::FileLock => {}
                             super::types::WaitKind::ChildExit => {}
+                            super::types::WaitKind::Signal => {}
                         }
                         if matches!(
                             resolution.source,
@@ -307,6 +309,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 | WaitSource::SocketAccept { .. }
                                 | WaitSource::FileLock { .. }
                                 | WaitSource::ChildExit { .. }
+                                | WaitSource::Signal
                         ) {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }

@@ -238,7 +238,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
-        SYS_PAUSE => Err(vmos_abi::ERR_EINTR),
+        SYS_PAUSE => sys_pause(frame),
         SYS_PSELECT6 => sys_pselect6(frame),
         SYS_UMASK => Ok(0),
         SYS_TIME => sys_time(frame),
@@ -1601,6 +1601,11 @@ fn sys_rt_sigreturn(frame: &mut SyscallFrame) -> Result<i64, i32> {
             handle_user_fault(11);
         }
     }
+}
+
+fn sys_pause(_frame: &SyscallFrame) -> Result<i64, i32> {
+    active_context().supervisor.block_on_signal_wait()?;
+    Err(vmos_abi::ERR_EINTR)
 }
 
 fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
