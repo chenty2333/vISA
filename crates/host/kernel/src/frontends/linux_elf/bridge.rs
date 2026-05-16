@@ -22,13 +22,13 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
     SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
     SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR,
-    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGTIMEDWAIT,
-    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
-    SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
-    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
-    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
+    SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
+    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
+    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -292,6 +292,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_EPOLL_PWAIT => sys_epoll_pwait(frame),
         SYS_EPOLL_PWAIT2 => sys_epoll_pwait2(frame),
         SYS_POLL => sys_poll(frame),
+        SYS_PPOLL => sys_ppoll(frame),
         SYS_SOCKET => sys_socket(frame),
         SYS_SOCKETPAIR => sys_socketpair(frame),
         SYS_BIND => sys_bind(frame),
@@ -2450,24 +2451,67 @@ fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
-    let nfds = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
     let timeout_ms = poll_timeout_ms(frame.rdx);
-    let mut entries = read_pollfds(frame.rdi, nfds)?;
+    sys_poll_args(frame.rdi, frame.rsi, timeout_ms, None)
+}
+
+fn sys_ppoll(frame: &SyscallFrame) -> Result<i64, i32> {
+    let timeout_ms = read_ppoll_timeout_ms(frame.rdx)?;
+    let temporary_sigmask = read_ppoll_sigmask(frame.r10, frame.r8)?;
+    sys_poll_args(frame.rdi, frame.rsi, timeout_ms, temporary_sigmask)
+}
+
+fn sys_poll_args(
+    fds_ptr: u64,
+    nfds_arg: u64,
+    timeout_ms: Option<u32>,
+    temporary_sigmask: Option<u64>,
+) -> Result<i64, i32> {
+    let nfds = usize::try_from(nfds_arg).map_err(|_| ERR_EINVAL)?;
+    let mut entries = read_pollfds(fds_ptr, nfds)?;
     let ready = collect_poll_revents(&mut entries)?;
     if ready != 0 || timeout_ms == Some(0) {
-        return write_pollfds(frame.rdi, &entries, ready);
+        return write_pollfds(fds_ptr, &entries, ready);
     }
     let (read_bits, write_bits, wait_nfds) = poll_wait_bits(&entries)?;
-    active_context()
+    let tid = active_context().tid;
+    let old_sigmask = if let Some(sigmask) = temporary_sigmask {
+        Some(active_context().supervisor.set_sigmask(tid, 2, sigmask).ok_or(ERR_EINVAL)?)
+    } else {
+        None
+    };
+    let wait_result = active_context()
         .supervisor
-        .block_on_fdset_wait(read_bits, write_bits, wait_nfds, timeout_ms)?;
+        .block_on_fdset_wait(read_bits, write_bits, wait_nfds, timeout_ms);
+    if let Some(old_sigmask) = old_sigmask {
+        active_context().supervisor.set_sigmask(tid, 2, old_sigmask).ok_or(ERR_EINVAL)?;
+    }
+    wait_result?;
     let ready = collect_poll_revents(&mut entries)?;
-    write_pollfds(frame.rdi, &entries, ready)
+    write_pollfds(fds_ptr, &entries, ready)
 }
 
 fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
     let timeout = timeout_arg as i32;
     if timeout < 0 { None } else { Some(timeout as u32) }
+}
+
+fn read_ppoll_timeout_ms(timeout_ptr: u64) -> Result<Option<u32>, i32> {
+    if timeout_ptr == 0 {
+        return Ok(None);
+    }
+    let ms = read_user_timespec_ms(timeout_ptr)?;
+    Ok(Some(core::cmp::min(ms, u32::MAX as u64) as u32))
+}
+
+fn read_ppoll_sigmask(sigmask_ptr: u64, sigsetsize_arg: u64) -> Result<Option<u64>, i32> {
+    if sigmask_ptr == 0 {
+        return Ok(None);
+    }
+    if sigsetsize_arg != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    Ok(Some(read_user_u64(sigmask_ptr)?))
 }
 
 fn read_pollfds(ptr: u64, nfds: usize) -> Result<Vec<PollFdEntry>, i32> {
