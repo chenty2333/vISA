@@ -89,9 +89,22 @@ impl UserFrameAllocator {
                 free_frames: Vec::new(),
             };
         };
-        let child_remainder = self.domain_remainder.saturating_add(self.domain_stride);
+        let child_remainder = self.domain_remainder + self.domain_stride;
+        debug_assert!(child_remainder < split_stride);
+
+        let mut parent_free_frames = Vec::new();
+        let mut child_free_frames = Vec::new();
+        for frame in self.free_frames.drain(..) {
+            if frame_in_domain_for(frame.start_address().as_u64(), split_stride, child_remainder) {
+                child_free_frames.push(frame);
+            } else {
+                parent_free_frames.push(frame);
+            }
+        }
+        self.free_frames = parent_free_frames;
         // Split the fresh-frame stream so independently scheduled parent and
-        // child allocators cannot hand out the same physical frame.
+        // child allocators cannot hand out the same physical frame. Free-list
+        // frames that now belong to the child domain move with the child too.
         self.domain_stride = split_stride;
         let child = Self {
             memory_regions: self.memory_regions,
@@ -99,7 +112,7 @@ impl UserFrameAllocator {
             cursor_addr: self.cursor_addr,
             domain_stride: split_stride,
             domain_remainder: child_remainder,
-            free_frames: Vec::new(),
+            free_frames: child_free_frames,
         };
         child
     }
@@ -140,8 +153,12 @@ impl UserFrameAllocator {
     }
 
     fn frame_in_domain(&self, addr: u64) -> bool {
-        self.domain_stride == 1 || (addr / 4096) % self.domain_stride == self.domain_remainder
+        frame_in_domain_for(addr, self.domain_stride, self.domain_remainder)
     }
+}
+
+fn frame_in_domain_for(addr: u64, stride: u64, remainder: u64) -> bool {
+    stride == 1 || (addr / 4096) % stride == remainder
 }
 
 fn align_up_to_frame(addr: u64) -> u64 {

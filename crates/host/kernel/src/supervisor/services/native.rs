@@ -973,6 +973,8 @@ impl VfsService {
 }
 
 fn file_lock_key(node_id: Option<u64>, path: &[u8]) -> FileLockKey {
+    // Dynamic VFS fds carry a stable node id; static resources have no node
+    // record, so their advisory locks intentionally fall back to path identity.
     if let Some(id) = node_id {
         FileLockKey::Node(id)
     } else {
