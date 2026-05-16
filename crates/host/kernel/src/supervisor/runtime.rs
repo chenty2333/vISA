@@ -727,4 +727,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         self.set_runtime_realtime_ns(adjusted, tick_count);
     }
+
+    pub(crate) fn runtime_clock_adj_state(&self) -> RuntimeClockAdjustmentState {
+        self.clock_adj
+    }
+
+    pub(crate) fn set_runtime_clock_adj_state(&mut self, clock_adj: RuntimeClockAdjustmentState) {
+        self.clock_adj = clock_adj;
+    }
 }

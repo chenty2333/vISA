@@ -11,7 +11,9 @@ use crate::{
     substrate::ring3::UserReturnContext,
     supervisor::{
         PrototypeRuntime, TaskId,
-        types::{CAP_SETGID, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS},
+        types::{
+            CAP_SETGID, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS, RuntimeClockAdjustmentState,
+        },
     },
 };
 
@@ -151,17 +153,7 @@ unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct ClockAdjustmentState {
-    pub(crate) freq_scaled_ppm: i64,
-    pub(crate) maxerror_us: i64,
-    pub(crate) esterror_us: i64,
-    pub(crate) status: i32,
-    pub(crate) constant: i64,
-    pub(crate) tick_us: i64,
-    pub(crate) tai: i32,
-    pub(crate) nano: bool,
-}
+pub(crate) type ClockAdjustmentState = RuntimeClockAdjustmentState;
 
 pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
@@ -198,9 +190,6 @@ pub(crate) struct ActiveUserContext {
     pending_io_signal: Option<u32>,
     next_activation_id: u64,
     alarm_seconds: u64,
-    realtime_epoch_ns: u64,
-    realtime_epoch_tick: u64,
-    clock_adj: ClockAdjustmentState,
     physical_memory_offset: u64,
     suspended_vfork_parent: Option<SuspendedVforkParent>,
     suspended_clone_parent: Option<SuspendedCloneParent>,
@@ -233,9 +222,6 @@ pub(crate) struct SuspendedVforkParent {
     io_signal: u32,
     pending_io_signal: Option<u32>,
     alarm_seconds: u64,
-    realtime_epoch_ns: u64,
-    realtime_epoch_tick: u64,
-    clock_adj: ClockAdjustmentState,
 }
 
 pub(crate) struct SuspendedCloneParent {
@@ -328,9 +314,6 @@ impl ActiveUserContext {
             pending_io_signal: None,
             next_activation_id: (task_id as u64) << 32 | 1,
             alarm_seconds: 0,
-            realtime_epoch_ns: 1_000_000_000,
-            realtime_epoch_tick: 0,
-            clock_adj: ClockAdjustmentState::default(),
             physical_memory_offset,
             suspended_vfork_parent: None,
             suspended_clone_parent: None,
@@ -720,41 +703,23 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn realtime_now_ns(&self, tick_count: u64, timer_hz: u64) -> u64 {
-        let elapsed_ticks = tick_count.saturating_sub(self.realtime_epoch_tick);
-        let elapsed_ns = elapsed_ticks.saturating_mul(1_000_000_000) / timer_hz.max(1);
-        let correction = (elapsed_ns as i128)
-            .saturating_mul(self.clock_adj.freq_scaled_ppm as i128)
-            / 65_536
-            / 1_000_000;
-        let adjusted_elapsed = elapsed_ns as i128 + correction;
-        if adjusted_elapsed >= 0 {
-            self.realtime_epoch_ns.saturating_add(adjusted_elapsed as u64)
-        } else {
-            self.realtime_epoch_ns.saturating_sub((-adjusted_elapsed) as u64)
-        }
+        self.supervisor.runtime_realtime_now_ns(tick_count, timer_hz)
     }
 
     pub(crate) fn set_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
-        self.realtime_epoch_ns = now_ns;
-        self.realtime_epoch_tick = tick_count;
+        self.supervisor.set_runtime_realtime_ns(now_ns, tick_count);
     }
 
     pub(crate) fn adjust_realtime_ns(&mut self, delta_ns: i128, tick_count: u64, timer_hz: u64) {
-        let now_ns = self.realtime_now_ns(tick_count, timer_hz);
-        let adjusted = if delta_ns >= 0 {
-            now_ns.saturating_add(delta_ns as u64)
-        } else {
-            now_ns.saturating_sub((-delta_ns) as u64)
-        };
-        self.set_realtime_ns(adjusted, tick_count);
+        self.supervisor.adjust_runtime_realtime_ns(delta_ns, tick_count, timer_hz);
     }
 
     pub(crate) fn clock_adj_state(&self) -> ClockAdjustmentState {
-        self.clock_adj
+        self.supervisor.runtime_clock_adj_state()
     }
 
     pub(crate) fn set_clock_adj_state(&mut self, clock_adj: ClockAdjustmentState) {
-        self.clock_adj = clock_adj;
+        self.supervisor.set_runtime_clock_adj_state(clock_adj);
     }
 
     pub(crate) fn suspend_for_vfork_child(
@@ -792,9 +757,6 @@ impl ActiveUserContext {
             io_signal: self.io_signal,
             pending_io_signal: self.pending_io_signal,
             alarm_seconds: self.alarm_seconds,
-            realtime_epoch_ns: self.realtime_epoch_ns,
-            realtime_epoch_tick: self.realtime_epoch_tick,
-            clock_adj: self.clock_adj,
         });
         self.task_id = child_task_id;
         self.pid = child_pid;
@@ -906,9 +868,6 @@ impl ActiveUserContext {
             io_signal,
             pending_io_signal,
             alarm_seconds,
-            realtime_epoch_ns,
-            realtime_epoch_tick,
-            clock_adj,
         } = parent;
         self.task_id = task_id;
         self.pid = pid;
@@ -935,9 +894,6 @@ impl ActiveUserContext {
         self.io_signal = io_signal;
         self.pending_io_signal = pending_io_signal;
         self.alarm_seconds = alarm_seconds;
-        self.realtime_epoch_ns = realtime_epoch_ns;
-        self.realtime_epoch_tick = realtime_epoch_tick;
-        self.clock_adj = clock_adj;
     }
 
     pub(crate) fn take_clone_parent_for_child(
@@ -1004,21 +960,6 @@ impl ActiveUserContext {
         self.io_signal = io_signal;
         self.pending_io_signal = pending_io_signal;
         self.alarm_seconds = alarm_seconds;
-    }
-}
-
-impl ClockAdjustmentState {
-    pub(crate) const fn default() -> Self {
-        Self {
-            freq_scaled_ppm: 0,
-            maxerror_us: 0,
-            esterror_us: 0,
-            status: 0,
-            constant: 0,
-            tick_us: 10_000,
-            tai: 0,
-            nano: true,
-        }
     }
 }
 
