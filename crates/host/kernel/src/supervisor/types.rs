@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use semantic_core::{ResourceHandle, ResourceId};
-use service_core::seccomp::SeccompFilterProgram;
+use service_core::seccomp::SeccompFilterChain;
 use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
 
 pub(crate) type TaskId = u32;
@@ -45,6 +45,7 @@ pub(crate) const CAP_DAC_READ_SEARCH: u64 = 1 << 2;
 pub(crate) const CAP_FOWNER: u64 = 1 << 3;
 pub(crate) const CAP_SETGID: u64 = 1 << 6;
 pub(crate) const CAP_SETUID: u64 = 1 << 7;
+pub(crate) const CAP_SYS_ADMIN: u64 = 1 << 21;
 pub(crate) const CAP_SYS_RESOURCE: u64 = 1 << 24;
 pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_DAC_OVERRIDE
@@ -52,6 +53,7 @@ pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_FOWNER
     | CAP_SETGID
     | CAP_SETUID
+    | CAP_SYS_ADMIN
     | CAP_SYS_RESOURCE;
 
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +87,7 @@ impl<'a> AccessIds<'a> {
 pub(crate) enum SeccompMode {
     Disabled,
     Strict,
-    Filter(SeccompFilterProgram),
+    Filter(SeccompFilterChain),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

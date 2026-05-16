@@ -4,7 +4,7 @@ use core::ptr::null_mut;
 use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
 use semantic_core::{FrontendKind, GuestMemoryManager, ResourceHandle, SemanticGraph, TaskState};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SeccompData, SeccompDecision, SeccompFilterProgram,
+    AUDIT_ARCH_X86_64, SeccompData, SeccompDecision, SeccompFilterChain, SeccompFilterProgram,
 };
 use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
@@ -564,17 +564,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         tid: Tid,
         program: SeccompFilterProgram,
+        privileged: bool,
     ) -> Result<(), i32> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
             return Err(vmos_abi::ERR_ESRCH);
         };
-        if !matches!(thread.seccomp, SeccompMode::Disabled) {
-            return Err(vmos_abi::ERR_EINVAL);
-        }
-        if !thread.no_new_privs {
+        if !thread.no_new_privs && !privileged {
             return Err(vmos_abi::ERR_EACCES);
         }
-        thread.seccomp = SeccompMode::Filter(program);
+        match &mut thread.seccomp {
+            SeccompMode::Disabled => {}
+            SeccompMode::Filter(chain) => {
+                chain.push(program);
+                return Ok(());
+            }
+            SeccompMode::Strict => return Err(vmos_abi::ERR_EINVAL),
+        }
+        thread.seccomp = SeccompMode::Filter(SeccompFilterChain::new(program));
         Ok(())
     }
 

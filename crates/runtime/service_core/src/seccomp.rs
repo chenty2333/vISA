@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 pub const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
 
@@ -86,6 +86,11 @@ pub struct SeccompFilterProgram {
     instructions: Vec<SeccompInstruction>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeccompFilterChain {
+    programs: Vec<SeccompFilterProgram>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeccompData {
     pub nr: u32,
@@ -120,8 +125,37 @@ impl SeccompFilterProgram {
     }
 
     pub fn evaluate(&self, data: SeccompData) -> Result<SeccompDecision, SeccompFilterError> {
-        let ret = execute_filter(&self.instructions, data)?;
+        let ret = self.evaluate_raw(data)?;
         Ok(seccomp_return_to_decision(ret))
+    }
+
+    pub fn evaluate_raw(&self, data: SeccompData) -> Result<u32, SeccompFilterError> {
+        execute_filter(&self.instructions, data)
+    }
+}
+
+impl SeccompFilterChain {
+    pub fn new(program: SeccompFilterProgram) -> Self {
+        Self { programs: vec![program] }
+    }
+
+    pub fn push(&mut self, program: SeccompFilterProgram) {
+        self.programs.push(program);
+    }
+
+    pub fn evaluate(&self, data: SeccompData) -> Result<SeccompDecision, SeccompFilterError> {
+        if self.programs.is_empty() {
+            return Err(SeccompFilterError::Empty);
+        }
+        let mut selected = None::<(u8, u32)>;
+        for program in self.programs.iter().rev() {
+            let ret = program.evaluate_raw(data)?;
+            let precedence = seccomp_action_precedence(ret);
+            if selected.is_none_or(|(best, _)| precedence > best) {
+                selected = Some((precedence, ret));
+            }
+        }
+        selected.map(|(_, ret)| seccomp_return_to_decision(ret)).ok_or(SeccompFilterError::Empty)
     }
 }
 
@@ -426,6 +460,20 @@ fn seccomp_return_to_decision(ret: u32) -> SeccompDecision {
     }
 }
 
+fn seccomp_action_precedence(ret: u32) -> u8 {
+    match ret & SECCOMP_RET_ACTION_FULL {
+        SECCOMP_RET_KILL_PROCESS => 8,
+        SECCOMP_RET_KILL_THREAD => 7,
+        SECCOMP_RET_TRAP => 6,
+        SECCOMP_RET_ERRNO => 5,
+        SECCOMP_RET_USER_NOTIF => 4,
+        SECCOMP_RET_TRACE => 3,
+        SECCOMP_RET_LOG => 2,
+        SECCOMP_RET_ALLOW => 1,
+        _ => 8,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -514,5 +562,59 @@ mod tests {
             ]),
             Err(SeccompFilterError::DivisionByZero)
         );
+    }
+
+    #[test]
+    fn chain_uses_highest_precedence_action() {
+        let allow = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ALLOW,
+        )])
+        .expect("allow filter");
+        let errno = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ERRNO | 22,
+        )])
+        .expect("errno filter");
+        let kill = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_KILL_PROCESS,
+        )])
+        .expect("kill filter");
+
+        let mut chain = SeccompFilterChain::new(allow);
+        chain.push(errno);
+        assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Errno(22)));
+        chain.push(kill);
+        assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Kill { signal: 31 }));
+    }
+
+    #[test]
+    fn chain_keeps_newest_data_for_same_action_precedence() {
+        let first = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ERRNO | 13,
+        )])
+        .expect("first errno filter");
+        let second = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ERRNO | 22,
+        )])
+        .expect("second errno filter");
+
+        let mut chain = SeccompFilterChain::new(first);
+        chain.push(second);
+
+        assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Errno(22)));
     }
 }

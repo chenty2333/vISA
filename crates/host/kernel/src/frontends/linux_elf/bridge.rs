@@ -51,8 +51,8 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS, Rlimit,
-            RobustListRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
+            AccessIds, CAP_SETGID, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS,
+            Rlimit, RobustListRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
             SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
             UserSignalDelivery,
         },
@@ -1341,13 +1341,14 @@ fn install_seccomp_mode(mode: u64, arg: u64) -> Result<i64, i32> {
             active_context().supervisor.set_seccomp_strict(active_context().tid).map(|()| 0)
         }
         SECCOMP_MODE_FILTER => {
-            if !active_context().supervisor.no_new_privs(active_context().tid) {
+            let privileged = active_context().has_effective_capability(CAP_SYS_ADMIN);
+            if !privileged && !active_context().supervisor.no_new_privs(active_context().tid) {
                 return Err(ERR_EACCES);
             }
             let program = read_seccomp_filter_program(arg)?;
             active_context()
                 .supervisor
-                .set_seccomp_filter(active_context().tid, program)
+                .set_seccomp_filter(active_context().tid, program, privileged)
                 .map(|()| 0)
         }
         _ => Err(ERR_EINVAL),
