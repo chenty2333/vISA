@@ -453,9 +453,17 @@ fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
             return PackedStep::error(-ERR_EINVAL);
         };
         let kind = if cmd == F_GETLK { PlanKind::FcntlGetlk } else { PlanKind::FcntlSetlk };
+        let command_or_ptr = if cmd == F_GETLK { arg } else { cmd };
         reset_plan(
             kind,
-            [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
+            [
+                fd,
+                command_or_ptr,
+                lock_type as i64 as u64,
+                whence as i64 as u64,
+                start as u64,
+                len as u64,
+            ],
         );
         return PackedStep::plan(kind);
     }
@@ -843,7 +851,7 @@ mod tests {
         assert_eq!(step.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FcntlGetlk));
         assert_eq!(plan_arg(0), 4);
-        assert_eq!(plan_arg(1), F_GETLK);
+        assert_eq!(plan_arg(1), ptr as u64);
         assert_eq!(plan_arg(2) as i16, F_RDLCK);
         assert_eq!(plan_arg(3) as i16, SEEK_SET);
         assert_eq!(plan_arg(4) as i64, 16);

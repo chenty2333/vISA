@@ -175,6 +175,10 @@ impl LinuxFrontend {
         self.module.read_memory(ptr, len, "failed to read linux linear memory")
     }
 
+    pub(super) fn write_bytes(&mut self, ptr: u32, bytes: &[u8]) -> Result<(), &'static str> {
+        self.module.write_memory(ptr, bytes, "failed to write linux linear memory")
+    }
+
     pub(super) fn encode_uname(&mut self, release: &[u8]) -> Result<Vec<u8>, &'static str> {
         let (ptr, len) = self.write_arg_bytes(release)?;
         let out_len = self.module.call(

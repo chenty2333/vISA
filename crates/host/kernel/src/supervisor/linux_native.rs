@@ -151,6 +151,18 @@ impl LinuxFrontend {
         Ok(self.arg_buffer[start..end].to_vec())
     }
 
+    pub(crate) fn write_bytes(&mut self, ptr: u32, bytes: &[u8]) -> Result<(), &'static str> {
+        let start = ptr
+            .checked_sub(ARG_BUFFER_BASE)
+            .ok_or("linux native pointer was outside arg buffer")? as usize;
+        let end = start.checked_add(bytes.len()).ok_or("linux native write overflowed")?;
+        if end > self.arg_buffer.len() {
+            return Err("linux native pointer was outside arg buffer");
+        }
+        self.arg_buffer[start..end].copy_from_slice(bytes);
+        Ok(())
+    }
+
     pub(crate) fn encode_uname(&mut self, release: &[u8]) -> Result<Vec<u8>, &'static str> {
         self.result_buffer.clear();
         push_c_field(&mut self.result_buffer, b"Linux");
@@ -497,9 +509,17 @@ impl LinuxFrontend {
                 return PackedStep::error(-ERR_EINVAL);
             };
             let kind = if cmd == F_GETLK { PlanKind::FcntlGetlk } else { PlanKind::FcntlSetlk };
+            let command_or_ptr = if cmd == F_GETLK { arg } else { cmd };
             self.reset_plan(
                 kind,
-                [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
+                [
+                    fd,
+                    command_or_ptr,
+                    lock_type as i64 as u64,
+                    whence as i64 as u64,
+                    start as u64,
+                    len as u64,
+                ],
             );
             return PackedStep::plan(kind);
         }

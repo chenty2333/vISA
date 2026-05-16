@@ -753,7 +753,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        const F_GETLK: u32 = 5;
         const F_RDLCK: i16 = 0;
         const F_WRLCK: i16 = 1;
         const F_UNLCK: i16 = 2;
@@ -774,24 +773,26 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
 
-        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl getlk cmd overflowed")?;
-        if cmd != F_GETLK {
-            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
-        }
+        let out_ptr =
+            u32::try_from(plan.args[1]).map_err(|_| "fcntl getlk output pointer overflowed")?;
         let lock_type = plan.args[2] as i16;
         let whence = plan.args[3] as i16;
         let start = plan.args[4] as i64;
         let len = plan.args[5] as i64;
         let owner = self.current_pid();
-        match self.fcntl_getlk_fd(fd, owner, lock_type, whence, start, len) {
-            Ok(Some((write, pid, lock_start, lock_len))) => Ok(LinuxCallResult::Bytes(
+        let encoded = match self.fcntl_getlk_fd(fd, owner, lock_type, whence, start, len) {
+            Ok(Some((write, pid, lock_start, lock_len))) => {
                 encode_flock(if write { F_WRLCK } else { F_RDLCK }, 0, lock_start, lock_len, pid)
-                    .to_vec(),
-            )),
-            Ok(None) => {
-                Ok(LinuxCallResult::Bytes(encode_flock(F_UNLCK, whence, start, len, 0).to_vec()))
             }
-            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Ok(None) => encode_flock(F_UNLCK, whence, start, len, 0),
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.linux.write_bytes(out_ptr, &encoded) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(err) => {
+                crate::kwarn!("fcntl getlk writeback: {}", err);
+                Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)))
+            }
         }
     }
 }
