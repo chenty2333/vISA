@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use semantic_core::{
     CowState, GuestAddressSpaceRef, GuestMemoryManager, GuestPerms, GuestVaRange, PageBacking,
-    VmaFlags, VmaRegionRef,
+    PageObjectRef, VmaFlags, VmaRegionRef,
 };
 
 const PAGE_SIZE: u64 = 4096;
@@ -41,6 +41,7 @@ impl GuestMemoryProjectionSpec {
 struct GuestMemoryProjectionRecord {
     spec: GuestMemoryProjectionSpec,
     region: VmaRegionRef,
+    page: PageObjectRef,
 }
 
 #[derive(Debug)]
@@ -75,6 +76,41 @@ impl GuestMemoryProjection {
         self.replace_range(start, len, None);
     }
 
+    pub(crate) fn record_cow_break(&mut self, page_addr: u64) {
+        if page_addr & (PAGE_SIZE - 1) != 0 {
+            return;
+        }
+        let Some(page_end) = page_addr.checked_add(PAGE_SIZE) else {
+            return;
+        };
+        if !self
+            .regions
+            .iter()
+            .any(|record| record.spec.start <= page_addr && record.spec.end >= page_end)
+        {
+            return;
+        }
+
+        self.split_record_for_page(page_addr, page_end);
+        let Some(index) = self
+            .regions
+            .iter()
+            .position(|record| record.spec.start == page_addr && record.spec.end == page_end)
+        else {
+            crate::kwarn!("guest memory projection failed to isolate COW page");
+            return;
+        };
+
+        let old_page = self.regions[index].page;
+        if self.memory.cow_break(old_page).is_err() {
+            crate::kwarn!("guest memory projection failed to record COW break");
+            return;
+        }
+        let new_page = PageObjectRef::new(old_page.id(), old_page.generation().saturating_add(1));
+        self.memory.record_page_fault(new_page, "cow-break");
+        self.regions[index].page = new_page;
+    }
+
     pub(crate) fn aspace(&self) -> GuestAddressSpaceRef {
         self.aspace
     }
@@ -82,6 +118,11 @@ impl GuestMemoryProjection {
     #[cfg(test)]
     fn region_specs(&self) -> Vec<GuestMemoryProjectionSpec> {
         self.regions.iter().map(|region| region.spec).collect()
+    }
+
+    #[cfg(test)]
+    fn page_refs(&self) -> Vec<PageObjectRef> {
+        self.regions.iter().map(|region| region.page).collect()
     }
 
     fn replace_range(
@@ -129,6 +170,55 @@ impl GuestMemoryProjection {
         self.rebuild_regions(normalize_region_specs(next_specs));
     }
 
+    fn split_record_for_page(&mut self, page_start: u64, page_end: u64) {
+        if self
+            .regions
+            .iter()
+            .any(|record| record.spec.start == page_start && record.spec.end == page_end)
+        {
+            return;
+        }
+
+        let mut next_specs = Vec::with_capacity(self.regions.len().saturating_add(2));
+        for record in &self.regions {
+            let spec = record.spec;
+            if spec.end <= page_start || spec.start >= page_end {
+                next_specs.push(spec);
+                continue;
+            }
+            if spec.start < page_start {
+                next_specs.push(GuestMemoryProjectionSpec::new(
+                    spec.start,
+                    page_start,
+                    spec.readable,
+                    spec.writable,
+                    spec.executable,
+                ));
+            }
+            let split_start = spec.start.max(page_start);
+            let split_end = spec.end.min(page_end);
+            if split_start < split_end {
+                next_specs.push(GuestMemoryProjectionSpec::new(
+                    split_start,
+                    split_end,
+                    spec.readable,
+                    spec.writable,
+                    spec.executable,
+                ));
+            }
+            if spec.end > page_end {
+                next_specs.push(GuestMemoryProjectionSpec::new(
+                    page_end,
+                    spec.end,
+                    spec.readable,
+                    spec.writable,
+                    spec.executable,
+                ));
+            }
+        }
+        self.rebuild_regions(next_specs);
+    }
+
     fn rebuild_regions(&mut self, next_specs: Vec<GuestMemoryProjectionSpec>) {
         let mut next_memory = self.memory.clone();
         for record in &self.regions {
@@ -155,7 +245,7 @@ impl GuestMemoryProjection {
                 );
                 return;
             };
-            next_regions.push(GuestMemoryProjectionRecord { spec, region });
+            next_regions.push(GuestMemoryProjectionRecord { spec, region, page });
         }
 
         self.memory = next_memory;
@@ -188,7 +278,7 @@ fn normalize_region_specs(
 
 #[cfg(test)]
 mod tests {
-    use semantic_core::{ContractObjectKind, ContractObjectRef};
+    use semantic_core::target_executor::{ContractObjectKind, ContractObjectRef};
 
     use super::*;
 
@@ -238,5 +328,42 @@ mod tests {
             .rebuild_substrate_mappings(projection.aspace())
             .expect("rebuild substrate mappings");
         assert!(rebuilt.is_empty());
+    }
+
+    #[test]
+    fn cow_break_splits_projection_page_and_bumps_generation() {
+        let owner = ContractObjectRef::new(ContractObjectKind::Store, 9, 1);
+        let mut memory = GuestMemoryManager::new();
+        let aspace = memory.create_address_space(owner);
+        let mut projection = GuestMemoryProjection::new(memory, aspace);
+
+        projection.record_region(0x1000, 0x3000, true, true, false);
+        assert_eq!(projection.page_refs().len(), 1);
+
+        projection.record_cow_break(0x2000);
+
+        let specs = projection.region_specs();
+        assert_eq!(specs.len(), 3);
+        assert_eq!(specs[0].start, 0x1000);
+        assert_eq!(specs[0].end, 0x2000);
+        assert_eq!(specs[1].start, 0x2000);
+        assert_eq!(specs[1].end, 0x3000);
+        assert_eq!(specs[2].start, 0x3000);
+        assert_eq!(specs[2].end, 0x4000);
+
+        let pages = projection.page_refs();
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages[0].generation(), 1);
+        assert_eq!(pages[1].generation(), 2);
+        assert_eq!(pages[2].generation(), 1);
+        assert_eq!(projection.memory.fault_history()[0].page, pages[1]);
+        assert_eq!(projection.memory.fault_history()[0].reason, "cow-break");
+
+        let rebuilt = projection
+            .memory
+            .rebuild_substrate_mappings(projection.aspace())
+            .expect("rebuild substrate mappings");
+        assert_eq!(rebuilt.len(), 3);
+        assert_eq!(rebuilt[1].page, pages[1]);
     }
 }
