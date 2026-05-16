@@ -25,7 +25,11 @@ mod host_tap {
     const IFNAMSIZ: usize = 16;
     const IFREQ_SIZE: usize = 40;
     const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
+    const SIOCGIFFLAGS: libc::c_ulong = 0x8913;
+    const SIOCSIFFLAGS: libc::c_ulong = 0x8914;
+    const SIOCSIFMTU: libc::c_ulong = 0x8922;
     const SIOCSIFHWADDR: libc::c_ulong = 0x8924;
+    const NETDEV_IFF_UP: i16 = 0x0001;
     const IFF_TAP: i16 = 0x0002;
     const IFF_NO_PI: i16 = 0x1000;
     const ARPHRD_ETHER: u16 = 1;
@@ -65,6 +69,9 @@ mod host_tap {
     impl PacketDeviceBackend for HostTapPacketDeviceBackend {
         fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
             set_tap_mac(&self.name, mac)?;
+            set_tap_mtu(&self.name, DEFAULT_MTU)?;
+            set_tap_up(&self.name)?;
+            self.mtu = DEFAULT_MTU;
             self.mac = Some(mac);
             Ok(())
         }
@@ -99,19 +106,13 @@ mod host_tap {
     }
 
     fn tap_ifreq(name: &str) -> SubstrateResult<[u8; IFREQ_SIZE]> {
-        let bytes = name.as_bytes();
-        if bytes.is_empty() || bytes.len() >= IFNAMSIZ || bytes.contains(&0) {
-            return Err(SubstrateError::ContractViolation { detail: "invalid tap interface name" });
-        }
-
-        let mut ifreq = [0u8; IFREQ_SIZE];
-        write_ifreq_name(&mut ifreq, bytes);
+        let mut ifreq = tap_name_ifreq(name)?;
         let flags = (IFF_TAP | IFF_NO_PI).to_ne_bytes();
         ifreq[IFNAMSIZ..IFNAMSIZ + flags.len()].copy_from_slice(&flags);
         Ok(ifreq)
     }
 
-    fn tap_hwaddr_ifreq(name: &str, mac: [u8; 6]) -> SubstrateResult<[u8; IFREQ_SIZE]> {
+    fn tap_name_ifreq(name: &str) -> SubstrateResult<[u8; IFREQ_SIZE]> {
         let bytes = name.as_bytes();
         if bytes.is_empty() || bytes.len() >= IFNAMSIZ || bytes.contains(&0) {
             return Err(SubstrateError::ContractViolation { detail: "invalid tap interface name" });
@@ -119,13 +120,34 @@ mod host_tap {
 
         let mut ifreq = [0u8; IFREQ_SIZE];
         write_ifreq_name(&mut ifreq, bytes);
+        Ok(ifreq)
+    }
+
+    fn tap_hwaddr_ifreq(name: &str, mac: [u8; 6]) -> SubstrateResult<[u8; IFREQ_SIZE]> {
+        let mut ifreq = tap_name_ifreq(name)?;
         ifreq[IFNAMSIZ..IFNAMSIZ + 2].copy_from_slice(&ARPHRD_ETHER.to_ne_bytes());
         ifreq[IFNAMSIZ + 2..IFNAMSIZ + 8].copy_from_slice(&mac);
         Ok(ifreq)
     }
 
+    fn tap_mtu_ifreq(name: &str, mtu: usize) -> SubstrateResult<[u8; IFREQ_SIZE]> {
+        let mtu = i32::try_from(mtu)
+            .map_err(|_| SubstrateError::ContractViolation { detail: "invalid tap mtu" })?;
+        let mut ifreq = tap_name_ifreq(name)?;
+        ifreq[IFNAMSIZ..IFNAMSIZ + 4].copy_from_slice(&mtu.to_ne_bytes());
+        Ok(ifreq)
+    }
+
     fn write_ifreq_name(ifreq: &mut [u8; IFREQ_SIZE], name: &[u8]) {
         ifreq[..name.len()].copy_from_slice(name);
+    }
+
+    fn read_ifreq_flags(ifreq: &[u8; IFREQ_SIZE]) -> i16 {
+        i16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]])
+    }
+
+    fn write_ifreq_flags(ifreq: &mut [u8; IFREQ_SIZE], flags: i16) {
+        ifreq[IFNAMSIZ..IFNAMSIZ + 2].copy_from_slice(&flags.to_ne_bytes());
     }
 
     fn tap_ifreq_name(ifreq: &[u8; IFREQ_SIZE]) -> SubstrateResult<String> {
@@ -162,18 +184,49 @@ mod host_tap {
 
     fn set_tap_mac(name: &str, mac: [u8; 6]) -> SubstrateResult<()> {
         let mut ifreq = tap_hwaddr_ifreq(name, mac)?;
+        with_control_socket(|fd| ioctl_ifreq(fd, SIOCSIFHWADDR, &mut ifreq, "ioctl SIOCSIFHWADDR"))
+    }
+
+    fn set_tap_mtu(name: &str, mtu: usize) -> SubstrateResult<()> {
+        let mut ifreq = tap_mtu_ifreq(name, mtu)?;
+        with_control_socket(|fd| ioctl_ifreq(fd, SIOCSIFMTU, &mut ifreq, "ioctl SIOCSIFMTU"))
+    }
+
+    fn set_tap_up(name: &str) -> SubstrateResult<()> {
+        let mut ifreq = tap_name_ifreq(name)?;
+        with_control_socket(|fd| {
+            ioctl_ifreq(fd, SIOCGIFFLAGS, &mut ifreq, "ioctl SIOCGIFFLAGS")?;
+            let flags = read_ifreq_flags(&ifreq) | NETDEV_IFF_UP;
+            write_ifreq_flags(&mut ifreq, flags);
+            ioctl_ifreq(fd, SIOCSIFFLAGS, &mut ifreq, "ioctl SIOCSIFFLAGS")
+        })
+    }
+
+    fn with_control_socket<T>(
+        action: impl FnOnce(libc::c_int) -> SubstrateResult<T>,
+    ) -> SubstrateResult<T> {
         let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
         if fd < 0 {
             return Err(tap_fault("socket AF_INET SOCK_DGRAM"));
         }
 
-        let rc = unsafe { libc::ioctl(fd, SIOCSIFHWADDR, ifreq.as_mut_ptr()) };
+        let result = action(fd);
         let close_rc = unsafe { libc::close(fd) };
-        if rc < 0 {
-            return Err(tap_fault("ioctl SIOCSIFHWADDR"));
-        }
-        if close_rc < 0 {
+        if result.is_ok() && close_rc < 0 {
             return Err(tap_fault("close tap control socket"));
+        }
+        result
+    }
+
+    fn ioctl_ifreq(
+        fd: libc::c_int,
+        request: libc::c_ulong,
+        ifreq: &mut [u8; IFREQ_SIZE],
+        detail: &'static str,
+    ) -> SubstrateResult<()> {
+        let rc = unsafe { libc::ioctl(fd, request, ifreq.as_mut_ptr()) };
+        if rc < 0 {
+            return Err(tap_fault(detail));
         }
         Ok(())
     }
@@ -208,6 +261,28 @@ mod host_tap {
             let family = u16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]]);
             assert_eq!(family, ARPHRD_ETHER);
             assert_eq!(&ifreq[IFNAMSIZ + 2..IFNAMSIZ + 8], &[2, 0, 0, 0, 0, 1]);
+        }
+
+        #[test]
+        fn tap_mtu_ifreq_encodes_requested_mtu() {
+            let ifreq = tap_mtu_ifreq("vmos0", 1500).unwrap();
+            assert_eq!(&ifreq[..5], b"vmos0");
+            let mtu = i32::from_ne_bytes([
+                ifreq[IFNAMSIZ],
+                ifreq[IFNAMSIZ + 1],
+                ifreq[IFNAMSIZ + 2],
+                ifreq[IFNAMSIZ + 3],
+            ]);
+            assert_eq!(mtu, 1500);
+        }
+
+        #[test]
+        fn tap_flags_helpers_preserve_existing_flags_when_marking_up() {
+            let mut ifreq = tap_name_ifreq("vmos0").unwrap();
+            write_ifreq_flags(&mut ifreq, 0x0040);
+            let flags = read_ifreq_flags(&ifreq) | NETDEV_IFF_UP;
+            write_ifreq_flags(&mut ifreq, flags);
+            assert_eq!(read_ifreq_flags(&ifreq), 0x0041);
         }
 
         #[test]
