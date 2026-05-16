@@ -7,7 +7,12 @@ use super::{
 };
 
 const CLOCK_REALTIME: u64 = 0;
+const CLOCK_REALTIME_COARSE: u64 = 5;
+const CLOCK_REALTIME_ALARM: u64 = 8;
+const CLOCK_TAI: u64 = 11;
+const MAX_CLOCK_ID: u64 = 11;
 const TIMEX_SIZE: u32 = 208;
+const TIMESPEC_SIZE: usize = 16;
 const ADJ_OFFSET: u32 = 0x0001;
 const ADJ_FREQUENCY: u32 = 0x0002;
 const ADJ_MAXERROR: u32 = 0x0004;
@@ -36,6 +41,26 @@ const TIME_OK: i64 = 0;
 const TIME_ERROR: i64 = 5;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(super) fn plan_clock_gettime(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        match self.apply_clock_gettime(plan) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
+    }
+
+    pub(super) fn plan_clock_getres(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        match self.apply_clock_getres(plan) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
+    }
+
     pub(super) fn plan_clock_adjtime(
         &mut self,
         plan: LinuxPlan,
@@ -46,12 +71,29 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    fn apply_clock_gettime(&mut self, plan: LinuxPlan) -> Result<(), i32> {
+        let clock_id = plan.args[0];
+        let ts_ptr = checked_user_ptr(plan.args[1])?;
+        let now_ns = self.current_runtime_clock_ns(clock_id)?;
+        self.write_timespec(ts_ptr, now_ns)
+    }
+
+    fn apply_clock_getres(&mut self, plan: LinuxPlan) -> Result<(), i32> {
+        let clock_id = plan.args[0];
+        if clock_id > MAX_CLOCK_ID {
+            return Err(ERR_EINVAL);
+        }
+        if plan.args[1] == 0 {
+            return Ok(());
+        }
+        let ts_ptr = checked_user_ptr(plan.args[1])?;
+        let resolution_ns = 1_000_000_000u64 / (crate::interrupts::TIMER_HZ as u64).max(1);
+        self.write_timespec(ts_ptr, resolution_ns)
+    }
+
     fn apply_clock_adjtime(&mut self, plan: LinuxPlan) -> Result<i64, i32> {
         let clock_id = plan.args[0];
-        let tx_ptr = match u32::try_from(plan.args[1]) {
-            Ok(ptr) if ptr != 0 => ptr,
-            _ => return Err(ERR_EFAULT),
-        };
+        let tx_ptr = checked_user_ptr(plan.args[1])?;
         if clock_id != CLOCK_REALTIME {
             return Err(ERR_EINVAL);
         }
@@ -126,6 +168,48 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         if state.status & STA_UNSYNC != 0 { Ok(TIME_ERROR) } else { Ok(TIME_OK) }
+    }
+
+    fn current_runtime_clock_ns(&self, clock_id: u64) -> Result<u64, i32> {
+        if clock_id > MAX_CLOCK_ID {
+            return Err(ERR_EINVAL);
+        }
+        let tick = crate::interrupts::tick_count();
+        let timer_hz = crate::interrupts::TIMER_HZ as u64;
+        let monotonic_ns =
+            1_000_000_000u64.saturating_add(tick.saturating_mul(1_000_000_000) / timer_hz.max(1));
+        match clock_id {
+            CLOCK_REALTIME | CLOCK_REALTIME_COARSE | CLOCK_REALTIME_ALARM => {
+                Ok(self.runtime_realtime_now_ns(tick, timer_hz))
+            }
+            CLOCK_TAI => {
+                let realtime_ns = self.runtime_realtime_now_ns(tick, timer_hz);
+                let offset_ns = self.clock_adj.tai as i128 * 1_000_000_000i128;
+                if offset_ns >= 0 {
+                    Ok(realtime_ns.saturating_add(offset_ns as u64))
+                } else {
+                    Ok(realtime_ns.saturating_sub((-offset_ns) as u64))
+                }
+            }
+            _ => Ok(monotonic_ns),
+        }
+    }
+
+    fn write_timespec(&mut self, ptr: u32, ns: u64) -> Result<(), i32> {
+        let mut encoded = [0u8; TIMESPEC_SIZE];
+        encoded[..8].copy_from_slice(&((ns / 1_000_000_000) as i64).to_le_bytes());
+        encoded[8..].copy_from_slice(&((ns % 1_000_000_000) as i64).to_le_bytes());
+        if self.linux.write_bytes(ptr, &encoded).is_err() {
+            return Err(ERR_EFAULT);
+        }
+        Ok(())
+    }
+}
+
+fn checked_user_ptr(value: u64) -> Result<u32, i32> {
+    match u32::try_from(value) {
+        Ok(ptr) if ptr != 0 => Ok(ptr),
+        _ => Err(ERR_EFAULT),
     }
 }
 

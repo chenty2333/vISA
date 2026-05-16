@@ -11,12 +11,13 @@ use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
-    SYS_CLOCK_ADJTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR,
-    SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT,
-    SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
+    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
+    SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT,
+    SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -97,6 +98,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETRLIMIT => plan_getrlimit(a0, a1),
         SYS_SETRLIMIT => plan_setrlimit(a0, a1),
         SYS_PRLIMIT64 => plan_prlimit64(a0, a1, a2, a3),
+        SYS_CLOCK_GETTIME => plan_clock_gettime(a0, a1),
+        SYS_CLOCK_GETRES => plan_clock_getres(a0, a1),
         SYS_CLOCK_ADJTIME => plan_clock_adjtime(a0, a1),
         SYS_RENAME => plan_renameat2(
             AT_FDCWD_ENCODED,
@@ -512,6 +515,16 @@ fn plan_poll(ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {
 fn plan_clock_adjtime(clock_id: u64, timex_ptr: u64) -> PackedStep {
     reset_plan(PlanKind::ClockAdjtime, [clock_id, timex_ptr, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::ClockAdjtime)
+}
+
+fn plan_clock_gettime(clock_id: u64, timespec_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::ClockGettime, [clock_id, timespec_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::ClockGettime)
+}
+
+fn plan_clock_getres(clock_id: u64, timespec_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::ClockGetres, [clock_id, timespec_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::ClockGetres)
 }
 
 fn plan_seccomp(operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
@@ -1126,6 +1139,28 @@ mod tests {
         assert_eq!(plan_arg(0), 0);
         assert_eq!(plan_arg(1), 0x3000);
         assert_eq!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn clock_gettime_plan_preserves_clock_and_timespec_pointer() {
+        let raw = dispatch(SYS_CLOCK_GETTIME, 11, 0x3040, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::ClockGettime));
+        assert_eq!(plan_arg(0), 11);
+        assert_eq!(plan_arg(1), 0x3040);
+    }
+
+    #[test]
+    fn clock_getres_plan_preserves_clock_and_optional_timespec_pointer() {
+        let raw = dispatch(SYS_CLOCK_GETRES, 1, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::ClockGetres));
+        assert_eq!(plan_arg(0), 1);
+        assert_eq!(plan_arg(1), 0);
     }
 
     #[test]

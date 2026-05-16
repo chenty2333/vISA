@@ -325,6 +325,8 @@ pub enum PlanKind {
     FcntlGetlk = 63,
     Flistxattr = 64,
     Fremovexattr = 65,
+    ClockGettime = 66,
+    ClockGetres = 67,
 }
 
 impl PlanKind {
@@ -395,6 +397,8 @@ impl PlanKind {
             63 => Some(Self::FcntlGetlk),
             64 => Some(Self::Flistxattr),
             65 => Some(Self::Fremovexattr),
+            66 => Some(Self::ClockGettime),
+            67 => Some(Self::ClockGetres),
             _ => None,
         }
     }

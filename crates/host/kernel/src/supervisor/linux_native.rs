@@ -4,12 +4,13 @@ use vmos_abi::{
     ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI,
     FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAKE,
     FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOCK_ADJTIME,
-    SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
+    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE,
+    SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -84,6 +85,8 @@ impl LinuxFrontend {
             SYS_GETRLIMIT => self.plan_getrlimit(a0, a1),
             SYS_SETRLIMIT => self.plan_setrlimit(a0, a1),
             SYS_PRLIMIT64 => self.plan_prlimit64(a0, a1, a2, a3),
+            SYS_CLOCK_GETTIME => self.plan_clock_gettime(a0, a1),
+            SYS_CLOCK_GETRES => self.plan_clock_getres(a0, a1),
             SYS_CLOCK_ADJTIME => self.plan_clock_adjtime(a0, a1),
             SYS_RENAME => self.plan_renameat2(
                 AT_FDCWD_ENCODED,
@@ -576,6 +579,16 @@ impl LinuxFrontend {
     fn plan_clock_adjtime(&mut self, clock_id: u64, timex_ptr: u64) -> PackedStep {
         self.reset_plan(PlanKind::ClockAdjtime, [clock_id, timex_ptr, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::ClockAdjtime)
+    }
+
+    fn plan_clock_gettime(&mut self, clock_id: u64, timespec_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::ClockGettime, [clock_id, timespec_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::ClockGettime)
+    }
+
+    fn plan_clock_getres(&mut self, clock_id: u64, timespec_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::ClockGetres, [clock_id, timespec_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::ClockGetres)
     }
 
     fn plan_seccomp(&mut self, operation: u64, flags: u64, args_ptr: u64) -> PackedStep {

@@ -298,6 +298,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Poll => self.plan_poll(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
+            PlanKind::ClockGettime => self.plan_clock_gettime(plan),
+            PlanKind::ClockGetres => self.plan_clock_getres(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
