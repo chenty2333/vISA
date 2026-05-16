@@ -219,6 +219,14 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
     ) {
         SeccompDecision::Allow => {}
+        SeccompDecision::Log { data } => {
+            crate::kinfo!(
+                "seccomp log syscall={} tid={} data={}",
+                syscall_nr,
+                active_context().tid,
+                data
+            );
+        }
         SeccompDecision::Errno(errno) => return Ok(-(errno as i64)),
         SeccompDecision::Trap { errno } => {
             let syscall = syscall_nr.min(u32::MAX as u64) as u32;

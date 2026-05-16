@@ -102,6 +102,7 @@ pub struct SeccompData {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeccompDecision {
     Allow,
+    Log { data: u16 },
     Errno(u16),
     Trap { errno: u16 },
     Trace,
@@ -453,7 +454,7 @@ fn next_pc(
 fn seccomp_return_to_decision(ret: u32) -> SeccompDecision {
     match ret & SECCOMP_RET_ACTION_FULL {
         SECCOMP_RET_ALLOW => SeccompDecision::Allow,
-        SECCOMP_RET_LOG => SeccompDecision::Allow,
+        SECCOMP_RET_LOG => SeccompDecision::Log { data: (ret & SECCOMP_RET_DATA) as u16 },
         SECCOMP_RET_ERRNO => SeccompDecision::Errno((ret & SECCOMP_RET_DATA) as u16),
         SECCOMP_RET_KILL_PROCESS | SECCOMP_RET_KILL_THREAD => SeccompDecision::Kill { signal: 31 },
         SECCOMP_RET_TRAP => SeccompDecision::Trap { errno: (ret & SECCOMP_RET_DATA) as u16 },
@@ -532,12 +533,12 @@ mod tests {
     #[test]
     fn filter_supports_returning_accumulator_value() {
         let program = SeccompFilterProgram::new(vec![
-            SeccompInstruction::new(BPF_LD | BPF_W | BPF_IMM, 0, 0, SECCOMP_RET_LOG),
+            SeccompInstruction::new(BPF_LD | BPF_W | BPF_IMM, 0, 0, SECCOMP_RET_LOG | 11),
             SeccompInstruction::new(BPF_RET_A, 0, 0, 0),
         ])
         .expect("valid ret-a filter");
 
-        assert_eq!(program.evaluate(data(1)), Ok(SeccompDecision::Allow));
+        assert_eq!(program.evaluate(data(1)), Ok(SeccompDecision::Log { data: 11 }));
     }
 
     #[test]
@@ -625,6 +626,29 @@ mod tests {
         assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Errno(22)));
         chain.push(kill);
         assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Kill { signal: 31 }));
+    }
+
+    #[test]
+    fn chain_treats_log_as_allow_with_audit_precedence() {
+        let allow = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_ALLOW,
+        )])
+        .expect("allow filter");
+        let log = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_LOG | 44,
+        )])
+        .expect("log filter");
+
+        let mut chain = SeccompFilterChain::new(allow);
+        chain.push(log);
+
+        assert_eq!(chain.evaluate(data(1)), Ok(SeccompDecision::Log { data: 44 }));
     }
 
     #[test]
