@@ -12,6 +12,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+use std::{thread, time::Duration};
 
 mod evidence_scenarios;
 mod package_projection;
@@ -155,9 +157,23 @@ const HOST_TAP_REMOTE_IPV4_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_IPV
 #[cfg(all(feature = "host-tap", target_os = "linux"))]
 const HOST_TAP_REMOTE_PORT_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_PORT";
 #[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_PUMP_STEPS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_STEPS";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_PUMP_SLEEP_MS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_SLEEP_MS";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_REQUIRE_ESTABLISHED_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REQUIRE_ESTABLISHED";
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
 const HOST_TAP_DEFAULT_REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
 #[cfg(all(feature = "host-tap", target_os = "linux"))]
 const HOST_TAP_DEFAULT_REMOTE_PORT: u16 = 80;
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_DEFAULT_PUMP_STEPS: u32 = 16;
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_MAX_PUMP_STEPS: u32 = 1024;
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_DEFAULT_PUMP_SLEEP_MS: u64 = 10;
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+const HOST_TAP_MAX_PUMP_SLEEP_MS: u64 = 1000;
 const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
     "i7-device-capability",
     "n17-dma-generation-capability",
@@ -366,10 +382,39 @@ fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), 
         .connect_tcp_ipv4(socket_id, host_tap_remote_ipv4()?, host_tap_remote_port()?)
         .map_err(|error| format!("host TAP probe tcp connect setup failed: {error}"))?;
 
-    let pump = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 1, 1)
-        .map_err(|error| format!("host TAP stack/driver/backend pump failed: {error:?}"))?;
+    let pump_steps = host_tap_pump_steps()?;
+    let pump_sleep_ms = host_tap_pump_sleep_ms()?;
+    let require_established = host_tap_require_established()?;
+    let mut totals = HostTapPumpTotals::default();
+    let mut final_state = "unknown";
+    let mut final_can_send = false;
+    let mut completed_steps = 0u32;
+    for step in 0..pump_steps {
+        completed_steps = step.saturating_add(1);
+        let tick = u64::from(step).saturating_add(1);
+        let pump =
+            pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, tick as i64, tick)
+                .map_err(|error| format!("host TAP stack/driver/backend pump failed: {error:?}"))?;
+        totals.add(&pump);
+        let snapshot = stack
+            .tcp_snapshot(socket_id)
+            .map_err(|error| format!("host TAP tcp snapshot failed: {error}"))?;
+        final_state = snapshot.state;
+        final_can_send = snapshot.can_send;
+        if require_established && final_state == "established" {
+            break;
+        }
+        if pump_sleep_ms != 0 && completed_steps < pump_steps {
+            thread::sleep(Duration::from_millis(pump_sleep_ms));
+        }
+    }
     if backend.tx_frames == 0 {
         return Err("host TAP probe produced no backend TX frame".into());
+    }
+    if require_established && final_state != "established" {
+        return Err(
+            format!("host TAP probe did not establish TCP socket: state={final_state}").into()
+        );
     }
 
     let interface = semantic.register_resource(
@@ -378,16 +423,25 @@ fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), 
         &format!("host-tap:{tap_name}"),
     );
     semantic.record_net_interface_state_changed(interface, true);
-    semantic.record_packet_transmitted(interface, None, 0, backend.last_tx_len);
+    for len in backend.tx_lengths.iter().copied() {
+        semantic.record_packet_transmitted(interface, None, 0, len);
+    }
     println!(
-        "host TAP runtime probe tap={} tx_frames={} tx_bytes={} rx_frames={} pump_backend_rx={} pump_stack_tx={} pump_driver_tx={}",
+        "host TAP runtime probe tap={} pump_steps={} completed_steps={} pump_sleep_ms={} require_established={} final_state={} final_can_send={} tx_frames={} tx_bytes={} rx_frames={} pump_backend_rx={} pump_driver_rx={} pump_stack_tx={} pump_driver_tx={}",
         tap_name,
+        pump_steps,
+        completed_steps,
+        pump_sleep_ms,
+        require_established,
+        final_state,
+        final_can_send,
         backend.tx_frames,
         backend.tx_bytes,
         backend.rx_frames,
-        pump.backend_rx_frames_delivered_to_driver,
-        pump.stack_tx_frames_submitted_to_driver,
-        pump.driver_tx_frames_submitted_to_backend
+        totals.backend_rx_frames_delivered_to_driver,
+        totals.driver_rx_frames_delivered_to_stack,
+        totals.stack_tx_frames_submitted_to_driver,
+        totals.driver_tx_frames_submitted_to_backend
     );
     Ok(())
 }
@@ -408,7 +462,7 @@ struct CountingHostTapBackend {
     inner: HostTapPacketDeviceBackend,
     tx_frames: usize,
     tx_bytes: usize,
-    last_tx_len: usize,
+    tx_lengths: Vec<usize>,
     rx_frames: usize,
 }
 
@@ -420,7 +474,7 @@ impl CountingHostTapBackend {
                 .map_err(|error| format!("host TAP open failed: {error:?}"))?,
             tx_frames: 0,
             tx_bytes: 0,
-            last_tx_len: 0,
+            tx_lengths: Vec::new(),
             rx_frames: 0,
         })
     }
@@ -436,7 +490,7 @@ impl PacketDeviceBackend for CountingHostTapBackend {
         self.inner.submit_tx(frame)?;
         self.tx_frames += 1;
         self.tx_bytes = self.tx_bytes.saturating_add(frame.len());
-        self.last_tx_len = frame.len();
+        self.tx_lengths.push(frame.len());
         Ok(())
     }
 
@@ -448,6 +502,33 @@ impl PacketDeviceBackend for CountingHostTapBackend {
 
     fn mtu(&self) -> usize {
         self.inner.mtu()
+    }
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+#[derive(Default)]
+struct HostTapPumpTotals {
+    backend_rx_frames_delivered_to_driver: usize,
+    driver_rx_frames_delivered_to_stack: usize,
+    stack_tx_frames_submitted_to_driver: usize,
+    driver_tx_frames_submitted_to_backend: usize,
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+impl HostTapPumpTotals {
+    fn add(&mut self, pump: &net_stack_adapter::StackDriverBackendPumpEvidence) {
+        self.backend_rx_frames_delivered_to_driver = self
+            .backend_rx_frames_delivered_to_driver
+            .saturating_add(pump.backend_rx_frames_delivered_to_driver);
+        self.driver_rx_frames_delivered_to_stack = self
+            .driver_rx_frames_delivered_to_stack
+            .saturating_add(pump.driver_rx_frames_delivered_to_stack);
+        self.stack_tx_frames_submitted_to_driver = self
+            .stack_tx_frames_submitted_to_driver
+            .saturating_add(pump.stack_tx_frames_submitted_to_driver);
+        self.driver_tx_frames_submitted_to_backend = self
+            .driver_tx_frames_submitted_to_backend
+            .saturating_add(pump.driver_tx_frames_submitted_to_backend);
     }
 }
 
@@ -485,6 +566,49 @@ fn host_tap_remote_port() -> Result<u16, Box<dyn Error>> {
         return Err(format!("{HOST_TAP_REMOTE_PORT_ENV} must be nonzero").into());
     }
     Ok(port)
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn host_tap_pump_steps() -> Result<u32, Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_PUMP_STEPS_ENV) else {
+        return Ok(HOST_TAP_DEFAULT_PUMP_STEPS);
+    };
+    let steps =
+        raw.parse::<u32>().map_err(|_| format!("{HOST_TAP_PUMP_STEPS_ENV} must be a u32"))?;
+    if steps == 0 || steps > HOST_TAP_MAX_PUMP_STEPS {
+        return Err(
+            format!("{HOST_TAP_PUMP_STEPS_ENV} must be in 1..={HOST_TAP_MAX_PUMP_STEPS}").into()
+        );
+    }
+    Ok(steps)
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn host_tap_pump_sleep_ms() -> Result<u64, Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_PUMP_SLEEP_MS_ENV) else {
+        return Ok(HOST_TAP_DEFAULT_PUMP_SLEEP_MS);
+    };
+    let sleep_ms =
+        raw.parse::<u64>().map_err(|_| format!("{HOST_TAP_PUMP_SLEEP_MS_ENV} must be a u64"))?;
+    if sleep_ms > HOST_TAP_MAX_PUMP_SLEEP_MS {
+        return Err(format!(
+            "{HOST_TAP_PUMP_SLEEP_MS_ENV} must be <= {HOST_TAP_MAX_PUMP_SLEEP_MS}"
+        )
+        .into());
+    }
+    Ok(sleep_ms)
+}
+
+#[cfg(all(feature = "host-tap", target_os = "linux"))]
+fn host_tap_require_established() -> Result<bool, Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_REQUIRE_ESTABLISHED_ENV) else {
+        return Ok(false);
+    };
+    match raw.as_str() {
+        "0" | "false" | "FALSE" | "False" => Ok(false),
+        "1" | "true" | "TRUE" | "True" => Ok(true),
+        _ => Err(format!("{HOST_TAP_REQUIRE_ESTABLISHED_ENV} must be boolean").into()),
+    }
 }
 
 fn validate_external_audit(package: &MigrationPackageManifest) -> Result<(), Box<dyn Error>> {
