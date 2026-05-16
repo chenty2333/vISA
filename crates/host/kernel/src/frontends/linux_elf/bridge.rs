@@ -4,8 +4,8 @@ use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
-    ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
-    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CMD_MASK,
+    ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
+    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CMD_MASK,
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_OWNER_DIED, FUTEX_REQUEUE,
     FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
     FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW,
@@ -101,6 +101,8 @@ const ROBUST_LIST_HEAD_SIZE: u64 = 24;
 const ROBUST_LIST_LIMIT: usize = 2048;
 const SA_SIGINFO: u64 = 0x4;
 const SA_ONSTACK: u64 = 0x0800_0000;
+const SA_RESTART: u64 = 0x1000_0000;
+const FCNTL_F_SETLKW: u64 = 7;
 const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
 const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
 const LINUX_SIGINFO_SIZE: usize = 128;
@@ -189,7 +191,7 @@ pub(crate) extern "C" fn syscall_dispatch_from_asm(frame: *mut SyscallFrame) {
         Err(errno) => frame.rax = (-(errno as i64)) as u64,
     }
     if syscall_nr != SYS_RT_SIGRETURN {
-        deliver_pending_signal_to_user(frame);
+        deliver_pending_signal_to_user(frame, syscall_nr);
     }
 }
 
@@ -1792,10 +1794,11 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
     Ok(saved_frame.rax as i64)
 }
 
-fn deliver_pending_signal_to_user(frame: &mut SyscallFrame) {
+fn deliver_pending_signal_to_user(frame: &mut SyscallFrame, syscall_nr: u64) {
     let tid = active_context().tid;
     if let Some(delivery) = active_context().supervisor.take_pending_user_handler_signal(tid) {
-        if let Err(errno) = install_user_signal_frame(frame, delivery) {
+        let restart_syscall = signal_restart_syscall(frame, syscall_nr, delivery.action.flags);
+        if let Err(errno) = install_user_signal_frame(frame, delivery, restart_syscall) {
             crate::kwarn!("signal frame install failed errno={}", errno);
             let pid = active_context().pid;
             active_context().supervisor.process_exit(pid, 128 + 11);
@@ -1809,6 +1812,7 @@ fn deliver_pending_signal_to_user(frame: &mut SyscallFrame) {
 fn install_user_signal_frame(
     frame: &mut SyscallFrame,
     delivery: UserSignalDelivery,
+    restart_syscall: Option<u64>,
 ) -> Result<(), i32> {
     if delivery.action.restorer == 0 {
         return Err(ERR_ENOSYS);
@@ -1816,7 +1820,11 @@ fn install_user_signal_frame(
     validate_user_range(delivery.action.handler, 1, false)?;
     validate_user_range(delivery.action.restorer, 1, false)?;
 
-    let saved = ring3::capture_user_return(frame);
+    let mut saved = ring3::capture_user_return(frame);
+    if let Some(syscall_nr) = restart_syscall {
+        saved.frame.rax = syscall_nr;
+        saved.frame.rcx = saved.frame.rcx.checked_sub(2).ok_or(ERR_EFAULT)?;
+    }
     let alt_stack = if delivery.action.flags & SA_ONSTACK != 0 {
         active_context().supervisor.signal_alt_stack_for_delivery(active_context().tid, saved.rsp)
     } else {
@@ -1865,6 +1873,30 @@ fn install_user_signal_frame(
     next.frame.rax = 0;
     ring3::install_user_return(frame, next);
     Ok(())
+}
+
+fn signal_restart_syscall(frame: &SyscallFrame, syscall_nr: u64, action_flags: u64) -> Option<u64> {
+    if action_flags & SA_RESTART == 0 || linux_error_return(frame) != Some(ERR_EINTR) {
+        return None;
+    }
+    restartable_interrupted_syscall(frame, syscall_nr).then_some(syscall_nr)
+}
+
+fn linux_error_return(frame: &SyscallFrame) -> Option<i32> {
+    let ret = frame.rax as i64;
+    (ret < 0 && ret >= -4095).then_some((-ret) as i32)
+}
+
+fn restartable_interrupted_syscall(frame: &SyscallFrame, syscall_nr: u64) -> bool {
+    match syscall_nr {
+        SYS_WAIT4 | SYS_ACCEPT | SYS_ACCEPT4 => true,
+        SYS_FCNTL => frame.rsi == FCNTL_F_SETLKW,
+        SYS_FUTEX => {
+            let op = (frame.rsi as u32) & FUTEX_CMD_MASK;
+            op == FUTEX_WAIT || op == FUTEX_WAIT_BITSET
+        }
+        _ => false,
+    }
 }
 
 fn encode_vmos_signal_frame(
