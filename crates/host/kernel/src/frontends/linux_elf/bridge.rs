@@ -2583,22 +2583,26 @@ fn poll_wait_bits(
 ) -> Result<([u64; PSELECT6_FDSET_WORDS], [u64; PSELECT6_FDSET_WORDS], u16), i32> {
     const POLLIN: u16 = 0x001;
     const POLLOUT: u16 = 0x004;
+    const POLLRDNORM: u16 = 0x040;
+    const POLLWRNORM: u16 = 0x100;
+    const POLL_READ_EVENTS: u16 = POLLIN | POLLRDNORM;
+    const POLL_WRITE_EVENTS: u16 = POLLOUT | POLLWRNORM;
 
     let mut read_bits = [0u64; PSELECT6_FDSET_WORDS];
     let mut write_bits = [0u64; PSELECT6_FDSET_WORDS];
     let mut wait_nfds = 0usize;
     for entry in entries {
-        if entry.fd < 0 || entry.events & (POLLIN | POLLOUT) == 0 {
+        if entry.fd < 0 || entry.events & (POLL_READ_EVENTS | POLL_WRITE_EVENTS) == 0 {
             continue;
         }
         let fd = usize::try_from(entry.fd).map_err(|_| ERR_EINVAL)?;
         if fd >= PSELECT6_MAX_FDS {
             return Err(ERR_ENOSYS);
         }
-        if entry.events & POLLIN != 0 {
+        if entry.events & POLL_READ_EVENTS != 0 {
             set_fd_bit(&mut read_bits, fd);
         }
-        if entry.events & POLLOUT != 0 {
+        if entry.events & POLL_WRITE_EVENTS != 0 {
             set_fd_bit(&mut write_bits, fd);
         }
         wait_nfds = core::cmp::max(wait_nfds, fd + 1);

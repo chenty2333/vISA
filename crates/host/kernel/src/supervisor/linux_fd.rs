@@ -39,6 +39,13 @@ const O_WRONLY: u32 = 0o1;
 const O_RDWR: u32 = 0o2;
 const POLLIN: u16 = 0x001;
 const POLLOUT: u16 = 0x004;
+const POLLERR: u16 = 0x008;
+const POLLHUP: u16 = 0x010;
+const POLLRDNORM: u16 = 0x040;
+const POLLWRNORM: u16 = 0x100;
+const POLLRDHUP: u16 = 0x2000;
+const POLL_READ_EVENTS: u16 = POLLIN | POLLRDNORM;
+const POLL_WRITE_EVENTS: u16 = POLLOUT | POLLWRNORM;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn lookup_path(&mut self, path: &[u8]) -> Result<LookupInfo, ServiceCallError> {
@@ -966,12 +973,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let pipe = self.pipes.iter().find(|pipe| pipe.id == pipe_id).ok_or(ERR_EBADF)?;
         let mut revents = 0u16;
-        if readable && events & POLLIN != 0 && !pipe.buffer.is_empty() {
-            revents |= POLLIN;
+        if readable && !pipe.buffer.is_empty() {
+            revents |= requested_read_revents(events);
         }
-        if writable && events & POLLOUT != 0 && pipe.read_open && pipe.buffer.len() < pipe.capacity
-        {
-            revents |= POLLOUT;
+        if readable && !pipe.write_open {
+            revents |= POLLHUP;
+        }
+        if writable && pipe.read_open && pipe.buffer.len() < pipe.capacity {
+            revents |= requested_write_revents(events);
+        }
+        if writable && !pipe.read_open {
+            revents |= POLLERR;
         }
         Ok(revents)
     }
@@ -1069,11 +1081,17 @@ impl<'engine> PrototypeRuntime<'engine> {
             (&pair.a_to_b, &pair.b_to_a, pair.open_a)
         };
         let mut revents = 0u16;
-        if events & POLLIN != 0 && !incoming.is_empty() {
-            revents |= POLLIN;
+        if !incoming.is_empty() {
+            revents |= requested_read_revents(events);
         }
-        if events & POLLOUT != 0 && peer_open && outgoing.len() < pair.capacity {
-            revents |= POLLOUT;
+        if !peer_open {
+            revents |= POLLHUP;
+            if events & POLLRDHUP != 0 {
+                revents |= POLLRDHUP;
+            }
+        }
+        if peer_open && outgoing.len() < pair.capacity {
+            revents |= requested_write_revents(events);
         }
         Ok(revents)
     }
@@ -1207,14 +1225,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             let word = fd / 64;
             let mask = 1u64 << (fd % 64);
             if read_bits[word] & mask != 0
-                && self.fd_poll_revents(fd as u32, POLLIN).is_ok_and(|events| events & POLLIN != 0)
+                && self
+                    .fd_poll_revents(fd as u32, POLLIN)
+                    .is_ok_and(|events| events & (POLLIN | POLLHUP | POLLERR) != 0)
             {
                 return true;
             }
             if write_bits[word] & mask != 0
                 && self
                     .fd_poll_revents(fd as u32, POLLOUT)
-                    .is_ok_and(|events| events & POLLOUT != 0)
+                    .is_ok_and(|events| events & (POLLOUT | POLLHUP | POLLERR) != 0)
             {
                 return true;
             }
@@ -1247,10 +1267,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (socket_id, ready_key, handle) =
             self.socket_fd_snapshot(fd).map_err(errno_from_service_error)?;
         let mut revents = 0u16;
-        if events & POLLIN != 0 && self.socket_ready_key_is_readable(ready_key) {
-            revents |= POLLIN;
+        if self.socket_ready_key_is_readable(ready_key) {
+            revents |= requested_read_revents(events);
         }
-        if events & POLLOUT != 0 {
+        if events & POLL_WRITE_EVENTS != 0 {
             let writable = if let Some(writable) =
                 self.net_stack_socket_writable(socket_id, ready_key, handle)
             {
@@ -1260,7 +1280,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     != 0
             };
             if writable {
-                revents |= POLLOUT;
+                revents |= requested_write_revents(events);
             }
         }
         Ok(revents)
@@ -1274,11 +1294,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let eventfd =
             self.eventfds.iter().find(|eventfd| eventfd.id == eventfd_id).ok_or(ERR_EBADF)?;
         let mut revents = 0u16;
-        if events & POLLIN != 0 && eventfd.counter > 0 {
-            revents |= POLLIN;
+        if eventfd.counter > 0 {
+            revents |= requested_read_revents(events);
         }
-        if events & POLLOUT != 0 && eventfd.counter < EVENTFD_MAX_COUNTER {
-            revents |= POLLOUT;
+        if eventfd.counter < EVENTFD_MAX_COUNTER {
+            revents |= requested_write_revents(events);
         }
         Ok(revents)
     }
@@ -1948,13 +1968,21 @@ fn socketpair_ready_key(pair_id: u64, endpoint: u8) -> u64 {
 
 fn service_node_poll_revents(status_flags: u32, events: u16) -> u16 {
     let mut revents = 0u16;
-    if events & POLLIN != 0 && status_flags & O_ACCMODE != O_WRONLY {
-        revents |= POLLIN;
+    if status_flags & O_ACCMODE != O_WRONLY {
+        revents |= requested_read_revents(events);
     }
-    if events & POLLOUT != 0 && matches!(status_flags & O_ACCMODE, O_WRONLY | O_RDWR) {
-        revents |= POLLOUT;
+    if matches!(status_flags & O_ACCMODE, O_WRONLY | O_RDWR) {
+        revents |= requested_write_revents(events);
     }
     revents
+}
+
+fn requested_read_revents(events: u16) -> u16 {
+    events & POLL_READ_EVENTS
+}
+
+fn requested_write_revents(events: u16) -> u16 {
+    events & POLL_WRITE_EVENTS
 }
 
 fn eventfd_ready_key(eventfd_id: u64) -> u64 {
