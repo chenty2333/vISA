@@ -104,7 +104,25 @@ const SA_ONSTACK: u64 = 0x0800_0000;
 const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
 const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
 const LINUX_SIGINFO_SIZE: usize = 128;
-const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
+const LINUX_UCONTEXT_MIN_SIZE: usize = 968;
+const LINUX_UCONTEXT_STACK_OFFSET: usize = 16;
+const LINUX_UCONTEXT_MCONTEXT_OFFSET: usize = 40;
+const LINUX_UCONTEXT_SIGMASK_OFFSET: usize = 296;
+const LINUX_UCONTEXT_FPREGS_MEM_OFFSET: usize = 424;
+const LINUX_MCONTEXT_FPREGS_OFFSET: usize = 184;
+const LINUX_GREG_R8: usize = 0;
+const LINUX_GREG_R9: usize = 1;
+const LINUX_GREG_R10: usize = 2;
+const LINUX_GREG_R11: usize = 3;
+const LINUX_GREG_RDI: usize = 8;
+const LINUX_GREG_RSI: usize = 9;
+const LINUX_GREG_RDX: usize = 12;
+const LINUX_GREG_RAX: usize = 13;
+const LINUX_GREG_RCX: usize = 14;
+const LINUX_GREG_RSP: usize = 15;
+const LINUX_GREG_RIP: usize = 16;
+const LINUX_GREG_EFL: usize = 17;
+const LINUX_GREG_OLDMASK: usize = 21;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
@@ -1727,6 +1745,11 @@ fn read_linux_stack_t(ptr: u64) -> Result<SignalAltStack, i32> {
 
 fn write_linux_stack_t(ptr: u64, stack: SignalAltStack, on_stack: bool) -> Result<(), i32> {
     let mut out = [0u8; LINUX_STACK_T_BYTES];
+    encode_linux_stack_t(&mut out, 0, stack, on_stack);
+    write_user_bytes(ptr, &out)
+}
+
+fn encode_linux_stack_t(out: &mut [u8], offset: usize, stack: SignalAltStack, on_stack: bool) {
     let flags = if on_stack {
         SIGALTSTACK_SS_ONSTACK
     } else if stack.is_disabled() {
@@ -1734,10 +1757,9 @@ fn write_linux_stack_t(ptr: u64, stack: SignalAltStack, on_stack: bool) -> Resul
     } else {
         0
     };
-    write_u64(&mut out, 0, stack.sp);
-    write_u32(&mut out, 8, flags);
-    write_u64(&mut out, 16, stack.size);
-    write_user_bytes(ptr, &out)
+    write_u64(out, offset, stack.sp);
+    write_u32(out, offset + 8, flags);
+    write_u64(out, offset + 16, stack.size);
 }
 
 fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
@@ -1815,6 +1837,8 @@ fn install_user_signal_frame(
     let record_sp = frame_sp.checked_add(8).ok_or(ERR_EFAULT)?;
     let siginfo_sp = record_sp.checked_add(VMOS_SIGNAL_FRAME_SIZE as u64).ok_or(ERR_EFAULT)?;
     let ucontext_sp = siginfo_sp.checked_add(LINUX_SIGINFO_SIZE as u64).ok_or(ERR_EFAULT)?;
+    let signal_stack =
+        active_context().supervisor.signal_alt_stack(active_context().tid).unwrap_or_default();
 
     write_user_u64(frame_sp, delivery.action.restorer)?;
     write_user_bytes(
@@ -1822,7 +1846,10 @@ fn install_user_signal_frame(
         &encode_vmos_signal_frame(&saved, delivery.old_sigmask, delivery.signal.signo),
     )?;
     write_user_bytes(siginfo_sp, &encode_linux_siginfo(&delivery.signal))?;
-    write_user_bytes(ucontext_sp, &encode_min_ucontext(&saved))?;
+    write_user_bytes(
+        ucontext_sp,
+        &encode_linux_ucontext(&saved, delivery.old_sigmask, signal_stack, ucontext_sp),
+    )?;
 
     let mut next = saved;
     next.rsp = frame_sp;
@@ -1892,12 +1919,44 @@ fn write_sigtimedwait_result(info_ptr: u64, signal: &PendingSignal) -> Result<i6
     Ok(signal.signo as i64)
 }
 
-fn encode_min_ucontext(saved: &UserReturnContext) -> [u8; LINUX_UCONTEXT_MIN_SIZE] {
+fn encode_linux_ucontext(
+    saved: &UserReturnContext,
+    old_sigmask: u64,
+    signal_stack: SignalAltStack,
+    ucontext_sp: u64,
+) -> [u8; LINUX_UCONTEXT_MIN_SIZE] {
     let mut out = [0u8; LINUX_UCONTEXT_MIN_SIZE];
-    write_u64(&mut out, 0, saved.frame.rcx);
-    write_u64(&mut out, 8, saved.rsp);
-    write_u64(&mut out, 16, saved.frame.r11);
+    encode_linux_stack_t(
+        &mut out,
+        LINUX_UCONTEXT_STACK_OFFSET,
+        signal_stack,
+        signal_stack.contains(saved.rsp),
+    );
+    let mcontext = LINUX_UCONTEXT_MCONTEXT_OFFSET;
+    write_linux_greg(&mut out, LINUX_GREG_R8, saved.frame.r8);
+    write_linux_greg(&mut out, LINUX_GREG_R9, saved.frame.r9);
+    write_linux_greg(&mut out, LINUX_GREG_R10, saved.frame.r10);
+    write_linux_greg(&mut out, LINUX_GREG_R11, saved.frame.r11);
+    write_linux_greg(&mut out, LINUX_GREG_RDI, saved.frame.rdi);
+    write_linux_greg(&mut out, LINUX_GREG_RSI, saved.frame.rsi);
+    write_linux_greg(&mut out, LINUX_GREG_RDX, saved.frame.rdx);
+    write_linux_greg(&mut out, LINUX_GREG_RAX, saved.frame.rax);
+    write_linux_greg(&mut out, LINUX_GREG_RCX, saved.frame.rcx);
+    write_linux_greg(&mut out, LINUX_GREG_RSP, saved.rsp);
+    write_linux_greg(&mut out, LINUX_GREG_RIP, saved.frame.rcx);
+    write_linux_greg(&mut out, LINUX_GREG_EFL, saved.frame.r11);
+    write_linux_greg(&mut out, LINUX_GREG_OLDMASK, old_sigmask);
+    write_u64(
+        &mut out,
+        mcontext + LINUX_MCONTEXT_FPREGS_OFFSET,
+        ucontext_sp.saturating_add(LINUX_UCONTEXT_FPREGS_MEM_OFFSET as u64),
+    );
+    write_u64(&mut out, LINUX_UCONTEXT_SIGMASK_OFFSET, old_sigmask);
     out
+}
+
+fn write_linux_greg(out: &mut [u8], index: usize, value: u64) {
+    write_u64(out, LINUX_UCONTEXT_MCONTEXT_OFFSET + index * 8, value);
 }
 
 fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
