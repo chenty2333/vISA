@@ -566,6 +566,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         for task in exited_tasks {
             self.semantic.set_task_state(task, TaskState::Exited);
+            self.release_all_futex_pi_boosts_for_task(task);
         }
         self.release_file_locks_for_pid(pid);
         if let Some((parent_pid, signal)) = parent_signal {

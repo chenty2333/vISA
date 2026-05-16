@@ -398,6 +398,38 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.apply_futex_pi_boost(owner_task)
     }
 
+    pub(crate) fn adopt_futex_pi_after_wait(
+        &mut self,
+        futex_key: u64,
+        old_owner_task: Option<TaskId>,
+    ) {
+        if let Some(old_owner_task) = old_owner_task {
+            self.release_futex_pi_boost(old_owner_task, futex_key);
+        }
+        let new_owner_task = self.scheduler.current_task();
+        let remaining_priority = match self.futex.max_priority(futex_key) {
+            Ok(priority) => priority,
+            Err(err) => {
+                crate::kwarn!(
+                    "futex pi remaining priority query failed for key {}: {:?}",
+                    futex_key,
+                    err
+                );
+                0
+            }
+        };
+        if remaining_priority > 0 {
+            self.register_futex_pi_boost(new_owner_task, futex_key, remaining_priority);
+        } else {
+            self.release_futex_pi_boost(new_owner_task, futex_key);
+        }
+    }
+
+    pub(crate) fn release_all_futex_pi_boosts_for_task(&mut self, task: TaskId) -> bool {
+        let had_boosts = self.futex_pi_boosts.remove(&task).is_some();
+        self.scheduler.restore_priority(task) || had_boosts
+    }
+
     pub(crate) fn prepare_futex_pi_handoff(
         &mut self,
         futex_key: u64,

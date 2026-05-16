@@ -4074,6 +4074,7 @@ fn sys_futex_lock_pi(
         LinuxCallResult::Ret(ret) if ret >= 0 => {
             let current_word = read_user_u32(uaddr)?;
             write_user_u32(uaddr, futex_pi_owner_word(current_word, tid))?;
+            active_context().supervisor.adopt_futex_pi_after_wait(uaddr, owner_task);
             Ok(0)
         }
         LinuxCallResult::Ret(ret) => {
