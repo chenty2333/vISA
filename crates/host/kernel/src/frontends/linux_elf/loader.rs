@@ -58,6 +58,36 @@ pub(crate) struct PreparedUserImage {
     pub(crate) page_mappings: Vec<UserPageMapping>,
 }
 
+impl PreparedUserImage {
+    pub(crate) fn release_frames(self, frame_allocator: &mut UserFrameAllocator) {
+        release_prepared_page_mappings(frame_allocator, &self.page_mappings);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UserPageSwitchError {
+    message: &'static str,
+    next_mappings_cleaned: bool,
+}
+
+impl UserPageSwitchError {
+    fn new(message: &'static str) -> Self {
+        Self { message, next_mappings_cleaned: true }
+    }
+
+    fn with_next_cleanup(message: &'static str, next_mappings_cleaned: bool) -> Self {
+        Self { message, next_mappings_cleaned }
+    }
+
+    pub(crate) fn message(self) -> &'static str {
+        self.message
+    }
+
+    pub(crate) fn next_mappings_cleaned(self) -> bool {
+        self.next_mappings_cleaned
+    }
+}
+
 pub(crate) fn demo_program_host_path() -> &'static str {
     env!("VMOS_LINUX_USER_DEMO_ELF")
 }
@@ -356,11 +386,12 @@ pub(crate) fn clone_user_page_mappings(
 pub(crate) fn switch_user_page_mappings(
     physical_memory_offset: u64,
     current_mappings: &[UserPageMapping],
+    current_regions: &[UserRegion],
     next_mappings: &[UserPageMapping],
     next_regions: &[UserRegion],
     frame_allocator: &mut UserFrameAllocator,
     reclaim_current: bool,
-) -> Result<(), &'static str> {
+) -> Result<(), UserPageSwitchError> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
@@ -369,19 +400,66 @@ pub(crate) fn switch_user_page_mappings(
 
     for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
         if user_page_region_prot(next_regions, mapping.va).is_none() {
-            return Err("forked user page has no region");
+            return Err(UserPageSwitchError::new("next user page has no region"));
+        }
+    }
+    for mapping in current_mappings.iter().filter(|mapping| mapping.present) {
+        if user_page_region_prot(current_regions, mapping.va).is_none() {
+            return Err(UserPageSwitchError::new("current user page has no region"));
         }
     }
 
+    let mut unmapped_current = Vec::new();
     for mapping in current_mappings.iter().filter(|mapping| mapping.present) {
         match authority.unmap_page(mapping.va) {
-            Ok(()) => {}
-            Err(err) if is_page_not_mapped(&err) => {}
+            Ok(()) => {
+                unmapped_current.push(mapping.va);
+            }
+            Err(err) if is_page_not_mapped(&err) => {
+                unmapped_current.push(mapping.va);
+            }
             Err(err) => {
-                return Err(map_page_table_error(err));
+                let rollback_err = remap_user_page_mappings(
+                    &mut authority,
+                    current_mappings,
+                    current_regions,
+                    &unmapped_current,
+                )
+                .err();
+                if let Some(rollback_err) = rollback_err {
+                    crate::kwarn!("user page switch rollback failed: {}", rollback_err);
+                }
+                return Err(UserPageSwitchError::new(map_page_table_error(err)));
             }
         }
     }
+
+    let mut mapped_next = Vec::new();
+    for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
+        let prot = user_page_region_prot(next_regions, mapping.va)
+            .ok_or_else(|| UserPageSwitchError::new("next user page has no region"))?;
+        let flags = user_page_flags_for_mapping(prot, mapping);
+        let (writable, executable) = page_attrs_from_flags(flags);
+        if let Err(err) = authority.map_page(mapping.va, mapping.frame_start, writable, executable)
+        {
+            let switch_err = map_page_table_error(err);
+            let next_mappings_cleaned =
+                unmap_user_page_mappings(&mut authority, &mapped_next).is_ok();
+            let rollback_err = remap_user_page_mappings(
+                &mut authority,
+                current_mappings,
+                current_regions,
+                &unmapped_current,
+            )
+            .err();
+            if let Some(rollback_err) = rollback_err {
+                crate::kwarn!("user page switch rollback failed: {}", rollback_err);
+            }
+            return Err(UserPageSwitchError::with_next_cleanup(switch_err, next_mappings_cleaned));
+        }
+        mapped_next.push(mapping.va);
+    }
+
     if reclaim_current {
         for mapping in current_mappings {
             if mapping.owned {
@@ -391,10 +469,19 @@ pub(crate) fn switch_user_page_mappings(
             }
         }
     }
+    Ok(())
+}
 
-    for mapping in next_mappings.iter().filter(|mapping| mapping.present) {
-        let prot = user_page_region_prot(next_regions, mapping.va)
-            .ok_or("forked user page has no region")?;
+fn remap_user_page_mappings(
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    mappings: &[UserPageMapping],
+    regions: &[UserRegion],
+    mapped_pages: &[u64],
+) -> Result<(), &'static str> {
+    for mapping in mappings.iter().filter(|mapping| {
+        mapping.present && mapped_pages.iter().any(|page_addr| *page_addr == mapping.va)
+    }) {
+        let prot = user_page_region_prot(regions, mapping.va).ok_or("user page has no region")?;
         let flags = user_page_flags_for_mapping(prot, mapping);
         let (writable, executable) = page_attrs_from_flags(flags);
         authority
@@ -402,6 +489,26 @@ pub(crate) fn switch_user_page_mappings(
             .map_err(map_page_table_error)?;
     }
     Ok(())
+}
+
+fn unmap_user_page_mappings(
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    mapped_pages: &[u64],
+) -> Result<(), &'static str> {
+    let mut first_error = None;
+    for page_addr in mapped_pages {
+        match authority.unmap_page(*page_addr) {
+            Ok(()) | Err(SubstrateError::InvalidObject { object: "page-mapping" }) => {}
+            Err(err) => {
+                let err = map_page_table_error(err);
+                crate::kwarn!("user page switch cleanup failed: {}", err);
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+    }
+    if let Some(err) = first_error { Err(err) } else { Ok(()) }
 }
 
 pub(crate) fn cow_break_user_page(

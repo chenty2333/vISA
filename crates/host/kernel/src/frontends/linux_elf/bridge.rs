@@ -850,23 +850,36 @@ fn execve_replace_image(
     };
     let entry = image.entry;
     let stack_top = image.stack_top;
+    let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
+    let next_regions = image.regions.clone();
     let next_mappings = image.page_mappings.clone();
 
-    {
+    let switch_result = {
         let context = active_context();
         switch_user_page_mappings(
             context.physical_memory_offset(),
             &current_mappings,
+            &current_regions,
             &next_mappings,
-            &image.regions,
+            &next_regions,
             &mut context.frame_allocator,
             true,
         )
-        .map_err(|err| {
-            crate::kwarn!("execve page-table switch failed: {}", err);
-            ERR_EFAULT
-        })?;
+    };
+    if let Err(err) = switch_result {
+        let context = active_context();
+        if err.next_mappings_cleaned() {
+            image.release_frames(&mut context.frame_allocator);
+        } else {
+            crate::kwarn!("execve prepared frames leaked after incomplete page-table cleanup");
+        }
+        crate::kwarn!("execve page-table switch failed: {}", err.message());
+        return Err(ERR_EFAULT);
+    }
+
+    {
+        let context = active_context();
         context.replace_user_image(
             image.regions,
             image.page_mappings,
@@ -5796,9 +5809,11 @@ fn switch_active_user_address_space_to_child(
 ) -> Result<(), i32> {
     let context = active_context();
     let current_mappings = context.page_mappings.clone();
+    let current_regions = context.regions.clone();
     switch_user_page_mappings(
         context.physical_memory_offset(),
         &current_mappings,
+        &current_regions,
         &child_address_space.page_mappings,
         &child_address_space.regions,
         &mut child_address_space.frame_allocator,
@@ -5815,9 +5830,11 @@ fn restore_independent_clone_parent_address_space(
     };
     let context = active_context();
     let child_mappings = context.page_mappings.clone();
+    let child_regions = context.regions.clone();
     switch_user_page_mappings(
         context.physical_memory_offset(),
         &child_mappings,
+        &child_regions,
         &parent_address_space.page_mappings,
         &parent_address_space.regions,
         &mut context.frame_allocator,
