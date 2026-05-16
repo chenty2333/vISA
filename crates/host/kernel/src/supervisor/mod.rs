@@ -8,6 +8,7 @@ mod events;
 mod fault;
 mod guest_memory;
 mod linux;
+mod linux_clock_dispatch;
 mod linux_dispatch;
 mod linux_epoll_dispatch;
 mod linux_fd;

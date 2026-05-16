@@ -297,6 +297,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
+            PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
@@ -317,7 +318,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::TimerfdCreate
             | PlanKind::TimerfdSettime
             | PlanKind::TimerfdGettime
-            | PlanKind::ClockAdjtime
             | PlanKind::Bpf => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }

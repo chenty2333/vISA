@@ -39,6 +39,33 @@ impl Default for Rlimit {
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_AS: usize = 9;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeClockAdjustmentState {
+    pub(crate) freq_scaled_ppm: i64,
+    pub(crate) maxerror_us: i64,
+    pub(crate) esterror_us: i64,
+    pub(crate) status: i32,
+    pub(crate) constant: i64,
+    pub(crate) tick_us: i64,
+    pub(crate) tai: i32,
+    pub(crate) nano: bool,
+}
+
+impl RuntimeClockAdjustmentState {
+    pub(crate) const fn default() -> Self {
+        Self {
+            freq_scaled_ppm: 0,
+            maxerror_us: 0,
+            esterror_us: 0,
+            status: 0,
+            constant: 0,
+            tick_us: 10_000,
+            tai: 0,
+            nano: true,
+        }
+    }
+}
+
 pub(crate) const CAP_CHOWN: u64 = 1 << 0;
 pub(crate) const CAP_DAC_OVERRIDE: u64 = 1 << 1;
 pub(crate) const CAP_DAC_READ_SEARCH: u64 = 1 << 2;

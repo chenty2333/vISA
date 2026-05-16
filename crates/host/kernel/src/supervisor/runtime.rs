@@ -27,8 +27,9 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, SeccompMode, ServiceCallError, SigAction,
-        SocketPairState, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, RuntimeClockAdjustmentState, SeccompMode,
+        ServiceCallError, SigAction, SocketPairState, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
     },
     wait::WaitRegistry,
 };
@@ -99,6 +100,9 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
+    pub(super) realtime_epoch_ns: u64,
+    pub(super) realtime_epoch_tick: u64,
+    pub(super) clock_adj: RuntimeClockAdjustmentState,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -253,6 +257,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             restart_count: 0,
             semantic,
             next_snapshot_barrier: 1,
+            realtime_epoch_ns: 1_000_000_000,
+            realtime_epoch_tick: interrupts::tick_count(),
+            clock_adj: RuntimeClockAdjustmentState::default(),
         })
     }
 
@@ -684,5 +691,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.semantic.ensure_task(task, FrontendKind::LinuxElf, "linux-elf-init");
         self.set_current_task(task);
         task
+    }
+
+    pub(crate) fn runtime_realtime_now_ns(&self, tick_count: u64, timer_hz: u64) -> u64 {
+        let elapsed_ticks = tick_count.saturating_sub(self.realtime_epoch_tick);
+        let elapsed_ns = elapsed_ticks.saturating_mul(1_000_000_000) / timer_hz.max(1);
+        let correction = (elapsed_ns as i128)
+            .saturating_mul(self.clock_adj.freq_scaled_ppm as i128)
+            / 65_536
+            / 1_000_000;
+        let adjusted_elapsed = elapsed_ns as i128 + correction;
+        if adjusted_elapsed >= 0 {
+            self.realtime_epoch_ns.saturating_add(adjusted_elapsed as u64)
+        } else {
+            self.realtime_epoch_ns.saturating_sub((-adjusted_elapsed) as u64)
+        }
+    }
+
+    pub(crate) fn set_runtime_realtime_ns(&mut self, now_ns: u64, tick_count: u64) {
+        self.realtime_epoch_ns = now_ns;
+        self.realtime_epoch_tick = tick_count;
+    }
+
+    pub(crate) fn adjust_runtime_realtime_ns(
+        &mut self,
+        delta_ns: i128,
+        tick_count: u64,
+        timer_hz: u64,
+    ) {
+        let now_ns = self.runtime_realtime_now_ns(tick_count, timer_hz);
+        let adjusted = if delta_ns >= 0 {
+            now_ns.saturating_add(delta_ns as u64)
+        } else {
+            now_ns.saturating_sub((-delta_ns) as u64)
+        };
+        self.set_runtime_realtime_ns(adjusted, tick_count);
     }
 }
