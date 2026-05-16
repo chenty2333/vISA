@@ -48,9 +48,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let timeout_ms = poll_timeout_ms(plan.args[2]);
         if nfds == 0 {
             if timeout_ms != Some(0) {
-                if let Err(errno) =
-                    self.block_on_fdset_wait([0; FDSET_WORDS], [0; FDSET_WORDS], 0, timeout_ms)
-                {
+                if let Err(errno) = self.block_on_fdset_wait(
+                    [0; FDSET_WORDS],
+                    [0; FDSET_WORDS],
+                    [0; FDSET_WORDS],
+                    0,
+                    timeout_ms,
+                ) {
                     return Ok(errno_ret(errno));
                 }
             }
@@ -74,11 +78,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             return self.write_pollfds(ptr, &entries, ready);
         }
 
-        let (read_bits, write_bits, wait_nfds) = match poll_wait_bits(&entries) {
+        let (read_bits, write_bits, error_bits, wait_nfds) = match poll_wait_bits(&entries) {
             Ok(bits) => bits,
             Err(errno) => return Ok(errno_ret(errno)),
         };
-        if let Err(errno) = self.block_on_fdset_wait(read_bits, write_bits, wait_nfds, timeout_ms) {
+        if let Err(errno) =
+            self.block_on_fdset_wait(read_bits, write_bits, error_bits, wait_nfds, timeout_ms)
+        {
             return Ok(errno_ret(errno));
         }
 
@@ -157,18 +163,20 @@ fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
 
 fn poll_wait_bits(
     entries: &[PollFdEntry],
-) -> Result<([u64; FDSET_WORDS], [u64; FDSET_WORDS], u16), i32> {
+) -> Result<([u64; FDSET_WORDS], [u64; FDSET_WORDS], [u64; FDSET_WORDS], u16), i32> {
     let mut read_bits = [0u64; FDSET_WORDS];
     let mut write_bits = [0u64; FDSET_WORDS];
+    let mut error_bits = [0u64; FDSET_WORDS];
     let mut wait_nfds = 0usize;
     for entry in entries {
-        if entry.fd < 0 || entry.events & (POLL_READ_EVENTS | POLL_WRITE_EVENTS) == 0 {
+        if entry.fd < 0 {
             continue;
         }
         let fd = usize::try_from(entry.fd).map_err(|_| ERR_EINVAL)?;
         if fd >= MAX_FDSET_FDS {
             return Err(ERR_ENOSYS);
         }
+        set_fd_bit(&mut error_bits, fd);
         if entry.events & POLL_READ_EVENTS != 0 {
             set_fd_bit(&mut read_bits, fd);
         }
@@ -177,7 +185,7 @@ fn poll_wait_bits(
         }
         wait_nfds = core::cmp::max(wait_nfds, fd + 1);
     }
-    Ok((read_bits, write_bits, u16::try_from(wait_nfds).map_err(|_| ERR_EINVAL)?))
+    Ok((read_bits, write_bits, error_bits, u16::try_from(wait_nfds).map_err(|_| ERR_EINVAL)?))
 }
 
 fn set_fd_bit(bits: &mut [u64; FDSET_WORDS], fd: usize) {

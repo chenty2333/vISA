@@ -1670,6 +1670,7 @@ fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
     let wait_result = active_context().supervisor.block_on_fdset_wait(
         snapshot.read_bits,
         snapshot.write_bits,
+        [0; PSELECT6_FDSET_WORDS],
         u16::try_from(nfds).map_err(|_| ERR_EINVAL)?,
         timeout_ms,
     );
@@ -3129,7 +3130,7 @@ fn sys_poll_args(
     if ready != 0 || timeout_ms == Some(0) {
         return write_pollfds(fds_ptr, &entries, ready);
     }
-    let (read_bits, write_bits, wait_nfds) = poll_wait_bits(&entries)?;
+    let (read_bits, write_bits, error_bits, wait_nfds) = poll_wait_bits(&entries)?;
     let tid = active_context().tid;
     let old_sigmask = if let Some(sigmask) = temporary_sigmask {
         Some(active_context().supervisor.set_sigmask(tid, 2, sigmask).ok_or(ERR_EINVAL)?)
@@ -3138,7 +3139,7 @@ fn sys_poll_args(
     };
     let wait_result = active_context()
         .supervisor
-        .block_on_fdset_wait(read_bits, write_bits, wait_nfds, timeout_ms);
+        .block_on_fdset_wait(read_bits, write_bits, error_bits, wait_nfds, timeout_ms);
     if let Some(old_sigmask) = old_sigmask {
         active_context().supervisor.set_sigmask(tid, 2, old_sigmask).ok_or(ERR_EINVAL)?;
     }
@@ -3210,7 +3211,10 @@ fn collect_poll_revents(entries: &mut [PollFdEntry]) -> Result<i64, i32> {
 
 fn poll_wait_bits(
     entries: &[PollFdEntry],
-) -> Result<([u64; PSELECT6_FDSET_WORDS], [u64; PSELECT6_FDSET_WORDS], u16), i32> {
+) -> Result<
+    ([u64; PSELECT6_FDSET_WORDS], [u64; PSELECT6_FDSET_WORDS], [u64; PSELECT6_FDSET_WORDS], u16),
+    i32,
+> {
     const POLLIN: u16 = 0x001;
     const POLLOUT: u16 = 0x004;
     const POLLRDNORM: u16 = 0x040;
@@ -3220,15 +3224,17 @@ fn poll_wait_bits(
 
     let mut read_bits = [0u64; PSELECT6_FDSET_WORDS];
     let mut write_bits = [0u64; PSELECT6_FDSET_WORDS];
+    let mut error_bits = [0u64; PSELECT6_FDSET_WORDS];
     let mut wait_nfds = 0usize;
     for entry in entries {
-        if entry.fd < 0 || entry.events & (POLL_READ_EVENTS | POLL_WRITE_EVENTS) == 0 {
+        if entry.fd < 0 {
             continue;
         }
         let fd = usize::try_from(entry.fd).map_err(|_| ERR_EINVAL)?;
         if fd >= PSELECT6_MAX_FDS {
             return Err(ERR_ENOSYS);
         }
+        set_fd_bit(&mut error_bits, fd);
         if entry.events & POLL_READ_EVENTS != 0 {
             set_fd_bit(&mut read_bits, fd);
         }
@@ -3237,7 +3243,7 @@ fn poll_wait_bits(
         }
         wait_nfds = core::cmp::max(wait_nfds, fd + 1);
     }
-    Ok((read_bits, write_bits, u16::try_from(wait_nfds).map_err(|_| ERR_EINVAL)?))
+    Ok((read_bits, write_bits, error_bits, u16::try_from(wait_nfds).map_err(|_| ERR_EINVAL)?))
 }
 
 fn write_pollfds(ptr: u64, entries: &[PollFdEntry], ready: i64) -> Result<i64, i32> {

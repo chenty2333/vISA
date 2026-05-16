@@ -9,16 +9,51 @@ use super::{
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum WaitRegistration {
-    Timer { delay_ms: u32, resume_cookie: u32 },
-    Futex { timeout_ms: Option<u32>, resume_cookie: u32 },
-    Epoll { epoll_id: u32, max_events: u32, timeout_ms: Option<u32>, resume_cookie: u32 },
-    SocketConnect { fd: u32 },
-    SocketAccept { fd: u32, flags: u32 },
-    FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
-    ChildExit { caller_pid: u32, selector: i64 },
-    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], nfds: u16, timeout_ms: Option<u32> },
+    Timer {
+        delay_ms: u32,
+        resume_cookie: u32,
+    },
+    Futex {
+        timeout_ms: Option<u32>,
+        resume_cookie: u32,
+    },
+    Epoll {
+        epoll_id: u32,
+        max_events: u32,
+        timeout_ms: Option<u32>,
+        resume_cookie: u32,
+    },
+    SocketConnect {
+        fd: u32,
+    },
+    SocketAccept {
+        fd: u32,
+        flags: u32,
+    },
+    FileLock {
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    },
+    ChildExit {
+        caller_pid: u32,
+        selector: i64,
+    },
+    FdSet {
+        read_bits: [u64; 16],
+        write_bits: [u64; 16],
+        error_bits: [u64; 16],
+        nfds: u16,
+        timeout_ms: Option<u32>,
+    },
     Signal,
-    SignalSet { wait_set: u64, timeout_ms: Option<u32> },
+    SignalSet {
+        wait_set: u64,
+        timeout_ms: Option<u32>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +87,7 @@ pub(crate) enum WaitSource {
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
-    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], nfds: u16 },
+    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], error_bits: [u64; 16], nfds: u16 },
     Signal,
     SignalSet { wait_set: u64 },
 }
@@ -119,15 +154,17 @@ impl WaitRegistry {
             WaitRegistration::ChildExit { caller_pid, selector } => {
                 (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
             }
-            WaitRegistration::FdSet { read_bits, write_bits, nfds, timeout_ms } => {
+            WaitRegistration::FdSet { read_bits, write_bits, error_bits, nfds, timeout_ms } => {
                 let kind = if read_bits.iter().any(|bits| *bits != 0) {
                     WaitKind::FdReadable
-                } else {
+                } else if write_bits.iter().any(|bits| *bits != 0) {
                     WaitKind::FdWritable
+                } else {
+                    WaitKind::FdReadable
                 };
                 (
                     kind,
-                    WaitSource::FdSet { read_bits, write_bits, nfds },
+                    WaitSource::FdSet { read_bits, write_bits, error_bits, nfds },
                     0,
                     timeout_ms
                         .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
@@ -476,11 +513,19 @@ mod tests {
         let mut registry = WaitRegistry::new();
         let mut read_bits = [0u64; 16];
         let mut write_bits = [0u64; 16];
+        let mut error_bits = [0u64; 16];
         read_bits[0] = 1 << 3;
         write_bits[0] = 1 << 4;
+        error_bits[0] = 1 << 5;
         let token = registry.register(
             7,
-            WaitRegistration::FdSet { read_bits, write_bits, nfds: 8, timeout_ms: Some(10) },
+            WaitRegistration::FdSet {
+                read_bits,
+                write_bits,
+                error_bits,
+                nfds: 8,
+                timeout_ms: Some(10),
+            },
             0,
             100,
         );
@@ -488,7 +533,7 @@ mod tests {
         assert_eq!(token.kind, WaitKind::FdReadable);
         assert_eq!(
             registry.pending_source(token),
-            Some(WaitSource::FdSet { read_bits, write_bits, nfds: 8 })
+            Some(WaitSource::FdSet { read_bits, write_bits, error_bits, nfds: 8 })
         );
 
         let mut events = Vec::new();
@@ -501,14 +546,70 @@ mod tests {
         let mut registry = WaitRegistry::new();
         let read_bits = [0u64; 16];
         let mut write_bits = [0u64; 16];
+        let error_bits = [0u64; 16];
         write_bits[0] = 1 << 4;
         let token = registry.register(
             7,
-            WaitRegistration::FdSet { read_bits, write_bits, nfds: 8, timeout_ms: None },
+            WaitRegistration::FdSet {
+                read_bits,
+                write_bits,
+                error_bits,
+                nfds: 8,
+                timeout_ms: None,
+            },
             0,
             100,
         );
 
         assert_eq!(token.kind, WaitKind::FdWritable);
+    }
+
+    #[test]
+    fn fdset_write_with_error_registration_stays_writable_wait_kind() {
+        let mut registry = WaitRegistry::new();
+        let read_bits = [0u64; 16];
+        let mut write_bits = [0u64; 16];
+        let mut error_bits = [0u64; 16];
+        write_bits[0] = 1 << 4;
+        error_bits[0] = 1 << 4;
+
+        let token = registry.register(
+            7,
+            WaitRegistration::FdSet {
+                read_bits,
+                write_bits,
+                error_bits,
+                nfds: 8,
+                timeout_ms: None,
+            },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::FdWritable);
+    }
+
+    #[test]
+    fn fdset_error_only_registration_uses_readable_wait_kind() {
+        let mut registry = WaitRegistry::new();
+        let read_bits = [0u64; 16];
+        let write_bits = [0u64; 16];
+        let mut error_bits = [0u64; 16];
+        error_bits[0] = 1 << 4;
+
+        let token = registry.register(
+            7,
+            WaitRegistration::FdSet {
+                read_bits,
+                write_bits,
+                error_bits,
+                nfds: 8,
+                timeout_ms: None,
+            },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::FdReadable);
     }
 }

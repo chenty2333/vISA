@@ -238,9 +238,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
-            if let Some(WaitSource::FdSet { read_bits, write_bits, nfds }) =
+            if let Some(WaitSource::FdSet { read_bits, write_bits, error_bits, nfds }) =
                 self.waits.pending_source(token)
-                && self.fdset_wait_is_ready(read_bits, write_bits, nfds)
+                && self.fdset_wait_is_ready(read_bits, write_bits, error_bits, nfds)
             {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();

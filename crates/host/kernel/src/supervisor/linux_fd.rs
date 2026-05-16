@@ -1324,6 +1324,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         read_bits: [u64; 16],
         write_bits: [u64; 16],
+        error_bits: [u64; 16],
         nfds: u16,
     ) -> bool {
         for fd in 0..nfds as usize {
@@ -1343,6 +1344,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             {
                 return true;
             }
+            if error_bits[word] & mask != 0
+                && self
+                    .fd_poll_revents(fd as u32, 0)
+                    .is_ok_and(|events| events & (POLLHUP | POLLERR) != 0)
+            {
+                return true;
+            }
         }
         false
     }
@@ -1351,12 +1359,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         read_bits: [u64; 16],
         write_bits: [u64; 16],
+        error_bits: [u64; 16],
         nfds: u16,
         timeout_ms: Option<u32>,
     ) -> Result<(), i32> {
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::FdSet { read_bits, write_bits, nfds, timeout_ms },
+            WaitRegistration::FdSet { read_bits, write_bits, error_bits, nfds, timeout_ms },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
