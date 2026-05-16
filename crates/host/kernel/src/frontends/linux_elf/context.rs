@@ -634,8 +634,9 @@ impl ActiveUserContext {
         }
     }
 
-    pub(crate) fn consume_io_signal(&mut self) -> Option<u32> {
-        self.pending_io_signal.take()
+    pub(crate) fn consume_io_signal_if(&mut self, accept: impl FnOnce(u32) -> bool) -> Option<u32> {
+        let signal = self.pending_io_signal?;
+        if accept(signal) { self.pending_io_signal.take() } else { None }
     }
 
     pub(crate) fn replace_alarm(&mut self, seconds: u64) -> u64 {

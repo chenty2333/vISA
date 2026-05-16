@@ -239,6 +239,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::SignalSet { wait_set }) = self.waits.pending_source(token)
+                && self.has_pending_signal_matching_set_for_task(token.owner_task, wait_set)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if self.waits.is_pending(token)
                 && self.has_unblocked_pending_signal_for_task(token.owner_task)
             {
@@ -263,6 +269,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::SignalSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         _ => {
                             let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.execute_linux_step("linux_resume", resumed)
@@ -310,6 +317,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 | WaitSource::FileLock { .. }
                                 | WaitSource::ChildExit { .. }
                                 | WaitSource::Signal
+                                | WaitSource::SignalSet { .. }
                         ) {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }

@@ -49,8 +49,8 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, RobustListRegistration,
-            ServiceCallError, SigAction, UserSignalDelivery,
+            AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS, Rlimit,
+            RobustListRegistration, ServiceCallError, SigAction, UserSignalDelivery,
         },
     },
 };
@@ -1728,6 +1728,24 @@ fn encode_linux_siginfo(
     out
 }
 
+fn linux_signal_mask_bit(signo: u8) -> u64 {
+    if signo == 0 || signo >= 64 { 0 } else { 1u64 << (signo - 1) }
+}
+
+fn signal_wait_set_contains(wait_set: u64, signal: u32) -> bool {
+    let Ok(signo) = u8::try_from(signal) else {
+        return false;
+    };
+    signo != 9 && signo != 19 && wait_set & linux_signal_mask_bit(signo) != 0
+}
+
+fn write_sigtimedwait_result(info_ptr: u64, signal: &PendingSignal) -> Result<i64, i32> {
+    if info_ptr != 0 {
+        write_user_bytes(info_ptr, &encode_linux_siginfo(signal))?;
+    }
+    Ok(signal.signo as i64)
+}
+
 fn encode_min_ucontext(saved: &UserReturnContext) -> [u8; LINUX_UCONTEXT_MIN_SIZE] {
     let mut out = [0u8; LINUX_UCONTEXT_MIN_SIZE];
     write_u64(&mut out, 0, saved.frame.rcx);
@@ -1737,16 +1755,49 @@ fn encode_min_ucontext(saved: &UserReturnContext) -> [u8; LINUX_UCONTEXT_MIN_SIZ
 }
 
 fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.rdi != 0 {
-        validate_user_range(frame.rdi, LINUX_SIGSET_BYTES as u64, false)?;
+    if frame.r10 != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
     }
-    if frame.rdx != 0 {
-        let _ = read_user_timespec_ns(frame.rdx)?;
+    if frame.rdi == 0 {
+        return Err(ERR_EFAULT);
     }
-    if let Some(signal) = active_context().consume_io_signal() {
-        return Ok(signal as i64);
+    let wait_set = read_user_u64(frame.rdi)?;
+    let timeout_ms = if frame.rdx != 0 {
+        let ms = read_user_timespec_ms(frame.rdx)?;
+        Some(core::cmp::min(ms, u32::MAX as u64) as u32)
+    } else {
+        None
+    };
+    let tid = active_context().tid;
+
+    if let Some(signal) =
+        active_context().supervisor.take_pending_signal_matching_set(tid, wait_set)
+    {
+        return write_sigtimedwait_result(frame.rsi, &signal);
     }
-    Err(vmos_abi::ERR_EAGAIN)
+
+    if let Some(signo) =
+        active_context().consume_io_signal_if(|signal| signal_wait_set_contains(wait_set, signal))
+    {
+        let signal = PendingSignal {
+            signo: u8::try_from(signo).map_err(|_| ERR_EINVAL)?,
+            si_code: 0,
+            si_pid: active_context().pid,
+            si_uid: active_context().uid(),
+        };
+        return write_sigtimedwait_result(frame.rsi, &signal);
+    }
+
+    if timeout_ms == Some(0) {
+        return Err(ERR_EAGAIN);
+    }
+    active_context().supervisor.block_on_signal_set_wait(wait_set, timeout_ms)?;
+    if let Some(signal) =
+        active_context().supervisor.take_pending_signal_matching_set(tid, wait_set)
+    {
+        return write_sigtimedwait_result(frame.rsi, &signal);
+    }
+    Err(ERR_EAGAIN)
 }
 
 fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {

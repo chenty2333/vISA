@@ -31,6 +31,10 @@ fn linux_signal_bit(signo: u8) -> u64 {
     if signo == 0 || signo > 64 { 0 } else { 1u64 << (signo - 1) }
 }
 
+fn waitable_signal_set(wait_set: u64) -> u64 {
+    wait_set & !linux_signal_bit(9) & !linux_signal_bit(19)
+}
+
 enum SignalDefaultAction {
     Terminate { core: bool },
     Stop,
@@ -202,6 +206,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         })
     }
 
+    pub(crate) fn has_pending_signal_matching_set_for_task(
+        &self,
+        task_id: TaskId,
+        wait_set: u64,
+    ) -> bool {
+        let wait_set = waitable_signal_set(wait_set);
+        if wait_set == 0 {
+            return false;
+        }
+        self.threads.iter().find(|thread| thread.task_id == task_id).is_some_and(|thread| {
+            thread
+                .pending_signals
+                .iter()
+                .any(|signal| wait_set & linux_signal_bit(signal.signo) != 0)
+        })
+    }
+
+    pub(crate) fn take_pending_signal_matching_set(
+        &mut self,
+        tid: Tid,
+        wait_set: u64,
+    ) -> Option<PendingSignal> {
+        let wait_set = waitable_signal_set(wait_set);
+        if wait_set == 0 {
+            return None;
+        }
+        let thread = self.threads.iter_mut().find(|thread| thread.tid == tid)?;
+        let index = thread
+            .pending_signals
+            .iter()
+            .position(|signal| wait_set & linux_signal_bit(signal.signo) != 0)?;
+        Some(thread.pending_signals.remove(index))
+    }
+
     pub(crate) fn block_on_signal_wait(&mut self) -> Result<(), i32> {
         let token = self.waits.register(
             self.scheduler.current_task(),
@@ -213,6 +251,28 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.block_on_wait("ring3_pause", token).map_err(|_| vmos_abi::ERR_EINVAL)? {
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
             LinuxCallResult::Ret(_) => Err(vmos_abi::ERR_EINTR),
+            _ => Err(vmos_abi::ERR_EINVAL),
+        }
+    }
+
+    pub(crate) fn block_on_signal_set_wait(
+        &mut self,
+        wait_set: u64,
+        timeout_ms: Option<u32>,
+    ) -> Result<(), i32> {
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::SignalSet { wait_set: waitable_signal_set(wait_set), timeout_ms },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        match self
+            .block_on_wait("ring3_rt_sigtimedwait", token)
+            .map_err(|_| vmos_abi::ERR_EINVAL)?
+        {
+            LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
+            LinuxCallResult::Ret(_) => Ok(()),
             _ => Err(vmos_abi::ERR_EINVAL),
         }
     }

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::ERR_ETIMEDOUT;
+use vmos_abi::{ERR_EAGAIN, ERR_ETIMEDOUT};
 
 use super::{
     events::Event,
@@ -17,6 +17,7 @@ pub(crate) enum WaitRegistration {
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
     Signal,
+    SignalSet { wait_set: u64, timeout_ms: Option<u32> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub(crate) enum WaitSource {
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
     Signal,
+    SignalSet { wait_set: u64 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,6 +118,13 @@ impl WaitRegistry {
                 (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
             }
             WaitRegistration::Signal => (WaitKind::Signal, WaitSource::Signal, 0, None),
+            WaitRegistration::SignalSet { wait_set, timeout_ms } => (
+                WaitKind::Signal,
+                WaitSource::SignalSet { wait_set },
+                0,
+                timeout_ms
+                    .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
+            ),
         };
 
         let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
@@ -159,6 +168,9 @@ impl WaitRegistry {
                 WaitSource::FileLock { .. } => {}
                 WaitSource::ChildExit { .. } => {}
                 WaitSource::Signal => {}
+                WaitSource::SignalSet { .. } => {
+                    events.push(Event::WaitCancelled(record.token.id, ERR_EAGAIN))
+                }
             }
         }
     }
@@ -422,5 +434,23 @@ mod tests {
                 source: WaitSource::Signal,
             })
         );
+    }
+
+    #[test]
+    fn signal_set_registration_carries_wait_set_and_times_out_with_eagain() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::SignalSet { wait_set: 0b101, timeout_ms: Some(10) },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::Signal);
+        assert_eq!(registry.pending_source(token), Some(WaitSource::SignalSet { wait_set: 0b101 }));
+
+        let mut events = Vec::new();
+        registry.collect_due_events(1, &mut events);
+        assert_eq!(events, alloc::vec![Event::WaitCancelled(token.id, ERR_EAGAIN)]);
     }
 }
