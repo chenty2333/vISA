@@ -136,6 +136,8 @@ const LINUX_GREG_RSP: usize = 15;
 const LINUX_GREG_RIP: usize = 16;
 const LINUX_GREG_EFL: usize = 17;
 const LINUX_GREG_OLDMASK: usize = 21;
+const RFLAGS_FORCED_USER_BITS: u64 = 0x202;
+const RFLAGS_RESTORABLE_USER_MASK: u64 = 0x0024_0cd5;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
@@ -2283,7 +2285,7 @@ fn read_linux_greg(bytes: &[u8], index: usize) -> Result<u64, i32> {
 }
 
 fn sanitize_restored_rflags(flags: u64) -> u64 {
-    flags | 0x202
+    (flags & RFLAGS_RESTORABLE_USER_MASK) | RFLAGS_FORCED_USER_BITS
 }
 
 fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -4629,6 +4631,7 @@ mod tests {
     use super::{
         CloneRequest, futex_pi_handoff_word, futex_pi_owner_word, futex_pi_restore_wait_word,
         futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
+        sanitize_restored_rflags,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -4682,6 +4685,30 @@ mod tests {
             futex_pi_restore_wait_word(original, FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x5678),
             None
         );
+    }
+
+    #[test]
+    fn signal_return_rflags_clears_control_bits() {
+        let tf = 1 << 8;
+        let iopl = 0x3000;
+        let nt = 1 << 14;
+        let rf = 1 << 16;
+        let vm = 1 << 17;
+        let high_reserved = 1 << 63;
+
+        let restored = sanitize_restored_rflags(tf | iopl | nt | rf | vm | high_reserved);
+
+        assert_eq!(restored & 0x202, 0x202);
+        assert_eq!(restored & (tf | iopl | nt | rf | vm | high_reserved), 0);
+    }
+
+    #[test]
+    fn signal_return_rflags_preserves_bounded_user_flags() {
+        let user_flags = 0x0024_0cd5;
+        let restored = sanitize_restored_rflags(user_flags);
+
+        assert_eq!(restored & user_flags, user_flags);
+        assert_eq!(restored & 0x202, 0x202);
     }
 
     #[test]
