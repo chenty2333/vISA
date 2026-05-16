@@ -3,31 +3,32 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use vmos_abi::{
-    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT, ERR_EINVAL,
-    ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EPERM,
-    ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
-    FUTEX_LOCK_PI, FUTEX_OWNER_DIED, FUTEX_REQUEUE, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI,
-    FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET,
-    SOCK_DGRAM, SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
-    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
-    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
-    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
-    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
-    SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
-    SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
-    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
-    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
-    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
-    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
+    ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR,
+    ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CMD_MASK,
+    FUTEX_CMP_REQUEUE, FUTEX_LOCK_PI, FUTEX_OWNER_DIED, FUTEX_REQUEUE, FUTEX_TID_MASK,
+    FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, FUTEX_WAKE,
+    FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS,
+    SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET,
+    SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE,
+    SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT,
+    SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2,
+    SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR,
+    SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
+    SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY,
+    SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT,
+    SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGRETURN, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -3232,8 +3233,7 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
     let owner = word & FUTEX_TID_MASK;
 
     if owner == 0 {
-        let new_word = (word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)) | tid;
-        write_user_u32(uaddr, new_word)?;
+        write_user_u32(uaddr, futex_pi_owner_word(word, tid))?;
         return Ok(0);
     }
     if owner == tid {
@@ -3243,9 +3243,53 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
         return Err(vmos_abi::ERR_EAGAIN);
     }
 
-    // Blocking PI needs a runnable owner and priority transfer. Returning
-    // success without that scheduler path would create a false lock handoff.
-    Err(ERR_ENOSYS)
+    if active_context()
+        .supervisor
+        .require_capability("futex_service", "futex.waitset", "wait")
+        .is_err()
+    {
+        return Err(ERR_EPERM);
+    }
+    // Reuse the existing futex wait queue here; this is bounded blocking handoff,
+    // not a full PI scheduler transfer.
+    let wait_word = futex_pi_wait_word(word);
+    if wait_word != word {
+        write_user_u32(uaddr, wait_word)?;
+    }
+    let result = active_context()
+        .supervisor
+        .dispatch_linux_syscall(
+            "ring3_futex_lock_pi",
+            SyscallContext::new(
+                SYS_FUTEX,
+                [uaddr, FUTEX_WAIT as u64, wait_word as u64, 0, 0, wait_word as u64],
+            ),
+        )
+        .map_err(|_| ERR_EINVAL)?;
+    match result {
+        LinuxCallResult::Ret(ret) if ret >= 0 => {
+            let current_word = read_user_u32(uaddr)?;
+            write_user_u32(uaddr, futex_pi_owner_word(current_word, tid))?;
+            Ok(0)
+        }
+        LinuxCallResult::Ret(ret) => {
+            if ret == -(ERR_EAGAIN as i64)
+                && let Ok(current_word) = read_user_u32(uaddr)
+                && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
+            {
+                let _ = write_user_u32(uaddr, restore_word);
+            }
+            Err((-ret) as i32)
+        }
+        _ => {
+            if let Ok(current_word) = read_user_u32(uaddr)
+                && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
+            {
+                let _ = write_user_u32(uaddr, restore_word);
+            }
+            Err(ERR_EINVAL)
+        }
+    }
 }
 
 fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3257,7 +3301,8 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EPERM);
     }
     if word & FUTEX_WAITERS != 0 {
-        write_user_u32(uaddr, 0)?;
+        // Preserve futex state bits and delegate wakeup to the existing futex service.
+        write_user_u32(uaddr, futex_pi_unlock_word(word))?;
         let result = active_context()
             .supervisor
             .dispatch_linux_syscall(
@@ -3273,6 +3318,66 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     write_user_u32(uaddr, 0)?;
     Ok(0)
+}
+
+fn futex_pi_owner_word(word: u32, tid: u32) -> u32 {
+    (word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)) | tid
+}
+
+fn futex_pi_wait_word(word: u32) -> u32 {
+    word | FUTEX_WAITERS
+}
+
+fn futex_pi_restore_wait_word(original: u32, current: u32) -> Option<u32> {
+    (current == futex_pi_wait_word(original)).then_some(original)
+}
+
+fn futex_pi_unlock_word(word: u32) -> u32 {
+    word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)
+}
+
+#[cfg(test)]
+mod tests {
+    use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_WAITERS};
+
+    use super::{
+        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_word, futex_pi_wait_word,
+    };
+
+    #[test]
+    fn futex_pi_owner_word_preserves_state_bits() {
+        let word = FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x1234;
+        let owned = futex_pi_owner_word(word, 0x55aa);
+        assert_eq!(owned & FUTEX_OWNER_DIED, FUTEX_OWNER_DIED);
+        assert_eq!(owned & FUTEX_WAITERS, FUTEX_WAITERS);
+        assert_eq!(owned & 0xffff, 0x55aa);
+    }
+
+    #[test]
+    fn futex_pi_unlock_word_preserves_state_bits() {
+        let word = FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x1234;
+        let unlocked = futex_pi_unlock_word(word);
+        assert_eq!(unlocked, FUTEX_OWNER_DIED | FUTEX_WAITERS);
+    }
+
+    #[test]
+    fn futex_pi_wait_word_sets_waiters_bit_only() {
+        assert_eq!(futex_pi_wait_word(0x1234), 0x1234 | FUTEX_WAITERS);
+    }
+
+    #[test]
+    fn futex_pi_restore_wait_word_only_rewinds_matching_wait_state() {
+        let original = FUTEX_OWNER_DIED | 0x1234;
+        assert_eq!(
+            futex_pi_restore_wait_word(original, futex_pi_wait_word(original)),
+            Some(original)
+        );
+        assert_eq!(futex_pi_restore_wait_word(original, original), None);
+        assert_eq!(
+            futex_pi_restore_wait_word(original, FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x5678),
+            None
+        );
+    }
 }
 
 fn handle_exit_syscall(frame: &mut SyscallFrame, status: i32) -> Result<i64, i32> {
