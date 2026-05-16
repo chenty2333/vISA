@@ -16,6 +16,7 @@ pub(crate) enum WaitRegistration {
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
+    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], nfds: u16, timeout_ms: Option<u32> },
     Signal,
     SignalSet { wait_set: u64, timeout_ms: Option<u32> },
 }
@@ -51,6 +52,7 @@ pub(crate) enum WaitSource {
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     ChildExit { caller_pid: u32, selector: i64 },
+    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], nfds: u16 },
     Signal,
     SignalSet { wait_set: u64 },
 }
@@ -117,6 +119,20 @@ impl WaitRegistry {
             WaitRegistration::ChildExit { caller_pid, selector } => {
                 (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
             }
+            WaitRegistration::FdSet { read_bits, write_bits, nfds, timeout_ms } => {
+                let kind = if read_bits.iter().any(|bits| *bits != 0) {
+                    WaitKind::FdReadable
+                } else {
+                    WaitKind::FdWritable
+                };
+                (
+                    kind,
+                    WaitSource::FdSet { read_bits, write_bits, nfds },
+                    0,
+                    timeout_ms
+                        .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
+                )
+            }
             WaitRegistration::Signal => (WaitKind::Signal, WaitSource::Signal, 0, None),
             WaitRegistration::SignalSet { wait_set, timeout_ms } => (
                 WaitKind::Signal,
@@ -167,6 +183,7 @@ impl WaitRegistry {
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::FileLock { .. } => {}
                 WaitSource::ChildExit { .. } => {}
+                WaitSource::FdSet { .. } => events.push(Event::WaitReady(record.token.id)),
                 WaitSource::Signal => {}
                 WaitSource::SignalSet { .. } => {
                     events.push(Event::WaitCancelled(record.token.id, ERR_EAGAIN))
@@ -452,5 +469,46 @@ mod tests {
         let mut events = Vec::new();
         registry.collect_due_events(1, &mut events);
         assert_eq!(events, alloc::vec![Event::WaitCancelled(token.id, ERR_EAGAIN)]);
+    }
+
+    #[test]
+    fn fdset_registration_carries_bits_and_times_out_ready() {
+        let mut registry = WaitRegistry::new();
+        let mut read_bits = [0u64; 16];
+        let mut write_bits = [0u64; 16];
+        read_bits[0] = 1 << 3;
+        write_bits[0] = 1 << 4;
+        let token = registry.register(
+            7,
+            WaitRegistration::FdSet { read_bits, write_bits, nfds: 8, timeout_ms: Some(10) },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::FdReadable);
+        assert_eq!(
+            registry.pending_source(token),
+            Some(WaitSource::FdSet { read_bits, write_bits, nfds: 8 })
+        );
+
+        let mut events = Vec::new();
+        registry.collect_due_events(1, &mut events);
+        assert_eq!(events, alloc::vec![Event::WaitReady(token.id)]);
+    }
+
+    #[test]
+    fn fdset_write_only_registration_uses_writable_wait_kind() {
+        let mut registry = WaitRegistry::new();
+        let read_bits = [0u64; 16];
+        let mut write_bits = [0u64; 16];
+        write_bits[0] = 1 << 4;
+        let token = registry.register(
+            7,
+            WaitRegistration::FdSet { read_bits, write_bits, nfds: 8, timeout_ms: None },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::FdWritable);
     }
 }

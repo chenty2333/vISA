@@ -1194,6 +1194,52 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(crate) fn fdset_wait_is_ready(
+        &mut self,
+        read_bits: [u64; 16],
+        write_bits: [u64; 16],
+        nfds: u16,
+    ) -> bool {
+        for fd in 0..nfds as usize {
+            let word = fd / 64;
+            let mask = 1u64 << (fd % 64);
+            if read_bits[word] & mask != 0
+                && self.fd_poll_revents(fd as u32, POLLIN).is_ok_and(|events| events & POLLIN != 0)
+            {
+                return true;
+            }
+            if write_bits[word] & mask != 0
+                && self
+                    .fd_poll_revents(fd as u32, POLLOUT)
+                    .is_ok_and(|events| events & POLLOUT != 0)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn block_on_fdset_wait(
+        &mut self,
+        read_bits: [u64; 16],
+        write_bits: [u64; 16],
+        nfds: u16,
+        timeout_ms: Option<u32>,
+    ) -> Result<(), i32> {
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::FdSet { read_bits, write_bits, nfds, timeout_ms },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        match self.block_on_wait("ring3_pselect6", token).map_err(|_| ERR_EINVAL)? {
+            LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
+            LinuxCallResult::Ret(_) => Ok(()),
+            _ => Err(ERR_EINVAL),
+        }
+    }
+
     fn socket_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
         let (socket_id, ready_key, handle) =
             self.socket_fd_snapshot(fd).map_err(errno_from_service_error)?;

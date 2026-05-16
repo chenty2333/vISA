@@ -239,6 +239,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::FdSet { read_bits, write_bits, nfds }) =
+                self.waits.pending_source(token)
+                && self.fdset_wait_is_ready(read_bits, write_bits, nfds)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if let Some(WaitSource::SignalSet { wait_set }) = self.waits.pending_source(token)
                 && self.has_pending_signal_matching_set_for_task(token.owner_task, wait_set)
             {
@@ -268,6 +275,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::FdSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SignalSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         _ => {
@@ -308,6 +316,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::FileLock => {}
                             super::types::WaitKind::ChildExit => {}
+                            super::types::WaitKind::FdReadable => {}
+                            super::types::WaitKind::FdWritable => {}
                             super::types::WaitKind::Signal => {}
                         }
                         if matches!(
@@ -316,6 +326,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 | WaitSource::SocketAccept { .. }
                                 | WaitSource::FileLock { .. }
                                 | WaitSource::ChildExit { .. }
+                                | WaitSource::FdSet { .. }
                                 | WaitSource::Signal
                                 | WaitSource::SignalSet { .. }
                         ) {

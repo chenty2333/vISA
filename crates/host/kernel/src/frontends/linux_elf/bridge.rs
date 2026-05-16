@@ -87,6 +87,9 @@ const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
 const LINUX_SIGACTION_BYTES: usize = 32;
+const PSELECT6_SIGMASK_ARG_BYTES: usize = 16;
+const PSELECT6_MAX_FDS: usize = 1024;
+const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
@@ -101,6 +104,23 @@ const LINUX_UCONTEXT_MIN_SIZE: usize = 256;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
+
+#[derive(Clone, Copy)]
+struct PselectFdSetSnapshot {
+    read_ptr: u64,
+    write_ptr: u64,
+    except_ptr: u64,
+    nfds: usize,
+    read_bits: [u64; PSELECT6_FDSET_WORDS],
+    write_bits: [u64; PSELECT6_FDSET_WORDS],
+    except_bits: [u64; PSELECT6_FDSET_WORDS],
+}
+
+struct PselectReadySet {
+    ready: i64,
+    read_bits: [u64; PSELECT6_FDSET_WORDS],
+    write_bits: [u64; PSELECT6_FDSET_WORDS],
+}
 
 pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
@@ -1360,21 +1380,42 @@ fn sys_clock_nanosleep(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
-    const POLLIN: u16 = 0x001;
-    const POLLOUT: u16 = 0x004;
-
     let nfds = usize::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
-    if nfds > 1024 {
+    if nfds > PSELECT6_MAX_FDS {
         return Err(ERR_EINVAL);
     }
-    if frame.r8 != 0 {
-        let _ = read_user_timespec_ns(frame.r8)?;
+    let timeout_ms = if frame.r8 != 0 {
+        let ms = read_user_timespec_ms(frame.r8)?;
+        Some(core::cmp::min(ms, u32::MAX as u64) as u32)
+    } else {
+        None
+    };
+    let temporary_sigmask = read_pselect_sigmask(frame.r9)?;
+    let snapshot = read_pselect_fdsets(frame.rsi, frame.rdx, frame.r10, nfds)?;
+    let ready = collect_pselect_ready(&snapshot)?;
+    if ready.ready != 0 || timeout_ms == Some(0) {
+        return write_pselect_result(&snapshot, &ready);
     }
-    let mut ready = 0i64;
-    ready += filter_fdset(frame.rsi, nfds, POLLIN)?;
-    ready += filter_fdset(frame.rdx, nfds, POLLOUT)?;
-    clear_fdset(frame.r10, nfds)?;
-    Ok(ready)
+
+    let tid = active_context().tid;
+    let old_sigmask = if let Some(sigmask) = temporary_sigmask {
+        Some(active_context().supervisor.set_sigmask(tid, 2, sigmask).ok_or(ERR_EINVAL)?)
+    } else {
+        None
+    };
+    let wait_result = active_context().supervisor.block_on_fdset_wait(
+        snapshot.read_bits,
+        snapshot.write_bits,
+        u16::try_from(nfds).map_err(|_| ERR_EINVAL)?,
+        timeout_ms,
+    );
+    if let Some(old_sigmask) = old_sigmask {
+        active_context().supervisor.set_sigmask(tid, 2, old_sigmask).ok_or(ERR_EINVAL)?;
+    }
+    wait_result?;
+
+    let ready = collect_pselect_ready(&snapshot)?;
+    write_pselect_result(&snapshot, &ready)
 }
 
 fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3161,41 +3202,122 @@ fn current_clock_ms() -> u64 {
     current_monotonic_ns() / 1_000_000
 }
 
-fn clear_fdset(ptr: u64, nfds: usize) -> Result<(), i32> {
+fn read_pselect_sigmask(arg_ptr: u64) -> Result<Option<u64>, i32> {
+    if arg_ptr == 0 {
+        return Ok(None);
+    }
+    let bytes = read_user_bytes(arg_ptr, PSELECT6_SIGMASK_ARG_BYTES)?;
+    let mask_ptr = read_u64_from(&bytes, 0)?;
+    let mask_len = read_u64_from(&bytes, 8)?;
+    if mask_ptr == 0 {
+        return Ok(None);
+    }
+    if mask_len != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    Ok(Some(read_user_u64(mask_ptr)?))
+}
+
+fn read_pselect_fdsets(
+    read_ptr: u64,
+    write_ptr: u64,
+    except_ptr: u64,
+    nfds: usize,
+) -> Result<PselectFdSetSnapshot, i32> {
+    Ok(PselectFdSetSnapshot {
+        read_ptr,
+        write_ptr,
+        except_ptr,
+        nfds,
+        read_bits: read_fdset_bits(read_ptr, nfds)?,
+        write_bits: read_fdset_bits(write_ptr, nfds)?,
+        except_bits: read_fdset_bits(except_ptr, nfds)?,
+    })
+}
+
+fn read_fdset_bits(ptr: u64, nfds: usize) -> Result<[u64; PSELECT6_FDSET_WORDS], i32> {
+    let mut bits = [0u64; PSELECT6_FDSET_WORDS];
+    if ptr == 0 || nfds == 0 {
+        return Ok(bits);
+    }
+    let len = nfds.div_ceil(8);
+    let bytes = read_user_bytes(ptr, len)?;
+    for fd in 0..nfds {
+        let byte = fd / 8;
+        let mask = 1u8 << (fd % 8);
+        if bytes[byte] & mask != 0 {
+            set_fd_bit(&mut bits, fd);
+        }
+    }
+    Ok(bits)
+}
+
+fn collect_pselect_ready(snapshot: &PselectFdSetSnapshot) -> Result<PselectReadySet, i32> {
+    const POLLIN: u16 = 0x001;
+    const POLLOUT: u16 = 0x004;
+
+    let mut ready = PselectReadySet {
+        ready: 0,
+        read_bits: [0; PSELECT6_FDSET_WORDS],
+        write_bits: [0; PSELECT6_FDSET_WORDS],
+    };
+    let supervisor = &mut active_context().supervisor;
+    for fd in 0..snapshot.nfds {
+        if fdset_bit(snapshot.read_bits, fd) {
+            let revents = supervisor.fd_poll_revents(fd as u32, POLLIN)?;
+            if revents & POLLIN != 0 {
+                set_fd_bit(&mut ready.read_bits, fd);
+                ready.ready += 1;
+            }
+        }
+        if fdset_bit(snapshot.write_bits, fd) {
+            let revents = supervisor.fd_poll_revents(fd as u32, POLLOUT)?;
+            if revents & POLLOUT != 0 {
+                set_fd_bit(&mut ready.write_bits, fd);
+                ready.ready += 1;
+            }
+        }
+        if fdset_bit(snapshot.except_bits, fd) {
+            let _ = supervisor.fd_poll_revents(fd as u32, 0)?;
+        }
+    }
+    Ok(ready)
+}
+
+fn write_pselect_result(
+    snapshot: &PselectFdSetSnapshot,
+    ready: &PselectReadySet,
+) -> Result<i64, i32> {
+    write_fdset_bits(snapshot.read_ptr, snapshot.nfds, ready.read_bits)?;
+    write_fdset_bits(snapshot.write_ptr, snapshot.nfds, ready.write_bits)?;
+    write_fdset_bits(snapshot.except_ptr, snapshot.nfds, [0; PSELECT6_FDSET_WORDS])?;
+    Ok(ready.ready)
+}
+
+fn write_fdset_bits(ptr: u64, nfds: usize, bits: [u64; PSELECT6_FDSET_WORDS]) -> Result<(), i32> {
     if ptr == 0 || nfds == 0 {
         return Ok(());
     }
     let len = nfds.div_ceil(8);
     let mut set = user_lease(ptr, len as u64, true)?;
-    for byte in set.bytes_mut().map_err(map_dmw_fault)? {
+    let bytes = set.bytes_mut().map_err(map_dmw_fault)?;
+    for byte in bytes.iter_mut() {
         *byte = 0;
+    }
+    for fd in 0..nfds {
+        if fdset_bit(bits, fd) {
+            bytes[fd / 8] |= 1u8 << (fd % 8);
+        }
     }
     Ok(())
 }
 
-fn filter_fdset(ptr: u64, nfds: usize, events: u16) -> Result<i64, i32> {
-    if ptr == 0 || nfds == 0 {
-        return Ok(0);
-    }
-    let len = nfds.div_ceil(8);
-    let mut set = user_lease(ptr, len as u64, true)?;
-    let bytes = set.bytes_mut().map_err(map_dmw_fault)?;
-    let supervisor = &mut active_context().supervisor;
-    let mut ready = 0i64;
-    for fd in 0..nfds {
-        let byte = fd / 8;
-        let mask = 1u8 << (fd % 8);
-        if bytes[byte] & mask == 0 {
-            continue;
-        }
-        let revents = supervisor.fd_poll_revents(fd as u32, events)?;
-        if revents & events != 0 {
-            ready += 1;
-        } else {
-            bytes[byte] &= !mask;
-        }
-    }
-    Ok(ready)
+fn fdset_bit(bits: [u64; PSELECT6_FDSET_WORDS], fd: usize) -> bool {
+    bits[fd / 64] & (1u64 << (fd % 64)) != 0
+}
+
+fn set_fd_bit(bits: &mut [u64; PSELECT6_FDSET_WORDS], fd: usize) {
+    bits[fd / 64] |= 1u64 << (fd % 64);
 }
 
 fn current_monotonic_ns() -> u64 {

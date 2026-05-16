@@ -167,6 +167,8 @@ pub(crate) enum WaitKind {
     SocketAccept,
     FileLock,
     ChildExit,
+    FdReadable,
+    FdWritable,
     Signal,
 }
 
