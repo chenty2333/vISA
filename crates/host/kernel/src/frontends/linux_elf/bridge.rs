@@ -5,31 +5,31 @@ use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
     ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
-    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CMD_MASK,
-    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_OWNER_DIED, FUTEX_REQUEUE,
-    FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
-    FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW,
-    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
-    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
-    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
-    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
-    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
-    SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID,
-    SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
-    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT,
-    SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME,
-    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
-    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT,
+    FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI,
+    FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_REQUEUE, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI,
+    FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4,
+    SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET,
+    SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE,
+    SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT,
+    SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2,
+    SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR,
+    SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
+    SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
+    SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
+    SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT,
+    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
+    SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
+    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR,
+    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
+    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
+    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -3774,11 +3774,35 @@ fn current_tai_ns() -> u64 {
 
 fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_futex_uaddr(frame.rdi)?;
-    let op = (frame.rsi as u32) & FUTEX_CMD_MASK;
+    let raw_op = frame.rsi as u32;
+    let op = raw_op & FUTEX_CMD_MASK;
     match op {
-        FUTEX_LOCK_PI => return sys_futex_lock_pi(frame, false),
-        FUTEX_TRYLOCK_PI => return sys_futex_lock_pi(frame, true),
-        FUTEX_UNLOCK_PI => return sys_futex_unlock_pi(frame),
+        FUTEX_LOCK_PI => {
+            if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+                return Err(ERR_ENOSYS);
+            }
+            return sys_futex_lock_pi(frame, false, FutexPiTimeoutClock::Realtime);
+        }
+        FUTEX_LOCK_PI2 => {
+            let clock = if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+                FutexPiTimeoutClock::Realtime
+            } else {
+                FutexPiTimeoutClock::Monotonic
+            };
+            return sys_futex_lock_pi(frame, false, clock);
+        }
+        FUTEX_TRYLOCK_PI => {
+            if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+                return Err(ERR_ENOSYS);
+            }
+            return sys_futex_lock_pi(frame, true, FutexPiTimeoutClock::Realtime);
+        }
+        FUTEX_UNLOCK_PI => {
+            if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+                return Err(ERR_ENOSYS);
+            }
+            return sys_futex_unlock_pi(frame);
+        }
         _ => {}
     }
 
@@ -3973,7 +3997,17 @@ fn validate_futex_uaddr(uaddr: u64) -> Result<(), i32> {
     validate_user_range(uaddr, 4, false)
 }
 
-fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
+#[derive(Clone, Copy)]
+enum FutexPiTimeoutClock {
+    Realtime,
+    Monotonic,
+}
+
+fn sys_futex_lock_pi(
+    frame: &SyscallFrame,
+    try_only: bool,
+    timeout_clock: FutexPiTimeoutClock,
+) -> Result<i64, i32> {
     let uaddr = frame.rdi;
     let tid = active_context().tid & FUTEX_TID_MASK;
     let word = read_user_u32(uaddr)?;
@@ -3997,6 +4031,7 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
     {
         return Err(ERR_EPERM);
     }
+    let (timeout_ptr, timeout_len) = futex_pi_lock_timeout_arg(frame.r10, timeout_clock)?;
     // Reuse the existing futex wait queue here; this is bounded blocking handoff,
     // not a full PI scheduler transfer.
     let wait_word = futex_pi_wait_word(word);
@@ -4008,16 +4043,33 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
     if let Some(owner_task) = owner_task {
         active_context().supervisor.register_futex_pi_boost(owner_task, uaddr, wait_priority);
     }
-    let result = active_context()
-        .supervisor
-        .dispatch_linux_syscall(
-            "ring3_futex_lock_pi",
-            SyscallContext::new(
-                SYS_FUTEX,
-                [uaddr, FUTEX_WAIT as u64, wait_word as u64, 0, 0, wait_word as u64],
-            ),
-        )
-        .map_err(|_| ERR_EINVAL)?;
+    let result = match active_context().supervisor.dispatch_linux_syscall(
+        "ring3_futex_lock_pi",
+        SyscallContext::new(
+            SYS_FUTEX,
+            [
+                uaddr,
+                FUTEX_WAIT as u64,
+                wait_word as u64,
+                timeout_ptr,
+                timeout_len,
+                wait_word as u64,
+            ],
+        ),
+    ) {
+        Ok(result) => result,
+        Err(_) => {
+            if let Some(owner_task) = owner_task {
+                active_context().supervisor.refresh_futex_pi_boost(owner_task, uaddr);
+            }
+            if let Ok(current_word) = read_user_u32(uaddr)
+                && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
+            {
+                let _ = write_user_u32(uaddr, restore_word);
+            }
+            return Err(ERR_EINVAL);
+        }
+    };
     match result {
         LinuxCallResult::Ret(ret) if ret >= 0 => {
             let current_word = read_user_u32(uaddr)?;
@@ -4048,6 +4100,34 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
             Err(ERR_EINVAL)
         }
     }
+}
+
+fn futex_pi_lock_timeout_arg(
+    timeout_user_ptr: u64,
+    clock: FutexPiTimeoutClock,
+) -> Result<(u64, u64), i32> {
+    if timeout_user_ptr == 0 {
+        return Ok((0, 0));
+    }
+    let target_ns = read_user_timespec_ns(timeout_user_ptr)?;
+    let now_ns = match clock {
+        FutexPiTimeoutClock::Realtime => current_realtime_ns(),
+        FutexPiTimeoutClock::Monotonic => current_monotonic_ns(),
+    };
+    let timeout_ms = target_ns.saturating_sub(now_ns).div_ceil(1_000_000);
+    write_timespec_ms_arg(timeout_ms)
+}
+
+fn write_timespec_ms_arg(delay_ms: u64) -> Result<(u64, u64), i32> {
+    let mut encoded = [0u8; LINUX_TIMESPEC_SIZE as usize];
+    let clamped_ms = delay_ms.min(u32::MAX as u64);
+    let tv_sec = clamped_ms / 1000;
+    let tv_nsec = (clamped_ms % 1000) * 1_000_000;
+    encoded[..8].copy_from_slice(&tv_sec.to_le_bytes());
+    encoded[8..16].copy_from_slice(&tv_nsec.to_le_bytes());
+    let (ptr, len) =
+        active_context().supervisor.write_linux_arg_bytes(&encoded).map_err(|_| ERR_EFAULT)?;
+    Ok((ptr as u64, len as u64))
 }
 
 fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
