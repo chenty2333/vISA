@@ -677,6 +677,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             exited_tasks.push(thread.task_id);
         }
         for task in exited_tasks {
+            self.scheduler.mark_task_exited(task);
             self.semantic.set_task_state(task, TaskState::Exited);
             self.release_all_futex_pi_boosts_for_task(task);
         }

@@ -2580,6 +2580,8 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
         if let Some(fs_base) = child_fs_base {
             child_return.fs_base = fs_base.as_u64();
         }
+        let parent_task_id = active_context().task_id;
+        active_context().supervisor.mark_task_blocked(parent_task_id);
         active_context().suspend_for_clone_child(
             child_task_id,
             child_pid,
@@ -2640,6 +2642,8 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
         child_return.fs_base = fs_base.as_u64();
     }
     switch_active_user_address_space_to_child(&mut child_address_space)?;
+    let parent_task_id = active_context().task_id;
+    active_context().supervisor.mark_task_blocked(parent_task_id);
     active_context().suspend_for_clone_child(
         child_task_id,
         child_pid,
@@ -2764,6 +2768,8 @@ fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
     )?;
     let mut parent_return = ring3::capture_user_return(frame);
     parent_return.frame.rax = child_pid as u64;
+    let parent_task_id = active_context().task_id;
+    active_context().supervisor.mark_task_blocked(parent_task_id);
     active_context().suspend_for_vfork_child(child_task_id, child_pid, child_tid, parent_return);
     active_context().supervisor.set_current_task(child_task_id);
     Ok(0)
@@ -4751,6 +4757,7 @@ fn restore_suspended_parent_after_child_exit(child_pid: u32) -> Option<UserRetur
         let return_context = parent.return_context;
         active_context().restore_vfork_parent(parent);
         let parent_task_id = active_context().task_id;
+        active_context().supervisor.mark_task_runnable(parent_task_id);
         active_context().supervisor.set_current_task(parent_task_id);
         return Some(return_context);
     }
@@ -4761,6 +4768,7 @@ fn restore_suspended_parent_after_child_exit(child_pid: u32) -> Option<UserRetur
         }
         active_context().restore_clone_parent(parent);
         let parent_task_id = active_context().task_id;
+        active_context().supervisor.mark_task_runnable(parent_task_id);
         active_context().supervisor.set_current_task(parent_task_id);
         return Some(return_context);
     }

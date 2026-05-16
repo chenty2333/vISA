@@ -339,6 +339,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.scheduler.task_priority(task)
     }
 
+    pub(crate) fn mark_task_blocked(&mut self, task: TaskId) -> bool {
+        self.scheduler.mark_task_blocked(task)
+    }
+
+    pub(crate) fn mark_task_runnable(&mut self, task: TaskId) -> bool {
+        self.scheduler.mark_task_runnable(task)
+    }
+
     pub(crate) fn task_id_for_tid(&self, tid: Tid) -> Option<TaskId> {
         self.threads.iter().find(|thread| thread.tid == tid).map(|thread| thread.task_id)
     }
@@ -654,9 +662,16 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
         self.scheduler.set_current_task(task);
+        let task_is_runnable = self.scheduler.is_task_runnable(task);
+        if !task_is_runnable && self.scheduler.highest_priority_runnable_task().is_none() {
+            crate::kwarn!(
+                "scheduler selected non-runnable task {} with no runnable fallback",
+                task
+            );
+        }
         let should_mark_running = match self.threads.iter().find(|thread| thread.task_id == task) {
-            Some(thread) => thread.state == ThreadRuntimeStateKind::Running,
-            None => true,
+            Some(thread) => task_is_runnable && thread.state == ThreadRuntimeStateKind::Running,
+            None => task_is_runnable,
         };
         if should_mark_running {
             self.semantic.set_task_state(task, TaskState::Running);

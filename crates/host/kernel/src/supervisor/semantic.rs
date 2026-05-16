@@ -246,29 +246,53 @@ impl<'engine> PrototypeRuntime<'engine> {
             semantic_wait_kind(token.kind),
             token.generation,
         );
-        if let Some(thread) = self.threads.iter_mut().find(|thread| {
-            thread.task_id == token.owner_task && thread.state == ThreadRuntimeStateKind::Running
-        }) {
-            thread.state = ThreadRuntimeStateKind::Blocked;
-            self.semantic.set_task_state(token.owner_task, TaskState::Pending);
+        match self.threads.iter_mut().find(|thread| thread.task_id == token.owner_task) {
+            Some(thread) if thread.state == ThreadRuntimeStateKind::Running => {
+                thread.state = ThreadRuntimeStateKind::Blocked;
+                self.scheduler.mark_task_blocked(token.owner_task);
+                self.semantic.set_task_state(token.owner_task, TaskState::Pending);
+            }
+            Some(thread) if thread.state == ThreadRuntimeStateKind::Blocked => {
+                self.scheduler.mark_task_blocked(token.owner_task);
+                self.semantic.set_task_state(token.owner_task, TaskState::Pending);
+            }
+            Some(thread) if thread.state == ThreadRuntimeStateKind::Stopped => {
+                self.scheduler.mark_task_blocked(token.owner_task);
+            }
+            Some(thread) if thread.state == ThreadRuntimeStateKind::Dead => {
+                self.scheduler.mark_task_exited(token.owner_task);
+            }
+            Some(_) => {}
+            None => {
+                self.scheduler.mark_task_blocked(token.owner_task);
+                self.semantic.set_task_state(token.owner_task, TaskState::Pending);
+            }
         }
     }
 
     pub(super) fn record_wait_owner_running(&mut self, owner_task: u32) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.task_id == owner_task)
         else {
+            self.scheduler.mark_task_runnable(owner_task);
             self.semantic.set_task_state(owner_task, TaskState::Running);
             return;
         };
         match thread.state {
             ThreadRuntimeStateKind::Blocked => {
                 thread.state = ThreadRuntimeStateKind::Running;
+                self.scheduler.mark_task_runnable(owner_task);
                 self.semantic.set_task_state(owner_task, TaskState::Running);
             }
             ThreadRuntimeStateKind::Running => {
+                self.scheduler.mark_task_runnable(owner_task);
                 self.semantic.set_task_state(owner_task, TaskState::Running);
             }
-            ThreadRuntimeStateKind::Stopped | ThreadRuntimeStateKind::Dead => {}
+            ThreadRuntimeStateKind::Stopped => {
+                self.scheduler.mark_task_blocked(owner_task);
+            }
+            ThreadRuntimeStateKind::Dead => {
+                self.scheduler.mark_task_exited(owner_task);
+            }
         }
     }
 
