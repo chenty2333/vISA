@@ -8,7 +8,7 @@ use vmos_abi::{
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{AccessIds, FdEntry, FdResource, ServiceCallError},
+    types::{AccessIds, FdEntry, FdResource, LINUX_KNOWN_CAPS, ServiceCallError},
 };
 
 const O_DIRECTORY: u64 = 0o200000;
@@ -256,7 +256,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             self.linux.read_bytes(value_ptr, value_len)?
         };
-        match self.fsetxattr_fd(fd, &name, &value, flags) {
+        let access = AccessIds::with_caps(0, 0, &[], LINUX_KNOWN_CAPS);
+        match self.fsetxattr_fd(fd, &name, &value, flags, access) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
@@ -273,7 +274,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             u32::try_from(plan.args[3]).map_err(|_| "fgetxattr value ptr overflowed")?;
         let size = usize::try_from(plan.args[4]).map_err(|_| "fgetxattr size overflowed")?;
         let name = self.linux.read_bytes(name_ptr, name_len)?;
-        match self.fgetxattr_fd(fd, &name, size) {
+        let access = AccessIds::with_caps(0, 0, &[], LINUX_KNOWN_CAPS);
+        match self.fgetxattr_fd(fd, &name, size, access) {
             Ok(value) => {
                 if size != 0 {
                     if value_ptr == 0 {
@@ -294,7 +296,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "flistxattr fd overflowed")?;
         let list_ptr = u32::try_from(plan.args[1]).map_err(|_| "flistxattr list ptr overflowed")?;
         let size = usize::try_from(plan.args[2]).map_err(|_| "flistxattr size overflowed")?;
-        match self.flistxattr_fd(fd, size) {
+        let access = AccessIds::with_caps(0, 0, &[], LINUX_KNOWN_CAPS);
+        match self.flistxattr_fd(fd, size, access) {
             Ok(names) => {
                 if size != 0 {
                     if list_ptr == 0 {
@@ -318,7 +321,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let name_len =
             u32::try_from(plan.args[2]).map_err(|_| "fremovexattr name len overflowed")?;
         let name = self.linux.read_bytes(name_ptr, name_len)?;
-        match self.fremovexattr_fd(fd, &name) {
+        let access = AccessIds::with_caps(0, 0, &[], LINUX_KNOWN_CAPS);
+        match self.fremovexattr_fd(fd, &name, access) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }

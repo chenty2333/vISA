@@ -15,9 +15,9 @@ use super::{
     semantic::{fd_resource_kind, fd_resource_label},
     services::ProcfsService,
     types::{
-        AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, EventFdState,
-        FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState, RLIMIT_NOFILE,
-        ServiceCallError, SocketPairState, TaskId,
+        AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, CAP_SYS_ADMIN,
+        EventFdState, FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState,
+        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -293,8 +293,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         name: &[u8],
         value: &[u8],
         flags: u32,
+        access: AccessIds<'_>,
     ) -> Result<(), i32> {
         let path = self.xattr_target(fd)?;
+        self.check_xattr_access(&path, name, XattrAccess::Write, access)?;
         self.vfs.fsetxattr(&path, name, value, flags).map_err(errno_from_service_error)
     }
 
@@ -303,18 +305,52 @@ impl<'engine> PrototypeRuntime<'engine> {
         fd: u32,
         name: &[u8],
         size: usize,
+        access: AccessIds<'_>,
     ) -> Result<Vec<u8>, i32> {
         let path = self.xattr_target(fd)?;
+        self.check_xattr_access(&path, name, XattrAccess::Read, access)?;
         self.vfs.fgetxattr(&path, name, size).map_err(errno_from_service_error)
     }
 
-    pub(crate) fn flistxattr_fd(&mut self, fd: u32, size: usize) -> Result<Vec<u8>, i32> {
+    pub(crate) fn flistxattr_fd(
+        &mut self,
+        fd: u32,
+        size: usize,
+        access: AccessIds<'_>,
+    ) -> Result<Vec<u8>, i32> {
         let path = self.xattr_target(fd)?;
-        self.vfs.flistxattr(&path, size).map_err(errno_from_service_error)
+        let encoded = self.vfs.flistxattr(&path, 0).map_err(errno_from_service_error)?;
+        let user_visible = self.check_path_access(&path, MAY_READ, access).is_ok();
+        let privileged_visible = access.has_capability(CAP_SYS_ADMIN)
+            && self.check_path_access(&path, 0, access).is_ok();
+        let mut visible = Vec::new();
+        for name in encoded.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
+            match classify_xattr_namespace(name) {
+                Ok(XattrNamespace::User) if user_visible => {
+                    visible.extend_from_slice(name);
+                    visible.push(0);
+                }
+                Ok(XattrNamespace::Privileged) if privileged_visible => {
+                    visible.extend_from_slice(name);
+                    visible.push(0);
+                }
+                _ => {}
+            }
+        }
+        if size != 0 && size < visible.len() {
+            return Err(vmos_abi::ERR_ERANGE);
+        }
+        Ok(visible)
     }
 
-    pub(crate) fn fremovexattr_fd(&mut self, fd: u32, name: &[u8]) -> Result<(), i32> {
+    pub(crate) fn fremovexattr_fd(
+        &mut self,
+        fd: u32,
+        name: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
         let path = self.xattr_target(fd)?;
+        self.check_xattr_access(&path, name, XattrAccess::Write, access)?;
         self.vfs.fremovexattr(&path, name).map_err(errno_from_service_error)
     }
 
@@ -397,6 +433,28 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EOPNOTSUPP);
         }
         Ok(path)
+    }
+
+    fn check_xattr_access(
+        &mut self,
+        path: &[u8],
+        name: &[u8],
+        op: XattrAccess,
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        match classify_xattr_namespace(name)? {
+            XattrNamespace::User => {
+                let mask = match op {
+                    XattrAccess::Read => MAY_READ,
+                    XattrAccess::Write => MAY_WRITE,
+                };
+                self.check_path_access(path, mask, access)
+            }
+            XattrNamespace::Privileged => {
+                self.check_path_access(path, 0, access)?;
+                if access.has_capability(CAP_SYS_ADMIN) { Ok(()) } else { Err(ERR_EPERM) }
+            }
+        }
     }
 
     pub(crate) fn check_path_access(
@@ -2058,6 +2116,37 @@ fn parent_path_for_access(path: &[u8]) -> Option<Vec<u8>> {
         if path.len() > 1 && path.ends_with(b"/") { &path[..path.len() - 1] } else { path };
     let slash = trimmed.iter().rposition(|byte| *byte == b'/')?;
     if slash == 0 { Some(b"/".to_vec()) } else { Some(trimmed[..slash].to_vec()) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XattrAccess {
+    Read,
+    Write,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XattrNamespace {
+    User,
+    Privileged,
+}
+
+fn classify_xattr_namespace(name: &[u8]) -> Result<XattrNamespace, i32> {
+    const XATTR_NAME_MAX: usize = 255;
+
+    if name.is_empty() || name.len() > XATTR_NAME_MAX || name.contains(&0) || !name.contains(&b'.')
+    {
+        return Err(ERR_EINVAL);
+    }
+    if name.starts_with(b"user.") {
+        return Ok(XattrNamespace::User);
+    }
+    if name.starts_with(b"trusted.")
+        || name.starts_with(b"security.")
+        || name.starts_with(b"system.")
+    {
+        return Ok(XattrNamespace::Privileged);
+    }
+    Err(vmos_abi::ERR_EOPNOTSUPP)
 }
 
 fn mode_grants_access(

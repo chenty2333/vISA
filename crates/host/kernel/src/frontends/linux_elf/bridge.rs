@@ -1297,7 +1297,8 @@ fn sys_fsetxattr(frame: &SyscallFrame) -> Result<i64, i32> {
     let size = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
     let value = read_user_bytes(frame.rdx, size)?;
     let flags = u32::try_from(frame.r8).map_err(|_| ERR_EINVAL)?;
-    active_context().supervisor.fsetxattr_fd(fd, &name, &value, flags)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.fsetxattr_fd(fd, &name, &value, flags, access.ids())?;
     Ok(0)
 }
 
@@ -1305,7 +1306,8 @@ fn sys_fgetxattr(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
     let name = read_xattr_name(frame.rsi)?;
     let size = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
-    let value = active_context().supervisor.fgetxattr_fd(fd, &name, size)?;
+    let access = effective_access_snapshot();
+    let value = active_context().supervisor.fgetxattr_fd(fd, &name, size, access.ids())?;
     if size != 0 {
         write_user_bytes(frame.rdx, &value)?;
     }
@@ -1315,7 +1317,8 @@ fn sys_fgetxattr(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_flistxattr(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
     let size = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
-    let names = active_context().supervisor.flistxattr_fd(fd, size)?;
+    let access = effective_access_snapshot();
+    let names = active_context().supervisor.flistxattr_fd(fd, size, access.ids())?;
     if size != 0 {
         write_user_bytes(frame.rsi, &names)?;
     }
@@ -1325,7 +1328,8 @@ fn sys_flistxattr(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_fremovexattr(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
     let name = read_xattr_name(frame.rsi)?;
-    active_context().supervisor.fremovexattr_fd(fd, &name)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.fremovexattr_fd(fd, &name, access.ids())?;
     Ok(0)
 }
 
