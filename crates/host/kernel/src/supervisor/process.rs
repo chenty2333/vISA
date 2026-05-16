@@ -486,7 +486,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             .find(|thread| thread.tid == tid)
             .and_then(|thread| thread.clear_child_tid.take());
         if clear_child_tid.is_some() {
-            let _ = self.semantic.set_thread_clear_child_tid_by_tid(tid, None);
+            if !self.semantic.set_thread_clear_child_tid_by_tid(tid, None) {
+                crate::kwarn!("failed to clear semantic clear_child_tid for tid {}", tid);
+            }
         }
         clear_child_tid
     }
@@ -525,7 +527,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             .find(|thread| thread.tid == tid)
             .and_then(|thread| thread.robust_list.take());
         if registration.is_some() {
-            let _ = self.semantic.set_thread_robust_list_by_tid(tid, None, 0);
+            if !self.semantic.set_thread_robust_list_by_tid(tid, None, 0) {
+                crate::kwarn!("failed to clear semantic robust_list for tid {}", tid);
+            }
         }
         registration
     }

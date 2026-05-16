@@ -565,7 +565,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let new_listener_stack_socket_id =
             self.net_stack.create_tcp_socket().map_err(|_| "smoltcp listener socket exhausted")?;
         if let Err(err) = self.net_stack.listen_tcp(new_listener_stack_socket_id, local_port) {
-            let _ = self.net_stack.close_tcp_socket(new_listener_stack_socket_id);
+            if let Err(close_err) = self.net_stack.close_tcp_socket(new_listener_stack_socket_id) {
+                crate::kwarn!(
+                    "smoltcp cleanup socket {} after relisten failure: {}",
+                    new_listener_stack_socket_id,
+                    close_err
+                );
+            }
             crate::kwarn!("smoltcp relisten socket {}: {}", listen_socket_id, err);
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
         }

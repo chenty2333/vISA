@@ -1101,7 +1101,9 @@ fn sys_setgroups(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let before = active_context().credential_state();
     let old_len = before.supplementary_groups.len();
-    let _ = active_context().set_groups(groups);
+    if !active_context().set_groups(groups) {
+        return Err(ERR_EPERM);
+    }
     let new_len = active_context().supplementary_groups().len();
     if let Err(errno) =
         record_credential_transition(CredentialTransitionKind::SetGroups { old_len, new_len })
@@ -2021,7 +2023,9 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
             size: read_u64_from(&bytes, 120)?,
             flags: read_u32_from(&bytes, 128)?,
         };
-        let _ = active_context().supervisor.set_signal_alt_stack(tid, stack);
+        if active_context().supervisor.set_signal_alt_stack(tid, stack).is_none() {
+            crate::kwarn!("rt_sigreturn could not restore altstack for tid {}", tid);
+        }
     }
     ring3::install_user_return(frame, restored);
     Ok(restored.frame.rax as i64)
