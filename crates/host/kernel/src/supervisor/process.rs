@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
 
-use semantic_core::{CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets, ProcessState};
+use semantic_core::{
+    CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets, ProcessState, TaskState,
+};
 
 use super::{
     runtime::PrototypeRuntime,
@@ -528,8 +530,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             proc.state = ProcessRuntimeStateKind::Zombie;
             proc.exit_code = Some(exit_code);
         }
+        let mut exited_tasks = Vec::new();
         for thread in self.threads.iter_mut().filter(|thread| thread.pid == pid) {
             thread.state = ThreadRuntimeStateKind::Dead;
+            exited_tasks.push(thread.task_id);
+        }
+        for task in exited_tasks {
+            self.semantic.set_task_state(task, TaskState::Exited);
         }
         self.release_file_locks_for_pid(pid);
         if let Some((parent_pid, signal)) = parent_signal {
