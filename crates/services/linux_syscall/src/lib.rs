@@ -1080,6 +1080,19 @@ mod tests {
     }
 
     #[test]
+    fn poll_plan_preserves_pollfd_pointer_count_and_timeout() {
+        let raw = dispatch(SYS_POLL, 0x2000, 3, 250, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Poll));
+        assert_eq!(plan_arg(0), 0x2000);
+        assert_eq!(plan_arg(1), 3);
+        assert_eq!(plan_arg(2), 250);
+        assert_eq!(plan_arg(3), 0);
+    }
+
+    #[test]
     fn xattr_plans_use_explicit_name_and_value_lengths() {
         let name = b"user.demo";
         let value = b"value";
