@@ -6,9 +6,9 @@ use vmos_abi::{
     FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
     SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
     SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
-    SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -76,6 +76,7 @@ impl LinuxFrontend {
             SYS_GETDENTS64 => self.plan_getdents(a0, a2),
             SYS_OPENAT => self.plan_openat(a0, a1, a2, a3, a4),
             SYS_READLINKAT => self.plan_readlinkat(a0, a1, a2),
+            SYS_PRLIMIT64 => self.plan_prlimit64(a0, a1, a2, a3),
             SYS_RENAME => self.plan_renameat2(
                 AT_FDCWD_ENCODED,
                 a0,
@@ -600,6 +601,17 @@ impl LinuxFrontend {
         }
         self.reset_plan(PlanKind::ReadLinkAt, [dirfd, ptr, len, 0, 0, 0]);
         PackedStep::plan(PlanKind::ReadLinkAt)
+    }
+
+    fn plan_prlimit64(
+        &mut self,
+        pid: u64,
+        resource: u64,
+        new_limit_ptr: u64,
+        old_limit_ptr: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::Prlimit64, [pid, resource, new_limit_ptr, old_limit_ptr, 0, 0]);
+        PackedStep::plan(PlanKind::Prlimit64)
     }
 
     fn plan_renameat2(

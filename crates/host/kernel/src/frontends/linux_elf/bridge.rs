@@ -1299,14 +1299,8 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EINVAL);
     }
 
-    if frame.r10 != 0 {
-        let rlimit = active_context().supervisor.get_rlimit(pid, resource);
-        let mut encoded = [0u8; 16];
-        encoded[..8].copy_from_slice(&rlimit.cur.to_le_bytes());
-        encoded[8..].copy_from_slice(&rlimit.max.to_le_bytes());
-        write_user_bytes(frame.r10, &encoded)?;
-    }
-    if frame.rdx != 0 {
+    let old_limit = active_context().supervisor.get_rlimit(pid, resource);
+    let new_limit = if frame.rdx != 0 {
         let bytes = read_user_bytes(frame.rdx, 16)?;
         let new_limit = Rlimit {
             cur: u64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?),
@@ -1315,12 +1309,22 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
         if new_limit.cur > new_limit.max {
             return Err(ERR_EINVAL);
         }
-        let old_limit = active_context().supervisor.get_rlimit(pid, resource);
         if new_limit.max > old_limit.max
             && !active_context().has_effective_capability(CAP_SYS_RESOURCE)
         {
             return Err(ERR_EPERM);
         }
+        Some(new_limit)
+    } else {
+        None
+    };
+    if frame.r10 != 0 {
+        let mut encoded = [0u8; 16];
+        encoded[..8].copy_from_slice(&old_limit.cur.to_le_bytes());
+        encoded[8..].copy_from_slice(&old_limit.max.to_le_bytes());
+        write_user_bytes(frame.r10, &encoded)?;
+    }
+    if let Some(new_limit) = new_limit {
         if !active_context().supervisor.set_rlimit(pid, resource, new_limit) {
             return Err(ERR_ESRCH);
         }
