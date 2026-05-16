@@ -17,6 +17,10 @@ const SECCOMP_DATA_LEN: u32 = 64;
 const MAX_FILTER_INSTRUCTIONS: usize = 4096;
 const BPF_MEM_WORDS: usize = 16;
 
+pub const LINUX_SECCOMP_NOTIF_SIZE: u16 = 80;
+pub const LINUX_SECCOMP_NOTIF_RESP_SIZE: u16 = 24;
+pub const LINUX_SECCOMP_DATA_SIZE: u16 = SECCOMP_DATA_LEN as u16;
+
 const BPF_CLASS_MASK: u16 = 0x07;
 const BPF_LD: u16 = 0x00;
 const BPF_LDX: u16 = 0x01;
@@ -89,6 +93,13 @@ pub struct SeccompFilterProgram {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SeccompFilterChain {
     programs: Vec<SeccompFilterProgram>,
+}
+
+pub fn linux_seccomp_notif_sizes_bytes() -> [u8; 6] {
+    let notif = LINUX_SECCOMP_NOTIF_SIZE.to_le_bytes();
+    let resp = LINUX_SECCOMP_NOTIF_RESP_SIZE.to_le_bytes();
+    let data = LINUX_SECCOMP_DATA_SIZE.to_le_bytes();
+    [notif[0], notif[1], resp[0], resp[1], data[0], data[1]]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -568,6 +579,11 @@ mod tests {
         assert_eq!(trap.evaluate(data(1)), Ok(SeccompDecision::Trap { errno: 7 }));
         assert_eq!(trace.evaluate(data(1)), Ok(SeccompDecision::Trace));
         assert_eq!(user_notif.evaluate(data(1)), Ok(SeccompDecision::UserNotif));
+    }
+
+    #[test]
+    fn linux_notification_size_encoding_matches_x86_64_abi() {
+        assert_eq!(linux_seccomp_notif_sizes_bytes(), [80, 0, 24, 0, 64, 0]);
     }
 
     #[test]

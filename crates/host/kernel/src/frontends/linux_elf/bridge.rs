@@ -5,7 +5,7 @@ use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
     AUDIT_ARCH_X86_64, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
     SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
-    SeccompFilterProgram, SeccompInstruction,
+    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK,
@@ -1652,6 +1652,7 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
     const SECCOMP_SET_MODE_STRICT: u64 = 0;
     const SECCOMP_SET_MODE_FILTER: u64 = 1;
     const SECCOMP_GET_ACTION_AVAIL: u64 = 2;
+    const SECCOMP_GET_NOTIF_SIZES: u64 = 3;
 
     if frame.rsi != 0 {
         return Err(ERR_EINVAL);
@@ -1660,6 +1661,7 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
         SECCOMP_SET_MODE_STRICT => install_seccomp_mode(1, 0),
         SECCOMP_SET_MODE_FILTER => install_seccomp_mode(2, frame.rdx),
         SECCOMP_GET_ACTION_AVAIL => seccomp_get_action_avail(frame.rdx),
+        SECCOMP_GET_NOTIF_SIZES => seccomp_get_notif_sizes(frame.rdx),
         _ => Err(ERR_EINVAL),
     }
 }
@@ -1679,6 +1681,11 @@ fn seccomp_get_action_avail(ptr: u64) -> Result<i64, i32> {
     } else {
         Err(vmos_abi::ERR_EOPNOTSUPP)
     }
+}
+
+fn seccomp_get_notif_sizes(ptr: u64) -> Result<i64, i32> {
+    write_user_bytes(ptr, &linux_seccomp_notif_sizes_bytes())?;
+    Ok(0)
 }
 
 fn install_seccomp_mode(mode: u64, arg: u64) -> Result<i64, i32> {

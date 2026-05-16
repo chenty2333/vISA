@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use service_core::seccomp::{
     SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD,
     SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
@@ -14,6 +15,7 @@ use super::{
 const SECCOMP_SET_MODE_STRICT: u64 = 0;
 const SECCOMP_SET_MODE_FILTER: u64 = 1;
 const SECCOMP_GET_ACTION_AVAIL: u64 = 2;
+const SECCOMP_GET_NOTIF_SIZES: u64 = 3;
 const SECCOMP_MODE_STRICT: u64 = 1;
 const SECCOMP_MODE_FILTER: u64 = 2;
 
@@ -73,6 +75,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.install_generic_seccomp_mode(SECCOMP_MODE_FILTER, args_ptr)
             }
             SECCOMP_GET_ACTION_AVAIL => self.seccomp_get_action_avail(args_ptr),
+            SECCOMP_GET_NOTIF_SIZES => self.seccomp_get_notif_sizes(args_ptr),
             _ => Ok(errno_ret(ERR_EINVAL)),
         }
     }
@@ -165,6 +168,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             Ok(errno_ret(ERR_EOPNOTSUPP))
         }
+    }
+
+    fn seccomp_get_notif_sizes(&mut self, args_ptr: u64) -> Result<LinuxCallResult, &'static str> {
+        let ptr = match u32::try_from(args_ptr) {
+            Ok(ptr) if ptr != 0 => ptr,
+            _ => return Ok(errno_ret(ERR_EFAULT)),
+        };
+        if self.linux.write_bytes(ptr, &linux_seccomp_notif_sizes_bytes()).is_err() {
+            return Ok(errno_ret(ERR_EFAULT));
+        }
+        Ok(LinuxCallResult::Ret(0))
     }
 
     fn read_generic_seccomp_filter_program(
