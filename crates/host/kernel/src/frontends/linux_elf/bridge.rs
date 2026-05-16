@@ -122,6 +122,13 @@ struct PselectReadySet {
     write_bits: [u64; PSELECT6_FDSET_WORDS],
 }
 
+#[derive(Clone, Copy)]
+struct PollFdEntry {
+    fd: i32,
+    events: u16,
+    revents: u16,
+}
+
 pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str> {
     serial_println!("== ring3 real ELF demo ==");
     let image = load_demo_program(boot_info)?;
@@ -2443,29 +2450,104 @@ fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
-    const POLLFD_SIZE: u64 = 8;
-
     let nfds = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    let total_len = frame.rsi.checked_mul(POLLFD_SIZE).ok_or(ERR_EINVAL)?;
-    let mut lease = user_lease(frame.rdi, total_len, true)?;
-    let bytes = lease.bytes_mut().map_err(map_dmw_fault)?;
-    let supervisor = &mut active_context().supervisor;
-    let mut ready = 0i64;
+    let timeout_ms = poll_timeout_ms(frame.rdx);
+    let mut entries = read_pollfds(frame.rdi, nfds)?;
+    let ready = collect_poll_revents(&mut entries)?;
+    if ready != 0 || timeout_ms == Some(0) {
+        return write_pollfds(frame.rdi, &entries, ready);
+    }
+    let (read_bits, write_bits, wait_nfds) = poll_wait_bits(&entries)?;
+    active_context()
+        .supervisor
+        .block_on_fdset_wait(read_bits, write_bits, wait_nfds, timeout_ms)?;
+    let ready = collect_poll_revents(&mut entries)?;
+    write_pollfds(frame.rdi, &entries, ready)
+}
+
+fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
+    let timeout = timeout_arg as i32;
+    if timeout < 0 { None } else { Some(timeout as u32) }
+}
+
+fn read_pollfds(ptr: u64, nfds: usize) -> Result<Vec<PollFdEntry>, i32> {
+    const POLLFD_SIZE: usize = 8;
+
+    let len = nfds.checked_mul(POLLFD_SIZE).ok_or(ERR_EINVAL)?;
+    let bytes = read_user_bytes(ptr, len)?;
+    let mut entries = Vec::new();
     for index in 0..nfds {
-        let offset = index * POLLFD_SIZE as usize;
+        let offset = index * POLLFD_SIZE;
         let fd = i32::from_le_bytes(bytes[offset..offset + 4].try_into().map_err(|_| ERR_EINVAL)?);
         let events =
             u16::from_le_bytes(bytes[offset + 4..offset + 6].try_into().map_err(|_| ERR_EINVAL)?);
-        let revents = if fd < 0 {
+        entries.push(PollFdEntry { fd, events, revents: 0 });
+    }
+    Ok(entries)
+}
+
+fn collect_poll_revents(entries: &mut [PollFdEntry]) -> Result<i64, i32> {
+    const POLLNVAL: u16 = 0x020;
+
+    let supervisor = &mut active_context().supervisor;
+    let mut ready = 0i64;
+    for entry in entries {
+        entry.revents = if entry.fd < 0 {
             0
         } else {
-            let fd = fd as u32;
-            supervisor.fd_poll_revents(fd, events)?
+            match supervisor.fd_poll_revents(entry.fd as u32, entry.events) {
+                Ok(revents) => revents,
+                Err(ERR_EBADF) => POLLNVAL,
+                Err(errno) => return Err(errno),
+            }
         };
-        bytes[offset + 6..offset + 8].copy_from_slice(&revents.to_le_bytes());
-        if revents != 0 {
+        if entry.revents != 0 {
             ready += 1;
         }
+    }
+    Ok(ready)
+}
+
+fn poll_wait_bits(
+    entries: &[PollFdEntry],
+) -> Result<([u64; PSELECT6_FDSET_WORDS], [u64; PSELECT6_FDSET_WORDS], u16), i32> {
+    const POLLIN: u16 = 0x001;
+    const POLLOUT: u16 = 0x004;
+
+    let mut read_bits = [0u64; PSELECT6_FDSET_WORDS];
+    let mut write_bits = [0u64; PSELECT6_FDSET_WORDS];
+    let mut wait_nfds = 0usize;
+    for entry in entries {
+        if entry.fd < 0 || entry.events & (POLLIN | POLLOUT) == 0 {
+            continue;
+        }
+        let fd = usize::try_from(entry.fd).map_err(|_| ERR_EINVAL)?;
+        if fd >= PSELECT6_MAX_FDS {
+            return Err(ERR_ENOSYS);
+        }
+        if entry.events & POLLIN != 0 {
+            set_fd_bit(&mut read_bits, fd);
+        }
+        if entry.events & POLLOUT != 0 {
+            set_fd_bit(&mut write_bits, fd);
+        }
+        wait_nfds = core::cmp::max(wait_nfds, fd + 1);
+    }
+    Ok((read_bits, write_bits, u16::try_from(wait_nfds).map_err(|_| ERR_EINVAL)?))
+}
+
+fn write_pollfds(ptr: u64, entries: &[PollFdEntry], ready: i64) -> Result<i64, i32> {
+    const POLLFD_SIZE: usize = 8;
+
+    if entries.is_empty() {
+        return Ok(ready);
+    }
+    let len = entries.len().checked_mul(POLLFD_SIZE).ok_or(ERR_EINVAL)?;
+    let mut lease = user_lease(ptr, len as u64, true)?;
+    let bytes = lease.bytes_mut().map_err(map_dmw_fault)?;
+    for (index, entry) in entries.iter().enumerate() {
+        let offset = index * POLLFD_SIZE;
+        bytes[offset + 6..offset + 8].copy_from_slice(&entry.revents.to_le_bytes());
     }
     Ok(ready)
 }

@@ -1186,6 +1186,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         };
         match entry.resource {
+            FdResource::ServiceNode { .. } => {
+                Ok(service_node_poll_revents(entry.status_flags, events))
+            }
             FdResource::PipeEnd { .. } => self.pipe_poll_revents(fd, events),
             FdResource::SocketPairEnd { .. } => self.socketpair_poll_revents(fd, events),
             FdResource::Socket { .. } => self.socket_poll_revents(fd, events),
@@ -1941,6 +1944,17 @@ fn epoll_ready_key(epoll_id: u32) -> u64 {
 
 fn socketpair_ready_key(pair_id: u64, endpoint: u8) -> u64 {
     SOCKETPAIR_READY_TAG | (pair_id << 1) | u64::from(endpoint & 1)
+}
+
+fn service_node_poll_revents(status_flags: u32, events: u16) -> u16 {
+    let mut revents = 0u16;
+    if events & POLLIN != 0 && status_flags & O_ACCMODE != O_WRONLY {
+        revents |= POLLIN;
+    }
+    if events & POLLOUT != 0 && matches!(status_flags & O_ACCMODE, O_WRONLY | O_RDWR) {
+        revents |= POLLOUT;
+    }
+    revents
 }
 
 fn eventfd_ready_key(eventfd_id: u64) -> u64 {
