@@ -528,6 +528,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         registration
     }
 
+    pub(crate) fn get_thread_robust_list(
+        &self,
+        tid: Tid,
+    ) -> Result<Option<RobustListRegistration>, i32> {
+        self.threads
+            .iter()
+            .find(|thread| thread.tid == tid)
+            .map(|thread| thread.robust_list)
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
+    pub(crate) fn thread_pid(&self, tid: Tid) -> Result<Pid, i32> {
+        self.threads
+            .iter()
+            .find(|thread| thread.tid == tid)
+            .map(|thread| thread.pid)
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
     /// Transition a process to Zombie state with the given exit code.
     pub(crate) fn process_exit(&mut self, pid: Pid, exit_code: i32) {
         let mut parent_signal = None;

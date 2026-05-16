@@ -17,18 +17,19 @@ use vmos_abi::{
     SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
     SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
     SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME,
-    SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
-    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR,
-    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
-    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID,
+    SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT,
+    SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME,
+    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
+    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -273,6 +274,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_BRK => sys_brk(frame),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(frame),
         SYS_SET_ROBUST_LIST => sys_set_robust_list(frame),
+        SYS_GET_ROBUST_LIST => sys_get_robust_list(frame),
         SYS_RSEQ => Ok(0),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
         SYS_PRCTL => sys_prctl(frame),
@@ -2401,6 +2403,37 @@ fn sys_set_robust_list(frame: &SyscallFrame) -> Result<i64, i32> {
     let tid = active_context().tid;
     active_context().supervisor.set_thread_robust_list(tid, registration)?;
     Ok(0)
+}
+
+fn sys_get_robust_list(frame: &SyscallFrame) -> Result<i64, i32> {
+    validate_user_range(frame.rsi, 8, true)?;
+    validate_user_range(frame.rdx, 8, true)?;
+    let target_tid = get_robust_list_target_tid(frame.rdi)?;
+    let target_pid = active_context().supervisor.thread_pid(target_tid)?;
+    if target_tid != active_context().tid && target_pid != active_context().pid {
+        return Err(ERR_EPERM);
+    }
+    let registration = active_context().supervisor.get_thread_robust_list(target_tid)?;
+    let (head, len) = registration
+        .map(|registration| (registration.head, registration.len))
+        .unwrap_or((0, ROBUST_LIST_HEAD_SIZE));
+    write_user_u64(frame.rsi, head)?;
+    write_user_u64(frame.rdx, len)?;
+    Ok(0)
+}
+
+fn get_robust_list_target_tid(raw_pid: u64) -> Result<u32, i32> {
+    if raw_pid == 0 {
+        return Ok(active_context().tid);
+    }
+    let signed_pid = raw_pid as i64;
+    if signed_pid < 0 {
+        return Err(ERR_ESRCH);
+    }
+    if raw_pid > i32::MAX as u64 {
+        return Err(ERR_ESRCH);
+    }
+    u32::try_from(raw_pid).map_err(|_| ERR_ESRCH)
 }
 
 fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {

@@ -116,6 +116,7 @@ pub const SYS_FACCESSAT: u64 = 269;
 pub const SYS_PSELECT6: u64 = 270;
 pub const SYS_PPOLL: u64 = 271;
 pub const SYS_SET_ROBUST_LIST: u64 = 273;
+pub const SYS_GET_ROBUST_LIST: u64 = 274;
 pub const SYS_UTIMENSAT: u64 = 280;
 pub const SYS_EPOLL_PWAIT: u64 = 281;
 pub const SYS_EPOLL_CREATE1: u64 = 291;
