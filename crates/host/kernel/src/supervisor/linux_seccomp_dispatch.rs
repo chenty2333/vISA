@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 
 use service_core::seccomp::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
-    SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
-    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO,
+    SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP,
+    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
@@ -149,7 +149,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
             SECCOMP_MODE_FILTER => {
-                if flags & !SECCOMP_FILTER_FLAG_LOG != 0 {
+                let supported_flags = SECCOMP_FILTER_FLAG_LOG | SECCOMP_FILTER_FLAG_TSYNC;
+                if flags & !supported_flags != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
                 }
                 let program = match self.read_generic_seccomp_filter_program(arg) {
@@ -160,6 +161,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     self.current_tid(),
                     program,
                     false,
+                    flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
                 ) {
                     Ok(()) => Ok(LinuxCallResult::Ret(0)),

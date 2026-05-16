@@ -3,9 +3,10 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO,
-    SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP,
-    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_RET_ALLOW,
+    SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG,
+    SECCOMP_RET_TRAP, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    linux_seccomp_notif_sizes_bytes,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK,
@@ -1712,7 +1713,8 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
             active_context().supervisor.set_seccomp_strict(active_context().tid).map(|()| 0)
         }
         SECCOMP_MODE_FILTER => {
-            if flags & !SECCOMP_FILTER_FLAG_LOG != 0 {
+            let supported_flags = SECCOMP_FILTER_FLAG_LOG | SECCOMP_FILTER_FLAG_TSYNC;
+            if flags & !supported_flags != 0 {
                 return Err(ERR_EINVAL);
             }
             let privileged = active_context().has_effective_capability(CAP_SYS_ADMIN);
@@ -1726,6 +1728,7 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
                     active_context().tid,
                     program,
                     privileged,
+                    flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
                 )
                 .map(|()| 0)

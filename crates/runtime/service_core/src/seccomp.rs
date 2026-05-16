@@ -11,6 +11,7 @@ pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc0_0000;
 pub const SECCOMP_RET_LOG: u32 = 0x7ffc_0000;
 pub const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 
+pub const SECCOMP_FILTER_FLAG_TSYNC: u64 = 1 << 0;
 pub const SECCOMP_FILTER_FLAG_LOG: u64 = 1 << 1;
 
 const SECCOMP_RET_ACTION_FULL: u32 = 0xffff_0000;
@@ -609,6 +610,12 @@ mod tests {
     #[test]
     fn linux_notification_size_encoding_matches_x86_64_abi() {
         assert_eq!(linux_seccomp_notif_sizes_bytes(), [80, 0, 24, 0, 64, 0]);
+    }
+
+    #[test]
+    fn linux_filter_flag_values_match_abi() {
+        assert_eq!(SECCOMP_FILTER_FLAG_TSYNC, 1);
+        assert_eq!(SECCOMP_FILTER_FLAG_LOG, 2);
     }
 
     #[test]

@@ -588,25 +588,52 @@ impl<'engine> PrototypeRuntime<'engine> {
         tid: Tid,
         program: SeccompFilterProgram,
         privileged: bool,
+        sync_threads: bool,
         log_non_allow: bool,
     ) -> Result<(), i32> {
+        let Some(caller) = self.threads.iter().find(|thread| thread.tid == tid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        if !caller.no_new_privs && !privileged {
+            return Err(vmos_abi::ERR_EACCES);
+        }
+
+        if sync_threads {
+            let pid = caller.pid;
+            let caller_seccomp = caller.seccomp.clone();
+            let mut targets = Vec::new();
+            for (index, thread) in self.threads.iter().enumerate() {
+                if thread.pid != pid || thread.state == ThreadRuntimeStateKind::Dead {
+                    continue;
+                }
+                if !thread.no_new_privs && !privileged {
+                    return Err(vmos_abi::ERR_EACCES);
+                }
+                if matches!(thread.seccomp, SeccompMode::Strict) {
+                    return Err(vmos_abi::ERR_EINVAL);
+                }
+                if thread.seccomp != caller_seccomp {
+                    return Err(vmos_abi::ERR_EINVAL);
+                }
+                targets.push(index);
+            }
+            if targets.is_empty() {
+                return Err(vmos_abi::ERR_ESRCH);
+            }
+            for index in targets {
+                install_seccomp_filter_on_mode(
+                    &mut self.threads[index].seccomp,
+                    program.clone(),
+                    log_non_allow,
+                )?;
+            }
+            return Ok(());
+        }
+
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
             return Err(vmos_abi::ERR_ESRCH);
         };
-        if !thread.no_new_privs && !privileged {
-            return Err(vmos_abi::ERR_EACCES);
-        }
-        match &mut thread.seccomp {
-            SeccompMode::Disabled => {}
-            SeccompMode::Filter(chain) => {
-                chain.push_with_log(program, log_non_allow);
-                return Ok(());
-            }
-            SeccompMode::Strict => return Err(vmos_abi::ERR_EINVAL),
-        }
-        thread.seccomp =
-            SeccompMode::Filter(SeccompFilterChain::new_with_log(program, log_non_allow));
-        Ok(())
+        install_seccomp_filter_on_mode(&mut thread.seccomp, program, log_non_allow)
     }
 
     pub(crate) fn set_no_new_privs(&mut self, tid: Tid, enabled: bool) -> bool {
@@ -769,6 +796,24 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn set_runtime_clock_adj_state(&mut self, clock_adj: RuntimeClockAdjustmentState) {
         self.clock_adj = clock_adj;
+    }
+}
+
+fn install_seccomp_filter_on_mode(
+    mode: &mut SeccompMode,
+    program: SeccompFilterProgram,
+    log_non_allow: bool,
+) -> Result<(), i32> {
+    match mode {
+        SeccompMode::Disabled => {
+            *mode = SeccompMode::Filter(SeccompFilterChain::new_with_log(program, log_non_allow));
+            Ok(())
+        }
+        SeccompMode::Filter(chain) => {
+            chain.push_with_log(program, log_non_allow);
+            Ok(())
+        }
+        SeccompMode::Strict => Err(vmos_abi::ERR_EINVAL),
     }
 }
 
