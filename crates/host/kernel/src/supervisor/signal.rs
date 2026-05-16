@@ -4,7 +4,8 @@ use super::{
     linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     types::{
-        PendingSignal, Pid, SigAction, TaskId, ThreadRuntimeStateKind, Tid, UserSignalDelivery,
+        PendingSignal, Pid, SigAction, SignalAltStack, TaskId, ThreadRuntimeStateKind, Tid,
+        UserSignalDelivery,
     },
     wait::WaitRegistration,
 };
@@ -358,5 +359,29 @@ impl<'engine> PrototypeRuntime<'engine> {
     /// Get signal mask for a thread.
     pub(crate) fn get_sigmask(&self, tid: Tid) -> Option<u64> {
         self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigmask)
+    }
+
+    pub(crate) fn signal_alt_stack(&self, tid: Tid) -> Option<SignalAltStack> {
+        self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigaltstack)
+    }
+
+    pub(crate) fn set_signal_alt_stack(
+        &mut self,
+        tid: Tid,
+        stack: SignalAltStack,
+    ) -> Option<SignalAltStack> {
+        let thread = self.threads.iter_mut().find(|t| t.tid == tid)?;
+        let old = thread.sigaltstack;
+        thread.sigaltstack = stack;
+        Some(old)
+    }
+
+    pub(crate) fn signal_alt_stack_for_delivery(
+        &self,
+        tid: Tid,
+        current_rsp: u64,
+    ) -> Option<SignalAltStack> {
+        let stack = self.signal_alt_stack(tid)?;
+        if stack.is_disabled() || stack.contains(current_rsp) { None } else { Some(stack) }
     }
 }

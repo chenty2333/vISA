@@ -102,6 +102,7 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) state: ThreadRuntimeStateKind,
     pub(crate) clear_child_tid: Option<u64>,
     pub(crate) robust_list: Option<RobustListRegistration>,
+    pub(crate) sigaltstack: SignalAltStack,
     pub(crate) sigmask: u64,
     pub(crate) sigsuspend_restore_mask: Option<u64>,
     pub(crate) pending_signals: Vec<PendingSignal>,
@@ -112,6 +113,40 @@ pub(crate) struct ThreadRuntimeState {
 pub(crate) struct RobustListRegistration {
     pub(crate) head: u64,
     pub(crate) len: u64,
+}
+
+pub(crate) const SIGALTSTACK_SS_ONSTACK: u32 = 1;
+pub(crate) const SIGALTSTACK_SS_DISABLE: u32 = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SignalAltStack {
+    pub(crate) sp: u64,
+    pub(crate) size: u64,
+    pub(crate) flags: u32,
+}
+
+impl SignalAltStack {
+    pub(crate) const fn disabled() -> Self {
+        Self { sp: 0, size: 0, flags: SIGALTSTACK_SS_DISABLE }
+    }
+
+    pub(crate) const fn is_disabled(self) -> bool {
+        self.flags & SIGALTSTACK_SS_DISABLE != 0
+    }
+
+    pub(crate) fn top(self) -> Option<u64> {
+        if self.is_disabled() { None } else { self.sp.checked_add(self.size) }
+    }
+
+    pub(crate) fn contains(self, rsp: u64) -> bool {
+        self.top().is_some_and(|top| rsp >= self.sp && rsp < top)
+    }
+}
+
+impl Default for SignalAltStack {
+    fn default() -> Self {
+        Self::disabled()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

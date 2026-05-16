@@ -26,9 +26,9 @@ use vmos_abi::{
     SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
     SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
-    SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
-    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
+    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -50,7 +50,8 @@ use crate::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS, Rlimit,
-            RobustListRegistration, ServiceCallError, SigAction, UserSignalDelivery,
+            RobustListRegistration, SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK,
+            ServiceCallError, SigAction, SignalAltStack, UserSignalDelivery,
         },
     },
 };
@@ -87,6 +88,8 @@ const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
 const LINUX_SIGACTION_BYTES: usize = 32;
+const LINUX_STACK_T_BYTES: usize = 24;
+const MINSIGSTKSZ: u64 = 2048;
 const PSELECT6_SIGMASK_ARG_BYTES: usize = 16;
 const PSELECT6_MAX_FDS: usize = 1024;
 const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
@@ -97,6 +100,7 @@ const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const ROBUST_LIST_HEAD_SIZE: u64 = 24;
 const ROBUST_LIST_LIMIT: usize = 2048;
 const SA_SIGINFO: u64 = 0x4;
+const SA_ONSTACK: u64 = 0x0800_0000;
 const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
 const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
 const LINUX_SIGINFO_SIZE: usize = 128;
@@ -263,6 +267,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RT_SIGRETURN => sys_rt_sigreturn(frame),
         SYS_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(frame),
         SYS_RT_SIGSUSPEND => sys_rt_sigsuspend(frame),
+        SYS_SIGALTSTACK => sys_sigaltstack(frame),
         SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
@@ -1683,6 +1688,58 @@ fn sys_rt_sigsuspend(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 }
 
+fn sys_sigaltstack(frame: &SyscallFrame) -> Result<i64, i32> {
+    let new_stack = if frame.rdi == 0 { None } else { Some(read_linux_stack_t(frame.rdi)?) };
+    let saved = ring3::capture_user_return(frame);
+    let tid = active_context().tid;
+    let current_stack = active_context().supervisor.signal_alt_stack(tid).ok_or(ERR_ESRCH)?;
+    let on_stack = current_stack.contains(saved.rsp);
+
+    if new_stack.is_some() && on_stack {
+        return Err(ERR_EPERM);
+    }
+    if frame.rsi != 0 {
+        write_linux_stack_t(frame.rsi, current_stack, on_stack)?;
+    }
+    if let Some(stack) = new_stack {
+        active_context().supervisor.set_signal_alt_stack(tid, stack).ok_or(ERR_ESRCH)?;
+    }
+    Ok(0)
+}
+
+fn read_linux_stack_t(ptr: u64) -> Result<SignalAltStack, i32> {
+    let bytes = read_user_bytes(ptr, LINUX_STACK_T_BYTES)?;
+    let sp = read_u64_from(&bytes, 0)?;
+    let flags = read_u32_from(&bytes, 8)?;
+    let size = read_u64_from(&bytes, 16)?;
+    match flags {
+        0 => {
+            if size < MINSIGSTKSZ {
+                return Err(ERR_ENOMEM);
+            }
+            validate_lower_user_address_range(sp, size)?;
+            Ok(SignalAltStack { sp, size, flags: 0 })
+        }
+        SIGALTSTACK_SS_DISABLE => Ok(SignalAltStack::disabled()),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn write_linux_stack_t(ptr: u64, stack: SignalAltStack, on_stack: bool) -> Result<(), i32> {
+    let mut out = [0u8; LINUX_STACK_T_BYTES];
+    let flags = if on_stack {
+        SIGALTSTACK_SS_ONSTACK
+    } else if stack.is_disabled() {
+        SIGALTSTACK_SS_DISABLE
+    } else {
+        0
+    };
+    write_u64(&mut out, 0, stack.sp);
+    write_u32(&mut out, 8, flags);
+    write_u64(&mut out, 16, stack.size);
+    write_user_bytes(ptr, &out)
+}
+
 fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let current = ring3::capture_user_return(frame);
     let bytes = read_user_bytes(current.rsp, VMOS_SIGNAL_FRAME_SIZE)?;
@@ -1738,9 +1795,23 @@ fn install_user_signal_frame(
     validate_user_range(delivery.action.restorer, 1, false)?;
 
     let saved = ring3::capture_user_return(frame);
+    let alt_stack = if delivery.action.flags & SA_ONSTACK != 0 {
+        active_context().supervisor.signal_alt_stack_for_delivery(active_context().tid, saved.rsp)
+    } else {
+        None
+    };
+    let stack_top = match alt_stack {
+        Some(stack) => stack.top().ok_or(ERR_EFAULT)?,
+        None => saved.rsp,
+    };
     let total_len = 8 + VMOS_SIGNAL_FRAME_SIZE + LINUX_SIGINFO_SIZE + LINUX_UCONTEXT_MIN_SIZE;
-    let base = saved.rsp.checked_sub(total_len as u64 + 16).ok_or(ERR_EFAULT)?;
+    let base = stack_top.checked_sub(total_len as u64 + 16).ok_or(ERR_EFAULT)?;
     let frame_sp = (base & !15).checked_add(8).ok_or(ERR_EFAULT)?;
+    if let Some(stack) = alt_stack {
+        if frame_sp < stack.sp {
+            return Err(ERR_EFAULT);
+        }
+    }
     let record_sp = frame_sp.checked_add(8).ok_or(ERR_EFAULT)?;
     let siginfo_sp = record_sp.checked_add(VMOS_SIGNAL_FRAME_SIZE as u64).ok_or(ERR_EFAULT)?;
     let ucontext_sp = siginfo_sp.checked_add(LINUX_SIGINFO_SIZE as u64).ok_or(ERR_EFAULT)?;
