@@ -8,7 +8,6 @@ use super::{
     linux::{LinuxCallResult, LinuxPlan},
     pulse::PulseEvent,
     runtime::PrototypeRuntime,
-    services::DriverNetEventKind,
     types::{ServiceCallError, WaitRestartClass, WaitToken},
     wait::{WaitOutcome, WaitRegistration, WaitSource},
 };
@@ -435,78 +434,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
 
-        let now_ticks = interrupts::tick_count();
-        for _ in 0..8 {
-            let event = match self.net_driver.poll_device(now_ticks) {
-                Ok(event) => event,
-                Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("driver_virtio_net poll: {}", reason);
-                    break;
-                }
-                Err(ServiceCallError::Invalid(err)) => {
-                    crate::kwarn!("driver_virtio_net poll: {}", err);
-                    break;
-                }
-                Err(ServiceCallError::Errno(errno)) => {
-                    crate::kwarn!("driver_virtio_net poll errno={}", errno);
-                    break;
-                }
-            };
-            match event.kind {
-                DriverNetEventKind::None => break,
-                DriverNetEventKind::Irq => self.semantic.record_device_irq_delivered(
-                    self.net.irq.id,
-                    self.net.device.id,
-                    "virtio-net-rx",
-                ),
-                DriverNetEventKind::DmaSubmitted => self.semantic.record_dma_submitted(
-                    self.net.dma_buffer.id,
-                    self.net.device.id,
-                    event.len as usize,
-                ),
-                DriverNetEventKind::DmaCompleted => self.semantic.record_dma_completed(
-                    self.net.dma_buffer.id,
-                    self.net.device.id,
-                    event.len as usize,
-                ),
-                DriverNetEventKind::DriverCompletion => {
-                    self.semantic.record_driver_completion(self.net.device.id, "virtio-net-rx")
-                }
-                DriverNetEventKind::PacketRx => {
-                    match self.net_core.deliver_packet_frame(&event.frame) {
-                        Ok(Some(ready_key)) => {
-                            let socket = self
-                                .socket_resource_for_ready_key(ready_key)
-                                .map(|handle| handle.id);
-                            self.semantic.record_packet_received(
-                                self.net.interface.id,
-                                socket,
-                                ready_key,
-                                event.len as usize,
-                            );
-                            self.notify_ready_key(ready_key, "epoll net ready notification");
-                        }
-                        Ok(None) => {
-                            self.semantic.record_packet_received(
-                                self.net.interface.id,
-                                None,
-                                0,
-                                event.len as usize,
-                            );
-                        }
-                        Err(ServiceCallError::Trap(reason)) => {
-                            crate::kwarn!("net_core deliver_packet_frame: {}", reason);
-                        }
-                        Err(ServiceCallError::Invalid(err)) => {
-                            crate::kwarn!("net_core deliver_packet_frame: {}", err);
-                        }
-                        Err(ServiceCallError::Errno(errno)) => {
-                            crate::kwarn!("net_core deliver_packet_frame errno={}", errno);
-                        }
-                    }
-                }
-            }
-        }
+        self.poll_network_driver_events();
         self.drain_event_queue();
     }
 }

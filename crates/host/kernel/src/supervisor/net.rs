@@ -1,6 +1,9 @@
 use net_stack_adapter::DEFAULT_IPV4_ADDR;
 use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
-use service_core::net_contract::PROTO_TCP;
+use service_core::{
+    net_contract::PROTO_TCP,
+    packet::{PROTO_DEMO_TCP, decode_frame},
+};
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN,
     ERR_EOPNOTSUPP, SOCK_STREAM,
@@ -11,7 +14,7 @@ use super::{
     linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     services::DriverNetEventKind,
-    types::ServiceCallError,
+    types::{FdResource, ServiceCallError},
 };
 use crate::interrupts;
 
@@ -618,50 +621,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: Option<ResourceId>,
     ) {
-        let now_ticks = interrupts::tick_count();
         let now_ms = net_stack_now_ms();
-        self.poll_net_stack_driver_events(now_ticks);
+        self.poll_network_driver_events();
         let _ = self.net_stack.poll(now_ms);
-        while let Some(frame) = self.net_stack.take_tx_frame() {
-            match self.net_driver.submit_tx_frame(now_ticks, &frame) {
-                Ok(submitted) if submitted > 0 => {
-                    self.semantic.record_packet_queued_for_transmit(
-                        self.net.interface.id,
-                        socket_resource,
-                        ready_key,
-                        frame.len(),
-                    );
-                }
-                Ok(_) => {
-                    crate::kwarn!("driver_virtio_net ignored smoltcp tx frame");
-                }
-                Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", reason);
-                }
-                Err(ServiceCallError::Invalid(err)) => {
-                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", err);
-                }
-                Err(ServiceCallError::Errno(errno)) => {
-                    crate::kwarn!("driver_virtio_net submit smoltcp tx errno={}", errno);
-                }
-            }
-        }
+        self.flush_net_stack_tx_frames(socket_resource, ready_key);
     }
 
-    fn poll_net_stack_driver_events(&mut self, now_ticks: u64) {
+    pub(super) fn poll_network_driver_events(&mut self) {
+        let now_ticks = interrupts::tick_count();
         for _ in 0..NET_STACK_DRIVER_EVENT_LIMIT {
             let event = match self.net_driver.poll_device(now_ticks) {
                 Ok(event) => event,
                 Err(ServiceCallError::Trap(reason)) => {
-                    crate::kwarn!("driver_virtio_net poll for smoltcp: {}", reason);
+                    crate::kwarn!("driver_virtio_net poll: {}", reason);
                     break;
                 }
                 Err(ServiceCallError::Invalid(err)) => {
-                    crate::kwarn!("driver_virtio_net poll for smoltcp: {}", err);
+                    crate::kwarn!("driver_virtio_net poll: {}", err);
                     break;
                 }
                 Err(ServiceCallError::Errno(errno)) => {
-                    crate::kwarn!("driver_virtio_net poll for smoltcp errno={}", errno);
+                    crate::kwarn!("driver_virtio_net poll errno={}", errno);
                     break;
                 }
             };
@@ -686,15 +666,115 @@ impl<'engine> PrototypeRuntime<'engine> {
                     self.semantic.record_driver_completion(self.net.device.id, "virtio-net-rx")
                 }
                 DriverNetEventKind::PacketRx => {
-                    self.semantic.record_packet_received(
+                    self.deliver_network_driver_rx_frame(&event.frame, event.len as usize)
+                }
+            }
+        }
+    }
+
+    fn deliver_network_driver_rx_frame(&mut self, frame: &[u8], reported_len: usize) {
+        if self.driver_rx_frame_targets_net_stack(frame) {
+            self.semantic.record_packet_received(self.net.interface.id, None, 0, frame.len());
+            if let Err(err) = self.net_stack.enqueue_rx_frame(frame) {
+                crate::kwarn!("smoltcp enqueue driver rx frame: {}", err);
+                return;
+            }
+            let _ = self.net_stack.poll(net_stack_now_ms());
+            self.refresh_active_net_stack_sockets();
+            self.flush_net_stack_tx_frames(None, 0);
+            return;
+        }
+
+        match self.net_core.deliver_packet_frame(frame) {
+            Ok(Some(ready_key)) => {
+                let socket = self.socket_resource_for_ready_key(ready_key).map(|handle| handle.id);
+                self.semantic.record_packet_received(
+                    self.net.interface.id,
+                    socket,
+                    ready_key,
+                    reported_len,
+                );
+                self.notify_ready_key(ready_key, "epoll net ready notification");
+            }
+            Ok(None) => {
+                self.semantic.record_packet_received(self.net.interface.id, None, 0, reported_len);
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("net_core deliver_packet_frame: {}", reason);
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                crate::kwarn!("net_core deliver_packet_frame: {}", err);
+            }
+            Err(ServiceCallError::Errno(errno)) => {
+                crate::kwarn!("net_core deliver_packet_frame errno={}", errno);
+            }
+        }
+    }
+
+    fn driver_rx_frame_targets_net_stack(&self, frame: &[u8]) -> bool {
+        self.has_active_net_stack_socket()
+            && is_raw_ipv4_or_arp_ethernet_frame(frame)
+            && !is_modeled_packet_frame(frame)
+    }
+
+    fn has_active_net_stack_socket(&self) -> bool {
+        self.net_stack_sockets.iter().any(|binding| binding.mode != NetStackSocketMode::Idle)
+    }
+
+    fn refresh_active_net_stack_sockets(&mut self) {
+        let mut index = 0usize;
+        while index < self.net_stack_sockets.len() {
+            if self.net_stack_sockets[index].mode != NetStackSocketMode::Idle {
+                let socket_id = self.net_stack_sockets[index].socket_id;
+                if let Some((ready_key, handle)) =
+                    self.socket_ready_snapshot_for_socket_id(socket_id)
+                {
+                    self.refresh_net_stack_socket_state(index, ready_key, handle);
+                }
+            }
+            index += 1;
+        }
+    }
+
+    fn socket_ready_snapshot_for_socket_id(&self, socket_id: u32) -> Option<(u64, ResourceHandle)> {
+        for (fd, entry) in self.fd_table.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            let FdResource::Socket { socket_id: candidate, ready_key } = &entry.resource else {
+                continue;
+            };
+            if *candidate as u32 != socket_id {
+                continue;
+            }
+            let handle = self.fd_handles.get(fd).copied().flatten()?;
+            return Some((*ready_key, handle));
+        }
+        None
+    }
+
+    fn flush_net_stack_tx_frames(&mut self, socket_resource: Option<ResourceId>, ready_key: u64) {
+        while let Some(frame) = self.net_stack.take_tx_frame() {
+            match self.net_driver.submit_tx_frame(interrupts::tick_count(), &frame) {
+                Ok(submitted) if submitted > 0 => {
+                    self.semantic.record_packet_queued_for_transmit(
                         self.net.interface.id,
-                        None,
-                        0,
-                        event.frame.len(),
+                        socket_resource,
+                        ready_key,
+                        frame.len(),
                     );
-                    if let Err(err) = self.net_stack.enqueue_rx_frame(&event.frame) {
-                        crate::kwarn!("smoltcp enqueue driver rx frame: {}", err);
-                    }
+                }
+                Ok(_) => {
+                    crate::kwarn!("driver_virtio_net ignored smoltcp tx frame");
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", reason);
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx: {}", err);
+                }
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("driver_virtio_net submit smoltcp tx errno={}", errno);
                 }
             }
         }
@@ -729,6 +809,17 @@ impl<'engine> PrototypeRuntime<'engine> {
 
 fn is_smoltcp_tcp_socket(domain: u32, ty: u32, protocol: u32) -> bool {
     domain == AF_INET && ty == SOCK_STREAM && (protocol == 0 || protocol == PROTO_TCP as u32)
+}
+
+fn is_raw_ipv4_or_arp_ethernet_frame(frame: &[u8]) -> bool {
+    if frame.len() < 14 {
+        return false;
+    }
+    matches!(u16::from_be_bytes([frame[12], frame[13]]), 0x0800 | 0x0806)
+}
+
+fn is_modeled_packet_frame(frame: &[u8]) -> bool {
+    matches!(decode_frame(frame), Ok((meta, _)) if meta.protocol == PROTO_DEMO_TCP)
 }
 
 fn net_stack_now_ms() -> i64 {
