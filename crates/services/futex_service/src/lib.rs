@@ -21,11 +21,12 @@ struct Waiter {
     key: u64,
     wait_id: u64,
     bitset: u32,
+    priority: u32,
     active: bool,
 }
 
 impl Waiter {
-    const EMPTY: Self = Self { key: 0, wait_id: 0, bitset: 0, active: false };
+    const EMPTY: Self = Self { key: 0, wait_id: 0, bitset: 0, priority: 0, active: false };
 }
 
 #[unsafe(no_mangle)]
@@ -50,17 +51,32 @@ pub extern "C" fn response_capacity() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn register_wait(key: u64, wait_id: u64) -> i32 {
-    register_wait_bitset(key, wait_id, u32::MAX)
+    register_wait_with_priority(key, wait_id, 0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn register_wait_bitset(key: u64, wait_id: u64, bitset: u32) -> i32 {
+    register_wait_bitset_with_priority(key, wait_id, bitset, 0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn register_wait_with_priority(key: u64, wait_id: u64, priority: u32) -> i32 {
+    register_wait_bitset_with_priority(key, wait_id, u32::MAX, priority)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn register_wait_bitset_with_priority(
+    key: u64,
+    wait_id: u64,
+    bitset: u32,
+    priority: u32,
+) -> i32 {
     unsafe {
         let base = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         for index in 0..MAX_WAITERS {
             let slot = base.add(index);
             if !(*slot).active {
-                *slot = Waiter { key, wait_id, bitset, active: true };
+                *slot = Waiter { key, wait_id, bitset, priority, active: true };
                 return 0;
             }
         }
@@ -82,19 +98,11 @@ pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
     unsafe {
         let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         let response = addr_of_mut!(RESPONSE) as *mut u8;
-        for index in 0..MAX_WAITERS {
-            let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != key {
-                continue;
-            }
-            // Bitset filter: only wake if waiter's bitset overlaps with wake bitset
-            if (*slot).bitset & bitset == 0 {
-                continue;
-            }
-            if written == max_count {
+        while written < max_count {
+            let Some(index) = select_waiter_index(waiters, key, bitset) else {
                 break;
-            }
-
+            };
+            let slot = waiters.add(index);
             let offset = written * 8;
             if offset + 8 > RESPONSE_CAPACITY {
                 return -ERR_EIO;
@@ -126,38 +134,34 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
             return -ERR_EIO;
         }
 
-        // First pass: wake up to wake_count waiters from src_key
-        for index in 0..MAX_WAITERS {
+        // First pass: wake up to wake_count waiters from src_key.
+        while woken < wake_count {
+            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX) else {
+                break;
+            };
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != src_key {
-                continue;
+            let offset = 8 + woken * 8;
+            if offset + 8 > RESPONSE_CAPACITY {
+                return -ERR_EIO;
             }
-            if woken < wake_count {
-                let offset = 8 + woken * 8;
-                if offset + 8 > RESPONSE_CAPACITY {
-                    return -ERR_EIO;
-                }
-                core::ptr::copy_nonoverlapping(
-                    (*slot).wait_id.to_le_bytes().as_ptr(),
-                    response.add(offset),
-                    8,
-                );
-                *slot = Waiter::EMPTY;
-                woken += 1;
-            }
+            core::ptr::copy_nonoverlapping(
+                (*slot).wait_id.to_le_bytes().as_ptr(),
+                response.add(offset),
+                8,
+            );
+            *slot = Waiter::EMPTY;
+            woken += 1;
         }
 
-        // Second pass: requeue up to count waiters from src_key to dst_key
+        // Second pass: requeue up to count waiters from src_key to dst_key.
         let mut requeued = 0usize;
-        for index in 0..MAX_WAITERS {
+        while requeued < count {
+            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX) else {
+                break;
+            };
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != src_key {
-                continue;
-            }
-            if requeued < count {
-                (*slot).key = dst_key;
-                requeued += 1;
-            }
+            (*slot).key = dst_key;
+            requeued += 1;
         }
 
         let total = (requeued + woken) as u64;
@@ -165,6 +169,45 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
     }
 
     (8 + woken * 8) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn max_priority(key: u64) -> i32 {
+    unsafe {
+        let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+        let mut best = 0u32;
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != key {
+                continue;
+            }
+            if (*slot).priority > best {
+                best = (*slot).priority;
+            }
+        }
+        best as i32
+    }
+}
+
+fn select_waiter_index(waiters: *mut Waiter, key: u64, bitset: u32) -> Option<usize> {
+    let mut best_index = None;
+    let mut best_priority = 0u32;
+    unsafe {
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != key {
+                continue;
+            }
+            if bitset != u32::MAX && (*slot).bitset & bitset == 0 {
+                continue;
+            }
+            if best_index.is_none() || (*slot).priority > best_priority {
+                best_index = Some(index);
+                best_priority = (*slot).priority;
+            }
+        }
+    }
+    best_index
 }
 
 #[unsafe(no_mangle)]
@@ -260,6 +303,35 @@ mod tests {
     }
 
     #[test]
+    fn wake_prefers_higher_priority_waiters() {
+        reset();
+        assert_eq!(register_wait_with_priority(11, 7, 1), 0);
+        assert_eq!(register_wait_with_priority(11, 8, 9), 0);
+        assert_eq!(register_wait_with_priority(11, 9, 4), 0);
+        assert_eq!(wake(11, 1), 8);
+        assert_eq!(response_wait_id(0), 8);
+        unsafe {
+            let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+            let mut seen_7 = false;
+            let mut seen_9 = false;
+            for index in 0..MAX_WAITERS {
+                let slot = waiters.add(index);
+                if !(*slot).active {
+                    continue;
+                }
+                match (*slot).wait_id {
+                    7 => seen_7 = true,
+                    9 => seen_9 = true,
+                    other => panic!("unexpected waiter id {}", other),
+                }
+            }
+            assert!(seen_7);
+            assert!(seen_9);
+        }
+        assert_eq!(max_priority(11), 4);
+    }
+
+    #[test]
     fn requeue_wakes_then_moves_waiters() {
         reset();
         assert_eq!(register_wait(11, 7), 0);
@@ -276,5 +348,14 @@ mod tests {
             assert!((*waiters.add(2)).active);
             assert_eq!((*waiters.add(2)).key, 22);
         }
+    }
+
+    #[test]
+    fn max_priority_reports_highest_waiter_priority() {
+        reset();
+        assert_eq!(register_wait_with_priority(11, 7, 3), 0);
+        assert_eq!(register_wait_with_priority(11, 8, 11), 0);
+        assert_eq!(max_priority(11), 11);
+        assert_eq!(max_priority(22), 0);
     }
 }

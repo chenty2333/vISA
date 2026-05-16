@@ -3271,6 +3271,11 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
     if wait_word != word {
         write_user_u32(uaddr, wait_word)?;
     }
+    let owner_task = active_context().supervisor.task_id_for_tid(owner);
+    let wait_priority = active_context().supervisor.current_task_priority();
+    if let Some(owner_task) = owner_task {
+        active_context().supervisor.register_futex_pi_boost(owner_task, uaddr, wait_priority);
+    }
     let result = active_context()
         .supervisor
         .dispatch_linux_syscall(
@@ -3288,6 +3293,9 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
             Ok(0)
         }
         LinuxCallResult::Ret(ret) => {
+            if let Some(owner_task) = owner_task {
+                active_context().supervisor.refresh_futex_pi_boost(owner_task, uaddr);
+            }
             if ret == -(ERR_EAGAIN as i64)
                 && let Ok(current_word) = read_user_u32(uaddr)
                 && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
@@ -3297,6 +3305,9 @@ fn sys_futex_lock_pi(frame: &SyscallFrame, try_only: bool) -> Result<i64, i32> {
             Err((-ret) as i32)
         }
         _ => {
+            if let Some(owner_task) = owner_task {
+                active_context().supervisor.refresh_futex_pi_boost(owner_task, uaddr);
+            }
             if let Ok(current_word) = read_user_u32(uaddr)
                 && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
             {
@@ -3315,9 +3326,11 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
     if owner != tid {
         return Err(ERR_EPERM);
     }
+    let owner_task = active_context().supervisor.current_task_id();
     if word & FUTEX_WAITERS != 0 {
         // Preserve futex state bits and delegate wakeup to the existing futex service.
         write_user_u32(uaddr, futex_pi_unlock_word(word))?;
+        active_context().supervisor.release_futex_pi_boost(owner_task, uaddr);
         let result = active_context()
             .supervisor
             .dispatch_linux_syscall(
@@ -3332,6 +3345,7 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
         };
     }
     write_user_u32(uaddr, 0)?;
+    active_context().supervisor.release_futex_pi_boost(owner_task, uaddr);
     Ok(0)
 }
 

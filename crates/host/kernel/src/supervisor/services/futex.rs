@@ -9,12 +9,13 @@ const FUTEX_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_FUTEX_SERVICE_WASM")
 
 pub(crate) struct FutexService {
     io: BufferedModule,
-    register_wait: WasmFn<(u64, u64), i32>,
-    register_wait_bitset: WasmFn<(u64, u64, u32), i32>,
-    wake: WasmFn<(u64, u32), i32>,
-    wake_bitset: WasmFn<(u64, u32, u32), i32>,
-    requeue: WasmFn<(u64, u32, u64, u32), i32>,
-    cancel_wait: WasmFn<u64, i32>,
+    register_wait_with_priority_export: WasmFn<(u64, u64, u32), i32>,
+    register_wait_bitset_with_priority_export: WasmFn<(u64, u64, u32, u32), i32>,
+    wake_export: WasmFn<(u64, u32), i32>,
+    wake_bitset_export: WasmFn<(u64, u32, u32), i32>,
+    requeue_export: WasmFn<(u64, u32, u64, u32), i32>,
+    cancel_wait_export: WasmFn<u64, i32>,
+    max_priority_export: WasmFn<u64, i32>,
 }
 
 impl FutexService {
@@ -24,29 +25,49 @@ impl FutexService {
             FUTEX_SERVICE_WASM,
             "failed to instantiate futex_service",
         )?;
-        let register_wait = io.bind("register_wait", "missing futex register_wait export")?;
-        let register_wait_bitset =
-            io.bind("register_wait_bitset", "missing futex register_wait_bitset export")?;
-        let wake = io.bind("wake", "missing futex wake export")?;
-        let wake_bitset = io.bind("wake_bitset", "missing futex wake_bitset export")?;
-        let requeue = io.bind("requeue", "missing futex requeue export")?;
-        let cancel_wait = io.bind("cancel_wait", "missing futex cancel_wait export")?;
+        let register_wait_with_priority_export = io.bind(
+            "register_wait_with_priority",
+            "missing futex register_wait_with_priority export",
+        )?;
+        let register_wait_bitset_with_priority_export = io.bind(
+            "register_wait_bitset_with_priority",
+            "missing futex register_wait_bitset_with_priority export",
+        )?;
+        let wake_export = io.bind("wake", "missing futex wake export")?;
+        let wake_bitset_export = io.bind("wake_bitset", "missing futex wake_bitset export")?;
+        let requeue_export = io.bind("requeue", "missing futex requeue export")?;
+        let cancel_wait_export = io.bind("cancel_wait", "missing futex cancel_wait export")?;
+        let max_priority_export = io.bind("max_priority", "missing futex max_priority export")?;
 
         Ok(Self {
             io,
-            register_wait,
-            register_wait_bitset,
-            wake,
-            wake_bitset,
-            requeue,
-            cancel_wait,
+            register_wait_with_priority_export,
+            register_wait_bitset_with_priority_export,
+            wake_export,
+            wake_bitset_export,
+            requeue_export,
+            cancel_wait_export,
+            max_priority_export,
         })
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
+        self.register_wait_with_priority(key, wait_id, 0)
+    }
+
+    pub(crate) fn register_wait_with_priority(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(&self.register_wait, (key, wait_id), "futex_service trapped")
+                .call(
+                    &self.register_wait_with_priority_export,
+                    (key, wait_id, priority),
+                    "futex_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -57,9 +78,23 @@ impl FutexService {
         wait_id: u64,
         bitset: u32,
     ) -> Result<(), ServiceCallError> {
+        self.register_wait_bitset_with_priority(key, wait_id, bitset, 0)
+    }
+
+    pub(crate) fn register_wait_bitset_with_priority(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        bitset: u32,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(&self.register_wait_bitset, (key, wait_id, bitset), "futex_service trapped")
+                .call(
+                    &self.register_wait_bitset_with_priority_export,
+                    (key, wait_id, bitset, priority),
+                    "futex_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -67,7 +102,7 @@ impl FutexService {
     pub(crate) fn wake(&mut self, key: u64, max_count: u32) -> Result<Vec<u64>, ServiceCallError> {
         let len = expect_len(
             self.io
-                .call(&self.wake, (key, max_count), "futex_service trapped")
+                .call(&self.wake_export, (key, max_count), "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.read_wake_response(len)
@@ -81,7 +116,7 @@ impl FutexService {
     ) -> Result<Vec<u64>, ServiceCallError> {
         let len = expect_len(
             self.io
-                .call(&self.wake_bitset, (key, max_count, bitset), "futex_service trapped")
+                .call(&self.wake_bitset_export, (key, max_count, bitset), "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.read_wake_response(len)
@@ -97,7 +132,7 @@ impl FutexService {
         let len = expect_len(
             self.io
                 .call(
-                    &self.requeue,
+                    &self.requeue_export,
                     (src_key, requeue_count, dst_key, wake_count),
                     "futex_service trapped",
                 )
@@ -128,7 +163,15 @@ impl FutexService {
     pub(crate) fn cancel_wait(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(&self.cancel_wait, wait_id, "futex_service trapped")
+                .call(&self.cancel_wait_export, wait_id, "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn max_priority(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        expect_len(
+            self.io
+                .call(&self.max_priority_export, key, "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }

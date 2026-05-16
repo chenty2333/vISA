@@ -1397,6 +1397,7 @@ struct FutexWaiter {
     key: u64,
     wait_id: u64,
     bitset: u32,
+    priority: u32,
 }
 
 pub(crate) struct FutexService {
@@ -1409,7 +1410,7 @@ impl FutexService {
     }
 
     pub(crate) fn register_wait(&mut self, key: u64, wait_id: u64) -> Result<(), ServiceCallError> {
-        self.register_wait_bitset(key, wait_id, u32::MAX)
+        self.register_wait_with_priority(key, wait_id, 0)
     }
 
     pub(crate) fn register_wait_bitset(
@@ -1418,7 +1419,26 @@ impl FutexService {
         wait_id: u64,
         bitset: u32,
     ) -> Result<(), ServiceCallError> {
-        self.waiters.push(FutexWaiter { key, wait_id, bitset });
+        self.register_wait_bitset_with_priority(key, wait_id, bitset, 0)
+    }
+
+    pub(crate) fn register_wait_with_priority(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
+        self.register_wait_bitset_with_priority(key, wait_id, u32::MAX, priority)
+    }
+
+    pub(crate) fn register_wait_bitset_with_priority(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        bitset: u32,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
+        self.waiters.push(FutexWaiter { key, wait_id, bitset, priority });
         Ok(())
     }
 
@@ -1434,15 +1454,14 @@ impl FutexService {
     ) -> Result<Vec<u64>, ServiceCallError> {
         let mut remaining = max_count as usize;
         let mut wait_ids = Vec::new();
-        self.waiters.retain(|waiter| {
-            if waiter.key == key && waiter.bitset & bitset != 0 && remaining > 0 {
-                wait_ids.push(waiter.wait_id);
-                remaining -= 1;
-                false
-            } else {
-                true
-            }
-        });
+        while remaining > 0 {
+            let Some(index) = self.best_waiter_index(key, bitset) else {
+                break;
+            };
+            wait_ids.push(self.waiters[index].wait_id);
+            self.waiters.remove(index);
+            remaining -= 1;
+        }
         Ok(wait_ids)
     }
 
@@ -1458,22 +1477,21 @@ impl FutexService {
         let mut wait_ids = Vec::new();
         let mut total = 0u32;
 
-        self.waiters.retain(|waiter| {
-            if waiter.key == src_key && wake_remaining > 0 {
-                wait_ids.push(waiter.wait_id);
-                wake_remaining -= 1;
-                total = total.saturating_add(1);
-                false
-            } else {
-                true
-            }
-        });
+        while wake_remaining > 0 {
+            let Some(index) = self.best_waiter_index(src_key, u32::MAX) else {
+                break;
+            };
+            wait_ids.push(self.waiters[index].wait_id);
+            self.waiters.remove(index);
+            wake_remaining -= 1;
+            total = total.saturating_add(1);
+        }
 
-        for waiter in &mut self.waiters {
-            if waiter.key != src_key || requeue_remaining == 0 {
-                continue;
-            }
-            waiter.key = dst_key;
+        while requeue_remaining > 0 {
+            let Some(index) = self.best_waiter_index(src_key, u32::MAX) else {
+                break;
+            };
+            self.waiters[index].key = dst_key;
             requeue_remaining -= 1;
             total = total.saturating_add(1);
         }
@@ -1485,6 +1503,34 @@ impl FutexService {
         let old_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.wait_id != wait_id);
         if self.waiters.len() == old_len { errno(ERR_EINVAL) } else { Ok(()) }
+    }
+
+    pub(crate) fn max_priority(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        Ok(self
+            .waiters
+            .iter()
+            .filter(|waiter| waiter.key == key)
+            .map(|waiter| waiter.priority)
+            .max()
+            .unwrap_or(0))
+    }
+
+    fn best_waiter_index(&self, key: u64, bitset: u32) -> Option<usize> {
+        let mut best_index = None;
+        let mut best_priority = 0u32;
+        for (index, waiter) in self.waiters.iter().enumerate() {
+            if waiter.key != key {
+                continue;
+            }
+            if bitset != u32::MAX && waiter.bitset & bitset == 0 {
+                continue;
+            }
+            if best_index.is_none() || waiter.priority > best_priority {
+                best_index = Some(index);
+                best_priority = waiter.priority;
+            }
+        }
+        best_index
     }
 }
 

@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use core::ptr::null_mut;
 
 use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
@@ -86,6 +86,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) next_eventfd_id: u64,
     pub(super) fault: Option<InjectedFault>,
     pub(super) scheduler: Scheduler,
+    pub(super) futex_pi_boosts: BTreeMap<TaskId, BTreeMap<u64, u32>>,
     pub(super) waits: WaitRegistry,
     pub(super) pulse: PulseDevice,
     pub(super) net: NetworkPlane,
@@ -227,6 +228,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             next_eventfd_id: 1,
             fault: None,
             scheduler: Scheduler::new(),
+            futex_pi_boosts: BTreeMap::new(),
             waits: WaitRegistry::new(),
             pulse: PulseDevice::new(interrupts::tick_count()),
             net,
@@ -297,6 +299,98 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn current_tid(&self) -> Tid {
         let task_id = self.scheduler.current_task();
         self.threads.iter().find(|t| t.task_id == task_id).map(|t| t.tid).unwrap_or(1)
+    }
+
+    pub(crate) fn current_task_id(&self) -> TaskId {
+        self.scheduler.current_task()
+    }
+
+    pub(crate) fn current_task_priority(&self) -> u32 {
+        self.scheduler.task_priority(self.scheduler.current_task())
+    }
+
+    pub(crate) fn task_priority(&self, task: TaskId) -> u32 {
+        self.scheduler.task_priority(task)
+    }
+
+    pub(crate) fn task_id_for_tid(&self, tid: Tid) -> Option<TaskId> {
+        self.threads.iter().find(|thread| thread.tid == tid).map(|thread| thread.task_id)
+    }
+
+    pub(crate) fn boost_task_priority(&mut self, task: TaskId, priority: u32) -> bool {
+        self.scheduler.boost_priority(task, priority)
+    }
+
+    pub(crate) fn restore_task_priority(&mut self, task: TaskId) -> bool {
+        self.scheduler.restore_priority(task)
+    }
+
+    pub(crate) fn register_futex_pi_boost(
+        &mut self,
+        owner_task: TaskId,
+        futex_key: u64,
+        priority: u32,
+    ) -> bool {
+        let owner_boosts = self.futex_pi_boosts.entry(owner_task).or_default();
+        let entry = owner_boosts.entry(futex_key).or_insert(0);
+        if priority > *entry {
+            *entry = priority;
+        }
+        self.apply_futex_pi_boost(owner_task)
+    }
+
+    pub(crate) fn release_futex_pi_boost(&mut self, owner_task: TaskId, futex_key: u64) -> bool {
+        let remove_owner = if let Some(owner_boosts) = self.futex_pi_boosts.get_mut(&owner_task) {
+            owner_boosts.remove(&futex_key);
+            owner_boosts.is_empty()
+        } else {
+            false
+        };
+        if remove_owner {
+            self.futex_pi_boosts.remove(&owner_task);
+        }
+        self.apply_futex_pi_boost(owner_task)
+    }
+
+    pub(crate) fn refresh_futex_pi_boost(&mut self, owner_task: TaskId, futex_key: u64) -> bool {
+        let priority = match self.futex.max_priority(futex_key) {
+            Ok(priority) => priority,
+            Err(err) => {
+                crate::kwarn!(
+                    "futex pi max_priority query failed for key {}: {:?}",
+                    futex_key,
+                    err
+                );
+                0
+            }
+        };
+        let remove_owner = if let Some(owner_boosts) = self.futex_pi_boosts.get_mut(&owner_task) {
+            if priority == 0 {
+                owner_boosts.remove(&futex_key);
+            } else {
+                owner_boosts.insert(futex_key, priority);
+            }
+            owner_boosts.is_empty()
+        } else {
+            false
+        };
+        if remove_owner {
+            self.futex_pi_boosts.remove(&owner_task);
+        }
+        self.apply_futex_pi_boost(owner_task)
+    }
+
+    fn apply_futex_pi_boost(&mut self, owner_task: TaskId) -> bool {
+        let priority = self
+            .futex_pi_boosts
+            .get(&owner_task)
+            .and_then(|entries| entries.values().copied().max())
+            .unwrap_or(0);
+        if priority == 0 {
+            self.scheduler.restore_priority(owner_task)
+        } else {
+            self.scheduler.boost_priority(owner_task, priority)
+        }
     }
 
     pub(crate) fn get_rlimit(&self, pid: Pid, resource: usize) -> Rlimit {

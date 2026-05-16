@@ -71,11 +71,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
+        let wait_priority = self.current_task_priority();
 
         let registered = if bitset == u32::MAX {
-            self.futex.register_wait(key, token.id)
+            self.futex.register_wait_with_priority(key, token.id, wait_priority)
         } else {
-            self.futex.register_wait_bitset(key, token.id, bitset)
+            self.futex.register_wait_bitset_with_priority(key, token.id, bitset, wait_priority)
         };
         match registered {
             Ok(()) => {
