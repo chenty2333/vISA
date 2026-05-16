@@ -50,8 +50,9 @@ use crate::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, PendingSignal, RLIMIT_AS, Rlimit,
-            RobustListRegistration, SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK,
-            ServiceCallError, SigAction, SignalAltStack, UserSignalDelivery,
+            RobustListRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
+            SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
+            UserSignalDelivery,
         },
     },
 };
@@ -104,7 +105,8 @@ const SA_ONSTACK: u64 = 0x0800_0000;
 const SA_RESTART: u64 = 0x1000_0000;
 const FCNTL_F_SETLKW: u64 = 7;
 const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
-const VMOS_SIGNAL_FRAME_SIZE: usize = 128;
+const VMOS_SIGNAL_FRAME_SIZE: usize = 160;
+const VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET: usize = 136;
 const LINUX_SIGINFO_SIZE: usize = 128;
 const LINUX_UCONTEXT_MIN_SIZE: usize = 968;
 const LINUX_UCONTEXT_STACK_OFFSET: usize = 16;
@@ -1733,12 +1735,12 @@ fn read_linux_stack_t(ptr: u64) -> Result<SignalAltStack, i32> {
     let flags = read_u32_from(&bytes, 8)?;
     let size = read_u64_from(&bytes, 16)?;
     match flags {
-        0 => {
+        0 | SIGALTSTACK_SS_AUTODISARM => {
             if size < MINSIGSTKSZ {
                 return Err(ERR_ENOMEM);
             }
             validate_lower_user_address_range(sp, size)?;
-            Ok(SignalAltStack { sp, size, flags: 0 })
+            Ok(SignalAltStack { sp, size, flags })
         }
         SIGALTSTACK_SS_DISABLE => Ok(SignalAltStack::disabled()),
         _ => Err(ERR_EINVAL),
@@ -1757,7 +1759,7 @@ fn encode_linux_stack_t(out: &mut [u8], offset: usize, stack: SignalAltStack, on
     } else if stack.is_disabled() {
         SIGALTSTACK_SS_DISABLE
     } else {
-        0
+        stack.flags & SIGALTSTACK_SS_AUTODISARM
     };
     write_u64(out, offset, stack.sp);
     write_u32(out, offset + 8, flags);
@@ -1787,6 +1789,14 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
     };
     let tid = active_context().tid;
     let _ = active_context().supervisor.set_sigmask(tid, 2, old_sigmask);
+    if read_u64_from(&bytes, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET)? != 0 {
+        let stack = SignalAltStack {
+            sp: read_u64_from(&bytes, 112)?,
+            size: read_u64_from(&bytes, 120)?,
+            flags: read_u32_from(&bytes, 128)?,
+        };
+        let _ = active_context().supervisor.set_signal_alt_stack(tid, stack);
+    }
     ring3::install_user_return(
         frame,
         UserReturnContext { frame: saved_frame, rsp: saved_rsp, fs_base: saved_fs_base },
@@ -1847,17 +1857,29 @@ fn install_user_signal_frame(
     let ucontext_sp = siginfo_sp.checked_add(LINUX_SIGINFO_SIZE as u64).ok_or(ERR_EFAULT)?;
     let signal_stack =
         active_context().supervisor.signal_alt_stack(active_context().tid).unwrap_or_default();
+    let restore_alt_stack = alt_stack.filter(|stack| stack.autodisarm());
 
     write_user_u64(frame_sp, delivery.action.restorer)?;
     write_user_bytes(
         record_sp,
-        &encode_vmos_signal_frame(&saved, delivery.old_sigmask, delivery.signal.signo),
+        &encode_vmos_signal_frame(
+            &saved,
+            delivery.old_sigmask,
+            delivery.signal.signo,
+            restore_alt_stack,
+        ),
     )?;
     write_user_bytes(siginfo_sp, &encode_linux_siginfo(&delivery.signal))?;
     write_user_bytes(
         ucontext_sp,
         &encode_linux_ucontext(&saved, delivery.old_sigmask, signal_stack, ucontext_sp),
     )?;
+    if restore_alt_stack.is_some() {
+        active_context()
+            .supervisor
+            .set_signal_alt_stack(active_context().tid, SignalAltStack::disabled())
+            .ok_or(ERR_ESRCH)?;
+    }
 
     let mut next = saved;
     next.rsp = frame_sp;
@@ -1903,6 +1925,7 @@ fn encode_vmos_signal_frame(
     saved: &UserReturnContext,
     old_sigmask: u64,
     signo: u8,
+    restore_alt_stack: Option<SignalAltStack>,
 ) -> [u8; VMOS_SIGNAL_FRAME_SIZE] {
     let mut out = [0u8; VMOS_SIGNAL_FRAME_SIZE];
     write_u64(&mut out, 0, VMOS_SIGNAL_FRAME_MAGIC);
@@ -1919,6 +1942,12 @@ fn encode_vmos_signal_frame(
     write_u64(&mut out, 88, saved.frame.rax);
     write_u64(&mut out, 96, saved.frame.rcx);
     write_u64(&mut out, 104, saved.frame.r11);
+    if let Some(stack) = restore_alt_stack {
+        write_u64(&mut out, 112, stack.sp);
+        write_u64(&mut out, 120, stack.size);
+        write_u32(&mut out, 128, stack.flags);
+        write_u64(&mut out, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET, 1);
+    }
     out
 }
 

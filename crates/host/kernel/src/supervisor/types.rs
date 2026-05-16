@@ -117,6 +117,7 @@ pub(crate) struct RobustListRegistration {
 
 pub(crate) const SIGALTSTACK_SS_ONSTACK: u32 = 1;
 pub(crate) const SIGALTSTACK_SS_DISABLE: u32 = 2;
+pub(crate) const SIGALTSTACK_SS_AUTODISARM: u32 = 1 << 31;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SignalAltStack {
@@ -132,6 +133,10 @@ impl SignalAltStack {
 
     pub(crate) const fn is_disabled(self) -> bool {
         self.flags & SIGALTSTACK_SS_DISABLE != 0
+    }
+
+    pub(crate) const fn autodisarm(self) -> bool {
+        self.flags & SIGALTSTACK_SS_AUTODISARM != 0
     }
 
     pub(crate) fn top(self) -> Option<u64> {
