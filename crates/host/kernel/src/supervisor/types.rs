@@ -85,6 +85,23 @@ pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_SYS_ADMIN
     | CAP_SYS_RESOURCE;
 
+pub(crate) const SECBIT_NOROOT: u32 = 1 << 0;
+pub(crate) const SECBIT_NOROOT_LOCKED: u32 = 1 << 1;
+pub(crate) const SECBIT_NO_SETUID_FIXUP: u32 = 1 << 2;
+pub(crate) const SECBIT_NO_SETUID_FIXUP_LOCKED: u32 = 1 << 3;
+pub(crate) const SECBIT_KEEP_CAPS: u32 = 1 << 4;
+pub(crate) const SECBIT_KEEP_CAPS_LOCKED: u32 = 1 << 5;
+pub(crate) const SECBIT_NO_CAP_AMBIENT_RAISE: u32 = 1 << 6;
+pub(crate) const SECBIT_NO_CAP_AMBIENT_RAISE_LOCKED: u32 = 1 << 7;
+pub(crate) const LINUX_SUPPORTED_SECUREBITS: u32 = SECBIT_NOROOT
+    | SECBIT_NOROOT_LOCKED
+    | SECBIT_NO_SETUID_FIXUP
+    | SECBIT_NO_SETUID_FIXUP_LOCKED
+    | SECBIT_KEEP_CAPS
+    | SECBIT_KEEP_CAPS_LOCKED
+    | SECBIT_NO_CAP_AMBIENT_RAISE
+    | SECBIT_NO_CAP_AMBIENT_RAISE_LOCKED;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccessIds<'a> {
     pub(crate) uid: u32,

@@ -70,6 +70,7 @@ fn bootstrap_linux_process_family(graph: &mut SemanticGraph) -> Result<(), &'sta
         permitted: LINUX_KNOWN_CAPS,
         effective: LINUX_KNOWN_CAPS,
         ambient: 0,
+        securebits: 0,
     };
     if graph.create_process_family_root_with_credential(
         1,

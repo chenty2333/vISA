@@ -13,7 +13,10 @@ use crate::{
         PrototypeRuntime, TaskId,
         types::{
             CAP_SETGID, CAP_SETPCAP, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS,
-            RuntimeClockAdjustmentState,
+            LINUX_SUPPORTED_SECUREBITS, RuntimeClockAdjustmentState, SECBIT_KEEP_CAPS,
+            SECBIT_KEEP_CAPS_LOCKED, SECBIT_NO_CAP_AMBIENT_RAISE,
+            SECBIT_NO_CAP_AMBIENT_RAISE_LOCKED, SECBIT_NO_SETUID_FIXUP,
+            SECBIT_NO_SETUID_FIXUP_LOCKED, SECBIT_NOROOT, SECBIT_NOROOT_LOCKED,
         },
     },
 };
@@ -183,6 +186,7 @@ pub(crate) struct ActiveUserContext {
     cap_permitted: u64,
     cap_effective: u64,
     cap_ambient: u64,
+    securebits: u32,
     umask: u32,
     io_owner: i64,
     io_owner_ex_type: u32,
@@ -216,6 +220,7 @@ pub(crate) struct SuspendedVforkParent {
     cap_permitted: u64,
     cap_effective: u64,
     cap_ambient: u64,
+    securebits: u32,
     umask: u32,
     io_owner: i64,
     io_owner_ex_type: u32,
@@ -261,6 +266,7 @@ pub(crate) struct CredentialState {
     pub(crate) cap_permitted: u64,
     pub(crate) cap_effective: u64,
     pub(crate) cap_ambient: u64,
+    pub(crate) securebits: u32,
 }
 
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
@@ -307,6 +313,7 @@ impl ActiveUserContext {
             cap_permitted: LINUX_KNOWN_CAPS,
             cap_effective: LINUX_KNOWN_CAPS,
             cap_ambient: 0,
+            securebits: 0,
             umask: 0o022,
             io_owner: 0,
             io_owner_ex_type: 0,
@@ -458,6 +465,14 @@ impl ActiveUserContext {
         self.cap_ambient
     }
 
+    pub(crate) fn securebits(&self) -> u32 {
+        self.securebits
+    }
+
+    pub(crate) fn keepcaps(&self) -> bool {
+        self.securebits & SECBIT_KEEP_CAPS != 0
+    }
+
     pub(crate) fn cap_bounding_is_set(&self, capability: u64) -> bool {
         self.cap_bounding & capability != 0
     }
@@ -484,6 +499,7 @@ impl ActiveUserContext {
             cap_permitted: self.cap_permitted,
             cap_effective: self.cap_effective,
             cap_ambient: self.cap_ambient,
+            securebits: self.securebits,
         }
     }
 
@@ -500,6 +516,7 @@ impl ActiveUserContext {
         self.cap_permitted = state.cap_permitted;
         self.cap_effective = state.cap_effective;
         self.cap_ambient = state.cap_ambient;
+        self.securebits = state.securebits;
     }
 
     pub(crate) fn set_uid(&mut self, uid: u32) -> bool {
@@ -636,6 +653,9 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn raise_ambient_capability(&mut self, capability: u64) -> bool {
+        if self.securebits & SECBIT_NO_CAP_AMBIENT_RAISE != 0 {
+            return false;
+        }
         if self.cap_permitted & capability == 0 || self.cap_inheritable & capability == 0 {
             return false;
         }
@@ -659,20 +679,57 @@ impl ActiveUserContext {
         true
     }
 
+    pub(crate) fn set_keepcaps(&mut self, enabled: bool) -> bool {
+        if self.securebits & SECBIT_KEEP_CAPS_LOCKED != 0 {
+            return false;
+        }
+        if enabled {
+            self.securebits |= SECBIT_KEEP_CAPS;
+        } else {
+            self.securebits &= !SECBIT_KEEP_CAPS;
+        }
+        true
+    }
+
+    pub(crate) fn set_securebits(&mut self, securebits: u32) -> bool {
+        if securebits & !LINUX_SUPPORTED_SECUREBITS != 0 {
+            return false;
+        }
+        for (bit, lock) in [
+            (SECBIT_NOROOT, SECBIT_NOROOT_LOCKED),
+            (SECBIT_NO_SETUID_FIXUP, SECBIT_NO_SETUID_FIXUP_LOCKED),
+            (SECBIT_KEEP_CAPS, SECBIT_KEEP_CAPS_LOCKED),
+            (SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_CAP_AMBIENT_RAISE_LOCKED),
+        ] {
+            if self.securebits & lock != 0
+                && (securebits & (bit | lock)) != (self.securebits & (bit | lock))
+            {
+                return false;
+            }
+        }
+        self.securebits = securebits;
+        true
+    }
+
     fn fixup_capabilities_after_uid_change(&mut self, old_uid: u32, old_euid: u32, old_suid: u32) {
+        if self.securebits & SECBIT_NO_SETUID_FIXUP != 0 {
+            return;
+        }
         let had_root_uid = old_uid == 0 || old_euid == 0 || old_suid == 0;
         let has_root_uid = self.uid == 0 || self.euid == 0 || self.suid == 0;
         if had_root_uid && !has_root_uid {
             self.cap_effective = 0;
-            self.cap_permitted = 0;
-            self.cap_ambient = 0;
+            if self.securebits & SECBIT_KEEP_CAPS == 0 {
+                self.cap_permitted = 0;
+                self.cap_ambient = 0;
+            }
             return;
         }
         if old_euid == 0 && self.euid != 0 {
             self.cap_effective = 0;
             return;
         }
-        if old_euid != 0 && self.euid == 0 {
+        if old_euid != 0 && self.euid == 0 && self.securebits & SECBIT_NOROOT == 0 {
             self.cap_effective = self.cap_permitted & self.cap_bounding;
         }
     }
@@ -795,6 +852,7 @@ impl ActiveUserContext {
             cap_permitted: self.cap_permitted,
             cap_effective: self.cap_effective,
             cap_ambient: self.cap_ambient,
+            securebits: self.securebits,
             umask: self.umask,
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
@@ -906,6 +964,7 @@ impl ActiveUserContext {
             cap_permitted,
             cap_effective,
             cap_ambient,
+            securebits,
             umask,
             io_owner,
             io_owner_ex_type,
@@ -932,6 +991,7 @@ impl ActiveUserContext {
         self.cap_permitted = cap_permitted;
         self.cap_effective = cap_effective;
         self.cap_ambient = cap_ambient;
+        self.securebits = securebits;
         self.umask = umask;
         self.io_owner = io_owner;
         self.io_owner_ex_type = io_owner_ex_type;

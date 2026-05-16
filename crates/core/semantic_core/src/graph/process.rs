@@ -1336,6 +1336,7 @@ mod tests {
             permitted: 0b011,
             effective: 0b001,
             ambient: 0,
+            securebits: 0b1_0000,
         };
         let credential_id = graph
             .transition_process_credential_by_pid(

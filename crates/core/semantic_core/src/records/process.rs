@@ -160,6 +160,7 @@ pub struct LinuxCapSets {
     pub permitted: u64,
     pub effective: u64,
     pub ambient: u64,
+    pub securebits: u32,
 }
 
 // ── CredentialTransition ──
@@ -184,14 +185,50 @@ impl CredentialTransitionRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialTransitionKind {
-    SetUid { old: u32, new: u32 },
-    SetGid { old: u32, new: u32 },
-    SetReUid { ruid: u32, euid: u32 },
-    SetReGid { rgid: u32, egid: u32 },
-    SetResUid { ruid: u32, euid: u32, suid: u32 },
-    SetResGid { rgid: u32, egid: u32, sgid: u32 },
-    SetFsuid { old: u32, new: u32 },
-    SetFsgid { old: u32, new: u32 },
-    SetGroups { old_len: usize, new_len: usize },
-    CapSet { bounding: bool, inheritable: bool, permitted: bool, effective: bool, ambient: bool },
+    SetUid {
+        old: u32,
+        new: u32,
+    },
+    SetGid {
+        old: u32,
+        new: u32,
+    },
+    SetReUid {
+        ruid: u32,
+        euid: u32,
+    },
+    SetReGid {
+        rgid: u32,
+        egid: u32,
+    },
+    SetResUid {
+        ruid: u32,
+        euid: u32,
+        suid: u32,
+    },
+    SetResGid {
+        rgid: u32,
+        egid: u32,
+        sgid: u32,
+    },
+    SetFsuid {
+        old: u32,
+        new: u32,
+    },
+    SetFsgid {
+        old: u32,
+        new: u32,
+    },
+    SetGroups {
+        old_len: usize,
+        new_len: usize,
+    },
+    CapSet {
+        bounding: bool,
+        inheritable: bool,
+        permitted: bool,
+        effective: bool,
+        ambient: bool,
+        securebits: bool,
+    },
 }

@@ -57,10 +57,10 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
-            PendingSignal, RLIMIT_AS, Rlimit, RobustListRegistration, SIGALTSTACK_SS_AUTODISARM,
-            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction,
-            SignalAltStack, UserSignalDelivery,
+            AccessIds, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
+            LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, Rlimit, RobustListRegistration,
+            SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK,
+            ServiceCallError, SigAction, SignalAltStack, UserSignalDelivery,
         },
     },
 };
@@ -1192,6 +1192,7 @@ fn sys_capset(frame: &SyscallFrame) -> Result<i64, i32> {
         permitted: before.cap_permitted != active_context().cap_permitted(),
         effective: before.cap_effective != active_context().cap_effective(),
         ambient: before.cap_ambient != active_context().cap_ambient(),
+        securebits: false,
     }) {
         restore_credential_state(before);
         return Err(errno);
@@ -1400,18 +1401,29 @@ fn sys_rlimit(
 }
 
 fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PR_GET_KEEPCAPS: u64 = 7;
+    const PR_SET_KEEPCAPS: u64 = 8;
     const PR_SET_NO_NEW_PRIVS: u64 = 38;
     const PR_GET_NO_NEW_PRIVS: u64 = 39;
     const PR_GET_SECCOMP: u64 = 21;
     const PR_SET_SECCOMP: u64 = 22;
     const PR_CAPBSET_READ: u64 = 23;
     const PR_CAPBSET_DROP: u64 = 24;
+    const PR_GET_SECUREBITS: u64 = 27;
+    const PR_SET_SECUREBITS: u64 = 28;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
     const PR_CAP_AMBIENT: u64 = 47;
     const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
 
     match frame.rdi {
+        PR_GET_KEEPCAPS => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            Ok(active_context().keepcaps() as i64)
+        }
+        PR_SET_KEEPCAPS => sys_prctl_set_keepcaps(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_SET_NO_NEW_PRIVS => {
             if frame.rsi != 1 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
                 return Err(ERR_EINVAL);
@@ -1446,11 +1458,65 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
         }
         PR_CAPBSET_READ => sys_prctl_capbset_read(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_CAPBSET_DROP => sys_prctl_capbset_drop(frame.rsi, frame.rdx, frame.r10, frame.r8),
+        PR_GET_SECUREBITS => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            Ok(active_context().securebits() as i64)
+        }
+        PR_SET_SECUREBITS => sys_prctl_set_securebits(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_SET_TIMERSLACK => Ok(0),
         PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
         PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_prctl_set_keepcaps(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if value > 1 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let before = active_context().credential_state();
+    if !active_context().set_keepcaps(value != 0) {
+        return Err(ERR_EPERM);
+    }
+    record_securebits_transition_if_changed(before)
+}
+
+fn sys_prctl_set_securebits(bits: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if bits > u32::MAX as u64 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let bits = bits as u32;
+    if bits & !LINUX_SUPPORTED_SECUREBITS != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if !active_context().has_effective_capability(CAP_SETPCAP) {
+        return Err(ERR_EPERM);
+    }
+    let before = active_context().credential_state();
+    if !active_context().set_securebits(bits) {
+        return Err(ERR_EPERM);
+    }
+    record_securebits_transition_if_changed(before)
+}
+
+fn record_securebits_transition_if_changed(before: CredentialState) -> Result<i64, i32> {
+    if before.securebits == active_context().securebits() {
+        return Ok(0);
+    }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+        bounding: false,
+        inheritable: false,
+        permitted: false,
+        effective: false,
+        ambient: false,
+        securebits: true,
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(0)
 }
 
 fn sys_prctl_capbset_read(cap: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
@@ -1477,6 +1543,7 @@ fn sys_prctl_capbset_drop(cap: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i
             permitted: false,
             effective: false,
             ambient: false,
+            securebits: false,
         }) {
             restore_credential_state(before);
             return Err(errno);
@@ -1515,6 +1582,7 @@ fn sys_prctl_cap_ambient(op: u64, cap: u64, arg4: u64, arg5: u64) -> Result<i64,
                     permitted: false,
                     effective: false,
                     ambient: true,
+                    securebits: false,
                 }) {
                     restore_credential_state(before);
                     return Err(errno);
@@ -1536,6 +1604,7 @@ fn sys_prctl_cap_ambient(op: u64, cap: u64, arg4: u64, arg5: u64) -> Result<i64,
                     permitted: false,
                     effective: false,
                     ambient: true,
+                    securebits: false,
                 }) {
                     restore_credential_state(before);
                     return Err(errno);
@@ -1556,6 +1625,7 @@ fn sys_prctl_cap_ambient(op: u64, cap: u64, arg4: u64, arg5: u64) -> Result<i64,
                     permitted: false,
                     effective: false,
                     ambient: true,
+                    securebits: false,
                 }) {
                     restore_credential_state(before);
                     return Err(errno);
@@ -2663,6 +2733,7 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
         permitted: credential.cap_permitted,
         effective: credential.cap_effective,
         ambient: credential.cap_ambient,
+        securebits: credential.securebits,
     };
 
     if shared_vm_flags_supported {
@@ -2884,6 +2955,7 @@ fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
         permitted: credential.cap_permitted,
         effective: credential.cap_effective,
         ambient: credential.cap_ambient,
+        securebits: credential.securebits,
     };
     let (child_task_id, child_pid, child_tid) = active_context().supervisor.create_vfork_child(
         parent_pid,
@@ -5139,6 +5211,7 @@ fn record_credential_transition(kind: CredentialTransitionKind) -> Result<(), i3
             permitted: state.cap_permitted,
             effective: state.cap_effective,
             ambient: state.cap_ambient,
+            securebits: state.securebits,
         },
         kind,
     ) {
