@@ -1,6 +1,6 @@
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS,
-    ERR_EPERM, PlanKind, SOCK_STREAM,
+    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EINPROGRESS, ERR_EINVAL, ERR_EMFILE,
+    ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
 };
 
 use super::{
@@ -45,22 +45,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ready_key = match self.net_core.ready_key(socket_id) {
             Ok(key) => key,
             Err(ServiceCallError::Errno(errno)) => {
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket ready_key rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket ready_key trap rollback");
                 crate::kwarn!("net_core ready_key: {}", reason);
                 return Err("net_core trapped while creating socket");
             }
             Err(ServiceCallError::Invalid(err)) => {
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket ready_key invalid rollback");
                 return Err(err);
             }
         };
         if let Err(err) = self.create_net_stack_socket_if_supported(socket_id, domain, ty, protocol)
         {
-            let _ = self.net_core.close_socket(socket_id);
+            self.cleanup_net_core_socket(socket_id, "socket smoltcp rollback");
             return match err {
                 ServiceCallError::Errno(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
                 ServiceCallError::Trap(reason) => {
@@ -74,18 +74,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
                 self.close_net_stack_socket(socket_id);
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket register rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
                 self.close_net_stack_socket(socket_id);
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket register trap rollback");
                 crate::kwarn!("linux_socket register_socket: {}", reason);
                 return Err("linux_socket_service trapped during socket");
             }
             Err(ServiceCallError::Invalid(err)) => {
                 self.close_net_stack_socket(socket_id);
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket register invalid rollback");
                 return Err(err);
             }
         }
@@ -99,9 +99,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         }) {
             Ok(fd) => fd,
             Err(errno) => {
-                let _ = self.linux_socket.close_socket(socket_id);
+                self.cleanup_linux_socket(socket_id, "socket fd rollback");
                 self.close_net_stack_socket(socket_id);
-                let _ = self.net_core.close_socket(socket_id);
+                self.cleanup_net_core_socket(socket_id, "socket fd rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
         };
@@ -330,16 +330,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         let accepted_ready_key = match self.net_core.ready_key(accepted_socket_id) {
             Ok(key) => key,
             Err(ServiceCallError::Errno(errno)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(accepted_socket_id, "accept ready_key rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(accepted_socket_id, "accept ready_key trap rollback");
                 crate::kwarn!("net_core accept ready_key: {}", reason);
                 return Err("net_core trapped during accept");
             }
             Err(ServiceCallError::Invalid(err)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(
+                    accepted_socket_id,
+                    "accept ready_key invalid rollback",
+                );
                 return Err(err);
             }
         };
@@ -365,16 +368,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         ) {
             Ok(_) => {}
             Err(ServiceCallError::Errno(errno)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(accepted_socket_id, "accept service rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(accepted_socket_id, "accept service trap rollback");
                 crate::kwarn!("linux_socket accept: {}", reason);
                 return Err("linux_socket_service trapped during accept");
             }
             Err(ServiceCallError::Invalid(err)) => {
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(accepted_socket_id, "accept service invalid rollback");
                 return Err(err);
             }
         }
@@ -392,8 +395,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         }) {
             Ok(fd) => fd,
             Err(errno) => {
-                let _ = self.linux_socket.close_socket(accepted_socket_id);
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_linux_socket(accepted_socket_id, "accept fd rollback");
+                self.cleanup_net_core_socket(accepted_socket_id, "accept fd rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
         };
@@ -413,7 +416,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         accept_result: LinuxCallResult,
     ) -> Result<LinuxCallResult, &'static str> {
         if !matches!(accept_result, LinuxCallResult::Ret(0)) {
-            let _ = self.net_core.close_socket(accepted_socket_id);
+            self.cleanup_net_core_socket(accepted_socket_id, "smoltcp accept nonready rollback");
             return Ok(accept_result);
         }
         match self.linux_socket.register_connected_socket(
@@ -426,18 +429,27 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
                 self.close_net_stack_socket(accepted_socket_id);
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(
+                    accepted_socket_id,
+                    "smoltcp accept register rollback",
+                );
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
             Err(ServiceCallError::Trap(reason)) => {
                 self.close_net_stack_socket(accepted_socket_id);
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(
+                    accepted_socket_id,
+                    "smoltcp accept register trap rollback",
+                );
                 crate::kwarn!("linux_socket register accepted socket: {}", reason);
                 return Err("linux_socket_service trapped during smoltcp accept");
             }
             Err(ServiceCallError::Invalid(err)) => {
                 self.close_net_stack_socket(accepted_socket_id);
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_net_core_socket(
+                    accepted_socket_id,
+                    "smoltcp accept register invalid rollback",
+                );
                 return Err(err);
             }
         }
@@ -456,8 +468,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(fd) => fd,
             Err(errno) => {
                 self.close_net_stack_socket(accepted_socket_id);
-                let _ = self.linux_socket.close_socket(accepted_socket_id);
-                let _ = self.net_core.close_socket(accepted_socket_id);
+                self.cleanup_linux_socket(accepted_socket_id, "smoltcp accept fd rollback");
+                self.cleanup_net_core_socket(accepted_socket_id, "smoltcp accept fd rollback");
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
         };
@@ -794,6 +806,29 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)))
             }
         }
+    }
+
+    fn cleanup_linux_socket(&mut self, socket_id: u32, context: &'static str) {
+        if let Err(err) = self.linux_socket.close_socket(socket_id) {
+            log_cleanup_error(context, err);
+        }
+    }
+
+    fn cleanup_net_core_socket(&mut self, socket_id: u32, context: &'static str) {
+        if let Err(err) = self.net_core.close_socket(socket_id) {
+            log_cleanup_error(context, err);
+        }
+    }
+}
+
+fn log_cleanup_error(context: &'static str, err: ServiceCallError) {
+    match err {
+        ServiceCallError::Errno(ERR_EBADF) => {}
+        ServiceCallError::Errno(errno) => {
+            crate::kwarn!("{} cleanup returned errno {}", context, errno)
+        }
+        ServiceCallError::Trap(reason) => crate::kwarn!("{} cleanup trapped: {}", context, reason),
+        ServiceCallError::Invalid(err) => crate::kwarn!("{} cleanup invalid: {}", context, err),
     }
 }
 

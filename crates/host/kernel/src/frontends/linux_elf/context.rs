@@ -50,20 +50,14 @@ pub(crate) struct UserAddressSpaceState {
 pub(crate) struct UserFrameAllocator {
     memory_regions: &'static [MemoryRegion],
     next: usize,
+    cursor_region: usize,
+    cursor_addr: u64,
     free_frames: Vec<PhysFrame>,
 }
 
 impl UserFrameAllocator {
     pub(crate) fn new(memory_regions: &'static [MemoryRegion]) -> Self {
-        Self { memory_regions, next: 0, free_frames: Vec::new() }
-    }
-
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
-        self.memory_regions
-            .iter()
-            .filter(|region| region.kind == MemoryRegionKind::Usable)
-            .flat_map(|region| (region.start..region.end).step_by(4096))
-            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+        Self { memory_regions, next: 0, cursor_region: 0, cursor_addr: 0, free_frames: Vec::new() }
     }
 
     pub(crate) fn deallocate_frame(&mut self, frame: PhysFrame) {
@@ -71,12 +65,51 @@ impl UserFrameAllocator {
     }
 
     pub(crate) fn fork_child_allocator(&self) -> Self {
-        Self { memory_regions: self.memory_regions, next: self.next, free_frames: Vec::new() }
+        Self {
+            memory_regions: self.memory_regions,
+            next: self.next,
+            cursor_region: self.cursor_region,
+            cursor_addr: self.cursor_addr,
+            free_frames: Vec::new(),
+        }
     }
 
     pub(crate) fn absorb_child_allocator(&mut self, mut child: Self) {
-        self.next = self.next.max(child.next);
+        if child.next > self.next {
+            self.next = child.next;
+            self.cursor_region = child.cursor_region;
+            self.cursor_addr = child.cursor_addr;
+        }
         self.free_frames.append(&mut child.free_frames);
+    }
+
+    fn allocate_fresh_frame(&mut self) -> Option<PhysFrame> {
+        while self.cursor_region < self.memory_regions.len() {
+            let region = &self.memory_regions[self.cursor_region];
+            if region.kind != MemoryRegionKind::Usable {
+                self.cursor_region += 1;
+                self.cursor_addr = 0;
+                continue;
+            }
+            if self.cursor_addr == 0 || self.cursor_addr < region.start {
+                self.cursor_addr = region.start;
+            }
+            if self.cursor_addr >= region.end {
+                self.cursor_region += 1;
+                self.cursor_addr = 0;
+                continue;
+            }
+
+            let addr = self.cursor_addr;
+            self.cursor_addr = self.cursor_addr.saturating_add(4096);
+            if self.cursor_addr >= region.end {
+                self.cursor_region += 1;
+                self.cursor_addr = 0;
+            }
+            self.next += 1;
+            return Some(PhysFrame::containing_address(PhysAddr::new(addr)));
+        }
+        None
     }
 }
 
@@ -85,9 +118,7 @@ unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
         if let Some(frame) = self.free_frames.pop() {
             return Some(frame);
         }
-        let frame = self.usable_frames().nth(self.next);
-        self.next += 1;
-        frame
+        self.allocate_fresh_frame()
     }
 }
 

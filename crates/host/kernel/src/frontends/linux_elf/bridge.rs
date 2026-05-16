@@ -1946,7 +1946,9 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let restored = decode_linux_ucontext_return(&ucontext, saved_fs_base)?;
     let restored_sigmask = read_u64_from(&ucontext, LINUX_UCONTEXT_SIGMASK_OFFSET)?;
     let tid = active_context().tid;
-    let _ = active_context().supervisor.set_sigmask(tid, 2, restored_sigmask);
+    if active_context().supervisor.set_sigmask(tid, 2, restored_sigmask).is_none() {
+        crate::kwarn!("rt_sigreturn could not restore sigmask for tid {}", tid);
+    }
     if read_u64_from(&bytes, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET)? != 0 {
         let stack = SignalAltStack {
             sp: read_u64_from(&bytes, 112)?,
@@ -2066,7 +2068,8 @@ fn linux_error_return(frame: &SyscallFrame) -> Option<i32> {
 
 fn restartable_interrupted_syscall(frame: &SyscallFrame, syscall_nr: u64) -> bool {
     match syscall_nr {
-        SYS_WAIT4 | SYS_ACCEPT | SYS_ACCEPT4 => true,
+        SYS_READ | SYS_WRITE | SYS_WRITEV | SYS_WAIT4 | SYS_ACCEPT | SYS_ACCEPT4 | SYS_CONNECT
+        | SYS_SENDTO | SYS_RECVFROM => true,
         SYS_FCNTL => frame.rsi == FCNTL_F_SETLKW,
         SYS_FUTEX => {
             let op = (frame.rsi as u32) & FUTEX_CMD_MASK;
@@ -4381,7 +4384,10 @@ fn sys_futex_lock_pi(
             if let Ok(current_word) = read_user_u32(uaddr)
                 && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
             {
-                let _ = write_user_u32(uaddr, restore_word);
+                log_ignored_user_write(
+                    "futex pi dispatch restore",
+                    write_user_u32(uaddr, restore_word),
+                );
             }
             return Err(ERR_EINVAL);
         }
@@ -4401,7 +4407,10 @@ fn sys_futex_lock_pi(
                 && let Ok(current_word) = read_user_u32(uaddr)
                 && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
             {
-                let _ = write_user_u32(uaddr, restore_word);
+                log_ignored_user_write(
+                    "futex pi eagain restore",
+                    write_user_u32(uaddr, restore_word),
+                );
             }
             Err((-ret) as i32)
         }
@@ -4412,7 +4421,10 @@ fn sys_futex_lock_pi(
             if let Ok(current_word) = read_user_u32(uaddr)
                 && let Some(restore_word) = futex_pi_restore_wait_word(word, current_word)
             {
-                let _ = write_user_u32(uaddr, restore_word);
+                log_ignored_user_write(
+                    "futex pi non-ret restore",
+                    write_user_u32(uaddr, restore_word),
+                );
             }
             Err(ERR_EINVAL)
         }
@@ -5103,6 +5115,12 @@ fn read_u64_from(bytes: &[u8], offset: usize) -> Result<u64, i32> {
 
 fn write_user_u32(ptr: u64, value: u32) -> Result<(), i32> {
     write_user_bytes(ptr, &value.to_le_bytes())
+}
+
+fn log_ignored_user_write(context: &'static str, result: Result<(), i32>) {
+    if let Err(errno) = result {
+        crate::kwarn!("{} failed with errno {}", context, errno);
+    }
 }
 
 fn write_user_u64(ptr: u64, value: u64) -> Result<(), i32> {
