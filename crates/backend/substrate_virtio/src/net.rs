@@ -17,6 +17,7 @@ mod host_tap {
         fs::{File, OpenOptions},
         io::{ErrorKind, Read, Write},
         os::fd::AsRawFd,
+        string::String,
     };
 
     use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
@@ -24,12 +25,15 @@ mod host_tap {
     const IFNAMSIZ: usize = 16;
     const IFREQ_SIZE: usize = 40;
     const TUNSETIFF: libc::c_ulong = 0x4004_54ca;
+    const SIOCSIFHWADDR: libc::c_ulong = 0x8924;
     const IFF_TAP: i16 = 0x0002;
     const IFF_NO_PI: i16 = 0x1000;
+    const ARPHRD_ETHER: u16 = 1;
     const DEFAULT_MTU: usize = 1500;
     const MAX_TAP_FRAME_LEN: usize = 1518;
 
     pub struct HostTapPacketDeviceBackend {
+        name: String,
         file: File,
         mtu: usize,
         mac: Option<[u8; 6]>,
@@ -48,8 +52,9 @@ mod host_tap {
             if rc < 0 {
                 return Err(tap_fault("ioctl TUNSETIFF"));
             }
+            let actual_name = tap_ifreq_name(&ifreq)?;
             set_nonblocking(fd)?;
-            Ok(Self { file, mtu: DEFAULT_MTU, mac: None })
+            Ok(Self { name: actual_name, file, mtu: DEFAULT_MTU, mac: None })
         }
 
         pub fn configured_mac(&self) -> Option<[u8; 6]> {
@@ -59,6 +64,7 @@ mod host_tap {
 
     impl PacketDeviceBackend for HostTapPacketDeviceBackend {
         fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
+            set_tap_mac(&self.name, mac)?;
             self.mac = Some(mac);
             Ok(())
         }
@@ -99,10 +105,38 @@ mod host_tap {
         }
 
         let mut ifreq = [0u8; IFREQ_SIZE];
-        ifreq[..bytes.len()].copy_from_slice(bytes);
+        write_ifreq_name(&mut ifreq, bytes);
         let flags = (IFF_TAP | IFF_NO_PI).to_ne_bytes();
         ifreq[IFNAMSIZ..IFNAMSIZ + flags.len()].copy_from_slice(&flags);
         Ok(ifreq)
+    }
+
+    fn tap_hwaddr_ifreq(name: &str, mac: [u8; 6]) -> SubstrateResult<[u8; IFREQ_SIZE]> {
+        let bytes = name.as_bytes();
+        if bytes.is_empty() || bytes.len() >= IFNAMSIZ || bytes.contains(&0) {
+            return Err(SubstrateError::ContractViolation { detail: "invalid tap interface name" });
+        }
+
+        let mut ifreq = [0u8; IFREQ_SIZE];
+        write_ifreq_name(&mut ifreq, bytes);
+        ifreq[IFNAMSIZ..IFNAMSIZ + 2].copy_from_slice(&ARPHRD_ETHER.to_ne_bytes());
+        ifreq[IFNAMSIZ + 2..IFNAMSIZ + 8].copy_from_slice(&mac);
+        Ok(ifreq)
+    }
+
+    fn write_ifreq_name(ifreq: &mut [u8; IFREQ_SIZE], name: &[u8]) {
+        ifreq[..name.len()].copy_from_slice(name);
+    }
+
+    fn tap_ifreq_name(ifreq: &[u8; IFREQ_SIZE]) -> SubstrateResult<String> {
+        let len = ifreq[..IFNAMSIZ].iter().position(|byte| *byte == 0).unwrap_or(IFNAMSIZ);
+        let name = core::str::from_utf8(&ifreq[..len]).map_err(|_| {
+            SubstrateError::ContractViolation { detail: "invalid tap interface name" }
+        })?;
+        if name.is_empty() {
+            return Err(SubstrateError::ContractViolation { detail: "invalid tap interface name" });
+        }
+        Ok(String::from(name))
     }
 
     fn validate_tap_frame_len(len: usize) -> SubstrateResult<()> {
@@ -122,6 +156,24 @@ mod host_tap {
         let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
         if rc < 0 {
             return Err(tap_fault("fcntl F_SETFL O_NONBLOCK"));
+        }
+        Ok(())
+    }
+
+    fn set_tap_mac(name: &str, mac: [u8; 6]) -> SubstrateResult<()> {
+        let mut ifreq = tap_hwaddr_ifreq(name, mac)?;
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+        if fd < 0 {
+            return Err(tap_fault("socket AF_INET SOCK_DGRAM"));
+        }
+
+        let rc = unsafe { libc::ioctl(fd, SIOCSIFHWADDR, ifreq.as_mut_ptr()) };
+        let close_rc = unsafe { libc::close(fd) };
+        if rc < 0 {
+            return Err(tap_fault("ioctl SIOCSIFHWADDR"));
+        }
+        if close_rc < 0 {
+            return Err(tap_fault("close tap control socket"));
         }
         Ok(())
     }
@@ -147,6 +199,22 @@ mod host_tap {
             assert_eq!(&ifreq[..5], b"vmos0");
             let flags = i16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]]);
             assert_eq!(flags, IFF_TAP | IFF_NO_PI);
+        }
+
+        #[test]
+        fn tap_hwaddr_ifreq_encodes_ethernet_mac() {
+            let ifreq = tap_hwaddr_ifreq("vmos0", [2, 0, 0, 0, 0, 1]).unwrap();
+            assert_eq!(&ifreq[..5], b"vmos0");
+            let family = u16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]]);
+            assert_eq!(family, ARPHRD_ETHER);
+            assert_eq!(&ifreq[IFNAMSIZ + 2..IFNAMSIZ + 8], &[2, 0, 0, 0, 0, 1]);
+        }
+
+        #[test]
+        fn tap_ifreq_name_reads_kernel_returned_name() {
+            let mut ifreq = [0u8; IFREQ_SIZE];
+            ifreq[..5].copy_from_slice(b"tap42");
+            assert_eq!(tap_ifreq_name(&ifreq).unwrap(), "tap42");
         }
 
         #[test]
