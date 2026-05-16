@@ -8,13 +8,13 @@ use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_REQUEUE,
-    FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind,
-    RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
-    SYS_WRITE, is_stdio_fd,
+    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
+    FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
+    SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -244,7 +244,7 @@ fn dispatch_futex(
 ) -> PackedStep {
     let command = (op as u32) & FUTEX_CMD_MASK;
     let timeout_ms = match command {
-        FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+        FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
             if timeout_ptr == 0 || timeout_len == 0 {
                 u64::MAX
             } else {
@@ -254,11 +254,11 @@ fn dispatch_futex(
                 }
             }
         }
-        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_ptr,
+        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
         _ => u64::MAX,
     };
     let aux_word = match command {
-        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_len,
+        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_len,
         _ => current_word,
     };
     plan_futex(key, op, val, timeout_ms, aux_word)
@@ -269,6 +269,7 @@ fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -
         FUTEX_WAIT => plan_futex_wait(key, val, timeout_ms, current_word),
         FUTEX_WAKE => plan_futex_wake(key, val),
         FUTEX_WAIT_BITSET => plan_futex_wait_bitset(key, val, timeout_ms, current_word),
+        FUTEX_WAIT_REQUEUE_PI => plan_futex_wait_requeue_pi(key, val, timeout_ms, current_word),
         FUTEX_WAKE_BITSET => plan_futex_wake_bitset(key, val, current_word),
         FUTEX_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, false),
         FUTEX_CMP_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, true),
@@ -308,6 +309,24 @@ fn plan_futex_wait_bitset(key: u64, expected: u64, timeout_ms: u64, bitset: u64)
         [key, timeout, resume_cookie as u64, bitset, expected, 0],
     );
     PackedStep::plan(PlanKind::FutexWaitBitset)
+}
+
+fn plan_futex_wait_requeue_pi(
+    key: u64,
+    expected: u64,
+    timeout_ms: u64,
+    current_word: u64,
+) -> PackedStep {
+    if current_word != expected {
+        return PackedStep::error(-ERR_EAGAIN);
+    }
+
+    let Some(resume_cookie) = allocate_pending_op(PendingOp::FutexWait) else {
+        return PackedStep::error(-ERR_EINVAL);
+    };
+    let timeout = if timeout_ms == u64::MAX { u64::MAX } else { (timeout_ms as u32) as u64 };
+    reset_plan(PlanKind::FutexWaitRequeuePi, [key, timeout, resume_cookie as u64, 0, 0, 0]);
+    PackedStep::plan(PlanKind::FutexWaitRequeuePi)
 }
 
 fn plan_futex_wake_bitset(key: u64, count: u64, bitset: u64) -> PackedStep {
@@ -694,6 +713,18 @@ mod tests {
         assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
         assert_eq!(plan_arg(4), ipv4 as u64);
         assert_eq!(plan_arg(5), 80);
+    }
+
+    #[test]
+    fn futex_wait_requeue_pi_plans_distinct_wait_kind() {
+        let raw = dispatch_futex_raw(0x1000, FUTEX_WAIT_REQUEUE_PI as u64, 7, u64::MAX, 7);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexWaitRequeuePi));
+        assert_eq!(plan_arg(0), 0x1000);
+        assert_eq!(plan_arg(1), u64::MAX);
+        assert_ne!(plan_arg(2), 0);
     }
 }
 

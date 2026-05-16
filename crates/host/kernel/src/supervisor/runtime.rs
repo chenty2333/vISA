@@ -418,6 +418,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         }))
     }
 
+    pub(crate) fn requeue_futex_pi_waiters(
+        &mut self,
+        src_key: u64,
+        dst_key: u64,
+        count: u32,
+    ) -> Result<u32, ServiceCallError> {
+        self.futex.requeue_pi(src_key, count, dst_key)
+    }
+
     pub(crate) fn complete_futex_pi_handoff(
         &mut self,
         futex_key: u64,
@@ -430,6 +439,29 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         self.scheduler.push_event(Event::WaitReady(handoff.wait_id));
         self.release_futex_pi_boost(old_owner_task, futex_key);
+        if handoff.remaining_waiter_priority > 0 {
+            self.register_futex_pi_boost(
+                handoff.next_owner_task,
+                futex_key,
+                handoff.remaining_waiter_priority,
+            );
+        } else {
+            self.release_futex_pi_boost(handoff.next_owner_task, futex_key);
+        }
+        self.drain_event_queue();
+        Ok(())
+    }
+
+    pub(crate) fn complete_futex_pi_ownerless_handoff(
+        &mut self,
+        futex_key: u64,
+        handoff: FutexPiHandoff,
+    ) -> Result<(), ServiceCallError> {
+        let wait_ids = self.futex.wake(futex_key, 1)?;
+        if wait_ids.as_slice() != [handoff.wait_id] {
+            return Err(ServiceCallError::Invalid("futex pi handoff woke a different waiter"));
+        }
+        self.scheduler.push_event(Event::WaitReady(handoff.wait_id));
         if handoff.remaining_waiter_priority > 0 {
             self.register_futex_pi_boost(
                 handoff.next_owner_task,

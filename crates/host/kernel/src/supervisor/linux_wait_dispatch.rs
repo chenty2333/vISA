@@ -49,10 +49,26 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.plan_futex_wait_common(plan, bitset)
     }
 
+    pub(super) fn plan_futex_wait_requeue_pi(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        self.plan_futex_wait_common_with_mode(plan, u32::MAX, true)
+    }
+
     fn plan_futex_wait_common(
         &mut self,
         plan: LinuxPlan,
         bitset: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        self.plan_futex_wait_common_with_mode(plan, bitset, false)
+    }
+
+    fn plan_futex_wait_common_with_mode(
+        &mut self,
+        plan: LinuxPlan,
+        bitset: u32,
+        requeue_pi: bool,
     ) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("futex_service", "futex.waitset", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
@@ -73,7 +89,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         );
         let wait_priority = self.current_task_priority();
 
-        let registered = if bitset == u32::MAX {
+        let registered = if requeue_pi {
+            self.futex.register_wait_requeue_pi(key, token.id, wait_priority)
+        } else if bitset == u32::MAX {
             self.futex.register_wait_with_priority(key, token.id, wait_priority)
         } else {
             self.futex.register_wait_bitset_with_priority(key, token.id, bitset, wait_priority)

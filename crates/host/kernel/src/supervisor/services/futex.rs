@@ -11,11 +11,13 @@ pub(crate) struct FutexService {
     io: BufferedModule,
     register_wait_with_priority_export: WasmFn<(u64, u64, u32), i32>,
     register_wait_bitset_with_priority_export: WasmFn<(u64, u64, u32, u32), i32>,
+    register_wait_requeue_pi_export: WasmFn<(u64, u64, u32), i32>,
     peek_waiter_export: WasmFn<u64, i32>,
     waiter_count_export: WasmFn<u64, i32>,
     wake_export: WasmFn<(u64, u32), i32>,
     wake_bitset_export: WasmFn<(u64, u32, u32), i32>,
     requeue_export: WasmFn<(u64, u32, u64, u32), i32>,
+    requeue_pi_export: WasmFn<(u64, u32, u64), i32>,
     cancel_wait_export: WasmFn<u64, i32>,
     max_priority_export: WasmFn<u64, i32>,
     max_priority_excluding_export: WasmFn<(u64, u64), i32>,
@@ -36,11 +38,14 @@ impl FutexService {
             "register_wait_bitset_with_priority",
             "missing futex register_wait_bitset_with_priority export",
         )?;
+        let register_wait_requeue_pi_export =
+            io.bind("register_wait_requeue_pi", "missing futex register_wait_requeue_pi export")?;
         let peek_waiter_export = io.bind("peek_waiter", "missing futex peek_waiter export")?;
         let waiter_count_export = io.bind("waiter_count", "missing futex waiter_count export")?;
         let wake_export = io.bind("wake", "missing futex wake export")?;
         let wake_bitset_export = io.bind("wake_bitset", "missing futex wake_bitset export")?;
         let requeue_export = io.bind("requeue", "missing futex requeue export")?;
+        let requeue_pi_export = io.bind("requeue_pi", "missing futex requeue_pi export")?;
         let cancel_wait_export = io.bind("cancel_wait", "missing futex cancel_wait export")?;
         let max_priority_export = io.bind("max_priority", "missing futex max_priority export")?;
         let max_priority_excluding_export =
@@ -50,11 +55,13 @@ impl FutexService {
             io,
             register_wait_with_priority_export,
             register_wait_bitset_with_priority_export,
+            register_wait_requeue_pi_export,
             peek_waiter_export,
             waiter_count_export,
             wake_export,
             wake_bitset_export,
             requeue_export,
+            requeue_pi_export,
             cancel_wait_export,
             max_priority_export,
             max_priority_excluding_export,
@@ -103,6 +110,23 @@ impl FutexService {
                 .call(
                     &self.register_wait_bitset_with_priority_export,
                     (key, wait_id, bitset, priority),
+                    "futex_service trapped",
+                )
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn register_wait_requeue_pi(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(
+                    &self.register_wait_requeue_pi_export,
+                    (key, wait_id, priority),
                     "futex_service trapped",
                 )
                 .map_err(ServiceCallError::Trap)?,
@@ -180,6 +204,25 @@ impl FutexService {
         decode_requeue_response(&bytes)
     }
 
+    pub(crate) fn requeue_pi(
+        &mut self,
+        src_key: u64,
+        requeue_count: u32,
+        dst_key: u64,
+    ) -> Result<u32, ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(
+                    &self.requeue_pi_export,
+                    (src_key, requeue_count, dst_key),
+                    "futex_service trapped",
+                )
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
+        decode_requeue_pi_response(&bytes)
+    }
+
     fn read_wake_response(&self, len: usize) -> Result<Vec<u64>, ServiceCallError> {
         let bytes = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
 
@@ -249,4 +292,16 @@ fn decode_requeue_response(bytes: &[u8]) -> Result<(u32, Vec<u64>), ServiceCallE
         ids.push(u64::from_le_bytes(raw));
     }
     Ok((total, ids))
+}
+
+fn decode_requeue_pi_response(bytes: &[u8]) -> Result<u32, ServiceCallError> {
+    if bytes.len() != 8 {
+        return Err(ServiceCallError::Invalid(
+            "futex_service returned a malformed pi requeue response",
+        ));
+    }
+    let mut total = [0u8; 8];
+    total.copy_from_slice(bytes);
+    u32::try_from(u64::from_le_bytes(total))
+        .map_err(|_| ServiceCallError::Invalid("futex_service pi requeue total overflowed"))
 }

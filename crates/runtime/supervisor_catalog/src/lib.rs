@@ -242,7 +242,7 @@ const EPOLL_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
 }];
 const FUTEX_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
     name: "futex.waitset",
-    rights: &["wait", "wake", "cancel"],
+    rights: &["wait", "wake", "requeue", "cancel"],
     lifetime: "store",
 }];
 const PROCFS_CAPABILITIES: &[CapabilitySpec] = &[CapabilitySpec {
@@ -415,9 +415,17 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "response_capacity",
             "register_wait",
             "register_wait_bitset",
+            "register_wait_with_priority",
+            "register_wait_bitset_with_priority",
+            "register_wait_requeue_pi",
+            "peek_waiter",
+            "waiter_count",
             "wake",
             "wake_bitset",
             "requeue",
+            "requeue_pi",
+            "max_priority",
+            "max_priority_excluding",
             "cancel_wait",
         ],
     },

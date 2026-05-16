@@ -22,11 +22,13 @@ struct Waiter {
     wait_id: u64,
     bitset: u32,
     priority: u32,
+    requeue_pi: bool,
     active: bool,
 }
 
 impl Waiter {
-    const EMPTY: Self = Self { key: 0, wait_id: 0, bitset: 0, priority: 0, active: false };
+    const EMPTY: Self =
+        Self { key: 0, wait_id: 0, bitset: 0, priority: 0, requeue_pi: false, active: false };
 }
 
 #[unsafe(no_mangle)]
@@ -71,12 +73,27 @@ pub extern "C" fn register_wait_bitset_with_priority(
     bitset: u32,
     priority: u32,
 ) -> i32 {
+    register_wait_common(key, wait_id, bitset, priority, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn register_wait_requeue_pi(key: u64, wait_id: u64, priority: u32) -> i32 {
+    register_wait_common(key, wait_id, u32::MAX, priority, true)
+}
+
+fn register_wait_common(
+    key: u64,
+    wait_id: u64,
+    bitset: u32,
+    priority: u32,
+    requeue_pi: bool,
+) -> i32 {
     unsafe {
         let base = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         for index in 0..MAX_WAITERS {
             let slot = base.add(index);
             if !(*slot).active {
-                *slot = Waiter { key, wait_id, bitset, priority, active: true };
+                *slot = Waiter { key, wait_id, bitset, priority, requeue_pi, active: true };
                 return 0;
             }
         }
@@ -111,7 +128,7 @@ pub extern "C" fn waiter_count(key: u64) -> i32 {
         let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if (*slot).active && (*slot).key == key {
+            if (*slot).active && (*slot).key == key && !(*slot).requeue_pi {
                 count += 1;
             }
         }
@@ -201,13 +218,41 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn requeue_pi(src_key: u64, count: u32, dst_key: u64) -> i32 {
+    let count = count as usize;
+    let mut requeued = 0usize;
+
+    unsafe {
+        let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
+        let response = addr_of_mut!(RESPONSE) as *mut u8;
+        if RESPONSE_CAPACITY < 8 {
+            return -ERR_EIO;
+        }
+
+        while requeued < count {
+            let Some(index) = select_requeue_pi_waiter_index(waiters, src_key) else {
+                break;
+            };
+            let slot = waiters.add(index);
+            (*slot).key = dst_key;
+            (*slot).requeue_pi = false;
+            requeued += 1;
+        }
+
+        core::ptr::copy_nonoverlapping((requeued as u64).to_le_bytes().as_ptr(), response, 8);
+    }
+
+    8
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn max_priority(key: u64) -> i32 {
     unsafe {
         let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
         let mut best = 0u32;
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != key {
+            if !(*slot).active || (*slot).key != key || (*slot).requeue_pi {
                 continue;
             }
             if (*slot).priority > best {
@@ -225,7 +270,11 @@ pub extern "C" fn max_priority_excluding(key: u64, excluded_wait_id: u64) -> i32
         let mut best = 0u32;
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != key || (*slot).wait_id == excluded_wait_id {
+            if !(*slot).active
+                || (*slot).key != key
+                || (*slot).wait_id == excluded_wait_id
+                || (*slot).requeue_pi
+            {
                 continue;
             }
             if (*slot).priority > best {
@@ -242,10 +291,28 @@ fn select_waiter_index(waiters: *mut Waiter, key: u64, bitset: u32) -> Option<us
     unsafe {
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != key {
+            if !(*slot).active || (*slot).key != key || (*slot).requeue_pi {
                 continue;
             }
             if bitset != u32::MAX && (*slot).bitset & bitset == 0 {
+                continue;
+            }
+            if best_index.is_none() || (*slot).priority > best_priority {
+                best_index = Some(index);
+                best_priority = (*slot).priority;
+            }
+        }
+    }
+    best_index
+}
+
+fn select_requeue_pi_waiter_index(waiters: *mut Waiter, key: u64) -> Option<usize> {
+    let mut best_index = None;
+    let mut best_priority = 0u32;
+    unsafe {
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != key || !(*slot).requeue_pi {
                 continue;
             }
             if best_index.is_none() || (*slot).priority > best_priority {
@@ -395,6 +462,37 @@ mod tests {
             assert!((*waiters.add(2)).active);
             assert_eq!((*waiters.add(2)).key, 22);
         }
+    }
+
+    #[test]
+    fn requeue_pi_waiters_are_not_woken_by_plain_wake() {
+        reset();
+        assert_eq!(register_wait_requeue_pi(11, 7, 5), 0);
+        assert_eq!(wake(11, 1), 0);
+        assert_eq!(waiter_count(11), 0);
+        assert_eq!(requeue_pi(11, 1, 22), 8);
+        assert_eq!(requeue_total(), 1);
+        assert_eq!(waiter_count(22), 1);
+        assert_eq!(wake(22, 1), 8);
+        assert_eq!(response_wait_id(0), 7);
+    }
+
+    #[test]
+    fn requeue_pi_moves_highest_priority_waiters_first() {
+        reset();
+        assert_eq!(register_wait_requeue_pi(11, 7, 1), 0);
+        assert_eq!(register_wait_requeue_pi(11, 8, 9), 0);
+        assert_eq!(register_wait_requeue_pi(11, 9, 4), 0);
+
+        assert_eq!(requeue_pi(11, 2, 22), 8);
+        assert_eq!(requeue_total(), 2);
+        assert_eq!(wake(22, 2), 16);
+        assert_eq!(response_wait_id(0), 8);
+        assert_eq!(response_wait_id(1), 9);
+        assert_eq!(requeue_pi(11, 1, 22), 8);
+        assert_eq!(requeue_total(), 1);
+        assert_eq!(wake(22, 1), 8);
+        assert_eq!(response_wait_id(0), 7);
     }
 
     #[test]

@@ -143,6 +143,8 @@ pub const FUTEX_UNLOCK_PI: u32 = 7;
 pub const FUTEX_TRYLOCK_PI: u32 = 8;
 pub const FUTEX_WAIT_BITSET: u32 = 9;
 pub const FUTEX_WAKE_BITSET: u32 = 10;
+pub const FUTEX_WAIT_REQUEUE_PI: u32 = 11;
+pub const FUTEX_CMP_REQUEUE_PI: u32 = 12;
 pub const FUTEX_PRIVATE_FLAG: u32 = 128;
 pub const FUTEX_CLOCK_REALTIME: u32 = 256;
 pub const FUTEX_CMD_MASK: u32 = !(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
@@ -304,6 +306,7 @@ pub enum PlanKind {
     ClockAdjtime = 59,
     Seccomp = 60,
     Bpf = 61,
+    FutexWaitRequeuePi = 62,
 }
 
 impl PlanKind {
@@ -370,6 +373,7 @@ impl PlanKind {
             59 => Some(Self::ClockAdjtime),
             60 => Some(Self::Seccomp),
             61 => Some(Self::Bpf),
+            62 => Some(Self::FutexWaitRequeuePi),
             _ => None,
         }
     }
