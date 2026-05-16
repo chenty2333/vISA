@@ -283,6 +283,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
             PlanKind::Fsetxattr => self.plan_fsetxattr(plan),
             PlanKind::Fgetxattr => self.plan_fgetxattr(plan),
+            PlanKind::Flistxattr => self.plan_flistxattr(plan),
+            PlanKind::Fremovexattr => self.plan_fremovexattr(plan),
             PlanKind::RenameAt2 => self.plan_renameat2(plan),
             PlanKind::Getrlimit => self.plan_getrlimit(plan),
             PlanKind::Setrlimit => self.plan_setrlimit(plan),

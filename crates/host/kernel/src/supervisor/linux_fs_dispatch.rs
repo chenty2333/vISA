@@ -287,6 +287,43 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_flistxattr(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "flistxattr fd overflowed")?;
+        let list_ptr = u32::try_from(plan.args[1]).map_err(|_| "flistxattr list ptr overflowed")?;
+        let size = usize::try_from(plan.args[2]).map_err(|_| "flistxattr size overflowed")?;
+        match self.flistxattr_fd(fd, size) {
+            Ok(names) => {
+                if size != 0 {
+                    if list_ptr == 0 {
+                        return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+                    }
+                    self.linux.write_bytes(list_ptr, &names)?;
+                }
+                Ok(LinuxCallResult::Ret(names.len() as i64))
+            }
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_fremovexattr(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fremovexattr fd overflowed")?;
+        let name_ptr =
+            u32::try_from(plan.args[1]).map_err(|_| "fremovexattr name ptr overflowed")?;
+        let name_len =
+            u32::try_from(plan.args[2]).map_err(|_| "fremovexattr name len overflowed")?;
+        let name = self.linux.read_bytes(name_ptr, name_len)?;
+        match self.fremovexattr_fd(fd, &name) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
     pub(super) fn plan_renameat2(
         &mut self,
         plan: LinuxPlan,

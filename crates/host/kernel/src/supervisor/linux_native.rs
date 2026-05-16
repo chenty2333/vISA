@@ -5,11 +5,11 @@ use vmos_abi::{
     FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAKE,
     FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOSE,
     SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP,
-    SYS_FCNTL, SYS_FGETXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext,
-    is_stdio_fd,
+    SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -79,6 +79,8 @@ impl LinuxFrontend {
             SYS_READLINKAT => self.plan_readlinkat(a0, a1, a2),
             SYS_FSETXATTR => self.plan_fsetxattr(a0, a1, a2, a3, a4, a5),
             SYS_FGETXATTR => self.plan_fgetxattr(a0, a1, a2, a3, a4),
+            SYS_FLISTXATTR => self.plan_flistxattr(a0, a1, a2),
+            SYS_FREMOVEXATTR => self.plan_fremovexattr(a0, a1, a2),
             SYS_GETRLIMIT => self.plan_getrlimit(a0, a1),
             SYS_SETRLIMIT => self.plan_setrlimit(a0, a1),
             SYS_PRLIMIT64 => self.plan_prlimit64(a0, a1, a2, a3),
@@ -637,6 +639,19 @@ impl LinuxFrontend {
         }
         self.reset_plan(PlanKind::Fgetxattr, [fd, name_ptr, name_len, value_ptr, size, 0]);
         PackedStep::plan(PlanKind::Fgetxattr)
+    }
+
+    fn plan_flistxattr(&mut self, fd: u64, list_ptr: u64, size: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Flistxattr, [fd, list_ptr, size, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Flistxattr)
+    }
+
+    fn plan_fremovexattr(&mut self, fd: u64, name_ptr: u64, name_len: u64) -> PackedStep {
+        if name_len == 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        self.reset_plan(PlanKind::Fremovexattr, [fd, name_ptr, name_len, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Fremovexattr)
     }
 
     fn plan_prlimit64(

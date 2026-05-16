@@ -323,6 +323,8 @@ pub enum PlanKind {
     Bpf = 61,
     FutexWaitRequeuePi = 62,
     FcntlGetlk = 63,
+    Flistxattr = 64,
+    Fremovexattr = 65,
 }
 
 impl PlanKind {
@@ -391,6 +393,8 @@ impl PlanKind {
             61 => Some(Self::Bpf),
             62 => Some(Self::FutexWaitRequeuePi),
             63 => Some(Self::FcntlGetlk),
+            64 => Some(Self::Flistxattr),
+            65 => Some(Self::Fremovexattr),
             _ => None,
         }
     }
