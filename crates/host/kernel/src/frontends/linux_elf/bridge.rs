@@ -336,7 +336,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_TGKILL => sys_tgkill(frame),
         SYS_PAUSE => sys_pause(frame),
         SYS_PSELECT6 => sys_pselect6(frame),
-        SYS_UMASK => Ok(0),
+        SYS_UMASK => sys_umask(frame),
         SYS_TIME => sys_time(frame),
         SYS_UTIMENSAT => Ok(0),
         SYS_MOUNT => sys_mount(frame),
@@ -626,8 +626,13 @@ fn sys_creat(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) -> Result<i64, i32> {
+    const O_CREAT: u32 = 0x40;
+
     let flags = u32::try_from(flags_raw).map_err(|_| ERR_EINVAL)?;
-    let mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
+    let mut mode = u32::try_from(mode_raw).map_err(|_| ERR_EINVAL)?;
+    if flags & O_CREAT != 0 {
+        mode = apply_umask(mode);
+    }
     let path = read_user_c_string(path_ptr, PATH_MAX)?;
     let resolved = resolve_path(dirfd, &path)?;
     // ETXTBSY enforcement not yet implemented (no real fork model)
@@ -649,6 +654,14 @@ fn sys_openat_inner(dirfd: i64, path_ptr: u64, flags_raw: u64, mode_raw: u64) ->
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_umask(frame: &SyscallFrame) -> Result<i64, i32> {
+    Ok(active_context().replace_umask(frame.rdi as u32) as i64)
+}
+
+fn apply_umask(mode: u32) -> u32 {
+    mode & !(active_context().umask() & 0o777)
 }
 
 fn sys_fstat(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -786,16 +799,18 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
+    let mode = apply_umask(frame.rsi as u32);
     let access = effective_access_snapshot();
-    active_context().supervisor.mkdir_path(&resolved, frame.rsi as u32, access.ids())?;
+    active_context().supervisor.mkdir_path(&resolved, mode, access.ids())?;
     Ok(0)
 }
 
 fn sys_mkdirat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let mode = apply_umask(frame.rdx as u32);
     let access = effective_access_snapshot();
-    active_context().supervisor.mkdir_path(&resolved, frame.rdx as u32, access.ids())?;
+    active_context().supervisor.mkdir_path(&resolved, mode, access.ids())?;
     Ok(0)
 }
 
@@ -811,6 +826,7 @@ fn sys_mknodat(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let mode = apply_umask(mode);
     let access = effective_access_snapshot();
     active_context().supervisor.create_fifo_path(&resolved, mode, access.ids())?;
     Ok(0)

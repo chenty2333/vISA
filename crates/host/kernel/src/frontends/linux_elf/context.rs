@@ -130,6 +130,7 @@ pub(crate) struct ActiveUserContext {
     cap_permitted: u64,
     cap_effective: u64,
     cap_ambient: u64,
+    umask: u32,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -165,6 +166,7 @@ pub(crate) struct SuspendedVforkParent {
     cap_permitted: u64,
     cap_effective: u64,
     cap_ambient: u64,
+    umask: u32,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -188,6 +190,7 @@ pub(crate) struct SuspendedCloneParent {
     files_shared: bool,
     fd_snapshot: Option<FdTableSnapshot>,
     credential: CredentialState,
+    umask: u32,
     io_owner: i64,
     io_owner_ex_type: u32,
     io_owner_ex_pid: i32,
@@ -257,6 +260,7 @@ impl ActiveUserContext {
             cap_permitted: LINUX_KNOWN_CAPS,
             cap_effective: LINUX_KNOWN_CAPS,
             cap_ambient: 0,
+            umask: 0o022,
             io_owner: 0,
             io_owner_ex_type: 0,
             io_owner_ex_pid: 0,
@@ -589,6 +593,16 @@ impl ActiveUserContext {
         ((self.euid as u64) << 32) | self.egid as u64
     }
 
+    pub(crate) fn umask(&self) -> u32 {
+        self.umask
+    }
+
+    pub(crate) fn replace_umask(&mut self, mask: u32) -> u32 {
+        let old = self.umask;
+        self.umask = mask & 0o777;
+        old
+    }
+
     pub(crate) fn io_owner(&self) -> i64 {
         self.io_owner
     }
@@ -711,6 +725,7 @@ impl ActiveUserContext {
             cap_permitted: self.cap_permitted,
             cap_effective: self.cap_effective,
             cap_ambient: self.cap_ambient,
+            umask: self.umask,
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
             io_owner_ex_pid: self.io_owner_ex_pid,
@@ -767,6 +782,7 @@ impl ActiveUserContext {
             files_shared,
             fd_snapshot,
             credential: self.credential_state(),
+            umask: self.umask,
             io_owner: self.io_owner,
             io_owner_ex_type: self.io_owner_ex_type,
             io_owner_ex_pid: self.io_owner_ex_pid,
@@ -823,6 +839,7 @@ impl ActiveUserContext {
             cap_permitted,
             cap_effective,
             cap_ambient,
+            umask,
             io_owner,
             io_owner_ex_type,
             io_owner_ex_pid,
@@ -851,6 +868,7 @@ impl ActiveUserContext {
         self.cap_permitted = cap_permitted;
         self.cap_effective = cap_effective;
         self.cap_ambient = cap_ambient;
+        self.umask = umask;
         self.io_owner = io_owner;
         self.io_owner_ex_type = io_owner_ex_type;
         self.io_owner_ex_pid = io_owner_ex_pid;
@@ -887,6 +905,7 @@ impl ActiveUserContext {
             files_shared,
             fd_snapshot,
             credential,
+            umask,
             io_owner,
             io_owner_ex_type,
             io_owner_ex_pid,
@@ -916,6 +935,7 @@ impl ActiveUserContext {
         self.next_activation_id = next_activation_id;
         if !fs_shared {
             self.cwd = cwd;
+            self.umask = umask;
         }
         self.restore_credential_state(credential);
         self.io_owner = io_owner;
