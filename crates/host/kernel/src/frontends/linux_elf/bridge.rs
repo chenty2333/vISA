@@ -24,7 +24,7 @@ use vmos_abi::{
     SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
     SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
     SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
     SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT,
     SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
@@ -262,6 +262,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(frame),
         SYS_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(frame),
+        SYS_RT_SIGSUSPEND => sys_rt_sigsuspend(frame),
         SYS_ALARM => Ok(active_context().replace_alarm(frame.rdi) as i64),
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
@@ -1655,6 +1656,31 @@ fn sys_rt_sigreturn(frame: &mut SyscallFrame) -> Result<i64, i32> {
 fn sys_pause(_frame: &SyscallFrame) -> Result<i64, i32> {
     active_context().supervisor.block_on_signal_wait()?;
     Err(vmos_abi::ERR_EINTR)
+}
+
+fn sys_rt_sigsuspend(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rsi != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    if frame.rdi == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let temporary_sigmask = read_user_u64(frame.rdi)?;
+    let tid = active_context().tid;
+    active_context().supervisor.begin_sigsuspend(tid, temporary_sigmask).ok_or(ERR_EINVAL)?;
+
+    let wait_result = active_context().supervisor.block_on_signal_wait();
+    match wait_result {
+        Err(vmos_abi::ERR_EINTR) => Err(vmos_abi::ERR_EINTR),
+        Ok(()) => {
+            active_context().supervisor.cancel_sigsuspend(tid);
+            Err(vmos_abi::ERR_EINTR)
+        }
+        Err(errno) => {
+            active_context().supervisor.cancel_sigsuspend(tid);
+            Err(errno)
+        }
+    }
 }
 
 fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {

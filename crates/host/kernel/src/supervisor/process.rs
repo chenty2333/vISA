@@ -192,6 +192,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             clear_child_tid: None,
             robust_list: None,
             sigmask: parent_thread.sigmask,
+            sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
         });
@@ -322,6 +323,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             clear_child_tid,
             robust_list: None,
             sigmask: parent_thread.sigmask,
+            sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
         });
@@ -444,6 +446,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             clear_child_tid,
             robust_list: None,
             sigmask: parent_thread.sigmask,
+            sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp,
         });

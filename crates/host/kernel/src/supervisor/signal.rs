@@ -110,7 +110,12 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         // Remove from queue
         if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == tid) {
-            thread.pending_signals.retain(|s| s.signo != signo);
+            if let Some(index) = thread.pending_signals.iter().position(|s| s.signo == signo) {
+                thread.pending_signals.remove(index);
+            }
+            if let Some(restore_mask) = thread.sigsuspend_restore_mask.take() {
+                thread.sigmask = restore_mask;
+            }
         }
 
         // Look up disposition
@@ -169,11 +174,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Option<UserSignalDelivery> {
         let thread_index = self.threads.iter().position(|thread| thread.tid == tid)?;
         let pid = self.threads[thread_index].pid;
-        let old_sigmask = self.threads[thread_index].sigmask;
+        let current_sigmask = self.threads[thread_index].sigmask;
         let pending_index = self.threads[thread_index]
             .pending_signals
             .iter()
-            .position(|signal| old_sigmask & linux_signal_bit(signal.signo) == 0)?;
+            .position(|signal| current_sigmask & linux_signal_bit(signal.signo) == 0)?;
         let signal = self.threads[thread_index].pending_signals[pending_index].clone();
         let action = self
             .processes
@@ -186,6 +191,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let signal = self.threads[thread_index].pending_signals.remove(pending_index);
+        let old_sigmask =
+            self.threads[thread_index].sigsuspend_restore_mask.take().unwrap_or(current_sigmask);
         let mut next_mask =
             old_sigmask | (action.mask & !linux_signal_bit(9) & !linux_signal_bit(19));
         if action.flags & SA_NODEFER == 0 {
@@ -253,6 +260,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Ret(_) => Err(vmos_abi::ERR_EINTR),
             _ => Err(vmos_abi::ERR_EINVAL),
         }
+    }
+
+    pub(crate) fn begin_sigsuspend(&mut self, tid: Tid, set: u64) -> Option<u64> {
+        let thread = self.threads.iter_mut().find(|thread| thread.tid == tid)?;
+        let old = thread.sigmask;
+        thread.sigmask = waitable_signal_set(set);
+        thread.sigsuspend_restore_mask = Some(old);
+        Some(old)
+    }
+
+    pub(crate) fn cancel_sigsuspend(&mut self, tid: Tid) -> Option<u64> {
+        let thread = self.threads.iter_mut().find(|thread| thread.tid == tid)?;
+        let restore_mask = thread.sigsuspend_restore_mask.take()?;
+        thread.sigmask = restore_mask;
+        Some(restore_mask)
     }
 
     pub(crate) fn block_on_signal_set_wait(

@@ -103,6 +103,7 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) clear_child_tid: Option<u64>,
     pub(crate) robust_list: Option<RobustListRegistration>,
     pub(crate) sigmask: u64,
+    pub(crate) sigsuspend_restore_mask: Option<u64>,
     pub(crate) pending_signals: Vec<PendingSignal>,
     pub(crate) seccomp: SeccompMode,
 }

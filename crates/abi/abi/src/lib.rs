@@ -16,6 +16,7 @@ pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_RT_SIGRETURN: u64 = 15;
 pub const SYS_RT_SIGTIMEDWAIT: u64 = 128;
+pub const SYS_RT_SIGSUSPEND: u64 = 130;
 pub const SYS_IOCTL: u64 = 16;
 pub const SYS_WRITEV: u64 = 20;
 pub const SYS_ACCESS: u64 = 21;
