@@ -441,21 +441,23 @@ fn plan_getsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) 
 }
 
 fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
+    const F_GETLK: u64 = 5;
     const F_SETLK: u64 = 6;
     const F_SETLKW: u64 = 7;
 
-    if matches!(cmd, F_SETLK | F_SETLKW) {
+    if matches!(cmd, F_GETLK | F_SETLK | F_SETLKW) {
         let Ok(arg_ptr) = u32::try_from(arg) else {
             return PackedStep::error(-ERR_EINVAL);
         };
         let Ok((lock_type, whence, start, len)) = parse_flock(arg_ptr) else {
             return PackedStep::error(-ERR_EINVAL);
         };
+        let kind = if cmd == F_GETLK { PlanKind::FcntlGetlk } else { PlanKind::FcntlSetlk };
         reset_plan(
-            PlanKind::FcntlSetlk,
+            kind,
             [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
         );
-        return PackedStep::plan(PlanKind::FcntlSetlk);
+        return PackedStep::plan(kind);
     }
 
     reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
@@ -809,6 +811,40 @@ mod tests {
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), F_SETLK);
         assert_eq!(plan_arg(2) as i16, F_WRLCK);
+        assert_eq!(plan_arg(3) as i16, SEEK_SET);
+        assert_eq!(plan_arg(4) as i64, 16);
+        assert_eq!(plan_arg(5) as i64, 8);
+    }
+
+    #[test]
+    fn fcntl_getlk_plan_decodes_flock_from_arg_buffer() {
+        const F_GETLK: u64 = 5;
+        const F_RDLCK: i16 = 0;
+        const SEEK_SET: i16 = 0;
+
+        let mut flock = [0u8; 32];
+        flock[0..2].copy_from_slice(&F_RDLCK.to_le_bytes());
+        flock[2..4].copy_from_slice(&SEEK_SET.to_le_bytes());
+        flock[8..16].copy_from_slice(&16i64.to_le_bytes());
+        flock[16..24].copy_from_slice(&8i64.to_le_bytes());
+
+        let ptr = core::ptr::addr_of!(ARG_BUFFER) as usize as u32;
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                flock.as_ptr(),
+                core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8,
+                flock.len(),
+            );
+        }
+
+        let raw = dispatch(SYS_FCNTL, 4, F_GETLK, ptr as u64, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FcntlGetlk));
+        assert_eq!(plan_arg(0), 4);
+        assert_eq!(plan_arg(1), F_GETLK);
+        assert_eq!(plan_arg(2) as i16, F_RDLCK);
         assert_eq!(plan_arg(3) as i16, SEEK_SET);
         assert_eq!(plan_arg(4) as i64, 16);
         assert_eq!(plan_arg(5) as i64, 8);

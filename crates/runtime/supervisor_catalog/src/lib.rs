@@ -232,6 +232,11 @@ const LINUX_CAPABILITIES: &[CapabilitySpec] = &[
         ],
         lifetime: "task",
     },
+    CapabilitySpec {
+        name: "vfs.file-lock",
+        rights: &["fcntl-setlk", "fcntl-getlk"],
+        lifetime: "task",
+    },
 ];
 const DEVFS_CAPABILITIES: &[CapabilitySpec] =
     &[CapabilitySpec { name: "device.pulse", rights: &["read", "poll"], lifetime: "store" }];

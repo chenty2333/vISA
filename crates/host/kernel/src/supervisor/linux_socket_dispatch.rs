@@ -715,7 +715,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         const F_SETLK: u32 = 6;
         const F_SETLKW: u32 = 7;
 
-        if self.require_capability("linux_syscall", "linux.socket", "fcntl").is_err() {
+        if self.require_capability("linux_syscall", "vfs.file-lock", "fcntl-setlk").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
         let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl setlk fd overflowed")?;
@@ -748,4 +748,60 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
     }
+
+    pub(super) fn plan_fcntl_getlk(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        const F_GETLK: u32 = 5;
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const F_UNLCK: i16 = 2;
+
+        if self.require_capability("linux_syscall", "vfs.file-lock", "fcntl-getlk").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl getlk fd overflowed")?;
+        match self.validate_fd_handle(fd) {
+            Ok(()) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("fcntl getlk fd validation: {}", reason);
+                return Err("fcntl getlk fd validation trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        }
+
+        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl getlk cmd overflowed")?;
+        if cmd != F_GETLK {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        let lock_type = plan.args[2] as i16;
+        let whence = plan.args[3] as i16;
+        let start = plan.args[4] as i64;
+        let len = plan.args[5] as i64;
+        let owner = self.current_pid();
+        match self.fcntl_getlk_fd(fd, owner, lock_type, whence, start, len) {
+            Ok(Some((write, pid, lock_start, lock_len))) => Ok(LinuxCallResult::Bytes(
+                encode_flock(if write { F_WRLCK } else { F_RDLCK }, 0, lock_start, lock_len, pid)
+                    .to_vec(),
+            )),
+            Ok(None) => {
+                Ok(LinuxCallResult::Bytes(encode_flock(F_UNLCK, whence, start, len, 0).to_vec()))
+            }
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+}
+
+fn encode_flock(lock_type: i16, whence: i16, start: i64, len: i64, pid: u32) -> [u8; 32] {
+    let mut encoded = [0u8; 32];
+    encoded[0..2].copy_from_slice(&lock_type.to_le_bytes());
+    encoded[2..4].copy_from_slice(&whence.to_le_bytes());
+    encoded[8..16].copy_from_slice(&start.to_le_bytes());
+    encoded[16..24].copy_from_slice(&len.to_le_bytes());
+    encoded[24..28].copy_from_slice(&(pid as i32).to_le_bytes());
+    encoded
 }

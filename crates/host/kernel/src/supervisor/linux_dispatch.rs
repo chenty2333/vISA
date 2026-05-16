@@ -279,6 +279,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::SetSockOpt => self.plan_setsockopt(plan),
             PlanKind::GetSockOpt => self.plan_getsockopt(plan),
             PlanKind::Fcntl => self.plan_fcntl(plan),
+            PlanKind::FcntlGetlk => self.plan_fcntl_getlk(plan),
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),

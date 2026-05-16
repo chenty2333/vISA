@@ -374,6 +374,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "vfs.file-lock",
             operation: "fcntl-setlk",
         },
+        PlanKind::FcntlGetlk => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "vfs.file-lock",
+            operation: "fcntl-getlk",
+        },
         PlanKind::Mmap | PlanKind::Munmap => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

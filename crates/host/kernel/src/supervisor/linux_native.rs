@@ -485,21 +485,23 @@ impl LinuxFrontend {
     }
 
     fn plan_fcntl(&mut self, fd: u64, cmd: u64, arg: u64) -> PackedStep {
+        const F_GETLK: u64 = 5;
         const F_SETLK: u64 = 6;
         const F_SETLKW: u64 = 7;
 
-        if matches!(cmd, F_SETLK | F_SETLKW) {
+        if matches!(cmd, F_GETLK | F_SETLK | F_SETLKW) {
             let Ok(arg_ptr) = u32::try_from(arg) else {
                 return PackedStep::error(-ERR_EINVAL);
             };
             let Ok((lock_type, whence, start, len)) = self.parse_flock(arg_ptr) else {
                 return PackedStep::error(-ERR_EINVAL);
             };
+            let kind = if cmd == F_GETLK { PlanKind::FcntlGetlk } else { PlanKind::FcntlSetlk };
             self.reset_plan(
-                PlanKind::FcntlSetlk,
+                kind,
                 [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
             );
-            return PackedStep::plan(PlanKind::FcntlSetlk);
+            return PackedStep::plan(kind);
         }
 
         self.reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
