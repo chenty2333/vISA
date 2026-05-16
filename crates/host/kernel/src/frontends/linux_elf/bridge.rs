@@ -48,8 +48,8 @@ use super::{
     },
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, clone_user_page_mappings,
-        cow_break_user_page, demo_program_host_path, load_demo_program, protect_user_page_range,
-        switch_user_page_mappings, unmap_user_page_range,
+        cow_break_user_page, demo_program_host_path, load_demo_program, prepare_user_program,
+        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
     },
 };
 use crate::{
@@ -104,6 +104,8 @@ const PSELECT6_MAX_FDS: usize = 1024;
 const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
+const EXEC_ARG_MAX_BYTES: usize = 131_072;
+const EXEC_ARG_MAX_STRINGS: usize = 4096;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const ROBUST_LIST_HEAD_SIZE: u64 = 24;
@@ -751,12 +753,14 @@ fn sys_faccessat(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
-fn sys_execve(frame: &SyscallFrame) -> Result<i64, i32> {
+fn sys_execve(frame: &mut SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
-    execve_resolved_path(AT_FDCWD, &path, 0)
+    let argv = read_exec_string_array(frame.rsi)?;
+    let envp = read_exec_string_array(frame.rdx)?;
+    execve_resolved_path(frame, AT_FDCWD, &path, 0, argv, envp)
 }
 
-fn sys_execveat(frame: &SyscallFrame) -> Result<i64, i32> {
+fn sys_execveat(frame: &mut SyscallFrame) -> Result<i64, i32> {
     const EXECVEAT_ALLOWED_FLAGS: u64 = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
     let flags = frame.r8;
@@ -764,26 +768,46 @@ fn sys_execveat(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EINVAL);
     }
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let argv = read_exec_string_array(frame.rdx)?;
+    let envp = read_exec_string_array(frame.r10)?;
     if path.is_empty() && flags & AT_EMPTY_PATH == 0 {
         return Err(ERR_ENOENT);
     }
     if path.is_empty() {
         let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
         let resolved = active_context().supervisor.fd_path(fd).map_err(|_| ERR_EBADF)?;
-        return execve_checked_path(&resolved, flags);
+        return execve_checked_path(frame, &resolved, flags, argv, envp);
     }
-    execve_resolved_path(linux_fd_arg(frame.rdi), &path, flags)
+    execve_resolved_path(frame, linux_fd_arg(frame.rdi), &path, flags, argv, envp)
 }
 
-fn execve_resolved_path(dirfd: i64, path: &[u8], flags: u64) -> Result<i64, i32> {
+fn execve_resolved_path(
+    frame: &mut SyscallFrame,
+    dirfd: i64,
+    path: &[u8],
+    flags: u64,
+    argv: Vec<Vec<u8>>,
+    envp: Vec<Vec<u8>>,
+) -> Result<i64, i32> {
     if path_has_too_long_component(path) {
         return Err(ERR_ENAMETOOLONG);
     }
     let resolved = resolve_path(dirfd, path)?;
-    execve_checked_path(&resolved, flags)
+    execve_checked_path(frame, &resolved, flags, argv, envp)
 }
 
-fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
+fn execve_checked_path(
+    frame: &mut SyscallFrame,
+    resolved: &[u8],
+    flags: u64,
+    argv: Vec<Vec<u8>>,
+    envp: Vec<Vec<u8>>,
+) -> Result<i64, i32> {
+    if active_context().has_suspended_vfork_parent()
+        || active_context().has_suspended_clone_parent()
+    {
+        return Err(ERR_ENOSYS);
+    }
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
@@ -800,7 +824,86 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
     if len == 0 {
         return Err(ERR_ENOEXEC);
     }
-    Err(ERR_ENOSYS)
+    let access = effective_access_snapshot();
+    let bytes = active_context().supervisor.read_vfs_file_path(resolved, access.ids())?;
+    execve_replace_image(frame, resolved, bytes, argv, envp)
+}
+
+fn execve_replace_image(
+    frame: &mut SyscallFrame,
+    resolved: &[u8],
+    bytes: Vec<u8>,
+    argv: Vec<Vec<u8>>,
+    envp: Vec<Vec<u8>>,
+) -> Result<i64, i32> {
+    let image = {
+        let context = active_context();
+        prepare_user_program(
+            context.physical_memory_offset(),
+            &mut context.frame_allocator,
+            &bytes,
+            &argv,
+            &envp,
+            resolved,
+        )
+        .map_err(exec_load_errno)?
+    };
+    let entry = image.entry;
+    let stack_top = image.stack_top;
+    let current_mappings = active_context().page_mappings.clone();
+    let next_mappings = image.page_mappings.clone();
+
+    {
+        let context = active_context();
+        switch_user_page_mappings(
+            context.physical_memory_offset(),
+            &current_mappings,
+            &next_mappings,
+            &image.regions,
+            &mut context.frame_allocator,
+            true,
+        )
+        .map_err(|err| {
+            crate::kwarn!("execve page-table switch failed: {}", err);
+            ERR_EFAULT
+        })?;
+        context.replace_user_image(
+            image.regions,
+            image.page_mappings,
+            USER_BRK_BASE,
+            USER_BRK_END,
+            USER_MMAP_ALLOC_BASE,
+            USER_MMAP_END,
+        );
+        context.supervisor.close_cloexec_fds_for_exec();
+        if !context.supervisor.reset_signal_state_for_exec(context.pid, context.tid) {
+            return Err(ERR_ESRCH);
+        }
+    }
+
+    let mut next = ring3::capture_user_return(frame);
+    next.frame.rax = 0;
+    next.frame.rcx = entry;
+    next.rsp = stack_top;
+    next.fs_base = 0;
+    ring3::install_user_return(frame, next);
+    Ok(0)
+}
+
+fn exec_load_errno(err: &'static str) -> i32 {
+    match err {
+        "user ELF was invalid"
+        | "user ELF referenced bytes outside the image"
+        | "user ELF program header table is not mapped"
+        | "user ELF segment file exceeds memory size" => ERR_ENOEXEC,
+        "user ELF interpreter unsupported" => ERR_ENOSYS,
+        "out of usable frames for user image" | "out of usable frames for user stack" => ERR_ENOMEM,
+        "initial stack underflowed"
+        | "initial stack overflowed"
+        | "initial stack exceeded one page"
+        | "initial stack string contains nul" => ERR_E2BIG,
+        _ => ERR_EFAULT,
+    }
 }
 
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -5404,6 +5507,40 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
         cursor = cursor.checked_add(chunk_len).ok_or(ERR_EFAULT)?;
     }
     Err(vmos_abi::ERR_ENAMETOOLONG)
+}
+
+fn read_exec_string_array(ptr: u64) -> Result<Vec<Vec<u8>>, i32> {
+    if ptr == 0 {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut total_bytes = 0usize;
+    for index in 0..EXEC_ARG_MAX_STRINGS {
+        let offset = u64::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_mul(8))
+            .and_then(|offset| ptr.checked_add(offset))
+            .ok_or(ERR_EFAULT)?;
+        let string_ptr = read_user_u64(offset)?;
+        if string_ptr == 0 {
+            return Ok(out);
+        }
+        let remaining = EXEC_ARG_MAX_BYTES.checked_sub(total_bytes).ok_or(ERR_E2BIG)?;
+        if remaining == 0 {
+            return Err(ERR_E2BIG);
+        }
+        let value = read_user_c_string(string_ptr, remaining)
+            .map_err(|errno| if errno == ERR_ENAMETOOLONG { ERR_E2BIG } else { errno })?;
+        total_bytes = total_bytes
+            .checked_add(value.len())
+            .and_then(|len| len.checked_add(1))
+            .ok_or(ERR_E2BIG)?;
+        if total_bytes > EXEC_ARG_MAX_BYTES {
+            return Err(ERR_E2BIG);
+        }
+        out.push(value);
+    }
+    Err(ERR_E2BIG)
 }
 
 fn read_xattr_name(ptr: u64) -> Result<Vec<u8>, i32> {

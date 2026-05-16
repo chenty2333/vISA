@@ -430,6 +430,24 @@ impl ActiveUserContext {
         self.brk_current = requested;
     }
 
+    pub(crate) fn replace_user_image(
+        &mut self,
+        regions: Vec<UserRegion>,
+        page_mappings: Vec<UserPageMapping>,
+        brk_base: u64,
+        brk_end: u64,
+        mmap_base: u64,
+        mmap_end: u64,
+    ) {
+        self.regions = regions;
+        self.page_mappings = page_mappings;
+        self.brk_base = brk_base;
+        self.brk_current = brk_base;
+        self.brk_end = brk_end;
+        self.mmap_cursor = mmap_base;
+        self.mmap_end = mmap_end;
+    }
+
     pub(crate) fn cwd(&self) -> &[u8] {
         &self.cwd
     }

@@ -51,6 +51,13 @@ struct AlignedElf<const N: usize>([u8; N]);
 static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")).len() }> =
     AlignedElf(*include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")));
 
+pub(crate) struct PreparedUserImage {
+    pub(crate) entry: u64,
+    pub(crate) stack_top: u64,
+    pub(crate) regions: Vec<UserRegion>,
+    pub(crate) page_mappings: Vec<UserPageMapping>,
+}
+
 pub(crate) fn demo_program_host_path() -> &'static str {
     env!("VMOS_LINUX_USER_DEMO_ELF")
 }
@@ -557,6 +564,111 @@ pub(crate) fn load_demo_program(
     load_user_program(boot_info, &LINUX_USER_DEMO_ELF.0)
 }
 
+pub(crate) fn prepare_user_program(
+    physical_memory_offset: u64,
+    frame_allocator: &mut UserFrameAllocator,
+    bytes: &[u8],
+    argv: &[Vec<u8>],
+    envp: &[Vec<u8>],
+    execfn: &[u8],
+) -> Result<PreparedUserImage, &'static str> {
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
+    let mut regions = Vec::new();
+    let mut page_mappings = Vec::new();
+
+    let result = prepare_user_program_inner(
+        phys_offset,
+        frame_allocator,
+        bytes,
+        &elf,
+        argv,
+        envp,
+        execfn,
+        &mut regions,
+        &mut page_mappings,
+    );
+    match result {
+        Ok(stack_top) => Ok(PreparedUserImage {
+            entry: elf.header.pt2.entry_point(),
+            stack_top,
+            regions,
+            page_mappings,
+        }),
+        Err(err) => {
+            release_prepared_page_mappings(frame_allocator, &page_mappings);
+            Err(err)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_user_program_inner(
+    phys_offset: VirtAddr,
+    frame_allocator: &mut UserFrameAllocator,
+    bytes: &[u8],
+    elf: &ElfFile<'_>,
+    argv: &[Vec<u8>],
+    envp: &[Vec<u8>],
+    execfn: &[u8],
+    regions: &mut Vec<UserRegion>,
+    page_mappings: &mut Vec<UserPageMapping>,
+) -> Result<u64, &'static str> {
+    for ph in elf.program_iter() {
+        if ph.get_type() == Ok(ProgramType::Interp) {
+            return Err("user ELF interpreter unsupported");
+        }
+    }
+
+    for ph in elf.program_iter() {
+        if ph.get_type() != Ok(ProgramType::Load) {
+            continue;
+        }
+
+        let virt_start = ph.virtual_addr();
+        let virt_end =
+            virt_start.checked_add(ph.mem_size()).ok_or("user ELF segment overflowed")?;
+        let file_start = usize::try_from(ph.offset()).map_err(|_| "user ELF offset overflowed")?;
+        let file_size =
+            usize::try_from(ph.file_size()).map_err(|_| "user ELF file size overflowed")?;
+        if ph.file_size() > ph.mem_size() {
+            return Err("user ELF segment file exceeds memory size");
+        }
+        let file_end = file_start.checked_add(file_size).ok_or("user ELF file range overflowed")?;
+        let segment_bytes =
+            bytes.get(file_start..file_end).ok_or("user ELF referenced bytes outside the image")?;
+
+        prepare_user_pages(
+            frame_allocator,
+            page_mappings,
+            phys_offset,
+            virt_start,
+            virt_end,
+            segment_bytes,
+        )?;
+
+        regions.push(UserRegion {
+            start: virt_start & !(PAGE_SIZE as u64 - 1),
+            end: align_up(virt_end as usize, PAGE_SIZE) as u64,
+            readable: ph.flags().is_read(),
+            writable: ph.flags().is_write(),
+            executable: ph.flags().is_execute(),
+        });
+    }
+
+    let initial_stack = build_exec_stack(elf, argv, envp, execfn)?;
+    prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack)?;
+    regions.push(UserRegion {
+        start: USER_STACK_BASE,
+        end: USER_STACK_TOP,
+        readable: true,
+        writable: true,
+        executable: false,
+    });
+
+    Ok(initial_stack.stack_pointer)
+}
+
 fn load_user_program(
     boot_info: &'static BootInfo,
     bytes: &[u8],
@@ -692,6 +804,46 @@ fn map_user_pages(
     Ok(())
 }
 
+fn prepare_user_pages(
+    frame_allocator: &mut UserFrameAllocator,
+    page_mappings: &mut Vec<UserPageMapping>,
+    phys_offset: VirtAddr,
+    virt_start: u64,
+    virt_end: u64,
+    file_bytes: &[u8],
+) -> Result<(), &'static str> {
+    let page_start = virt_start & !(PAGE_SIZE as u64 - 1);
+    let page_end = align_up(virt_end as usize, PAGE_SIZE) as u64;
+
+    for page_addr in (page_start..page_end).step_by(PAGE_SIZE) {
+        let frame =
+            frame_allocator.allocate_frame().ok_or("out of usable frames for user image")?;
+        page_mappings.push(UserPageMapping {
+            va: page_addr,
+            frame_start: frame.start_address().as_u64(),
+            present: true,
+            owned: true,
+            cow: false,
+        });
+
+        let dest = frame_bytes(frame, phys_offset);
+        dest.fill(0);
+
+        let copy_start = core::cmp::max(page_addr, virt_start);
+        let copy_end =
+            core::cmp::min(page_addr + PAGE_SIZE as u64, virt_start + file_bytes.len() as u64);
+        if copy_start < copy_end {
+            let file_offset = (copy_start - virt_start) as usize;
+            let page_offset = (copy_start - page_addr) as usize;
+            let copy_len = (copy_end - copy_start) as usize;
+            dest[page_offset..page_offset + copy_len]
+                .copy_from_slice(&file_bytes[file_offset..file_offset + copy_len]);
+        }
+    }
+
+    Ok(())
+}
+
 fn map_user_stack(
     mapper: &mut OffsetPageTable<'_>,
     frame_allocator: &mut UserFrameAllocator,
@@ -732,6 +884,43 @@ fn map_user_stack(
     Ok(())
 }
 
+fn prepare_user_stack(
+    frame_allocator: &mut UserFrameAllocator,
+    page_mappings: &mut Vec<UserPageMapping>,
+    phys_offset: VirtAddr,
+    initial_stack: &InitialStack,
+) -> Result<(), &'static str> {
+    for index in 0..USER_STACK_PAGES {
+        let addr = USER_STACK_BASE + (index * PAGE_SIZE) as u64;
+        let frame =
+            frame_allocator.allocate_frame().ok_or("out of usable frames for user stack")?;
+        page_mappings.push(UserPageMapping {
+            va: addr,
+            frame_start: frame.start_address().as_u64(),
+            present: true,
+            owned: true,
+            cow: false,
+        });
+        let dest = frame_bytes(frame, phys_offset);
+        dest.fill(0);
+        if addr == initial_stack.page_base {
+            dest.copy_from_slice(&initial_stack.page_bytes);
+        }
+    }
+
+    Ok(())
+}
+
+fn release_prepared_page_mappings(
+    frame_allocator: &mut UserFrameAllocator,
+    page_mappings: &[UserPageMapping],
+) {
+    for mapping in page_mappings.iter().filter(|mapping| mapping.owned) {
+        frame_allocator
+            .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(mapping.frame_start)));
+    }
+}
+
 struct InitialStack {
     page_base: u64,
     page_bytes: Vec<u8>,
@@ -739,18 +928,49 @@ struct InitialStack {
 }
 
 fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> {
+    let argv = [b"/bin/vmos-ltp".as_slice()];
+    let envp = [
+        b"KCONFIG_SKIP_CHECK=1".as_slice(),
+        b"LTP_DEV=/dev/loop0".as_slice(),
+        b"LTP_SINGLE_FS_TYPE=tmpfs".as_slice(),
+    ];
+    build_initial_stack_slices(elf, &argv, &envp, b"/bin/vmos-ltp")
+}
+
+fn build_exec_stack(
+    elf: &ElfFile<'_>,
+    argv: &[Vec<u8>],
+    envp: &[Vec<u8>],
+    execfn: &[u8],
+) -> Result<InitialStack, &'static str> {
+    let argv_refs: Vec<&[u8]> = argv.iter().map(Vec::as_slice).collect();
+    let envp_refs: Vec<&[u8]> = envp.iter().map(Vec::as_slice).collect();
+    build_initial_stack_slices(elf, &argv_refs, &envp_refs, execfn)
+}
+
+fn build_initial_stack_slices(
+    elf: &ElfFile<'_>,
+    argv: &[&[u8]],
+    envp: &[&[u8]],
+    execfn_bytes: &[u8],
+) -> Result<InitialStack, &'static str> {
     let page_base = USER_STACK_TOP - PAGE_SIZE as u64;
     let mut page_bytes = vec![0; PAGE_SIZE];
     let mut cursor = USER_STACK_TOP;
 
-    let execfn = push_bytes(&mut page_bytes, page_base, &mut cursor, b"/bin/vmos-ltp\0")?;
-    let platform = push_bytes(&mut page_bytes, page_base, &mut cursor, b"x86_64\0")?;
+    let execfn = push_c_string(&mut page_bytes, page_base, &mut cursor, execfn_bytes)?;
+    let platform = push_c_string(&mut page_bytes, page_base, &mut cursor, b"x86_64")?;
     let random = push_bytes(&mut page_bytes, page_base, &mut cursor, b"vmos-ltp-random!")?;
-    let kconfig_skip =
-        push_bytes(&mut page_bytes, page_base, &mut cursor, b"KCONFIG_SKIP_CHECK=1\0")?;
-    let ltp_dev = push_bytes(&mut page_bytes, page_base, &mut cursor, b"LTP_DEV=/dev/loop0\0")?;
-    let ltp_single_fs =
-        push_bytes(&mut page_bytes, page_base, &mut cursor, b"LTP_SINGLE_FS_TYPE=tmpfs\0")?;
+    let mut argv_ptrs = Vec::with_capacity(argv.len());
+    for arg in argv.iter().rev() {
+        argv_ptrs.push(push_c_string(&mut page_bytes, page_base, &mut cursor, arg)?);
+    }
+    argv_ptrs.reverse();
+    let mut envp_ptrs = Vec::with_capacity(envp.len());
+    for env in envp.iter().rev() {
+        envp_ptrs.push(push_c_string(&mut page_bytes, page_base, &mut cursor, env)?);
+    }
+    envp_ptrs.reverse();
     cursor &= !15;
 
     let entry = elf.header.pt2.entry_point();
@@ -774,13 +994,12 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
         (AT_NULL, 0),
     ];
 
-    let mut values = Vec::with_capacity(1 + 2 + 1 + auxv.len() * 2);
-    values.push(1);
-    values.push(execfn);
+    let mut values =
+        Vec::with_capacity(1 + argv_ptrs.len() + 1 + envp_ptrs.len() + 1 + auxv.len() * 2);
+    values.push(argv_ptrs.len() as u64);
+    values.extend(argv_ptrs);
     values.push(0);
-    values.push(kconfig_skip);
-    values.push(ltp_dev);
-    values.push(ltp_single_fs);
+    values.extend(envp_ptrs);
     values.push(0);
     for (kind, value) in auxv {
         values.push(kind);
@@ -824,6 +1043,22 @@ fn push_bytes(
     let dest = page.get_mut(offset..end).ok_or("initial stack exceeded one page")?;
     dest.copy_from_slice(bytes);
     Ok(*cursor)
+}
+
+fn push_c_string(
+    page: &mut [u8],
+    page_base: u64,
+    cursor: &mut u64,
+    bytes: &[u8],
+) -> Result<u64, &'static str> {
+    if bytes.contains(&0) {
+        return Err("initial stack string contains nul");
+    }
+    let start = cursor.checked_sub(1).ok_or("initial stack underflowed")?;
+    *cursor = start;
+    let offset = cursor.checked_sub(page_base).ok_or("initial stack exceeded one page")? as usize;
+    *page.get_mut(offset).ok_or("initial stack exceeded one page")? = 0;
+    push_bytes(page, page_base, cursor, bytes)
 }
 
 fn write_u64_values(

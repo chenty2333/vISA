@@ -750,6 +750,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(crate) fn close_cloexec_fds_for_exec(&mut self) {
+        let fds: Vec<u32> = self
+            .fd_table
+            .iter()
+            .enumerate()
+            .filter_map(|(fd, entry)| {
+                (fd >= 3 && entry.as_ref().is_some_and(|entry| entry.fd_flags & 1 != 0))
+                    .then_some(fd as u32)
+            })
+            .collect();
+        for fd in fds {
+            if let Err(errno) = self.close_fd_slot(fd, false) {
+                crate::kwarn!("exec close-on-exec fd {} failed errno={}", fd, errno);
+            }
+        }
+    }
+
     fn capture_fd_table_snapshot(&self) -> FdTableSnapshot {
         FdTableSnapshot { fd_table: self.fd_table.clone(), fd_handles: self.fd_handles.clone() }
     }
@@ -1922,6 +1939,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let len = self.len_for_service_node(info.route, path);
         Ok((info.node, mode, len))
+    }
+
+    pub(crate) fn read_vfs_file_path(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<Vec<u8>, i32> {
+        self.check_path_access(path, MAY_EXEC, access)?;
+        self.vfs.read_file(path, false).map_err(errno_from_service_error)
     }
 
     fn path_owner(&mut self, path: &[u8]) -> Result<(u32, u32), i32> {

@@ -399,4 +399,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         let stack = self.signal_alt_stack(tid)?;
         if stack.is_disabled() || stack.contains(current_rsp) { None } else { Some(stack) }
     }
+
+    pub(crate) fn reset_signal_state_for_exec(&mut self, pid: Pid, tid: Tid) -> bool {
+        let Some(process) = self.processes.iter_mut().find(|process| process.pid == pid) else {
+            return false;
+        };
+        for action in &mut process.sigactions {
+            if action.handler != 1 {
+                *action = SigAction::default();
+            }
+        }
+
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
+            return false;
+        };
+        thread.sigaltstack = SignalAltStack::default();
+        thread.sigsuspend_restore_mask = None;
+        thread.robust_list = None;
+        true
+    }
 }
