@@ -1773,22 +1773,17 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EINVAL);
     }
 
-    let old_sigmask = read_u64_from(&bytes, 16)?;
-    let saved_rsp = read_u64_from(&bytes, 24)?;
     let saved_fs_base = read_u64_from(&bytes, 32)?;
-    let saved_frame = SyscallFrame {
-        r9: read_u64_from(&bytes, 40)?,
-        r8: read_u64_from(&bytes, 48)?,
-        r10: read_u64_from(&bytes, 56)?,
-        rdx: read_u64_from(&bytes, 64)?,
-        rsi: read_u64_from(&bytes, 72)?,
-        rdi: read_u64_from(&bytes, 80)?,
-        rax: read_u64_from(&bytes, 88)?,
-        rcx: read_u64_from(&bytes, 96)?,
-        r11: read_u64_from(&bytes, 104)?,
-    };
+    let ucontext_sp = current
+        .rsp
+        .checked_add(VMOS_SIGNAL_FRAME_SIZE as u64)
+        .and_then(|addr| addr.checked_add(LINUX_SIGINFO_SIZE as u64))
+        .ok_or(ERR_EFAULT)?;
+    let ucontext = read_user_bytes(ucontext_sp, LINUX_UCONTEXT_MIN_SIZE)?;
+    let restored = decode_linux_ucontext_return(&ucontext, saved_fs_base)?;
+    let restored_sigmask = read_u64_from(&ucontext, LINUX_UCONTEXT_SIGMASK_OFFSET)?;
     let tid = active_context().tid;
-    let _ = active_context().supervisor.set_sigmask(tid, 2, old_sigmask);
+    let _ = active_context().supervisor.set_sigmask(tid, 2, restored_sigmask);
     if read_u64_from(&bytes, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET)? != 0 {
         let stack = SignalAltStack {
             sp: read_u64_from(&bytes, 112)?,
@@ -1797,11 +1792,8 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<i64, i32> {
         };
         let _ = active_context().supervisor.set_signal_alt_stack(tid, stack);
     }
-    ring3::install_user_return(
-        frame,
-        UserReturnContext { frame: saved_frame, rsp: saved_rsp, fs_base: saved_fs_base },
-    );
-    Ok(saved_frame.rax as i64)
+    ring3::install_user_return(frame, restored);
+    Ok(restored.frame.rax as i64)
 }
 
 fn deliver_pending_signal_to_user(frame: &mut SyscallFrame, syscall_nr: u64) {
@@ -2016,8 +2008,41 @@ fn encode_linux_ucontext(
     out
 }
 
+fn decode_linux_ucontext_return(
+    bytes: &[u8],
+    saved_fs_base: u64,
+) -> Result<UserReturnContext, i32> {
+    let rip = read_linux_greg(bytes, LINUX_GREG_RIP)?;
+    let rsp = read_linux_greg(bytes, LINUX_GREG_RSP)?;
+    validate_lower_user_address_range(rip, 1)?;
+    validate_lower_user_address_range(rsp, 1)?;
+    Ok(UserReturnContext {
+        frame: SyscallFrame {
+            r9: read_linux_greg(bytes, LINUX_GREG_R9)?,
+            r8: read_linux_greg(bytes, LINUX_GREG_R8)?,
+            r10: read_linux_greg(bytes, LINUX_GREG_R10)?,
+            rdx: read_linux_greg(bytes, LINUX_GREG_RDX)?,
+            rsi: read_linux_greg(bytes, LINUX_GREG_RSI)?,
+            rdi: read_linux_greg(bytes, LINUX_GREG_RDI)?,
+            rax: read_linux_greg(bytes, LINUX_GREG_RAX)?,
+            rcx: rip,
+            r11: sanitize_restored_rflags(read_linux_greg(bytes, LINUX_GREG_EFL)?),
+        },
+        rsp,
+        fs_base: saved_fs_base,
+    })
+}
+
 fn write_linux_greg(out: &mut [u8], index: usize, value: u64) {
     write_u64(out, LINUX_UCONTEXT_MCONTEXT_OFFSET + index * 8, value);
+}
+
+fn read_linux_greg(bytes: &[u8], index: usize) -> Result<u64, i32> {
+    read_u64_from(bytes, LINUX_UCONTEXT_MCONTEXT_OFFSET + index * 8)
+}
+
+fn sanitize_restored_rflags(flags: u64) -> u64 {
+    flags | 0x202
 }
 
 fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
