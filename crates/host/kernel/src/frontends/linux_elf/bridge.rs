@@ -1404,6 +1404,8 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const PR_GET_NO_NEW_PRIVS: u64 = 39;
     const PR_GET_SECCOMP: u64 = 21;
     const PR_SET_SECCOMP: u64 = 22;
+    const PR_CAPBSET_READ: u64 = 23;
+    const PR_CAPBSET_DROP: u64 = 24;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
     const PR_CAP_AMBIENT: u64 = 47;
@@ -1442,11 +1444,45 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
             }
             install_seccomp_mode(frame.rsi, frame.rdx)
         }
+        PR_CAPBSET_READ => sys_prctl_capbset_read(frame.rsi, frame.rdx, frame.r10, frame.r8),
+        PR_CAPBSET_DROP => sys_prctl_capbset_drop(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_SET_TIMERSLACK => Ok(0),
         PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
         PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_prctl_capbset_read(cap: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if arg3 != 0 || arg4 != 0 || arg5 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let capability = capability_bit_from_prctl_arg(cap)?;
+    Ok(active_context().cap_bounding_is_set(capability) as i64)
+}
+
+fn sys_prctl_capbset_drop(cap: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if arg3 != 0 || arg4 != 0 || arg5 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let capability = capability_bit_from_prctl_arg(cap)?;
+    let before = active_context().credential_state();
+    if !active_context().drop_bounding_capability(capability) {
+        return Err(ERR_EPERM);
+    }
+    if before.cap_bounding != active_context().credential_state().cap_bounding {
+        if let Err(errno) = record_credential_transition(CredentialTransitionKind::CapSet {
+            bounding: true,
+            inheritable: false,
+            permitted: false,
+            effective: false,
+            ambient: false,
+        }) {
+            restore_credential_state(before);
+            return Err(errno);
+        }
+    }
+    Ok(0)
 }
 
 fn sys_prctl_cap_ambient(op: u64, cap: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {

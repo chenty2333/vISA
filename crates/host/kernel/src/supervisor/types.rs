@@ -72,6 +72,7 @@ pub(crate) const CAP_DAC_READ_SEARCH: u64 = 1 << 2;
 pub(crate) const CAP_FOWNER: u64 = 1 << 3;
 pub(crate) const CAP_SETGID: u64 = 1 << 6;
 pub(crate) const CAP_SETUID: u64 = 1 << 7;
+pub(crate) const CAP_SETPCAP: u64 = 1 << 8;
 pub(crate) const CAP_SYS_ADMIN: u64 = 1 << 21;
 pub(crate) const CAP_SYS_RESOURCE: u64 = 1 << 24;
 pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
@@ -80,6 +81,7 @@ pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_FOWNER
     | CAP_SETGID
     | CAP_SETUID
+    | CAP_SETPCAP
     | CAP_SYS_ADMIN
     | CAP_SYS_RESOURCE;
 

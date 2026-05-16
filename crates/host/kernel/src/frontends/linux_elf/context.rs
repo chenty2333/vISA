@@ -12,7 +12,8 @@ use crate::{
     supervisor::{
         PrototypeRuntime, TaskId,
         types::{
-            CAP_SETGID, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS, RuntimeClockAdjustmentState,
+            CAP_SETGID, CAP_SETPCAP, CAP_SETUID, FdTableSnapshot, LINUX_KNOWN_CAPS,
+            RuntimeClockAdjustmentState,
         },
     },
 };
@@ -457,6 +458,10 @@ impl ActiveUserContext {
         self.cap_ambient
     }
 
+    pub(crate) fn cap_bounding_is_set(&self, capability: u64) -> bool {
+        self.cap_bounding & capability != 0
+    }
+
     pub(crate) fn cap_ambient_is_set(&self, capability: u64) -> bool {
         self.cap_ambient & capability != 0
     }
@@ -604,8 +609,9 @@ impl ActiveUserContext {
         let effective = effective & LINUX_KNOWN_CAPS;
         let inheritable = inheritable & LINUX_KNOWN_CAPS;
         let ambient = ambient & LINUX_KNOWN_CAPS;
-        if permitted & !self.cap_bounding != 0
-            || permitted & !self.cap_permitted != 0
+        let newly_inheritable = inheritable & !self.cap_inheritable;
+        if permitted & !self.cap_permitted != 0
+            || newly_inheritable & !self.cap_bounding != 0
             || effective & !permitted != 0
             || ambient & !permitted != 0
             || ambient & !inheritable != 0
@@ -643,6 +649,14 @@ impl ActiveUserContext {
 
     pub(crate) fn clear_ambient_capabilities(&mut self) {
         self.cap_ambient = 0;
+    }
+
+    pub(crate) fn drop_bounding_capability(&mut self, capability: u64) -> bool {
+        if !self.has_effective_capability(CAP_SETPCAP) {
+            return false;
+        }
+        self.cap_bounding &= !capability;
+        true
     }
 
     fn fixup_capabilities_after_uid_change(&mut self, old_uid: u32, old_euid: u32, old_suid: u32) {
