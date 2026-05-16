@@ -282,6 +282,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::FcntlGetlk => self.plan_fcntl_getlk(plan),
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
             PlanKind::RenameAt2 => self.plan_renameat2(plan),
+            PlanKind::Getrlimit => self.plan_getrlimit(plan),
+            PlanKind::Setrlimit => self.plan_setrlimit(plan),
             PlanKind::Prlimit64 => self.plan_prlimit64(plan),
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
@@ -305,8 +307,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::FutexLockPi
             | PlanKind::FutexUnlockPi
             | PlanKind::SetRobustList
-            | PlanKind::Getrlimit
-            | PlanKind::Setrlimit
             | PlanKind::TimerfdCreate
             | PlanKind::TimerfdSettime
             | PlanKind::TimerfdGettime

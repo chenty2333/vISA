@@ -12,10 +12,10 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
     SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETSOCKOPT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
+    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -89,6 +89,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETDENTS64 => plan_getdents(a0, a2),
         SYS_OPENAT => plan_openat(a0, a1, a2, a3, a4),
         SYS_READLINKAT => plan_readlinkat(a0, a1, a2),
+        SYS_GETRLIMIT => plan_getrlimit(a0, a1),
+        SYS_SETRLIMIT => plan_setrlimit(a0, a1),
         SYS_PRLIMIT64 => plan_prlimit64(a0, a1, a2, a3),
         SYS_RENAME => plan_renameat2(
             AT_FDCWD_ENCODED,
@@ -547,6 +549,16 @@ fn plan_prlimit64(pid: u64, resource: u64, new_limit_ptr: u64, old_limit_ptr: u6
     PackedStep::plan(PlanKind::Prlimit64)
 }
 
+fn plan_getrlimit(resource: u64, old_limit_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::Getrlimit, [resource, old_limit_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Getrlimit)
+}
+
+fn plan_setrlimit(resource: u64, new_limit_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::Setrlimit, [resource, new_limit_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Setrlimit)
+}
+
 fn plan_renameat2(
     old_dirfd: u64,
     old_ptr: u64,
@@ -1003,6 +1015,27 @@ mod tests {
         assert_eq!(plan_arg(3), 0x1010);
         assert_eq!(plan_arg(4), 0);
         assert_eq!(plan_arg(5), 0);
+    }
+
+    #[test]
+    fn legacy_rlimit_syscalls_plan_distinct_operations() {
+        let raw = dispatch(SYS_GETRLIMIT, 7, 0x2000, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Getrlimit));
+        assert_eq!(plan_arg(0), 7);
+        assert_eq!(plan_arg(1), 0x2000);
+        assert_eq!(plan_arg(2), 0);
+
+        let raw = dispatch(SYS_SETRLIMIT, 9, 0x2010, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Setrlimit));
+        assert_eq!(plan_arg(0), 9);
+        assert_eq!(plan_arg(1), 0x2010);
+        assert_eq!(plan_arg(2), 0);
     }
 }
 

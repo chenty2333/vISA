@@ -24,18 +24,18 @@ use vmos_abi::{
     SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR,
     SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
-    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
-    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
-    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
-    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
-    SyscallContext,
+    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID,
+    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
+    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
+    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
+    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -315,6 +315,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SET_ROBUST_LIST => sys_set_robust_list(frame),
         SYS_GET_ROBUST_LIST => sys_get_robust_list(frame),
         SYS_RSEQ => Ok(0),
+        SYS_GETRLIMIT => sys_getrlimit(frame),
+        SYS_SETRLIMIT => sys_setrlimit(frame),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
         SYS_PRCTL => sys_prctl(frame),
         SYS_SECCOMP => sys_seccomp(frame),
@@ -1285,23 +1287,40 @@ fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(0)
 }
 
+fn sys_getrlimit(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_rlimit(active_context().pid, frame.rdi, 0, frame.rsi)
+}
+
+fn sys_setrlimit(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_rlimit(active_context().pid, frame.rdi, frame.rsi, 0)
+}
+
 fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
     let pid = if frame.rdi == 0 {
         active_context().pid
     } else {
         u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?
     };
+    sys_rlimit(pid, frame.rsi, frame.rdx, frame.r10)
+}
+
+fn sys_rlimit(
+    pid: u32,
+    resource_raw: u64,
+    new_limit_ptr: u64,
+    old_limit_ptr: u64,
+) -> Result<i64, i32> {
     if active_context().supervisor.query_process(pid).is_none() {
         return Err(ERR_ESRCH);
     }
-    let resource = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let resource = usize::try_from(resource_raw).map_err(|_| ERR_EINVAL)?;
     if resource >= 16 {
         return Err(ERR_EINVAL);
     }
 
     let old_limit = active_context().supervisor.get_rlimit(pid, resource);
-    let new_limit = if frame.rdx != 0 {
-        let bytes = read_user_bytes(frame.rdx, 16)?;
+    let new_limit = if new_limit_ptr != 0 {
+        let bytes = read_user_bytes(new_limit_ptr, 16)?;
         let new_limit = Rlimit {
             cur: u64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?),
             max: u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?),
@@ -1318,11 +1337,11 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         None
     };
-    if frame.r10 != 0 {
+    if old_limit_ptr != 0 {
         let mut encoded = [0u8; 16];
         encoded[..8].copy_from_slice(&old_limit.cur.to_le_bytes());
         encoded[8..].copy_from_slice(&old_limit.max.to_le_bytes());
-        write_user_bytes(frame.r10, &encoded)?;
+        write_user_bytes(old_limit_ptr, &encoded)?;
     }
     if let Some(new_limit) = new_limit {
         if !active_context().supervisor.set_rlimit(pid, resource, new_limit) {

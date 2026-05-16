@@ -18,23 +18,64 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(pid) => pid,
             Err(errno) => return Ok(errno_ret(errno)),
         };
+        self.apply_rlimit_plan(pid, plan.args[1], plan.args[2], plan.args[3])
+    }
+
+    pub(super) fn plan_getrlimit(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let resource = plan.args[0];
+        let old_ptr = plan.args[1];
+        self.apply_rlimit_plan(self.current_pid(), resource, 0, old_ptr)
+    }
+
+    pub(super) fn plan_setrlimit(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let resource = plan.args[0];
+        let new_ptr = plan.args[1];
+        if new_ptr == 0 {
+            return Ok(errno_ret(ERR_EINVAL));
+        }
+        self.apply_rlimit_plan(self.current_pid(), resource, new_ptr, 0)
+    }
+
+    fn apply_rlimit_plan(
+        &mut self,
+        pid: Pid,
+        resource_raw: u64,
+        new_ptr_raw: u64,
+        old_ptr_raw: u64,
+    ) -> Result<LinuxCallResult, &'static str> {
         if self.query_process(pid).is_none() {
             return Ok(errno_ret(ERR_ESRCH));
         }
 
-        let resource = match usize::try_from(plan.args[1]) {
+        let resource = match usize::try_from(resource_raw) {
             Ok(resource) if resource < RLIMIT_COUNT => resource,
             _ => return Ok(errno_ret(ERR_EINVAL)),
         };
-        let new_ptr = match u32::try_from(plan.args[2]) {
+        let new_ptr = match u32::try_from(new_ptr_raw) {
             Ok(ptr) => ptr,
             Err(_) => return Ok(errno_ret(ERR_EINVAL)),
         };
-        let old_ptr = match u32::try_from(plan.args[3]) {
+        let old_ptr = match u32::try_from(old_ptr_raw) {
             Ok(ptr) => ptr,
             Err(_) => return Ok(errno_ret(ERR_EINVAL)),
         };
 
+        self.apply_rlimit_ptrs(pid, resource, new_ptr, old_ptr)
+    }
+
+    fn apply_rlimit_ptrs(
+        &mut self,
+        pid: Pid,
+        resource: usize,
+        new_ptr: u32,
+        old_ptr: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         let old_limit = self.get_rlimit(pid, resource);
         let new_limit = if new_ptr != 0 {
             let bytes = match self.linux.read_bytes(new_ptr, RLIMIT64_SIZE as u32) {
