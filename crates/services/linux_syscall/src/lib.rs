@@ -441,6 +441,23 @@ fn plan_getsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) 
 }
 
 fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
+    const F_SETLK: u64 = 6;
+    const F_SETLKW: u64 = 7;
+
+    if matches!(cmd, F_SETLK | F_SETLKW) {
+        let Ok(arg_ptr) = u32::try_from(arg) else {
+            return PackedStep::error(-ERR_EINVAL);
+        };
+        let Ok((lock_type, whence, start, len)) = parse_flock(arg_ptr) else {
+            return PackedStep::error(-ERR_EINVAL);
+        };
+        reset_plan(
+            PlanKind::FcntlSetlk,
+            [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
+        );
+        return PackedStep::plan(PlanKind::FcntlSetlk);
+    }
+
     reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
     PackedStep::plan(PlanKind::Fcntl)
 }
@@ -595,14 +612,27 @@ fn parse_timespec_ms(ptr: u32, len: u32) -> Result<u64, i32> {
     Ok((tv_sec as u64).saturating_mul(1000).saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
 }
 
+fn parse_flock(ptr: u32) -> Result<(i16, i16, i64, i64), i32> {
+    const FLOCK_SIZE: u32 = 32;
+
+    let bytes = arg_bytes(ptr, FLOCK_SIZE)?;
+    let lock_type = i16::from_le_bytes(bytes[0..2].try_into().map_err(|_| -ERR_EINVAL)?);
+    let whence = i16::from_le_bytes(bytes[2..4].try_into().map_err(|_| -ERR_EINVAL)?);
+    let start = i64::from_le_bytes(bytes[8..16].try_into().map_err(|_| -ERR_EINVAL)?);
+    let len = i64::from_le_bytes(bytes[16..24].try_into().map_err(|_| -ERR_EINVAL)?);
+    Ok((lock_type, whence, start, len))
+}
+
 fn arg_bytes(ptr: u32, len: u32) -> Result<&'static [u8], i32> {
-    let base = core::ptr::addr_of!(ARG_BUFFER) as usize as u32;
-    let end = ptr.checked_add(len).ok_or(-ERR_EINVAL)?;
-    if ptr < base || end > base + ARG_BUFFER_CAPACITY as u32 {
+    let base_ptr = core::ptr::addr_of!(ARG_BUFFER) as *const u8;
+    let base = base_ptr as usize as u32;
+    let offset = ptr.checked_sub(base).ok_or(-ERR_EINVAL)?;
+    let end = offset.checked_add(len).ok_or(-ERR_EINVAL)?;
+    if end > ARG_BUFFER_CAPACITY as u32 {
         return Err(-ERR_EINVAL);
     }
 
-    Ok(unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) })
+    Ok(unsafe { slice::from_raw_parts(base_ptr.add(offset as usize), len as usize) })
 }
 
 fn write_result_bytes(bytes: &[u8]) -> i32 {
@@ -748,6 +778,40 @@ mod tests {
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), u64::MAX);
         assert_ne!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn fcntl_setlk_plan_decodes_flock_from_arg_buffer() {
+        const F_SETLK: u64 = 6;
+        const F_WRLCK: i16 = 1;
+        const SEEK_SET: i16 = 0;
+
+        let mut flock = [0u8; 32];
+        flock[0..2].copy_from_slice(&F_WRLCK.to_le_bytes());
+        flock[2..4].copy_from_slice(&SEEK_SET.to_le_bytes());
+        flock[8..16].copy_from_slice(&16i64.to_le_bytes());
+        flock[16..24].copy_from_slice(&8i64.to_le_bytes());
+
+        let ptr = core::ptr::addr_of!(ARG_BUFFER) as usize as u32;
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                flock.as_ptr(),
+                core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8,
+                flock.len(),
+            );
+        }
+
+        let raw = dispatch(SYS_FCNTL, 4, F_SETLK, ptr as u64, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FcntlSetlk));
+        assert_eq!(plan_arg(0), 4);
+        assert_eq!(plan_arg(1), F_SETLK);
+        assert_eq!(plan_arg(2) as i16, F_WRLCK);
+        assert_eq!(plan_arg(3) as i16, SEEK_SET);
+        assert_eq!(plan_arg(4) as i64, 16);
+        assert_eq!(plan_arg(5) as i64, 8);
     }
 }
 

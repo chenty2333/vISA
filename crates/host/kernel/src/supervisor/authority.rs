@@ -368,6 +368,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "linux.socket",
             operation: "fcntl",
         },
+        PlanKind::FcntlSetlk => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "linux_syscall",
+            object: "vfs.file-lock",
+            operation: "fcntl-setlk",
+        },
         PlanKind::Mmap | PlanKind::Munmap => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

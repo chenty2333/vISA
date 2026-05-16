@@ -485,6 +485,23 @@ impl LinuxFrontend {
     }
 
     fn plan_fcntl(&mut self, fd: u64, cmd: u64, arg: u64) -> PackedStep {
+        const F_SETLK: u64 = 6;
+        const F_SETLKW: u64 = 7;
+
+        if matches!(cmd, F_SETLK | F_SETLKW) {
+            let Ok(arg_ptr) = u32::try_from(arg) else {
+                return PackedStep::error(-ERR_EINVAL);
+            };
+            let Ok((lock_type, whence, start, len)) = self.parse_flock(arg_ptr) else {
+                return PackedStep::error(-ERR_EINVAL);
+            };
+            self.reset_plan(
+                PlanKind::FcntlSetlk,
+                [fd, cmd, lock_type as i64 as u64, whence as i64 as u64, start as u64, len as u64],
+            );
+            return PackedStep::plan(PlanKind::FcntlSetlk);
+        }
+
         self.reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
         PackedStep::plan(PlanKind::Fcntl)
     }
@@ -626,6 +643,24 @@ impl LinuxFrontend {
         Ok((tv_sec as u64)
             .saturating_mul(1000)
             .saturating_add((tv_nsec as u64).div_ceil(1_000_000)))
+    }
+
+    fn parse_flock(&mut self, ptr: u32) -> Result<(i16, i16, i64, i64), i32> {
+        let bytes = self.read_bytes(ptr, 32).map_err(|_| -ERR_EINVAL)?;
+        let mut lock_type = [0u8; 2];
+        let mut whence = [0u8; 2];
+        let mut start = [0u8; 8];
+        let mut len = [0u8; 8];
+        lock_type.copy_from_slice(&bytes[0..2]);
+        whence.copy_from_slice(&bytes[2..4]);
+        start.copy_from_slice(&bytes[8..16]);
+        len.copy_from_slice(&bytes[16..24]);
+        Ok((
+            i16::from_le_bytes(lock_type),
+            i16::from_le_bytes(whence),
+            i64::from_le_bytes(start),
+            i64::from_le_bytes(len),
+        ))
     }
 }
 

@@ -707,4 +707,45 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
     }
+
+    pub(super) fn plan_fcntl_setlk(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        const F_SETLK: u32 = 6;
+        const F_SETLKW: u32 = 7;
+
+        if self.require_capability("linux_syscall", "linux.socket", "fcntl").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl setlk fd overflowed")?;
+        match self.validate_fd_handle(fd) {
+            Ok(()) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("fcntl setlk fd validation: {}", reason);
+                return Err("fcntl setlk fd validation trapped");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        }
+
+        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl setlk cmd overflowed")?;
+        let lock_type = plan.args[2] as i16;
+        let whence = plan.args[3] as i16;
+        let start = plan.args[4] as i64;
+        let len = plan.args[5] as i64;
+        let owner = self.current_pid();
+        let ret = match cmd {
+            F_SETLK => self.fcntl_setlk_fd(fd, owner, lock_type, whence, start, len),
+            F_SETLKW => self.fcntl_setlkw_fd(fd, owner, lock_type, whence, start, len),
+            _ => Err(ERR_EINVAL),
+        };
+
+        match ret {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
 }
