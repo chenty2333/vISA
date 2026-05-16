@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ELOOP,
-    ERR_ENOENT, ERR_ENOTDIR, ERR_ENOTEMPTY, ERR_EPERM, NodeKind, PackedStep, ServiceRoute,
+    ERR_ENODATA, ERR_ENOENT, ERR_ENOTDIR, ERR_ENOTEMPTY, ERR_EPERM, ERR_ERANGE, NodeKind,
+    PackedStep, ServiceRoute,
 };
 
 use super::super::{
@@ -87,6 +88,8 @@ const WASM_APP_MESSAGE: &[u8] = b"wasm frontend: hello from wasm_app\n";
 const RENAME_NOREPLACE: u32 = 1;
 const RENAME_EXCHANGE: u32 = 2;
 const RENAME_SUPPORTED_FLAGS: u32 = RENAME_NOREPLACE | RENAME_EXCHANGE;
+const XATTR_NAME_MAX: usize = 255;
+const XATTR_VALUE_MAX: usize = 65_536;
 
 pub(crate) struct ConsoleService;
 
@@ -124,6 +127,12 @@ struct VfsNode {
     gid: u32,
     len: usize,
     chunks: Vec<VfsChunk>,
+    xattrs: Vec<VfsXattr>,
+}
+
+struct VfsXattr {
+    name: Vec<u8>,
+    value: Vec<u8>,
 }
 
 pub(crate) struct LinuxUserResourceFile {
@@ -322,6 +331,7 @@ impl VfsService {
             gid,
             len: 0,
             chunks: Vec::new(),
+            xattrs: Vec::new(),
         });
         Ok(())
     }
@@ -349,6 +359,7 @@ impl VfsService {
             gid,
             len: 0,
             chunks: Vec::new(),
+            xattrs: Vec::new(),
         });
         Ok(())
     }
@@ -605,6 +616,94 @@ impl VfsService {
         self.dynamic_node(&normalized).map(|node| node.id)
     }
 
+    pub(crate) fn fsetxattr(
+        &mut self,
+        path: &[u8],
+        name: &[u8],
+        value: &[u8],
+        flags: u32,
+    ) -> Result<(), ServiceCallError> {
+        const XATTR_CREATE: u32 = 1;
+        const XATTR_REPLACE: u32 = 2;
+
+        validate_xattr_name(name)?;
+        if value.len() > XATTR_VALUE_MAX {
+            return errno(vmos_abi::ERR_E2BIG);
+        }
+        if flags & !(XATTR_CREATE | XATTR_REPLACE) != 0
+            || flags & (XATTR_CREATE | XATTR_REPLACE) == XATTR_CREATE | XATTR_REPLACE
+        {
+            return errno(ERR_EINVAL);
+        }
+
+        let node =
+            self.dynamic_node_mut(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let existing = node.xattrs.iter().position(|xattr| xattr.name == name);
+        if flags & XATTR_CREATE != 0 && existing.is_some() {
+            return errno(ERR_EEXIST);
+        }
+        if flags & XATTR_REPLACE != 0 && existing.is_none() {
+            return errno(ERR_ENODATA);
+        }
+        match existing {
+            Some(index) => node.xattrs[index].value = value.to_vec(),
+            None => node.xattrs.push(VfsXattr { name: name.to_vec(), value: value.to_vec() }),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fgetxattr(
+        &self,
+        path: &[u8],
+        name: &[u8],
+        size: usize,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        validate_xattr_name(name)?;
+        let node =
+            self.dynamic_node(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let value = node
+            .xattrs
+            .iter()
+            .find(|xattr| xattr.name == name)
+            .ok_or(ServiceCallError::Errno(ERR_ENODATA))?
+            .value
+            .clone();
+        if size != 0 && size < value.len() {
+            return errno(ERR_ERANGE);
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn flistxattr(&self, path: &[u8], size: usize) -> Result<Vec<u8>, ServiceCallError> {
+        let node =
+            self.dynamic_node(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let mut encoded = Vec::new();
+        for xattr in &node.xattrs {
+            encoded.extend_from_slice(&xattr.name);
+            encoded.push(0);
+        }
+        if size != 0 && size < encoded.len() {
+            return errno(ERR_ERANGE);
+        }
+        Ok(encoded)
+    }
+
+    pub(crate) fn fremovexattr(
+        &mut self,
+        path: &[u8],
+        name: &[u8],
+    ) -> Result<(), ServiceCallError> {
+        validate_xattr_name(name)?;
+        let node =
+            self.dynamic_node_mut(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let before = node.xattrs.len();
+        node.xattrs.retain(|xattr| xattr.name != name);
+        if before == node.xattrs.len() {
+            return errno(ERR_ENODATA);
+        }
+        Ok(())
+    }
+
     fn install_linux_user_resources(&mut self) {
         if LINUX_USER_RESOURCE_FILES.is_empty() {
             return;
@@ -642,6 +741,7 @@ impl VfsService {
             gid: 0,
             len: 0,
             chunks: Vec::new(),
+            xattrs: Vec::new(),
         });
     }
 
@@ -835,19 +935,37 @@ impl VfsService {
                 continue;
             }
 
-            let lock_start = lock.start;
-            let stored_end = lock_end(lock.start, lock.len);
-            if lock_start < remove_start {
-                let mut left = lock.clone();
-                left.len = remove_start.saturating_sub(lock_start);
-                next.push(left);
+            let FileLock { key, owner_pid, write, start: lock_start, len: lock_len } = lock;
+            let stored_end = lock_end(lock_start, lock_len);
+            let keep_left = lock_start < remove_start;
+            let keep_right = remove_end < stored_end;
+            let mut key = Some(key);
+            if keep_left {
+                let left_key = if keep_right {
+                    key.as_ref().expect("file-lock key present").clone()
+                } else {
+                    key.take().expect("file-lock key present")
+                };
+                next.push(FileLock {
+                    key: left_key,
+                    owner_pid,
+                    write,
+                    start: lock_start,
+                    len: remove_start.saturating_sub(lock_start),
+                });
             }
-            if remove_end < stored_end {
-                let mut right = lock;
-                right.start = remove_end;
-                right.len =
-                    if stored_end == i64::MAX { 0 } else { stored_end.saturating_sub(remove_end) };
-                next.push(right);
+            if keep_right {
+                next.push(FileLock {
+                    key: key.take().expect("file-lock key present"),
+                    owner_pid,
+                    write,
+                    start: remove_end,
+                    len: if stored_end == i64::MAX {
+                        0
+                    } else {
+                        stored_end.saturating_sub(remove_end)
+                    },
+                });
             }
         }
         self.locks = next;
@@ -903,6 +1021,7 @@ impl VfsNode {
             gid,
             len: bytes.len(),
             chunks: alloc::vec![VfsChunk::from_write(0, bytes)],
+            xattrs: Vec::new(),
         }
     }
 
@@ -1643,6 +1762,14 @@ fn lookup(route: ServiceRoute, node: NodeKind) -> Result<LookupInfo, ServiceCall
 
 fn errno<T>(errno: i32) -> Result<T, ServiceCallError> {
     Err(ServiceCallError::Errno(errno))
+}
+
+fn validate_xattr_name(name: &[u8]) -> Result<(), ServiceCallError> {
+    if name.is_empty() || name.len() > XATTR_NAME_MAX || name.contains(&0) || !name.contains(&b'.')
+    {
+        return errno(ERR_EINVAL);
+    }
+    Ok(())
 }
 
 fn normalize_path(path: &[u8]) -> Vec<u8> {

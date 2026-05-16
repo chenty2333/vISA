@@ -287,6 +287,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(self.vfs.fcntl_getlk(vfs_node_id, &path, owner, want_write, start, len))
     }
 
+    pub(crate) fn fsetxattr_fd(
+        &mut self,
+        fd: u32,
+        name: &[u8],
+        value: &[u8],
+        flags: u32,
+    ) -> Result<(), i32> {
+        let path = self.xattr_target(fd)?;
+        self.vfs.fsetxattr(&path, name, value, flags).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn fgetxattr_fd(
+        &mut self,
+        fd: u32,
+        name: &[u8],
+        size: usize,
+    ) -> Result<Vec<u8>, i32> {
+        let path = self.xattr_target(fd)?;
+        self.vfs.fgetxattr(&path, name, size).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn flistxattr_fd(&mut self, fd: u32, size: usize) -> Result<Vec<u8>, i32> {
+        let path = self.xattr_target(fd)?;
+        self.vfs.flistxattr(&path, size).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn fremovexattr_fd(&mut self, fd: u32, name: &[u8]) -> Result<(), i32> {
+        let path = self.xattr_target(fd)?;
+        self.vfs.fremovexattr(&path, name).map_err(errno_from_service_error)
+    }
+
     fn fcntl_lock_available_fd(
         &mut self,
         fd: u32,
@@ -358,6 +389,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         Ok((vfs_node_id, path, range_start as i64, range_len as i64))
+    }
+
+    fn xattr_target(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
+        let (route, _, _, path) = self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(vmos_abi::ERR_EOPNOTSUPP);
+        }
+        Ok(path)
     }
 
     pub(crate) fn check_path_access(

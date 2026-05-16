@@ -281,6 +281,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Fcntl => self.plan_fcntl(plan),
             PlanKind::FcntlGetlk => self.plan_fcntl_getlk(plan),
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
+            PlanKind::Fsetxattr => self.plan_fsetxattr(plan),
+            PlanKind::Fgetxattr => self.plan_fgetxattr(plan),
             PlanKind::RenameAt2 => self.plan_renameat2(plan),
             PlanKind::Getrlimit => self.plan_getrlimit(plan),
             PlanKind::Setrlimit => self.plan_setrlimit(plan),
@@ -301,8 +303,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::RtSigreturn
             | PlanKind::Kill
             | PlanKind::Pause
-            | PlanKind::Fsetxattr
-            | PlanKind::Fgetxattr
             | PlanKind::Flock
             | PlanKind::FutexLockPi
             | PlanKind::FutexUnlockPi

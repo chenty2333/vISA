@@ -353,13 +353,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn drain_event_queue(&mut self) {
+        const MAX_DRAINED_EVENTS_PER_CALL: usize = 4096;
+
         let mut events = Vec::new();
-        self.scheduler.drain_events(&mut events);
-        while !events.is_empty() {
+        let mut drained = 0usize;
+        loop {
+            if events.is_empty() {
+                self.scheduler.drain_events(&mut events);
+                if events.is_empty() {
+                    break;
+                }
+            }
+            if drained >= MAX_DRAINED_EVENTS_PER_CALL {
+                self.scheduler.prepend_events(&mut events);
+                crate::kwarn!("scheduler event drain stopped after {} events", drained);
+                break;
+            }
             let index = self.highest_priority_event_index(&events);
             let event = events.remove(index);
             self.record_scheduler_event(event);
             self.waits.apply_event(event);
+            drained += 1;
         }
     }
 

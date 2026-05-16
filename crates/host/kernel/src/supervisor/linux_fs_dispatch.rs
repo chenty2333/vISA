@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    ERR_EBADF, ERR_ENOENT, ERR_ENOTDIR, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind, ServiceRoute,
+    ERR_EBADF, ERR_EINVAL, ERR_ENOENT, ERR_ENOTDIR, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind,
+    ServiceRoute,
 };
 
 use super::{
@@ -234,6 +235,55 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Err("a service trapped during readlink")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    pub(super) fn plan_fsetxattr(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fsetxattr fd overflowed")?;
+        let name_ptr = u32::try_from(plan.args[1]).map_err(|_| "fsetxattr name ptr overflowed")?;
+        let name_len = u32::try_from(plan.args[2]).map_err(|_| "fsetxattr name len overflowed")?;
+        let value_ptr =
+            u32::try_from(plan.args[3]).map_err(|_| "fsetxattr value ptr overflowed")?;
+        let value_len =
+            u32::try_from(plan.args[4]).map_err(|_| "fsetxattr value len overflowed")?;
+        let flags = u32::try_from(plan.args[5]).map_err(|_| "fsetxattr flags overflowed")?;
+        let name = self.linux.read_bytes(name_ptr, name_len)?;
+        let value = if value_len == 0 {
+            Vec::new()
+        } else {
+            self.linux.read_bytes(value_ptr, value_len)?
+        };
+        match self.fsetxattr_fd(fd, &name, &value, flags) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_fgetxattr(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "fgetxattr fd overflowed")?;
+        let name_ptr = u32::try_from(plan.args[1]).map_err(|_| "fgetxattr name ptr overflowed")?;
+        let name_len = u32::try_from(plan.args[2]).map_err(|_| "fgetxattr name len overflowed")?;
+        let value_ptr =
+            u32::try_from(plan.args[3]).map_err(|_| "fgetxattr value ptr overflowed")?;
+        let size = usize::try_from(plan.args[4]).map_err(|_| "fgetxattr size overflowed")?;
+        let name = self.linux.read_bytes(name_ptr, name_len)?;
+        match self.fgetxattr_fd(fd, &name, size) {
+            Ok(value) => {
+                if size != 0 {
+                    if value_ptr == 0 {
+                        return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+                    }
+                    self.linux.write_bytes(value_ptr, &value)?;
+                }
+                Ok(LinuxCallResult::Ret(value.len() as i64))
+            }
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
     }
 

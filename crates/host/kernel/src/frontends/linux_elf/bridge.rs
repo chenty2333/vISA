@@ -21,21 +21,22 @@ use vmos_abi::{
     SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT,
     SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2,
-    SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR,
-    SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
-    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
-    SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
-    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
-    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
-    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FORK,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX,
+    SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM,
+    SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY,
+    SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT,
+    SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
+    SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
+    SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
+    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
+    SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -344,7 +345,10 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_MOUNT => sys_mount(frame),
         SYS_UMOUNT2 => sys_umount2(frame),
         SYS_FALLOCATE => Err(vmos_abi::ERR_EOPNOTSUPP),
-        SYS_FSETXATTR | SYS_FREMOVEXATTR => Err(vmos_abi::ERR_EOPNOTSUPP),
+        SYS_FSETXATTR => sys_fsetxattr(frame),
+        SYS_FGETXATTR => sys_fgetxattr(frame),
+        SYS_FLISTXATTR => sys_flistxattr(frame),
+        SYS_FREMOVEXATTR => sys_fremovexattr(frame),
         SYS_BPF => Err(ERR_EPERM),
         SYS_ADD_KEY | SYS_KEYCTL => Err(ERR_EPERM),
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
@@ -1284,6 +1288,44 @@ fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
     active_context().supervisor.truncate_fd(fd, len)?;
+    Ok(0)
+}
+
+fn sys_fsetxattr(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let name = read_xattr_name(frame.rsi)?;
+    let size = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
+    let value = read_user_bytes(frame.rdx, size)?;
+    let flags = u32::try_from(frame.r8).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.fsetxattr_fd(fd, &name, &value, flags)?;
+    Ok(0)
+}
+
+fn sys_fgetxattr(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let name = read_xattr_name(frame.rsi)?;
+    let size = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
+    let value = active_context().supervisor.fgetxattr_fd(fd, &name, size)?;
+    if size != 0 {
+        write_user_bytes(frame.rdx, &value)?;
+    }
+    Ok(value.len() as i64)
+}
+
+fn sys_flistxattr(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let size = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let names = active_context().supervisor.flistxattr_fd(fd, size)?;
+    if size != 0 {
+        write_user_bytes(frame.rsi, &names)?;
+    }
+    Ok(names.len() as i64)
+}
+
+fn sys_fremovexattr(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EBADF)?;
+    let name = read_xattr_name(frame.rsi)?;
+    active_context().supervisor.fremovexattr_fd(fd, &name)?;
     Ok(0)
 }
 
@@ -5081,6 +5123,16 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
         cursor = cursor.checked_add(chunk_len).ok_or(ERR_EFAULT)?;
     }
     Err(vmos_abi::ERR_ENAMETOOLONG)
+}
+
+fn read_xattr_name(ptr: u64) -> Result<Vec<u8>, i32> {
+    const XATTR_NAME_MAX: usize = 255;
+
+    let name = read_user_c_string(ptr, XATTR_NAME_MAX + 1)?;
+    if name.is_empty() || name.len() > XATTR_NAME_MAX {
+        return Err(ERR_EINVAL);
+    }
+    Ok(name)
 }
 
 fn readable_user_chunk_len(ptr: u64, max_len: usize) -> Result<u64, i32> {

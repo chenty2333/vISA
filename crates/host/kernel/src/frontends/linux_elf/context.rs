@@ -49,37 +49,56 @@ pub(crate) struct UserAddressSpaceState {
 
 pub(crate) struct UserFrameAllocator {
     memory_regions: &'static [MemoryRegion],
-    next: usize,
     cursor_region: usize,
     cursor_addr: u64,
+    domain_stride: u64,
+    domain_remainder: u64,
     free_frames: Vec<PhysFrame>,
 }
 
 impl UserFrameAllocator {
     pub(crate) fn new(memory_regions: &'static [MemoryRegion]) -> Self {
-        Self { memory_regions, next: 0, cursor_region: 0, cursor_addr: 0, free_frames: Vec::new() }
+        Self {
+            memory_regions,
+            cursor_region: 0,
+            cursor_addr: 0,
+            domain_stride: 1,
+            domain_remainder: 0,
+            free_frames: Vec::new(),
+        }
     }
 
     pub(crate) fn deallocate_frame(&mut self, frame: PhysFrame) {
         self.free_frames.push(frame);
     }
 
-    pub(crate) fn fork_child_allocator(&self) -> Self {
-        Self {
+    pub(crate) fn fork_child_allocator(&mut self) -> Self {
+        let Some(split_stride) = self.domain_stride.checked_mul(2) else {
+            return Self {
+                memory_regions: self.memory_regions,
+                cursor_region: self.memory_regions.len(),
+                cursor_addr: 0,
+                domain_stride: self.domain_stride,
+                domain_remainder: self.domain_remainder,
+                free_frames: Vec::new(),
+            };
+        };
+        let child_remainder = self.domain_remainder.saturating_add(self.domain_stride);
+        // Split the fresh-frame stream so independently scheduled parent and
+        // child allocators cannot hand out the same physical frame.
+        self.domain_stride = split_stride;
+        let child = Self {
             memory_regions: self.memory_regions,
-            next: self.next,
             cursor_region: self.cursor_region,
             cursor_addr: self.cursor_addr,
+            domain_stride: split_stride,
+            domain_remainder: child_remainder,
             free_frames: Vec::new(),
-        }
+        };
+        child
     }
 
     pub(crate) fn absorb_child_allocator(&mut self, mut child: Self) {
-        if child.next > self.next {
-            self.next = child.next;
-            self.cursor_region = child.cursor_region;
-            self.cursor_addr = child.cursor_addr;
-        }
         self.free_frames.append(&mut child.free_frames);
     }
 
@@ -92,7 +111,7 @@ impl UserFrameAllocator {
                 continue;
             }
             if self.cursor_addr == 0 || self.cursor_addr < region.start {
-                self.cursor_addr = region.start;
+                self.cursor_addr = align_up_to_frame(region.start);
             }
             if self.cursor_addr >= region.end {
                 self.cursor_region += 1;
@@ -106,11 +125,21 @@ impl UserFrameAllocator {
                 self.cursor_region += 1;
                 self.cursor_addr = 0;
             }
-            self.next += 1;
+            if !self.frame_in_domain(addr) {
+                continue;
+            }
             return Some(PhysFrame::containing_address(PhysAddr::new(addr)));
         }
         None
     }
+
+    fn frame_in_domain(&self, addr: u64) -> bool {
+        self.domain_stride == 1 || (addr / 4096) % self.domain_stride == self.domain_remainder
+    }
+}
+
+fn align_up_to_frame(addr: u64) -> u64 {
+    addr.saturating_add(4095) & !4095
 }
 
 unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {

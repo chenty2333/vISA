@@ -90,4 +90,10 @@ impl Scheduler {
             out.push(event);
         }
     }
+
+    pub(crate) fn prepend_events(&mut self, events: &mut Vec<Event>) {
+        while let Some(event) = events.pop() {
+            self.events.push_front(event);
+        }
+    }
 }

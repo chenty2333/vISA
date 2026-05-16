@@ -12,10 +12,11 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
     SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT,
+    SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -89,6 +90,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETDENTS64 => plan_getdents(a0, a2),
         SYS_OPENAT => plan_openat(a0, a1, a2, a3, a4),
         SYS_READLINKAT => plan_readlinkat(a0, a1, a2),
+        SYS_FSETXATTR => plan_fsetxattr(a0, a1, a2, a3, a4, a5),
+        SYS_FGETXATTR => plan_fgetxattr(a0, a1, a2, a3, a4),
         SYS_GETRLIMIT => plan_getrlimit(a0, a1),
         SYS_SETRLIMIT => plan_setrlimit(a0, a1),
         SYS_PRLIMIT64 => plan_prlimit64(a0, a1, a2, a3),
@@ -542,6 +545,29 @@ fn plan_readlinkat(dirfd: u64, ptr: u64, len: u64) -> PackedStep {
 
     reset_plan(PlanKind::ReadLinkAt, [dirfd, ptr, len, 0, 0, 0]);
     PackedStep::plan(PlanKind::ReadLinkAt)
+}
+
+fn plan_fsetxattr(
+    fd: u64,
+    name_ptr: u64,
+    name_len: u64,
+    value_ptr: u64,
+    value_len: u64,
+    flags: u64,
+) -> PackedStep {
+    if name_len == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    reset_plan(PlanKind::Fsetxattr, [fd, name_ptr, name_len, value_ptr, value_len, flags]);
+    PackedStep::plan(PlanKind::Fsetxattr)
+}
+
+fn plan_fgetxattr(fd: u64, name_ptr: u64, name_len: u64, value_ptr: u64, size: u64) -> PackedStep {
+    if name_len == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    reset_plan(PlanKind::Fgetxattr, [fd, name_ptr, name_len, value_ptr, size, 0]);
+    PackedStep::plan(PlanKind::Fgetxattr)
 }
 
 fn plan_prlimit64(pid: u64, resource: u64, new_limit_ptr: u64, old_limit_ptr: u64) -> PackedStep {
@@ -1036,6 +1062,51 @@ mod tests {
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x2010);
         assert_eq!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn xattr_plans_use_explicit_name_and_value_lengths() {
+        let name = b"user.demo";
+        let value = b"value";
+        let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+        let name_ptr = base as usize as u32;
+        let value_ptr = name_ptr + name.len() as u32;
+        unsafe {
+            core::ptr::copy_nonoverlapping(name.as_ptr(), base, name.len());
+            core::ptr::copy_nonoverlapping(value.as_ptr(), base.add(name.len()), value.len());
+        }
+
+        let raw = dispatch(
+            SYS_FSETXATTR,
+            4,
+            name_ptr as u64,
+            name.len() as u64,
+            value_ptr as u64,
+            value.len() as u64,
+            1,
+        );
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Fsetxattr));
+        assert_eq!(plan_arg(0), 4);
+        assert_eq!(plan_arg(1), name_ptr as u64);
+        assert_eq!(plan_arg(2), name.len() as u64);
+        assert_eq!(plan_arg(3), value_ptr as u64);
+        assert_eq!(plan_arg(4), value.len() as u64);
+        assert_eq!(plan_arg(5), 1);
+
+        let raw =
+            dispatch(SYS_FGETXATTR, 4, name_ptr as u64, name.len() as u64, value_ptr as u64, 64, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Fgetxattr));
+        assert_eq!(plan_arg(0), 4);
+        assert_eq!(plan_arg(1), name_ptr as u64);
+        assert_eq!(plan_arg(2), name.len() as u64);
+        assert_eq!(plan_arg(3), value_ptr as u64);
+        assert_eq!(plan_arg(4), 64);
     }
 }
 
