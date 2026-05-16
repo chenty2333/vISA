@@ -91,7 +91,6 @@ const SYS_SYMLINKAT: u64 = 266;
 const SYS_EXECVEAT: u64 = 322;
 const ERR_ENOEXEC: i32 = 8;
 const ERR_ENODEV: i32 = 19;
-const ERR_ETXTBSY: i32 = 26;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
@@ -785,7 +784,6 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
-    // ETXTBSY enforcement not yet implemented (no real fork model)
     let (kind, mode, len) = active_context().supervisor.path_metadata(resolved)?;
     if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
@@ -799,7 +797,7 @@ fn execve_checked_path(resolved: &[u8], flags: u64) -> Result<i64, i32> {
     if len == 0 {
         return Err(ERR_ENOEXEC);
     }
-    handle_exit(0)
+    Err(ERR_ENOSYS)
 }
 
 fn sys_mkdir(frame: &SyscallFrame) -> Result<i64, i32> {
