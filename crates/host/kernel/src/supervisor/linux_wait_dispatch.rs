@@ -322,11 +322,38 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
     pub(super) fn drain_event_queue(&mut self) {
-        while let Some(event) = self.scheduler.pop_event() {
+        let mut events = Vec::new();
+        self.scheduler.drain_events(&mut events);
+        while !events.is_empty() {
+            let index = self.highest_priority_event_index(&events);
+            let event = events.remove(index);
             self.record_scheduler_event(event);
             self.waits.apply_event(event);
         }
     }
+
+    fn highest_priority_event_index(&self, events: &[Event]) -> usize {
+        let mut selected = 0usize;
+        let mut selected_priority = 0u32;
+        for (index, event) in events.iter().copied().enumerate() {
+            let priority = self.event_owner_priority(event);
+            if index == 0 || priority > selected_priority {
+                selected = index;
+                selected_priority = priority;
+            }
+        }
+        selected
+    }
+
+    fn event_owner_priority(&self, event: Event) -> u32 {
+        let wait_id = match event {
+            Event::WaitReady(wait_id)
+            | Event::WaitCancelled(wait_id, _)
+            | Event::WaitRestart(wait_id, _) => wait_id,
+        };
+        self.waits.owner_task_for_wait_id(wait_id).map(|task| self.task_priority(task)).unwrap_or(0)
+    }
+
     pub(super) fn pump_async_sources(&mut self) {
         let mut due_events = vec![];
         self.waits.collect_due_events(interrupts::tick_count(), &mut due_events);

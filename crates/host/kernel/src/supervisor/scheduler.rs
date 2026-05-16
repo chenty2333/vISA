@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use super::{
     events::{Event, EventQueue},
@@ -85,7 +85,9 @@ impl Scheduler {
         self.events.push(event);
     }
 
-    pub(crate) fn pop_event(&mut self) -> Option<Event> {
-        self.events.pop()
+    pub(crate) fn drain_events(&mut self, out: &mut Vec<Event>) {
+        while let Some(event) = self.events.pop() {
+            out.push(event);
+        }
     }
 }
