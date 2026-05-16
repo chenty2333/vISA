@@ -2391,30 +2391,55 @@ fn sys_epoll_wait_args(
     }
 }
 
-fn sys_epoll_pwait(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.r8 != 0 {
-        let len = if frame.r9 == 0 { 8 } else { frame.r9 };
-        validate_user_range(frame.r8, len, false)?;
+fn sys_epoll_wait_args_with_sigmask(
+    epfd_arg: u64,
+    events_ptr: u64,
+    max_events_arg: u64,
+    timeout_ms: i64,
+    sigmask_ptr: u64,
+    sigsetsize_arg: u64,
+) -> Result<i64, i32> {
+    let temporary_sigmask = read_epoll_sigmask(sigmask_ptr, sigsetsize_arg)?;
+    let tid = active_context().tid;
+    let old_sigmask = if let Some(sigmask) = temporary_sigmask {
+        Some(active_context().supervisor.set_sigmask(tid, 2, sigmask).ok_or(ERR_EINVAL)?)
+    } else {
+        None
+    };
+    let result = sys_epoll_wait_args(epfd_arg, events_ptr, max_events_arg, timeout_ms);
+    if let Some(old_sigmask) = old_sigmask {
+        active_context().supervisor.set_sigmask(tid, 2, old_sigmask).ok_or(ERR_EINVAL)?;
     }
-    // No pending signals to consume
-    sys_epoll_wait(frame)
+    result
+}
+
+fn read_epoll_sigmask(sigmask_ptr: u64, sigsetsize_arg: u64) -> Result<Option<u64>, i32> {
+    if sigmask_ptr == 0 {
+        return Ok(None);
+    }
+    let sigsetsize = if sigsetsize_arg == 0 { LINUX_SIGSET_BYTES as u64 } else { sigsetsize_arg };
+    if sigsetsize != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    Ok(Some(read_user_u64(sigmask_ptr)?))
+}
+
+fn sys_epoll_pwait(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_epoll_wait_args_with_sigmask(
+        frame.rdi,
+        frame.rsi,
+        frame.rdx,
+        frame.r10 as i32 as i64,
+        frame.r8,
+        frame.r9,
+    )
 }
 
 fn sys_epoll_pwait2(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.r10 != 0 {
-        let timeout_ms = read_user_timespec_ms(frame.r10)?;
-        if frame.r8 != 0 {
-            let len = if frame.r9 == 0 { 8 } else { frame.r9 };
-            validate_user_range(frame.r8, len, false)?;
-        }
-        return sys_epoll_wait_args(frame.rdi, frame.rsi, frame.rdx, timeout_ms as i64);
-    }
-    if frame.r8 != 0 {
-        let len = if frame.r9 == 0 { 8 } else { frame.r9 };
-        validate_user_range(frame.r8, len, false)?;
-    }
-    // No pending signals to consume
-    sys_epoll_wait(frame)
+    let timeout_ms = if frame.r10 != 0 { read_user_timespec_ms(frame.r10)? as i64 } else { -1 };
+    sys_epoll_wait_args_with_sigmask(
+        frame.rdi, frame.rsi, frame.rdx, timeout_ms, frame.r8, frame.r9,
+    )
 }
 
 fn sys_poll(frame: &SyscallFrame) -> Result<i64, i32> {
