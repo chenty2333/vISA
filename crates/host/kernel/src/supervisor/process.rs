@@ -9,8 +9,9 @@ use super::{
     linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     types::{
-        Pid, ProcessRuntimeState, ProcessRuntimeStateKind, RobustListRegistration, SignalAltStack,
-        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
+        RobustListRegistration, SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind,
+        Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -81,7 +82,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         capability_sets: LinuxCapSets,
         kind: CredentialTransitionKind,
     ) -> bool {
-        self.semantic
+        if self.processes.iter().all(|process| process.pid != pid) {
+            return false;
+        }
+        let runtime_access = ProcessAccessState::from_effective(
+            euid,
+            egid,
+            supplementary_groups.clone(),
+            capability_sets.effective,
+        );
+        let transitioned = self
+            .semantic
             .transition_process_credential_by_pid(
                 pid,
                 uid,
@@ -96,7 +107,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 capability_sets,
                 kind,
             )
-            .is_some()
+            .is_some();
+        if transitioned
+            && let Some(process) = self.processes.iter_mut().find(|process| process.pid == pid)
+        {
+            process.access = runtime_access;
+        }
+        transitioned
     }
 
     /// Create the runtime and semantic records for a vfork child.
@@ -149,6 +166,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
+        let runtime_access = ProcessAccessState::from_effective(
+            euid,
+            egid,
+            supplementary_groups.clone(),
+            capability_sets.effective,
+        );
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -178,6 +201,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pgid: parent.pgid,
             sid: parent.sid,
             tgid: child_tid,
+            access: runtime_access,
             exit_signal: Some(SIGCHLD),
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -275,6 +299,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
+        let runtime_access = ProcessAccessState::from_effective(
+            euid,
+            egid,
+            supplementary_groups.clone(),
+            capability_sets.effective,
+        );
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -310,6 +340,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pgid: parent.pgid,
             sid: parent.sid,
             tgid: child_tid,
+            access: runtime_access,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -400,6 +431,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
+        let runtime_access = ProcessAccessState::from_effective(
+            euid,
+            egid,
+            supplementary_groups.clone(),
+            capability_sets.effective,
+        );
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -435,6 +472,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pgid: parent.pgid,
             sid: parent.sid,
             tgid: child_tid,
+            access: runtime_access,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,

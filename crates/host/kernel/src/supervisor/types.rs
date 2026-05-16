@@ -17,11 +17,39 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) pgid: Pid,
     pub(crate) sid: Pid,
     pub(crate) tgid: Tid,
+    pub(crate) access: ProcessAccessState,
     pub(crate) exit_signal: Option<u8>,
     pub(crate) state: ProcessRuntimeStateKind,
     pub(crate) exit_code: Option<i32>,
     pub(crate) sigactions: [SigAction; 64],
     pub(crate) rlimits: [Rlimit; 16],
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProcessAccessState {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) supplementary_groups: Vec<u32>,
+    pub(crate) cap_effective: u64,
+}
+
+impl ProcessAccessState {
+    pub(crate) fn root() -> Self {
+        Self { uid: 0, gid: 0, supplementary_groups: Vec::new(), cap_effective: LINUX_KNOWN_CAPS }
+    }
+
+    pub(crate) fn from_effective(
+        uid: u32,
+        gid: u32,
+        supplementary_groups: Vec<u32>,
+        cap_effective: u64,
+    ) -> Self {
+        Self { uid, gid, supplementary_groups, cap_effective }
+    }
+
+    pub(crate) fn ids(&self) -> AccessIds<'_> {
+        AccessIds::with_caps(self.uid, self.gid, &self.supplementary_groups, self.cap_effective)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -26,10 +26,10 @@ use super::{
     },
     store_manager::StoreManager,
     types::{
-        EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, RuntimeClockAdjustmentState, SeccompMode,
-        ServiceCallError, SigAction, SocketPairState, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid,
+        EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessAccessState,
+        ProcessRuntimeState, ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit,
+        RuntimeClockAdjustmentState, SeccompMode, ServiceCallError, SigAction, SocketPairState,
+        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::WaitRegistry,
 };
@@ -208,6 +208,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     pgid: 1,
                     sid: 1,
                     tgid: 1,
+                    access: ProcessAccessState::root(),
                     exit_signal: None,
                     state: ProcessRuntimeStateKind::Running,
                     exit_code: None,
@@ -279,6 +280,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pgid,
             sid,
             tgid: pid as Tid,
+            access: ProcessAccessState::root(),
             exit_signal: None,
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -320,6 +322,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn current_pid(&self) -> Pid {
         let task_id = self.scheduler.current_task();
         self.threads.iter().find(|t| t.task_id == task_id).map(|t| t.pid).unwrap_or(1)
+    }
+
+    pub(crate) fn current_access_state(&self) -> ProcessAccessState {
+        self.query_process(self.current_pid())
+            .map(|process| process.access.clone())
+            .unwrap_or_else(ProcessAccessState::root)
     }
 
     pub(crate) fn current_tid(&self) -> Tid {
