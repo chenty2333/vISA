@@ -3,7 +3,9 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    AUDIT_ARCH_X86_64, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
+    SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP, SeccompDecision,
+    SeccompFilterProgram, SeccompInstruction,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
@@ -1310,6 +1312,7 @@ fn sys_prlimit64(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const PR_SET_NO_NEW_PRIVS: u64 = 38;
     const PR_GET_NO_NEW_PRIVS: u64 = 39;
+    const PR_GET_SECCOMP: u64 = 21;
     const PR_SET_SECCOMP: u64 = 22;
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
@@ -1332,6 +1335,16 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
             }
             Ok(active_context().supervisor.no_new_privs(active_context().tid) as i64)
         }
+        PR_GET_SECCOMP => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            active_context()
+                .supervisor
+                .seccomp_mode(active_context().tid)
+                .ok_or(ERR_ESRCH)
+                .map(|mode| mode as i64)
+        }
         PR_SET_SECCOMP => {
             if frame.r10 != 0 || frame.r8 != 0 {
                 return Err(ERR_EINVAL);
@@ -1347,6 +1360,7 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
     const SECCOMP_SET_MODE_STRICT: u64 = 0;
     const SECCOMP_SET_MODE_FILTER: u64 = 1;
+    const SECCOMP_GET_ACTION_AVAIL: u64 = 2;
 
     if frame.rsi != 0 {
         return Err(ERR_EINVAL);
@@ -1354,7 +1368,25 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
     match frame.rdi {
         SECCOMP_SET_MODE_STRICT => install_seccomp_mode(1, 0),
         SECCOMP_SET_MODE_FILTER => install_seccomp_mode(2, frame.rdx),
+        SECCOMP_GET_ACTION_AVAIL => seccomp_get_action_avail(frame.rdx),
         _ => Err(ERR_EINVAL),
+    }
+}
+
+fn seccomp_get_action_avail(ptr: u64) -> Result<i64, i32> {
+    let action = read_user_u32(ptr)?;
+    if matches!(
+        action,
+        SECCOMP_RET_KILL_PROCESS
+            | SECCOMP_RET_KILL_THREAD
+            | SECCOMP_RET_TRAP
+            | SECCOMP_RET_ERRNO
+            | SECCOMP_RET_LOG
+            | SECCOMP_RET_ALLOW
+    ) {
+        Ok(0)
+    } else {
+        Err(vmos_abi::ERR_EOPNOTSUPP)
     }
 }
 

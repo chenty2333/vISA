@@ -603,6 +603,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             .unwrap_or(false)
     }
 
+    pub(crate) fn seccomp_mode(&self, tid: Tid) -> Option<u64> {
+        self.threads.iter().find(|thread| thread.tid == tid).map(|thread| match thread.seccomp {
+            SeccompMode::Disabled => 0,
+            SeccompMode::Strict => 1,
+            SeccompMode::Filter(_) => 2,
+        })
+    }
+
     pub(crate) fn check_seccomp_syscall(
         &self,
         tid: Tid,
