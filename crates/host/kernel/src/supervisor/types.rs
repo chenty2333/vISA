@@ -186,9 +186,41 @@ impl Default for SigAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PendingSignal {
     pub(crate) signo: u8,
+    pub(crate) si_errno: i32,
     pub(crate) si_code: i32,
     pub(crate) si_pid: u32,
     pub(crate) si_uid: u32,
+    pub(crate) si_call_addr: u64,
+    pub(crate) si_syscall: u32,
+    pub(crate) si_arch: u32,
+}
+
+impl PendingSignal {
+    pub(crate) const fn basic(signo: u8, si_code: i32, si_pid: u32, si_uid: u32) -> Self {
+        Self {
+            signo,
+            si_errno: 0,
+            si_code,
+            si_pid,
+            si_uid,
+            si_call_addr: 0,
+            si_syscall: 0,
+            si_arch: 0,
+        }
+    }
+
+    pub(crate) const fn seccomp_trap(call_addr: u64, syscall: u32, arch: u32, errno: u16) -> Self {
+        Self {
+            signo: 31,
+            si_errno: errno as i32,
+            si_code: 1,
+            si_pid: 0,
+            si_uid: 0,
+            si_call_addr: call_addr,
+            si_syscall: syscall,
+            si_arch: arch,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

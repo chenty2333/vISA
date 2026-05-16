@@ -57,7 +57,22 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         }
         if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == tid) {
-            thread.pending_signals.push(PendingSignal { signo, si_code, si_pid, si_uid });
+            thread.pending_signals.push(PendingSignal::basic(signo, si_code, si_pid, si_uid));
+        }
+    }
+
+    pub(crate) fn queue_seccomp_trap_to_thread(
+        &mut self,
+        tid: Tid,
+        call_addr: u64,
+        syscall: u32,
+        arch: u32,
+        errno: u16,
+    ) {
+        if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == tid) {
+            thread
+                .pending_signals
+                .push(PendingSignal::seccomp_trap(call_addr, syscall, arch, errno));
         }
     }
 

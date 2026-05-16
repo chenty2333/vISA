@@ -103,6 +103,9 @@ pub struct SeccompData {
 pub enum SeccompDecision {
     Allow,
     Errno(u16),
+    Trap { errno: u16 },
+    Trace,
+    UserNotif,
     Kill { signal: u8 },
 }
 
@@ -453,9 +456,9 @@ fn seccomp_return_to_decision(ret: u32) -> SeccompDecision {
         SECCOMP_RET_LOG => SeccompDecision::Allow,
         SECCOMP_RET_ERRNO => SeccompDecision::Errno((ret & SECCOMP_RET_DATA) as u16),
         SECCOMP_RET_KILL_PROCESS | SECCOMP_RET_KILL_THREAD => SeccompDecision::Kill { signal: 31 },
-        SECCOMP_RET_TRAP | SECCOMP_RET_TRACE | SECCOMP_RET_USER_NOTIF => {
-            SeccompDecision::Kill { signal: 31 }
-        }
+        SECCOMP_RET_TRAP => SeccompDecision::Trap { errno: (ret & SECCOMP_RET_DATA) as u16 },
+        SECCOMP_RET_TRACE => SeccompDecision::Trace,
+        SECCOMP_RET_USER_NOTIF => SeccompDecision::UserNotif,
         _ => SeccompDecision::Kill { signal: 31 },
     }
 }
@@ -535,6 +538,35 @@ mod tests {
         .expect("valid ret-a filter");
 
         assert_eq!(program.evaluate(data(1)), Ok(SeccompDecision::Allow));
+    }
+
+    #[test]
+    fn filter_distinguishes_trap_trace_and_user_notification_actions() {
+        let trap = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_TRAP | 7,
+        )])
+        .expect("trap filter");
+        let trace = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_TRACE | 8,
+        )])
+        .expect("trace filter");
+        let user_notif = SeccompFilterProgram::new(vec![SeccompInstruction::new(
+            BPF_RET_K,
+            0,
+            0,
+            SECCOMP_RET_USER_NOTIF | 9,
+        )])
+        .expect("user-notif filter");
+
+        assert_eq!(trap.evaluate(data(1)), Ok(SeccompDecision::Trap { errno: 7 }));
+        assert_eq!(trace.evaluate(data(1)), Ok(SeccompDecision::Trace));
+        assert_eq!(user_notif.evaluate(data(1)), Ok(SeccompDecision::UserNotif));
     }
 
     #[test]

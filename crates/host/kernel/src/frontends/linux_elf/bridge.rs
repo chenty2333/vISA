@@ -2,7 +2,9 @@ use alloc::vec::Vec;
 
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
-use service_core::seccomp::{SeccompDecision, SeccompFilterProgram, SeccompInstruction};
+use service_core::seccomp::{
+    AUDIT_ARCH_X86_64, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+};
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK, ERR_EFAULT,
     ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS,
@@ -102,6 +104,8 @@ const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const ROBUST_LIST_HEAD_SIZE: u64 = 24;
 const ROBUST_LIST_LIMIT: usize = 2048;
+const SIGSYS: u8 = 31;
+const SI_CODE_SYS_SECCOMP: i32 = 1;
 const SA_SIGINFO: u64 = 0x4;
 const SA_ONSTACK: u64 = 0x0800_0000;
 const SA_RESTART: u64 = 0x1000_0000;
@@ -207,14 +211,27 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     };
     let _activation = ActivationGuard { activation_id };
     active_context().supervisor.set_current_task(task_id);
+    let seccomp_call_addr = seccomp_syscall_instruction_addr(frame);
     match active_context().supervisor.check_seccomp_syscall(
         active_context().tid,
         syscall_nr,
-        frame.rcx,
+        seccomp_call_addr,
         [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
     ) {
         SeccompDecision::Allow => {}
         SeccompDecision::Errno(errno) => return Ok(-(errno as i64)),
+        SeccompDecision::Trap { errno } => {
+            let syscall = syscall_nr.min(u32::MAX as u64) as u32;
+            active_context().supervisor.queue_seccomp_trap_to_thread(
+                active_context().tid,
+                seccomp_call_addr,
+                syscall,
+                AUDIT_ARCH_X86_64,
+                errno,
+            );
+            return Ok(syscall_nr as i64);
+        }
+        SeccompDecision::Trace | SeccompDecision::UserNotif => return Err(ERR_ENOSYS),
         SeccompDecision::Kill { signal } => {
             crate::kwarn!("seccomp killed syscall {}", syscall_nr);
             return handle_exit_syscall(frame, 128 + signal as i32);
@@ -366,6 +383,10 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         }
     };
     result
+}
+
+fn seccomp_syscall_instruction_addr(frame: &SyscallFrame) -> u64 {
+    frame.rcx.checked_sub(2).unwrap_or(frame.rcx)
 }
 
 fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -2027,9 +2048,16 @@ fn encode_linux_siginfo(
 ) -> [u8; LINUX_SIGINFO_SIZE] {
     let mut out = [0u8; LINUX_SIGINFO_SIZE];
     write_i32(&mut out, 0, signal.signo as i32);
+    write_i32(&mut out, 4, signal.si_errno);
     write_i32(&mut out, 8, signal.si_code);
-    write_u32(&mut out, 16, signal.si_pid);
-    write_u32(&mut out, 20, signal.si_uid);
+    if signal.signo == SIGSYS && signal.si_code == SI_CODE_SYS_SECCOMP {
+        write_u64(&mut out, 16, signal.si_call_addr);
+        write_u32(&mut out, 24, signal.si_syscall);
+        write_u32(&mut out, 28, signal.si_arch);
+    } else {
+        write_u32(&mut out, 16, signal.si_pid);
+        write_u32(&mut out, 20, signal.si_uid);
+    }
     out
 }
 
@@ -2149,12 +2177,12 @@ fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
     if let Some(signo) =
         active_context().consume_io_signal_if(|signal| signal_wait_set_contains(wait_set, signal))
     {
-        let signal = PendingSignal {
-            signo: u8::try_from(signo).map_err(|_| ERR_EINVAL)?,
-            si_code: 0,
-            si_pid: active_context().pid,
-            si_uid: active_context().uid(),
-        };
+        let signal = PendingSignal::basic(
+            u8::try_from(signo).map_err(|_| ERR_EINVAL)?,
+            0,
+            active_context().pid,
+            active_context().uid(),
+        );
         return write_sigtimedwait_result(frame.rsi, &signal);
     }
 
