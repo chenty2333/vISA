@@ -12,8 +12,8 @@ pub(crate) struct LinuxSocketService {
     register_socket: WasmFn<(u32, u32, u32, u32, u64), i32>,
     register_connected_socket: WasmFn<(u32, u32, u32, u32, u64), i32>,
     close_socket: WasmFn<u32, i32>,
-    bind_socket: WasmFn<(u32, u32), i32>,
-    connect_socket: WasmFn<(u32, u32), i32>,
+    bind_socket: WasmFn<(u32, u32, u32, u32, u32), i32>,
+    connect_socket: WasmFn<(u32, u32, u32, u32, u32), i32>,
     listen_socket: WasmFn<(u32, u32), i32>,
     accept_socket: WasmFn<(u32, u32, u64), i32>,
     pending_accept_count: WasmFn<u32, i32>,
@@ -143,10 +143,17 @@ impl LinuxSocketService {
         &mut self,
         socket_id: u32,
         addr_len: u32,
+        family: u32,
+        ipv4: u32,
+        port: u32,
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(&self.bind_socket, (socket_id, addr_len), "linux_socket_service trapped")
+                .call(
+                    &self.bind_socket,
+                    (socket_id, addr_len, family, ipv4, port),
+                    "linux_socket_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }
@@ -155,10 +162,17 @@ impl LinuxSocketService {
         &mut self,
         socket_id: u32,
         addr_len: u32,
+        family: u32,
+        ipv4: u32,
+        port: u32,
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
-                .call(&self.connect_socket, (socket_id, addr_len), "linux_socket_service trapped")
+                .call(
+                    &self.connect_socket,
+                    (socket_id, addr_len, family, ipv4, port),
+                    "linux_socket_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }

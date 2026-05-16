@@ -128,16 +128,22 @@ impl LinuxSocketService {
         &mut self,
         socket_id: u32,
         addr_len: u32,
+        family: u32,
+        ipv4: u32,
+        port: u32,
     ) -> Result<(), ServiceCallError> {
-        map_errno(self.state.bind_socket(socket_id, addr_len))
+        map_errno(self.state.bind_socket(socket_id, addr_len, family, ipv4, port))
     }
 
     pub(crate) fn connect_socket(
         &mut self,
         socket_id: u32,
         addr_len: u32,
+        family: u32,
+        ipv4: u32,
+        port: u32,
     ) -> Result<(), ServiceCallError> {
-        map_errno(self.state.connect_socket(socket_id, addr_len))
+        map_errno(self.state.connect_socket(socket_id, addr_len, family, ipv4, port))
     }
 
     pub(crate) fn listen_socket(

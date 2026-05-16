@@ -57,7 +57,7 @@ impl LinuxFrontend {
             SYS_EPOLL_CTL => self.plan_epoll_ctl(a0, a1, a2, a3, a4),
             SYS_EPOLL_WAIT => self.plan_epoll_wait(a0, a1, a2),
             SYS_SOCKET => self.plan_socket(a0, a1, a2),
-            SYS_BIND => self.plan_bind(a0, a1, a2),
+            SYS_BIND => self.plan_bind(a0, a1, a2, a3, a4, a5),
             SYS_CONNECT => self.plan_connect(a0, a1, a2, a3, a4, a5),
             SYS_LISTEN => self.plan_listen(a0, a1),
             SYS_ACCEPT => self.plan_accept(a0, a1, a2),
@@ -398,8 +398,16 @@ impl LinuxFrontend {
         PackedStep::plan(PlanKind::Socket)
     }
 
-    fn plan_bind(&mut self, fd: u64, addr: u64, addr_len: u64) -> PackedStep {
-        self.reset_plan(PlanKind::Bind, [fd, addr, addr_len, 0, 0, 0]);
+    fn plan_bind(
+        &mut self,
+        fd: u64,
+        addr: u64,
+        addr_len: u64,
+        family: u64,
+        ipv4_addr: u64,
+        port: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::Bind, [fd, addr, addr_len, family, ipv4_addr, port]);
         PackedStep::plan(PlanKind::Bind)
     }
 

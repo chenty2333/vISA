@@ -1,6 +1,6 @@
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO, ERR_EISCONN,
-    ERR_EOPNOTSUPP, SOCK_STREAM,
+    AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
+    ERR_EISCONN, ERR_EOPNOTSUPP, SOCK_STREAM,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -18,6 +18,10 @@ struct LinuxSocket {
     state: u32,
     backlog: u32,
     pending_accepts: u32,
+    local_ipv4: u32,
+    local_port: u16,
+    remote_ipv4: u32,
+    remote_port: u16,
     active: bool,
 }
 
@@ -31,6 +35,10 @@ impl LinuxSocket {
         state: 0,
         backlog: 0,
         pending_accepts: 0,
+        local_ipv4: 0,
+        local_port: 0,
+        remote_ipv4: 0,
+        remote_port: 0,
         active: false,
     };
 }
@@ -72,6 +80,10 @@ impl LinuxSocketState {
                     state: SOCKET_OPEN,
                     backlog: 0,
                     pending_accepts: 0,
+                    local_ipv4: 0,
+                    local_port: 0,
+                    remote_ipv4: 0,
+                    remote_port: 0,
                     active: true,
                 };
                 return Ok(());
@@ -103,6 +115,10 @@ impl LinuxSocketState {
                     state: SOCKET_CONNECTED,
                     backlog: 0,
                     pending_accepts: 0,
+                    local_ipv4: 0,
+                    local_port: 0,
+                    remote_ipv4: 0,
+                    remote_port: 0,
                     active: true,
                 };
                 return Ok(());
@@ -117,11 +133,42 @@ impl LinuxSocketState {
         Ok(())
     }
 
-    pub fn bind_socket(&mut self, socket_id: u32, _addr_len: u32) -> Result<(), i32> {
-        self.set_state(socket_id, SOCKET_BOUND)
+    pub fn bind_socket(
+        &mut self,
+        socket_id: u32,
+        addr_len: u32,
+        family: u32,
+        ipv4: u32,
+        port: u32,
+    ) -> Result<(), i32> {
+        if family == AF_INET && addr_len < 16 {
+            return Err(ERR_EINVAL);
+        }
+        if family != AF_INET || port > u16::MAX as u32 {
+            return self.set_state(socket_id, SOCKET_BOUND);
+        }
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
+            return self.set_state(socket_id, SOCKET_BOUND);
+        }
+        let port = port as u16;
+        if port != 0 && self.bound_port_conflicts(index, ipv4, port) {
+            return Err(ERR_EADDRINUSE);
+        }
+        self.sockets[index].local_ipv4 = ipv4;
+        self.sockets[index].local_port = port;
+        self.sockets[index].state = SOCKET_BOUND;
+        Ok(())
     }
 
-    pub fn connect_socket(&mut self, socket_id: u32, _addr_len: u32) -> Result<(), i32> {
+    pub fn connect_socket(
+        &mut self,
+        socket_id: u32,
+        addr_len: u32,
+        family: u32,
+        remote_ipv4: u32,
+        remote_port: u32,
+    ) -> Result<(), i32> {
         let index = self.socket_index(socket_id)?;
         if self.sockets[index].state == SOCKET_CONNECTED {
             return Err(ERR_EISCONN);
@@ -130,7 +177,11 @@ impl LinuxSocketState {
             self.sockets[index].state = SOCKET_CONNECTED;
             return Ok(());
         }
-        let Some(listener_index) = self.listener_index_for(index) else {
+        if family != AF_INET || addr_len < 16 || remote_port == 0 || remote_port > u16::MAX as u32 {
+            return Err(ERR_ECONNREFUSED);
+        }
+        let remote_port = remote_port as u16;
+        let Some(listener_index) = self.listener_index_for(index, remote_ipv4, remote_port) else {
             return Err(ERR_ECONNREFUSED);
         };
         if self.sockets[listener_index].pending_accepts >= self.sockets[listener_index].backlog {
@@ -138,6 +189,8 @@ impl LinuxSocketState {
         }
         self.sockets[listener_index].pending_accepts =
             self.sockets[listener_index].pending_accepts.saturating_add(1);
+        self.sockets[index].remote_ipv4 = remote_ipv4;
+        self.sockets[index].remote_port = remote_port;
         self.sockets[index].state = SOCKET_CONNECTED;
         Ok(())
     }
@@ -178,6 +231,10 @@ impl LinuxSocketState {
             state: SOCKET_CONNECTED,
             backlog: 0,
             pending_accepts: 0,
+            local_ipv4: self.sockets[index].local_ipv4,
+            local_port: self.sockets[index].local_port,
+            remote_ipv4: 0,
+            remote_port: 0,
             active: true,
         };
         self.sockets[index].pending_accepts -= 1;
@@ -197,7 +254,10 @@ impl LinuxSocketState {
         if self.sockets[index].domain != AF_INET || self.sockets[index].ty != SOCK_STREAM {
             return Ok(None);
         }
-        let Some(listener_index) = self.listener_index_for(index) else {
+        let client = self.sockets[index];
+        let Some(listener_index) =
+            self.listener_index_for(index, client.remote_ipv4, client.remote_port)
+        else {
             return Ok(None);
         };
         if self.sockets[listener_index].pending_accepts == 0 {
@@ -254,17 +314,50 @@ impl LinuxSocketState {
             .ok_or(ERR_EBADF)
     }
 
-    fn listener_index_for(&self, client_index: usize) -> Option<usize> {
+    fn listener_index_for(
+        &self,
+        client_index: usize,
+        remote_ipv4: u32,
+        remote_port: u16,
+    ) -> Option<usize> {
         let client = self.sockets[client_index];
-        self.sockets.iter().enumerate().position(|(index, socket)| {
-            index != client_index
+        let mut wildcard = None;
+        for (index, socket) in self.sockets.iter().copied().enumerate() {
+            if index == client_index
+                || !socket.active
+                || socket.state != SOCKET_LISTENING
+                || socket.domain != client.domain
+                || socket.ty != client.ty
+                || socket.protocol != client.protocol
+            {
+                continue;
+            }
+            if socket.local_port == remote_port
+                && ipv4_matches_bound_pair(socket.local_ipv4, remote_ipv4)
+            {
+                return Some(index);
+            }
+            if socket.local_port == 0 && wildcard.is_none() {
+                wildcard = Some(index);
+            }
+        }
+        wildcard
+    }
+
+    fn bound_port_conflicts(&self, socket_index: usize, ipv4: u32, port: u16) -> bool {
+        self.sockets.iter().enumerate().any(|(index, socket)| {
+            index != socket_index
                 && socket.active
-                && socket.state == SOCKET_LISTENING
-                && socket.domain == client.domain
-                && socket.ty == client.ty
-                && socket.protocol == client.protocol
+                && socket.domain == AF_INET
+                && socket.ty == SOCK_STREAM
+                && socket.local_port == port
+                && ipv4_matches_bound_pair(socket.local_ipv4, ipv4)
         })
     }
+}
+
+fn ipv4_matches_bound_pair(bound_ipv4: u32, target_ipv4: u32) -> bool {
+    bound_ipv4 == 0 || target_ipv4 == 0 || bound_ipv4 == target_ipv4
 }
 
 impl Default for LinuxSocketState {
@@ -275,9 +368,32 @@ impl Default for LinuxSocketState {
 
 #[cfg(test)]
 mod tests {
-    use vmos_abi::{AF_INET, ERR_EAGAIN, ERR_ECONNREFUSED, ERR_EINVAL, SOCK_DGRAM, SOCK_STREAM};
+    use vmos_abi::{
+        AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_ECONNREFUSED, ERR_EINVAL, SOCK_DGRAM, SOCK_STREAM,
+    };
 
     use super::*;
+
+    const LOOPBACK: u32 = 0x7f00_0001;
+    const ALT_LOOPBACK: u32 = 0x7f00_0002;
+
+    fn bind_ipv4(
+        state: &mut LinuxSocketState,
+        socket_id: u32,
+        ipv4: u32,
+        port: u32,
+    ) -> Result<(), i32> {
+        state.bind_socket(socket_id, 16, AF_INET, ipv4, port)
+    }
+
+    fn connect_ipv4(
+        state: &mut LinuxSocketState,
+        socket_id: u32,
+        ipv4: u32,
+        port: u32,
+    ) -> Result<(), i32> {
+        state.connect_socket(socket_id, 16, AF_INET, ipv4, port)
+    }
 
     #[test]
     fn register_socket_enforces_network_contract() {
@@ -295,8 +411,8 @@ mod tests {
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
         assert_eq!(state.listen_socket(2, 1), Ok(()));
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
-        assert_eq!(state.connect_socket(1, 16), Ok(()));
-        assert_eq!(state.connect_socket(1, 16), Err(ERR_EISCONN));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Err(ERR_EISCONN));
     }
 
     #[test]
@@ -305,11 +421,11 @@ mod tests {
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.accept_socket(1, 3, 44), Err(ERR_EINVAL));
-        assert_eq!(state.connect_socket(1, 16), Err(ERR_ECONNREFUSED));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Err(ERR_ECONNREFUSED));
 
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
         assert_eq!(state.listen_socket(2, 1), Ok(()));
-        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.accept_socket(2, 3, 44), Ok(3));
         assert_eq!(state.accept_socket(2, 4, 45), Err(ERR_EAGAIN));
     }
@@ -321,9 +437,9 @@ mod tests {
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
         assert_eq!(state.listen_socket(2, 1), Ok(()));
-        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
-        assert_eq!(state.connect_socket(7, 16), Err(ERR_EISCONN));
+        assert_eq!(connect_ipv4(&mut state, 7, LOOPBACK, 80), Err(ERR_EISCONN));
     }
 
     #[test]
@@ -331,8 +447,77 @@ mod tests {
         let mut state = LinuxSocketState::new();
 
         assert_eq!(state.register_connected_socket(7, AF_INET, SOCK_STREAM, 0, 99), Ok(()));
-        assert_eq!(state.connect_socket(7, 16), Err(ERR_EISCONN));
+        assert_eq!(connect_ipv4(&mut state, 7, LOOPBACK, 80), Err(ERR_EISCONN));
         assert_eq!(state.pending_accept_count(7), Err(ERR_EINVAL));
+    }
+
+    #[test]
+    fn bind_rejects_conflicting_ipv4_stream_listener_ports() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 2, LOOPBACK, 8080), Err(ERR_EADDRINUSE));
+        assert_eq!(bind_ipv4(&mut state, 2, ALT_LOOPBACK, 8080), Ok(()));
+    }
+
+    #[test]
+    fn bind_rejects_short_ipv4_sockaddr() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.bind_socket(1, 2, AF_INET, LOOPBACK, 8080), Err(ERR_EINVAL));
+    }
+
+    #[test]
+    fn connect_matches_bound_listener_port_and_ipv4() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 2), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 2, ALT_LOOPBACK, 9090), Ok(()));
+        assert_eq!(state.listen_socket(2, 2), Ok(()));
+
+        assert!(state.register_socket(3, AF_INET, SOCK_STREAM, 0, 44).is_ok());
+        assert_eq!(connect_ipv4(&mut state, 3, ALT_LOOPBACK, 8080), Err(ERR_ECONNREFUSED));
+        assert_eq!(connect_ipv4(&mut state, 3, LOOPBACK, 9090), Err(ERR_ECONNREFUSED));
+        assert_eq!(connect_ipv4(&mut state, 3, ALT_LOOPBACK, 9090), Ok(()));
+        assert_eq!(state.pending_accept_count(1), Ok(0));
+        assert_eq!(state.pending_accept_count(2), Ok(1));
+        assert_eq!(state.accept_ready_key_for_client(3), Ok(Some(43)));
+    }
+
+    #[test]
+    fn wildcard_listener_ipv4_matches_specific_remote_ipv4() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, 0, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 1), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.accept_ready_key_for_client(2), Ok(Some(42)));
+    }
+
+    #[test]
+    fn exact_bound_listener_wins_over_unbound_legacy_listener() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.listen_socket(1, 2), Ok(()));
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(2, 2), Ok(()));
+        assert!(state.register_socket(3, AF_INET, SOCK_STREAM, 0, 44).is_ok());
+
+        assert_eq!(connect_ipv4(&mut state, 3, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.pending_accept_count(1), Ok(0));
+        assert_eq!(state.pending_accept_count(2), Ok(1));
+        assert_eq!(state.accept_ready_key_for_client(3), Ok(Some(43)));
     }
 
     #[test]
@@ -352,7 +537,7 @@ mod tests {
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
         assert_eq!(state.listen_socket(2, 2), Ok(()));
         assert_eq!(state.pending_accept_count(2), Ok(0));
-        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.pending_accept_count(2), Ok(1));
         assert_eq!(state.accept_socket(2, 7, 99), Ok(7));
         assert_eq!(state.pending_accept_count(2), Ok(0));
@@ -366,7 +551,7 @@ mod tests {
         assert_eq!(state.accept_ready_key_for_client(1), Ok(None));
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
         assert_eq!(state.listen_socket(2, 1), Ok(()));
-        assert_eq!(state.connect_socket(1, 16), Ok(()));
+        assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.accept_ready_key_for_client(1), Ok(Some(43)));
     }
 }

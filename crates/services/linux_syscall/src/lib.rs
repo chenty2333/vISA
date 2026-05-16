@@ -70,7 +70,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_EPOLL_CTL => plan_epoll_ctl(a0, a1, a2, a3, a4),
         SYS_EPOLL_WAIT => plan_epoll_wait(a0, a1, a2),
         SYS_SOCKET => plan_socket(a0, a1, a2),
-        SYS_BIND => plan_bind(a0, a1, a2),
+        SYS_BIND => plan_bind(a0, a1, a2, a3, a4, a5),
         SYS_CONNECT => plan_connect(a0, a1, a2, a3, a4, a5),
         SYS_LISTEN => plan_listen(a0, a1),
         SYS_ACCEPT => plan_accept(a0, a1, a2),
@@ -386,8 +386,15 @@ fn plan_socket(domain: u64, ty: u64, protocol: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Socket)
 }
 
-fn plan_bind(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
-    reset_plan(PlanKind::Bind, [fd, addr, addr_len, 0, 0, 0]);
+fn plan_bind(
+    fd: u64,
+    addr: u64,
+    addr_len: u64,
+    family: u64,
+    ipv4_addr: u64,
+    port: u64,
+) -> PackedStep {
+    reset_plan(PlanKind::Bind, [fd, addr, addr_len, family, ipv4_addr, port]);
     PackedStep::plan(PlanKind::Bind)
 }
 
@@ -713,6 +720,22 @@ mod tests {
         assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
         assert_eq!(plan_arg(4), ipv4 as u64);
         assert_eq!(plan_arg(5), 80);
+    }
+
+    #[test]
+    fn bind_plan_preserves_sockaddr_metadata() {
+        let ipv4 = u32::from_be_bytes([127, 0, 0, 1]);
+        let raw = dispatch(SYS_BIND, 8, 0x2000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 8080);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Bind));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0x2000);
+        assert_eq!(plan_arg(2), 16);
+        assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
+        assert_eq!(plan_arg(4), ipv4 as u64);
+        assert_eq!(plan_arg(5), 8080);
     }
 
     #[test]

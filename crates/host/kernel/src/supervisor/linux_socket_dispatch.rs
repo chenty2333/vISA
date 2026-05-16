@@ -180,19 +180,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let addr_len =
                     u32::try_from(plan.args[2]).map_err(|_| "bind addr_len overflowed")?;
                 let family = u32::try_from(plan.args[3]).map_err(|_| "bind family overflowed")?;
+                let local_ipv4 = u32::try_from(plan.args[4]).map_err(|_| "bind ipv4 overflowed")?;
+                let local_port = u32::try_from(plan.args[5]).map_err(|_| "bind port overflowed")?;
                 if family == AF_INET && self.has_net_stack_socket(socket_id) {
-                    let local_ipv4 = u32::try_from(plan.args[4])
-                        .map_err(|_| "bind ipv4 overflowed")?
-                        .to_be_bytes();
+                    let local_ipv4 = local_ipv4.to_be_bytes();
                     let local_port =
-                        u16::try_from(plan.args[5]).map_err(|_| "bind port overflowed")?;
+                        u16::try_from(local_port).map_err(|_| "bind port overflowed")?;
                     if let Some(result) =
                         self.bind_net_stack_tcp(socket_id, local_ipv4, local_port)?
                     {
                         return Ok(result);
                     }
                 }
-                self.linux_socket.bind_socket(socket_id, addr_len)
+                self.linux_socket.bind_socket(socket_id, addr_len, family, local_ipv4, local_port)
             }
             PlanKind::Listen => {
                 let backlog =
@@ -220,7 +220,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Connect => {
                 let addr_len =
                     u32::try_from(plan.args[2]).map_err(|_| "connect addr_len overflowed")?;
-                self.linux_socket.connect_socket(socket_id, addr_len)
+                let family =
+                    u32::try_from(plan.args[3]).map_err(|_| "connect family overflowed")?;
+                let remote_ipv4 =
+                    u32::try_from(plan.args[4]).map_err(|_| "connect ipv4 overflowed")?;
+                let remote_port =
+                    u32::try_from(plan.args[5]).map_err(|_| "connect port overflowed")?;
+                self.linux_socket.connect_socket(
+                    socket_id,
+                    addr_len,
+                    family,
+                    remote_ipv4,
+                    remote_port,
+                )
             }
             _ => Ok(()),
         };

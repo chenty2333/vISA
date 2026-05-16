@@ -193,6 +193,7 @@ pub const ERR_ENOTSOCK: i32 = 88;
 pub const ERR_EPROTONOSUPPORT: i32 = 93;
 pub const ERR_EOPNOTSUPP: i32 = 95;
 pub const ERR_EAFNOSUPPORT: i32 = 97;
+pub const ERR_EADDRINUSE: i32 = 98;
 pub const ERR_EISCONN: i32 = 106;
 pub const ERR_ENOTCONN: i32 = 107;
 pub const ERR_ETIMEDOUT: i32 = 110;

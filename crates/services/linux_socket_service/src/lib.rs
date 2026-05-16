@@ -71,13 +71,25 @@ pub extern "C" fn close_socket(socket_id: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn bind_socket(socket_id: u32, addr_len: u32) -> i32 {
-    result_unit(unsafe { state().bind_socket(socket_id, addr_len) })
+pub extern "C" fn bind_socket(
+    socket_id: u32,
+    addr_len: u32,
+    family: u32,
+    ipv4: u32,
+    port: u32,
+) -> i32 {
+    result_unit(unsafe { state().bind_socket(socket_id, addr_len, family, ipv4, port) })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn connect_socket(socket_id: u32, addr_len: u32) -> i32 {
-    result_unit(unsafe { state().connect_socket(socket_id, addr_len) })
+pub extern "C" fn connect_socket(
+    socket_id: u32,
+    addr_len: u32,
+    family: u32,
+    ipv4: u32,
+    port: u32,
+) -> i32 {
+    result_unit(unsafe { state().connect_socket(socket_id, addr_len, family, ipv4, port) })
 }
 
 #[unsafe(no_mangle)]

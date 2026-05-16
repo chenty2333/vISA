@@ -3086,6 +3086,9 @@ fn sys_bind(frame: &SyscallFrame) -> Result<i64, i32> {
     if sockaddr.family != AF_INET as u16 && sockaddr.family != AF_UNIX as u16 {
         return Err(ERR_EAFNOSUPPORT);
     }
+    if sockaddr.family == AF_INET as u16 && frame.rdx < 16 {
+        return Err(ERR_EINVAL);
+    }
     dispatch_ret(
         "ring3_bind",
         SyscallContext::new(
