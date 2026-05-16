@@ -15,7 +15,7 @@ use vmos_abi::{
     SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR,
     SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP,
     SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SENDTO, SYS_SETRLIMIT,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
     SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
@@ -107,6 +107,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         ),
         SYS_RENAMEAT => plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
         SYS_RENAMEAT2 => plan_renameat2(a0, a1, a2, a3, a4, a5),
+        SYS_SECCOMP => plan_seccomp(a0, a1, a2),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
@@ -505,6 +506,11 @@ fn plan_munmap(addr: u64, len: u64) -> PackedStep {
 fn plan_poll(ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {
     reset_plan(PlanKind::Poll, [ptr, nfds, timeout_ms, 0, 0, 0]);
     PackedStep::plan(PlanKind::Poll)
+}
+
+fn plan_seccomp(operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::Seccomp, [operation, flags, args_ptr, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Seccomp)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
@@ -1090,6 +1096,18 @@ mod tests {
         assert_eq!(plan_arg(1), 3);
         assert_eq!(plan_arg(2), 250);
         assert_eq!(plan_arg(3), 0);
+    }
+
+    #[test]
+    fn seccomp_plan_preserves_operation_flags_and_args_pointer() {
+        let raw = dispatch(SYS_SECCOMP, 2, 0, 0x1234, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Seccomp));
+        assert_eq!(plan_arg(0), 2);
+        assert_eq!(plan_arg(1), 0);
+        assert_eq!(plan_arg(2), 0x1234);
     }
 
     #[test]

@@ -134,6 +134,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         ctx: SyscallContext,
     ) -> Result<LinuxCallResult, &'static str> {
+        let decision = self.check_seccomp_syscall(self.current_tid(), ctx.nr, 0, ctx.args);
+        if let Some(result) = self.apply_generic_seccomp_decision(ctx.nr, decision) {
+            return Ok(result);
+        }
         let step = self.linux.dispatch(ctx)?;
         self.execute_linux_step(label, step)
     }
@@ -292,6 +296,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
+            PlanKind::Seccomp => self.plan_seccomp(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
@@ -313,7 +318,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::TimerfdSettime
             | PlanKind::TimerfdGettime
             | PlanKind::ClockAdjtime
-            | PlanKind::Seccomp
             | PlanKind::Bpf => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
