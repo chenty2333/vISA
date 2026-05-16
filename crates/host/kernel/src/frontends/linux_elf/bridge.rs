@@ -2063,18 +2063,24 @@ fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
     let rusage_ptr = frame.r10;
     let caller_pid = active_context().pid;
 
-    match active_context().supervisor.query_wait4(caller_pid, selector, options)? {
-        Some((pid, status)) => {
-            if status_ptr != 0 {
-                write_user_u32(status_ptr, status)?;
+    loop {
+        match active_context().supervisor.query_wait4(caller_pid, selector, options) {
+            Ok(Some((pid, status))) => {
+                if status_ptr != 0 {
+                    write_user_u32(status_ptr, status)?;
+                }
+                if rusage_ptr != 0 {
+                    write_user_bytes(rusage_ptr, &[0u8; LINUX_RUSAGE_SIZE])?;
+                }
+                active_context().supervisor.reap_wait4_child(caller_pid, pid)?;
+                return Ok(pid as i64);
             }
-            if rusage_ptr != 0 {
-                write_user_bytes(rusage_ptr, &[0u8; LINUX_RUSAGE_SIZE])?;
+            Ok(None) => return Ok(0),
+            Err(ERR_ENOSYS) => {
+                active_context().supervisor.block_on_wait4_child_exit(caller_pid, selector)?;
             }
-            active_context().supervisor.reap_wait4_child(caller_pid, pid)?;
-            Ok(pid as i64)
-        }
-        None => Ok(0),
+            Err(errno) => return Err(errno),
+        };
     }
 }
 

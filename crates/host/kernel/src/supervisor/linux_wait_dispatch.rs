@@ -232,6 +232,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::ChildExit { caller_pid, selector }) =
+                self.waits.pending_source(token)
+                && self.wait4_child_is_ready(caller_pid, selector)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if self.waits.is_pending(token)
                 && self.has_unblocked_pending_signal_for_task(token.owner_task)
             {
@@ -254,6 +261,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::SocketConnect { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
                         _ => {
                             let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.execute_linux_step("linux_resume", resumed)
@@ -291,12 +299,14 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::SocketConnect => {}
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::FileLock => {}
+                            super::types::WaitKind::ChildExit => {}
                         }
                         if matches!(
                             resolution.source,
                             WaitSource::SocketConnect { .. }
                                 | WaitSource::SocketAccept { .. }
                                 | WaitSource::FileLock { .. }
+                                | WaitSource::ChildExit { .. }
                         ) {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }

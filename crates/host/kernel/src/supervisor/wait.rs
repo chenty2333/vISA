@@ -15,6 +15,7 @@ pub(crate) enum WaitRegistration {
     SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
+    ChildExit { caller_pid: u32, selector: i64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +48,7 @@ pub(crate) enum WaitSource {
     SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
+    ChildExit { caller_pid: u32, selector: i64 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -108,6 +110,9 @@ impl WaitRegistry {
                 0,
                 None,
             ),
+            WaitRegistration::ChildExit { caller_pid, selector } => {
+                (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
+            }
         };
 
         let token = WaitToken { id: self.next_id, owner_task, kind, generation: self.next_id };
@@ -149,6 +154,7 @@ impl WaitRegistry {
                 WaitSource::SocketConnect { .. } => {}
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::FileLock { .. } => {}
+                WaitSource::ChildExit { .. } => {}
             }
         }
     }
@@ -366,5 +372,32 @@ mod tests {
         assert_eq!(token.kind, WaitKind::FileLock);
         assert_eq!(registry.pending_source(token), Some(source));
         assert_eq!(registry.pending_sources(), alloc::vec![(token, source)]);
+    }
+
+    #[test]
+    fn child_exit_registration_carries_wait4_selector() {
+        let mut registry = WaitRegistry::new();
+        let token = registry.register(
+            7,
+            WaitRegistration::ChildExit { caller_pid: 3, selector: -1 },
+            0,
+            100,
+        );
+
+        assert_eq!(token.kind, WaitKind::ChildExit);
+        assert_eq!(
+            registry.pending_source(token),
+            Some(WaitSource::ChildExit { caller_pid: 3, selector: -1 })
+        );
+
+        registry.apply_event(Event::WaitReady(token.id));
+        assert_eq!(
+            registry.take_resolution(token),
+            Some(WaitResolution {
+                outcome: WaitOutcome::Ready,
+                resume_cookie: 0,
+                source: WaitSource::ChildExit { caller_pid: 3, selector: -1 },
+            })
+        );
     }
 }

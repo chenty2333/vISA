@@ -5,12 +5,16 @@ use semantic_core::{
 };
 
 use super::{
+    events::Event,
+    linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     types::{
         Pid, ProcessRuntimeState, ProcessRuntimeStateKind, RobustListRegistration, TaskId,
         ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
+    wait::{WaitRegistration, WaitSource},
 };
+use crate::interrupts;
 
 // Linux clone flags
 const CLONE_EXIT_SIGNAL_MASK: u64 = 0xff;
@@ -545,6 +549,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         self.semantic.transition_process_state_by_pid(pid, ProcessState::Zombie { exit_code });
+        self.notify_child_exit_waiters();
     }
 
     pub(crate) fn query_wait4(
@@ -590,6 +595,47 @@ impl<'engine> PrototypeRuntime<'engine> {
         let pid = child.pid;
         let status = wait_exit_status(child.exit_code.unwrap_or(0));
         Ok(Some((pid, status)))
+    }
+
+    pub(crate) fn wait4_child_is_ready(&self, caller_pid: Pid, selector: i64) -> bool {
+        self.query_wait4(caller_pid, selector, WNOHANG).ok().flatten().is_some()
+    }
+
+    pub(crate) fn block_on_wait4_child_exit(
+        &mut self,
+        caller_pid: Pid,
+        selector: i64,
+    ) -> Result<(), i32> {
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::ChildExit { caller_pid, selector },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        match self.block_on_wait("ring3_wait4", token).map_err(|_| vmos_abi::ERR_EINVAL)? {
+            LinuxCallResult::Ret(0) => Ok(()),
+            LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
+            _ => Err(vmos_abi::ERR_EINVAL),
+        }
+    }
+
+    fn notify_child_exit_waiters(&mut self) {
+        let ready_waits: Vec<u64> = self
+            .waits
+            .pending_sources()
+            .into_iter()
+            .filter_map(|(token, source)| {
+                let WaitSource::ChildExit { caller_pid, selector } = source else {
+                    return None;
+                };
+                self.wait4_child_is_ready(caller_pid, selector).then_some(token.id)
+            })
+            .collect();
+        for wait_id in ready_waits {
+            self.scheduler.push_event(Event::WaitReady(wait_id));
+        }
+        self.drain_event_queue();
     }
 
     pub(crate) fn reap_wait4_child(&mut self, caller_pid: Pid, child_pid: Pid) -> Result<(), i32> {
