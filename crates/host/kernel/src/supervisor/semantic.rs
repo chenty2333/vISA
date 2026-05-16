@@ -20,7 +20,9 @@ use super::{
     authority::{AuthorityPlane, SubstrateAuthorityClass, SubstrateAuthoritySpec},
     events::Event,
     runtime::PrototypeRuntime,
-    types::{FdResource, LINUX_KNOWN_CAPS, WaitKind, WaitRestartClass, WaitToken},
+    types::{
+        FdResource, LINUX_KNOWN_CAPS, ThreadRuntimeStateKind, WaitKind, WaitRestartClass, WaitToken,
+    },
 };
 
 pub(super) fn bootstrap_graph(
@@ -244,6 +246,30 @@ impl<'engine> PrototypeRuntime<'engine> {
             semantic_wait_kind(token.kind),
             token.generation,
         );
+        if let Some(thread) = self.threads.iter_mut().find(|thread| {
+            thread.task_id == token.owner_task && thread.state == ThreadRuntimeStateKind::Running
+        }) {
+            thread.state = ThreadRuntimeStateKind::Blocked;
+            self.semantic.set_task_state(token.owner_task, TaskState::Pending);
+        }
+    }
+
+    pub(super) fn record_wait_owner_running(&mut self, owner_task: u32) {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.task_id == owner_task)
+        else {
+            self.semantic.set_task_state(owner_task, TaskState::Running);
+            return;
+        };
+        match thread.state {
+            ThreadRuntimeStateKind::Blocked => {
+                thread.state = ThreadRuntimeStateKind::Running;
+                self.semantic.set_task_state(owner_task, TaskState::Running);
+            }
+            ThreadRuntimeStateKind::Running => {
+                self.semantic.set_task_state(owner_task, TaskState::Running);
+            }
+            ThreadRuntimeStateKind::Stopped | ThreadRuntimeStateKind::Dead => {}
+        }
     }
 
     pub(super) fn record_scheduler_event(&mut self, event: Event) {

@@ -1,6 +1,6 @@
 use alloc::{vec, vec::Vec};
 
-use semantic_core::{FailureEffect, TaskState};
+use semantic_core::FailureEffect;
 use vmos_abi::{ERR_EFAULT, ERR_EINTR, ERR_EPERM};
 
 use super::{
@@ -244,7 +244,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     self.validate_wait_token(token)
                         .map_err(|_| "wait token generation check failed before resume")?;
                 }
-                self.semantic.set_task_state(token.owner_task, TaskState::Running);
+                self.record_wait_owner_running(token.owner_task);
                 return match resolution.outcome {
                     WaitOutcome::Ready => match resolution.source {
                         WaitSource::Epoll { epoll_id, max_events } => {
