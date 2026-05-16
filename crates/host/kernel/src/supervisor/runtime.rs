@@ -9,6 +9,7 @@ use super::{
     artifacts::ArtifactRegistry,
     authority::AuthorityPlane,
     engine::RuntimeOnlyExecutor,
+    events::Event,
     guest_memory::GuestMemoryProjection,
     linux::LinuxFrontend,
     net::{NetStackSocketBinding, NetworkPlane},
@@ -23,8 +24,8 @@ use super::{
     store_manager::StoreManager,
     types::{
         EventFdState, FdEntry, InjectedFault, Pid, PipeState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, SeccompMode, SigAction, SocketPairState,
-        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, SeccompMode, ServiceCallError, SigAction,
+        SocketPairState, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::WaitRegistry,
 };
@@ -95,6 +96,15 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) restart_count: u64,
     pub(super) semantic: SemanticGraph,
     pub(super) next_snapshot_barrier: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FutexPiHandoff {
+    pub(crate) wait_id: u64,
+    pub(crate) next_owner_task: TaskId,
+    pub(crate) next_owner_tid: Tid,
+    pub(crate) remaining_waiter_priority: u32,
+    pub(crate) has_more_waiters: bool,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -317,6 +327,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.threads.iter().find(|thread| thread.tid == tid).map(|thread| thread.task_id)
     }
 
+    pub(crate) fn tid_for_task_id(&self, task: TaskId) -> Option<Tid> {
+        self.threads.iter().find(|thread| thread.task_id == task).map(|thread| thread.tid)
+    }
+
     pub(crate) fn boost_task_priority(&mut self, task: TaskId, priority: u32) -> bool {
         self.scheduler.boost_priority(task, priority)
     }
@@ -378,6 +392,55 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.futex_pi_boosts.remove(&owner_task);
         }
         self.apply_futex_pi_boost(owner_task)
+    }
+
+    pub(crate) fn prepare_futex_pi_handoff(
+        &mut self,
+        futex_key: u64,
+    ) -> Result<Option<FutexPiHandoff>, ServiceCallError> {
+        let Some(wait_id) = self.futex.peek_waiter(futex_key)? else {
+            return Ok(None);
+        };
+        let Some(next_owner_task) = self.waits.owner_task_for_wait_id(wait_id) else {
+            return Err(ServiceCallError::Invalid("futex pi waiter has no pending wait token"));
+        };
+        let Some(next_owner_tid) = self.tid_for_task_id(next_owner_task) else {
+            return Err(ServiceCallError::Invalid("futex pi waiter has no runtime thread"));
+        };
+        let waiter_count = self.futex.waiter_count(futex_key)?;
+        let remaining_waiter_priority = self.futex.max_priority_excluding(futex_key, wait_id)?;
+        Ok(Some(FutexPiHandoff {
+            wait_id,
+            next_owner_task,
+            next_owner_tid,
+            remaining_waiter_priority,
+            has_more_waiters: waiter_count > 1,
+        }))
+    }
+
+    pub(crate) fn complete_futex_pi_handoff(
+        &mut self,
+        futex_key: u64,
+        old_owner_task: TaskId,
+        handoff: FutexPiHandoff,
+    ) -> Result<(), ServiceCallError> {
+        let wait_ids = self.futex.wake(futex_key, 1)?;
+        if wait_ids.as_slice() != [handoff.wait_id] {
+            return Err(ServiceCallError::Invalid("futex pi handoff woke a different waiter"));
+        }
+        self.scheduler.push_event(Event::WaitReady(handoff.wait_id));
+        self.release_futex_pi_boost(old_owner_task, futex_key);
+        if handoff.remaining_waiter_priority > 0 {
+            self.register_futex_pi_boost(
+                handoff.next_owner_task,
+                futex_key,
+                handoff.remaining_waiter_priority,
+            );
+        } else {
+            self.release_futex_pi_boost(handoff.next_owner_task, futex_key);
+        }
+        self.drain_event_queue();
+        Ok(())
     }
 
     fn apply_futex_pi_boost(&mut self, owner_task: TaskId) -> bool {

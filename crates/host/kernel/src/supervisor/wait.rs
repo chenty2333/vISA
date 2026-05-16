@@ -206,6 +206,14 @@ impl WaitRegistry {
             .map(|record| record.source)
     }
 
+    pub(crate) fn owner_task_for_wait_id(&self, wait_id: u64) -> Option<TaskId> {
+        self.records
+            .iter()
+            .flatten()
+            .find(|record| record.token.id == wait_id && record.state == WaitState::Pending)
+            .map(|record| record.token.owner_task)
+    }
+
     pub(crate) fn pending_sources(&self) -> Vec<(WaitToken, WaitSource)> {
         self.records
             .iter()

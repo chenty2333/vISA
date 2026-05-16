@@ -11,11 +11,14 @@ pub(crate) struct FutexService {
     io: BufferedModule,
     register_wait_with_priority_export: WasmFn<(u64, u64, u32), i32>,
     register_wait_bitset_with_priority_export: WasmFn<(u64, u64, u32, u32), i32>,
+    peek_waiter_export: WasmFn<u64, i32>,
+    waiter_count_export: WasmFn<u64, i32>,
     wake_export: WasmFn<(u64, u32), i32>,
     wake_bitset_export: WasmFn<(u64, u32, u32), i32>,
     requeue_export: WasmFn<(u64, u32, u64, u32), i32>,
     cancel_wait_export: WasmFn<u64, i32>,
     max_priority_export: WasmFn<u64, i32>,
+    max_priority_excluding_export: WasmFn<(u64, u64), i32>,
 }
 
 impl FutexService {
@@ -33,21 +36,28 @@ impl FutexService {
             "register_wait_bitset_with_priority",
             "missing futex register_wait_bitset_with_priority export",
         )?;
+        let peek_waiter_export = io.bind("peek_waiter", "missing futex peek_waiter export")?;
+        let waiter_count_export = io.bind("waiter_count", "missing futex waiter_count export")?;
         let wake_export = io.bind("wake", "missing futex wake export")?;
         let wake_bitset_export = io.bind("wake_bitset", "missing futex wake_bitset export")?;
         let requeue_export = io.bind("requeue", "missing futex requeue export")?;
         let cancel_wait_export = io.bind("cancel_wait", "missing futex cancel_wait export")?;
         let max_priority_export = io.bind("max_priority", "missing futex max_priority export")?;
+        let max_priority_excluding_export =
+            io.bind("max_priority_excluding", "missing futex max_priority_excluding export")?;
 
         Ok(Self {
             io,
             register_wait_with_priority_export,
             register_wait_bitset_with_priority_export,
+            peek_waiter_export,
+            waiter_count_export,
             wake_export,
             wake_bitset_export,
             requeue_export,
             cancel_wait_export,
             max_priority_export,
+            max_priority_excluding_export,
         })
     }
 
@@ -106,6 +116,34 @@ impl FutexService {
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.read_wake_response(len)
+    }
+
+    pub(crate) fn peek_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(&self.peek_waiter_export, key, "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        match len {
+            0 => Ok(None),
+            8 => {
+                let bytes = self.io.read_response(8).map_err(ServiceCallError::Invalid)?;
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&bytes);
+                Ok(Some(u64::from_le_bytes(raw)))
+            }
+            _ => Err(ServiceCallError::Invalid("futex_service returned a malformed peek response")),
+        }
+    }
+
+    pub(crate) fn waiter_count(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        let count = expect_len(
+            self.io
+                .call(&self.waiter_count_export, key, "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        u32::try_from(count)
+            .map_err(|_| ServiceCallError::Invalid("futex_service waiter count overflowed"))
     }
 
     pub(crate) fn wake_bitset(
@@ -172,6 +210,22 @@ impl FutexService {
         expect_len(
             self.io
                 .call(&self.max_priority_export, key, "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn max_priority_excluding(
+        &mut self,
+        key: u64,
+        excluded_wait_id: u64,
+    ) -> Result<u32, ServiceCallError> {
+        expect_len(
+            self.io
+                .call(
+                    &self.max_priority_excluding_export,
+                    (key, excluded_wait_id),
+                    "futex_service trapped",
+                )
                 .map_err(ServiceCallError::Trap)?,
         )
     }

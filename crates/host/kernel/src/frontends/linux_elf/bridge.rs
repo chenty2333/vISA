@@ -50,7 +50,7 @@ use crate::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_SETGID, CAP_SYS_RESOURCE, RLIMIT_AS, Rlimit, RobustListRegistration,
-            SigAction, UserSignalDelivery,
+            ServiceCallError, SigAction, UserSignalDelivery,
         },
     },
 };
@@ -3330,21 +3330,28 @@ fn sys_futex_unlock_pi(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let owner_task = active_context().supervisor.current_task_id();
     if word & FUTEX_WAITERS != 0 {
-        // Preserve futex state bits and delegate wakeup to the existing futex service.
-        write_user_u32(uaddr, futex_pi_unlock_word(word))?;
-        active_context().supervisor.release_futex_pi_boost(owner_task, uaddr);
-        let result = active_context()
+        let handoff = active_context()
             .supervisor
-            .dispatch_linux_syscall(
-                "ring3_futex_unlock_pi_wake",
-                SyscallContext::new(SYS_FUTEX, [uaddr, FUTEX_WAKE as u64, 1, 0, 0, 0]),
-            )
-            .map_err(|_| ERR_EINVAL)?;
-        return match result {
-            LinuxCallResult::Ret(ret) if ret >= 0 => Ok(0),
-            LinuxCallResult::Ret(ret) => Err((-ret) as i32),
-            _ => Err(ERR_EINVAL),
-        };
+            .prepare_futex_pi_handoff(uaddr)
+            .map_err(service_error_to_errno)?;
+        if let Some(handoff) = handoff {
+            write_user_u32(
+                uaddr,
+                futex_pi_handoff_word(
+                    word,
+                    handoff.next_owner_tid & FUTEX_TID_MASK,
+                    handoff.has_more_waiters,
+                ),
+            )?;
+            active_context()
+                .supervisor
+                .complete_futex_pi_handoff(uaddr, owner_task, handoff)
+                .map_err(service_error_to_errno)?;
+            return Ok(0);
+        }
+        write_user_u32(uaddr, futex_pi_unlock_empty_word(word))?;
+        active_context().supervisor.release_futex_pi_boost(owner_task, uaddr);
+        return Ok(0);
     }
     write_user_u32(uaddr, 0)?;
     active_context().supervisor.release_futex_pi_boost(owner_task, uaddr);
@@ -3363,16 +3370,39 @@ fn futex_pi_restore_wait_word(original: u32, current: u32) -> Option<u32> {
     (current == futex_pi_wait_word(original)).then_some(original)
 }
 
-fn futex_pi_unlock_word(word: u32) -> u32 {
-    word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)
+fn futex_pi_handoff_word(word: u32, tid: u32, has_more_waiters: bool) -> u32 {
+    let mut next = (word & FUTEX_OWNER_DIED) | (tid & FUTEX_TID_MASK);
+    if has_more_waiters {
+        next |= FUTEX_WAITERS;
+    }
+    next
+}
+
+fn futex_pi_unlock_empty_word(word: u32) -> u32 {
+    word & FUTEX_OWNER_DIED
+}
+
+fn service_error_to_errno(err: ServiceCallError) -> i32 {
+    match err {
+        ServiceCallError::Errno(errno) => errno,
+        ServiceCallError::Trap(reason) => {
+            crate::kwarn!("futex pi service trap: {}", reason);
+            ERR_EINVAL
+        }
+        ServiceCallError::Invalid(err) => {
+            crate::kwarn!("futex pi service invalid response: {}", err);
+            ERR_EINVAL
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_WAITERS};
+    use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
 
     use super::{
-        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_word, futex_pi_wait_word,
+        futex_pi_handoff_word, futex_pi_owner_word, futex_pi_restore_wait_word,
+        futex_pi_unlock_empty_word, futex_pi_wait_word,
     };
 
     #[test]
@@ -3387,8 +3417,22 @@ mod tests {
     #[test]
     fn futex_pi_unlock_word_preserves_state_bits() {
         let word = FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x1234;
-        let unlocked = futex_pi_unlock_word(word);
-        assert_eq!(unlocked, FUTEX_OWNER_DIED | FUTEX_WAITERS);
+        let unlocked = futex_pi_unlock_empty_word(word);
+        assert_eq!(unlocked, FUTEX_OWNER_DIED);
+    }
+
+    #[test]
+    fn futex_pi_handoff_word_installs_next_owner_and_waiters_state() {
+        let word = FUTEX_OWNER_DIED | FUTEX_WAITERS | 0x1234;
+        let handoff = futex_pi_handoff_word(word, 0x55aa, true);
+        assert_eq!(handoff & FUTEX_OWNER_DIED, FUTEX_OWNER_DIED);
+        assert_eq!(handoff & FUTEX_WAITERS, FUTEX_WAITERS);
+        assert_eq!(handoff & FUTEX_TID_MASK, 0x55aa);
+
+        let final_handoff = futex_pi_handoff_word(word, 0x33cc, false);
+        assert_eq!(final_handoff & FUTEX_OWNER_DIED, FUTEX_OWNER_DIED);
+        assert_eq!(final_handoff & FUTEX_WAITERS, 0);
+        assert_eq!(final_handoff & FUTEX_TID_MASK, 0x33cc);
     }
 
     #[test]

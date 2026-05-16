@@ -91,6 +91,35 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn peek_waiter(key: u64) -> i32 {
+    unsafe {
+        let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
+        let response = addr_of_mut!(RESPONSE) as *mut u8;
+        let Some(index) = select_waiter_index(waiters, key, u32::MAX) else {
+            return 0;
+        };
+        let slot = waiters.add(index);
+        core::ptr::copy_nonoverlapping((*slot).wait_id.to_le_bytes().as_ptr(), response, 8);
+    }
+    8
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn waiter_count(key: u64) -> i32 {
+    let mut count = 0i32;
+    unsafe {
+        let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if (*slot).active && (*slot).key == key {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
     let max_count = max_count as usize;
     let mut written = 0usize;
@@ -179,6 +208,24 @@ pub extern "C" fn max_priority(key: u64) -> i32 {
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
             if !(*slot).active || (*slot).key != key {
+                continue;
+            }
+            if (*slot).priority > best {
+                best = (*slot).priority;
+            }
+        }
+        best as i32
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn max_priority_excluding(key: u64, excluded_wait_id: u64) -> i32 {
+    unsafe {
+        let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
+        let mut best = 0u32;
+        for index in 0..MAX_WAITERS {
+            let slot = waiters.add(index);
+            if !(*slot).active || (*slot).key != key || (*slot).wait_id == excluded_wait_id {
                 continue;
             }
             if (*slot).priority > best {
@@ -356,6 +403,31 @@ mod tests {
         assert_eq!(register_wait_with_priority(11, 7, 3), 0);
         assert_eq!(register_wait_with_priority(11, 8, 11), 0);
         assert_eq!(max_priority(11), 11);
+        assert_eq!(max_priority_excluding(11, 8), 3);
+        assert_eq!(max_priority_excluding(11, 7), 11);
         assert_eq!(max_priority(22), 0);
+    }
+
+    #[test]
+    fn peek_waiter_reports_highest_priority_without_removing() {
+        reset();
+        assert_eq!(register_wait_with_priority(11, 7, 3), 0);
+        assert_eq!(register_wait_with_priority(11, 8, 11), 0);
+        assert_eq!(register_wait_with_priority(11, 9, 5), 0);
+
+        assert_eq!(peek_waiter(11), 8);
+        assert_eq!(response_wait_id(0), 8);
+        assert_eq!(waiter_count(11), 3);
+
+        assert_eq!(wake(11, 1), 8);
+        assert_eq!(response_wait_id(0), 8);
+        assert_eq!(waiter_count(11), 2);
+    }
+
+    #[test]
+    fn peek_waiter_reports_empty_key_as_zero_len() {
+        reset();
+        assert_eq!(peek_waiter(99), 0);
+        assert_eq!(waiter_count(99), 0);
     }
 }
