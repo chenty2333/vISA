@@ -2282,6 +2282,18 @@ pub enum EventKind {
         old_state: String,
         new_state: String,
     },
+    ProcessGroupChanged {
+        pid: u32,
+        old_pgid: u32,
+        new_pgid: u32,
+    },
+    ProcessSessionChanged {
+        pid: u32,
+        old_sid: u32,
+        new_sid: u32,
+        old_pgid: u32,
+        new_pgid: u32,
+    },
     ThreadCreated {
         tid: u32,
         task_id: u64,

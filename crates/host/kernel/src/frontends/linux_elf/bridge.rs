@@ -24,17 +24,18 @@ use vmos_abi::{
     SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FORK, SYS_FREMOVEXATTR,
     SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
-    SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
-    SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
-    SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT,
-    SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT,
-    SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6,
-    SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR,
-    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
+    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETSID, SYS_GETSOCKNAME,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL,
+    SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
+    SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
+    SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
     SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR,
-    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
-    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -289,9 +290,10 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FTRUNCATE => sys_ftruncate(frame),
         SYS_GETPID => Ok(active_context().pid as i64),
         SYS_GETTID => Ok(active_context().tid as i64),
-        SYS_GETPGID => Ok(active_context().pid as i64), // pgid = self (no process groups yet)
+        SYS_GETPGID => sys_getpgid(frame),
+        SYS_GETPGRP => sys_getpgrp(),
         SYS_GETPPID => Ok(current_parent_pid() as i64),
-        SYS_GETSID => Ok(active_context().pid as i64), // sid = self (no sessions yet)
+        SYS_GETSID => sys_getsid(frame),
         SYS_GETUID => Ok(active_context().uid() as i64),
         SYS_GETEUID => Ok(active_context().euid() as i64),
         SYS_GETGID => Ok(active_context().gid() as i64),
@@ -346,7 +348,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
         SYS_CLONE3 => Err(ERR_ENOSYS),
         SYS_WAIT4 => sys_wait4(frame),
-        SYS_SETPGID => Ok(0),
+        SYS_SETPGID => sys_setpgid(frame),
+        SYS_SETSID => sys_setsid(),
         SYS_KILL => sys_kill(frame),
         SYS_IOCTL => sys_ioctl(frame),
         SYS_PIPE => sys_pipe(frame, 0),
@@ -2262,6 +2265,41 @@ fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
     let sender_pid = active_context().pid;
     supervisor.queue_signal_to_thread(target_tid, signal as u8, 0, sender_pid, 0);
     Ok(0)
+}
+
+fn sys_getpgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let pid_arg = linux_pid_arg(frame.rdi)?;
+    let context = active_context();
+    let current_pid = context.pid;
+    context.supervisor.get_process_group_id(current_pid, pid_arg).map(|pgid| pgid as i64)
+}
+
+fn sys_getpgrp() -> Result<i64, i32> {
+    let context = active_context();
+    let current_pid = context.pid;
+    context.supervisor.get_process_group_id(current_pid, 0).map(|pgid| pgid as i64)
+}
+
+fn sys_getsid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let pid_arg = linux_pid_arg(frame.rdi)?;
+    let context = active_context();
+    let current_pid = context.pid;
+    context.supervisor.get_session_id(current_pid, pid_arg).map(|sid| sid as i64)
+}
+
+fn sys_setpgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let pid_arg = linux_pid_arg(frame.rdi)?;
+    let pgid_arg = linux_pid_arg(frame.rsi)?;
+    let context = active_context();
+    let current_pid = context.pid;
+    context.supervisor.set_process_group_id(current_pid, pid_arg, pgid_arg)?;
+    Ok(0)
+}
+
+fn sys_setsid() -> Result<i64, i32> {
+    let context = active_context();
+    let current_pid = context.pid;
+    context.supervisor.create_session_for_process(current_pid).map(|sid| sid as i64)
 }
 
 fn sys_fork_like(frame: &mut SyscallFrame) -> Result<i64, i32> {
@@ -5324,6 +5362,11 @@ fn parent_user_path(path: &[u8]) -> Option<Vec<u8>> {
 
 fn linux_fd_arg(raw: u64) -> i64 {
     (raw as i32) as i64
+}
+
+fn linux_pid_arg(raw: u64) -> Result<i32, i32> {
+    let value = raw as i32;
+    if raw == value as i64 as u64 { Ok(value) } else { Err(ERR_EINVAL) }
 }
 
 fn linux_owner_arg(raw: u64) -> Result<Option<u32>, i32> {

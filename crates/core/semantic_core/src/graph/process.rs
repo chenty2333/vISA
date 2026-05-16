@@ -203,13 +203,13 @@ impl SemanticGraph {
         record.state = new_state;
         let new_str = format!("{0:?}", record.state);
         record.generation += 1;
+        let process_id = record.id;
+        let process_ref = record.object_ref();
+        let pid = record.pid;
+        self.refresh_process_object_ref_dependents(process_id, process_ref);
         self.event_log.push(
             "process",
-            EventKind::ProcessStateChanged {
-                pid: record.pid,
-                old_state: old_str,
-                new_state: new_str,
-            },
+            EventKind::ProcessStateChanged { pid, old_state: old_str, new_state: new_str },
         );
         true
     }
@@ -226,15 +226,107 @@ impl SemanticGraph {
         record.state = new_state;
         let new_str = format!("{0:?}", record.state);
         record.generation += 1;
+        let process_id = record.id;
+        let process_ref = record.object_ref();
+        let pid = record.pid;
+        self.refresh_process_object_ref_dependents(process_id, process_ref);
         self.event_log.push(
             "process",
-            EventKind::ProcessStateChanged {
-                pid: record.pid,
-                old_state: old_str,
-                new_state: new_str,
+            EventKind::ProcessStateChanged { pid, old_state: old_str, new_state: new_str },
+        );
+        true
+    }
+
+    pub fn set_process_group_by_pid(&mut self, pid: u32, pgid: u32) -> bool {
+        if pgid == 0 {
+            return false;
+        }
+        let Some(record) = self.domains.process.processes.iter_mut().find(|r| r.pid == pid) else {
+            return false;
+        };
+        if record.pgid == pgid {
+            return true;
+        }
+        let old_pgid = record.pgid;
+        record.pgid = pgid;
+        record.generation += 1;
+        let process_id = record.id;
+        let process_ref = record.object_ref();
+        let pid = record.pid;
+        self.refresh_process_object_ref_dependents(process_id, process_ref);
+        self.event_log
+            .push("process", EventKind::ProcessGroupChanged { pid, old_pgid, new_pgid: pgid });
+        true
+    }
+
+    pub fn set_process_session_by_pid(&mut self, pid: u32, sid: u32, pgid: u32) -> bool {
+        if sid == 0 || pgid == 0 {
+            return false;
+        }
+        let Some(record) = self.domains.process.processes.iter_mut().find(|r| r.pid == pid) else {
+            return false;
+        };
+        if record.sid == sid && record.pgid == pgid {
+            return true;
+        }
+        let old_sid = record.sid;
+        let old_pgid = record.pgid;
+        record.sid = sid;
+        record.pgid = pgid;
+        record.generation += 1;
+        let process_id = record.id;
+        let process_ref = record.object_ref();
+        let pid = record.pid;
+        self.refresh_process_object_ref_dependents(process_id, process_ref);
+        self.event_log.push(
+            "process",
+            EventKind::ProcessSessionChanged {
+                pid,
+                old_sid,
+                new_sid: sid,
+                old_pgid,
+                new_pgid: pgid,
             },
         );
         true
+    }
+
+    fn refresh_process_object_ref_dependents(
+        &mut self,
+        process_id: ProcessId,
+        process_ref: ContractObjectRef,
+    ) {
+        let mut updated_threads = Vec::new();
+        for thread in
+            self.domains.process.threads.iter_mut().filter(|thread| thread.process.id == process_id)
+        {
+            thread.process = process_ref;
+            thread.generation += 1;
+            updated_threads.push(thread.object_ref());
+        }
+        for thread_group in &mut self.domains.process.thread_groups {
+            if let Some(updated) =
+                updated_threads.iter().find(|thread_ref| thread_ref.id == thread_group.leader.id)
+            {
+                thread_group.leader = *updated;
+            }
+        }
+        for credential in self
+            .domains
+            .process
+            .credentials
+            .iter_mut()
+            .filter(|credential| credential.owner_process.id == process_id)
+        {
+            credential.owner_process = process_ref;
+        }
+        for process in &mut self.domains.process.processes {
+            for child in &mut process.children {
+                if child.id == process_id {
+                    *child = process_ref;
+                }
+            }
+        }
     }
 
     // ── Thread ──
@@ -1197,6 +1289,36 @@ mod tests {
         let process = graph.query_process(1).unwrap();
         assert_eq!(process.state, ProcessState::Dead);
         assert_eq!(process.generation, 3);
+        assert!(graph.check_invariants().is_ok());
+    }
+
+    #[test]
+    fn process_group_and_session_changes_bump_process_generation() {
+        let mut graph = graph_with_bootstrapped_process_family();
+
+        assert!(!graph.set_process_group_by_pid(1, 0));
+        assert!(graph.set_process_group_by_pid(1, 2));
+        let process = graph.query_process(1).unwrap();
+        assert_eq!(process.pgid, 2);
+        assert_eq!(process.sid, 1);
+        assert_eq!(process.generation, 2);
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "ProcessGroupChanged pid=1 pgid=1->2"
+        );
+
+        assert!(!graph.set_process_session_by_pid(1, 0, 1));
+        assert!(!graph.set_process_session_by_pid(1, 1, 0));
+        assert!(graph.set_process_session_by_pid(1, 1, 1));
+        let process = graph.query_process(1).unwrap();
+        assert_eq!(process.pgid, 1);
+        assert_eq!(process.sid, 1);
+        assert_eq!(process.generation, 3);
+        assert_eq!(
+            graph.event_log_tail(1)[0].kind.summary(),
+            "ProcessSessionChanged pid=1 sid=1->1 pgid=2->1"
+        );
+        assert!(graph.check_invariants().is_ok());
     }
 
     #[test]

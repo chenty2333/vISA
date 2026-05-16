@@ -435,6 +435,39 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
         EventKind::FailureEffect { effect } => {
             format!("FailureEffect {}", effect.summary())
         }
+        EventKind::ProcessCreated { pid, parent_pid } => {
+            format!("ProcessCreated pid={pid} parent={parent_pid:?}")
+        }
+        EventKind::ProcessStateChanged { pid, old_state, new_state } => {
+            format!("ProcessStateChanged pid={pid} {old_state}->{new_state}")
+        }
+        EventKind::ProcessGroupChanged { pid, old_pgid, new_pgid } => {
+            format!("ProcessGroupChanged pid={pid} pgid={old_pgid}->{new_pgid}")
+        }
+        EventKind::ProcessSessionChanged { pid, old_sid, new_sid, old_pgid, new_pgid } => format!(
+            "ProcessSessionChanged pid={pid} sid={old_sid}->{new_sid} pgid={old_pgid}->{new_pgid}"
+        ),
+        EventKind::ThreadCreated { tid, task_id } => {
+            format!("ThreadCreated tid={tid} task={task_id}")
+        }
+        EventKind::ThreadClearChildTidChanged { tid, clear_child_tid } => {
+            format!("ThreadClearChildTidChanged tid={tid} clear_child_tid={clear_child_tid:?}")
+        }
+        EventKind::ThreadRobustListChanged { tid, head, len } => {
+            format!("ThreadRobustListChanged tid={tid} head={head:?} len={len}")
+        }
+        EventKind::ThreadGroupCreated { tgid } => {
+            format!("ThreadGroupCreated tgid={tgid}")
+        }
+        EventKind::FdTableCreated { shared } => {
+            format!("FdTableCreated shared={shared}")
+        }
+        EventKind::CredentialCreated { uid, gid } => {
+            format!("CredentialCreated uid={uid} gid={gid}")
+        }
+        EventKind::CredentialTransition { from_id } => {
+            format!("CredentialTransition from_id={from_id}")
+        }
         _ => return None,
     };
     Some(summary)

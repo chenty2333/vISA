@@ -550,6 +550,112 @@ impl<'engine> PrototypeRuntime<'engine> {
             .ok_or(vmos_abi::ERR_ESRCH)
     }
 
+    pub(crate) fn get_process_group_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
+        let target_pid = resolve_pid_arg(caller_pid, pid_arg)?;
+        self.processes
+            .iter()
+            .find(|process| {
+                process.pid == target_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .map(|process| process.pgid)
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
+    pub(crate) fn get_session_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
+        let target_pid = resolve_pid_arg(caller_pid, pid_arg)?;
+        self.processes
+            .iter()
+            .find(|process| {
+                process.pid == target_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .map(|process| process.sid)
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
+    pub(crate) fn set_process_group_id(
+        &mut self,
+        caller_pid: Pid,
+        pid_arg: i32,
+        pgid_arg: i32,
+    ) -> Result<(), i32> {
+        if pgid_arg < 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let target_pid = resolve_pid_arg(caller_pid, pid_arg)?;
+        let caller = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .cloned()
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        let target = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == target_pid && process.state == ProcessRuntimeStateKind::Running
+            })
+            .cloned()
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+
+        if target_pid != caller_pid && target.ppid != caller_pid {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        if target.sid != caller.sid || target.sid == target.pid {
+            return Err(vmos_abi::ERR_EPERM);
+        }
+
+        let new_pgid = if pgid_arg == 0 { target_pid } else { pgid_arg as Pid };
+        let existing_group_session = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.state != ProcessRuntimeStateKind::Dead && process.pgid == new_pgid
+            })
+            .map(|process| process.sid);
+        match existing_group_session {
+            Some(session) if session != caller.sid => return Err(vmos_abi::ERR_EPERM),
+            Some(_) => {}
+            None if new_pgid != target_pid => return Err(vmos_abi::ERR_EPERM),
+            None => {}
+        }
+
+        if !self.semantic.set_process_group_by_pid(target_pid, new_pgid) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let Some(target) = self.processes.iter_mut().find(|process| process.pid == target_pid)
+        else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        target.pgid = new_pgid;
+        Ok(())
+    }
+
+    pub(crate) fn create_session_for_process(&mut self, caller_pid: Pid) -> Result<Pid, i32> {
+        let caller = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == caller_pid && process.state == ProcessRuntimeStateKind::Running
+            })
+            .cloned()
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if caller.pgid == caller.pid {
+            return Err(vmos_abi::ERR_EPERM);
+        }
+        if !self.semantic.set_process_session_by_pid(caller_pid, caller_pid, caller_pid) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let Some(caller) = self.processes.iter_mut().find(|process| process.pid == caller_pid)
+        else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        caller.sid = caller_pid;
+        caller.pgid = caller_pid;
+        Ok(caller_pid)
+    }
+
     /// Transition a process to Zombie state with the given exit code.
     pub(crate) fn process_exit(&mut self, pid: Pid, exit_code: i32) {
         let mut parent_signal = None;
@@ -702,4 +808,14 @@ fn wait_selector_matches(
 
 fn wait_exit_status(exit_code: i32) -> u32 {
     ((exit_code as u32) & 0xff) << 8
+}
+
+fn resolve_pid_arg(caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
+    if pid_arg < 0 {
+        Err(vmos_abi::ERR_EINVAL)
+    } else if pid_arg == 0 {
+        Ok(caller_pid)
+    } else {
+        Ok(pid_arg as Pid)
+    }
 }
