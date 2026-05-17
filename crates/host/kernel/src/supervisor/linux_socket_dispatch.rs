@@ -197,7 +197,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Listen => {
                 let backlog =
                     u32::try_from(plan.args[1]).map_err(|_| "listen backlog overflowed")?;
-                if let Some(result) = self.listen_net_stack_tcp(socket_id, ready_key, handle)? {
+                if let Some(result) =
+                    self.listen_net_stack_tcp(socket_id, backlog, ready_key, handle)?
+                {
                     if matches!(result, LinuxCallResult::Ret(0)) {
                         match self.linux_socket.listen_socket(socket_id, backlog) {
                             Ok(()) | Err(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP)) => {}

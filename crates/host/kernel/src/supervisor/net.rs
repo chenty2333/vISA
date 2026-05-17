@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use net_stack_adapter::DEFAULT_IPV4_ADDR;
 use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
 use service_core::{
@@ -20,6 +22,7 @@ use crate::interrupts;
 
 const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
 const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
+const MAX_NET_STACK_PENDING_ACCEPTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Ipv4SocketEndpoint {
@@ -36,11 +39,22 @@ pub(crate) enum NetStackSocketMode {
     TcpEstablished,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NetStackSocketBinding {
     pub(crate) socket_id: u32,
     pub(crate) stack_socket_id: u32,
     pub(crate) mode: NetStackSocketMode,
+    pub(crate) listen_backlog: u32,
+    pub(crate) local_ipv4: [u8; 4],
+    pub(crate) local_port: u16,
+    pub(crate) remote_ipv4: [u8; 4],
+    pub(crate) remote_port: u16,
+    pub(crate) pending_accepts: Vec<NetStackPendingAccept>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NetStackPendingAccept {
+    pub(crate) stack_socket_id: u32,
     pub(crate) local_ipv4: [u8; 4],
     pub(crate) local_port: u16,
     pub(crate) remote_ipv4: [u8; 4],
@@ -48,15 +62,17 @@ pub(crate) struct NetStackSocketBinding {
 }
 
 impl NetStackSocketBinding {
-    pub(crate) const fn new(socket_id: u32, stack_socket_id: u32) -> Self {
+    pub(crate) fn new(socket_id: u32, stack_socket_id: u32) -> Self {
         Self {
             socket_id,
             stack_socket_id,
             mode: NetStackSocketMode::Idle,
+            listen_backlog: 0,
             local_ipv4: [0; 4],
             local_port: 0,
             remote_ipv4: [0; 4],
             remote_port: 0,
+            pending_accepts: Vec::new(),
         }
     }
 }
@@ -255,6 +271,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         };
         let binding = self.net_stack_sockets.remove(index);
+        for pending in binding.pending_accepts {
+            if let Err(err) = self.net_stack.close_tcp_socket(pending.stack_socket_id) {
+                crate::kwarn!(
+                    "smoltcp close pending accepted socket {}: {}",
+                    pending.stack_socket_id,
+                    err
+                );
+            }
+        }
         if let Err(err) = self.net_stack.close_tcp_socket(binding.stack_socket_id) {
             crate::kwarn!("smoltcp close socket {}: {}", socket_id, err);
         }
@@ -349,6 +374,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn listen_net_stack_tcp(
         &mut self,
         socket_id: u32,
+        backlog: u32,
         ready_key: u64,
         socket_resource: ResourceHandle,
     ) -> Result<Option<LinuxCallResult>, &'static str> {
@@ -358,9 +384,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].local_port == 0 {
             return Ok(None);
         }
+        let listen_backlog = normalize_net_stack_backlog(backlog);
         match self.net_stack_sockets[index].mode {
             NetStackSocketMode::Idle => {}
             NetStackSocketMode::TcpListening | NetStackSocketMode::TcpListenEstablished => {
+                self.net_stack_sockets[index].listen_backlog = listen_backlog;
                 return Ok(Some(LinuxCallResult::Ret(0)));
             }
             NetStackSocketMode::TcpConnectInProgress | NetStackSocketMode::TcpEstablished => {
@@ -375,6 +403,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
         }
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
+        self.net_stack_sockets[index].listen_backlog = listen_backlog;
         self.semantic.record_socket_state_changed(socket_resource.id, "listen");
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         Ok(Some(LinuxCallResult::Ret(0)))
@@ -527,7 +556,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
-        Some(self.net_stack_sockets[index].mode == NetStackSocketMode::TcpListenEstablished)
+        Some(
+            !self.net_stack_sockets[index].pending_accepts.is_empty()
+                || self.net_stack_sockets[index].mode == NetStackSocketMode::TcpListenEstablished,
+        )
     }
 
     pub(super) fn accept_net_stack_tcp(
@@ -552,6 +584,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
         };
         self.refresh_net_stack_socket_state(index, listen_ready_key, listen_resource);
+        if let Some(pending) = dequeue_net_stack_pending_accept(&mut self.net_stack_sockets[index])
+        {
+            self.net_stack_sockets.push(NetStackSocketBinding {
+                socket_id: accepted_socket_id,
+                stack_socket_id: pending.stack_socket_id,
+                mode: NetStackSocketMode::TcpEstablished,
+                listen_backlog: 0,
+                local_ipv4: pending.local_ipv4,
+                local_port: pending.local_port,
+                remote_ipv4: pending.remote_ipv4,
+                remote_port: pending.remote_port,
+                pending_accepts: Vec::new(),
+            });
+            return Ok(Some(LinuxCallResult::Ret(0)));
+        }
         if self.net_stack_sockets[index].mode != NetStackSocketMode::TcpListenEstablished {
             return Ok(None);
         }
@@ -584,10 +631,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             socket_id: accepted_socket_id,
             stack_socket_id: old_stack_socket_id,
             mode: NetStackSocketMode::TcpEstablished,
+            listen_backlog: 0,
             local_ipv4: accepted_snapshot.local_ipv4,
             local_port: accepted_snapshot.local_port,
             remote_ipv4: accepted_snapshot.remote_ipv4,
             remote_port: accepted_snapshot.remote_port,
+            pending_accepts: Vec::new(),
         });
         Ok(Some(LinuxCallResult::Ret(0)))
     }
@@ -816,10 +865,60 @@ impl<'engine> PrototypeRuntime<'engine> {
         if snapshot.state == "established"
             && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpListening
         {
+            if self.queue_established_listener_socket(index, &snapshot, ready_key, socket_resource)
+            {
+                return;
+            }
             self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListenEstablished;
             self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
             self.notify_ready_key(ready_key, "smoltcp listener ready");
         }
+    }
+
+    fn queue_established_listener_socket(
+        &mut self,
+        index: usize,
+        snapshot: &net_stack_adapter::TcpSocketSnapshot,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> bool {
+        let backlog = self.net_stack_sockets[index].listen_backlog.max(1) as usize;
+        if self.net_stack_sockets[index].pending_accepts.len() >= backlog {
+            return false;
+        }
+
+        let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        let local_port = self.net_stack_sockets[index].local_port;
+        let Ok(new_listener_stack_socket_id) = self.net_stack.create_tcp_socket() else {
+            crate::kwarn!("smoltcp listener socket exhausted while queueing accept");
+            return false;
+        };
+        if let Err(err) = self.net_stack.listen_tcp(new_listener_stack_socket_id, local_port) {
+            if let Err(close_err) = self.net_stack.close_tcp_socket(new_listener_stack_socket_id) {
+                crate::kwarn!(
+                    "smoltcp cleanup socket {} after queue relisten failure: {}",
+                    new_listener_stack_socket_id,
+                    close_err
+                );
+            }
+            crate::kwarn!("smoltcp relisten socket after accept-ready: {}", err);
+            return false;
+        }
+
+        self.net_stack_sockets[index].pending_accepts.push(NetStackPendingAccept {
+            stack_socket_id: old_stack_socket_id,
+            local_ipv4: snapshot.local_ipv4,
+            local_port: snapshot.local_port,
+            remote_ipv4: snapshot.remote_ipv4,
+            remote_port: snapshot.remote_port,
+        });
+        self.net_stack_sockets[index].stack_socket_id = new_listener_stack_socket_id;
+        self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
+        self.net_stack_sockets[index].remote_ipv4 = [0; 4];
+        self.net_stack_sockets[index].remote_port = 0;
+        self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
+        self.notify_ready_key(ready_key, "smoltcp listener ready");
+        true
     }
 }
 
@@ -836,6 +935,19 @@ fn is_raw_ipv4_or_arp_ethernet_frame(frame: &[u8]) -> bool {
 
 fn is_modeled_packet_frame(frame: &[u8]) -> bool {
     matches!(decode_frame(frame), Ok((meta, _)) if meta.protocol == PROTO_DEMO_TCP)
+}
+
+fn normalize_net_stack_backlog(backlog: u32) -> u32 {
+    backlog.max(1).min(MAX_NET_STACK_PENDING_ACCEPTS as u32)
+}
+
+fn dequeue_net_stack_pending_accept(
+    binding: &mut NetStackSocketBinding,
+) -> Option<NetStackPendingAccept> {
+    if binding.pending_accepts.is_empty() {
+        return None;
+    }
+    Some(binding.pending_accepts.remove(0))
 }
 
 fn net_stack_now_ms() -> i64 {
