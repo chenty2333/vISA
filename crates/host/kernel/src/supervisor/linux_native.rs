@@ -3,14 +3,14 @@ use alloc::vec::Vec;
 use vmos_abi::{
     ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI,
     FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAKE,
-    FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_CLOCK_ADJTIME,
-    SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_BPF,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
+    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
+    SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -109,6 +109,7 @@ impl LinuxFrontend {
             SYS_LINKAT => self.plan_linkat(a0, a1, a2, a3, a4, a5),
             SYS_PRCTL => self.plan_prctl(a0, a1, a2, a3, a4),
             SYS_SECCOMP => self.plan_seccomp(a0, a1, a2),
+            SYS_BPF => self.plan_bpf(a0, a1, a2),
             SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
             _ => PackedStep::error(-ERR_ENOSYS),
         };
@@ -604,6 +605,11 @@ impl LinuxFrontend {
     fn plan_seccomp(&mut self, operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
         self.reset_plan(PlanKind::Seccomp, [operation, flags, args_ptr, 0, 0, 0]);
         PackedStep::plan(PlanKind::Seccomp)
+    }
+
+    fn plan_bpf(&mut self, cmd: u64, attr_ptr: u64, attr_size: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Bpf, [cmd, attr_ptr, attr_size, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Bpf)
     }
 
     fn plan_prctl(

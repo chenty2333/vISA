@@ -1,13 +1,20 @@
 use alloc::{vec, vec::Vec};
 
 use vmos_abi::{
-    ERR_E2BIG, ERR_EBADF, ERR_EEXIST, ERR_EINVAL, ERR_EMFILE, ERR_ENOENT, ERR_EOPNOTSUPP,
+    ERR_E2BIG, ERR_EBADF, ERR_EEXIST, ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOENT,
+    ERR_EOPNOTSUPP, ERR_EPERM,
 };
 
 use super::{
+    linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{BpfMapEntry, BpfMapKind, BpfMapState, FdEntry, FdResource},
+    types::{BpfMapEntry, BpfMapKind, BpfMapState, CAP_SYS_ADMIN, FdEntry, FdResource},
 };
+
+const BPF_MAP_CREATE: u32 = 0;
+const BPF_MAP_LOOKUP_ELEM: u32 = 1;
+const BPF_MAP_UPDATE_ELEM: u32 = 2;
+const BPF_MAP_DELETE_ELEM: u32 = 3;
 
 const BPF_MAP_TYPE_HASH: u32 = 1;
 const BPF_MAP_TYPE_ARRAY: u32 = 2;
@@ -20,8 +27,75 @@ const MAX_BPF_KEY_SIZE: u32 = 256;
 const MAX_BPF_VALUE_SIZE: u32 = 4096;
 const MAX_BPF_MAP_ENTRIES: u32 = 1024;
 const MAX_BPF_MAP_BYTES: usize = 1024 * 1024;
+const BPF_ATTR_MAX_SIZE: usize = 256;
+const BPF_ATTR_MAP_CREATE_SIZE: usize = 20;
+const BPF_ATTR_MAP_LOOKUP_SIZE: usize = 24;
+const BPF_ATTR_MAP_UPDATE_SIZE: usize = 32;
+const BPF_ATTR_MAP_DELETE_SIZE: usize = 16;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(super) fn plan_bpf(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        match self.apply_bpf_plan(plan) {
+            Ok(ret) => Ok(LinuxCallResult::Ret(ret)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
+    }
+
+    fn apply_bpf_plan(&mut self, plan: LinuxPlan) -> Result<i64, i32> {
+        let cmd = u32::try_from(plan.args[0]).map_err(|_| ERR_EINVAL)?;
+        let attr_ptr = plan.args[1];
+        let attr_size = usize::try_from(plan.args[2]).map_err(|_| ERR_E2BIG)?;
+
+        match cmd {
+            BPF_MAP_CREATE => {
+                if self.current_access_state().cap_effective & CAP_SYS_ADMIN == 0 {
+                    return Err(ERR_EPERM);
+                }
+                let attr = self.read_bpf_attr(attr_ptr, attr_size, BPF_ATTR_MAP_CREATE_SIZE)?;
+                let map_type = read_u32_from(&attr, 0)?;
+                let key_size = read_u32_from(&attr, 4)?;
+                let value_size = read_u32_from(&attr, 8)?;
+                let max_entries = read_u32_from(&attr, 12)?;
+                let map_flags = read_u32_from(&attr, 16)?;
+                self.bpf_map_create(map_type, key_size, value_size, max_entries, map_flags)
+                    .map(|fd| fd as i64)
+            }
+            BPF_MAP_LOOKUP_ELEM => {
+                let attr = self.read_bpf_attr(attr_ptr, attr_size, BPF_ATTR_MAP_LOOKUP_SIZE)?;
+                let map_fd = read_u32_from(&attr, 0)?;
+                let key_ptr = read_u64_from(&attr, 8)?;
+                let value_ptr = read_u64_from(&attr, 16)?;
+                let (key_size, _) = self.bpf_map_shape_for_fd(map_fd)?;
+                let key = self.read_bpf_user_bytes(key_ptr, key_size)?;
+                let value = self.bpf_map_lookup_elem(map_fd, &key)?;
+                self.write_bpf_user_bytes(value_ptr, &value)?;
+                Ok(0)
+            }
+            BPF_MAP_UPDATE_ELEM => {
+                let attr = self.read_bpf_attr(attr_ptr, attr_size, BPF_ATTR_MAP_UPDATE_SIZE)?;
+                let map_fd = read_u32_from(&attr, 0)?;
+                let key_ptr = read_u64_from(&attr, 8)?;
+                let value_ptr = read_u64_from(&attr, 16)?;
+                let flags = read_u64_from(&attr, 24)?;
+                let (key_size, value_size) = self.bpf_map_shape_for_fd(map_fd)?;
+                let key = self.read_bpf_user_bytes(key_ptr, key_size)?;
+                let value = self.read_bpf_user_bytes(value_ptr, value_size)?;
+                self.bpf_map_update_elem(map_fd, &key, &value, flags)?;
+                Ok(0)
+            }
+            BPF_MAP_DELETE_ELEM => {
+                let attr = self.read_bpf_attr(attr_ptr, attr_size, BPF_ATTR_MAP_DELETE_SIZE)?;
+                let map_fd = read_u32_from(&attr, 0)?;
+                let key_ptr = read_u64_from(&attr, 8)?;
+                let (key_size, _) = self.bpf_map_shape_for_fd(map_fd)?;
+                let key = self.read_bpf_user_bytes(key_ptr, key_size)?;
+                self.bpf_map_delete_elem(map_fd, &key)?;
+                Ok(0)
+            }
+            _ => Err(ERR_EOPNOTSUPP),
+        }
+    }
+
     pub(crate) fn bpf_map_create(
         &mut self,
         map_type: u32,
@@ -190,6 +264,46 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn bpf_map_mut(&mut self, map_id: u64) -> Result<&mut BpfMapState, i32> {
         self.bpf_maps.iter_mut().find(|map| map.id == map_id).ok_or(ERR_EBADF)
     }
+
+    fn read_bpf_attr(&mut self, ptr: u64, size: usize, min_size: usize) -> Result<Vec<u8>, i32> {
+        if ptr == 0 {
+            return Err(ERR_EFAULT);
+        }
+        if size < min_size {
+            return Err(ERR_EINVAL);
+        }
+        if size > BPF_ATTR_MAX_SIZE {
+            return Err(ERR_E2BIG);
+        }
+        self.read_bpf_user_bytes(ptr, size)
+    }
+
+    fn read_bpf_user_bytes(&mut self, ptr: u64, len: usize) -> Result<Vec<u8>, i32> {
+        let ptr = u32::try_from(ptr).map_err(|_| ERR_EFAULT)?;
+        let len = u32::try_from(len).map_err(|_| ERR_EINVAL)?;
+        self.linux.read_bytes(ptr, len).map_err(|_| ERR_EFAULT)
+    }
+
+    fn write_bpf_user_bytes(&mut self, ptr: u64, bytes: &[u8]) -> Result<(), i32> {
+        let ptr = u32::try_from(ptr).map_err(|_| ERR_EFAULT)?;
+        self.linux.write_bytes(ptr, bytes).map_err(|_| ERR_EFAULT)
+    }
+}
+
+fn errno_ret(errno: i32) -> LinuxCallResult {
+    LinuxCallResult::Ret(-(errno as i64))
+}
+
+fn read_u32_from(bytes: &[u8], offset: usize) -> Result<u32, i32> {
+    let end = offset.checked_add(4).ok_or(ERR_EINVAL)?;
+    let raw = bytes.get(offset..end).ok_or(ERR_EINVAL)?;
+    Ok(u32::from_le_bytes(raw.try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn read_u64_from(bytes: &[u8], offset: usize) -> Result<u64, i32> {
+    let end = offset.checked_add(8).ok_or(ERR_EINVAL)?;
+    let raw = bytes.get(offset..end).ok_or(ERR_EINVAL)?;
+    Ok(u64::from_le_bytes(raw.try_into().map_err(|_| ERR_EINVAL)?))
 }
 
 fn validate_bpf_map_shape(

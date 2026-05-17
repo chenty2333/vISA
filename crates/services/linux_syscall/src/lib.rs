@@ -11,7 +11,7 @@ use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
-    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
+    SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
     SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
     SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
@@ -122,6 +122,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_LINKAT => plan_linkat(a0, a1, a2, a3, a4, a5),
         SYS_PRCTL => plan_prctl(a0, a1, a2, a3, a4),
         SYS_SECCOMP => plan_seccomp(a0, a1, a2),
+        SYS_BPF => plan_bpf(a0, a1, a2),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
@@ -540,6 +541,11 @@ fn plan_clock_getres(clock_id: u64, timespec_ptr: u64) -> PackedStep {
 fn plan_seccomp(operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
     reset_plan(PlanKind::Seccomp, [operation, flags, args_ptr, 0, 0, 0]);
     PackedStep::plan(PlanKind::Seccomp)
+}
+
+fn plan_bpf(cmd: u64, attr_ptr: u64, attr_size: u64) -> PackedStep {
+    reset_plan(PlanKind::Bpf, [cmd, attr_ptr, attr_size, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Bpf)
 }
 
 fn plan_prctl(option: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> PackedStep {
@@ -1230,6 +1236,19 @@ mod tests {
         assert_eq!(plan_arg(0), 1);
         assert_eq!(plan_arg(1), 2);
         assert_eq!(plan_arg(2), 0x1234);
+    }
+
+    #[test]
+    fn bpf_plan_preserves_command_attr_pointer_and_size() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_BPF, 2, 0x1234, 32, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Bpf));
+        assert_eq!(plan_arg(0), 2);
+        assert_eq!(plan_arg(1), 0x1234);
+        assert_eq!(plan_arg(2), 32);
     }
 
     #[test]

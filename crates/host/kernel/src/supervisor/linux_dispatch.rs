@@ -300,6 +300,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Poll => self.plan_poll(plan),
             PlanKind::Prctl => self.plan_prctl(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
+            PlanKind::Bpf => self.plan_bpf(plan),
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
             PlanKind::ClockGettime => self.plan_clock_gettime(plan),
             PlanKind::ClockGetres => self.plan_clock_getres(plan),
@@ -322,8 +323,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::SetRobustList
             | PlanKind::TimerfdCreate
             | PlanKind::TimerfdSettime
-            | PlanKind::TimerfdGettime
-            | PlanKind::Bpf => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::TimerfdGettime => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }
