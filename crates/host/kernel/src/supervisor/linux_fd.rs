@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use semantic_core::ResourceHandle;
 use vmos_abi::{
     EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE,
-    ERR_ENOTSOCK, ERR_EPERM, NodeKind, ServiceRoute,
+    ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -138,6 +138,86 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs
             .read_file_range_by_id(vfs_node_id, &path, offset, count)
             .map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn read_shared_mmap_vfs_fd_range(
+        &mut self,
+        fd: u32,
+        offset: usize,
+        count: usize,
+        writable_mapping: bool,
+    ) -> Result<(u64, Vec<u8>, Vec<u8>), i32> {
+        let count_u32 = u32::try_from(count).map_err(|_| ERR_EINVAL)?;
+        self.require_fd_readable(fd).map_err(|_| ERR_EACCES)?;
+        if writable_mapping {
+            self.require_fd_writable(fd).map_err(|_| ERR_EACCES)?;
+        }
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(ERR_EINVAL);
+        }
+        if node == NodeKind::Directory {
+            return Err(vmos_abi::ERR_EISDIR);
+        }
+        if node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        let Some(vfs_node_id) = vfs_node_id else {
+            return Err(ERR_EOPNOTSUPP);
+        };
+        let bytes = self
+            .vfs
+            .read_file_range_by_id(Some(vfs_node_id), &path, offset, count_u32)
+            .map_err(errno_from_service_error)?;
+        if bytes.len() != count {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        Ok((vfs_node_id, path, bytes))
+    }
+
+    pub(crate) fn write_shared_mmap_vfs_page(
+        &mut self,
+        vfs_node_id: u64,
+        path: &[u8],
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs
+            .write_file_by_id(Some(vfs_node_id), path, offset, bytes)
+            .map_err(errno_from_service_error)?;
+        Ok(())
+    }
+
+    pub(crate) fn remove_shared_mmap_vfs_range(
+        &mut self,
+        vfs_node_id: u64,
+        path: &[u8],
+        offset: usize,
+        len: usize,
+    ) -> Result<(), i32> {
+        const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+        const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
+
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs
+            .fallocate_file_by_id(
+                Some(vfs_node_id),
+                path,
+                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                offset,
+                len,
+            )
+            .map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn retain_shared_mmap_inode(&mut self, vfs_node_id: u64) {
+        self.vfs.retain_open_inode(Some(vfs_node_id));
+    }
+
+    pub(crate) fn release_shared_mmap_inode(&mut self, vfs_node_id: u64) {
+        self.vfs.release_open_inode(Some(vfs_node_id));
     }
 
     pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {

@@ -51,11 +51,11 @@ use super::{
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
-        clone_user_page_mappings, cow_break_user_page, demo_program_host_path,
-        discard_user_page_range, discard_zero_user_page_range, load_demo_program,
-        populate_user_page_range, prefault_user_page_range, prepare_user_program,
-        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
-        user_elf_interpreter_path,
+        clone_user_page_mappings, copy_user_page_bytes, cow_break_user_page,
+        demo_program_host_path, discard_user_page_range, discard_zero_user_page_range,
+        fill_user_page_frame, load_demo_program, populate_user_page_range,
+        prefault_user_page_range, prepare_user_program, protect_user_page_range,
+        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -926,6 +926,7 @@ fn execve_replace_image(
     let current_mappings = active_context().page_mappings.clone();
     let next_regions = image.regions.clone();
     let next_mappings = image.page_mappings.clone();
+    sync_file_shared_page_mappings(&current_mappings)?;
 
     let switch_result = {
         let context = active_context();
@@ -949,6 +950,7 @@ fn execve_replace_image(
         crate::kwarn!("execve page-table switch failed: {}", err.message());
         return Err(ERR_EFAULT);
     }
+    release_file_shared_page_refs(&current_mappings);
 
     {
         let context = active_context();
@@ -4681,6 +4683,19 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
     )
 }
 
+enum MmapFileBacking {
+    Private(Vec<u8>),
+    Shared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8> },
+}
+
+impl MmapFileBacking {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Private(bytes) | Self::Shared { bytes, .. } => bytes,
+        }
+    }
+}
+
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
@@ -4696,19 +4711,25 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let fixed = flags & MAP_FIXED != 0;
     let fixed_noreplace = flags & MAP_FIXED_NOREPLACE != 0;
     let fixed_address = fixed || fixed_noreplace;
-    let file_bytes = if anonymous {
+    let file_backing = if anonymous {
         None
     } else {
-        if !private {
-            return Err(vmos_abi::ERR_EOPNOTSUPP);
-        }
         if frame.r9 & 4095 != 0 {
             return Err(ERR_EINVAL);
         }
         let fd = u32::try_from(frame.r8).map_err(|_| ERR_EBADF)?;
         let offset = usize::try_from(frame.r9).map_err(|_| ERR_EINVAL)?;
         let count = usize::try_from(len).map_err(|_| ERR_ENOMEM)?;
-        Some(active_context().supervisor.read_vfs_fd_range(fd, offset, count)?)
+        if private {
+            Some(MmapFileBacking::Private(
+                active_context().supervisor.read_vfs_fd_range(fd, offset, count)?,
+            ))
+        } else {
+            let (vfs_node_id, path, bytes) = active_context()
+                .supervisor
+                .read_shared_mmap_vfs_fd_range(fd, offset, count, frame.rdx & PROT_WRITE != 0)?;
+            Some(MmapFileBacking::Shared { vfs_node_id, path, offset, bytes })
+        }
     };
     let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
     if as_limit != u64::MAX && active_context().mapped_user_bytes().saturating_add(len) > as_limit {
@@ -4729,7 +4750,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     if fixed_noreplace && !existing_ranges.is_empty() {
         return Err(vmos_abi::ERR_EEXIST);
     }
-    if fixed || file_bytes.is_some() {
+    if fixed || file_backing.is_some() {
         for (start, end) in existing_ranges {
             unmap_active_user_page_range(start, end - start)?;
             active_context().unmap_user_region(start, end - start);
@@ -4749,15 +4770,35 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context()
         .supervisor
         .record_guest_memory_region(addr, len, readable, writable, executable);
-    if let Some(bytes) = file_bytes {
+    if let Some(file_backing) = file_backing {
         let map_prot = if frame.rdx == 0 { PROT_READ } else { frame.rdx };
         if map_prot != 0 {
             protect_active_user_page_range(addr, len, map_prot)?;
         }
-        populate_active_user_page_range(addr, &bytes)?;
-        mark_active_user_page_range_file_private(addr, len, &bytes);
+        let bytes = file_backing.bytes();
+        populate_active_user_page_range(addr, bytes)?;
+        let retain_shared_refs = match file_backing {
+            MmapFileBacking::Private(bytes) => {
+                mark_active_user_page_range_file_private(addr, len, &bytes);
+                false
+            }
+            MmapFileBacking::Shared { vfs_node_id, path, offset, bytes } => {
+                mark_active_user_page_range_file_shared(
+                    addr,
+                    len,
+                    &bytes,
+                    vfs_node_id,
+                    &path,
+                    offset,
+                );
+                true
+            }
+        };
         if map_prot != frame.rdx {
             protect_active_user_page_range(addr, len, frame.rdx)?;
+        }
+        if retain_shared_refs {
+            retain_active_file_shared_page_refs(addr, len);
         }
     }
     Ok(addr as i64)
@@ -4943,6 +4984,7 @@ fn move_active_user_mapping_range(
     if has_duplicate_user_page_mapping(&next_mappings) {
         return Err(ERR_ENOMEM);
     }
+    sync_file_shared_page_mappings(&dropped_mappings)?;
 
     let switch_result = {
         let context = active_context();
@@ -4961,6 +5003,7 @@ fn move_active_user_mapping_range(
         return Err(ERR_EFAULT);
     }
 
+    release_file_shared_page_refs(&dropped_mappings);
     let context = active_context();
     for mapping in dropped_mappings {
         if mapping.owned && mapping.frame_start != 0 {
@@ -5057,6 +5100,7 @@ fn sys_msync(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     validate_mapped_user_range(frame.rdi, len)
         .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
+    sync_active_file_shared_page_range(frame.rdi, len)?;
     Ok(0)
 }
 
@@ -5067,6 +5111,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_WILLNEED: u64 = 3;
     const MADV_DONTNEED: u64 = 4;
     const MADV_FREE: u64 = 8;
+    const MADV_REMOVE: u64 = 9;
     const MADV_DONTFORK: u64 = 10;
     const MADV_DOFORK: u64 = 11;
     const MADV_MERGEABLE: u64 = 12;
@@ -5084,9 +5129,10 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
 
     match frame.rdx {
         MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED | MADV_FREE
-        | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE
-        | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP | MADV_WIPEONFORK | MADV_KEEPONFORK
-        | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {}
+        | MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE | MADV_UNMERGEABLE
+        | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP | MADV_WIPEONFORK
+        | MADV_KEEPONFORK | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {
+        }
         _ => return Err(ERR_EINVAL),
     }
 
@@ -5103,6 +5149,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     match frame.rdx {
         MADV_DONTNEED => discard_active_user_page_range(frame.rdi, len)?,
         MADV_FREE => discard_active_zero_user_page_range(frame.rdi, len)?,
+        MADV_REMOVE => remove_active_file_shared_page_range(frame.rdi, len)?,
         MADV_DONTFORK => active_context().set_user_region_fork_advice(frame.rdi, len, true, false),
         MADV_DOFORK => set_active_user_region_dofork(frame.rdi, len),
         MADV_WIPEONFORK => {
@@ -6894,6 +6941,8 @@ fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(),
 }
 
 fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
+    let file_shared = active_file_shared_page_mappings_in_range(start, len);
+    sync_file_shared_page_mappings(&file_shared)?;
     let context = active_context();
     unmap_user_page_range(
         context.physical_memory_offset(),
@@ -6902,7 +6951,9 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
         start,
         len,
     )
-    .map_err(|_| ERR_EFAULT)
+    .map_err(|_| ERR_EFAULT)?;
+    release_file_shared_page_refs(&file_shared);
+    Ok(())
 }
 
 fn discard_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
@@ -7064,6 +7115,176 @@ fn mark_active_user_page_range_file_private(start: u64, len: u64, bytes: &[u8]) 
     }
 }
 
+fn mark_active_user_page_range_file_shared(
+    start: u64,
+    len: u64,
+    bytes: &[u8],
+    vfs_node_id: u64,
+    path: &[u8],
+    file_offset: usize,
+) {
+    let Some(end) = start.checked_add(len) else {
+        return;
+    };
+    for mapping in &mut active_context().page_mappings {
+        if mapping.va >= start && mapping.va < end {
+            let copied = (mapping.va - start) as usize;
+            let mut page_bytes = vec![0u8; 4096];
+            if copied < bytes.len() {
+                let copy_len = core::cmp::min(4096, bytes.len() - copied);
+                page_bytes[..copy_len].copy_from_slice(&bytes[copied..copied + copy_len]);
+            }
+            mapping.backing = UserPageBacking::FileShared {
+                vfs_node_id,
+                path: path.to_vec(),
+                offset: file_offset.saturating_add(copied),
+                bytes: page_bytes,
+            };
+        }
+    }
+}
+
+fn active_file_shared_page_mappings_in_range(start: u64, len: u64) -> Vec<UserPageMapping> {
+    let Some(end) = start.checked_add(len) else {
+        return Vec::new();
+    };
+    active_context()
+        .page_mappings
+        .iter()
+        .filter(|mapping| mapping.va >= start && mapping.va < end)
+        .filter(|mapping| matches!(mapping.backing, UserPageBacking::FileShared { .. }))
+        .cloned()
+        .collect()
+}
+
+fn retain_active_file_shared_page_refs(start: u64, len: u64) {
+    let mappings = active_file_shared_page_mappings_in_range(start, len);
+    retain_file_shared_page_refs(&mappings);
+}
+
+fn retain_file_shared_page_refs(mappings: &[UserPageMapping]) {
+    for mapping in mappings {
+        if let UserPageBacking::FileShared { vfs_node_id, .. } = &mapping.backing {
+            active_context().supervisor.retain_shared_mmap_inode(*vfs_node_id);
+        }
+    }
+}
+
+fn release_file_shared_page_refs(mappings: &[UserPageMapping]) {
+    for mapping in mappings {
+        if let UserPageBacking::FileShared { vfs_node_id, .. } = &mapping.backing {
+            active_context().supervisor.release_shared_mmap_inode(*vfs_node_id);
+        }
+    }
+}
+
+fn sync_active_file_shared_page_range(start: u64, len: u64) -> Result<(), i32> {
+    let mappings = active_file_shared_page_mappings_in_range(start, len);
+    sync_file_shared_page_mappings(&mappings)?;
+    let mut synced_pages = Vec::new();
+    for mapping in mappings {
+        if let Some(bytes) = file_shared_page_bytes(&mapping)? {
+            synced_pages.push((mapping.va, bytes));
+        }
+    }
+    for (va, bytes) in synced_pages {
+        if let Some(mapping) = active_context().page_mappings.iter_mut().find(|mapping| {
+            mapping.va == va && matches!(mapping.backing, UserPageBacking::FileShared { .. })
+        }) && let UserPageBacking::FileShared { bytes: backing_bytes, .. } = &mut mapping.backing
+        {
+            *backing_bytes = bytes;
+        }
+    }
+    Ok(())
+}
+
+fn sync_file_shared_page_mappings(mappings: &[UserPageMapping]) -> Result<(), i32> {
+    for mapping in mappings {
+        let UserPageBacking::FileShared { vfs_node_id, path, offset, .. } = &mapping.backing else {
+            continue;
+        };
+        let Some(bytes) = file_shared_page_bytes(mapping)? else {
+            continue;
+        };
+        active_context().supervisor.write_shared_mmap_vfs_page(
+            *vfs_node_id,
+            path,
+            *offset,
+            &bytes,
+        )?;
+    }
+    Ok(())
+}
+
+struct FileSharedPageTarget {
+    va: u64,
+    frame_start: u64,
+    vfs_node_id: u64,
+    path: Vec<u8>,
+    offset: usize,
+}
+
+fn remove_active_file_shared_page_range(start: u64, len: u64) -> Result<(), i32> {
+    validate_user_range_access(start, len, UserRangeAccess::Write)?;
+    let end = start.checked_add(len).ok_or(ERR_EINVAL)?;
+    let mut targets = Vec::new();
+    for page in (start..end).step_by(4096) {
+        let mapping = active_context()
+            .page_mappings
+            .iter()
+            .find(|mapping| mapping.va == page)
+            .ok_or(ERR_EINVAL)?;
+        let UserPageBacking::FileShared { vfs_node_id, path, offset, .. } = &mapping.backing else {
+            return Err(ERR_EINVAL);
+        };
+        targets.push(FileSharedPageTarget {
+            va: mapping.va,
+            frame_start: mapping.frame_start,
+            vfs_node_id: *vfs_node_id,
+            path: path.clone(),
+            offset: *offset,
+        });
+    }
+
+    for target in &targets {
+        active_context().supervisor.remove_shared_mmap_vfs_range(
+            target.vfs_node_id,
+            &target.path,
+            target.offset,
+            4096,
+        )?;
+    }
+
+    let physical_memory_offset = active_context().physical_memory_offset();
+    for target in targets {
+        fill_user_page_frame(physical_memory_offset, target.frame_start, 0)
+            .map_err(|_| ERR_EFAULT)?;
+        if let Some(mapping) =
+            active_context().page_mappings.iter_mut().find(|mapping| mapping.va == target.va)
+            && let UserPageBacking::FileShared { bytes, .. } = &mut mapping.backing
+        {
+            bytes.clear();
+            bytes.resize(4096, 0);
+        }
+    }
+    Ok(())
+}
+
+fn file_shared_page_bytes(mapping: &UserPageMapping) -> Result<Option<Vec<u8>>, i32> {
+    let UserPageBacking::FileShared { bytes, .. } = &mapping.backing else {
+        return Ok(None);
+    };
+    let mut page_bytes = bytes.clone();
+    if page_bytes.len() < 4096 {
+        page_bytes.resize(4096, 0);
+    }
+    if mapping.frame_start != 0 {
+        copy_user_page_bytes(active_context().physical_memory_offset(), mapping, &mut page_bytes)
+            .map_err(|_| ERR_EFAULT)?;
+    }
+    Ok(Some(page_bytes))
+}
+
 fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
     let context = active_context();
     let child_allocator = context.frame_allocator.fork_child_allocator();
@@ -7117,6 +7338,7 @@ fn restore_independent_clone_parent_address_space(
     let context = active_context();
     let child_mappings = context.page_mappings.clone();
     let child_regions = context.regions.clone();
+    sync_file_shared_page_mappings(&child_mappings)?;
     switch_user_page_mappings(
         context.physical_memory_offset(),
         &child_mappings,
@@ -7126,7 +7348,9 @@ fn restore_independent_clone_parent_address_space(
         &mut context.frame_allocator,
         true,
     )
-    .map_err(|_| ERR_EFAULT)
+    .map_err(|_| ERR_EFAULT)?;
+    release_file_shared_page_refs(&child_mappings);
+    Ok(())
 }
 
 fn cow_break_active_user_page(page: u64, prot: u64) -> Result<(), i32> {

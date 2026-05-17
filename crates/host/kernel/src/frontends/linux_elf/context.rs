@@ -36,6 +36,7 @@ pub(crate) struct UserRegion {
 pub(crate) enum UserPageBacking {
     ZeroFill,
     FilePrivate(Vec<u8>),
+    FileShared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8> },
     Preserve,
 }
 

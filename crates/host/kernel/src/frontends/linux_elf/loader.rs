@@ -884,6 +884,11 @@ fn materialize_user_page_frame(
             let copy_len = core::cmp::min(bytes.len(), PAGE_SIZE);
             dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
         }
+        UserPageBacking::FileShared { bytes, .. } => {
+            dest.fill(0);
+            let copy_len = core::cmp::min(bytes.len(), PAGE_SIZE);
+            dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        }
         UserPageBacking::Preserve => {
             authority.frame_allocator.deallocate_frame(frame);
             return Err("preserved user page lost its physical frame");
@@ -1482,6 +1487,37 @@ fn write_u64_values(
 fn frame_bytes(frame: PhysFrame, phys_offset: VirtAddr) -> &'static mut [u8] {
     let virt = phys_offset + frame.start_address().as_u64();
     unsafe { slice::from_raw_parts_mut(virt.as_mut_ptr::<u8>(), PAGE_SIZE) }
+}
+
+pub(crate) fn copy_user_page_bytes(
+    physical_memory_offset: u64,
+    mapping: &UserPageMapping,
+    out: &mut [u8],
+) -> Result<(), &'static str> {
+    if out.len() < PAGE_SIZE {
+        return Err("destination buffer is smaller than one user page");
+    }
+    if mapping.frame_start == 0 {
+        return Err("user page has no materialized frame");
+    }
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
+    out[..PAGE_SIZE].copy_from_slice(frame_bytes(frame, phys_offset));
+    Ok(())
+}
+
+pub(crate) fn fill_user_page_frame(
+    physical_memory_offset: u64,
+    frame_start: u64,
+    value: u8,
+) -> Result<(), &'static str> {
+    if frame_start == 0 {
+        return Ok(());
+    }
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let frame = PhysFrame::containing_address(PhysAddr::new(frame_start));
+    frame_bytes(frame, phys_offset).fill(value);
+    Ok(())
 }
 
 unsafe fn active_level_4_table(phys_offset: VirtAddr) -> &'static mut PageTable {
