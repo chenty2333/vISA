@@ -4785,20 +4785,48 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     if (fixed || dontunmap) && flags & MREMAP_MAYMOVE == 0 {
         return Err(ERR_EINVAL);
     }
-    if dontunmap && old_size != new_size {
-        return Err(ERR_EINVAL);
-    }
-    if dontunmap {
-        return Err(ERR_ENOSYS);
-    }
-
     let old_len = align_page(old_size).ok_or(ERR_EINVAL)?;
     let new_len = align_page(new_size).ok_or(ERR_EINVAL)?;
+    if dontunmap && old_len != new_len {
+        return Err(ERR_EINVAL);
+    }
     validate_lower_user_address_range(old_addr, old_len)?;
     validate_mapped_user_range(old_addr, old_len)?;
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
     let (readable, writable, executable, dont_fork, wipe_on_fork) =
         single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+
+    if dontunmap {
+        validate_active_user_page_range_zero_backing(old_addr, old_len)?;
+        let new_addr = if fixed {
+            let new_addr = frame.r8;
+            if new_addr & 4095 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            validate_reserved_user_page_range(new_addr, new_len).map_err(|_| ERR_EINVAL)?;
+            let target_end = new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+            if ranges_overlap_for_mremap(old_addr, old_end, new_addr, target_end) {
+                return Err(ERR_EINVAL);
+            }
+            new_addr
+        } else {
+            active_context().find_mmap_gap(new_len, 4096).ok_or(ERR_ENOMEM)?
+        };
+        let target_unmap_ranges = active_context().mapped_user_subranges(new_addr, new_len);
+        let target_unmap_len = subranges_total_len(&target_unmap_ranges);
+        let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+        if as_limit != u64::MAX
+            && active_context()
+                .mapped_user_bytes()
+                .saturating_sub(target_unmap_len)
+                .saturating_add(new_len)
+                > as_limit
+        {
+            return Err(ERR_ENOMEM);
+        }
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, fixed, true)?;
+        return Ok(new_addr as i64);
+    }
 
     if fixed {
         let new_addr = frame.r8;
@@ -4810,7 +4838,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         if ranges_overlap_for_mremap(old_addr, old_end, new_addr, target_end) {
             return Err(ERR_EINVAL);
         }
-        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, true)?;
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, true, false)?;
         return Ok(new_addr as i64);
     }
 
@@ -4834,7 +4862,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
             return Err(ERR_ENOMEM);
         }
         let new_addr = active_context().find_mmap_gap(new_len, 4096).ok_or(ERR_ENOMEM)?;
-        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, false)?;
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, false, false)?;
         return Ok(new_addr as i64);
     }
 
@@ -4867,6 +4895,7 @@ fn move_active_user_mapping_range(
     new_addr: u64,
     new_len: u64,
     replace_target: bool,
+    preserve_source_region: bool,
 ) -> Result<(), i32> {
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
     let moved_end = old_addr.checked_add(old_len.min(new_len)).ok_or(ERR_EINVAL)?;
@@ -4881,7 +4910,9 @@ fn move_active_user_mapping_range(
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
     let mut next_regions = current_regions.clone();
-    replace_user_region_range_for_mremap(&mut next_regions, old_addr, old_end, None);
+    if !preserve_source_region {
+        replace_user_region_range_for_mremap(&mut next_regions, old_addr, old_end, None);
+    }
     if replace_target {
         replace_user_region_range_for_mremap(&mut next_regions, new_addr, target_end, None);
     }
@@ -4941,7 +4972,9 @@ fn move_active_user_mapping_range(
     context.page_mappings = next_mappings;
     context.regions = next_regions;
     context.commit_mmap_allocation(new_addr, new_len).ok_or(ERR_EINVAL)?;
-    context.supervisor.record_guest_memory_unmap(old_addr, old_len);
+    if !preserve_source_region {
+        context.supervisor.record_guest_memory_unmap(old_addr, old_len);
+    }
     for (start, end) in target_unmap_ranges {
         context.supervisor.record_guest_memory_unmap(start, end - start);
     }
@@ -6751,6 +6784,10 @@ fn has_duplicate_user_page_mapping(mappings: &[UserPageMapping]) -> bool {
         }
     }
     false
+}
+
+fn subranges_total_len(ranges: &[(u64, u64)]) -> u64 {
+    ranges.iter().map(|(start, end)| end.saturating_sub(*start)).sum()
 }
 
 fn ranges_overlap_for_mremap(
