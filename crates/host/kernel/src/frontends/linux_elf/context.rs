@@ -286,6 +286,13 @@ pub(crate) struct CredentialState {
     pub(crate) securebits: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExecFileCapabilities {
+    pub(crate) permitted: u64,
+    pub(crate) inheritable: u64,
+    pub(crate) effective: bool,
+}
+
 static mut ACTIVE_CONTEXT: *mut ActiveUserContext = null_mut();
 
 impl ActiveUserContext {
@@ -554,7 +561,13 @@ impl ActiveUserContext {
         self.securebits = state.securebits;
     }
 
-    pub(crate) fn apply_exec_file_credentials(&mut self, file_uid: u32, file_gid: u32, mode: u32) {
+    pub(crate) fn apply_exec_file_credentials(
+        &mut self,
+        file_uid: u32,
+        file_gid: u32,
+        mode: u32,
+        file_capabilities: Option<ExecFileCapabilities>,
+    ) {
         const S_ISUID: u32 = 0o4000;
         const S_ISGID: u32 = 0o2000;
 
@@ -564,7 +577,7 @@ impl ActiveUserContext {
         let old_egid = self.egid;
         let setuid = mode & S_ISUID != 0;
         let setgid = mode & S_ISGID != 0;
-        let privileged_exec = setuid || setgid;
+        let privileged_exec = setuid || setgid || file_capabilities.is_some();
 
         if setuid {
             self.euid = file_uid;
@@ -582,6 +595,20 @@ impl ActiveUserContext {
 
         if old_euid != 0 && self.euid == 0 && self.securebits & SECBIT_NOROOT == 0 {
             self.cap_permitted = LINUX_KNOWN_CAPS & self.cap_bounding;
+        }
+        if let Some(capabilities) = file_capabilities {
+            let ambient = if privileged_exec { 0 } else { self.cap_ambient };
+            self.cap_permitted = ((self.cap_inheritable & capabilities.inheritable)
+                | (capabilities.permitted & self.cap_bounding)
+                | ambient)
+                & LINUX_KNOWN_CAPS;
+            self.cap_effective = if capabilities.effective {
+                self.cap_permitted
+            } else {
+                ambient & self.cap_permitted
+            };
+            self.cap_ambient = ambient & self.cap_permitted & self.cap_inheritable;
+            return;
         }
         self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
         if old_egid != self.egid {

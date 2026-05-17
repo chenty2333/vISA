@@ -2008,6 +2008,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok((info.node, mode, len, uid, gid))
     }
 
+    pub(crate) fn path_xattr_value(
+        &mut self,
+        path: &[u8],
+        name: &[u8],
+    ) -> Result<Option<Vec<u8>>, i32> {
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        if info.route != ServiceRoute::Vfs || info.node != NodeKind::File {
+            return Ok(None);
+        }
+        let node_id = self.vfs.node_id_for_path(path);
+        match self.vfs.fgetxattr_by_id(node_id, path, name, 0) {
+            Ok(value) => Ok(Some(value)),
+            Err(ServiceCallError::Errno(vmos_abi::ERR_ENODATA | vmos_abi::ERR_EOPNOTSUPP)) => {
+                Ok(None)
+            }
+            Err(err) => Err(errno_from_service_error(err)),
+        }
+    }
+
     pub(crate) fn read_vfs_file_path(
         &mut self,
         path: &[u8],

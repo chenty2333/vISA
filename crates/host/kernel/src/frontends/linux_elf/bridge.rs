@@ -42,8 +42,8 @@ use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
 use super::{
     context::{
-        ActiveUserContext, ClockAdjustmentState, CredentialState, UserAddressSpaceState,
-        active_context, install_active_context, try_active_context,
+        ActiveUserContext, ClockAdjustmentState, CredentialState, ExecFileCapabilities,
+        UserAddressSpaceState, active_context, install_active_context, try_active_context,
     },
     loader::{
         USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, clone_user_page_mappings,
@@ -77,6 +77,7 @@ const RENAME_WHITEOUT: u64 = 4;
 const RENAME_SUPPORTED_FLAGS: u64 = RENAME_NOREPLACE | RENAME_EXCHANGE;
 const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
+const SECURITY_CAPABILITY_XATTR: &[u8] = b"security.capability";
 const SYS_EXECVE: u64 = 59;
 const SYS_SYMLINK: u64 = 88;
 const SYS_SETUID: u64 = 105;
@@ -829,7 +830,18 @@ fn execve_checked_path(
     }
     let access = effective_access_snapshot();
     let bytes = active_context().supervisor.read_vfs_file_path(resolved, access.ids())?;
-    execve_replace_image(frame, resolved, bytes, argv, envp, mode, owner_uid, owner_gid)
+    let file_capabilities = read_exec_file_capabilities(resolved)?;
+    execve_replace_image(
+        frame,
+        resolved,
+        bytes,
+        argv,
+        envp,
+        mode,
+        owner_uid,
+        owner_gid,
+        file_capabilities,
+    )
 }
 
 fn execve_replace_image(
@@ -841,6 +853,7 @@ fn execve_replace_image(
     mode: u32,
     owner_uid: u32,
     owner_gid: u32,
+    file_capabilities: Option<ExecFileCapabilities>,
 ) -> Result<i64, i32> {
     let image = {
         let context = active_context();
@@ -899,7 +912,7 @@ fn execve_replace_image(
             return Err(ERR_ESRCH);
         }
     }
-    apply_exec_credential_fixup(mode, owner_uid, owner_gid)?;
+    apply_exec_credential_fixup(mode, owner_uid, owner_gid, file_capabilities)?;
     {
         let context = active_context();
         if !context.supervisor.mark_process_execed(context.pid) {
@@ -916,9 +929,14 @@ fn execve_replace_image(
     Ok(0)
 }
 
-fn apply_exec_credential_fixup(mode: u32, owner_uid: u32, owner_gid: u32) -> Result<(), i32> {
+fn apply_exec_credential_fixup(
+    mode: u32,
+    owner_uid: u32,
+    owner_gid: u32,
+    file_capabilities: Option<ExecFileCapabilities>,
+) -> Result<(), i32> {
     let before = active_context().credential_state();
-    active_context().apply_exec_file_credentials(owner_uid, owner_gid, mode);
+    active_context().apply_exec_file_credentials(owner_uid, owner_gid, mode, file_capabilities);
     let after = active_context().credential_state();
     if before == after {
         return Ok(());
@@ -943,6 +961,59 @@ fn apply_exec_credential_fixup(mode: u32, owner_uid: u32, owner_gid: u32) -> Res
         return Err(errno);
     }
     Ok(())
+}
+
+fn read_exec_file_capabilities(path: &[u8]) -> Result<Option<ExecFileCapabilities>, i32> {
+    let Some(value) =
+        active_context().supervisor.path_xattr_value(path, SECURITY_CAPABILITY_XATTR)?
+    else {
+        return Ok(None);
+    };
+    parse_exec_file_capabilities(&value)
+}
+
+fn parse_exec_file_capabilities(value: &[u8]) -> Result<Option<ExecFileCapabilities>, i32> {
+    const VFS_CAP_REVISION_MASK: u32 = 0xff00_0000;
+    const VFS_CAP_REVISION_1: u32 = 0x0100_0000;
+    const VFS_CAP_REVISION_2: u32 = 0x0200_0000;
+    const VFS_CAP_REVISION_3: u32 = 0x0300_0000;
+    const VFS_CAP_FLAGS_EFFECTIVE: u32 = 0x0000_0001;
+    const VFS_CAP_KNOWN_FLAGS: u32 = VFS_CAP_FLAGS_EFFECTIVE;
+
+    let expected_len = match value.len() {
+        12 | 20 | 24 => value.len(),
+        _ => return Err(ERR_EINVAL),
+    };
+    let magic_etc = read_u32_from(value, 0)?;
+    let flags = magic_etc & !VFS_CAP_REVISION_MASK;
+    if flags & !VFS_CAP_KNOWN_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let revision = magic_etc & VFS_CAP_REVISION_MASK;
+    let words = match (revision, expected_len) {
+        (VFS_CAP_REVISION_1, 12) => 1usize,
+        (VFS_CAP_REVISION_2, 20) => 2usize,
+        (VFS_CAP_REVISION_3, 24) => {
+            let rootid = read_u32_from(value, 20)?;
+            if rootid != 0 {
+                return Ok(None);
+            }
+            2usize
+        }
+        _ => return Err(ERR_EINVAL),
+    };
+
+    let mut permitted = read_u32_from(value, 4)? as u64;
+    let mut inheritable = read_u32_from(value, 8)? as u64;
+    if words == 2 {
+        permitted |= (read_u32_from(value, 12)? as u64) << 32;
+        inheritable |= (read_u32_from(value, 16)? as u64) << 32;
+    }
+    Ok(Some(ExecFileCapabilities {
+        permitted: permitted & LINUX_KNOWN_CAPS,
+        inheritable: inheritable & LINUX_KNOWN_CAPS,
+        effective: flags & VFS_CAP_FLAGS_EFFECTIVE != 0,
+    }))
 }
 
 fn exec_load_errno(err: &'static str) -> i32 {
