@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{collections::VecDeque, vec::Vec};
 
 use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
 
@@ -394,6 +394,104 @@ pub struct VirtioNetQueueBackendEvidence {
     pub mac: Option<[u8; 6]>,
     pub rx_queue_len: usize,
     pub tx_queue_len: usize,
+    pub rx_queue: VirtioNetFrameQueueEvidence,
+    pub tx_queue: VirtioNetFrameQueueEvidence,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VirtioNetFrameDescriptor {
+    pub queue_index: u16,
+    pub slot: u16,
+    pub len: u16,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VirtioNetFrameQueueEvidence {
+    pub queue_index: u16,
+    pub capacity: u16,
+    pub pending: usize,
+    pub next_slot: u16,
+    pub next_sequence: u64,
+    pub last_descriptor: Option<VirtioNetFrameDescriptor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QueuedVirtioFrame {
+    descriptor: VirtioNetFrameDescriptor,
+    data: Vec<u8>,
+}
+
+struct InMemoryVirtioFrameQueue {
+    queue_index: u16,
+    capacity: u16,
+    frames: VecDeque<QueuedVirtioFrame>,
+    next_slot: u16,
+    next_sequence: u64,
+    last_descriptor: Option<VirtioNetFrameDescriptor>,
+}
+
+impl InMemoryVirtioFrameQueue {
+    fn new(queue_index: u16, capacity: u16) -> Self {
+        Self {
+            queue_index,
+            capacity,
+            frames: VecDeque::new(),
+            next_slot: 0,
+            next_sequence: 1,
+            last_descriptor: None,
+        }
+    }
+
+    fn evidence(&self) -> VirtioNetFrameQueueEvidence {
+        VirtioNetFrameQueueEvidence {
+            queue_index: self.queue_index,
+            capacity: self.capacity,
+            pending: self.frames.len(),
+            next_slot: self.next_slot,
+            next_sequence: self.next_sequence,
+            last_descriptor: self.last_descriptor,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    fn reset(&mut self) {
+        self.frames.clear();
+        self.next_slot = 0;
+        self.next_sequence = 1;
+        self.last_descriptor = None;
+    }
+
+    fn push_frame(
+        &mut self,
+        frame: &[u8],
+        full_detail: &'static str,
+    ) -> SubstrateResult<VirtioNetFrameDescriptor> {
+        if self.frames.len() >= usize::from(self.capacity) {
+            return Err(SubstrateError::ContractViolation { detail: full_detail });
+        }
+        let len = u16::try_from(frame.len()).map_err(|_| SubstrateError::ContractViolation {
+            detail: "virtio net frame length overflow",
+        })?;
+        let descriptor = VirtioNetFrameDescriptor {
+            queue_index: self.queue_index,
+            slot: self.next_slot,
+            len,
+            sequence: self.next_sequence,
+        };
+        self.next_slot = (self.next_slot + 1) % self.capacity;
+        self.next_sequence += 1;
+        self.last_descriptor = Some(descriptor);
+        self.frames.push_back(QueuedVirtioFrame { descriptor, data: frame.to_vec() });
+        Ok(descriptor)
+    }
+
+    fn pop_frame(&mut self) -> Option<QueuedVirtioFrame> {
+        self.frames.pop_front()
+    }
 }
 
 /// Bounded in-memory packet backend for virtio-net queue semantics.
@@ -404,13 +502,19 @@ pub struct InMemoryVirtioNetBackend {
     config: VirtioNetBackendConfig,
     initialized: bool,
     mac: Option<[u8; 6]>,
-    rx_queue: Vec<Vec<u8>>,
-    tx_queue: Vec<Vec<u8>>,
+    rx_queue: InMemoryVirtioFrameQueue,
+    tx_queue: InMemoryVirtioFrameQueue,
 }
 
 impl InMemoryVirtioNetBackend {
-    pub const fn new(config: VirtioNetBackendConfig) -> Self {
-        Self { config, initialized: false, mac: None, rx_queue: Vec::new(), tx_queue: Vec::new() }
+    pub fn new(config: VirtioNetBackendConfig) -> Self {
+        Self {
+            config,
+            initialized: false,
+            mac: None,
+            rx_queue: InMemoryVirtioFrameQueue::new(config.rx_queue_index, config.queue_size),
+            tx_queue: InMemoryVirtioFrameQueue::new(config.tx_queue_index, config.queue_size),
+        }
     }
 
     pub const fn config(&self) -> VirtioNetBackendConfig {
@@ -427,19 +531,20 @@ impl InMemoryVirtioNetBackend {
             mac: self.mac,
             rx_queue_len: self.rx_queue.len(),
             tx_queue_len: self.tx_queue.len(),
+            rx_queue: self.rx_queue.evidence(),
+            tx_queue: self.tx_queue.evidence(),
         }
     }
 
     pub fn inject_rx_frame(&mut self, frame: &[u8]) -> SubstrateResult<()> {
         self.ensure_initialized()?;
         validate_frame_len(frame.len())?;
-        self.ensure_rx_capacity()?;
-        self.rx_queue.push(frame.to_vec());
+        self.rx_queue.push_frame(frame, "virtio net rx queue is full")?;
         Ok(())
     }
 
     pub fn take_tx_frame(&mut self) -> Option<Vec<u8>> {
-        if self.tx_queue.is_empty() { None } else { Some(self.tx_queue.remove(0)) }
+        self.tx_queue.pop_frame().map(|frame| frame.data)
     }
 
     pub fn pending_rx_frames(&self) -> usize {
@@ -450,31 +555,11 @@ impl InMemoryVirtioNetBackend {
         self.tx_queue.len()
     }
 
-    fn queue_capacity(&self) -> usize {
-        usize::from(self.config.queue_size)
-    }
-
     fn ensure_initialized(&self) -> SubstrateResult<()> {
         if self.initialized {
             Ok(())
         } else {
             Err(SubstrateError::InvalidObject { object: "virtio-net-backend" })
-        }
-    }
-
-    fn ensure_rx_capacity(&self) -> SubstrateResult<()> {
-        if self.rx_queue.len() < self.queue_capacity() {
-            Ok(())
-        } else {
-            Err(SubstrateError::ContractViolation { detail: "virtio net rx queue is full" })
-        }
-    }
-
-    fn ensure_tx_capacity(&self) -> SubstrateResult<()> {
-        if self.tx_queue.len() < self.queue_capacity() {
-            Ok(())
-        } else {
-            Err(SubstrateError::ContractViolation { detail: "virtio net tx queue is full" })
         }
     }
 }
@@ -491,28 +576,31 @@ impl PacketDeviceBackend for InMemoryVirtioNetBackend {
             .map_err(|detail| SubstrateError::ContractViolation { detail })?;
         self.mac = Some(mac);
         self.initialized = true;
-        self.rx_queue.clear();
-        self.tx_queue.clear();
+        self.rx_queue.reset();
+        self.tx_queue.reset();
         Ok(())
     }
 
     fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
         self.ensure_initialized()?;
         validate_frame_len(frame.len())?;
-        self.ensure_tx_capacity()?;
-        self.tx_queue.push(frame.to_vec());
+        self.tx_queue.push_frame(frame, "virtio net tx queue is full")?;
         Ok(())
     }
 
     fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
         self.ensure_initialized()?;
-        let count = core::cmp::min(out.len(), self.rx_queue.len());
-        for slot in out.iter_mut().take(count) {
-            let frame = self.rx_queue.remove(0);
-            slot.data[..frame.len()].copy_from_slice(&frame);
-            slot.len = u16::try_from(frame.len()).map_err(|_| {
-                SubstrateError::ContractViolation { detail: "virtio net rx frame length overflow" }
-            })?;
+        let mut count = 0usize;
+        for slot in out {
+            let Some(frame) = self.rx_queue.pop_frame() else { break };
+            if frame.data.len() > slot.data.len() {
+                return Err(SubstrateError::ContractViolation {
+                    detail: "virtio net rx frame exceeds slot capacity",
+                });
+            }
+            slot.data[..frame.data.len()].copy_from_slice(&frame.data);
+            slot.len = frame.descriptor.len;
+            count += 1;
         }
         Ok(count)
     }
@@ -662,6 +750,44 @@ mod tests {
         assert_eq!(slots[0].len, rx.len() as u16);
         assert_eq!(&slots[0].data[..rx.len()], &rx);
         assert_eq!(backend.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn in_memory_virtio_net_backend_records_descriptor_slots_and_sequences() {
+        let mut backend = InMemoryVirtioNetBackend::default();
+        let frame = [0x77u8; 64];
+
+        backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
+        for _ in 0..backend.config().queue_size {
+            backend.submit_tx(&frame).unwrap();
+        }
+        let evidence = backend.evidence();
+        assert_eq!(evidence.tx_queue.pending, usize::from(backend.config().queue_size));
+        assert_eq!(evidence.tx_queue.next_slot, 0);
+        assert_eq!(evidence.tx_queue.next_sequence, u64::from(backend.config().queue_size) + 1);
+        assert_eq!(
+            evidence.tx_queue.last_descriptor,
+            Some(VirtioNetFrameDescriptor {
+                queue_index: backend.config().tx_queue_index,
+                slot: backend.config().queue_size - 1,
+                len: frame.len() as u16,
+                sequence: u64::from(backend.config().queue_size),
+            })
+        );
+
+        assert_eq!(backend.take_tx_frame().unwrap().as_slice(), &frame);
+        backend.submit_tx(&frame).unwrap();
+        let evidence = backend.evidence();
+        assert_eq!(
+            evidence.tx_queue.last_descriptor,
+            Some(VirtioNetFrameDescriptor {
+                queue_index: backend.config().tx_queue_index,
+                slot: 0,
+                len: frame.len() as u16,
+                sequence: u64::from(backend.config().queue_size) + 1,
+            })
+        );
+        assert_eq!(evidence.tx_queue.next_slot, 1);
     }
 
     #[test]
