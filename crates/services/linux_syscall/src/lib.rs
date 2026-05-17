@@ -13,11 +13,11 @@ use vmos_abi::{
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
+    SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE,
     SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
@@ -106,6 +106,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_CLOCK_GETTIME => plan_clock_gettime(a0, a1),
         SYS_CLOCK_GETRES => plan_clock_getres(a0, a1),
         SYS_CLOCK_ADJTIME => plan_clock_adjtime(a0, a1),
+        SYS_EVENTFD => plan_eventfd(a0, 0),
+        SYS_EVENTFD2 => plan_eventfd(a0, a1),
         SYS_TIMERFD_CREATE => plan_timerfd_create(a0, a1),
         SYS_TIMERFD_SETTIME => plan_timerfd_settime(a0, a1, a2, a3),
         SYS_TIMERFD_GETTIME => plan_timerfd_gettime(a0, a1),
@@ -588,6 +590,11 @@ fn plan_clock_getres(clock_id: u64, timespec_ptr: u64) -> PackedStep {
 fn plan_timerfd_create(clock_id: u64, flags: u64) -> PackedStep {
     reset_plan(PlanKind::TimerfdCreate, [clock_id, flags, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::TimerfdCreate)
+}
+
+fn plan_eventfd(initval: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::Eventfd, [initval, flags, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Eventfd)
 }
 
 fn plan_timerfd_settime(fd: u64, flags: u64, new_value_ptr: u64, old_value_ptr: u64) -> PackedStep {
@@ -1525,6 +1532,23 @@ mod tests {
         assert_eq!(PlanKind::from_raw(gettime.aux), Some(PlanKind::TimerfdGettime));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 0x3080);
+    }
+
+    #[test]
+    fn eventfd_plans_preserve_initval_and_flags() {
+        let _guard = test_guard();
+
+        let eventfd = PackedStep::decode(dispatch(SYS_EVENTFD, 5, 0xdead, 0, 0, 0, 0));
+        assert_eq!(eventfd.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(eventfd.aux), Some(PlanKind::Eventfd));
+        assert_eq!(plan_arg(0), 5);
+        assert_eq!(plan_arg(1), 0);
+
+        let eventfd2 = PackedStep::decode(dispatch(SYS_EVENTFD2, 7, 0o2004001, 0, 0, 0, 0));
+        assert_eq!(eventfd2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(eventfd2.aux), Some(PlanKind::Eventfd));
+        assert_eq!(plan_arg(0), 7);
+        assert_eq!(plan_arg(1), 0o2004001);
     }
 
     #[test]

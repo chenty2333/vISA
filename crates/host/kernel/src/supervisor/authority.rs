@@ -428,6 +428,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "time.timerfd",
             operation: "gettime",
         },
+        PlanKind::Eventfd => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "event.eventfd",
+            operation: "create",
+        },
         PlanKind::SetRobustList => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

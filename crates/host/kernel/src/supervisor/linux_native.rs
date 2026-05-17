@@ -6,11 +6,11 @@ use vmos_abi::{
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
+    SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE,
     SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
@@ -93,6 +93,8 @@ impl LinuxFrontend {
             SYS_CLOCK_GETTIME => self.plan_clock_gettime(a0, a1),
             SYS_CLOCK_GETRES => self.plan_clock_getres(a0, a1),
             SYS_CLOCK_ADJTIME => self.plan_clock_adjtime(a0, a1),
+            SYS_EVENTFD => self.plan_eventfd(a0, 0),
+            SYS_EVENTFD2 => self.plan_eventfd(a0, a1),
             SYS_TIMERFD_CREATE => self.plan_timerfd_create(a0, a1),
             SYS_TIMERFD_SETTIME => self.plan_timerfd_settime(a0, a1, a2, a3),
             SYS_TIMERFD_GETTIME => self.plan_timerfd_gettime(a0, a1),
@@ -637,6 +639,11 @@ impl LinuxFrontend {
     fn plan_timerfd_create(&mut self, clock_id: u64, flags: u64) -> PackedStep {
         self.reset_plan(PlanKind::TimerfdCreate, [clock_id, flags, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::TimerfdCreate)
+    }
+
+    fn plan_eventfd(&mut self, initval: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Eventfd, [initval, flags, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Eventfd)
     }
 
     fn plan_timerfd_settime(

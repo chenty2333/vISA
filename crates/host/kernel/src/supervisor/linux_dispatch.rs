@@ -306,6 +306,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
             PlanKind::ClockGettime => self.plan_clock_gettime(plan),
             PlanKind::ClockGetres => self.plan_clock_getres(plan),
+            PlanKind::Eventfd => self.plan_eventfd(plan),
             PlanKind::TimerfdCreate => self.plan_timerfd_create(plan),
             PlanKind::TimerfdSettime => self.plan_timerfd_settime(plan),
             PlanKind::TimerfdGettime => self.plan_timerfd_gettime(plan),

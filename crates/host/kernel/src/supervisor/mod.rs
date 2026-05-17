@@ -12,6 +12,7 @@ mod linux_bpf;
 mod linux_clock_dispatch;
 mod linux_dispatch;
 mod linux_epoll_dispatch;
+mod linux_eventfd_dispatch;
 mod linux_fd;
 mod linux_fs_dispatch;
 mod linux_memory_dispatch;
