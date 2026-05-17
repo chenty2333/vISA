@@ -663,7 +663,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         match self.net_core.recv_socket(socket_id, count) {
             Ok(bytes) => {
-                let _ = self.linux_socket.recv_socket(socket_id, bytes.len() as u32);
+                match self.linux_socket.recv_socket(socket_id, bytes.len() as u32) {
+                    Ok(_) => {}
+                    Err(ServiceCallError::Errno(errno)) => {
+                        crate::kwarn!(
+                            "linux_socket recv bookkeeping socket {} failed errno={}",
+                            socket_id,
+                            errno
+                        );
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!(
+                            "linux_socket recv bookkeeping socket {}: {}",
+                            socket_id,
+                            reason
+                        );
+                    }
+                    Err(ServiceCallError::Invalid(err)) => {
+                        crate::kwarn!(
+                            "linux_socket recv bookkeeping socket {}: {}",
+                            socket_id,
+                            err
+                        );
+                    }
+                }
                 Ok(LinuxCallResult::Bytes(bytes))
             }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),

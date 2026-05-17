@@ -983,9 +983,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn close_active_fd_table_for_process_exit(&mut self) {
-        let len = self.fd_table.len();
+        let len = self.fd_table.len().max(self.fd_handles.len());
         for fd in 3..len {
-            let _ = self.close_fd_slot(fd as u32, false);
+            if let Err(errno) = self.close_fd_slot_if_open(fd as u32, false) {
+                crate::kwarn!("process-exit close fd {} failed errno={}", fd, errno);
+            }
         }
     }
 
@@ -1057,7 +1059,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         if old_fd == new_fd {
             if allow_same_fd {
-                let _ = self.dup_source_entry(old_fd)?;
+                self.dup_source_entry(old_fd)?;
                 return Ok(new_fd);
             }
             return Err(ERR_EINVAL);
@@ -1088,7 +1090,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let end = last.min(MAX_LINUX_FD - 1);
         for fd in first.max(3)..=end {
-            let _ = self.close_fd_slot(fd, true);
+            self.close_fd_slot_if_open(fd, true)?;
         }
         Ok(())
     }
@@ -1911,10 +1913,19 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn close_fd_if_present(&mut self, fd: u32) -> Result<(), i32> {
-        if self.fd_table.get(fd as usize).and_then(Option::as_ref).is_none() {
+        self.close_fd_slot_if_open(fd, true)
+    }
+
+    fn close_fd_slot_if_open(&mut self, fd: u32, validate_handle: bool) -> Result<(), i32> {
+        if self.fd_slot_absent(fd) {
             return Ok(());
         }
-        self.close_fd_slot(fd, true)
+        self.close_fd_slot(fd, validate_handle)
+    }
+
+    fn fd_slot_absent(&self, fd: u32) -> bool {
+        self.fd_table.get(fd as usize).and_then(Option::as_ref).is_none()
+            && self.fd_handles.get(fd as usize).and_then(Option::as_ref).is_none()
     }
 
     fn close_fd_slot(&mut self, fd: u32, validate_handle: bool) -> Result<(), i32> {
