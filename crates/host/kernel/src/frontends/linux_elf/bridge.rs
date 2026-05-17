@@ -5899,14 +5899,14 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
             return sys_futex_lock_pi(frame, false, futex_pi_lock_timeout_clock(raw_op, true));
         }
         FUTEX_TRYLOCK_PI => {
-            if raw_op & FUTEX_CLOCK_REALTIME != 0 {
-                return Err(ERR_ENOSYS);
+            if !futex_pi_non_timeout_flags_valid(raw_op) {
+                return Err(ERR_EINVAL);
             }
             return sys_futex_lock_pi(frame, true, FutexPiTimeoutClock::Realtime);
         }
         FUTEX_UNLOCK_PI => {
-            if raw_op & FUTEX_CLOCK_REALTIME != 0 {
-                return Err(ERR_ENOSYS);
+            if !futex_pi_non_timeout_flags_valid(raw_op) {
+                return Err(ERR_EINVAL);
             }
             return sys_futex_unlock_pi(frame);
         }
@@ -6108,6 +6108,10 @@ fn validate_futex_uaddr(uaddr: u64) -> Result<(), i32> {
 enum FutexPiTimeoutClock {
     Realtime,
     Monotonic,
+}
+
+fn futex_pi_non_timeout_flags_valid(raw_op: u32) -> bool {
+    raw_op & FUTEX_CLOCK_REALTIME == 0
 }
 
 fn futex_pi_lock_timeout_clock(raw_op: u32, pi2: bool) -> FutexPiTimeoutClock {
@@ -6343,16 +6347,16 @@ fn linux_call_result(result: LinuxCallResult) -> Result<i64, i32> {
 mod tests {
     use vmos_abi::{
         FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK,
-        FUTEX_WAITERS,
+        FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAITERS,
     };
 
     use super::{
         CloneRequest, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX,
         LINUX_GREG_RIP, LINUX_GREG_RSP, SignalAltStack, SyscallFrame, UserReturnContext,
         decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
-        futex_pi_lock_timeout_clock, futex_pi_owner_word, futex_pi_restore_wait_word,
-        futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
-        read_linux_greg, sanitize_restored_rflags, write_linux_greg,
+        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
+        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
+        parse_clone3_request_bytes, read_linux_greg, sanitize_restored_rflags, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6426,6 +6430,14 @@ mod tests {
             futex_pi_lock_timeout_clock(FUTEX_LOCK_PI2 | FUTEX_CLOCK_REALTIME, true),
             FutexPiTimeoutClock::Realtime
         );
+    }
+
+    #[test]
+    fn futex_pi_non_timeout_ops_reject_realtime_clock_flag() {
+        assert!(futex_pi_non_timeout_flags_valid(FUTEX_TRYLOCK_PI));
+        assert!(futex_pi_non_timeout_flags_valid(FUTEX_UNLOCK_PI));
+        assert!(!futex_pi_non_timeout_flags_valid(FUTEX_TRYLOCK_PI | FUTEX_CLOCK_REALTIME));
+        assert!(!futex_pi_non_timeout_flags_valid(FUTEX_UNLOCK_PI | FUTEX_CLOCK_REALTIME));
     }
 
     #[test]
