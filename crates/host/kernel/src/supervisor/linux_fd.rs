@@ -1373,19 +1373,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(revents)
     }
 
-    pub(crate) fn simulate_socketpair_peer_activity(&mut self) {
-        let mut ready = Vec::new();
-        for pair in &mut self.socketpairs {
-            if pair.open_a && pair.open_b && pair.b_to_a.len() < pair.capacity {
-                pair.b_to_a.push(b'w');
-                ready.push(socketpair_ready_key(pair.id, 0));
-            }
-        }
-        for ready_key in ready {
-            self.notify_ready_key(ready_key, "socketpair fake child write");
-        }
-    }
-
     pub(super) fn socketpair_ready_key_matches_events(
         &mut self,
         ready_key: u64,
@@ -1460,21 +1447,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.notify_ready_key(eventfd_ready_key(eventfd_id), "eventfd read readiness");
         }
         Ok(8)
-    }
-
-    pub(crate) fn simulate_eventfd_child_activity(&mut self) {
-        const FAKE_CHILD_EVENTFD_VALUE: u64 = 0xdead_beef;
-
-        let mut ready = Vec::new();
-        for eventfd in &mut self.eventfds {
-            if EVENTFD_MAX_COUNTER.saturating_sub(eventfd.counter) >= FAKE_CHILD_EVENTFD_VALUE {
-                eventfd.counter = eventfd.counter.saturating_add(FAKE_CHILD_EVENTFD_VALUE);
-                ready.push(eventfd_ready_key(eventfd.id));
-            }
-        }
-        for ready_key in ready {
-            self.notify_ready_key(ready_key, "eventfd fake child write");
-        }
     }
 
     pub(crate) fn fd_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
