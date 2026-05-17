@@ -235,7 +235,14 @@ fn check_epoll_pulse() -> Result<(), i32> {
 
 fn check_socket_path() -> Result<(), i32> {
     let fd = sys_socket(AF_INET as i32, SOCK_STREAM as i32, 0)?;
-    sys_setsockopt(fd, 1, 2, 0, 0)?;
+    let reuse_addr = 1u32;
+    sys_setsockopt(
+        fd,
+        1,
+        2,
+        (&reuse_addr as *const u32) as u64,
+        core::mem::size_of::<u32>() as u64,
+    )?;
     let _ = sys_fcntl(fd, 3, 0)?;
     let sent = sys_sendto(fd, HTTP_GET)?;
     if sent != HTTP_GET.len() {

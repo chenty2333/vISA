@@ -1,6 +1,7 @@
 use vmos_abi::{
     AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
-    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ERROR, SOCK_STREAM, SOL_SOCKET,
+    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_STREAM,
+    SOL_SOCKET,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -36,6 +37,8 @@ struct LinuxSocket {
     local_port: u16,
     remote_ipv4: u32,
     remote_port: u16,
+    reuse_addr: bool,
+    reuse_port: bool,
     pending_accept_queue: [PendingAccept; MAX_PENDING_ACCEPTS],
     active: bool,
 }
@@ -54,6 +57,8 @@ impl LinuxSocket {
         local_port: 0,
         remote_ipv4: 0,
         remote_port: 0,
+        reuse_addr: false,
+        reuse_port: false,
         pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
         active: false,
     };
@@ -100,6 +105,8 @@ impl LinuxSocketState {
                     local_port: 0,
                     remote_ipv4: 0,
                     remote_port: 0,
+                    reuse_addr: false,
+                    reuse_port: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
@@ -136,6 +143,8 @@ impl LinuxSocketState {
                     local_port: 0,
                     remote_ipv4: 0,
                     remote_port: 0,
+                    reuse_addr: false,
+                    reuse_port: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
@@ -278,6 +287,8 @@ impl LinuxSocketState {
             local_port: self.sockets[index].local_port,
             remote_ipv4: pending.remote_ipv4,
             remote_port: pending.remote_port,
+            reuse_addr: self.sockets[index].reuse_addr,
+            reuse_port: self.sockets[index].reuse_port,
             pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
             active: true,
         };
@@ -340,20 +351,35 @@ impl LinuxSocketState {
     }
 
     pub fn setsockopt(
-        &self,
+        &mut self,
         socket_id: u32,
-        _level: u32,
-        _optname: u32,
-        _optlen: u32,
+        level: u32,
+        optname: u32,
+        optlen: u32,
+        value: u32,
     ) -> Result<(), i32> {
-        self.socket_index(socket_id)?;
+        let index = self.socket_index(socket_id)?;
+        if level != SOL_SOCKET {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        if optlen < 4 {
+            return Err(ERR_EINVAL);
+        }
+        match optname {
+            SO_REUSEADDR => self.sockets[index].reuse_addr = value != 0,
+            SO_REUSEPORT => self.sockets[index].reuse_port = value != 0,
+            _ => return Err(ERR_EOPNOTSUPP),
+        }
         Ok(())
     }
 
     pub fn getsockopt(&self, socket_id: u32, level: u32, optname: u32) -> Result<u32, i32> {
-        self.socket_index(socket_id)?;
+        let index = self.socket_index(socket_id)?;
         match (level, optname) {
             (SOL_SOCKET, SO_ERROR) => Ok(0),
+            (SOL_SOCKET, SO_TYPE) => Ok(self.sockets[index].ty),
+            (SOL_SOCKET, SO_REUSEADDR) => Ok(self.sockets[index].reuse_addr as u32),
+            (SOL_SOCKET, SO_REUSEPORT) => Ok(self.sockets[index].reuse_port as u32),
             _ => Err(ERR_EOPNOTSUPP),
         }
     }
@@ -411,6 +437,7 @@ impl LinuxSocketState {
     }
 
     fn bound_port_conflicts(&self, socket_index: usize, ipv4: u32, port: u16) -> bool {
+        let reuse_port = self.sockets[socket_index].reuse_port;
         self.sockets.iter().enumerate().any(|(index, socket)| {
             index != socket_index
                 && socket.active
@@ -418,6 +445,7 @@ impl LinuxSocketState {
                 && socket.ty == SOCK_STREAM
                 && socket.local_port == port
                 && ipv4_matches_bound_pair(socket.local_ipv4, ipv4)
+                && !(reuse_port && socket.reuse_port)
         })
     }
 
@@ -483,7 +511,8 @@ impl Default for LinuxSocketState {
 mod tests {
     use vmos_abi::{
         AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL,
-        ERR_EOPNOTSUPP, SO_ERROR, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
+        ERR_EOPNOTSUPP, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_DGRAM, SOCK_STREAM,
+        SOL_SOCKET,
     };
 
     use super::*;
@@ -648,6 +677,22 @@ mod tests {
     }
 
     #[test]
+    fn reuse_port_allows_port_sharing_when_both_sockets_opt_in() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEPORT, 4, 1), Ok(()));
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(state.setsockopt(2, SOL_SOCKET, SO_REUSEPORT, 4, 1), Ok(()));
+        assert_eq!(bind_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+
+        assert!(state.register_socket(3, AF_INET, SOCK_STREAM, 0, 44).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 3, LOOPBACK, 8080), Err(ERR_EADDRINUSE));
+    }
+
+    #[test]
     fn bind_rejects_short_ipv4_sockaddr() {
         let mut state = LinuxSocketState::new();
 
@@ -714,6 +759,32 @@ mod tests {
     }
 
     #[test]
+    fn setsockopt_persists_bounded_sol_socket_options() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 4, 1), Ok(()));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEPORT, 4, 1), Ok(()));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_TYPE), Ok(SOCK_STREAM));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(1));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(1));
+
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 4, 0), Ok(()));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(0));
+    }
+
+    #[test]
+    fn setsockopt_rejects_unsupported_or_short_options() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.setsockopt(1, SOL_SOCKET + 1, SO_REUSEADDR, 4, 1), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_ERROR, 4, 0), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 3, 1), Err(ERR_EINVAL));
+        assert_eq!(state.setsockopt(99, SOL_SOCKET, SO_REUSEADDR, 4, 1), Err(ERR_EBADF));
+    }
+
+    #[test]
     fn pending_accept_count_tracks_listen_backlog() {
         let mut state = LinuxSocketState::new();
 
@@ -758,11 +829,14 @@ mod tests {
     }
 
     #[test]
-    fn getsockopt_supports_so_error_only() {
+    fn getsockopt_supports_bounded_sol_socket_options() {
         let mut state = LinuxSocketState::new();
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR), Ok(0));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_TYPE), Ok(SOCK_STREAM));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(0));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR + 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.getsockopt(99, SOL_SOCKET, SO_ERROR), Err(ERR_EBADF));
     }

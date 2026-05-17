@@ -181,7 +181,10 @@ pub const SOCK_STREAM: u32 = 1;
 pub const SOCK_DGRAM: u32 = 2;
 pub const SOCK_RAW: u32 = 3;
 pub const SOL_SOCKET: u32 = 1;
+pub const SO_REUSEADDR: u32 = 2;
+pub const SO_TYPE: u32 = 3;
 pub const SO_ERROR: u32 = 4;
+pub const SO_REUSEPORT: u32 = 15;
 
 pub const ERR_EPERM: i32 = 1;
 pub const ERR_ENOENT: i32 = 2;

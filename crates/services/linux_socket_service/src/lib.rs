@@ -135,8 +135,14 @@ pub extern "C" fn recv_socket(socket_id: u32, len: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn setsockopt(socket_id: u32, level: u32, optname: u32, optlen: u32) -> i32 {
-    result_unit(unsafe { state().setsockopt(socket_id, level, optname, optlen) })
+pub extern "C" fn setsockopt(
+    socket_id: u32,
+    level: u32,
+    optname: u32,
+    optlen: u32,
+    value: u32,
+) -> i32 {
+    result_unit(unsafe { state().setsockopt(socket_id, level, optname, optlen, value) })
 }
 
 #[unsafe(no_mangle)]

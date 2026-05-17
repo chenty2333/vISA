@@ -1,16 +1,17 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI,
-    FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI, FUTEX_WAKE,
-    FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_BPF,
-    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
-    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
-    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
+    FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
+    SOL_SOCKET, SYS_ACCEPT, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
+    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -517,7 +518,11 @@ impl LinuxFrontend {
         optval: u64,
         optlen: u64,
     ) -> PackedStep {
-        self.reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, 0]);
+        let value = match self.setsockopt_u32_value(level, optname, optval, optlen) {
+            Ok(value) => value,
+            Err(errno) => return PackedStep::error(-(errno as i32)),
+        };
+        self.reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, value]);
         PackedStep::plan(PlanKind::SetSockOpt)
     }
 
@@ -782,6 +787,27 @@ impl LinuxFrontend {
     fn plan_simple(&mut self, kind: PlanKind) -> PackedStep {
         self.reset_plan(kind, [0, 0, 0, 0, 0, 0]);
         PackedStep::plan(kind)
+    }
+
+    fn setsockopt_u32_value(
+        &mut self,
+        level: u64,
+        optname: u64,
+        optval: u64,
+        optlen: u64,
+    ) -> Result<u64, i32> {
+        let (Ok(level), Ok(optname)) = (u32::try_from(level), u32::try_from(optname)) else {
+            return Ok(0);
+        };
+        if level != SOL_SOCKET || !matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            return Ok(0);
+        }
+        if optlen < 4 {
+            return Err(ERR_EINVAL);
+        }
+        let ptr = u32::try_from(optval).map_err(|_| ERR_EFAULT)?;
+        let bytes = self.read_bytes(ptr, 4).map_err(|_| ERR_EFAULT)?;
+        Ok(u32::from_le_bytes(bytes.as_slice().try_into().map_err(|_| ERR_EFAULT)?) as u64)
     }
 
     fn reset_plan(&mut self, _kind: PlanKind, args: [u64; 6]) {

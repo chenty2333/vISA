@@ -204,8 +204,9 @@ impl LinuxSocketService {
         level: u32,
         optname: u32,
         optlen: u32,
+        value: u32,
     ) -> Result<(), ServiceCallError> {
-        map_errno(self.state.setsockopt(socket_id, level, optname, optlen))
+        map_errno(self.state.setsockopt(socket_id, level, optname, optlen, value))
     }
 
     pub(crate) fn getsockopt(

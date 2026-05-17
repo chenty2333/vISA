@@ -21,7 +21,7 @@ pub(crate) struct LinuxSocketService {
     ipv4_endpoint: WasmFn<(u32, u32), u64>,
     send_socket: WasmFn<(u32, u32), i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
-    setsockopt: WasmFn<(u32, u32, u32, u32), i32>,
+    setsockopt: WasmFn<(u32, u32, u32, u32, u32), i32>,
     getsockopt: WasmFn<(u32, u32, u32), i32>,
     fcntl: WasmFn<(u32, u32, u64), i32>,
     socket_count: WasmFn<(), u32>,
@@ -271,12 +271,13 @@ impl LinuxSocketService {
         level: u32,
         optname: u32,
         optlen: u32,
+        value: u32,
     ) -> Result<(), ServiceCallError> {
         expect_ok(
             self.io
                 .call(
                     &self.setsockopt,
-                    (socket_id, level, optname, optlen),
+                    (socket_id, level, optname, optlen, value),
                     "linux_socket_service trapped",
                 )
                 .map_err(ServiceCallError::Trap)?,

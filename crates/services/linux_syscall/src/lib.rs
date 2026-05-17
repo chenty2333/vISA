@@ -8,16 +8,17 @@ use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
+    EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
-    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
-    SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
-    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
-    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
+    SOL_SOCKET, SYS_ACCEPT, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
+    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -468,13 +469,32 @@ fn plan_recvfrom(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u
 }
 
 fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
-    reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, 0]);
+    let value = match setsockopt_u32_value(level, optname, optval, optlen) {
+        Ok(value) => value,
+        Err(errno) => return PackedStep::error(-(errno as i32)),
+    };
+    reset_plan(PlanKind::SetSockOpt, [fd, level, optname, optval, optlen, value]);
     PackedStep::plan(PlanKind::SetSockOpt)
 }
 
 fn plan_getsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
     reset_plan(PlanKind::GetSockOpt, [fd, level, optname, optval, optlen, 0]);
     PackedStep::plan(PlanKind::GetSockOpt)
+}
+
+fn setsockopt_u32_value(level: u64, optname: u64, optval: u64, optlen: u64) -> Result<u64, i32> {
+    let (Ok(level), Ok(optname)) = (u32::try_from(level), u32::try_from(optname)) else {
+        return Ok(0);
+    };
+    if level != SOL_SOCKET || !matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+        return Ok(0);
+    }
+    if optlen < 4 {
+        return Err(ERR_EINVAL);
+    }
+    let ptr = u32::try_from(optval).map_err(|_| ERR_EFAULT)?;
+    let bytes = arg_bytes(ptr, 4).map_err(|_| ERR_EFAULT)?;
+    Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| ERR_EFAULT)?) as u64)
 }
 
 fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
@@ -973,6 +993,53 @@ mod tests {
         assert_eq!(plan_arg(2), vmos_abi::SO_ERROR as u64);
         assert_eq!(plan_arg(3), 0x2100);
         assert_eq!(plan_arg(4), 0x2200);
+    }
+
+    #[test]
+    fn setsockopt_plan_preserves_supported_u32_value() {
+        let _guard = test_guard();
+        let ptr = unsafe {
+            let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+            core::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), base, 4);
+            base as usize as u32
+        };
+        let raw = dispatch(
+            SYS_SETSOCKOPT,
+            8,
+            vmos_abi::SOL_SOCKET as u64,
+            vmos_abi::SO_REUSEADDR as u64,
+            ptr as u64,
+            4,
+            0,
+        );
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::SetSockOpt));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), vmos_abi::SOL_SOCKET as u64);
+        assert_eq!(plan_arg(2), vmos_abi::SO_REUSEADDR as u64);
+        assert_eq!(plan_arg(3), ptr as u64);
+        assert_eq!(plan_arg(4), 4);
+        assert_eq!(plan_arg(5), 1);
+    }
+
+    #[test]
+    fn setsockopt_plan_rejects_short_supported_u32_value() {
+        let _guard = test_guard();
+        let raw = dispatch(
+            SYS_SETSOCKOPT,
+            8,
+            vmos_abi::SOL_SOCKET as u64,
+            vmos_abi::SO_REUSEADDR as u64,
+            0,
+            3,
+            0,
+        );
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Error);
+        assert_eq!(step.value, -ERR_EINVAL);
     }
 
     #[test]

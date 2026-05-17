@@ -685,6 +685,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let level = u32::try_from(plan.args[1]).map_err(|_| "setsockopt level overflowed")?;
         let optname = u32::try_from(plan.args[2]).map_err(|_| "setsockopt optname overflowed")?;
         let optlen = u32::try_from(plan.args[4]).map_err(|_| "setsockopt optlen overflowed")?;
+        let value = u32::try_from(plan.args[5]).map_err(|_| "setsockopt value overflowed")?;
         let (socket_id, _, _) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
@@ -696,7 +697,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
-        match self.linux_socket.setsockopt(socket_id, level, optname, optlen) {
+        match self.linux_socket.setsockopt(socket_id, level, optname, optlen, value) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
