@@ -5,7 +5,7 @@ use net_stack_adapter::{
     pump_stack_driver_backend,
 };
 use service_core::driver::DriverVirtioNetState;
-use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateResult};
+use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
 use substrate_virtio::net::HostTapPacketDeviceBackend;
 
 use crate::HOST_TAP_ENV;
@@ -93,6 +93,8 @@ pub(crate) struct HostTapRuntimeReport {
     pub(crate) tx_bytes: usize,
     pub(crate) tx_lengths: Vec<usize>,
     pub(crate) rx_frames: usize,
+    pub(crate) rx_bytes: usize,
+    pub(crate) rx_lengths: Vec<usize>,
     pub(crate) totals: HostTapPumpTotals,
 }
 
@@ -158,6 +160,8 @@ pub(crate) fn run_host_tap_runtime_probe(
         tx_bytes: backend.tx_bytes,
         tx_lengths: backend.tx_lengths,
         rx_frames: backend.rx_frames,
+        rx_bytes: backend.rx_bytes,
+        rx_lengths: backend.rx_lengths,
         totals,
     })
 }
@@ -168,6 +172,8 @@ struct CountingHostTapBackend {
     tx_bytes: usize,
     tx_lengths: Vec<usize>,
     rx_frames: usize,
+    rx_bytes: usize,
+    rx_lengths: Vec<usize>,
 }
 
 impl CountingHostTapBackend {
@@ -179,6 +185,8 @@ impl CountingHostTapBackend {
             tx_bytes: 0,
             tx_lengths: Vec::new(),
             rx_frames: 0,
+            rx_bytes: 0,
+            rx_lengths: Vec::new(),
         })
     }
 }
@@ -198,6 +206,16 @@ impl PacketDeviceBackend for CountingHostTapBackend {
 
     fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
         let count = self.inner.poll_rx(out)?;
+        if count > out.len() {
+            return Err(SubstrateError::ContractViolation {
+                detail: "host TAP backend overreported rx frame count",
+            });
+        }
+        for slot in out.iter().take(count) {
+            let len = usize::from(slot.len);
+            self.rx_bytes = self.rx_bytes.saturating_add(len);
+            self.rx_lengths.push(len);
+        }
         self.rx_frames = self.rx_frames.saturating_add(count);
         Ok(count)
     }
