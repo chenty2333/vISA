@@ -132,6 +132,7 @@ struct VfsInode {
     len: usize,
     chunks: Vec<VfsChunk>,
     xattrs: Vec<VfsXattr>,
+    open_refs: usize,
 }
 
 struct VfsXattr {
@@ -337,6 +338,7 @@ impl VfsService {
             len: 0,
             chunks: Vec::new(),
             xattrs: Vec::new(),
+            open_refs: 0,
         });
         self.nodes.push(VfsNode { id, path: normalize_path(path) });
         Ok(())
@@ -365,6 +367,7 @@ impl VfsService {
             len: 0,
             chunks: Vec::new(),
             xattrs: Vec::new(),
+            open_refs: 0,
         });
         self.nodes.push(VfsNode { id, path: normalized });
         Ok(())
@@ -420,6 +423,25 @@ impl VfsService {
         }
         self.remove_node_index(index);
         Ok(())
+    }
+
+    pub(crate) fn retain_open_inode(&mut self, node_id: Option<u64>) {
+        let Some(id) = node_id else {
+            return;
+        };
+        if let Some(inode) = self.inode_mut(id) {
+            inode.open_refs = inode.open_refs.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn release_open_inode(&mut self, node_id: Option<u64>) {
+        let Some(id) = node_id else {
+            return;
+        };
+        if let Some(inode) = self.inode_mut(id) {
+            inode.open_refs = inode.open_refs.saturating_sub(1);
+        }
+        self.remove_inode_if_unlinked_and_closed(id);
     }
 
     pub(crate) fn rmdir(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
@@ -695,8 +717,12 @@ impl VfsService {
     }
 
     pub(crate) fn nlink_for_node(&self, node_id: Option<u64>, path: &[u8]) -> u64 {
-        node_id
-            .or_else(|| self.node_id_for_path(path))
+        if let Some(id) = node_id
+            && self.inode(id).is_some()
+        {
+            return self.nodes.iter().filter(|node| node.id == id).count() as u64;
+        }
+        self.node_id_for_path(path)
             .map(|id| self.nodes.iter().filter(|node| node.id == id).count() as u64)
             .unwrap_or(1)
     }
@@ -846,6 +872,7 @@ impl VfsService {
             len: 0,
             chunks: Vec::new(),
             xattrs: Vec::new(),
+            open_refs: 0,
         });
         self.nodes.push(VfsNode { id, path: normalized });
     }
@@ -905,8 +932,15 @@ impl VfsService {
     fn remove_node_index(&mut self, index: usize) {
         let id = self.nodes[index].id;
         self.nodes.remove(index);
-        if !self.nodes.iter().any(|node| node.id == id)
-            && let Some(inode_index) = self.inodes.iter().position(|inode| inode.id == id)
+        self.remove_inode_if_unlinked_and_closed(id);
+    }
+
+    fn remove_inode_if_unlinked_and_closed(&mut self, id: u64) {
+        if self.nodes.iter().any(|node| node.id == id) {
+            return;
+        }
+        if let Some(inode_index) =
+            self.inodes.iter().position(|inode| inode.id == id && inode.open_refs == 0)
         {
             self.inodes.remove(inode_index);
         }
@@ -1158,6 +1192,7 @@ impl VfsInode {
             len: bytes.len(),
             chunks: alloc::vec![VfsChunk::from_write(0, bytes)],
             xattrs: Vec::new(),
+            open_refs: 0,
         }
     }
 

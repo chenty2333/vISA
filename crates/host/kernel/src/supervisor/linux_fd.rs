@@ -729,6 +729,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn install_fd_at_for_owner(&mut self, fd: u32, mut entry: FdEntry, owner_task: Option<TaskId>) {
+        let retained_vfs_inode = match &entry.resource {
+            FdResource::ServiceNode { route: ServiceRoute::Vfs, vfs_node_id: Some(id), .. } => {
+                Some(*id)
+            }
+            _ => None,
+        };
         let resource_kind = fd_resource_kind(&entry.resource);
         let resource_label = fd_resource_label(&entry.resource);
         let resource_id =
@@ -743,6 +749,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.ensure_fd_handle_slot(fd);
         self.fd_table[fd] = Some(entry);
         self.fd_handles[fd] = self.semantic.resource_handle(resource_id);
+        self.vfs.retain_open_inode(retained_vfs_inode);
     }
 
     pub(crate) fn fork_fd_table_for_owner(&mut self, owner_task: TaskId) -> FdTableSnapshot {
@@ -1542,6 +1549,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             } => Some((*vfs_node_id, path.clone())),
             _ => None,
         });
+        let closing_vfs_inode = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::ServiceNode { route: ServiceRoute::Vfs, vfs_node_id: Some(id), .. } => {
+                Some(*id)
+            }
+            _ => None,
+        });
         if let Some(socket_id) = closing_socket
             && closing_socket_last_ref
         {
@@ -1587,6 +1600,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         {
             self.wake_ready_file_lock_waits();
         }
+        self.vfs.release_open_inode(closing_vfs_inode);
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
         {
