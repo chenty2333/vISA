@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use net_stack_adapter::DEFAULT_IPV4_ADDR;
+use net_stack_adapter::{DEFAULT_IPV4_ADDR, TcpSocketSnapshot};
 use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
 use service_core::{
     net_contract::PROTO_TCP,
@@ -474,6 +474,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         };
         if !snapshot.can_recv {
+            if tcp_read_half_closed(&snapshot) {
+                return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
+            }
             let errno = if snapshot.may_recv { ERR_EAGAIN } else { ERR_ENOTCONN };
             return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
         }
@@ -504,7 +507,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
-        self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_recv)
+        self.net_stack
+            .tcp_snapshot(stack_socket_id)
+            .ok()
+            .map(|snapshot| snapshot.can_recv || tcp_read_half_closed(&snapshot))
+    }
+
+    pub(super) fn net_stack_socket_read_half_closed(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+    ) -> Option<bool> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
+            return None;
+        }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        self.net_stack
+            .tcp_snapshot(stack_socket_id)
+            .ok()
+            .map(|snapshot| tcp_read_half_closed(&snapshot))
     }
 
     pub(super) fn net_stack_socket_writable(
@@ -924,6 +950,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 
 fn is_smoltcp_tcp_socket(domain: u32, ty: u32, protocol: u32) -> bool {
     domain == AF_INET && ty == SOCK_STREAM && (protocol == 0 || protocol == PROTO_TCP as u32)
+}
+
+fn tcp_read_half_closed(snapshot: &TcpSocketSnapshot) -> bool {
+    snapshot.state == "close-wait"
 }
 
 fn is_raw_ipv4_or_arp_ethernet_frame(frame: &[u8]) -> bool {

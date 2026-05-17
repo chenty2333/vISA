@@ -3600,6 +3600,7 @@ fn poll_wait_bits(
     const POLLOUT: u16 = 0x004;
     const POLLRDNORM: u16 = 0x040;
     const POLLWRNORM: u16 = 0x100;
+    const POLLRDHUP: u16 = 0x2000;
     const POLL_READ_EVENTS: u16 = POLLIN | POLLRDNORM;
     const POLL_WRITE_EVENTS: u16 = POLLOUT | POLLWRNORM;
 
@@ -3616,7 +3617,7 @@ fn poll_wait_bits(
             return Err(ERR_ENOSYS);
         }
         set_fd_bit(&mut error_bits, fd);
-        if entry.events & POLL_READ_EVENTS != 0 {
+        if entry.events & (POLL_READ_EVENTS | POLLRDHUP) != 0 {
             set_fd_bit(&mut read_bits, fd);
         }
         if entry.events & POLL_WRITE_EVENTS != 0 {

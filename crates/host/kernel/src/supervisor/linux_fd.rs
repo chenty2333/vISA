@@ -2,8 +2,8 @@ use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, EPOLLOUT, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK,
-    ERR_EPERM, NodeKind, ServiceRoute,
+    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE,
+    ERR_ENOTSOCK, ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -1249,6 +1249,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             };
             (events & EPOLLIN != 0 && !incoming.is_empty())
                 || (events & EPOLLOUT != 0 && peer_open && outgoing.len() < pair.capacity)
+                || (events & EPOLLRDHUP != 0 && !peer_open)
         })
     }
 
@@ -1400,6 +1401,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mut revents = 0u16;
         if self.socket_ready_key_is_readable(ready_key) {
             revents |= requested_read_revents(events);
+        }
+        if events & POLLRDHUP != 0
+            && self.net_stack_socket_read_half_closed(socket_id, ready_key, handle).unwrap_or(false)
+        {
+            revents |= POLLRDHUP;
         }
         if events & POLL_WRITE_EVENTS != 0 {
             let writable = if let Some(writable) =
@@ -1765,7 +1771,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                     .unwrap_or(false)
             }
         };
-        readable || writable
+        let read_half_closed = events & EPOLLRDHUP != 0
+            && self
+                .net_stack_socket_read_half_closed(socket_id, ready_key, handle)
+                .unwrap_or(false);
+        readable || writable || read_half_closed
     }
 
     pub(super) fn socket_accept_fd_is_ready(&mut self, fd: u32) -> bool {

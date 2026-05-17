@@ -167,6 +167,7 @@ pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLL_CTL_MOD: u32 = 3;
 pub const EPOLLIN: u32 = 0x001;
 pub const EPOLLOUT: u32 = 0x004;
+pub const EPOLLRDHUP: u32 = 0x2000;
 
 pub const AF_INET: u32 = 2;
 pub const AF_UNIX: u32 = 1;

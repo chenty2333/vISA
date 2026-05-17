@@ -970,6 +970,42 @@ mod tests {
     }
 
     #[test]
+    fn tcp_remote_fin_marks_receive_half_closed() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let socket = stack.create_tcp_socket().expect("tcp socket");
+        let remote_mac = [0x02, 0, 0, 0, 0, 2];
+        let remote_ip = [10, 0, 2, 2];
+
+        stack.connect_tcp_ipv4(socket, remote_ip, 80).expect("connect tcp");
+        let _ = stack.poll(1);
+        let _arp = stack.take_tx_frame().expect("arp request");
+
+        let reply = arp_reply(remote_mac, remote_ip, VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
+        stack.enqueue_rx_frame(&reply).expect("enqueue arp reply");
+        let _ = stack.poll(2);
+        let syn = stack.take_tx_frame().expect("tcp syn");
+
+        let syn_ack = tcp_syn_ack_for_syn(&syn, remote_mac, 0x1234_5678);
+        stack.enqueue_rx_frame(&syn_ack).expect("enqueue syn ack");
+        let _ = stack.poll(3);
+        let ack = stack.take_tx_frame().expect("final tcp ack");
+        assert_eq!(ack[47] & 0x10, 0x10);
+
+        let fin = tcp_fin_for_syn_ack(&syn_ack);
+        stack.enqueue_rx_frame(&fin).expect("enqueue remote fin");
+        let _ = stack.poll(4);
+
+        let snapshot = stack.tcp_snapshot(socket).expect("close-wait snapshot");
+        assert_eq!(snapshot.state, "close-wait");
+        assert!(!snapshot.can_recv);
+        assert!(!snapshot.may_recv);
+        assert!(snapshot.can_send);
+        let fin_ack = stack.take_tx_frame().expect("fin ack");
+        assert_eq!(fin_ack[47] & 0x10, 0x10);
+    }
+
+    #[test]
     fn tcp_listen_reaches_established_after_remote_handshake() {
         let mut stack =
             SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
@@ -1262,6 +1298,61 @@ mod tests {
         frame[tcp_start + 13] = 0x10;
         frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
         let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
+    fn tcp_fin_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
+        let syn_ack_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
+        let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
+        let client_mac: [u8; 6] = syn_ack[0..6].try_into().expect("client mac");
+        let server_mac: [u8; 6] = syn_ack[6..12].try_into().expect("server mac");
+        let server_ip: [u8; 4] = syn_ack[26..30].try_into().expect("server ip");
+        let client_ip: [u8; 4] = syn_ack[30..34].try_into().expect("client ip");
+        let server_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start], syn_ack[syn_ack_tcp_start + 1]]);
+        let client_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start + 2], syn_ack[syn_ack_tcp_start + 3]]);
+        let server_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 4],
+            syn_ack[syn_ack_tcp_start + 5],
+            syn_ack[syn_ack_tcp_start + 6],
+            syn_ack[syn_ack_tcp_start + 7],
+        ]);
+        let client_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 8],
+            syn_ack[syn_ack_tcp_start + 9],
+            syn_ack[syn_ack_tcp_start + 10],
+            syn_ack[syn_ack_tcp_start + 11],
+        ]);
+
+        let mut frame = vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&client_mac);
+        frame[6..12].copy_from_slice(&server_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&server_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&client_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8]
+            .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x11;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&server_ip, &client_ip, &frame[tcp_start..]);
         frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
         frame
     }
