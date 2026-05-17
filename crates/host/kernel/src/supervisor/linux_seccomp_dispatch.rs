@@ -1,9 +1,8 @@
 use alloc::vec::Vec;
 
 use service_core::seccomp::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO,
-    SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRAP,
-    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram,
+    SeccompInstruction, linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
 };
 use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
@@ -260,15 +259,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 }
 
 fn is_supported_seccomp_action(action: u32) -> bool {
-    matches!(
-        action,
-        SECCOMP_RET_KILL_PROCESS
-            | SECCOMP_RET_KILL_THREAD
-            | SECCOMP_RET_TRAP
-            | SECCOMP_RET_ERRNO
-            | SECCOMP_RET_LOG
-            | SECCOMP_RET_ALLOW
-    )
+    seccomp_action_available_without_listener(action)
 }
 
 fn errno_ret(errno: i32) -> LinuxCallResult {

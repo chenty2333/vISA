@@ -3,10 +3,9 @@ use alloc::vec::Vec;
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_RET_ALLOW,
-    SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG,
-    SECCOMP_RET_TRAP, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
-    linux_seccomp_notif_sizes_bytes,
+    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision,
+    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    seccomp_action_available_without_listener,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EDEADLK,
@@ -1867,15 +1866,7 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn seccomp_get_action_avail(ptr: u64) -> Result<i64, i32> {
     let action = read_user_u32(ptr)?;
-    if matches!(
-        action,
-        SECCOMP_RET_KILL_PROCESS
-            | SECCOMP_RET_KILL_THREAD
-            | SECCOMP_RET_TRAP
-            | SECCOMP_RET_ERRNO
-            | SECCOMP_RET_LOG
-            | SECCOMP_RET_ALLOW
-    ) {
+    if seccomp_action_available_without_listener(action) {
         Ok(0)
     } else {
         Err(vmos_abi::ERR_EOPNOTSUPP)

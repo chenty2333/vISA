@@ -111,6 +111,19 @@ pub fn linux_seccomp_notif_sizes_bytes() -> [u8; 6] {
     [notif[0], notif[1], resp[0], resp[1], data[0], data[1]]
 }
 
+pub fn seccomp_action_available_without_listener(action: u32) -> bool {
+    matches!(
+        action,
+        SECCOMP_RET_KILL_PROCESS
+            | SECCOMP_RET_KILL_THREAD
+            | SECCOMP_RET_TRAP
+            | SECCOMP_RET_ERRNO
+            | SECCOMP_RET_TRACE
+            | SECCOMP_RET_LOG
+            | SECCOMP_RET_ALLOW
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeccompData {
     pub nr: u32,
@@ -610,6 +623,12 @@ mod tests {
     #[test]
     fn linux_notification_size_encoding_matches_x86_64_abi() {
         assert_eq!(linux_seccomp_notif_sizes_bytes(), [80, 0, 24, 0, 64, 0]);
+    }
+
+    #[test]
+    fn action_availability_includes_trace_but_not_user_notification() {
+        assert!(seccomp_action_available_without_listener(SECCOMP_RET_TRACE));
+        assert!(!seccomp_action_available_without_listener(SECCOMP_RET_USER_NOTIF));
     }
 
     #[test]
