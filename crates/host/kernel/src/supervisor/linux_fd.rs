@@ -17,7 +17,7 @@ use super::{
     types::{
         AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, CAP_SYS_ADMIN,
         EventFdState, FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState,
-        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId,
+        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId, VfsTimestamps,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -1986,6 +1986,71 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn update_timestamps_path(
+        &mut self,
+        path: &[u8],
+        atime_ns: Option<u64>,
+        mtime_ns: Option<u64>,
+        ctime_ns: u64,
+        check_permissions: bool,
+        allow_write_access: bool,
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        self.check_path_access(path, 0, access)?;
+        let info = self.lookup_path(path).map_err(errno_from_service_error)?;
+        if info.route != ServiceRoute::Vfs {
+            return Err(vmos_abi::ERR_EOPNOTSUPP);
+        }
+        let node_id = self.vfs.node_id_for_path(path);
+        if check_permissions {
+            self.check_timestamp_update_access(
+                node_id,
+                path,
+                info.node,
+                allow_write_access,
+                access,
+            )?;
+        }
+        if atime_ns.is_none() && mtime_ns.is_none() {
+            return Ok(());
+        }
+        self.vfs
+            .set_timestamps_by_id(node_id, path, atime_ns, mtime_ns, ctime_ns)
+            .map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn update_timestamps_fd(
+        &mut self,
+        fd: u32,
+        atime_ns: Option<u64>,
+        mtime_ns: Option<u64>,
+        ctime_ns: u64,
+        check_permissions: bool,
+        allow_write_access: bool,
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(vmos_abi::ERR_EOPNOTSUPP);
+        }
+        if check_permissions {
+            self.check_timestamp_update_access(
+                vfs_node_id,
+                &path,
+                node,
+                allow_write_access,
+                access,
+            )?;
+        }
+        if atime_ns.is_none() && mtime_ns.is_none() {
+            return Ok(());
+        }
+        self.vfs
+            .set_timestamps_by_id(vfs_node_id, &path, atime_ns, mtime_ns, ctime_ns)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn stat_fd_abi(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
         self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
         let entry = self.fd_entry(fd).ok_or(ERR_EBADF)?;
@@ -1995,7 +2060,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 | FdResource::SocketPairEnd { .. }
                 | FdResource::EventFd { .. }
         ) {
-            return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1));
+            return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1, VfsTimestamps::default()));
         }
         let FdResource::ServiceNode { route, node, path, vfs_node_id } = &entry.resource else {
             return Err(ERR_EBADF);
@@ -2004,7 +2069,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (uid, gid) = self.owner_for_service_node_by_id(*route, *vfs_node_id, path);
         let len = self.len_for_service_node_by_id(*route, *vfs_node_id, path);
         let nlink = self.nlink_for_service_node_by_id(*route, *vfs_node_id, path);
-        Ok(encode_stat_abi(mode, len, uid, gid, nlink))
+        let timestamps = self.timestamps_for_service_node_by_id(*route, *vfs_node_id, path);
+        Ok(encode_stat_abi(mode, len, uid, gid, nlink, timestamps))
     }
 
     pub(crate) fn stat_path_abi(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
@@ -2013,7 +2079,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (uid, gid) = self.owner_for_service_node(info.route, path);
         let len = self.len_for_service_node(info.route, path);
         let nlink = self.nlink_for_service_node(info.route, path);
-        Ok(encode_stat_abi(mode, len, uid, gid, nlink))
+        let timestamps = self.timestamps_for_service_node(info.route, path);
+        Ok(encode_stat_abi(mode, len, uid, gid, nlink, timestamps))
     }
 
     pub(crate) fn path_metadata(
@@ -2058,6 +2125,26 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn path_owner(&mut self, path: &[u8]) -> Result<(u32, u32), i32> {
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         Ok(self.owner_for_service_node(info.route, path))
+    }
+
+    fn check_timestamp_update_access(
+        &self,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+        node: NodeKind,
+        allow_write_access: bool,
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        let (owner_uid, _) = self.vfs.owner_for_node(vfs_node_id, path);
+        if access.uid == owner_uid || access.has_capability(CAP_FOWNER) {
+            return Ok(());
+        }
+        if allow_write_access
+            && self.check_vfs_node_access(vfs_node_id, path, node, MAY_WRITE, access)
+        {
+            return Ok(());
+        }
+        Err(ERR_EPERM)
     }
 
     fn check_sticky_removal_access(
@@ -2158,6 +2245,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         match route {
             ServiceRoute::Vfs => self.vfs.nlink_for_node(vfs_node_id, path),
             _ => self.nlink_for_service_node(route, path),
+        }
+    }
+
+    fn timestamps_for_service_node(&self, route: ServiceRoute, path: &[u8]) -> VfsTimestamps {
+        match route {
+            ServiceRoute::Vfs => self.vfs.timestamps_for_path(path),
+            ServiceRoute::Procfs | ServiceRoute::Devfs => VfsTimestamps::default(),
+        }
+    }
+
+    fn timestamps_for_service_node_by_id(
+        &self,
+        route: ServiceRoute,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+    ) -> VfsTimestamps {
+        match route {
+            ServiceRoute::Vfs => self.vfs.timestamps_for_node(vfs_node_id, path),
+            _ => self.timestamps_for_service_node(route, path),
         }
     }
 
@@ -2385,7 +2491,14 @@ fn errno_from_service_error(err: ServiceCallError) -> i32 {
     }
 }
 
-fn encode_stat_abi(mode: u32, size: u64, uid: u32, gid: u32, nlink: u64) -> Vec<u8> {
+fn encode_stat_abi(
+    mode: u32,
+    size: u64,
+    uid: u32,
+    gid: u32,
+    nlink: u64,
+    timestamps: VfsTimestamps,
+) -> Vec<u8> {
     let mut out = alloc::vec![0u8; 144];
     write_u64(&mut out, 0, 1);
     write_u64(&mut out, 8, 1);
@@ -2396,6 +2509,9 @@ fn encode_stat_abi(mode: u32, size: u64, uid: u32, gid: u32, nlink: u64) -> Vec<
     write_u64(&mut out, 48, size);
     write_u64(&mut out, 56, 4096);
     write_u64(&mut out, 64, size.div_ceil(512));
+    write_timespec_ns(&mut out, 72, timestamps.atime_ns);
+    write_timespec_ns(&mut out, 88, timestamps.mtime_ns);
+    write_timespec_ns(&mut out, 104, timestamps.ctime_ns);
     out
 }
 
@@ -2409,4 +2525,9 @@ fn write_u32(out: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64(out: &mut [u8], offset: usize, value: u64) {
     out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_timespec_ns(out: &mut [u8], offset: usize, value: u64) {
+    write_u64(out, offset, value / 1_000_000_000);
+    write_u64(out, offset + 8, value % 1_000_000_000);
 }

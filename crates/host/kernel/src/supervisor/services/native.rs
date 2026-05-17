@@ -8,7 +8,7 @@ use vmos_abi::{
 
 use super::super::{
     engine::SupervisorEngine,
-    types::{LookupInfo, ServiceCallError},
+    types::{LookupInfo, ServiceCallError, VfsTimestamps},
 };
 use crate::serial;
 
@@ -130,6 +130,7 @@ struct VfsInode {
     uid: u32,
     gid: u32,
     len: usize,
+    timestamps: VfsTimestamps,
     chunks: Vec<VfsChunk>,
     xattrs: Vec<VfsXattr>,
     open_refs: usize,
@@ -336,6 +337,7 @@ impl VfsService {
             uid,
             gid,
             len: 0,
+            timestamps: VfsTimestamps::default(),
             chunks: Vec::new(),
             xattrs: Vec::new(),
             open_refs: 0,
@@ -365,6 +367,7 @@ impl VfsService {
             uid,
             gid,
             len: 0,
+            timestamps: VfsTimestamps::default(),
             chunks: Vec::new(),
             xattrs: Vec::new(),
             open_refs: 0,
@@ -777,6 +780,38 @@ impl VfsService {
             .unwrap_or(1)
     }
 
+    pub(crate) fn timestamps_for_path(&self, path: &[u8]) -> VfsTimestamps {
+        self.dynamic_node(path).map(|node| node.timestamps).unwrap_or_default()
+    }
+
+    pub(crate) fn timestamps_for_node(&self, node_id: Option<u64>, path: &[u8]) -> VfsTimestamps {
+        self.dynamic_node_for_target(node_id, path)
+            .map(|node| node.timestamps)
+            .unwrap_or_else(|| self.timestamps_for_path(path))
+    }
+
+    pub(crate) fn set_timestamps_by_id(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        atime_ns: Option<u64>,
+        mtime_ns: Option<u64>,
+        ctime_ns: u64,
+    ) -> Result<(), ServiceCallError> {
+        let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
+            self.lookup(path, false)?;
+            return errno(vmos_abi::ERR_EOPNOTSUPP);
+        };
+        if let Some(atime_ns) = atime_ns {
+            node.timestamps.atime_ns = atime_ns;
+        }
+        if let Some(mtime_ns) = mtime_ns {
+            node.timestamps.mtime_ns = mtime_ns;
+        }
+        node.timestamps.ctime_ns = ctime_ns;
+        Ok(())
+    }
+
     pub(crate) fn node_id_for_path(&self, path: &[u8]) -> Option<u64> {
         if let Some(node) = self.dynamic_node(path) {
             return Some(node.id);
@@ -920,6 +955,7 @@ impl VfsService {
             uid: 0,
             gid: 0,
             len: 0,
+            timestamps: VfsTimestamps::default(),
             chunks: Vec::new(),
             xattrs: Vec::new(),
             open_refs: 0,
@@ -1244,6 +1280,7 @@ impl VfsInode {
             uid,
             gid,
             len: bytes.len(),
+            timestamps: VfsTimestamps::default(),
             chunks: alloc::vec![VfsChunk::from_write(0, bytes)],
             xattrs: Vec::new(),
             open_refs: 0,

@@ -73,6 +73,8 @@ const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const AT_SYMLINK_FOLLOW: u64 = 0x400;
 const AT_EMPTY_PATH: u64 = 0x1000;
 const AT_EACCESS: u64 = 0x200;
+const UTIME_NOW: i64 = 1_073_741_823;
+const UTIME_OMIT: i64 = 1_073_741_822;
 const RENAME_NOREPLACE: u64 = 1;
 const RENAME_EXCHANGE: u64 = 2;
 const RENAME_WHITEOUT: u64 = 4;
@@ -358,7 +360,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_PSELECT6 => sys_pselect6(frame),
         SYS_UMASK => sys_umask(frame),
         SYS_TIME => sys_time(frame),
-        SYS_UTIMENSAT => Ok(0),
+        SYS_UTIMENSAT => sys_utimensat(frame),
         SYS_MOUNT => sys_mount(frame),
         SYS_UMOUNT2 => sys_umount2(frame),
         SYS_FALLOCATE => sys_fallocate(frame),
@@ -2231,6 +2233,99 @@ fn sys_time(frame: &SyscallFrame) -> Result<i64, i32> {
         write_user_bytes(frame.rdi, &(now as i64).to_le_bytes())?;
     }
     Ok(now as i64)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UtimensatPermission {
+    None,
+    WriteOrOwner,
+    OwnerOnly,
+}
+
+fn sys_utimensat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const UTIMENSAT_ALLOWED_FLAGS: u64 = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    let flags = frame.r10;
+    if flags & !UTIMENSAT_ALLOWED_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
+
+    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    if path.is_empty() && flags & AT_EMPTY_PATH == 0 {
+        return Err(ERR_ENOENT);
+    }
+    let now_ns = current_realtime_ns();
+    let (atime_ns, mtime_ns, permission) = read_utimensat_times(frame.rdx, now_ns)?;
+    let access = effective_access_snapshot();
+    let check_permissions = permission != UtimensatPermission::None;
+    let allow_write_access = permission == UtimensatPermission::WriteOrOwner;
+
+    if path.is_empty() {
+        let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+        active_context().supervisor.update_timestamps_fd(
+            fd,
+            atime_ns,
+            mtime_ns,
+            now_ns,
+            check_permissions,
+            allow_write_access,
+            access.ids(),
+        )?;
+        return Ok(0);
+    }
+
+    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
+    let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
+    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink)?;
+    active_context().supervisor.update_timestamps_path(
+        &resolved,
+        atime_ns,
+        mtime_ns,
+        now_ns,
+        check_permissions,
+        allow_write_access,
+        access.ids(),
+    )?;
+    Ok(0)
+}
+
+fn read_utimensat_times(
+    ptr: u64,
+    now_ns: u64,
+) -> Result<(Option<u64>, Option<u64>, UtimensatPermission), i32> {
+    if ptr == 0 {
+        return Ok((Some(now_ns), Some(now_ns), UtimensatPermission::WriteOrOwner));
+    }
+    let bytes = read_user_bytes(ptr, (LINUX_TIMESPEC_SIZE * 2) as usize)?;
+    let atime = decode_utimensat_timespec(&bytes[0..16], now_ns)?;
+    let mtime = decode_utimensat_timespec(&bytes[16..32], now_ns)?;
+    let permission = match (atime, mtime) {
+        (None, None) => UtimensatPermission::None,
+        (Some(atime), Some(mtime)) if atime == now_ns && mtime == now_ns => {
+            let atime_nsec = read_i64_from(&bytes, 8)?;
+            let mtime_nsec = read_i64_from(&bytes, 24)?;
+            if atime_nsec == UTIME_NOW && mtime_nsec == UTIME_NOW {
+                UtimensatPermission::WriteOrOwner
+            } else {
+                UtimensatPermission::OwnerOnly
+            }
+        }
+        _ => UtimensatPermission::OwnerOnly,
+    };
+    Ok((atime, mtime, permission))
+}
+
+fn decode_utimensat_timespec(bytes: &[u8], now_ns: u64) -> Result<Option<u64>, i32> {
+    let tv_sec = i64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?);
+    let tv_nsec = i64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?);
+    match tv_nsec {
+        UTIME_NOW => Ok(Some(now_ns)),
+        UTIME_OMIT => Ok(None),
+        0..=999_999_999 if tv_sec >= 0 => {
+            Ok(Some((tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(tv_nsec as u64)))
+        }
+        _ => Err(ERR_EINVAL),
+    }
 }
 
 fn sys_mount(frame: &SyscallFrame) -> Result<i64, i32> {

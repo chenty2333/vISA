@@ -212,6 +212,13 @@ impl<'a> AccessIds<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VfsTimestamps {
+    pub(crate) atime_ns: u64,
+    pub(crate) mtime_ns: u64,
+    pub(crate) ctime_ns: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
     Disabled,

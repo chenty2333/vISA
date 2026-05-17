@@ -4,7 +4,7 @@ use vmos_abi::{NodeKind, ServiceRoute};
 
 use super::super::{
     engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
-    types::{LookupInfo, ServiceCallError},
+    types::{LookupInfo, ServiceCallError, VfsTimestamps},
 };
 
 const VFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_VFS_SERVICE_WASM"));
@@ -103,5 +103,24 @@ impl VfsService {
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.io.read_response(len).map_err(ServiceCallError::Invalid)
+    }
+
+    pub(crate) fn timestamps_for_path(&self, _path: &[u8]) -> VfsTimestamps {
+        VfsTimestamps::default()
+    }
+
+    pub(crate) fn timestamps_for_node(&self, _node_id: Option<u64>, _path: &[u8]) -> VfsTimestamps {
+        VfsTimestamps::default()
+    }
+
+    pub(crate) fn set_timestamps_by_id(
+        &mut self,
+        _node_id: Option<u64>,
+        _path: &[u8],
+        _atime_ns: Option<u64>,
+        _mtime_ns: Option<u64>,
+        _ctime_ns: u64,
+    ) -> Result<(), ServiceCallError> {
+        Err(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))
     }
 }
