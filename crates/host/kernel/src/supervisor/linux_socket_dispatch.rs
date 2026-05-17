@@ -1,6 +1,6 @@
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EINPROGRESS, ERR_EINVAL, ERR_EMFILE,
-    ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
+    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
+    ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
 };
 
 use super::{
@@ -727,8 +727,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
+        let optval_ptr =
+            u32::try_from(plan.args[3]).map_err(|_| "getsockopt optval pointer overflowed")?;
+        let optlen_ptr =
+            u32::try_from(plan.args[4]).map_err(|_| "getsockopt optlen pointer overflowed")?;
         match self.linux_socket.getsockopt(socket_id, level, optname) {
-            Ok(value) => Ok(LinuxCallResult::Ret(value as i64)),
+            Ok(value) => self.write_getsockopt_u32(optval_ptr, optlen_ptr, value),
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("linux_socket getsockopt: {}", reason);
@@ -737,6 +741,35 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    fn write_getsockopt_u32(
+        &mut self,
+        optval_ptr: u32,
+        optlen_ptr: u32,
+        value: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        const SOCKOPT_U32_LEN: u32 = 4;
+
+        let optlen = match self.linux.read_bytes(optlen_ptr, SOCKOPT_U32_LEN) {
+            Ok(bytes) => u32::from_le_bytes(
+                bytes.as_slice().try_into().map_err(|_| "getsockopt optlen read was short")?,
+            ),
+            Err(err) => {
+                crate::kwarn!("getsockopt optlen readback: {}", err);
+                return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64)));
+            }
+        };
+        if optlen < SOCKOPT_U32_LEN {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        if self.linux.write_bytes(optval_ptr, &value.to_le_bytes()).is_err()
+            || self.linux.write_bytes(optlen_ptr, &SOCKOPT_U32_LEN.to_le_bytes()).is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64)));
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
     pub(super) fn plan_fcntl(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         const F_DUPFD: u32 = 0;
         const F_GETFD: u32 = 1;

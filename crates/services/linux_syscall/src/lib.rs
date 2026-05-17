@@ -953,6 +953,29 @@ mod tests {
     }
 
     #[test]
+    fn getsockopt_plan_preserves_writeback_pointers() {
+        let _guard = test_guard();
+        let raw = dispatch(
+            SYS_GETSOCKOPT,
+            8,
+            vmos_abi::SOL_SOCKET as u64,
+            vmos_abi::SO_ERROR as u64,
+            0x2100,
+            0x2200,
+            0,
+        );
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::GetSockOpt));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), vmos_abi::SOL_SOCKET as u64);
+        assert_eq!(plan_arg(2), vmos_abi::SO_ERROR as u64);
+        assert_eq!(plan_arg(3), 0x2100);
+        assert_eq!(plan_arg(4), 0x2200);
+    }
+
+    #[test]
     fn futex_wait_requeue_pi_plans_distinct_wait_kind() {
         let _guard = test_guard();
         let raw = dispatch_futex_raw(0x1000, FUTEX_WAIT_REQUEUE_PI as u64, 7, u64::MAX, 7);
