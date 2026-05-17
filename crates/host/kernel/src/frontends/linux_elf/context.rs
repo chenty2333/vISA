@@ -214,6 +214,7 @@ pub(crate) struct ActiveUserContext {
     io_owner_ex_pid: i32,
     io_signal: u32,
     pending_io_signal: Option<u32>,
+    exec_path: Vec<u8>,
     next_activation_id: u64,
     alarm_seconds: u64,
     timer_slack_ns: u64,
@@ -322,6 +323,7 @@ impl ActiveUserContext {
         mmap_base: u64,
         mmap_end: u64,
         physical_memory_offset: u64,
+        exec_path: Vec<u8>,
     ) -> Self {
         Self {
             supervisor,
@@ -360,6 +362,7 @@ impl ActiveUserContext {
             io_owner_ex_pid: 0,
             io_signal: 0,
             pending_io_signal: None,
+            exec_path,
             next_activation_id: (task_id as u64) << 32 | 1,
             alarm_seconds: 0,
             timer_slack_ns: DEFAULT_TIMER_SLACK_NS,
@@ -470,6 +473,14 @@ impl ActiveUserContext {
         self.brk_end = brk_end;
         self.mmap_cursor = mmap_base;
         self.mmap_end = mmap_end;
+    }
+
+    pub(crate) fn exec_path(&self) -> &[u8] {
+        &self.exec_path
+    }
+
+    pub(crate) fn set_exec_path(&mut self, path: Vec<u8>) {
+        self.exec_path = path;
     }
 
     pub(crate) fn cwd(&self) -> &[u8] {

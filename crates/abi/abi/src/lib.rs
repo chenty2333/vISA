@@ -61,6 +61,7 @@ pub const SYS_RMDIR: u64 = 84;
 pub const SYS_CREAT: u64 = 85;
 pub const SYS_LINK: u64 = 86;
 pub const SYS_UNLINK: u64 = 87;
+pub const SYS_READLINK: u64 = 89;
 pub const SYS_CHMOD: u64 = 90;
 pub const SYS_CHOWN: u64 = 92;
 pub const SYS_LCHOWN: u64 = 94;

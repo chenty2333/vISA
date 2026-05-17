@@ -30,13 +30,13 @@ use vmos_abi::{
     SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP,
     SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN,
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE,
-    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
-    SYS_WRITEV, SyscallContext,
+    SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
+    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
+    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -207,6 +207,7 @@ pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str>
         USER_MMAP_ALLOC_BASE,
         USER_MMAP_END,
         physical_memory_offset,
+        b"/bin/vmos-ltp".to_vec(),
     );
     install_active_context(&mut context);
 
@@ -417,6 +418,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FUTEX => sys_futex(frame),
         SYS_GETDENTS64 => sys_getdents64(frame),
         SYS_GETCWD => sys_getcwd(frame),
+        SYS_READLINK => sys_readlink(frame),
         SYS_READLINKAT => sys_readlinkat(frame),
         SYS_UNAME => sys_uname(frame),
         SYS_NANOSLEEP => sys_nanosleep(frame),
@@ -949,6 +951,7 @@ fn execve_replace_image(
             USER_MMAP_ALLOC_BASE,
             USER_MMAP_END,
         );
+        context.set_exec_path(resolved.to_vec());
         context.supervisor.close_cloexec_fds_for_exec();
         if !context.supervisor.reset_signal_state_for_exec(context.pid, context.tid) {
             return Err(ERR_ESRCH);
@@ -4899,28 +4902,46 @@ fn sys_getcwd(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok((cwd.len() + 1) as i64)
 }
 
+fn sys_readlink(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_readlink_impl(AT_FDCWD, frame.rdi, frame.rsi, frame.rdx)
+}
+
 fn sys_readlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
-    let path = read_user_c_string(frame.rsi, PATH_MAX)?;
-    let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
-    let count = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
+    sys_readlink_impl(linux_fd_arg(frame.rdi), frame.rsi, frame.rdx, frame.r10)
+}
+
+fn sys_readlink_impl(dirfd: i64, path_ptr: u64, buf_ptr: u64, count_arg: u64) -> Result<i64, i32> {
+    let path = read_user_c_string(path_ptr, PATH_MAX)?;
+    let resolved = resolve_path(dirfd, &path)?;
+    let count = usize::try_from(count_arg).map_err(|_| ERR_EINVAL)?;
+    if count == 0 {
+        return Err(ERR_EINVAL);
+    }
+    let link = if resolved == b"/proc/self/exe" {
+        active_context().exec_path().to_vec()
+    } else {
+        readlink_via_supervisor(dirfd, &resolved)?
+    };
+    let written = core::cmp::min(link.len(), count);
+    let mut dest = user_lease(buf_ptr, written as u64, true)?;
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&link[..written]);
+    Ok(written as i64)
+}
+
+fn readlink_via_supervisor(dirfd: i64, resolved: &[u8]) -> Result<Vec<u8>, i32> {
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(&resolved).map_err(|_| ERR_EFAULT)?;
-    let link = match supervisor
+    match supervisor
         .dispatch_linux_syscall(
             "ring3_readlinkat",
-            SyscallContext::new(SYS_READLINKAT, [frame.rdi, ptr as u64, len as u64, 0, 0, 0]),
+            SyscallContext::new(SYS_READLINKAT, [dirfd as u64, ptr as u64, len as u64, 0, 0, 0]),
         )
         .map_err(|_| ERR_EINVAL)?
     {
-        LinuxCallResult::Bytes(bytes) => bytes,
-        LinuxCallResult::Ret(ret) if ret <= 0 => return Err((-ret) as i32),
-        _ => return Err(ERR_EINVAL),
-    };
-
-    let written = core::cmp::min(link.len(), count);
-    let mut dest = user_lease(frame.rdx, written as u64, true)?;
-    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&link[..written]);
-    Ok(written as i64)
+        LinuxCallResult::Bytes(bytes) => Ok(bytes),
+        LinuxCallResult::Ret(ret) if ret <= 0 => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
 }
 
 fn sys_uname(frame: &SyscallFrame) -> Result<i64, i32> {

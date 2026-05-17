@@ -40,7 +40,7 @@ CONFIG_EFI_SECURE_BOOT_LOCK_DOWN=n\n\
 CONFIG_LOCK_DOWN_IN_EFI_SECURE_BOOT=n\n";
 
 const PROC_DIR: &[u8] = b"self\nmeminfo\ncpuinfo\nsys\ncmdline\nmounts\n";
-const PROC_SELF_DIR: &[u8] = b"status\nstat\ncwd\n";
+const PROC_SELF_DIR: &[u8] = b"status\nstat\ncwd\nexe\n";
 const PROC_SYS_DIR: &[u8] = b"kernel\n";
 const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\ntainted\n";
 const PROC_STATUS: &[u8] = b"Name:\tvmos-ltp\n\
@@ -223,7 +223,9 @@ impl VfsService {
             | b"/proc/cpuinfo"
             | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => lookup(ServiceRoute::Procfs, NodeKind::File),
-            b"/proc/self/cwd" => lookup(ServiceRoute::Procfs, NodeKind::Symlink),
+            b"/proc/self/cwd" | b"/proc/self/exe" => {
+                lookup(ServiceRoute::Procfs, NodeKind::Symlink)
+            }
             b"/dev" => lookup(ServiceRoute::Devfs, NodeKind::Directory),
             b"/dev/null" | b"/dev/zero" | b"/dev/pulse" | b"/dev/loop0" | b"/dev/loop-control" => {
                 lookup(ServiceRoute::Devfs, NodeKind::CharDevice)
@@ -1380,7 +1382,7 @@ impl ProcfsService {
             | b"/proc/cpuinfo"
             | b"/proc/sys/kernel/tainted"
             | b"/proc/sys/kernel/pid_max" => Ok(NodeKind::File),
-            b"/proc/self/cwd" => Ok(NodeKind::Symlink),
+            b"/proc/self/cwd" | b"/proc/self/exe" => Ok(NodeKind::Symlink),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -1423,6 +1425,7 @@ impl ProcfsService {
             b"/proc/self/status"
             | b"/proc/self/stat"
             | b"/proc/self/cwd"
+            | b"/proc/self/exe"
             | b"/proc/cmdline"
             | b"/proc/mounts"
             | b"/proc/meminfo"
@@ -1443,6 +1446,7 @@ impl ProcfsService {
         }
         match path {
             b"/proc/self/cwd" => Ok(PROC_CWD.to_vec()),
+            b"/proc/self/exe" => Ok(b"/bin/vmos-ltp".to_vec()),
             b"/proc"
             | b"/proc/self"
             | b"/proc/self/status"
