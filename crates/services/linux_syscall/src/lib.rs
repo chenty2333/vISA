@@ -12,8 +12,8 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
@@ -72,6 +72,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_CLOSE => plan_close(a0),
         SYS_NANOSLEEP => dispatch_nanosleep(a0, a1),
         SYS_FUTEX => dispatch_futex(a0, a1, a2, a3, a4, a5),
+        SYS_EPOLL_CREATE => plan_epoll_create(a0),
         SYS_EPOLL_CREATE1 => plan_epoll_create1(a0),
         SYS_EPOLL_CTL => plan_epoll_ctl(a0, a1, a2, a3, a4),
         SYS_EPOLL_WAIT => plan_epoll_wait(a0, a1, a2),
@@ -400,6 +401,14 @@ fn plan_futex_requeue(
 fn plan_epoll_create1(flags: u64) -> PackedStep {
     let flags = (flags as u32) as u64;
     reset_plan(PlanKind::EpollCreate1, [flags, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::EpollCreate1)
+}
+
+fn plan_epoll_create(size: u64) -> PackedStep {
+    if size == 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    reset_plan(PlanKind::EpollCreate1, [0, 0, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::EpollCreate1)
 }
 
@@ -1107,6 +1116,22 @@ mod tests {
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), u64::MAX);
         assert_ne!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn epoll_create_legacy_plans_create1_without_flags() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_EPOLL_CREATE, 16, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::EpollCreate1));
+        assert_eq!(plan_arg(0), 0);
+
+        let raw = dispatch(SYS_EPOLL_CREATE, 0, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Error);
+        assert_eq!(step.value, -ERR_EINVAL);
     }
 
     #[test]

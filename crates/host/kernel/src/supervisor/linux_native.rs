@@ -5,8 +5,8 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
@@ -59,6 +59,7 @@ impl LinuxFrontend {
             SYS_CLOSE => self.plan_close(a0),
             SYS_NANOSLEEP => self.dispatch_nanosleep(a0, a1),
             SYS_FUTEX => self.dispatch_futex(a0, a1, a2, a3, a4, a5),
+            SYS_EPOLL_CREATE => self.plan_epoll_create(a0),
             SYS_EPOLL_CREATE1 => self.plan_epoll_create1(a0),
             SYS_EPOLL_CTL => self.plan_epoll_ctl(a0, a1, a2, a3, a4),
             SYS_EPOLL_WAIT => self.plan_epoll_wait(a0, a1, a2),
@@ -417,6 +418,14 @@ impl LinuxFrontend {
 
     fn plan_epoll_create1(&mut self, flags: u64) -> PackedStep {
         self.reset_plan(PlanKind::EpollCreate1, [flags as u32 as u64, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::EpollCreate1)
+    }
+
+    fn plan_epoll_create(&mut self, size: u64) -> PackedStep {
+        if size == 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        self.reset_plan(PlanKind::EpollCreate1, [0, 0, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::EpollCreate1)
     }
 
