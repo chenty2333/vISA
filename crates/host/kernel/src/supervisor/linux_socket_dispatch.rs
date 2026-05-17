@@ -19,11 +19,11 @@ const MSG_DONTWAIT: u32 = 0x40;
 const FDSET_WORDS: usize = 16;
 const FDSET_BITS: u32 = (FDSET_WORDS as u32) * 64;
 
-fn recvfrom_would_block(result: &LinuxCallResult) -> bool {
+fn call_would_block(result: &LinuxCallResult) -> bool {
     matches!(result, LinuxCallResult::Ret(ret) if *ret == -(ERR_EAGAIN as i64))
 }
 
-fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
+fn fdset_single_bit(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
     if fd >= FDSET_BITS {
         return None;
     }
@@ -31,6 +31,14 @@ fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
     bits[(fd / 64) as usize] = 1u64 << (fd % 64);
     let nfds = u16::try_from(fd.checked_add(1)?).ok()?;
     Some((bits, nfds))
+}
+
+fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
+    fdset_single_bit(fd)
+}
+
+fn fdset_write_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
+    fdset_single_bit(fd)
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -508,7 +516,36 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "sendto fd overflowed")?;
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "sendto ptr overflowed")?;
         let len = u32::try_from(plan.args[2]).map_err(|_| "sendto len overflowed")?;
+        let flags = plan.args[3] as u32;
         let bytes = self.linux.read_bytes(ptr, len)?;
+        let result = self.try_sendto_fd(fd, len, &bytes)?;
+        if !call_would_block(&result) {
+            return Ok(result);
+        }
+
+        let status_flags = match self.file_status_flags(fd) {
+            Ok(flags) => flags,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if status_flags & O_NONBLOCK != 0 || flags & MSG_DONTWAIT != 0 {
+            return Ok(result);
+        }
+
+        let Some((write_bits, nfds)) = fdset_write_bits(fd) else {
+            return Ok(result);
+        };
+        match self.block_on_fdset_wait([0; FDSET_WORDS], write_bits, [0; FDSET_WORDS], nfds, None) {
+            Ok(()) => self.try_sendto_fd(fd, len, &bytes),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    fn try_sendto_fd(
+        &mut self,
+        fd: u32,
+        len: u32,
+        bytes: &[u8],
+    ) -> Result<LinuxCallResult, &'static str> {
         let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
@@ -588,7 +625,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
         let flags = plan.args[3] as u32;
         let result = self.try_recvfrom_fd(fd, count)?;
-        if !recvfrom_would_block(&result) {
+        if !call_would_block(&result) {
             return Ok(result);
         }
 
