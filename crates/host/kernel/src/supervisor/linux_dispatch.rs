@@ -286,6 +286,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Fcntl => self.plan_fcntl(plan),
             PlanKind::FcntlGetlk => self.plan_fcntl_getlk(plan),
             PlanKind::FcntlSetlk => self.plan_fcntl_setlk(plan),
+            PlanKind::Flock => self.plan_flock(plan),
             PlanKind::Fsetxattr => self.plan_fsetxattr(plan),
             PlanKind::Fgetxattr => self.plan_fgetxattr(plan),
             PlanKind::Flistxattr => self.plan_flistxattr(plan),
@@ -317,7 +318,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::RtSigreturn
             | PlanKind::Kill
             | PlanKind::Pause
-            | PlanKind::Flock
             | PlanKind::FutexLockPi
             | PlanKind::FutexUnlockPi
             | PlanKind::SetRobustList

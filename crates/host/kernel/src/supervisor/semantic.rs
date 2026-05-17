@@ -435,6 +435,7 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
         WaitKind::SocketConnect => SemanticWaitKind::SocketWritable,
         WaitKind::SocketAccept => SemanticWaitKind::SocketAccept,
         WaitKind::FileLock => SemanticWaitKind::FileLock,
+        WaitKind::Flock => SemanticWaitKind::FileLock,
         WaitKind::ChildExit => SemanticWaitKind::ChildExit,
         WaitKind::FdReadable => SemanticWaitKind::FdReadable,
         WaitKind::FdWritable => SemanticWaitKind::FdWritable,

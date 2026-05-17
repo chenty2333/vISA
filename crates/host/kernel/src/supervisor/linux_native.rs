@@ -6,9 +6,9 @@ use vmos_abi::{
     FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND, SYS_BPF,
     SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
-    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
     SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
     SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
@@ -70,6 +70,7 @@ impl LinuxFrontend {
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
             SYS_GETSOCKOPT => self.plan_getsockopt(a0, a1, a2, a3, a4),
             SYS_FCNTL => self.plan_fcntl(a0, a1, a2),
+            SYS_FLOCK => self.plan_flock(a0, a1),
             SYS_MMAP => self.plan_mmap(a0, a1, a2, a3, a4, a5),
             SYS_MUNMAP => self.plan_munmap(a0, a1),
             SYS_POLL => self.plan_poll(a0, a1, a2),
@@ -562,6 +563,11 @@ impl LinuxFrontend {
 
         self.reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
         PackedStep::plan(PlanKind::Fcntl)
+    }
+
+    fn plan_flock(&mut self, fd: u64, operation: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Flock, [fd, operation, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Flock)
     }
 
     fn plan_mmap(

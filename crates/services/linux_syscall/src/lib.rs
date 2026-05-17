@@ -13,9 +13,9 @@ use vmos_abi::{
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SYS_ACCEPT, SYS_BIND,
     SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL,
-    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
     SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
     SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
@@ -83,6 +83,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
         SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
         SYS_FCNTL => plan_fcntl(a0, a1, a2),
+        SYS_FLOCK => plan_flock(a0, a1),
         SYS_MMAP => plan_mmap(a0, a1, a2, a3, a4, a5),
         SYS_MUNMAP => plan_munmap(a0, a1),
         SYS_POLL => plan_poll(a0, a1, a2),
@@ -506,6 +507,11 @@ fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
 
     reset_plan(PlanKind::Fcntl, [fd, cmd, arg, 0, 0, 0]);
     PackedStep::plan(PlanKind::Fcntl)
+}
+
+fn plan_flock(fd: u64, operation: u64) -> PackedStep {
+    reset_plan(PlanKind::Flock, [fd, operation, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Flock)
 }
 
 fn plan_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64) -> PackedStep {
@@ -1027,6 +1033,21 @@ mod tests {
         assert_eq!(plan_arg(3) as i16, SEEK_SET);
         assert_eq!(plan_arg(4) as i64, 16);
         assert_eq!(plan_arg(5) as i64, 8);
+    }
+
+    #[test]
+    fn flock_plan_preserves_fd_and_operation() {
+        let _guard = test_guard();
+        const LOCK_EX: u64 = 2;
+        const LOCK_NB: u64 = 4;
+
+        let raw = dispatch(SYS_FLOCK, 9, LOCK_EX | LOCK_NB, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Flock));
+        assert_eq!(plan_arg(0), 9);
+        assert_eq!(plan_arg(1), LOCK_EX | LOCK_NB);
     }
 
     #[test]

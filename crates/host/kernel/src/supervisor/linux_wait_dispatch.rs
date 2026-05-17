@@ -231,6 +231,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::Flock { fd, owner, exclusive }) =
+                self.waits.pending_source(token)
+                && self.flock_wait_is_ready(fd, owner, exclusive)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if let Some(WaitSource::ChildExit { caller_pid, selector }) =
                 self.waits.pending_source(token)
                 && self.wait4_child_is_ready(caller_pid, selector)
@@ -273,6 +280,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::SocketConnect { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::Flock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::FdSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
@@ -314,6 +322,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::SocketConnect => {}
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::FileLock => {}
+                            super::types::WaitKind::Flock => {}
                             super::types::WaitKind::ChildExit => {}
                             super::types::WaitKind::FdReadable => {}
                             super::types::WaitKind::FdWritable => {}
@@ -324,6 +333,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             WaitSource::SocketConnect { .. }
                                 | WaitSource::SocketAccept { .. }
                                 | WaitSource::FileLock { .. }
+                                | WaitSource::Flock { .. }
                                 | WaitSource::ChildExit { .. }
                                 | WaitSource::FdSet { .. }
                                 | WaitSource::Signal

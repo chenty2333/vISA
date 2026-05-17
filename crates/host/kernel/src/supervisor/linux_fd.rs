@@ -375,6 +375,53 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(crate) fn flock_fd(&mut self, fd: u32, operation: u32) -> Result<(), i32> {
+        const LOCK_SH: u32 = 1;
+        const LOCK_EX: u32 = 2;
+        const LOCK_NB: u32 = 4;
+        const LOCK_UN: u32 = 8;
+
+        if operation & !(LOCK_SH | LOCK_EX | LOCK_NB | LOCK_UN) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        let lock_op = operation & !LOCK_NB;
+        let nonblocking = operation & LOCK_NB != 0;
+        let exclusive = match lock_op {
+            LOCK_SH => false,
+            LOCK_EX => true,
+            LOCK_UN => {
+                let (vfs_node_id, path, owner) = self.flock_lock_target(fd)?;
+                if self.vfs.flock_unlock_owner_file(vfs_node_id, &path, owner) {
+                    self.wake_ready_flock_waits();
+                }
+                return Ok(());
+            }
+            _ => return Err(ERR_EINVAL),
+        };
+
+        loop {
+            let (vfs_node_id, path, owner) = self.flock_lock_target(fd)?;
+            match self.vfs.flock_set(vfs_node_id, &path, owner, exclusive) {
+                Ok(()) => return Ok(()),
+                Err(ERR_EAGAIN) if !nonblocking => {
+                    let token = self.waits.register(
+                        self.scheduler.current_task(),
+                        WaitRegistration::Flock { fd, owner, exclusive },
+                        interrupts::tick_count(),
+                        interrupts::TIMER_HZ,
+                    );
+                    self.record_wait_token(token);
+                    match self.block_on_wait("ring3_flock", token).map_err(|_| ERR_EINVAL)? {
+                        LinuxCallResult::Ret(0) => {}
+                        LinuxCallResult::Ret(ret) if ret < 0 => return Err((-ret) as i32),
+                        _ => return Err(ERR_EINVAL),
+                    }
+                }
+                Err(errno) => return Err(errno),
+            }
+        }
+    }
+
     pub(super) fn file_lock_wait_is_ready(
         &mut self,
         fd: u32,
@@ -502,6 +549,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(self.vfs.fcntl_getlk(vfs_node_id, &path, owner, want_write, start, len).is_none())
     }
 
+    pub(super) fn flock_wait_is_ready(&mut self, fd: u32, owner: u64, exclusive: bool) -> bool {
+        self.flock_lock_target(fd).is_ok_and(|(vfs_node_id, path, current_owner)| {
+            current_owner == owner
+                && self.vfs.flock_is_available(vfs_node_id, &path, owner, exclusive)
+        })
+    }
+
     pub(super) fn wake_ready_file_lock_waits(&mut self) {
         let pending = self.waits.pending_sources();
         for (token, source) in pending {
@@ -509,6 +563,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                 continue;
             };
             if self.file_lock_wait_is_ready(fd, owner, lock_type, whence, start, len) {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+            }
+        }
+        self.drain_event_queue();
+    }
+
+    pub(super) fn wake_ready_flock_waits(&mut self) {
+        let pending = self.waits.pending_sources();
+        for (token, source) in pending {
+            let WaitSource::Flock { fd, owner, exclusive } = source else {
+                continue;
+            };
+            if self.flock_wait_is_ready(fd, owner, exclusive) {
                 self.scheduler.push_event(Event::WaitReady(token.id));
             }
         }
@@ -550,6 +617,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         Ok((vfs_node_id, path, range_start as i64, range_len as i64))
+    }
+
+    fn flock_lock_target(&mut self, fd: u32) -> Result<(Option<u64>, Vec<u8>, u64), i32> {
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_lock_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs || !matches!(node, NodeKind::File | NodeKind::Directory) {
+            return Err(ERR_EBADF);
+        }
+        let owner = self.fd_entry(fd).and_then(|entry| entry.cursor_group).ok_or(ERR_EBADF)?;
+        Ok((vfs_node_id, path, owner))
     }
 
     fn xattr_target(&mut self, fd: u32) -> Result<(NodeKind, Option<u64>, Vec<u8>), i32> {
@@ -1644,6 +1721,17 @@ impl<'engine> PrototypeRuntime<'engine> {
             } => Some((*vfs_node_id, path.clone())),
             _ => None,
         });
+        let closing_flock = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::ServiceNode { route: ServiceRoute::Vfs, node, path, vfs_node_id }
+                if matches!(node, NodeKind::File | NodeKind::Directory) =>
+            {
+                entry.cursor_group.map(|owner| (*vfs_node_id, path.clone(), owner))
+            }
+            _ => None,
+        });
+        let closing_flock_last_ref = closing_flock
+            .as_ref()
+            .is_some_and(|(_, _, owner)| !self.has_other_cursor_group_fd_ref(fd, *owner));
         let closing_vfs_inode = self.fd_entry(fd).and_then(|entry| match &entry.resource {
             FdResource::ServiceNode { route: ServiceRoute::Vfs, vfs_node_id: Some(id), .. } => {
                 Some(*id)
@@ -1702,6 +1790,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         {
             self.wake_ready_file_lock_waits();
         }
+        if let Some((vfs_node_id, path, owner)) = closing_flock
+            && closing_flock_last_ref
+            && self.vfs.flock_unlock_owner_file(vfs_node_id, &path, owner)
+        {
+            self.wake_ready_flock_waits();
+        }
         self.vfs.release_open_inode(closing_vfs_inode);
         if let Some(map_id) = closing_bpf_map
             && closing_bpf_map_last_ref
@@ -1759,6 +1853,20 @@ impl<'engine> PrototypeRuntime<'engine> {
                         FdResource::Socket { socket_id: other, .. } if other as u32 == socket_id
                     )
                 })
+            })
+    }
+
+    fn has_other_cursor_group_fd_ref(&self, closing_fd: u32, cursor_group: u64) -> bool {
+        let active_ref = self.fd_table.iter().enumerate().any(|(fd, entry)| {
+            fd != closing_fd as usize
+                && entry.as_ref().is_some_and(|entry| entry.cursor_group == Some(cursor_group))
+        });
+        active_ref
+            || self.hidden_fd_table_refs.iter().any(|table| {
+                table
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .any(|entry| entry.cursor_group == Some(cursor_group))
             })
     }
 

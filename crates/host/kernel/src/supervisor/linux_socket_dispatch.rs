@@ -810,6 +810,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_flock(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("linux_syscall", "vfs.file-lock", "flock").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "flock fd overflowed")?;
+        let operation = u32::try_from(plan.args[1]).map_err(|_| "flock operation overflowed")?;
+        match self.flock_fd(fd, operation) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
     fn cleanup_linux_socket(&mut self, socket_id: u32, context: &'static str) {
         if let Err(err) = self.linux_socket.close_socket(socket_id) {
             log_cleanup_error(context, err);

@@ -53,6 +53,7 @@ pub const SYS_VFORK: u64 = 58;
 pub const SYS_WAIT4: u64 = 61;
 pub const SYS_KILL: u64 = 62;
 pub const SYS_FCNTL: u64 = 72;
+pub const SYS_FLOCK: u64 = 73;
 pub const SYS_TRUNCATE: u64 = 76;
 pub const SYS_FTRUNCATE: u64 = 77;
 pub const SYS_GETCWD: u64 = 79;

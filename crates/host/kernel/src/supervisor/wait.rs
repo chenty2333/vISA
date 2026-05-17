@@ -38,6 +38,11 @@ pub(crate) enum WaitRegistration {
         start: i64,
         len: i64,
     },
+    Flock {
+        fd: u32,
+        owner: u64,
+        exclusive: bool,
+    },
     ChildExit {
         caller_pid: u32,
         selector: i64,
@@ -86,6 +91,7 @@ pub(crate) enum WaitSource {
     SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
+    Flock { fd: u32, owner: u64, exclusive: bool },
     ChildExit { caller_pid: u32, selector: i64 },
     FdSet { read_bits: [u64; 16], write_bits: [u64; 16], error_bits: [u64; 16], nfds: u16 },
     Signal,
@@ -151,6 +157,9 @@ impl WaitRegistry {
                 0,
                 None,
             ),
+            WaitRegistration::Flock { fd, owner, exclusive } => {
+                (WaitKind::Flock, WaitSource::Flock { fd, owner, exclusive }, 0, None)
+            }
             WaitRegistration::ChildExit { caller_pid, selector } => {
                 (WaitKind::ChildExit, WaitSource::ChildExit { caller_pid, selector }, 0, None)
             }
@@ -219,6 +228,7 @@ impl WaitRegistry {
                 WaitSource::SocketConnect { .. } => {}
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::FileLock { .. } => {}
+                WaitSource::Flock { .. } => {}
                 WaitSource::ChildExit { .. } => {}
                 WaitSource::FdSet { .. } => events.push(Event::WaitReady(record.token.id)),
                 WaitSource::Signal => {}

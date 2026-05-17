@@ -165,17 +165,30 @@ struct FileLock {
     len: i64,
 }
 
+#[derive(Clone)]
+struct FlockLock {
+    key: FileLockKey,
+    owner: u64,
+    exclusive: bool,
+}
+
 pub(crate) struct VfsService {
     nodes: Vec<VfsNode>,
     inodes: Vec<VfsInode>,
     locks: Vec<FileLock>,
+    flock_locks: Vec<FlockLock>,
     next_node_id: u64,
 }
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        let mut service =
-            Self { nodes: Vec::new(), inodes: Vec::new(), locks: Vec::new(), next_node_id: 1 };
+        let mut service = Self {
+            nodes: Vec::new(),
+            inodes: Vec::new(),
+            locks: Vec::new(),
+            flock_locks: Vec::new(),
+            next_node_id: 1,
+        };
         service.install_linux_user_resources();
         Ok(service)
     }
@@ -1105,6 +1118,13 @@ impl VfsService {
                 *path = shared_file_lock_path(next_path);
             }
         }
+        for lock in &mut self.flock_locks {
+            if let FileLockKey::Path(path) = &mut lock.key
+                && let Some(next_path) = replace_path_prefix(path.as_ref(), old_prefix, new_prefix)
+            {
+                *path = shared_file_lock_path(next_path);
+            }
+        }
     }
 
     fn swap_subtree_prefixes(&mut self, left: &[u8], right: &[u8]) {
@@ -1116,6 +1136,15 @@ impl VfsService {
             }
         }
         for lock in &mut self.locks {
+            if let FileLockKey::Path(path) = &mut lock.key {
+                if let Some(next_path) = replace_path_prefix(path.as_ref(), left, right) {
+                    *path = shared_file_lock_path(next_path);
+                } else if let Some(next_path) = replace_path_prefix(path.as_ref(), right, left) {
+                    *path = shared_file_lock_path(next_path);
+                }
+            }
+        }
+        for lock in &mut self.flock_locks {
             if let FileLockKey::Path(path) = &mut lock.key {
                 if let Some(next_path) = replace_path_prefix(path.as_ref(), left, right) {
                     *path = shared_file_lock_path(next_path);
@@ -1177,6 +1206,52 @@ impl VfsService {
         let before = self.locks.len();
         self.locks.retain(|lock| lock.owner_pid != owner);
         before != self.locks.len()
+    }
+
+    pub(crate) fn flock_set(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        owner: u64,
+        exclusive: bool,
+    ) -> Result<(), i32> {
+        let key = self.file_lock_key(node_id, path);
+        for lock in &self.flock_locks {
+            if lock.key != key || lock.owner == owner {
+                continue;
+            }
+            if exclusive || lock.exclusive {
+                return Err(vmos_abi::ERR_EAGAIN);
+            }
+        }
+        self.flock_locks.retain(|lock| lock.key != key || lock.owner != owner);
+        self.flock_locks.push(FlockLock { key, owner, exclusive });
+        Ok(())
+    }
+
+    pub(crate) fn flock_is_available(
+        &self,
+        node_id: Option<u64>,
+        path: &[u8],
+        owner: u64,
+        exclusive: bool,
+    ) -> bool {
+        let key = self.file_lock_key(node_id, path);
+        self.flock_locks
+            .iter()
+            .all(|lock| lock.key != key || lock.owner == owner || (!exclusive && !lock.exclusive))
+    }
+
+    pub(crate) fn flock_unlock_owner_file(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        owner: u64,
+    ) -> bool {
+        let key = self.file_lock_key(node_id, path);
+        let before = self.flock_locks.len();
+        self.flock_locks.retain(|lock| lock.key != key || lock.owner != owner);
+        before != self.flock_locks.len()
     }
 
     pub(crate) fn fcntl_getlk(
