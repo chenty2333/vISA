@@ -1,6 +1,6 @@
 use vmos_abi::{
     AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
-    ERR_EISCONN, ERR_EOPNOTSUPP, SOCK_STREAM,
+    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ERROR, SOCK_STREAM, SOL_SOCKET,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -350,9 +350,12 @@ impl LinuxSocketState {
         Ok(())
     }
 
-    pub fn getsockopt(&self, socket_id: u32, _level: u32, _optname: u32) -> Result<u32, i32> {
+    pub fn getsockopt(&self, socket_id: u32, level: u32, optname: u32) -> Result<u32, i32> {
         self.socket_index(socket_id)?;
-        Ok(0)
+        match (level, optname) {
+            (SOL_SOCKET, SO_ERROR) => Ok(0),
+            _ => Err(ERR_EOPNOTSUPP),
+        }
     }
 
     pub fn fcntl(&self, socket_id: u32, _cmd: u32, _arg: u64) -> Result<u32, i32> {
@@ -479,7 +482,8 @@ impl Default for LinuxSocketState {
 #[cfg(test)]
 mod tests {
     use vmos_abi::{
-        AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_ECONNREFUSED, ERR_EINVAL, SOCK_DGRAM, SOCK_STREAM,
+        AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL,
+        ERR_EOPNOTSUPP, SO_ERROR, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
     };
 
     use super::*;
@@ -751,5 +755,15 @@ mod tests {
         assert_eq!(state.listen_socket(2, 1), Ok(()));
         assert_eq!(connect_ipv4(&mut state, 1, LOOPBACK, 80), Ok(()));
         assert_eq!(state.accept_ready_key_for_client(1), Ok(Some(43)));
+    }
+
+    #[test]
+    fn getsockopt_supports_so_error_only() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR), Ok(0));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR + 1), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.getsockopt(99, SOL_SOCKET, SO_ERROR), Err(ERR_EBADF));
     }
 }

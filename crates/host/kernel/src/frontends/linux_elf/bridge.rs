@@ -14,17 +14,17 @@ use vmos_abi::{
     FD_STDERR, FD_STDOUT, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_REQUEUE,
     FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
-    FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW,
-    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
-    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
-    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
-    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
-    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
-    SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR,
-    SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD,
-    SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
+    FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SO_ERROR, SOCK_DGRAM,
+    SOCK_RAW, SOCK_STREAM, SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD,
+    SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+    SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT,
+    SYS_FCHOWNAT, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FORK, SYS_FREMOVEXATTR,
+    SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID,
     SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID,
     SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL,
     SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT,
@@ -4588,13 +4588,47 @@ fn sys_setsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_getsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
-    dispatch_ret(
-        "ring3_getsockopt",
-        SyscallContext::new(
-            SYS_GETSOCKOPT,
-            [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, 0],
-        ),
-    )
+    let supervisor = &mut active_context().supervisor;
+    match supervisor
+        .dispatch_linux_syscall(
+            "ring3_getsockopt",
+            SyscallContext::new(
+                SYS_GETSOCKOPT,
+                [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, 0],
+            ),
+        )
+        .map_err(|_| ERR_EINVAL)?
+    {
+        LinuxCallResult::Ret(ret) if ret >= 0 => {
+            write_getsockopt_u32(frame.rsi, frame.rdx, frame.r10, frame.r8, ret as u32)?;
+            Ok(0)
+        }
+        LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn write_getsockopt_u32(
+    level: u64,
+    optname: u64,
+    optval_ptr: u64,
+    optlen_ptr: u64,
+    value: u32,
+) -> Result<(), i32> {
+    const SOCKOPT_U32_LEN: u32 = 4;
+
+    if optval_ptr == 0 || optlen_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    if level as u32 != SOL_SOCKET || optname as u32 != SO_ERROR {
+        return Err(ERR_EOPNOTSUPP);
+    }
+    let optlen = read_user_u32(optlen_ptr)?;
+    if optlen < SOCKOPT_U32_LEN {
+        return Err(ERR_EINVAL);
+    }
+    write_user_u32(optval_ptr, value)?;
+    write_user_u32(optlen_ptr, SOCKOPT_U32_LEN)
 }
 
 fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
