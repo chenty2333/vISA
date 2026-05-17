@@ -361,7 +361,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_UTIMENSAT => Ok(0),
         SYS_MOUNT => sys_mount(frame),
         SYS_UMOUNT2 => sys_umount2(frame),
-        SYS_FALLOCATE => Err(vmos_abi::ERR_EOPNOTSUPP),
+        SYS_FALLOCATE => sys_fallocate(frame),
         SYS_FSETXATTR => sys_fsetxattr(frame),
         SYS_FGETXATTR => sys_fgetxattr(frame),
         SYS_FLISTXATTR => sys_flistxattr(frame),
@@ -1716,6 +1716,20 @@ fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
     active_context().supervisor.truncate_fd(fd, len)?;
+    Ok(0)
+}
+
+fn sys_fallocate(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let mode = u32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let offset = frame.rdx as i64;
+    let len = frame.r10 as i64;
+    if offset < 0 || len <= 0 {
+        return Err(ERR_EINVAL);
+    }
+    let offset = usize::try_from(offset).map_err(|_| ERR_EINVAL)?;
+    let len = usize::try_from(len).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.fallocate_fd(fd, mode, offset, len)?;
     Ok(0)
 }
 

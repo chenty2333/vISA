@@ -157,6 +157,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    pub(crate) fn fallocate_fd(
+        &mut self,
+        fd: u32,
+        mode: u32,
+        offset: usize,
+        len: usize,
+    ) -> Result<(), i32> {
+        self.require_fd_writable(fd).map_err(errno_from_service_error)?;
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs
+            .fallocate_file_by_id(vfs_node_id, &path, mode, offset, len)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn seek_fd(&mut self, fd: u32, offset: i64, whence: u32) -> Result<i64, i32> {
         const SEEK_SET: u32 = 0;
         const SEEK_CUR: u32 = 1;

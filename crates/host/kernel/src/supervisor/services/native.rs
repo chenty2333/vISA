@@ -660,6 +660,56 @@ impl VfsService {
         Ok(())
     }
 
+    pub(crate) fn fallocate_file_by_id(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        mode: u32,
+        offset: usize,
+        len: usize,
+    ) -> Result<(), ServiceCallError> {
+        const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+        const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
+        const FALLOC_FL_COLLAPSE_RANGE: u32 = 0x08;
+        const FALLOC_FL_ZERO_RANGE: u32 = 0x10;
+        const FALLOC_FL_INSERT_RANGE: u32 = 0x20;
+        const FALLOC_FL_UNSHARE_RANGE: u32 = 0x40;
+        const SUPPORTED: u32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE;
+        const UNSUPPORTED: u32 =
+            FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_INSERT_RANGE | FALLOC_FL_UNSHARE_RANGE;
+
+        if len == 0 {
+            return errno(ERR_EINVAL);
+        }
+        let end = offset.checked_add(len).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+        if mode & !SUPPORTED != 0 || mode & UNSUPPORTED != 0 {
+            return errno(vmos_abi::ERR_EOPNOTSUPP);
+        }
+
+        let keep_size = mode & FALLOC_FL_KEEP_SIZE != 0;
+        let punch_hole = mode & FALLOC_FL_PUNCH_HOLE != 0;
+        let zero_range = mode & FALLOC_FL_ZERO_RANGE != 0;
+        if punch_hole && (!keep_size || zero_range) {
+            return errno(vmos_abi::ERR_EOPNOTSUPP);
+        }
+
+        let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
+            return errno(ERR_ENOENT);
+        };
+        if node.kind != NodeKind::File {
+            return errno(ERR_EISDIR);
+        }
+
+        if !keep_size && end > node.len {
+            node.len = end;
+        }
+        if punch_hole || zero_range {
+            let zero_end = if keep_size { end.min(node.len) } else { end };
+            node.zero_range(offset, zero_end);
+        }
+        Ok(())
+    }
+
     pub(crate) fn mode_for_path(&self, path: &[u8], kind: NodeKind) -> u32 {
         if let Some(node) = self.dynamic_node(path) {
             return node.mode;
@@ -1176,6 +1226,10 @@ impl VfsChunk {
         Self { start, len: bytes.len(), fill, data }
     }
 
+    fn from_fill(start: usize, len: usize, fill: u8) -> Self {
+        Self { start, len, fill: Some(fill), data: Vec::new() }
+    }
+
     fn end(&self) -> usize {
         self.start.saturating_add(self.len)
     }
@@ -1234,6 +1288,12 @@ impl VfsInode {
             }
             true
         });
+    }
+
+    fn zero_range(&mut self, start: usize, end: usize) {
+        if start < end {
+            self.chunks.push(VfsChunk::from_fill(start, end - start, 0));
+        }
     }
 }
 
