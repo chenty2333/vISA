@@ -2614,17 +2614,15 @@ fn sys_clock_nanosleep(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
-    let nfds = usize::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
-    if nfds > PSELECT6_MAX_FDS {
-        return Err(ERR_EINVAL);
-    }
+    let nofile = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_NOFILE).cur;
+    let nfds = validate_pselect6_nfds(frame.rdi, nofile)?;
+    let temporary_sigmask = read_pselect_sigmask(frame.r9)?;
     let timeout_ms = if frame.r8 != 0 {
         let ms = read_user_timespec_ms(frame.r8)?;
         Some(core::cmp::min(ms, u32::MAX as u64) as u32)
     } else {
         None
     };
-    let temporary_sigmask = read_pselect_sigmask(frame.r9)?;
     let snapshot = read_pselect_fdsets(frame.rsi, frame.rdx, frame.r10, nfds)?;
     let ready = collect_pselect_ready(&snapshot)?;
     if ready.ready != 0 || timeout_ms == Some(0) {
@@ -2651,6 +2649,17 @@ fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let ready = collect_pselect_ready(&snapshot)?;
     write_pselect_result(&snapshot, &ready)
+}
+
+fn validate_pselect6_nfds(nfds_arg: u64, nofile: u64) -> Result<usize, i32> {
+    let nfds = usize::try_from(nfds_arg).map_err(|_| ERR_EINVAL)?;
+    if !wait_nfds_within_rlimit(nfds, nofile) {
+        return Err(ERR_EINVAL);
+    }
+    if nfds > PSELECT6_MAX_FDS {
+        return Err(ERR_EINVAL);
+    }
+    Ok(nfds)
 }
 
 fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -4200,7 +4209,7 @@ fn sys_poll_args(
 ) -> Result<i64, i32> {
     let nfds = usize::try_from(nfds_arg).map_err(|_| ERR_EINVAL)?;
     let nofile = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_NOFILE).cur;
-    if !poll_nfds_within_rlimit(nfds, nofile) {
+    if !wait_nfds_within_rlimit(nfds, nofile) {
         return Err(ERR_EINVAL);
     }
     let mut entries = read_pollfds(fds_ptr, nfds)?;
@@ -4231,7 +4240,7 @@ fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
     if timeout < 0 { None } else { Some(timeout as u32) }
 }
 
-fn poll_nfds_within_rlimit(nfds: usize, nofile: u64) -> bool {
+fn wait_nfds_within_rlimit(nfds: usize, nofile: u64) -> bool {
     u64::try_from(nfds).is_ok_and(|nfds| nfds <= nofile)
 }
 
@@ -6360,12 +6369,12 @@ mod tests {
 
     use super::{
         CloneRequest, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX,
-        LINUX_GREG_RIP, LINUX_GREG_RSP, SignalAltStack, SyscallFrame, UserReturnContext,
-        decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
-        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
-        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        parse_clone3_request_bytes, poll_nfds_within_rlimit, read_linux_greg,
-        sanitize_restored_rflags, write_linux_greg,
+        LINUX_GREG_RIP, LINUX_GREG_RSP, PSELECT6_MAX_FDS, SignalAltStack, SyscallFrame,
+        UserReturnContext, decode_linux_ucontext_return, encode_linux_ucontext,
+        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
+        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
+        futex_pi_wait_word, parse_clone3_request_bytes, read_linux_greg, sanitize_restored_rflags,
+        validate_pselect6_nfds, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6450,10 +6459,20 @@ mod tests {
     }
 
     #[test]
-    fn poll_nfds_honors_rlimit_nofile_boundary() {
-        assert!(poll_nfds_within_rlimit(0, 0));
-        assert!(poll_nfds_within_rlimit(1024, 1024));
-        assert!(!poll_nfds_within_rlimit(1025, 1024));
+    fn wait_nfds_honors_rlimit_nofile_boundary() {
+        assert!(wait_nfds_within_rlimit(0, 0));
+        assert!(wait_nfds_within_rlimit(1024, 1024));
+        assert!(!wait_nfds_within_rlimit(1025, 1024));
+    }
+
+    #[test]
+    fn pselect6_nfds_honors_rlimit_before_user_fdsets() {
+        assert_eq!(validate_pselect6_nfds(16, 16), Ok(16));
+        assert_eq!(validate_pselect6_nfds(17, 16), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(
+            validate_pselect6_nfds((PSELECT6_MAX_FDS + 1) as u64, u64::MAX),
+            Err(vmos_abi::ERR_EINVAL)
+        );
     }
 
     #[test]
