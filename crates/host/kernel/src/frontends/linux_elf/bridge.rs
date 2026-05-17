@@ -101,6 +101,7 @@ const BPF_ATTR_MAP_UPDATE_SIZE: usize = 32;
 const BPF_ATTR_MAP_DELETE_SIZE: usize = 16;
 const SYS_EXECVE: u64 = 59;
 const SYS_PREAD64: u64 = 17;
+const SYS_PWRITE64: u64 = 18;
 const SYS_SYMLINK: u64 = 88;
 const SYS_SETUID: u64 = 105;
 const SYS_SETGID: u64 = 106;
@@ -302,6 +303,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_PREADV2 => sys_preadv2(frame),
         SYS_PWRITEV2 => sys_pwritev2(frame),
         SYS_PREAD64 => sys_pread64(frame),
+        SYS_PWRITE64 => sys_pwrite64(frame),
         SYS_LSEEK => sys_lseek(frame),
         SYS_OPEN => sys_open(frame),
         SYS_OPENAT => sys_openat(frame),
@@ -962,11 +964,31 @@ fn block_on_readable_fd(fd: u32) -> Result<(), i32> {
 fn sys_pread64(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
-    let offset = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
+    let offset = positioned_io_offset(frame.r10)?;
     let bytes = active_context().supervisor.read_vfs_fd_range(fd, offset, count)?;
     let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
     dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
     Ok(bytes.len() as i64)
+}
+
+fn sys_pwrite64(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let offset = positioned_io_offset(frame.r10)?;
+    if count == 0 {
+        return Ok(0);
+    }
+    let lease = user_lease(frame.rsi, count as u64, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    let written = active_context().supervisor.write_vfs_fd_range(fd, offset, bytes)?;
+    Ok(written as i64)
+}
+
+fn positioned_io_offset(offset: u64) -> Result<usize, i32> {
+    if offset > i64::MAX as u64 {
+        return Err(ERR_EINVAL);
+    }
+    usize::try_from(offset).map_err(|_| ERR_EINVAL)
 }
 
 fn sys_lseek(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -6737,12 +6759,12 @@ mod tests {
         UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return, encode_linux_ucontext,
         futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, parse_clone3_request_bytes, preadv_offset_from_split,
-        preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
-        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
-        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
-        select_timeval_ms, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
-        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        futex_pi_wait_word, parse_clone3_request_bytes, positioned_io_offset,
+        preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
+        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
+        read_linux_greg, sanitize_restored_rflags, select_remaining_timeout_ms,
+        select_timeval_bytes, select_timeval_ms, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6856,6 +6878,14 @@ mod tests {
         assert_eq!(preadv_offset_from_split(0x89ab_cdef, 0x0123_4567), Ok(0x0123_4567_89ab_cdef));
         assert_eq!(preadv_offset_from_split(0xffff_ffff, 0x7fff_ffff), Ok(i64::MAX as usize));
         assert_eq!(preadv_offset_from_split(0, 0x8000_0000), Err(vmos_abi::ERR_EINVAL));
+    }
+
+    #[test]
+    fn positioned_io_offset_rejects_negative_linux_offsets() {
+        assert_eq!(positioned_io_offset(0), Ok(0));
+        assert_eq!(positioned_io_offset(i64::MAX as u64), Ok(i64::MAX as usize));
+        assert_eq!(positioned_io_offset(i64::MAX as u64 + 1), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(positioned_io_offset(u64::MAX), Err(vmos_abi::ERR_EINVAL));
     }
 
     #[test]
