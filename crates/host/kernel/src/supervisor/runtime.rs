@@ -3,9 +3,14 @@ use core::ptr::null_mut;
 
 use net_stack_adapter::{SmoltcpAdapterConfig, SmoltcpPacketStack};
 use semantic_core::{FrontendKind, GuestMemoryManager, ResourceHandle, SemanticGraph, TaskState};
-use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SeccompData, SeccompDecision, SeccompFilterChain, SeccompFilterProgram,
+use service_core::{
+    net_contract::VIRTIO_NET0_CONTRACT,
+    seccomp::{
+        AUDIT_ARCH_X86_64, SeccompData, SeccompDecision, SeccompFilterChain, SeccompFilterProgram,
+    },
 };
+use substrate_api::PacketDeviceBackend;
+use substrate_virtio::net::InMemoryVirtioNetBackend;
 use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
 use super::{
@@ -73,6 +78,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) net_stack: SmoltcpPacketStack,
     pub(super) net_stack_sockets: Vec<NetStackSocketBinding>,
     pub(super) net_driver: DriverVirtioNetService,
+    pub(super) reference_packet_backend: InMemoryVirtioNetBackend,
     pub(super) replay_snapshot: ReplaySnapshotService,
     pub(super) linux: LinuxFrontend,
     pub(super) app: WasmApp,
@@ -159,6 +165,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         let net_stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())?;
         crate::kdebug!("instantiating driver_virtio_net");
         let net_driver = DriverVirtioNetService::new(engine)?;
+        let mut reference_packet_backend = InMemoryVirtioNetBackend::default();
+        reference_packet_backend
+            .init(VIRTIO_NET0_CONTRACT.mac)
+            .map_err(|_| "failed to initialize reference packet backend")?;
         crate::kdebug!("instantiating replay_snapshot");
         let replay_snapshot = ReplaySnapshotService::new(engine)?;
         crate::kdebug!("instantiating linux_syscall");
@@ -196,6 +206,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             net_stack,
             net_stack_sockets: Vec::new(),
             net_driver,
+            reference_packet_backend,
             replay_snapshot,
             linux,
             app,

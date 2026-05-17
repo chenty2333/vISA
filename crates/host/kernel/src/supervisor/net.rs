@@ -6,6 +6,7 @@ use service_core::{
     net_contract::PROTO_TCP,
     packet::{PROTO_DEMO_TCP, decode_frame},
 };
+use substrate_api::{PacketDeviceBackend, PacketFrameSlot};
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN,
     ERR_EOPNOTSUPP, SOCK_STREAM,
@@ -22,6 +23,7 @@ use crate::interrupts;
 
 const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
 const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
+const REFERENCE_PACKET_BACKEND_RX_BATCH: usize = 4;
 const MAX_NET_STACK_PENDING_ACCEPTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -702,13 +704,117 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: Option<ResourceId>,
     ) {
+        self.pump_reference_packet_backend(socket_resource, ready_key);
         self.poll_network_driver_events();
         self.poll_active_net_stack(socket_resource, ready_key);
+        self.pump_reference_packet_backend(socket_resource, ready_key);
     }
 
     pub(super) fn pump_network_runtime(&mut self) {
+        self.pump_reference_packet_backend(None, 0);
         self.poll_network_driver_events();
         self.poll_active_net_stack(None, 0);
+        self.pump_reference_packet_backend(None, 0);
+    }
+
+    fn pump_reference_packet_backend(
+        &mut self,
+        socket_resource: Option<ResourceId>,
+        ready_key: u64,
+    ) {
+        self.pump_reference_packet_backend_rx();
+        self.pump_reference_packet_backend_tx(socket_resource, ready_key);
+    }
+
+    fn pump_reference_packet_backend_rx(&mut self) {
+        match self.net_driver.pending_rx_frames() {
+            Ok(0) => {}
+            Ok(_) => return,
+            Err(err) => {
+                self.warn_driver_service_error("driver_virtio_net pending rx", err);
+                return;
+            }
+        }
+        let mut slots: [PacketFrameSlot; REFERENCE_PACKET_BACKEND_RX_BATCH] =
+            core::array::from_fn(|_| PacketFrameSlot::new());
+        let frames = match self.reference_packet_backend.poll_rx(&mut slots) {
+            Ok(frames) => frames,
+            Err(err) => {
+                crate::kwarn!("reference packet backend rx poll: {}", err);
+                return;
+            }
+        };
+        if frames > slots.len() {
+            crate::kwarn!("reference packet backend overreported rx frames");
+            return;
+        }
+        let now_ticks = interrupts::tick_count();
+        for slot in slots.iter().take(frames) {
+            let len = slot.len as usize;
+            if len > slot.data.len() {
+                crate::kwarn!("reference packet backend returned oversized rx frame");
+                continue;
+            }
+            if let Err(err) = self.net_driver.deliver_rx_frame(now_ticks, &slot.data[..len]) {
+                self.warn_driver_service_error("driver_virtio_net backend rx", err);
+            }
+        }
+    }
+
+    fn pump_reference_packet_backend_tx(
+        &mut self,
+        socket_resource: Option<ResourceId>,
+        ready_key: u64,
+    ) {
+        loop {
+            let frame = match self.net_driver.take_tx_frame() {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(err) => {
+                    self.warn_driver_service_error("driver_virtio_net backend tx", err);
+                    break;
+                }
+            };
+            match self.reference_packet_backend.submit_tx(&frame) {
+                Ok(()) => {
+                    self.semantic.record_packet_transmitted(
+                        self.net.interface.id,
+                        socket_resource,
+                        ready_key,
+                        frame.len(),
+                    );
+                    match self.reference_packet_backend.take_tx_frame() {
+                        Some(completed) if completed.as_slice() == frame.as_slice() => {}
+                        Some(_) => {
+                            crate::kwarn!("reference packet backend consumed unexpected tx frame");
+                        }
+                        None => {
+                            crate::kwarn!("reference packet backend lost submitted tx frame");
+                        }
+                    }
+                }
+                Err(err) => {
+                    crate::kwarn!("reference packet backend tx submit: {}", err);
+                    if let Err(requeue_err) =
+                        self.net_driver.submit_tx_frame(interrupts::tick_count(), &frame)
+                    {
+                        self.warn_driver_service_error(
+                            "driver_virtio_net backend tx requeue",
+                            requeue_err,
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    fn warn_driver_service_error(&self, context: &str, err: ServiceCallError) {
+        match err {
+            ServiceCallError::Trap(reason) => crate::kwarn!("{}: {}", context, reason),
+            ServiceCallError::Invalid(reason) => crate::kwarn!("{}: {}", context, reason),
+            ServiceCallError::Errno(errno) => crate::kwarn!("{} errno={}", context, errno),
+        }
     }
 
     pub(super) fn poll_network_driver_events(&mut self) {

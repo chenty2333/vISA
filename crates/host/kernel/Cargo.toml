@@ -18,6 +18,7 @@ semantic_core.workspace = true
 service_core = { workspace = true, features = ["seccomp-filter"] }
 spin.workspace = true
 substrate_api.workspace = true
+substrate_virtio.workspace = true
 supervisor_catalog.workspace = true
 uart_16550.workspace = true
 vmos_abi.workspace = true
