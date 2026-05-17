@@ -386,14 +386,40 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn allocate_mmap(&mut self, len: u64, align: u64) -> Option<u64> {
-        let align = align.max(1);
-        let start = align_up(self.mmap_cursor, align)?;
-        let end = start.checked_add(align_up(len, align)?)?;
-        if end > self.mmap_end {
-            return None;
-        }
-        self.mmap_cursor = end;
+        let start = self.find_mmap_gap(len, align)?;
+        self.commit_mmap_allocation(start, len)?;
         Some(start)
+    }
+
+    pub(crate) fn find_mmap_gap(&self, len: u64, align: u64) -> Option<u64> {
+        let align = align.max(1);
+        let len = align_up(len, align)?;
+        let mut start = align_up(self.mmap_cursor, align)?;
+        while start < self.mmap_end {
+            let end = start.checked_add(len)?;
+            if end > self.mmap_end {
+                return None;
+            }
+            let mut overlap_end = None;
+            for region in &self.regions {
+                if ranges_overlap(start, end, region.start, region.end) {
+                    overlap_end = Some(overlap_end.unwrap_or(region.end).max(region.end));
+                }
+            }
+            match overlap_end {
+                Some(next_start) => start = align_up(next_start, align)?,
+                None => return Some(start),
+            }
+        }
+        None
+    }
+
+    pub(crate) fn commit_mmap_allocation(&mut self, start: u64, len: u64) -> Option<()> {
+        let end = start.checked_add(len)?;
+        if end > self.mmap_cursor {
+            self.mmap_cursor = end;
+        }
+        Some(())
     }
 
     pub(crate) fn record_user_region(
@@ -1354,6 +1380,10 @@ impl ActiveUserContext {
 fn align_up(value: u64, align: u64) -> Option<u64> {
     let mask = align.checked_sub(1)?;
     value.checked_add(mask).map(|value| value & !mask)
+}
+
+fn ranges_overlap(left_start: u64, left_end: u64, right_start: u64, right_end: u64) -> bool {
+    left_start < right_end && right_start < left_end
 }
 
 fn path_inside_chroot(path: &[u8], root: &[u8]) -> Option<Vec<u8>> {

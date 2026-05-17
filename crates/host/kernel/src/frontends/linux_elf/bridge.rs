@@ -44,7 +44,8 @@ use x86_64::{VirtAddr, registers::model_specific::FsBase};
 use super::{
     context::{
         ActiveUserContext, ClockAdjustmentState, CredentialState, ExecFileCapabilities,
-        UserAddressSpaceState, active_context, install_active_context, try_active_context,
+        UserAddressSpaceState, UserPageMapping, UserRegion, active_context, install_active_context,
+        try_active_context,
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
@@ -4808,7 +4809,12 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
 
     validate_reserved_user_page_range(old_addr, new_len)?;
     if !active_context().mapped_user_subranges(old_end, new_end - old_end).is_empty() {
-        return if flags & MREMAP_MAYMOVE != 0 { Err(ERR_ENOSYS) } else { Err(ERR_ENOMEM) };
+        if flags & MREMAP_MAYMOVE == 0 {
+            return Err(ERR_ENOMEM);
+        }
+        let new_addr = active_context().find_mmap_gap(new_len, 4096).ok_or(ERR_ENOMEM)?;
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len)?;
+        return Ok(new_addr as i64);
     }
 
     let grow_len = new_len - old_len;
@@ -4824,6 +4830,69 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         .supervisor
         .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
     Ok(old_addr as i64)
+}
+
+fn move_active_user_mapping_range(
+    old_addr: u64,
+    old_len: u64,
+    new_addr: u64,
+    new_len: u64,
+) -> Result<(), i32> {
+    let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    validate_reserved_user_page_range(new_addr, new_len)?;
+    if !active_context().mapped_user_subranges(new_addr, new_len).is_empty() {
+        return Err(ERR_ENOMEM);
+    }
+    let (readable, writable, executable) =
+        single_user_region_permissions(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+
+    let current_regions = active_context().regions.clone();
+    let current_mappings = active_context().page_mappings.clone();
+    let mut next_regions = current_regions.clone();
+    replace_user_region_range_for_mremap(&mut next_regions, old_addr, old_end, None);
+    replace_user_region_range_for_mremap(
+        &mut next_regions,
+        new_addr,
+        new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?,
+        Some((readable, writable, executable)),
+    );
+
+    let mut next_mappings = current_mappings.clone();
+    for mapping in &mut next_mappings {
+        if mapping.va >= old_addr && mapping.va < old_end {
+            mapping.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
+        }
+    }
+    if has_duplicate_user_page_mapping(&next_mappings) {
+        return Err(ERR_ENOMEM);
+    }
+
+    let switch_result = {
+        let context = active_context();
+        switch_user_page_mappings(
+            context.physical_memory_offset(),
+            &current_mappings,
+            &current_regions,
+            &next_mappings,
+            &next_regions,
+            &mut context.frame_allocator,
+            false,
+        )
+    };
+    if let Err(err) = switch_result {
+        crate::kwarn!("mremap page-table move failed: {}", err.message());
+        return Err(ERR_EFAULT);
+    }
+
+    let context = active_context();
+    context.page_mappings = next_mappings;
+    context.regions = next_regions;
+    context.commit_mmap_allocation(new_addr, new_len).ok_or(ERR_EINVAL)?;
+    context.supervisor.record_guest_memory_unmap(old_addr, old_len);
+    context
+        .supervisor
+        .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
+    Ok(())
 }
 
 fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -6512,6 +6581,70 @@ fn single_user_region_permissions(ptr: u64, len: u64) -> Option<(bool, bool, boo
         .rev()
         .find(|region| ptr >= region.start && end <= region.end)?;
     Some((region.readable, region.writable, region.executable))
+}
+
+fn replace_user_region_range_for_mremap(
+    regions: &mut Vec<UserRegion>,
+    start: u64,
+    end: u64,
+    replacement: Option<(bool, bool, bool)>,
+) {
+    if start >= end {
+        return;
+    }
+    let mut updated = Vec::with_capacity(regions.len().saturating_add(1));
+    for region in regions.drain(..) {
+        if region.end <= start || region.start >= end {
+            updated.push(region);
+            continue;
+        }
+        if region.start < start {
+            updated.push(UserRegion {
+                start: region.start,
+                end: start,
+                readable: region.readable,
+                writable: region.writable,
+                executable: region.executable,
+            });
+        }
+        if region.end > end {
+            updated.push(UserRegion {
+                start: end,
+                end: region.end,
+                readable: region.readable,
+                writable: region.writable,
+                executable: region.executable,
+            });
+        }
+    }
+    if let Some((readable, writable, executable)) = replacement {
+        updated.push(UserRegion { start, end, readable, writable, executable });
+    }
+    updated.sort_by_key(|region| (region.start, region.end));
+    for region in updated {
+        if region.start >= region.end {
+            continue;
+        }
+        if let Some(last) = regions.last_mut()
+            && last.readable == region.readable
+            && last.writable == region.writable
+            && last.executable == region.executable
+            && last.end >= region.start
+        {
+            last.end = last.end.max(region.end);
+            continue;
+        }
+        regions.push(region);
+    }
+}
+
+fn has_duplicate_user_page_mapping(mappings: &[UserPageMapping]) -> bool {
+    for (index, mapping) in mappings.iter().enumerate() {
+        if mappings[index + 1..].iter().any(|other| other.va == mapping.va) {
+            return true;
+        }
+    }
+    false
 }
 
 fn validate_reserved_user_page_range(ptr: u64, len: u64) -> Result<(), i32> {
