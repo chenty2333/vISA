@@ -66,8 +66,8 @@ use crate::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT, CAP_SYS_RESOURCE,
-            LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, Rlimit,
-            RobustListRegistration, RseqRegistration, SIGALTSTACK_SS_AUTODISARM,
+            LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, RLIMIT_NOFILE,
+            Rlimit, RobustListRegistration, RseqRegistration, SIGALTSTACK_SS_AUTODISARM,
             SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction,
             SignalAltStack, UserSignalDelivery,
         },
@@ -4199,6 +4199,10 @@ fn sys_poll_args(
     temporary_sigmask: Option<u64>,
 ) -> Result<i64, i32> {
     let nfds = usize::try_from(nfds_arg).map_err(|_| ERR_EINVAL)?;
+    let nofile = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_NOFILE).cur;
+    if !poll_nfds_within_rlimit(nfds, nofile) {
+        return Err(ERR_EINVAL);
+    }
     let mut entries = read_pollfds(fds_ptr, nfds)?;
     let ready = collect_poll_revents(&mut entries)?;
     if ready != 0 || timeout_ms == Some(0) {
@@ -4225,6 +4229,10 @@ fn sys_poll_args(
 fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
     let timeout = timeout_arg as i32;
     if timeout < 0 { None } else { Some(timeout as u32) }
+}
+
+fn poll_nfds_within_rlimit(nfds: usize, nofile: u64) -> bool {
+    u64::try_from(nfds).is_ok_and(|nfds| nfds <= nofile)
 }
 
 fn read_ppoll_timeout_ms(timeout_ptr: u64) -> Result<Option<u32>, i32> {
@@ -6356,7 +6364,8 @@ mod tests {
         decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
         futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
         futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        parse_clone3_request_bytes, read_linux_greg, sanitize_restored_rflags, write_linux_greg,
+        parse_clone3_request_bytes, poll_nfds_within_rlimit, read_linux_greg,
+        sanitize_restored_rflags, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6438,6 +6447,13 @@ mod tests {
         assert!(futex_pi_non_timeout_flags_valid(FUTEX_UNLOCK_PI));
         assert!(!futex_pi_non_timeout_flags_valid(FUTEX_TRYLOCK_PI | FUTEX_CLOCK_REALTIME));
         assert!(!futex_pi_non_timeout_flags_valid(FUTEX_UNLOCK_PI | FUTEX_CLOCK_REALTIME));
+    }
+
+    #[test]
+    fn poll_nfds_honors_rlimit_nofile_boundary() {
+        assert!(poll_nfds_within_rlimit(0, 0));
+        assert!(poll_nfds_within_rlimit(1024, 1024));
+        assert!(!poll_nfds_within_rlimit(1025, 1024));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use vmos_abi::{ERR_EBADF, ERR_EEXIST, ERR_EINVAL, ERR_ENOMEM, ERR_ENOSYS, ERR_EO
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{GenericMmapRegion, RLIMIT_AS},
+    types::{GenericMmapRegion, RLIMIT_AS, RLIMIT_NOFILE},
 };
 
 const PAGE_SIZE: u64 = 4096;
@@ -151,6 +151,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(nfds) => nfds,
             Err(_) => return Ok(errno_ret(ERR_EINVAL)),
         };
+        let nofile = self.get_rlimit(self.current_pid(), RLIMIT_NOFILE).cur;
+        if !poll_nfds_within_rlimit(nfds, nofile) {
+            return Ok(errno_ret(ERR_EINVAL));
+        }
         let timeout_ms = poll_timeout_ms(plan.args[2]);
         if nfds == 0 {
             if timeout_ms != Some(0) {
@@ -399,6 +403,10 @@ fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
     if timeout < 0 { None } else { Some(timeout as u32) }
 }
 
+fn poll_nfds_within_rlimit(nfds: usize, nofile: u64) -> bool {
+    u64::try_from(nfds).is_ok_and(|nfds| nfds <= nofile)
+}
+
 fn poll_wait_bits(
     entries: &[PollFdEntry],
 ) -> Result<([u64; FDSET_WORDS], [u64; FDSET_WORDS], [u64; FDSET_WORDS], u16), i32> {
@@ -440,6 +448,18 @@ fn encode_pollfds(entries: &[PollFdEntry]) -> Result<Vec<u8>, i32> {
         out.extend_from_slice(&entry.revents.to_le_bytes());
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::poll_nfds_within_rlimit;
+
+    #[test]
+    fn poll_nfds_honors_rlimit_nofile_boundary() {
+        assert!(poll_nfds_within_rlimit(0, 0));
+        assert!(poll_nfds_within_rlimit(1024, 1024));
+        assert!(!poll_nfds_within_rlimit(1025, 1024));
+    }
 }
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
