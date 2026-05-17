@@ -359,6 +359,8 @@ pub enum PlanKind {
     SocketPair = 73,
     Dup = 74,
     CloseRange = 75,
+    Readv = 76,
+    Writev = 77,
 }
 
 impl PlanKind {
@@ -439,6 +441,8 @@ impl PlanKind {
             73 => Some(Self::SocketPair),
             74 => Some(Self::Dup),
             75 => Some(Self::CloseRange),
+            76 => Some(Self::Readv),
+            77 => Some(Self::Writev),
             _ => None,
         }
     }

@@ -25,6 +25,7 @@ mod linux_seccomp_dispatch;
 mod linux_socket_dispatch;
 mod linux_socketpair_dispatch;
 mod linux_timerfd_dispatch;
+mod linux_vectored_dispatch;
 mod linux_wait_dispatch;
 mod net;
 mod process;

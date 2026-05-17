@@ -234,6 +234,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "console.write",
             operation: "write",
         },
+        PlanKind::Writev => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "fd.table",
+            operation: "writev",
+        },
         PlanKind::OpenAt => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "vfs_service",
@@ -245,6 +251,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             subject: "vfs_service",
             object: "vfs.namespace",
             operation: "read",
+        },
+        PlanKind::Readv => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "fd.table",
+            operation: "readv",
         },
         PlanKind::Close => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,

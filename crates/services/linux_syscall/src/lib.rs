@@ -18,9 +18,9 @@ use vmos_abi::{
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV,
     is_stdio_fd,
 };
 
@@ -70,7 +70,9 @@ struct GuestEpollEvent {
 pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     let step = match nr {
         SYS_READ => plan_read(a0, a2),
+        SYS_READV => plan_readv(a0, a1, a2),
         SYS_WRITE => plan_write(a0, a1, a2),
+        SYS_WRITEV => plan_writev(a0, a1, a2),
         SYS_CLOSE => plan_close(a0),
         SYS_CLOSE_RANGE => plan_close_range(a0, a1, a2),
         SYS_DUP => plan_dup(a0, 0, 0, 0),
@@ -660,6 +662,11 @@ fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Write)
 }
 
+fn plan_writev(fd: u64, iov_ptr: u64, iovcnt: u64) -> PackedStep {
+    reset_plan(PlanKind::Writev, [fd, iov_ptr, iovcnt, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Writev)
+}
+
 fn plan_openat(dirfd: u64, ptr: u64, len: u64, flags: u64, mode: u64) -> PackedStep {
     if len == 0 {
         return PackedStep::error(-ERR_EINVAL);
@@ -672,6 +679,11 @@ fn plan_openat(dirfd: u64, ptr: u64, len: u64, flags: u64, mode: u64) -> PackedS
 fn plan_read(fd: u64, count: u64) -> PackedStep {
     reset_plan(PlanKind::Read, [fd, count, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Read)
+}
+
+fn plan_readv(fd: u64, iov_ptr: u64, iovcnt: u64) -> PackedStep {
+    reset_plan(PlanKind::Readv, [fd, iov_ptr, iovcnt, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Readv)
 }
 
 fn plan_close(fd: u64) -> PackedStep {
@@ -1130,6 +1142,25 @@ mod tests {
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 128);
         assert_eq!(plan_arg(2), CLOSE_RANGE_CLOEXEC);
+    }
+
+    #[test]
+    fn readv_writev_plans_preserve_iovec_arguments() {
+        let _guard = test_guard();
+
+        let readv = PackedStep::decode(dispatch(SYS_READV, 8, 0x3000, 4, 0, 0, 0));
+        assert_eq!(readv.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(readv.aux), Some(PlanKind::Readv));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0x3000);
+        assert_eq!(plan_arg(2), 4);
+
+        let writev = PackedStep::decode(dispatch(SYS_WRITEV, 9, 0x4000, 5, 0, 0, 0));
+        assert_eq!(writev.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(writev.aux), Some(PlanKind::Writev));
+        assert_eq!(plan_arg(0), 9);
+        assert_eq!(plan_arg(1), 0x4000);
+        assert_eq!(plan_arg(2), 5);
     }
 
     #[test]

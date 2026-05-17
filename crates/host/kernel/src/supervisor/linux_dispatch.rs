@@ -259,6 +259,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Write => self.plan_write(plan),
             PlanKind::OpenAt => self.plan_openat(plan),
             PlanKind::Read => self.plan_read(plan),
+            PlanKind::Readv => self.plan_readv(plan),
+            PlanKind::Writev => self.plan_writev(plan),
             PlanKind::Close => self.plan_close(plan),
             PlanKind::CloseRange => self.plan_close_range(plan),
             PlanKind::Dup => self.plan_dup(plan),

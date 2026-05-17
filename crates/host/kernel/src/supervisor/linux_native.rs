@@ -11,9 +11,9 @@ use vmos_abi::{
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV,
     SyscallContext, is_stdio_fd,
 };
 
@@ -57,7 +57,9 @@ impl LinuxFrontend {
         let [a0, a1, a2, a3, a4, a5] = ctx.args;
         let step = match ctx.nr {
             SYS_READ => self.plan_read(a0, a2),
+            SYS_READV => self.plan_readv(a0, a1, a2),
             SYS_WRITE => self.plan_write(a0, a1, a2),
+            SYS_WRITEV => self.plan_writev(a0, a1, a2),
             SYS_CLOSE => self.plan_close(a0),
             SYS_CLOSE_RANGE => self.plan_close_range(a0, a1, a2),
             SYS_DUP => self.plan_dup(a0, 0, 0, 0),
@@ -721,6 +723,11 @@ impl LinuxFrontend {
         PackedStep::plan(PlanKind::Write)
     }
 
+    fn plan_writev(&mut self, fd: u64, iov_ptr: u64, iovcnt: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Writev, [fd, iov_ptr, iovcnt, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Writev)
+    }
+
     fn plan_openat(&mut self, dirfd: u64, ptr: u64, len: u64, flags: u64, mode: u64) -> PackedStep {
         if len == 0 {
             return PackedStep::error(-ERR_EINVAL);
@@ -732,6 +739,11 @@ impl LinuxFrontend {
     fn plan_read(&mut self, fd: u64, count: u64) -> PackedStep {
         self.reset_plan(PlanKind::Read, [fd, count, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Read)
+    }
+
+    fn plan_readv(&mut self, fd: u64, iov_ptr: u64, iovcnt: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Readv, [fd, iov_ptr, iovcnt, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Readv)
     }
 
     fn plan_close(&mut self, fd: u64) -> PackedStep {
