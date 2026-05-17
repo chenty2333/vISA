@@ -1350,6 +1350,52 @@ fn lock_end(start: i64, len: i64) -> i64 {
     if len == 0 { i64::MAX } else { start.saturating_add(len) }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_vfs() -> VfsService {
+        let engine = SupervisorEngine::default();
+        VfsService::new(&engine).expect("native VFS test service")
+    }
+
+    #[test]
+    fn file_lock_key_reresolves_dynamic_path_to_node_identity() {
+        let mut vfs = test_vfs();
+        vfs.create_file(b"/tmp/lock-key", 0o600, 0, 0).expect("create dynamic file");
+        let node_id = vfs.node_id_for_path(b"/tmp/lock-key").expect("dynamic node id");
+
+        vfs.fcntl_setlk(Some(node_id), b"/tmp/lock-key", 100, true, 0, 10)
+            .expect("install lock by node id");
+
+        assert_eq!(
+            vfs.fcntl_getlk(None, b"/tmp/lock-key", 200, false, 0, 10),
+            Some((true, 100, 0, 10))
+        );
+    }
+
+    #[test]
+    fn fcntl_unlock_middle_splits_lock_without_losing_sides() {
+        let mut vfs = test_vfs();
+        vfs.create_file(b"/tmp/split-lock", 0o600, 0, 0).expect("create dynamic file");
+        let node_id = vfs.node_id_for_path(b"/tmp/split-lock").expect("dynamic node id");
+
+        vfs.fcntl_setlk(Some(node_id), b"/tmp/split-lock", 100, true, 0, 100)
+            .expect("install owner lock");
+        vfs.fcntl_unlock(Some(node_id), b"/tmp/split-lock", 100, 20, 10);
+
+        assert_eq!(
+            vfs.fcntl_getlk(Some(node_id), b"/tmp/split-lock", 200, false, 0, 20),
+            Some((true, 100, 0, 20))
+        );
+        assert_eq!(vfs.fcntl_getlk(Some(node_id), b"/tmp/split-lock", 200, false, 20, 10), None);
+        assert_eq!(
+            vfs.fcntl_getlk(Some(node_id), b"/tmp/split-lock", 200, false, 30, 70),
+            Some((true, 100, 30, 70))
+        );
+    }
+}
+
 impl VfsChunk {
     fn from_write(start: usize, bytes: &[u8]) -> Self {
         let fill = uniform_byte(bytes);

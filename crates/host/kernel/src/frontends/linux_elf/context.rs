@@ -225,6 +225,64 @@ unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
 pub(crate) type ClockAdjustmentState = RuntimeClockAdjustmentState;
 pub(crate) const DEFAULT_TIMER_SLACK_NS: u64 = 50_000;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static TEST_MEMORY_REGIONS: [MemoryRegion; 1] =
+        [MemoryRegion { start: 0x1000, end: 0x20_000, kind: MemoryRegionKind::Usable }];
+
+    fn alloc_addr(allocator: &mut UserFrameAllocator) -> u64 {
+        FrameAllocator::<Size4KiB>::allocate_frame(allocator)
+            .expect("test allocator should have a frame")
+            .start_address()
+            .as_u64()
+    }
+
+    #[test]
+    fn fork_child_allocator_splits_fresh_frame_domains() {
+        let mut parent = UserFrameAllocator::new(&TEST_MEMORY_REGIONS);
+        let mut child = parent.fork_child_allocator();
+
+        let parent_frames =
+            [alloc_addr(&mut parent), alloc_addr(&mut parent), alloc_addr(&mut parent)];
+        let child_frames = [alloc_addr(&mut child), alloc_addr(&mut child), alloc_addr(&mut child)];
+
+        for parent_frame in parent_frames {
+            assert_eq!((parent_frame / 4096) % 2, 0);
+            assert!(!child_frames.contains(&parent_frame));
+        }
+        for child_frame in child_frames {
+            assert_eq!((child_frame / 4096) % 2, 1);
+        }
+    }
+
+    #[test]
+    fn fork_child_allocator_partitions_reusable_frames() {
+        let mut parent = UserFrameAllocator::new(&TEST_MEMORY_REGIONS);
+        parent.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(0x2000)));
+        parent.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(0x3000)));
+
+        let mut child = parent.fork_child_allocator();
+
+        assert_eq!(alloc_addr(&mut child), 0x3000);
+        assert_eq!(alloc_addr(&mut parent), 0x2000);
+    }
+
+    #[test]
+    fn absorb_child_allocator_merges_fresh_domain_cursor() {
+        let mut parent = UserFrameAllocator::new(&TEST_MEMORY_REGIONS);
+        let mut child = parent.fork_child_allocator();
+
+        assert_eq!(alloc_addr(&mut child), 0x1000);
+        assert_eq!(alloc_addr(&mut child), 0x3000);
+
+        parent.absorb_child_allocator(child);
+
+        assert_eq!(alloc_addr(&mut parent), 0x4000);
+    }
+}
+
 pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
     pub(crate) regions: Vec<UserRegion>,

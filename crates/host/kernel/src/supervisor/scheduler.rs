@@ -238,4 +238,28 @@ mod tests {
         assert_eq!(scheduler.set_current_task_or_runnable_fallback(blocked), blocked);
         assert_eq!(scheduler.current_task(), blocked);
     }
+
+    #[test]
+    fn prepend_events_preserves_deferred_fifo_order() {
+        let mut scheduler = Scheduler::new();
+        let mut deferred =
+            alloc::vec![Event::WaitReady(1), Event::WaitReady(2), Event::WaitCancelled(3, -1),];
+
+        scheduler.prepend_events(&mut deferred);
+        scheduler.push_event(Event::WaitReady(4));
+
+        let mut drained = Vec::new();
+        scheduler.drain_events(&mut drained);
+
+        assert!(deferred.is_empty());
+        assert_eq!(
+            drained,
+            alloc::vec![
+                Event::WaitReady(1),
+                Event::WaitReady(2),
+                Event::WaitCancelled(3, -1),
+                Event::WaitReady(4),
+            ]
+        );
+    }
 }
