@@ -135,6 +135,7 @@ const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
 const RWF_NOWAIT: u64 = 0x0000_0008;
+const RWF_APPEND: u64 = 0x0000_0010;
 const O_NONBLOCK: u32 = 0o4000;
 const EXEC_ARG_MAX_BYTES: usize = 131_072;
 const EXEC_ARG_MAX_STRINGS: usize = 4096;
@@ -651,9 +652,11 @@ fn sys_pwritev(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_pwritev2(frame: &SyscallFrame) -> Result<i64, i32> {
-    validate_preadv2_flags(frame.r9)?;
+    let append = pwritev2_flags_append(frame.r9)?;
     match preadv2_offset_from_split(frame.r10, frame.r8)? {
+        VectoredIoOffset::Current if append => sys_pwritev_append(frame, true),
         VectoredIoOffset::Current => sys_writev(frame),
+        VectoredIoOffset::Explicit(_) if append => sys_pwritev_append(frame, false),
         VectoredIoOffset::Explicit(offset) => sys_pwritev_at(frame, offset),
     }
 }
@@ -677,6 +680,35 @@ fn sys_pwritev_at(frame: &SyscallFrame, mut offset: usize) -> Result<i64, i32> {
             Ok(written) => {
                 total = total.checked_add(written).ok_or(ERR_EINVAL)?;
                 offset = offset.checked_add(written).ok_or(ERR_EINVAL)?;
+                if written < bytes.len() {
+                    return Ok(total as i64);
+                }
+            }
+            Err(_errno) if total > 0 => return Ok(total as i64),
+            Err(errno) => return Err(errno),
+        }
+    }
+    Ok(total as i64)
+}
+
+fn sys_pwritev_append(frame: &SyscallFrame, update_cursor: bool) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let iovcnt = validate_iovcnt(frame.rdx)?;
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+
+    let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
+    let mut total = 0usize;
+    for (base, len) in iovecs {
+        if len == 0 {
+            continue;
+        }
+        let lease = user_lease(base, len, false)?;
+        let bytes = lease.bytes().map_err(map_dmw_fault)?;
+        match active_context().supervisor.write_vfs_fd_append(fd, bytes, update_cursor) {
+            Ok(written) => {
+                total = total.checked_add(written).ok_or(ERR_EINVAL)?;
                 if written < bytes.len() {
                     return Ok(total as i64);
                 }
@@ -725,6 +757,15 @@ fn validate_preadv2_flags(flags: u64) -> Result<(), i32> {
 fn preadv2_flags_nowait(flags: u64) -> Result<bool, i32> {
     validate_preadv2_flags(flags)?;
     Ok(flags & RWF_NOWAIT != 0)
+}
+
+fn validate_pwritev2_flags(flags: u64) -> Result<(), i32> {
+    if flags & !(RWF_NOWAIT | RWF_APPEND) == 0 { Ok(()) } else { Err(ERR_EOPNOTSUPP) }
+}
+
+fn pwritev2_flags_append(flags: u64) -> Result<bool, i32> {
+    validate_pwritev2_flags(flags)?;
+    Ok(flags & RWF_APPEND != 0)
 }
 
 fn read_user_iovecs(ptr: u64, iovcnt: usize) -> Result<Vec<(u64, u64)>, i32> {
@@ -6698,9 +6739,10 @@ mod tests {
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
         futex_pi_wait_word, parse_clone3_request_bytes, preadv_offset_from_split,
         preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
-        pselect_write_revents_ready, read_linux_greg, sanitize_restored_rflags,
-        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms, validate_iovcnt,
-        validate_preadv2_flags, validate_pselect6_nfds, wait_nfds_within_rlimit, write_linux_greg,
+        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
+        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6837,6 +6879,18 @@ mod tests {
         assert_eq!(preadv2_flags_nowait(0x0000_0008), Ok(true));
         assert_eq!(validate_preadv2_flags(0x0000_0001), Err(vmos_abi::ERR_EOPNOTSUPP));
         assert_eq!(validate_preadv2_flags(0x0000_0010), Err(vmos_abi::ERR_EOPNOTSUPP));
+    }
+
+    #[test]
+    fn pwritev2_flags_support_nowait_and_append_only() {
+        assert_eq!(validate_pwritev2_flags(0), Ok(()));
+        assert_eq!(validate_pwritev2_flags(0x0000_0008), Ok(()));
+        assert_eq!(validate_pwritev2_flags(0x0000_0010), Ok(()));
+        assert_eq!(validate_pwritev2_flags(0x0000_0018), Ok(()));
+        assert_eq!(pwritev2_flags_append(0), Ok(false));
+        assert_eq!(pwritev2_flags_append(0x0000_0018), Ok(true));
+        assert_eq!(validate_pwritev2_flags(0x0000_0001), Err(vmos_abi::ERR_EOPNOTSUPP));
+        assert_eq!(validate_pwritev2_flags(0x0000_0040), Err(vmos_abi::ERR_EOPNOTSUPP));
     }
 
     #[test]

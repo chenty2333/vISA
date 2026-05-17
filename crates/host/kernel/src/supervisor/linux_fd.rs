@@ -43,6 +43,7 @@ const MAY_READ: u32 = 0x4;
 const O_ACCMODE: u32 = 0o3;
 const O_WRONLY: u32 = 0o1;
 const O_RDWR: u32 = 0o2;
+const O_APPEND: u32 = 0o2000;
 const O_NONBLOCK: u32 = 0o4000;
 const POLLIN: u16 = 0x001;
 const POLLOUT: u16 = 0x004;
@@ -228,20 +229,52 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {
+        self.write_vfs_fd_current_or_append(fd, bytes, false, true)
+    }
+
+    fn write_vfs_fd_current_or_append(
+        &mut self,
+        fd: u32,
+        bytes: &[u8],
+        force_append: bool,
+        update_cursor: bool,
+    ) -> Result<usize, ServiceCallError> {
         self.require_fd_writable(fd)?;
+        let status_flags =
+            self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?.status_flags;
         let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
             return Err(ServiceCallError::Errno(ERR_EBADF));
         }
         self.require_capability("vfs_service", "vfs.namespace", "write")
             .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
-        let written = self.vfs.write_file_by_id(vfs_node_id, &path, cursor, bytes)?;
-        self.set_fd_cursor(fd, cursor + written)?;
+        let offset = if force_append || status_flags & O_APPEND != 0 {
+            usize::try_from(self.len_for_service_node_by_id(route, vfs_node_id, &path))
+                .map_err(|_| ServiceCallError::Errno(ERR_EINVAL))?
+        } else {
+            cursor
+        };
+        let written = self.vfs.write_file_by_id(vfs_node_id, &path, offset, bytes)?;
+        if update_cursor {
+            let next_cursor =
+                offset.checked_add(written).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+            self.set_fd_cursor(fd, next_cursor)?;
+        }
         Ok(written)
     }
 
     pub(crate) fn write_vfs_fd_bytes(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, i32> {
         self.write_to_fd(fd, bytes).map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn write_vfs_fd_append(
+        &mut self,
+        fd: u32,
+        bytes: &[u8],
+        update_cursor: bool,
+    ) -> Result<usize, i32> {
+        self.write_vfs_fd_current_or_append(fd, bytes, true, update_cursor)
+            .map_err(errno_from_service_error)
     }
 
     pub(crate) fn write_vfs_fd_range(
@@ -2241,10 +2274,6 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn set_file_status_flags(&mut self, fd: u32, flags: u32) -> Result<(), i32> {
-        const O_ACCMODE: u32 = 0o3;
-        const O_APPEND: u32 = 0o2000;
-        const O_NONBLOCK: u32 = 0o4000;
-
         if fd < 3 {
             return Ok(());
         }
