@@ -264,6 +264,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "vfs.namespace",
             operation: "readlink",
         },
+        PlanKind::LinkAt => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "vfs_service",
+            object: "vfs.namespace",
+            operation: "link",
+        },
         PlanKind::Sleep => HostcallBinding {
             class: HostcallClass::AsyncOp,
             subject: "linux_syscall",

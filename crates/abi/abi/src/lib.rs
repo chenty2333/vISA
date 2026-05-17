@@ -59,6 +59,7 @@ pub const SYS_RENAME: u64 = 82;
 pub const SYS_MKDIR: u64 = 83;
 pub const SYS_RMDIR: u64 = 84;
 pub const SYS_CREAT: u64 = 85;
+pub const SYS_LINK: u64 = 86;
 pub const SYS_UNLINK: u64 = 87;
 pub const SYS_CHMOD: u64 = 90;
 pub const SYS_CHOWN: u64 = 92;
@@ -116,6 +117,7 @@ pub const SYS_FCHOWNAT: u64 = 260;
 pub const SYS_NEWFSTATAT: u64 = 262;
 pub const SYS_UNLINKAT: u64 = 263;
 pub const SYS_RENAMEAT: u64 = 264;
+pub const SYS_LINKAT: u64 = 265;
 pub const SYS_READLINKAT: u64 = 267;
 pub const SYS_FCHMODAT: u64 = 268;
 pub const SYS_FACCESSAT: u64 = 269;
@@ -329,6 +331,7 @@ pub enum PlanKind {
     ClockGettime = 66,
     ClockGetres = 67,
     Prctl = 68,
+    LinkAt = 69,
 }
 
 impl PlanKind {
@@ -402,6 +405,7 @@ impl PlanKind {
             66 => Some(Self::ClockGettime),
             67 => Some(Self::ClockGetres),
             68 => Some(Self::Prctl),
+            69 => Some(Self::LinkAt),
             _ => None,
         }
     }

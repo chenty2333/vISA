@@ -121,6 +121,10 @@ struct VfsChunk {
 struct VfsNode {
     id: u64,
     path: Vec<u8>,
+}
+
+struct VfsInode {
+    id: u64,
     kind: NodeKind,
     mode: u32,
     uid: u32,
@@ -160,13 +164,15 @@ struct FileLock {
 
 pub(crate) struct VfsService {
     nodes: Vec<VfsNode>,
+    inodes: Vec<VfsInode>,
     locks: Vec<FileLock>,
     next_node_id: u64,
 }
 
 impl VfsService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        let mut service = Self { nodes: Vec::new(), locks: Vec::new(), next_node_id: 1 };
+        let mut service =
+            Self { nodes: Vec::new(), inodes: Vec::new(), locks: Vec::new(), next_node_id: 1 };
         service.install_linux_user_resources();
         Ok(service)
     }
@@ -322,9 +328,8 @@ impl VfsService {
         }
         self.require_parent_dir(path)?;
         let id = self.allocate_node_id();
-        self.nodes.push(VfsNode {
+        self.inodes.push(VfsInode {
             id,
-            path: normalize_path(path),
             kind: NodeKind::Directory,
             mode: 0o040000 | (mode & 0o7777),
             uid,
@@ -333,6 +338,7 @@ impl VfsService {
             chunks: Vec::new(),
             xattrs: Vec::new(),
         });
+        self.nodes.push(VfsNode { id, path: normalize_path(path) });
         Ok(())
     }
 
@@ -350,9 +356,8 @@ impl VfsService {
         let normalized = normalize_path(path);
         let (mode, gid) = self.create_file_mode_and_gid(&normalized, mode, gid);
         let id = self.allocate_node_id();
-        self.nodes.push(VfsNode {
+        self.inodes.push(VfsInode {
             id,
-            path: normalized,
             kind: NodeKind::File,
             mode: 0o100000 | mode,
             uid,
@@ -361,6 +366,7 @@ impl VfsService {
             chunks: Vec::new(),
             xattrs: Vec::new(),
         });
+        self.nodes.push(VfsNode { id, path: normalized });
         Ok(())
     }
 
@@ -370,40 +376,65 @@ impl VfsService {
         }
         self.require_parent_dir(path)?;
         let id = self.allocate_node_id();
-        self.nodes.push(VfsNode::from_bytes(
-            id,
-            normalize_path(path),
-            NodeKind::Symlink,
-            0o120777,
-            0,
-            0,
-            target,
-        ));
+        let normalized = normalize_path(path);
+        self.inodes.push(VfsInode::from_bytes(id, NodeKind::Symlink, 0o120777, 0, 0, target));
+        self.nodes.push(VfsNode { id, path: normalized });
+        Ok(())
+    }
+
+    pub(crate) fn link(
+        &mut self,
+        old_path: &[u8],
+        new_path: &[u8],
+    ) -> Result<(), ServiceCallError> {
+        let old_path = normalize_path(old_path);
+        let new_path = normalize_path(new_path);
+        if self.lookup(&new_path, false).is_ok() {
+            return errno(ERR_EEXIST);
+        }
+        self.require_parent_dir(&new_path)?;
+
+        let Some(old_id) = self.node_id_for_path(&old_path) else {
+            self.lookup(&old_path, false)?;
+            return errno(ERR_EPERM);
+        };
+        let Some(inode) = self.inode(old_id) else {
+            return errno(ERR_ENOENT);
+        };
+        if inode.kind == NodeKind::Directory {
+            return errno(ERR_EPERM);
+        }
+
+        self.nodes.push(VfsNode { id: old_id, path: new_path });
         Ok(())
     }
 
     pub(crate) fn unlink(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
-        let Some(index) = self.nodes.iter().position(|node| node.path.as_slice() == path) else {
+        let normalized = normalize_path(path);
+        let Some(index) = self.nodes.iter().position(|node| node.path == normalized) else {
             return errno(ERR_ENOENT);
         };
-        if self.nodes[index].kind == NodeKind::Directory {
+        let id = self.nodes[index].id;
+        if self.inode(id).is_some_and(|inode| inode.kind == NodeKind::Directory) {
             return errno(ERR_EISDIR);
         }
-        self.nodes.remove(index);
+        self.remove_node_index(index);
         Ok(())
     }
 
     pub(crate) fn rmdir(&mut self, path: &[u8]) -> Result<(), ServiceCallError> {
         let normalized = normalize_path(path);
-        let Some(index) = self.nodes.iter().position(|node| {
-            node.path.as_slice() == normalized.as_slice() && node.kind == NodeKind::Directory
-        }) else {
+        let Some(index) = self.nodes.iter().position(|node| node.path == normalized) else {
             return errno(ERR_ENOENT);
         };
+        let id = self.nodes[index].id;
+        if !self.inode(id).is_some_and(|inode| inode.kind == NodeKind::Directory) {
+            return errno(ERR_ENOTDIR);
+        }
         if self.nodes.iter().any(|node| child_name(&normalized, &node.path).is_some()) {
             return errno(ERR_ENOTEMPTY);
         }
-        self.nodes.remove(index);
+        self.remove_node_index(index);
         Ok(())
     }
 
@@ -431,14 +462,21 @@ impl VfsService {
             self.lookup(&old_path, false)?;
             return errno(ERR_EPERM);
         };
-        let old_kind = self.nodes[old_index].kind;
+        let old_kind = self
+            .inode(self.nodes[old_index].id)
+            .map(|inode| inode.kind)
+            .ok_or(ServiceCallError::Errno(ERR_ENOENT))?;
         if old_kind == NodeKind::Directory && is_descendant_path(&new_path, &old_path) {
             return errno(ERR_EINVAL);
         }
 
         let target_index = self.nodes.iter().position(|node| node.path == new_path);
         let target_kind = if let Some(index) = target_index {
-            Some(self.nodes[index].kind)
+            Some(
+                self.inode(self.nodes[index].id)
+                    .map(|inode| inode.kind)
+                    .ok_or(ServiceCallError::Errno(ERR_ENOENT))?,
+            )
         } else {
             match self.lookup(&new_path, false) {
                 Ok(info) => Some(info.node),
@@ -455,7 +493,9 @@ impl VfsService {
             let Some(target_index) = target_index else {
                 return if target_kind.is_some() { errno(ERR_EPERM) } else { errno(ERR_ENOENT) };
             };
-            if self.nodes[target_index].kind == NodeKind::Directory
+            if self
+                .inode(self.nodes[target_index].id)
+                .is_some_and(|inode| inode.kind == NodeKind::Directory)
                 && is_descendant_path(&old_path, &new_path)
             {
                 return errno(ERR_EINVAL);
@@ -466,7 +506,10 @@ impl VfsService {
 
         match target_index {
             Some(index) => {
-                let target_kind = self.nodes[index].kind;
+                let target_kind = self
+                    .inode(self.nodes[index].id)
+                    .map(|inode| inode.kind)
+                    .ok_or(ServiceCallError::Errno(ERR_ENOENT))?;
                 match (old_kind == NodeKind::Directory, target_kind == NodeKind::Directory) {
                     (true, false) => return errno(ERR_ENOTDIR),
                     (false, true) => return errno(ERR_EISDIR),
@@ -477,7 +520,7 @@ impl VfsService {
                 {
                     return errno(ERR_ENOTEMPTY);
                 }
-                self.nodes.remove(index);
+                self.remove_node_index(index);
             }
             None if target_kind.is_some() => return errno(ERR_EPERM),
             None => {}
@@ -521,13 +564,14 @@ impl VfsService {
         Ok(())
     }
 
-    pub(crate) fn write_file(
+    pub(crate) fn write_file_by_id(
         &mut self,
+        node_id: Option<u64>,
         path: &[u8],
         cursor: usize,
         bytes: &[u8],
     ) -> Result<usize, ServiceCallError> {
-        let Some(node) = self.dynamic_node_mut(path) else {
+        let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
             return errno(ERR_ENOENT);
         };
         if node.kind != NodeKind::File {
@@ -541,13 +585,14 @@ impl VfsService {
         Ok(bytes.len())
     }
 
-    pub(crate) fn read_file_range(
+    pub(crate) fn read_file_range_by_id(
         &mut self,
+        node_id: Option<u64>,
         path: &[u8],
         cursor: usize,
         count: u32,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let Some(node) = self.dynamic_node(path) else {
+        let Some(node) = self.dynamic_node_for_target(node_id, path) else {
             return self.read_file(path, false).map(|bytes| {
                 let start = cursor.min(bytes.len());
                 let end = start.saturating_add(count as usize).min(bytes.len());
@@ -577,6 +622,22 @@ impl VfsService {
         Ok(())
     }
 
+    pub(crate) fn truncate_file_by_id(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+        len: usize,
+    ) -> Result<(), ServiceCallError> {
+        let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
+            return errno(ERR_ENOENT);
+        };
+        if node.kind != NodeKind::File {
+            return errno(ERR_EISDIR);
+        }
+        node.truncate(len);
+        Ok(())
+    }
+
     pub(crate) fn mode_for_path(&self, path: &[u8], kind: NodeKind) -> u32 {
         if let Some(node) = self.dynamic_node(path) {
             return node.mode;
@@ -595,8 +656,21 @@ impl VfsService {
         }
     }
 
+    pub(crate) fn mode_for_node(&self, node_id: Option<u64>, path: &[u8], kind: NodeKind) -> u32 {
+        if let Some(node) = self.dynamic_node_for_target(node_id, path) {
+            return node.mode;
+        }
+        self.mode_for_path(path, kind)
+    }
+
     pub(crate) fn owner_for_path(&self, path: &[u8]) -> (u32, u32) {
         self.dynamic_node(path).map(|node| (node.uid, node.gid)).unwrap_or((0, 0))
+    }
+
+    pub(crate) fn owner_for_node(&self, node_id: Option<u64>, path: &[u8]) -> (u32, u32) {
+        self.dynamic_node_for_target(node_id, path)
+            .map(|node| (node.uid, node.gid))
+            .unwrap_or_else(|| self.owner_for_path(path))
     }
 
     pub(crate) fn len_for_path(&self, path: &[u8]) -> u64 {
@@ -608,6 +682,25 @@ impl VfsService {
             .unwrap_or(0)
     }
 
+    pub(crate) fn len_for_node(&self, node_id: Option<u64>, path: &[u8]) -> u64 {
+        self.dynamic_node_for_target(node_id, path)
+            .map(|node| node.len as u64)
+            .unwrap_or_else(|| self.len_for_path(path))
+    }
+
+    pub(crate) fn nlink_for_path(&self, path: &[u8]) -> u64 {
+        self.node_id_for_path(path)
+            .map(|id| self.nodes.iter().filter(|node| node.id == id).count() as u64)
+            .unwrap_or(1)
+    }
+
+    pub(crate) fn nlink_for_node(&self, node_id: Option<u64>, path: &[u8]) -> u64 {
+        node_id
+            .or_else(|| self.node_id_for_path(path))
+            .map(|id| self.nodes.iter().filter(|node| node.id == id).count() as u64)
+            .unwrap_or(1)
+    }
+
     pub(crate) fn node_id_for_path(&self, path: &[u8]) -> Option<u64> {
         if let Some(node) = self.dynamic_node(path) {
             return Some(node.id);
@@ -616,8 +709,9 @@ impl VfsService {
         self.dynamic_node(&normalized).map(|node| node.id)
     }
 
-    pub(crate) fn fsetxattr(
+    pub(crate) fn fsetxattr_by_id(
         &mut self,
+        node_id: Option<u64>,
         path: &[u8],
         name: &[u8],
         value: &[u8],
@@ -636,8 +730,9 @@ impl VfsService {
             return errno(ERR_EINVAL);
         }
 
-        let node =
-            self.dynamic_node_mut(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let node = self
+            .dynamic_node_for_target_mut(node_id, path)
+            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
         let existing = node.xattrs.iter().position(|xattr| xattr.name == name);
         if flags & XATTR_CREATE != 0 && existing.is_some() {
             return errno(ERR_EEXIST);
@@ -652,15 +747,17 @@ impl VfsService {
         Ok(())
     }
 
-    pub(crate) fn fgetxattr(
+    pub(crate) fn fgetxattr_by_id(
         &self,
+        node_id: Option<u64>,
         path: &[u8],
         name: &[u8],
         size: usize,
     ) -> Result<Vec<u8>, ServiceCallError> {
         validate_xattr_name(name)?;
-        let node =
-            self.dynamic_node(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let node = self
+            .dynamic_node_for_target(node_id, path)
+            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
         let value = node
             .xattrs
             .iter()
@@ -674,9 +771,15 @@ impl VfsService {
         Ok(value)
     }
 
-    pub(crate) fn flistxattr(&self, path: &[u8], size: usize) -> Result<Vec<u8>, ServiceCallError> {
-        let node =
-            self.dynamic_node(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+    pub(crate) fn flistxattr_by_id(
+        &self,
+        node_id: Option<u64>,
+        path: &[u8],
+        size: usize,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        let node = self
+            .dynamic_node_for_target(node_id, path)
+            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
         let mut encoded = Vec::new();
         for xattr in &node.xattrs {
             encoded.extend_from_slice(&xattr.name);
@@ -688,14 +791,16 @@ impl VfsService {
         Ok(encoded)
     }
 
-    pub(crate) fn fremovexattr(
+    pub(crate) fn fremovexattr_by_id(
         &mut self,
+        node_id: Option<u64>,
         path: &[u8],
         name: &[u8],
     ) -> Result<(), ServiceCallError> {
         validate_xattr_name(name)?;
-        let node =
-            self.dynamic_node_mut(path).ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+        let node = self
+            .dynamic_node_for_target_mut(node_id, path)
+            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
         let before = node.xattrs.len();
         node.xattrs.retain(|xattr| xattr.name != name);
         if before == node.xattrs.len() {
@@ -732,9 +837,8 @@ impl VfsService {
             return;
         }
         let id = self.allocate_node_id();
-        self.nodes.push(VfsNode {
+        self.inodes.push(VfsInode {
             id,
-            path: normalized,
             kind: NodeKind::Directory,
             mode: 0o040755,
             uid: 0,
@@ -743,6 +847,7 @@ impl VfsService {
             chunks: Vec::new(),
             xattrs: Vec::new(),
         });
+        self.nodes.push(VfsNode { id, path: normalized });
     }
 
     fn install_resource_file(&mut self, root: &[u8], name: &[u8], mode: u32, bytes: &[u8]) {
@@ -751,23 +856,60 @@ impl VfsService {
             return;
         }
         let id = self.allocate_node_id();
-        self.nodes.push(VfsNode::from_bytes(
+        self.inodes.push(VfsInode::from_bytes(
             id,
-            path,
             NodeKind::File,
             0o100000 | (mode & 0o7777),
             0,
             0,
             bytes,
         ));
+        self.nodes.push(VfsNode { id, path });
     }
 
-    fn dynamic_node(&self, path: &[u8]) -> Option<&VfsNode> {
-        self.nodes.iter().find(|node| node.path.as_slice() == path)
+    fn dynamic_node(&self, path: &[u8]) -> Option<&VfsInode> {
+        let id = self.nodes.iter().find(|node| node.path.as_slice() == path)?.id;
+        self.inode(id)
     }
 
-    fn dynamic_node_mut(&mut self, path: &[u8]) -> Option<&mut VfsNode> {
-        self.nodes.iter_mut().find(|node| node.path.as_slice() == path)
+    fn dynamic_node_mut(&mut self, path: &[u8]) -> Option<&mut VfsInode> {
+        let id = self.nodes.iter().find(|node| node.path.as_slice() == path)?.id;
+        self.inode_mut(id)
+    }
+
+    fn dynamic_node_for_target(&self, node_id: Option<u64>, path: &[u8]) -> Option<&VfsInode> {
+        node_id.and_then(|id| self.inode(id)).or_else(|| self.dynamic_node(path))
+    }
+
+    fn dynamic_node_for_target_mut(
+        &mut self,
+        node_id: Option<u64>,
+        path: &[u8],
+    ) -> Option<&mut VfsInode> {
+        if let Some(id) = node_id
+            && self.inode(id).is_some()
+        {
+            return self.inode_mut(id);
+        }
+        self.dynamic_node_mut(path)
+    }
+
+    fn inode(&self, id: u64) -> Option<&VfsInode> {
+        self.inodes.iter().find(|inode| inode.id == id)
+    }
+
+    fn inode_mut(&mut self, id: u64) -> Option<&mut VfsInode> {
+        self.inodes.iter_mut().find(|inode| inode.id == id)
+    }
+
+    fn remove_node_index(&mut self, index: usize) {
+        let id = self.nodes[index].id;
+        self.nodes.remove(index);
+        if !self.nodes.iter().any(|node| node.id == id)
+            && let Some(inode_index) = self.inodes.iter().position(|inode| inode.id == id)
+        {
+            self.inodes.remove(inode_index);
+        }
     }
 
     fn allocate_node_id(&mut self) -> u64 {
@@ -1005,19 +1147,10 @@ impl VfsChunk {
     }
 }
 
-impl VfsNode {
-    fn from_bytes(
-        id: u64,
-        path: Vec<u8>,
-        kind: NodeKind,
-        mode: u32,
-        uid: u32,
-        gid: u32,
-        bytes: &[u8],
-    ) -> Self {
+impl VfsInode {
+    fn from_bytes(id: u64, kind: NodeKind, mode: u32, uid: u32, gid: u32, bytes: &[u8]) -> Self {
         Self {
             id,
-            path,
             kind,
             mode,
             uid,

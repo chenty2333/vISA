@@ -27,12 +27,12 @@ use vmos_abi::{
     SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
     SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRANDOM,
     SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETTIMEOFDAY,
-    SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT,
-    SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
-    SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
+    SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_LSEEK, SYS_LSTAT, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT,
+    SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE,
+    SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
     SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
     SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
@@ -69,6 +69,7 @@ use crate::{
 const AT_FDCWD: i64 = -100;
 const AT_REMOVEDIR: u64 = 0x200;
 const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
+const AT_SYMLINK_FOLLOW: u64 = 0x400;
 const AT_EMPTY_PATH: u64 = 0x1000;
 const AT_EACCESS: u64 = 0x200;
 const RENAME_NOREPLACE: u64 = 1;
@@ -280,6 +281,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_MKDIRAT => sys_mkdirat(frame),
         SYS_MKNODAT => sys_mknodat(frame),
         SYS_RMDIR => sys_rmdir(frame),
+        SYS_LINK => sys_link(frame),
+        SYS_LINKAT => sys_linkat(frame),
         SYS_UNLINK => sys_unlink(frame),
         SYS_UNLINKAT => sys_unlinkat(frame),
         SYS_RENAME => sys_rename(frame),
@@ -972,6 +975,53 @@ fn sys_unlinkat(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         active_context().supervisor.unlink_path(&resolved, access.ids())?;
     }
+    Ok(0)
+}
+
+fn sys_link(frame: &SyscallFrame) -> Result<i64, i32> {
+    let old_path = read_user_c_string(frame.rdi, PATH_MAX)?;
+    let new_path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    link_resolved_paths(AT_FDCWD, &old_path, AT_FDCWD, &new_path, 0)
+}
+
+fn sys_linkat(frame: &SyscallFrame) -> Result<i64, i32> {
+    const LINKAT_ALLOWED_FLAGS: u64 = AT_SYMLINK_FOLLOW | AT_EMPTY_PATH;
+
+    let flags = frame.r8;
+    if flags & !LINKAT_ALLOWED_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let old_path = read_user_c_string(frame.rsi, PATH_MAX)?;
+    let new_path = read_user_c_string(frame.r10, PATH_MAX)?;
+    link_resolved_paths(
+        linux_fd_arg(frame.rdi),
+        &old_path,
+        linux_fd_arg(frame.rdx),
+        &new_path,
+        flags,
+    )
+}
+
+fn link_resolved_paths(
+    old_dirfd: i64,
+    old_path: &[u8],
+    new_dirfd: i64,
+    new_path: &[u8],
+    flags: u64,
+) -> Result<i64, i32> {
+    if old_path.is_empty() && flags & AT_EMPTY_PATH == 0 {
+        return Err(ERR_ENOENT);
+    }
+    if new_path.is_empty() {
+        return Err(ERR_ENOENT);
+    }
+    let mut old_resolved = resolve_path(old_dirfd, old_path)?;
+    if flags & AT_SYMLINK_FOLLOW != 0 {
+        old_resolved = resolve_final_symlink_for_stat(old_resolved, true)?;
+    }
+    let new_resolved = resolve_path(new_dirfd, new_path)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.link_path(&old_resolved, &new_resolved, access.ids())?;
     Ok(0)
 }
 

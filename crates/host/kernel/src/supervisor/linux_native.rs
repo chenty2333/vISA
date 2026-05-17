@@ -7,10 +7,10 @@ use vmos_abi::{
     SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
     SYS_EPOLL_WAIT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME,
-    SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -98,6 +98,15 @@ impl LinuxFrontend {
             ),
             SYS_RENAMEAT => self.plan_renameat2(a0, a1, a2, a3, a4, pack_rename_len_flags(a5, 0)),
             SYS_RENAMEAT2 => self.plan_renameat2(a0, a1, a2, a3, a4, a5),
+            SYS_LINK => self.plan_linkat(
+                AT_FDCWD_ENCODED,
+                a0,
+                a1,
+                AT_FDCWD_ENCODED,
+                a2,
+                pack_rename_len_flags(a3, 0),
+            ),
+            SYS_LINKAT => self.plan_linkat(a0, a1, a2, a3, a4, a5),
             SYS_PRCTL => self.plan_prctl(a0, a1, a2, a3, a4),
             SYS_SECCOMP => self.plan_seccomp(a0, a1, a2),
             SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
@@ -731,6 +740,26 @@ impl LinuxFrontend {
             [old_dirfd, old_ptr, old_len, new_dirfd, new_ptr, new_len_flags],
         );
         PackedStep::plan(PlanKind::RenameAt2)
+    }
+
+    fn plan_linkat(
+        &mut self,
+        old_dirfd: u64,
+        old_ptr: u64,
+        old_len: u64,
+        new_dirfd: u64,
+        new_ptr: u64,
+        new_len_flags: u64,
+    ) -> PackedStep {
+        let new_len = new_len_flags & 0xffff_ffff;
+        if old_len == 0 || new_len == 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        self.reset_plan(
+            PlanKind::LinkAt,
+            [old_dirfd, old_ptr, old_len, new_dirfd, new_ptr, new_len_flags],
+        );
+        PackedStep::plan(PlanKind::LinkAt)
     }
 
     fn plan_getcwd(&mut self, size: u64) -> PackedStep {

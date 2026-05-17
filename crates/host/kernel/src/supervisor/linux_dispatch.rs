@@ -290,6 +290,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Flistxattr => self.plan_flistxattr(plan),
             PlanKind::Fremovexattr => self.plan_fremovexattr(plan),
             PlanKind::RenameAt2 => self.plan_renameat2(plan),
+            PlanKind::LinkAt => self.plan_linkat(plan),
             PlanKind::Getrlimit => self.plan_getrlimit(plan),
             PlanKind::Setrlimit => self.plan_setrlimit(plan),
             PlanKind::Prlimit64 => self.plan_prlimit64(plan),

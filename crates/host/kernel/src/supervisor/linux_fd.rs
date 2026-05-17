@@ -75,7 +75,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         count: u32,
     ) -> Result<Vec<u8>, ServiceCallError> {
         self.require_fd_readable(fd)?;
-        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
+        let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;
         if node == NodeKind::Directory {
             return Err(ServiceCallError::Errno(vmos_abi::ERR_EISDIR));
         }
@@ -84,7 +84,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             ServiceRoute::Vfs => {
                 self.require_capability("vfs_service", "vfs.namespace", "read")
                     .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
-                self.vfs.read_file_range(&path, cursor, count)?
+                self.vfs.read_file_range_by_id(vfs_node_id, &path, cursor, count)?
             }
             ServiceRoute::Procfs => {
                 self.require_capability("procfs_service", "procfs.tree", "read")
@@ -118,13 +118,13 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {
         self.require_fd_writable(fd)?;
-        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
+        let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
             return Err(ServiceCallError::Errno(ERR_EBADF));
         }
         self.require_capability("vfs_service", "vfs.namespace", "write")
             .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
-        let written = self.vfs.write_file(&path, cursor, bytes)?;
+        let written = self.vfs.write_file_by_id(vfs_node_id, &path, cursor, bytes)?;
         self.set_fd_cursor(fd, cursor + written)?;
         Ok(written)
     }
@@ -144,13 +144,13 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn truncate_fd(&mut self, fd: u32, len: usize) -> Result<(), i32> {
         self.require_fd_writable(fd).map_err(errno_from_service_error)?;
-        let (route, node, cursor, path) =
+        let (route, node, cursor, path, vfs_node_id) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs || node != NodeKind::File {
             return Err(ERR_EBADF);
         }
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
-        self.vfs.truncate_file(&path, len).map_err(errno_from_service_error)?;
+        self.vfs.truncate_file_by_id(vfs_node_id, &path, len).map_err(errno_from_service_error)?;
         if cursor > len {
             self.set_fd_cursor(fd, len).map_err(errno_from_service_error)?;
         }
@@ -162,12 +162,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         const SEEK_CUR: u32 = 1;
         const SEEK_END: u32 = 2;
 
-        let (route, node, cursor, path) =
+        let (route, node, cursor, path, vfs_node_id) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if node == NodeKind::Directory {
             return Err(ERR_EBADF);
         }
-        let len = self.len_for_service_node(route, &path);
+        let len = self.len_for_service_node_by_id(route, vfs_node_id, &path);
         let base = match whence {
             SEEK_SET => 0,
             SEEK_CUR => cursor as i64,
@@ -295,9 +295,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         flags: u32,
         access: AccessIds<'_>,
     ) -> Result<(), i32> {
-        let path = self.xattr_target(fd)?;
-        self.check_xattr_access(&path, name, XattrAccess::Write, access)?;
-        self.vfs.fsetxattr(&path, name, value, flags).map_err(errno_from_service_error)
+        let (node, vfs_node_id, path) = self.xattr_target(fd)?;
+        self.check_xattr_fd_access(vfs_node_id, &path, node, name, XattrAccess::Write, access)?;
+        self.vfs
+            .fsetxattr_by_id(vfs_node_id, &path, name, value, flags)
+            .map_err(errno_from_service_error)
     }
 
     pub(crate) fn fgetxattr_fd(
@@ -307,9 +309,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         size: usize,
         access: AccessIds<'_>,
     ) -> Result<Vec<u8>, i32> {
-        let path = self.xattr_target(fd)?;
-        self.check_xattr_access(&path, name, XattrAccess::Read, access)?;
-        self.vfs.fgetxattr(&path, name, size).map_err(errno_from_service_error)
+        let (node, vfs_node_id, path) = self.xattr_target(fd)?;
+        self.check_xattr_fd_access(vfs_node_id, &path, node, name, XattrAccess::Read, access)?;
+        self.vfs.fgetxattr_by_id(vfs_node_id, &path, name, size).map_err(errno_from_service_error)
     }
 
     pub(crate) fn flistxattr_fd(
@@ -318,11 +320,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         size: usize,
         access: AccessIds<'_>,
     ) -> Result<Vec<u8>, i32> {
-        let path = self.xattr_target(fd)?;
-        let encoded = self.vfs.flistxattr(&path, 0).map_err(errno_from_service_error)?;
-        let user_visible = self.check_path_access(&path, MAY_READ, access).is_ok();
-        let privileged_visible = access.has_capability(CAP_SYS_ADMIN)
-            && self.check_path_access(&path, 0, access).is_ok();
+        let (node, vfs_node_id, path) = self.xattr_target(fd)?;
+        let encoded =
+            self.vfs.flistxattr_by_id(vfs_node_id, &path, 0).map_err(errno_from_service_error)?;
+        let user_visible = self.check_vfs_node_access(vfs_node_id, &path, node, MAY_READ, access);
+        let privileged_visible = access.has_capability(CAP_SYS_ADMIN);
         let mut visible = Vec::new();
         for name in encoded.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
             match classify_xattr_namespace(name) {
@@ -349,9 +351,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         name: &[u8],
         access: AccessIds<'_>,
     ) -> Result<(), i32> {
-        let path = self.xattr_target(fd)?;
-        self.check_xattr_access(&path, name, XattrAccess::Write, access)?;
-        self.vfs.fremovexattr(&path, name).map_err(errno_from_service_error)
+        let (node, vfs_node_id, path) = self.xattr_target(fd)?;
+        self.check_xattr_fd_access(vfs_node_id, &path, node, name, XattrAccess::Write, access)?;
+        self.vfs.fremovexattr_by_id(vfs_node_id, &path, name).map_err(errno_from_service_error)
     }
 
     fn fcntl_lock_available_fd(
@@ -427,17 +429,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok((vfs_node_id, path, range_start as i64, range_len as i64))
     }
 
-    fn xattr_target(&mut self, fd: u32) -> Result<Vec<u8>, i32> {
-        let (route, _, _, path) = self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+    fn xattr_target(&mut self, fd: u32) -> Result<(NodeKind, Option<u64>, Vec<u8>), i32> {
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs {
             return Err(vmos_abi::ERR_EOPNOTSUPP);
         }
-        Ok(path)
+        Ok((node, vfs_node_id, path))
     }
 
-    fn check_xattr_access(
-        &mut self,
+    fn check_xattr_fd_access(
+        &self,
+        vfs_node_id: Option<u64>,
         path: &[u8],
+        node: NodeKind,
         name: &[u8],
         op: XattrAccess,
         access: AccessIds<'_>,
@@ -448,13 +453,33 @@ impl<'engine> PrototypeRuntime<'engine> {
                     XattrAccess::Read => MAY_READ,
                     XattrAccess::Write => MAY_WRITE,
                 };
-                self.check_path_access(path, mask, access)
+                if self.check_vfs_node_access(vfs_node_id, path, node, mask, access) {
+                    Ok(())
+                } else {
+                    Err(ERR_EACCES)
+                }
             }
             XattrNamespace::Privileged => {
-                self.check_path_access(path, 0, access)?;
-                if access.has_capability(CAP_SYS_ADMIN) { Ok(()) } else { Err(ERR_EPERM) }
+                if access.has_capability(CAP_SYS_ADMIN) {
+                    Ok(())
+                } else {
+                    Err(ERR_EPERM)
+                }
             }
         }
+    }
+
+    fn check_vfs_node_access(
+        &self,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+        node: NodeKind,
+        mask: u32,
+        access: AccessIds<'_>,
+    ) -> bool {
+        let mode = self.vfs.mode_for_node(vfs_node_id, path, node);
+        let (owner_uid, owner_gid) = self.vfs.owner_for_node(vfs_node_id, path);
+        mode_grants_access(mode, owner_uid, owner_gid, access, mask)
     }
 
     pub(crate) fn check_path_access(
@@ -547,7 +572,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         fd: u32,
         count: u32,
     ) -> Result<Vec<u8>, ServiceCallError> {
-        let (route, node, cursor, path) = self.service_fd_snapshot(fd)?;
+        let (route, node, cursor, path, _) = self.service_fd_snapshot(fd)?;
         if node != NodeKind::Directory {
             return Err(ServiceCallError::Errno(vmos_abi::ERR_ENOTDIR));
         }
@@ -1905,6 +1930,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.symlink(path, target).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn link_path(
+        &mut self,
+        old_path: &[u8],
+        new_path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<(), i32> {
+        self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
+        self.check_path_access(old_path, 0, access)?;
+        self.check_parent_access(new_path, MAY_WRITE | MAY_EXEC, access)?;
+        self.vfs.link(old_path, new_path).map_err(errno_from_service_error)
+    }
+
     pub(crate) fn truncate_path(
         &mut self,
         path: &[u8],
@@ -1925,15 +1962,16 @@ impl<'engine> PrototypeRuntime<'engine> {
                 | FdResource::SocketPairEnd { .. }
                 | FdResource::EventFd { .. }
         ) {
-            return Ok(encode_stat_abi(0o010666, 0, 0, 0));
+            return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1));
         }
-        let FdResource::ServiceNode { route, node, path, .. } = &entry.resource else {
+        let FdResource::ServiceNode { route, node, path, vfs_node_id } = &entry.resource else {
             return Err(ERR_EBADF);
         };
-        let mode = self.mode_for_service_node(*route, *node, path);
-        let (uid, gid) = self.owner_for_service_node(*route, path);
-        let len = self.len_for_service_node(*route, path);
-        Ok(encode_stat_abi(mode, len, uid, gid))
+        let mode = self.mode_for_service_node_by_id(*route, *node, *vfs_node_id, path);
+        let (uid, gid) = self.owner_for_service_node_by_id(*route, *vfs_node_id, path);
+        let len = self.len_for_service_node_by_id(*route, *vfs_node_id, path);
+        let nlink = self.nlink_for_service_node_by_id(*route, *vfs_node_id, path);
+        Ok(encode_stat_abi(mode, len, uid, gid, nlink))
     }
 
     pub(crate) fn stat_path_abi(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
@@ -1941,7 +1979,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let (uid, gid) = self.owner_for_service_node(info.route, path);
         let len = self.len_for_service_node(info.route, path);
-        Ok(encode_stat_abi(mode, len, uid, gid))
+        let nlink = self.nlink_for_service_node(info.route, path);
+        Ok(encode_stat_abi(mode, len, uid, gid, nlink))
     }
 
     pub(crate) fn path_metadata(&mut self, path: &[u8]) -> Result<(NodeKind, u32, u64), i32> {
@@ -1996,10 +2035,35 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    fn mode_for_service_node_by_id(
+        &self,
+        route: ServiceRoute,
+        node: NodeKind,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+    ) -> u32 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.mode_for_node(vfs_node_id, path, node),
+            _ => self.mode_for_service_node(route, node, path),
+        }
+    }
+
     fn owner_for_service_node(&self, route: ServiceRoute, path: &[u8]) -> (u32, u32) {
         match route {
             ServiceRoute::Vfs => self.vfs.owner_for_path(path),
             ServiceRoute::Procfs | ServiceRoute::Devfs => (0, 0),
+        }
+    }
+
+    fn owner_for_service_node_by_id(
+        &self,
+        route: ServiceRoute,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+    ) -> (u32, u32) {
+        match route {
+            ServiceRoute::Vfs => self.vfs.owner_for_node(vfs_node_id, path),
+            _ => self.owner_for_service_node(route, path),
         }
     }
 
@@ -2010,15 +2074,46 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    fn len_for_service_node_by_id(
+        &self,
+        route: ServiceRoute,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+    ) -> u64 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.len_for_node(vfs_node_id, path),
+            _ => self.len_for_service_node(route, path),
+        }
+    }
+
+    fn nlink_for_service_node(&self, route: ServiceRoute, path: &[u8]) -> u64 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.nlink_for_path(path),
+            ServiceRoute::Procfs | ServiceRoute::Devfs => 1,
+        }
+    }
+
+    fn nlink_for_service_node_by_id(
+        &self,
+        route: ServiceRoute,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+    ) -> u64 {
+        match route {
+            ServiceRoute::Vfs => self.vfs.nlink_for_node(vfs_node_id, path),
+            _ => self.nlink_for_service_node(route, path),
+        }
+    }
+
     fn service_fd_snapshot(
         &mut self,
         fd: u32,
-    ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>), ServiceCallError> {
+    ) -> Result<(ServiceRoute, NodeKind, usize, Vec<u8>, Option<u64>), ServiceCallError> {
         self.validate_fd_handle(fd)?;
         let entry = self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?;
         match &entry.resource {
-            FdResource::ServiceNode { route, node, path, .. } => {
-                Ok((*route, *node, entry.cursor, path.clone()))
+            FdResource::ServiceNode { route, node, path, vfs_node_id } => {
+                Ok((*route, *node, entry.cursor, path.clone(), *vfs_node_id))
             }
             FdResource::EpollInstance { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::Socket { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
@@ -2234,11 +2329,11 @@ fn errno_from_service_error(err: ServiceCallError) -> i32 {
     }
 }
 
-fn encode_stat_abi(mode: u32, size: u64, uid: u32, gid: u32) -> Vec<u8> {
+fn encode_stat_abi(mode: u32, size: u64, uid: u32, gid: u32, nlink: u64) -> Vec<u8> {
     let mut out = alloc::vec![0u8; 144];
     write_u64(&mut out, 0, 1);
     write_u64(&mut out, 8, 1);
-    write_u64(&mut out, 16, 1);
+    write_u64(&mut out, 16, nlink);
     write_u32(&mut out, 24, mode);
     write_u32(&mut out, 28, uid);
     write_u32(&mut out, 32, gid);

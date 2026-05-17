@@ -362,6 +362,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_linkat(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let old_dirfd = plan.args[0] as i64;
+        let old_ptr = u32::try_from(plan.args[1]).map_err(|_| "link old ptr overflowed")?;
+        let old_len = u32::try_from(plan.args[2]).map_err(|_| "link old len overflowed")?;
+        let new_dirfd = plan.args[3] as i64;
+        let new_ptr = u32::try_from(plan.args[4]).map_err(|_| "link new ptr overflowed")?;
+        let new_len =
+            u32::try_from(plan.args[5] & 0xffff_ffff).map_err(|_| "link new len overflowed")?;
+        let flags = u32::try_from(plan.args[5] >> 32).map_err(|_| "link flags overflowed")?;
+        if flags != 0 {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+
+        let old_path = self.linux.read_bytes(old_ptr, old_len)?;
+        let new_path = self.linux.read_bytes(new_ptr, new_len)?;
+        let old_path = match self.resolve_plan_path(old_dirfd, &old_path) {
+            Ok(path) => path,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let new_path = match self.resolve_plan_path(new_dirfd, &new_path) {
+            Ok(path) => path,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let access = AccessIds::new(0, 0, &[]);
+
+        match self.link_path(&old_path, &new_path, access) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
     fn resolve_plan_path(&mut self, dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
         if path.is_empty() {
             return Err(ERR_ENOENT);
