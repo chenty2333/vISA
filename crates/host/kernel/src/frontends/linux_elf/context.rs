@@ -736,6 +736,71 @@ impl ActiveUserContext {
         true
     }
 
+    pub(crate) fn set_resuid(
+        &mut self,
+        ruid: Option<u32>,
+        euid: Option<u32>,
+        suid: Option<u32>,
+    ) -> bool {
+        let privileged = self.has_effective_capability(CAP_SETUID);
+        let old_ruid = self.uid;
+        let old_euid = self.euid;
+        let old_suid = self.suid;
+        if !privileged {
+            for uid in [ruid, euid, suid].into_iter().flatten() {
+                if uid != old_ruid && uid != old_euid && uid != old_suid {
+                    return false;
+                }
+            }
+        }
+        if let Some(uid) = ruid {
+            self.uid = uid;
+        }
+        if let Some(uid) = euid {
+            self.euid = uid;
+        }
+        if let Some(uid) = suid {
+            self.suid = uid;
+        }
+        if ruid.is_some() || euid.is_some() || suid.is_some() {
+            self.fsuid = self.euid;
+            self.fixup_capabilities_after_uid_change(old_ruid, old_euid, old_suid);
+        }
+        true
+    }
+
+    pub(crate) fn set_resgid(
+        &mut self,
+        rgid: Option<u32>,
+        egid: Option<u32>,
+        sgid: Option<u32>,
+    ) -> bool {
+        let privileged = self.has_effective_capability(CAP_SETGID);
+        let old_rgid = self.gid;
+        let old_egid = self.egid;
+        let old_sgid = self.sgid;
+        if !privileged {
+            for gid in [rgid, egid, sgid].into_iter().flatten() {
+                if gid != old_rgid && gid != old_egid && gid != old_sgid {
+                    return false;
+                }
+            }
+        }
+        if let Some(gid) = rgid {
+            self.gid = gid;
+        }
+        if let Some(gid) = egid {
+            self.egid = gid;
+        }
+        if let Some(gid) = sgid {
+            self.sgid = gid;
+        }
+        if rgid.is_some() || egid.is_some() || sgid.is_some() {
+            self.fsgid = self.egid;
+        }
+        true
+    }
+
     pub(crate) fn set_fsuid(&mut self, uid: u32) -> u32 {
         let old = self.fsuid;
         if uid != u32::MAX

@@ -87,7 +87,9 @@ const SYS_SETREUID: u64 = 113;
 const SYS_SETREGID: u64 = 114;
 const SYS_GETGROUPS: u64 = 115;
 const SYS_SETGROUPS: u64 = 116;
+const SYS_SETRESUID: u64 = 117;
 const SYS_GETRESUID: u64 = 118;
+const SYS_SETRESGID: u64 = 119;
 const SYS_GETRESGID: u64 = 120;
 const SYS_SETFSUID: u64 = 122;
 const SYS_SETFSGID: u64 = 123;
@@ -315,7 +317,9 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SETREGID => sys_setregid(frame),
         SYS_GETGROUPS => sys_getgroups(frame),
         SYS_SETGROUPS => sys_setgroups(frame),
+        SYS_SETRESUID => sys_setresuid(frame),
         SYS_GETRESUID => sys_getresuid(frame),
+        SYS_SETRESGID => sys_setresgid(frame),
         SYS_GETRESGID => sys_getresgid(frame),
         SYS_SETFSUID => sys_setfsuid(frame),
         SYS_SETFSGID => sys_setfsgid(frame),
@@ -1390,6 +1394,52 @@ fn sys_setregid(frame: &SyscallFrame) -> Result<i64, i32> {
     if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetReGid {
         rgid: after.gid,
         egid: after.egid,
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(0)
+}
+
+fn sys_setresuid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let ruid = optional_linux_id_arg(frame.rdi)?;
+    let euid = optional_linux_id_arg(frame.rsi)?;
+    let suid = optional_linux_id_arg(frame.rdx)?;
+    let before = active_context().credential_state();
+    if !active_context().set_resuid(ruid, euid, suid) {
+        return Err(ERR_EPERM);
+    }
+    let after = active_context().credential_state();
+    if before == after {
+        return Ok(0);
+    }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetResUid {
+        ruid: after.uid,
+        euid: after.euid,
+        suid: after.suid,
+    }) {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(0)
+}
+
+fn sys_setresgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let rgid = optional_linux_id_arg(frame.rdi)?;
+    let egid = optional_linux_id_arg(frame.rsi)?;
+    let sgid = optional_linux_id_arg(frame.rdx)?;
+    let before = active_context().credential_state();
+    if !active_context().set_resgid(rgid, egid, sgid) {
+        return Err(ERR_EPERM);
+    }
+    let after = active_context().credential_state();
+    if before == after {
+        return Ok(0);
+    }
+    if let Err(errno) = record_credential_transition(CredentialTransitionKind::SetResGid {
+        rgid: after.gid,
+        egid: after.egid,
+        sgid: after.sgid,
     }) {
         restore_credential_state(before);
         return Err(errno);
