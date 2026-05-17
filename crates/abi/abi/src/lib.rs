@@ -355,6 +355,7 @@ pub enum PlanKind {
     LinkAt = 69,
     GetRobustList = 70,
     Eventfd = 71,
+    Pipe = 72,
 }
 
 impl PlanKind {
@@ -431,6 +432,7 @@ impl PlanKind {
             69 => Some(Self::LinkAt),
             70 => Some(Self::GetRobustList),
             71 => Some(Self::Eventfd),
+            72 => Some(Self::Pipe),
             _ => None,
         }
     }

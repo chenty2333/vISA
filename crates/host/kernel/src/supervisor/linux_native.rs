@@ -9,10 +9,11 @@ use vmos_abi::{
     SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
+    SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -77,6 +78,8 @@ impl LinuxFrontend {
             SYS_FLOCK => self.plan_flock(a0, a1),
             SYS_MMAP => self.plan_mmap(a0, a1, a2, a3, a4, a5),
             SYS_MUNMAP => self.plan_munmap(a0, a1),
+            SYS_PIPE => self.plan_pipe(a0, 0),
+            SYS_PIPE2 => self.plan_pipe(a0, a1),
             SYS_POLL => self.plan_poll(a0, a1, a2),
             SYS_UNAME => self.plan_simple(PlanKind::Uname),
             SYS_GETCWD => self.plan_getcwd(a1),
@@ -614,6 +617,11 @@ impl LinuxFrontend {
     fn plan_munmap(&mut self, addr: u64, len: u64) -> PackedStep {
         self.reset_plan(PlanKind::Munmap, [addr, len, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Munmap)
+    }
+
+    fn plan_pipe(&mut self, fds_ptr: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Pipe, [fds_ptr, flags, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Pipe)
     }
 
     fn plan_poll(&mut self, ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {

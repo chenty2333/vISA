@@ -4292,11 +4292,8 @@ fn sys_pipe(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
     if flags & !(O_CLOEXEC | O_NONBLOCK) != 0 {
         return Err(ERR_EINVAL);
     }
-    let (read_fd, write_fd) = active_context().supervisor.create_pipe_pair()?;
-    if flags & O_CLOEXEC != 0 {
-        active_context().supervisor.set_fd_flags(read_fd, 1)?;
-        active_context().supervisor.set_fd_flags(write_fd, 1)?;
-    }
+    let flags = u32::try_from(flags).map_err(|_| ERR_EINVAL)?;
+    let (read_fd, write_fd) = active_context().supervisor.create_pipe_pair_with_flags(flags)?;
     let mut encoded = [0u8; 8];
     encoded[..4].copy_from_slice(&(read_fd as i32).to_le_bytes());
     encoded[4..].copy_from_slice(&(write_fd as i32).to_le_bytes());

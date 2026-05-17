@@ -1185,9 +1185,21 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn create_pipe_pair(&mut self) -> Result<(u32, u32), i32> {
+        self.create_pipe_pair_with_flags(0)
+    }
+
+    pub(crate) fn create_pipe_pair_with_flags(&mut self, flags: u32) -> Result<(u32, u32), i32> {
+        const PIPE_CLOEXEC: u32 = 0o2000000;
+        const PIPE_NONBLOCK: u32 = O_NONBLOCK;
+
+        if flags & !(PIPE_CLOEXEC | PIPE_NONBLOCK) != 0 {
+            return Err(ERR_EINVAL);
+        }
         if self.available_fd_slots() < 2 {
             return Err(ERR_EMFILE);
         }
+        let fd_flags = if flags & PIPE_CLOEXEC != 0 { 1 } else { 0 };
+        let status_flags = flags & PIPE_NONBLOCK;
         let pipe_id = self.next_pipe_id;
         self.next_pipe_id = self.next_pipe_id.saturating_add(1);
         self.pipes.push(PipeState {
@@ -1200,15 +1212,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         let read_fd = self.alloc_fd(FdEntry {
             resource: FdResource::PipeEnd { pipe_id, readable: true, writable: false },
             cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
+            fd_flags,
+            status_flags,
             cursor_group: None,
         })?;
         let write_fd = self.alloc_fd(FdEntry {
             resource: FdResource::PipeEnd { pipe_id, readable: false, writable: true },
             cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
+            fd_flags,
+            status_flags,
             cursor_group: None,
         })?;
         Ok((read_fd, write_fd))

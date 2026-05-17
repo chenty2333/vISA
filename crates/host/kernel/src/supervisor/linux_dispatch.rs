@@ -300,6 +300,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Mmap => self.plan_mmap(plan),
             PlanKind::Munmap => self.plan_munmap(plan),
             PlanKind::Poll => self.plan_poll(plan),
+            PlanKind::Pipe => self.plan_pipe(plan),
             PlanKind::Prctl => self.plan_prctl(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
             PlanKind::Bpf => self.plan_bpf(plan),

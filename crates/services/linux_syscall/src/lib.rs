@@ -16,10 +16,11 @@ use vmos_abi::{
     SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -90,6 +91,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_FLOCK => plan_flock(a0, a1),
         SYS_MMAP => plan_mmap(a0, a1, a2, a3, a4, a5),
         SYS_MUNMAP => plan_munmap(a0, a1),
+        SYS_PIPE => plan_pipe(a0, 0),
+        SYS_PIPE2 => plan_pipe(a0, a1),
         SYS_POLL => plan_poll(a0, a1, a2),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
@@ -565,6 +568,11 @@ fn plan_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64) -
 fn plan_munmap(addr: u64, len: u64) -> PackedStep {
     reset_plan(PlanKind::Munmap, [addr, len, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Munmap)
+}
+
+fn plan_pipe(fds_ptr: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::Pipe, [fds_ptr, flags, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Pipe)
 }
 
 fn plan_poll(ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {
@@ -1420,6 +1428,23 @@ mod tests {
         assert_eq!(plan_arg(1), 3);
         assert_eq!(plan_arg(2), 250);
         assert_eq!(plan_arg(3), 0);
+    }
+
+    #[test]
+    fn pipe_plans_preserve_pointer_and_flags() {
+        let _guard = test_guard();
+
+        let pipe = PackedStep::decode(dispatch(SYS_PIPE, 0x1000, 0xdead, 0, 0, 0, 0));
+        assert_eq!(pipe.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(pipe.aux), Some(PlanKind::Pipe));
+        assert_eq!(plan_arg(0), 0x1000);
+        assert_eq!(plan_arg(1), 0);
+
+        let pipe2 = PackedStep::decode(dispatch(SYS_PIPE2, 0x2000, 0o2004000, 0, 0, 0, 0));
+        assert_eq!(pipe2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(pipe2.aux), Some(PlanKind::Pipe));
+        assert_eq!(plan_arg(0), 0x2000);
+        assert_eq!(plan_arg(1), 0o2004000);
     }
 
     #[test]
