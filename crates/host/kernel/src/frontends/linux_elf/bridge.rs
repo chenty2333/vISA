@@ -34,9 +34,9 @@ use vmos_abi::{
     SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT,
     SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
     SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
-    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
-    SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE,
+    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK,
+    SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE,
     SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
     SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
@@ -120,6 +120,7 @@ const ERR_ENOEXEC: i32 = 8;
 const ERR_ENODEV: i32 = 19;
 const ERR_ENOTTY: i32 = 25;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
+const LINUX_TIMEVAL_SIZE: u64 = 16;
 const LINUX_ITIMERSPEC_SIZE: usize = 32;
 const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
@@ -384,6 +385,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_CLOCK_ADJTIME => sys_clock_adjtime(frame),
         SYS_TGKILL => sys_tgkill(frame),
         SYS_PAUSE => sys_pause(frame),
+        SYS_SELECT => sys_select(frame),
         SYS_PSELECT6 => sys_pselect6(frame),
         SYS_UMASK => sys_umask(frame),
         SYS_TIME => sys_time(frame),
@@ -2649,6 +2651,40 @@ fn sys_pselect6(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let ready = collect_pselect_ready(&snapshot)?;
     write_pselect_result(&snapshot, &ready)
+}
+
+fn sys_select(frame: &SyscallFrame) -> Result<i64, i32> {
+    let nofile = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_NOFILE).cur;
+    let nfds = validate_pselect6_nfds(frame.rdi, nofile)?;
+    let timeout_ms = if frame.r8 != 0 { Some(read_user_timeval_ms(frame.r8)?) } else { None };
+    let wait_timeout_ms = timeout_ms.map(|ms| core::cmp::min(ms, u32::MAX as u64) as u32);
+    let start_ns = current_monotonic_ns();
+    let snapshot = read_pselect_fdsets(frame.rsi, frame.rdx, frame.r10, nfds)?;
+    let ready = collect_pselect_ready(&snapshot)?;
+    if ready.ready != 0 || wait_timeout_ms == Some(0) {
+        let ret = write_pselect_result(&snapshot, &ready)?;
+        write_select_timeout_remaining(frame.r8, timeout_ms, start_ns)?;
+        return Ok(ret);
+    }
+
+    let wait_result = active_context().supervisor.block_on_fdset_wait(
+        snapshot.read_bits,
+        snapshot.write_bits,
+        [0; PSELECT6_FDSET_WORDS],
+        u16::try_from(nfds).map_err(|_| ERR_EINVAL)?,
+        wait_timeout_ms,
+    );
+    if let Err(errno) = wait_result {
+        if errno == ERR_EINTR {
+            write_select_timeout_remaining(frame.r8, timeout_ms, start_ns)?;
+        }
+        return Err(errno);
+    }
+
+    let ready = collect_pselect_ready(&snapshot)?;
+    let ret = write_pselect_result(&snapshot, &ready)?;
+    write_select_timeout_remaining(frame.r8, timeout_ms, start_ns)?;
+    Ok(ret)
 }
 
 fn validate_pselect6_nfds(nfds_arg: u64, nofile: u64) -> Result<usize, i32> {
@@ -5720,6 +5756,47 @@ fn read_user_timespec_ms(ptr: u64) -> Result<u64, i32> {
     Ok(read_user_timespec_ns(ptr)?.div_ceil(1_000_000))
 }
 
+fn read_user_timeval_ms(ptr: u64) -> Result<u64, i32> {
+    let req = user_lease(ptr, LINUX_TIMEVAL_SIZE, false)?;
+    let bytes = req.bytes().map_err(map_dmw_fault)?;
+    select_timeval_ms(
+        i64::from_le_bytes(bytes[..8].try_into().map_err(|_| ERR_EINVAL)?),
+        i64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?),
+    )
+}
+
+fn select_timeval_ms(tv_sec: i64, tv_usec: i64) -> Result<u64, i32> {
+    if tv_sec < 0 || !(0..1_000_000).contains(&tv_usec) {
+        return Err(ERR_EINVAL);
+    }
+    Ok((tv_sec as u64).saturating_mul(1000).saturating_add((tv_usec as u64).div_ceil(1000)))
+}
+
+fn write_select_timeout_remaining(
+    ptr: u64,
+    timeout_ms: Option<u64>,
+    start_ns: u64,
+) -> Result<(), i32> {
+    let Some(timeout_ms) = timeout_ms else {
+        return Ok(());
+    };
+    let remaining_ms = select_remaining_timeout_ms(timeout_ms, start_ns, current_monotonic_ns());
+    write_user_bytes(ptr, &select_timeval_bytes(remaining_ms))
+}
+
+fn select_remaining_timeout_ms(timeout_ms: u64, start_ns: u64, now_ns: u64) -> u64 {
+    timeout_ms.saturating_sub(now_ns.saturating_sub(start_ns).div_ceil(1_000_000))
+}
+
+fn select_timeval_bytes(timeout_ms: u64) -> [u8; LINUX_TIMEVAL_SIZE as usize] {
+    let mut bytes = [0u8; LINUX_TIMEVAL_SIZE as usize];
+    let tv_sec = (timeout_ms / 1000) as i64;
+    let tv_usec = ((timeout_ms % 1000) * 1000) as i64;
+    bytes[..8].copy_from_slice(&tv_sec.to_le_bytes());
+    bytes[8..16].copy_from_slice(&tv_usec.to_le_bytes());
+    bytes
+}
+
 fn read_user_timespec_ns(ptr: u64) -> Result<u64, i32> {
     let req = user_lease(ptr, LINUX_TIMESPEC_SIZE, false)?;
     let bytes = req.bytes().map_err(map_dmw_fault)?;
@@ -6391,6 +6468,7 @@ mod tests {
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
         futex_pi_wait_word, parse_clone3_request_bytes, pselect_read_revents_ready,
         pselect_write_revents_ready, read_linux_greg, sanitize_restored_rflags,
+        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms,
         validate_pselect6_nfds, wait_nfds_within_rlimit, write_linux_greg,
     };
 
@@ -6490,6 +6568,31 @@ mod tests {
             validate_pselect6_nfds((PSELECT6_MAX_FDS + 1) as u64, u64::MAX),
             Err(vmos_abi::ERR_EINVAL)
         );
+    }
+
+    #[test]
+    fn select_timeval_ms_validates_and_rounds_up() {
+        assert_eq!(select_timeval_ms(0, 0), Ok(0));
+        assert_eq!(select_timeval_ms(0, 1), Ok(1));
+        assert_eq!(select_timeval_ms(1, 999_001), Ok(2000));
+        assert_eq!(select_timeval_ms(-1, 0), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(select_timeval_ms(0, -1), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(select_timeval_ms(0, 1_000_000), Err(vmos_abi::ERR_EINVAL));
+    }
+
+    #[test]
+    fn select_remaining_timeout_tracks_elapsed_ms() {
+        assert_eq!(select_remaining_timeout_ms(100, 1_000_000, 1_000_000), 100);
+        assert_eq!(select_remaining_timeout_ms(100, 1_000_000, 1_000_001), 99);
+        assert_eq!(select_remaining_timeout_ms(100, 1_000_000, 51_000_000), 50);
+        assert_eq!(select_remaining_timeout_ms(100, 1_000_000, 102_000_000), 0);
+    }
+
+    #[test]
+    fn select_timeval_bytes_uses_linux_x86_64_layout() {
+        let bytes = select_timeval_bytes(12_345);
+        assert_eq!(i64::from_le_bytes(bytes[..8].try_into().unwrap()), 12);
+        assert_eq!(i64::from_le_bytes(bytes[8..16].try_into().unwrap()), 345_000);
     }
 
     #[test]
