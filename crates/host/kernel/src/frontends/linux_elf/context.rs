@@ -269,7 +269,7 @@ pub(crate) struct SuspendedCloneParent {
     pub(crate) address_space: Option<UserAddressSpaceState>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct CredentialState {
     pub(crate) uid: u32,
     pub(crate) gid: u32,
@@ -552,6 +552,45 @@ impl ActiveUserContext {
         self.cap_effective = state.cap_effective;
         self.cap_ambient = state.cap_ambient;
         self.securebits = state.securebits;
+    }
+
+    pub(crate) fn apply_exec_file_credentials(&mut self, file_uid: u32, file_gid: u32, mode: u32) {
+        const S_ISUID: u32 = 0o4000;
+        const S_ISGID: u32 = 0o2000;
+
+        let old_uid = self.uid;
+        let old_euid = self.euid;
+        let old_suid = self.suid;
+        let old_egid = self.egid;
+        let setuid = mode & S_ISUID != 0;
+        let setgid = mode & S_ISGID != 0;
+        let privileged_exec = setuid || setgid;
+
+        if setuid {
+            self.euid = file_uid;
+        }
+        if setgid {
+            self.egid = file_gid;
+        }
+        self.suid = self.euid;
+        self.sgid = self.egid;
+
+        self.securebits &= !SECBIT_KEEP_CAPS;
+        if privileged_exec {
+            self.cap_ambient = 0;
+        }
+
+        if old_euid != 0 && self.euid == 0 && self.securebits & SECBIT_NOROOT == 0 {
+            self.cap_permitted = LINUX_KNOWN_CAPS & self.cap_bounding;
+        }
+        self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
+        if old_egid != self.egid {
+            // A setgid exec is a privileged exec for ambient capability purposes,
+            // but Linux capabilities themselves are uid-scoped in this bounded model.
+            self.cap_ambient &= self.cap_permitted & self.cap_inheritable;
+        }
+        self.cap_effective &= self.cap_permitted;
+        self.cap_ambient &= self.cap_permitted & self.cap_inheritable;
     }
 
     pub(crate) fn set_uid(&mut self, uid: u32) -> bool {

@@ -813,7 +813,8 @@ fn execve_checked_path(
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
-    let (kind, mode, len) = active_context().supervisor.path_metadata(resolved)?;
+    let (kind, mode, len, owner_uid, owner_gid) =
+        active_context().supervisor.path_metadata(resolved)?;
     if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
     }
@@ -828,7 +829,7 @@ fn execve_checked_path(
     }
     let access = effective_access_snapshot();
     let bytes = active_context().supervisor.read_vfs_file_path(resolved, access.ids())?;
-    execve_replace_image(frame, resolved, bytes, argv, envp)
+    execve_replace_image(frame, resolved, bytes, argv, envp, mode, owner_uid, owner_gid)
 }
 
 fn execve_replace_image(
@@ -837,6 +838,9 @@ fn execve_replace_image(
     bytes: Vec<u8>,
     argv: Vec<Vec<u8>>,
     envp: Vec<Vec<u8>>,
+    mode: u32,
+    owner_uid: u32,
+    owner_gid: u32,
 ) -> Result<i64, i32> {
     let image = {
         let context = active_context();
@@ -894,6 +898,10 @@ fn execve_replace_image(
         if !context.supervisor.reset_signal_state_for_exec(context.pid, context.tid) {
             return Err(ERR_ESRCH);
         }
+    }
+    apply_exec_credential_fixup(mode, owner_uid, owner_gid)?;
+    {
+        let context = active_context();
         if !context.supervisor.mark_process_execed(context.pid) {
             crate::kwarn!("execve could not mark pid {} execed", context.pid);
         }
@@ -906,6 +914,35 @@ fn execve_replace_image(
     next.fs_base = 0;
     ring3::install_user_return(frame, next);
     Ok(0)
+}
+
+fn apply_exec_credential_fixup(mode: u32, owner_uid: u32, owner_gid: u32) -> Result<(), i32> {
+    let before = active_context().credential_state();
+    active_context().apply_exec_file_credentials(owner_uid, owner_gid, mode);
+    let after = active_context().credential_state();
+    if before == after {
+        return Ok(());
+    }
+    let kind = if before.uid != after.uid || before.euid != after.euid || before.suid != after.suid
+    {
+        CredentialTransitionKind::SetResUid { ruid: after.uid, euid: after.euid, suid: after.suid }
+    } else if before.gid != after.gid || before.egid != after.egid || before.sgid != after.sgid {
+        CredentialTransitionKind::SetResGid { rgid: after.gid, egid: after.egid, sgid: after.sgid }
+    } else {
+        CredentialTransitionKind::CapSet {
+            bounding: before.cap_bounding != after.cap_bounding,
+            inheritable: before.cap_inheritable != after.cap_inheritable,
+            permitted: before.cap_permitted != after.cap_permitted,
+            effective: before.cap_effective != after.cap_effective,
+            ambient: before.cap_ambient != after.cap_ambient,
+            securebits: before.securebits != after.securebits,
+        }
+    };
+    if let Err(errno) = record_credential_transition(kind) {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(())
 }
 
 fn exec_load_errno(err: &'static str) -> i32 {

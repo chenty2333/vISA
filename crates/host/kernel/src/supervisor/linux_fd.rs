@@ -1997,11 +1997,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(encode_stat_abi(mode, len, uid, gid, nlink))
     }
 
-    pub(crate) fn path_metadata(&mut self, path: &[u8]) -> Result<(NodeKind, u32, u64), i32> {
+    pub(crate) fn path_metadata(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(NodeKind, u32, u64, u32, u32), i32> {
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         let mode = self.mode_for_service_node(info.route, info.node, path);
         let len = self.len_for_service_node(info.route, path);
-        Ok((info.node, mode, len))
+        let (uid, gid) = self.owner_for_service_node(info.route, path);
+        Ok((info.node, mode, len, uid, gid))
     }
 
     pub(crate) fn read_vfs_file_path(
