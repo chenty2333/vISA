@@ -259,6 +259,15 @@ impl DriverVirtioNetService {
         map_errno(self.state.submit_tx_frame(now_ticks, frame))
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn deliver_rx_frame(
+        &mut self,
+        now_ticks: u64,
+        frame: &[u8],
+    ) -> Result<u32, ServiceCallError> {
+        map_errno(self.state.deliver_rx_frame(now_ticks, frame))
+    }
+
     pub(crate) fn poll_device(
         &mut self,
         now_ticks: u64,
@@ -274,6 +283,27 @@ impl DriverVirtioNetService {
             frame.clear();
         }
         Ok(DriverNetEvent { kind: event.kind, len: payload_len, frame })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn take_tx_frame(&mut self) -> Result<Option<Vec<u8>>, ServiceCallError> {
+        let mut frame = alloc::vec![0; RESPONSE_CAPACITY];
+        let len = map_errno(self.state.take_tx_frame(&mut frame))?;
+        if len == 0 {
+            return Ok(None);
+        }
+        frame.truncate(len as usize);
+        Ok(Some(frame))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn pending_rx_frames(&mut self) -> Result<u32, ServiceCallError> {
+        Ok(self.state.pending_rx_frames())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn pending_tx_frames(&mut self) -> Result<u32, ServiceCallError> {
+        Ok(self.state.pending_tx_frames())
     }
 }
 

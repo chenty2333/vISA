@@ -9,7 +9,7 @@ use service_core::{
 };
 
 use super::super::{
-    engine::{BufferedModule, SupervisorEngine, WasmFn},
+    engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len},
     types::ServiceCallError,
 };
 
@@ -36,9 +36,13 @@ pub(crate) struct DriverVirtioNetService {
     io: BufferedModule,
     reset_sequence: WasmFn<u64, ()>,
     submit_tx_frame: WasmFn<(u64, u32), i32>,
+    deliver_rx_frame: WasmFn<(u64, u32), i32>,
     poll_device: WasmFn<u64, u32>,
     event_len: WasmFn<(), u32>,
     dequeue_rx_frame: WasmFn<(), i32>,
+    take_tx_frame: WasmFn<(), i32>,
+    pending_rx_frames: WasmFn<(), u32>,
+    pending_tx_frames: WasmFn<(), u32>,
 }
 
 impl DriverVirtioNetService {
@@ -52,10 +56,18 @@ impl DriverVirtioNetService {
             io.bind("reset_sequence", "missing driver_virtio_net reset_sequence export")?;
         let submit_tx_frame =
             io.bind("submit_tx_frame", "missing driver_virtio_net submit_tx_frame export")?;
+        let deliver_rx_frame =
+            io.bind("deliver_rx_frame", "missing driver_virtio_net deliver_rx_frame export")?;
         let poll_device = io.bind("poll_device", "missing driver_virtio_net poll_device export")?;
         let event_len = io.bind("event_len", "missing driver_virtio_net event_len export")?;
         let dequeue_rx_frame =
             io.bind("dequeue_rx_frame", "missing driver_virtio_net dequeue_rx_frame export")?;
+        let take_tx_frame =
+            io.bind("take_tx_frame", "missing driver_virtio_net take_tx_frame export")?;
+        let pending_rx_frames =
+            io.bind("pending_rx_frames", "missing driver_virtio_net pending_rx_frames export")?;
+        let pending_tx_frames =
+            io.bind("pending_tx_frames", "missing driver_virtio_net pending_tx_frames export")?;
         let network_contract_version: WasmFn<(), u32> = io.bind(
             "network_contract_version",
             "missing driver_virtio_net network_contract_version export",
@@ -71,8 +83,18 @@ impl DriverVirtioNetService {
             "missing driver_virtio_net packet_tx_queue_depth export",
         )?;
 
-        let mut service =
-            Self { io, reset_sequence, submit_tx_frame, poll_device, event_len, dequeue_rx_frame };
+        let mut service = Self {
+            io,
+            reset_sequence,
+            submit_tx_frame,
+            deliver_rx_frame,
+            poll_device,
+            event_len,
+            dequeue_rx_frame,
+            take_tx_frame,
+            pending_rx_frames,
+            pending_tx_frames,
+        };
         validate_network_contract(
             &mut service.io,
             &network_contract_version,
@@ -88,6 +110,19 @@ impl DriverVirtioNetService {
         self.io
             .call(&self.reset_sequence, now_ticks, "driver_virtio_net trapped")
             .map_err(ServiceCallError::Trap)
+    }
+
+    pub(crate) fn deliver_rx_frame(
+        &mut self,
+        now_ticks: u64,
+        frame: &[u8],
+    ) -> Result<u32, ServiceCallError> {
+        let len = self.io.write_request(frame).map_err(ServiceCallError::Invalid)?;
+        let delivered = self
+            .io
+            .call(&self.deliver_rx_frame, (now_ticks, len), "driver_virtio_net trapped")
+            .map_err(ServiceCallError::Trap)?;
+        expect_len(delivered)
     }
 
     pub(crate) fn submit_tx_frame(
@@ -144,6 +179,31 @@ impl DriverVirtioNetService {
             (Vec::new(), len)
         };
         Ok(DriverNetEvent { kind, len: payload_len, frame })
+    }
+
+    pub(crate) fn take_tx_frame(&mut self) -> Result<Option<Vec<u8>>, ServiceCallError> {
+        let len = self
+            .io
+            .call(&self.take_tx_frame, (), "driver_virtio_net trapped")
+            .map_err(ServiceCallError::Trap)?;
+        let len = expect_len(len)?;
+        if len == 0 {
+            return Ok(None);
+        }
+        let frame = self.io.read_response(len).map_err(ServiceCallError::Invalid)?;
+        Ok(Some(frame))
+    }
+
+    pub(crate) fn pending_rx_frames(&mut self) -> Result<u32, ServiceCallError> {
+        self.io
+            .call(&self.pending_rx_frames, (), "driver_virtio_net trapped")
+            .map_err(ServiceCallError::Trap)
+    }
+
+    pub(crate) fn pending_tx_frames(&mut self) -> Result<u32, ServiceCallError> {
+        self.io
+            .call(&self.pending_tx_frames, (), "driver_virtio_net trapped")
+            .map_err(ServiceCallError::Trap)
     }
 }
 
