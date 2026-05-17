@@ -53,6 +53,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let entry = self.fd_entry(fd).ok_or("write targeted an unknown file descriptor")?;
         match &entry.resource {
+            FdResource::TimerFd { .. } => Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
             FdResource::ServiceNode { route, path, .. } if *route == ServiceRoute::Devfs => {
                 let path = path.clone();
                 if self.require_capability("devfs_service", "device.pulse", "poll").is_err() {
@@ -185,6 +186,15 @@ impl<'engine> PrototypeRuntime<'engine> {
                 kind: PlanKind::RecvFrom,
                 args: [fd as u64, 0, count as u64, 0, 0, 0],
             });
+        }
+        if self
+            .fd_entry(fd)
+            .is_some_and(|entry| matches!(entry.resource, FdResource::TimerFd { .. }))
+        {
+            return match self.read_timerfd_value(fd, count as usize) {
+                Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
         }
         match self.read_from_fd(fd, count) {
             Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),

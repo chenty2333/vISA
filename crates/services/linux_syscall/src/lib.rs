@@ -18,7 +18,8 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
     SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
     SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -103,6 +104,9 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_CLOCK_GETTIME => plan_clock_gettime(a0, a1),
         SYS_CLOCK_GETRES => plan_clock_getres(a0, a1),
         SYS_CLOCK_ADJTIME => plan_clock_adjtime(a0, a1),
+        SYS_TIMERFD_CREATE => plan_timerfd_create(a0, a1),
+        SYS_TIMERFD_SETTIME => plan_timerfd_settime(a0, a1, a2, a3),
+        SYS_TIMERFD_GETTIME => plan_timerfd_gettime(a0, a1),
         SYS_RENAME => plan_renameat2(
             AT_FDCWD_ENCODED,
             a0,
@@ -562,6 +566,21 @@ fn plan_clock_gettime(clock_id: u64, timespec_ptr: u64) -> PackedStep {
 fn plan_clock_getres(clock_id: u64, timespec_ptr: u64) -> PackedStep {
     reset_plan(PlanKind::ClockGetres, [clock_id, timespec_ptr, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::ClockGetres)
+}
+
+fn plan_timerfd_create(clock_id: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::TimerfdCreate, [clock_id, flags, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::TimerfdCreate)
+}
+
+fn plan_timerfd_settime(fd: u64, flags: u64, new_value_ptr: u64, old_value_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::TimerfdSettime, [fd, flags, new_value_ptr, old_value_ptr, 0, 0]);
+    PackedStep::plan(PlanKind::TimerfdSettime)
+}
+
+fn plan_timerfd_gettime(fd: u64, curr_value_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::TimerfdGettime, [fd, curr_value_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::TimerfdGettime)
 }
 
 fn plan_seccomp(operation: u64, flags: u64, args_ptr: u64) -> PackedStep {
@@ -1404,6 +1423,31 @@ mod tests {
         assert_eq!(plan_arg(0), 0);
         assert_eq!(plan_arg(1), 0x3000);
         assert_eq!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn timerfd_plans_preserve_arguments() {
+        let _guard = test_guard();
+
+        let create = PackedStep::decode(dispatch(SYS_TIMERFD_CREATE, 1, 0o2004000, 0, 0, 0, 0));
+        assert_eq!(create.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(create.aux), Some(PlanKind::TimerfdCreate));
+        assert_eq!(plan_arg(0), 1);
+        assert_eq!(plan_arg(1), 0o2004000);
+
+        let settime = PackedStep::decode(dispatch(SYS_TIMERFD_SETTIME, 7, 1, 0x3000, 0x3040, 0, 0));
+        assert_eq!(settime.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(settime.aux), Some(PlanKind::TimerfdSettime));
+        assert_eq!(plan_arg(0), 7);
+        assert_eq!(plan_arg(1), 1);
+        assert_eq!(plan_arg(2), 0x3000);
+        assert_eq!(plan_arg(3), 0x3040);
+
+        let gettime = PackedStep::decode(dispatch(SYS_TIMERFD_GETTIME, 7, 0x3080, 0, 0, 0, 0));
+        assert_eq!(gettime.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(gettime.aux), Some(PlanKind::TimerfdGettime));
+        assert_eq!(plan_arg(0), 7);
+        assert_eq!(plan_arg(1), 0x3080);
     }
 
     #[test]

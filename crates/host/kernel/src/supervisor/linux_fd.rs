@@ -17,7 +17,7 @@ use super::{
     types::{
         AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, CAP_SYS_ADMIN,
         EventFdState, FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState,
-        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId, VfsTimestamps,
+        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId, TimerFdState, VfsTimestamps,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -28,15 +28,22 @@ const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
 const PIPE_READY_TAG: u64 = 0x7000_0000_0000_0000;
 const SOCKETPAIR_READY_TAG: u64 = 0x8000_0000_0000_0000;
 const EVENTFD_READY_TAG: u64 = 0x9000_0000_0000_0000;
+const TIMERFD_READY_TAG: u64 = 0xa000_0000_0000_0000;
 const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const DEFAULT_PIPE_CAPACITY: usize = 65_536;
 const EVENTFD_MAX_COUNTER: u64 = u64::MAX - 1;
+const CLOCK_REALTIME: u64 = 0;
+const CLOCK_MONOTONIC: u64 = 1;
+const CLOCK_BOOTTIME: u64 = 7;
+const CLOCK_REALTIME_ALARM: u64 = 8;
+const CLOCK_BOOTTIME_ALARM: u64 = 9;
 const MAY_EXEC: u32 = 0x1;
 const MAY_WRITE: u32 = 0x2;
 const MAY_READ: u32 = 0x4;
 const O_ACCMODE: u32 = 0o3;
 const O_WRONLY: u32 = 0o1;
 const O_RDWR: u32 = 0o2;
+const O_NONBLOCK: u32 = 0o4000;
 const POLLIN: u16 = 0x001;
 const POLLOUT: u16 = 0x004;
 const POLLERR: u16 = 0x008;
@@ -1214,6 +1221,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(fd)
     }
 
+    pub(crate) fn create_timerfd(&mut self, clock_id: u64, flags: u32) -> Result<u32, i32> {
+        const TFD_CLOEXEC: u32 = 0o2000000;
+        const TFD_NONBLOCK: u32 = O_NONBLOCK;
+
+        if flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        self.timerfd_now_ns(clock_id)?;
+        if !self.can_allocate_fds(1) {
+            return Err(ERR_EMFILE);
+        }
+
+        let timerfd_id = self.next_timerfd_id;
+        self.next_timerfd_id = self.next_timerfd_id.saturating_add(1);
+        self.timerfds.push(TimerFdState {
+            id: timerfd_id,
+            clock_id,
+            interval_ns: 0,
+            next_expiration_ns: None,
+            expirations: 0,
+        });
+        let fd = self.alloc_fd(FdEntry {
+            resource: FdResource::TimerFd { timerfd_id },
+            cursor: 0,
+            fd_flags: 0,
+            status_flags: flags & TFD_NONBLOCK,
+            cursor_group: None,
+        })?;
+        if flags & TFD_CLOEXEC != 0 {
+            self.set_fd_flags(fd, 1)?;
+        }
+        Ok(fd)
+    }
+
     pub(crate) fn is_pipe_fd(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::PipeEnd { .. }))
     }
@@ -1252,6 +1293,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn is_eventfd_fd(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::EventFd { .. }))
+    }
+
+    pub(crate) fn is_timerfd_fd(&self, fd: u32) -> bool {
+        self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::TimerFd { .. }))
     }
 
     pub(crate) fn read_pipe_fd_bytes(&mut self, fd: u32, count: usize) -> Result<Vec<u8>, i32> {
@@ -1526,6 +1571,68 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(8)
     }
 
+    pub(crate) fn timerfd_settime(
+        &mut self,
+        fd: u32,
+        flags: u32,
+        value_ns: u64,
+        interval_ns: u64,
+    ) -> Result<(u64, u64), i32> {
+        const TFD_TIMER_ABSTIME: u32 = 1;
+        const TFD_TIMER_CANCEL_ON_SET: u32 = 2;
+
+        if flags & !(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        if flags & TFD_TIMER_CANCEL_ON_SET != 0 {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        let timerfd_id = self.timerfd_id_for_fd(fd)?;
+        self.refresh_timerfd(timerfd_id)?;
+        let old = self.timerfd_gettime_by_id(timerfd_id)?;
+        let clock_id = self.timerfd(timerfd_id)?.clock_id;
+        let now_ns = self.timerfd_now_ns(clock_id)?;
+        let timerfd = self.timerfd_mut(timerfd_id)?;
+        timerfd.interval_ns = interval_ns;
+        timerfd.expirations = 0;
+        timerfd.next_expiration_ns = if value_ns == 0 {
+            None
+        } else if flags & TFD_TIMER_ABSTIME != 0 {
+            Some(value_ns)
+        } else {
+            Some(now_ns.saturating_add(value_ns))
+        };
+        self.refresh_timerfd(timerfd_id)?;
+        if self.timerfd(timerfd_id)?.expirations > 0 {
+            self.notify_ready_key(timerfd_ready_key(timerfd_id), "timerfd read readiness");
+        }
+        Ok(old)
+    }
+
+    pub(crate) fn timerfd_gettime(&mut self, fd: u32) -> Result<(u64, u64), i32> {
+        let timerfd_id = self.timerfd_id_for_fd(fd)?;
+        self.refresh_timerfd(timerfd_id)?;
+        self.timerfd_gettime_by_id(timerfd_id)
+    }
+
+    pub(crate) fn read_timerfd_value(&mut self, fd: u32, count: usize) -> Result<Vec<u8>, i32> {
+        if count < 8 {
+            return Err(ERR_EINVAL);
+        }
+        let timerfd_id = self.timerfd_id_for_fd(fd)?;
+        self.refresh_timerfd(timerfd_id)?;
+        let value = {
+            let timerfd = self.timerfd_mut(timerfd_id)?;
+            if timerfd.expirations == 0 {
+                return Err(ERR_EAGAIN);
+            }
+            let value = timerfd.expirations;
+            timerfd.expirations = 0;
+            value
+        };
+        Ok(value.to_le_bytes().to_vec())
+    }
+
     pub(crate) fn fd_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
         let Some(entry) = self.fd_entry(fd) else {
             return Err(ERR_EBADF);
@@ -1538,6 +1645,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::SocketPairEnd { .. } => self.socketpair_poll_revents(fd, events),
             FdResource::Socket { .. } => self.socket_poll_revents(fd, events),
             FdResource::EventFd { .. } => self.eventfd_poll_revents(fd, events),
+            FdResource::TimerFd { .. } => self.timerfd_poll_revents(fd, events),
             _ => Ok(0),
         }
     }
@@ -1655,8 +1763,105 @@ impl<'engine> PrototypeRuntime<'engine> {
         })
     }
 
+    pub(crate) fn timerfd_poll_revents(&mut self, fd: u32, events: u16) -> Result<u16, i32> {
+        let timerfd_id = self.timerfd_id_for_fd(fd)?;
+        self.refresh_timerfd(timerfd_id)?;
+        let timerfd = self.timerfd(timerfd_id)?;
+        let mut revents = 0u16;
+        if timerfd.expirations > 0 {
+            revents |= requested_read_revents(events);
+        }
+        Ok(revents)
+    }
+
+    pub(super) fn timerfd_ready_key_matches_events(&mut self, ready_key: u64, events: u32) -> bool {
+        if ready_key & READY_TAG_MASK != TIMERFD_READY_TAG {
+            return false;
+        }
+        let timerfd_id = ready_key & !READY_TAG_MASK;
+        if self.refresh_timerfd(timerfd_id).is_err() {
+            return false;
+        }
+        self.timerfd(timerfd_id)
+            .is_ok_and(|timerfd| events & EPOLLIN != 0 && timerfd.expirations > 0)
+    }
+
+    pub(super) fn collect_timerfd_ready_keys(&mut self, out: &mut Vec<u64>) {
+        for index in 0..self.timerfds.len() {
+            let timerfd_id = self.timerfds[index].id;
+            if self.refresh_timerfd(timerfd_id).is_ok()
+                && self.timerfd(timerfd_id).is_ok_and(|timerfd| timerfd.expirations > 0)
+            {
+                out.push(timerfd_ready_key(timerfd_id));
+            }
+        }
+    }
+
     fn eventfd_mut(&mut self, eventfd_id: u64) -> Result<&mut EventFdState, i32> {
         self.eventfds.iter_mut().find(|eventfd| eventfd.id == eventfd_id).ok_or(ERR_EBADF)
+    }
+
+    fn timerfd_id_for_fd(&self, fd: u32) -> Result<u64, i32> {
+        match &self.fd_entry(fd).ok_or(ERR_EBADF)?.resource {
+            FdResource::TimerFd { timerfd_id } => Ok(*timerfd_id),
+            _ => Err(ERR_EBADF),
+        }
+    }
+
+    fn timerfd(&self, timerfd_id: u64) -> Result<&TimerFdState, i32> {
+        self.timerfds.iter().find(|timerfd| timerfd.id == timerfd_id).ok_or(ERR_EBADF)
+    }
+
+    fn timerfd_mut(&mut self, timerfd_id: u64) -> Result<&mut TimerFdState, i32> {
+        self.timerfds.iter_mut().find(|timerfd| timerfd.id == timerfd_id).ok_or(ERR_EBADF)
+    }
+
+    fn refresh_timerfd(&mut self, timerfd_id: u64) -> Result<(), i32> {
+        let timerfd = self.timerfd(timerfd_id)?;
+        let Some(deadline_ns) = timerfd.next_expiration_ns else {
+            return Ok(());
+        };
+        let now_ns = self.timerfd_now_ns(timerfd.clock_id)?;
+        if now_ns < deadline_ns {
+            return Ok(());
+        }
+        let timerfd = self.timerfd_mut(timerfd_id)?;
+        if timerfd.interval_ns == 0 {
+            timerfd.next_expiration_ns = None;
+            timerfd.expirations = timerfd.expirations.saturating_add(1);
+            return Ok(());
+        }
+        let elapsed = now_ns.saturating_sub(deadline_ns);
+        let periods = (elapsed / timerfd.interval_ns).saturating_add(1);
+        timerfd.expirations = timerfd.expirations.saturating_add(periods);
+        timerfd.next_expiration_ns =
+            Some(deadline_ns.saturating_add(periods.saturating_mul(timerfd.interval_ns)));
+        Ok(())
+    }
+
+    fn timerfd_gettime_by_id(&self, timerfd_id: u64) -> Result<(u64, u64), i32> {
+        let timerfd = self.timerfd(timerfd_id)?;
+        let remaining_ns = match timerfd.next_expiration_ns {
+            Some(deadline_ns) => {
+                let now_ns = self.timerfd_now_ns(timerfd.clock_id)?;
+                deadline_ns.saturating_sub(now_ns)
+            }
+            None => 0,
+        };
+        Ok((remaining_ns, timerfd.interval_ns))
+    }
+
+    fn timerfd_now_ns(&self, clock_id: u64) -> Result<u64, i32> {
+        let tick = interrupts::tick_count();
+        let timer_hz = interrupts::TIMER_HZ as u64;
+        match clock_id {
+            CLOCK_REALTIME | CLOCK_REALTIME_ALARM => {
+                Ok(self.runtime_realtime_now_ns(tick, timer_hz))
+            }
+            CLOCK_MONOTONIC | CLOCK_BOOTTIME | CLOCK_BOOTTIME_ALARM => Ok(1_000_000_000u64
+                .saturating_add(tick.saturating_mul(1_000_000_000) / timer_hz.max(1))),
+            _ => Err(ERR_EINVAL),
+        }
     }
 
     fn dup_source_entry(&mut self, fd: u32) -> Result<FdEntry, i32> {
@@ -1745,6 +1950,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         let closing_bpf_map_last_ref = closing_bpf_map
             .map(|map_id| !self.has_other_bpf_map_fd_ref(fd, map_id))
             .unwrap_or(false);
+        let closing_timerfd = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::TimerFd { timerfd_id } => Some(*timerfd_id),
+            _ => None,
+        });
+        let closing_timerfd_last_ref =
+            closing_timerfd.map(|timerfd_id| !self.has_other_timerfd_fd_ref(fd, timerfd_id));
         if let Some(socket_id) = closing_socket
             && closing_socket_last_ref
         {
@@ -1801,6 +2012,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             && closing_bpf_map_last_ref
         {
             self.remove_bpf_map(map_id);
+        }
+        if let Some(timerfd_id) = closing_timerfd
+            && closing_timerfd_last_ref.unwrap_or(false)
+        {
+            self.remove_timerfd(timerfd_id);
         }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
@@ -1918,6 +2134,26 @@ impl<'engine> PrototypeRuntime<'engine> {
                 )
             })
         })
+    }
+
+    fn has_other_timerfd_fd_ref(&self, closing_fd: u32, timerfd_id: u64) -> bool {
+        self.fd_table.iter().enumerate().any(|(fd, entry)| {
+            fd != closing_fd as usize
+                && matches!(
+                    entry.as_ref().map(|entry| &entry.resource),
+                    Some(FdResource::TimerFd { timerfd_id: other }) if *other == timerfd_id
+                )
+        }) || self.hidden_fd_table_refs.iter().any(|table| {
+            table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(entry.resource, FdResource::TimerFd { timerfd_id: other } if other == timerfd_id)
+            })
+        })
+    }
+
+    fn remove_timerfd(&mut self, timerfd_id: u64) -> bool {
+        let before = self.timerfds.len();
+        self.timerfds.retain(|timerfd| timerfd.id != timerfd_id);
+        before != self.timerfds.len()
     }
 
     pub(crate) fn fd_flags(&self, fd: u32) -> Result<u32, i32> {
@@ -2255,6 +2491,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. }
                 | FdResource::SocketPairEnd { .. }
                 | FdResource::EventFd { .. }
+                | FdResource::TimerFd { .. }
                 | FdResource::BpfMap { .. }
         ) {
             return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1, VfsTimestamps::default()));
@@ -2479,6 +2716,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::TimerFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
@@ -2498,6 +2736,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::TimerFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
@@ -2549,6 +2788,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(socketpair_ready_key(*pair_id, *endpoint))
             }
             FdResource::EventFd { eventfd_id } => Ok(eventfd_ready_key(*eventfd_id)),
+            FdResource::TimerFd { timerfd_id } => Ok(timerfd_ready_key(*timerfd_id)),
             FdResource::EpollInstance { epoll_id } => Ok(epoll_ready_key(*epoll_id)),
             _ => Err(ServiceCallError::Errno(ERR_EPERM)),
         }
@@ -2593,6 +2833,10 @@ fn requested_write_revents(events: u16) -> u16 {
 
 fn eventfd_ready_key(eventfd_id: u64) -> u64 {
     EVENTFD_READY_TAG | eventfd_id
+}
+
+fn timerfd_ready_key(timerfd_id: u64) -> u64 {
+    TIMERFD_READY_TAG | timerfd_id
 }
 
 fn peer_endpoint(endpoint: u8) -> u8 {

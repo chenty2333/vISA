@@ -104,6 +104,7 @@ pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {
         FdResource::PipeEnd { .. } => ResourceKind::Fd,
         FdResource::SocketPairEnd { .. } => ResourceKind::Fd,
         FdResource::EventFd { .. } => ResourceKind::Fd,
+        FdResource::TimerFd { .. } => ResourceKind::Fd,
         FdResource::BpfMap { .. } => ResourceKind::Fd,
     }
 }
@@ -123,6 +124,7 @@ pub(super) fn fd_resource_label(resource: &FdResource) -> String {
             format!("socketpair:{pair_id}:endpoint{endpoint}")
         }
         FdResource::EventFd { eventfd_id } => format!("eventfd:{eventfd_id}"),
+        FdResource::TimerFd { timerfd_id } => format!("timerfd:{timerfd_id}"),
         FdResource::BpfMap { map_id } => format!("bpf-map:{map_id}"),
     }
 }

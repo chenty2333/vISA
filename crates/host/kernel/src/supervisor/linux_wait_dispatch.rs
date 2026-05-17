@@ -416,6 +416,27 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.scheduler.push_event(event);
         }
 
+        let mut timerfd_ready_keys = Vec::new();
+        self.collect_timerfd_ready_keys(&mut timerfd_ready_keys);
+        for ready_key in timerfd_ready_keys {
+            match self.epoll.notify_ready(ready_key) {
+                Ok(wait_ids) => {
+                    for wait_id in wait_ids {
+                        self.scheduler.push_event(Event::WaitReady(wait_id));
+                    }
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("timerfd ready notification: {}", reason);
+                }
+                Err(ServiceCallError::Invalid(err)) => {
+                    crate::kwarn!("timerfd ready notification: {}", err);
+                }
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("timerfd ready notification errno={}", errno);
+                }
+            }
+        }
+
         let mut pulse_events = Vec::new();
         self.pulse.collect_events(interrupts::tick_count(), &mut pulse_events);
         for event in pulse_events {

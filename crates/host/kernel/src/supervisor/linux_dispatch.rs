@@ -110,6 +110,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ERR_EBADF),
             FdResource::SocketPairEnd { .. } => Err(ERR_EBADF),
             FdResource::EventFd { .. } => Err(ERR_EBADF),
+            FdResource::TimerFd { .. } => Err(ERR_EBADF),
             FdResource::BpfMap { .. } => Err(ERR_EBADF),
         }
     }
@@ -305,6 +306,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),
             PlanKind::ClockGettime => self.plan_clock_gettime(plan),
             PlanKind::ClockGetres => self.plan_clock_getres(plan),
+            PlanKind::TimerfdCreate => self.plan_timerfd_create(plan),
+            PlanKind::TimerfdSettime => self.plan_timerfd_settime(plan),
+            PlanKind::TimerfdGettime => self.plan_timerfd_gettime(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
@@ -320,10 +324,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Pause
             | PlanKind::FutexLockPi
             | PlanKind::FutexUnlockPi
-            | PlanKind::SetRobustList
-            | PlanKind::TimerfdCreate
-            | PlanKind::TimerfdSettime
-            | PlanKind::TimerfdGettime => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::SetRobustList => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

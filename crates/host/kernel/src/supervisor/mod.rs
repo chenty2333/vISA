@@ -18,6 +18,7 @@ mod linux_memory_dispatch;
 mod linux_resource_dispatch;
 mod linux_seccomp_dispatch;
 mod linux_socket_dispatch;
+mod linux_timerfd_dispatch;
 mod linux_wait_dispatch;
 mod net;
 mod process;

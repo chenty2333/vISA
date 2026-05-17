@@ -11,7 +11,8 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
     SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
     SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_UNAME, SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -90,6 +91,9 @@ impl LinuxFrontend {
             SYS_CLOCK_GETTIME => self.plan_clock_gettime(a0, a1),
             SYS_CLOCK_GETRES => self.plan_clock_getres(a0, a1),
             SYS_CLOCK_ADJTIME => self.plan_clock_adjtime(a0, a1),
+            SYS_TIMERFD_CREATE => self.plan_timerfd_create(a0, a1),
+            SYS_TIMERFD_SETTIME => self.plan_timerfd_settime(a0, a1, a2, a3),
+            SYS_TIMERFD_GETTIME => self.plan_timerfd_gettime(a0, a1),
             SYS_RENAME => self.plan_renameat2(
                 AT_FDCWD_ENCODED,
                 a0,
@@ -611,6 +615,27 @@ impl LinuxFrontend {
     fn plan_clock_getres(&mut self, clock_id: u64, timespec_ptr: u64) -> PackedStep {
         self.reset_plan(PlanKind::ClockGetres, [clock_id, timespec_ptr, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::ClockGetres)
+    }
+
+    fn plan_timerfd_create(&mut self, clock_id: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::TimerfdCreate, [clock_id, flags, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::TimerfdCreate)
+    }
+
+    fn plan_timerfd_settime(
+        &mut self,
+        fd: u64,
+        flags: u64,
+        new_value_ptr: u64,
+        old_value_ptr: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::TimerfdSettime, [fd, flags, new_value_ptr, old_value_ptr, 0, 0]);
+        PackedStep::plan(PlanKind::TimerfdSettime)
+    }
+
+    fn plan_timerfd_gettime(&mut self, fd: u64, curr_value_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::TimerfdGettime, [fd, curr_value_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::TimerfdGettime)
     }
 
     fn plan_seccomp(&mut self, operation: u64, flags: u64, args_ptr: u64) -> PackedStep {

@@ -410,6 +410,24 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "time.clock",
             operation: "adjust",
         },
+        PlanKind::TimerfdCreate => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "time.timerfd",
+            operation: "create",
+        },
+        PlanKind::TimerfdSettime => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "time.timerfd",
+            operation: "settime",
+        },
+        PlanKind::TimerfdGettime => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "time.timerfd",
+            operation: "gettime",
+        },
         PlanKind::Seccomp | PlanKind::Prctl => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

@@ -36,8 +36,9 @@ use vmos_abi::{
     SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
     SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
-    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
-    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
+    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, SyscallContext,
 };
 use x86_64::{
     PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
@@ -119,6 +120,7 @@ const ERR_ENOEXEC: i32 = 8;
 const ERR_ENODEV: i32 = 19;
 const ERR_ENOTTY: i32 = 25;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
+const LINUX_ITIMERSPEC_SIZE: usize = 32;
 const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
 const LINUX_SIGSET_BYTES: usize = 8;
@@ -130,6 +132,7 @@ const PSELECT6_MAX_FDS: usize = 1024;
 const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
+const O_NONBLOCK: u32 = 0o4000;
 const EXEC_ARG_MAX_BYTES: usize = 131_072;
 const EXEC_ARG_MAX_STRINGS: usize = 4096;
 const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
@@ -404,6 +407,9 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_PIPE => sys_pipe(frame, 0),
         SYS_EVENTFD => sys_eventfd(frame, 0),
         SYS_EVENTFD2 => sys_eventfd(frame, frame.rsi),
+        SYS_TIMERFD_CREATE => sys_timerfd_create(frame),
+        SYS_TIMERFD_SETTIME => sys_timerfd_settime(frame),
+        SYS_TIMERFD_GETTIME => sys_timerfd_gettime(frame),
         SYS_EPOLL_CREATE1 => sys_epoll_create1(frame),
         SYS_EPOLL_CREATE => sys_epoll_create(frame),
         SYS_EPOLL_CTL => sys_epoll_ctl(frame),
@@ -487,6 +493,9 @@ fn sys_write(frame: &SyscallFrame) -> Result<i64, i32> {
         let value = read_user_u64(frame.rsi)?;
         let count = active_context().supervisor.write_eventfd_value(fd, value, count)?;
         return Ok(count as i64);
+    }
+    if active_context().supervisor.is_timerfd_fd(fd) {
+        return Err(ERR_EINVAL);
     }
     let bytes = user_lease(frame.rsi, frame.rdx, false)?;
     let bytes = bytes.bytes().map_err(map_dmw_fault)?;
@@ -584,6 +593,9 @@ fn write_fd_chunk(fd: u32, bytes: &[u8]) -> Result<usize, i32> {
             .ok_or(ERR_EINVAL)?;
         return active_context().supervisor.write_eventfd_value(fd, value, bytes.len());
     }
+    if active_context().supervisor.is_timerfd_fd(fd) {
+        return Err(ERR_EINVAL);
+    }
 
     let supervisor = &mut active_context().supervisor;
     let (ptr, len) = supervisor.write_linux_arg_bytes(bytes).map_err(|_| ERR_EFAULT)?;
@@ -636,6 +648,21 @@ fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
         dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
         return Ok(bytes.len() as i64);
     }
+    if active_context().supervisor.is_timerfd_fd(fd) {
+        let bytes = match active_context().supervisor.read_timerfd_value(fd, count) {
+            Ok(bytes) => bytes,
+            Err(ERR_EAGAIN)
+                if active_context().supervisor.file_status_flags(fd)? & O_NONBLOCK == 0 =>
+            {
+                block_on_readable_fd(fd)?;
+                active_context().supervisor.read_timerfd_value(fd, count)?
+            }
+            Err(errno) => return Err(errno),
+        };
+        let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+        dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+        return Ok(bytes.len() as i64);
+    }
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
@@ -653,6 +680,22 @@ fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn block_on_readable_fd(fd: u32) -> Result<(), i32> {
+    let fd = usize::try_from(fd).map_err(|_| ERR_EINVAL)?;
+    if fd >= PSELECT6_MAX_FDS {
+        return Err(ERR_EINVAL);
+    }
+    let mut read_bits = [0u64; PSELECT6_FDSET_WORDS];
+    set_fd_bit(&mut read_bits, fd);
+    active_context().supervisor.block_on_fdset_wait(
+        read_bits,
+        [0; PSELECT6_FDSET_WORDS],
+        [0; PSELECT6_FDSET_WORDS],
+        u16::try_from(fd + 1).map_err(|_| ERR_EINVAL)?,
+        None,
+    )
 }
 
 fn sys_pread64(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3953,6 +3996,36 @@ fn sys_eventfd(frame: &SyscallFrame, flags_raw: u64) -> Result<i64, i32> {
     Ok(active_context().supervisor.create_eventfd(initval, flags)? as i64)
 }
 
+fn sys_timerfd_create(frame: &SyscallFrame) -> Result<i64, i32> {
+    let flags = u32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    Ok(active_context().supervisor.create_timerfd(frame.rdi, flags)? as i64)
+}
+
+fn sys_timerfd_settime(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdx == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    let flags = u32::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let (value_ns, interval_ns) = read_user_itimerspec_ns(frame.rdx)?;
+    let (old_value_ns, old_interval_ns) =
+        active_context().supervisor.timerfd_settime(fd, flags, value_ns, interval_ns)?;
+    if frame.r10 != 0 {
+        write_user_itimerspec_ns(frame.r10, old_value_ns, old_interval_ns)?;
+    }
+    Ok(0)
+}
+
+fn sys_timerfd_gettime(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rsi == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    let (value_ns, interval_ns) = active_context().supervisor.timerfd_gettime(fd)?;
+    write_user_itimerspec_ns(frame.rsi, value_ns, interval_ns)?;
+    Ok(0)
+}
+
 fn sys_epoll_create(frame: &SyscallFrame) -> Result<i64, i32> {
     let size = i32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     if size <= 0 {
@@ -5634,6 +5707,35 @@ fn read_user_timespec_ns(ptr: u64) -> Result<u64, i32> {
         return Err(ERR_EINVAL);
     }
     Ok((tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(tv_nsec as u64))
+}
+
+fn read_user_itimerspec_ns(ptr: u64) -> Result<(u64, u64), i32> {
+    let req = user_lease(ptr, LINUX_ITIMERSPEC_SIZE as u64, false)?;
+    let bytes = req.bytes().map_err(map_dmw_fault)?;
+    let interval_ns = decode_timespec_ns_from(bytes, 0)?;
+    let value_ns = decode_timespec_ns_from(bytes, 16)?;
+    Ok((value_ns, interval_ns))
+}
+
+fn write_user_itimerspec_ns(ptr: u64, value_ns: u64, interval_ns: u64) -> Result<(), i32> {
+    let mut encoded = [0u8; LINUX_ITIMERSPEC_SIZE];
+    encode_timespec_ns_into(&mut encoded, 0, interval_ns);
+    encode_timespec_ns_into(&mut encoded, 16, value_ns);
+    write_user_bytes(ptr, &encoded)
+}
+
+fn decode_timespec_ns_from(bytes: &[u8], offset: usize) -> Result<u64, i32> {
+    let tv_sec = read_i64_from(bytes, offset)?;
+    let tv_nsec = read_i64_from(bytes, offset + 8)?;
+    if tv_sec < 0 || !(0..1_000_000_000).contains(&tv_nsec) {
+        return Err(ERR_EINVAL);
+    }
+    Ok((tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(tv_nsec as u64))
+}
+
+fn encode_timespec_ns_into(out: &mut [u8], offset: usize, ns: u64) {
+    write_i64(out, offset, (ns / 1_000_000_000) as i64);
+    write_i64(out, offset + 8, (ns % 1_000_000_000) as i64);
 }
 
 fn current_clock_ms() -> u64 {

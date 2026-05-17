@@ -84,6 +84,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     || self.pipe_ready_key_matches_events(ready_key, events)
                     || self.socketpair_ready_key_matches_events(ready_key, events)
                     || self.eventfd_ready_key_matches_events(ready_key, events)
+                    || self.timerfd_ready_key_matches_events(ready_key, events)
                 {
                     let _ = self.epoll.notify_ready(ready_key);
                 }

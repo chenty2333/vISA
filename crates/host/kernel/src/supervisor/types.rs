@@ -420,6 +420,7 @@ pub(crate) enum FdResource {
     PipeEnd { pipe_id: u64, readable: bool, writable: bool },
     SocketPairEnd { pair_id: u64, endpoint: u8 },
     EventFd { eventfd_id: u64 },
+    TimerFd { timerfd_id: u64 },
     BpfMap { map_id: u64 },
 }
 
@@ -484,6 +485,15 @@ pub(crate) struct EventFdState {
     pub(crate) id: u64,
     pub(crate) counter: u64,
     pub(crate) semaphore: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TimerFdState {
+    pub(crate) id: u64,
+    pub(crate) clock_id: u64,
+    pub(crate) interval_ns: u64,
+    pub(crate) next_expiration_ns: Option<u64>,
+    pub(crate) expirations: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
