@@ -244,6 +244,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.write_to_fd(fd, bytes).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn write_vfs_fd_range(
+        &mut self,
+        fd: u32,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<usize, i32> {
+        self.require_fd_writable(fd).map_err(errno_from_service_error)?;
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(ERR_EINVAL);
+        }
+        if node == NodeKind::Directory {
+            return Err(vmos_abi::ERR_EISDIR);
+        }
+        if node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.vfs
+            .write_file_by_id(vfs_node_id, &path, offset, bytes)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn is_vfs_file_fd(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| {
             matches!(

@@ -31,11 +31,11 @@ use vmos_abi::{
     SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MADVISE, SYS_MKDIR, SYS_MKDIRAT,
     SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
-    SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT,
-    SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ,
-    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_PPOLL, SYS_PRCTL, SYS_PREADV, SYS_PRLIMIT64, SYS_PSELECT6, SYS_PWRITEV, SYS_READ,
+    SYS_READLINK, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
     SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
     SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
     SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
@@ -295,6 +295,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_WRITEV => sys_writev(frame),
         SYS_READ => sys_read(frame),
         SYS_READV => sys_readv(frame),
+        SYS_PREADV => sys_preadv(frame),
+        SYS_PWRITEV => sys_pwritev(frame),
         SYS_PREAD64 => sys_pread64(frame),
         SYS_LSEEK => sys_lseek(frame),
         SYS_OPEN => sys_open(frame),
@@ -585,12 +587,90 @@ fn sys_readv(frame: &SyscallFrame) -> Result<i64, i32> {
     Ok(total as i64)
 }
 
+fn sys_preadv(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let iovcnt = validate_iovcnt(frame.rdx)?;
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+
+    let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
+    for (base, len) in &iovecs {
+        validate_user_range(*base, *len, true)?;
+    }
+
+    let mut offset = preadv_offset_from_split(frame.r10, frame.r8)?;
+    let mut total = 0usize;
+    for (base, len) in iovecs {
+        if len == 0 {
+            continue;
+        }
+        let count = usize::try_from(len).map_err(|_| ERR_EINVAL)?;
+        match active_context().supervisor.read_vfs_fd_range(fd, offset, count) {
+            Ok(bytes) => {
+                let read_len = bytes.len();
+                if read_len != 0 {
+                    let mut dest = user_lease(base, read_len as u64, true)?;
+                    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+                }
+                total = total.checked_add(read_len).ok_or(ERR_EINVAL)?;
+                offset = offset.checked_add(read_len).ok_or(ERR_EINVAL)?;
+                if read_len < count {
+                    return Ok(total as i64);
+                }
+            }
+            Err(_errno) if total > 0 => return Ok(total as i64),
+            Err(errno) => return Err(errno),
+        }
+    }
+    Ok(total as i64)
+}
+
+fn sys_pwritev(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let iovcnt = validate_iovcnt(frame.rdx)?;
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+
+    let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
+    let mut offset = preadv_offset_from_split(frame.r10, frame.r8)?;
+    let mut total = 0usize;
+    for (base, len) in iovecs {
+        if len == 0 {
+            continue;
+        }
+        let lease = user_lease(base, len, false)?;
+        let bytes = lease.bytes().map_err(map_dmw_fault)?;
+        match active_context().supervisor.write_vfs_fd_range(fd, offset, bytes) {
+            Ok(written) => {
+                total = total.checked_add(written).ok_or(ERR_EINVAL)?;
+                offset = offset.checked_add(written).ok_or(ERR_EINVAL)?;
+                if written < bytes.len() {
+                    return Ok(total as i64);
+                }
+            }
+            Err(_errno) if total > 0 => return Ok(total as i64),
+            Err(errno) => return Err(errno),
+        }
+    }
+    Ok(total as i64)
+}
+
 fn validate_iovcnt(iovcnt_arg: u64) -> Result<usize, i32> {
     let iovcnt = usize::try_from(iovcnt_arg).map_err(|_| ERR_EINVAL)?;
     if iovcnt > LINUX_IOV_MAX {
         return Err(ERR_EINVAL);
     }
     Ok(iovcnt)
+}
+
+fn preadv_offset_from_split(pos_l: u64, pos_h: u64) -> Result<usize, i32> {
+    let raw = ((pos_h & u32::MAX as u64) << 32) | (pos_l & u32::MAX as u64);
+    if raw > i64::MAX as u64 {
+        return Err(ERR_EINVAL);
+    }
+    usize::try_from(raw).map_err(|_| ERR_EINVAL)
 }
 
 fn read_user_iovecs(ptr: u64, iovcnt: usize) -> Result<Vec<(u64, u64)>, i32> {
@@ -6561,10 +6641,11 @@ mod tests {
         UserReturnContext, decode_linux_ucontext_return, encode_linux_ucontext,
         futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, parse_clone3_request_bytes, pselect_read_revents_ready,
-        pselect_write_revents_ready, read_linux_greg, sanitize_restored_rflags,
-        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms, validate_iovcnt,
-        validate_pselect6_nfds, wait_nfds_within_rlimit, write_linux_greg,
+        futex_pi_wait_word, parse_clone3_request_bytes, preadv_offset_from_split,
+        pselect_read_revents_ready, pselect_write_revents_ready, read_linux_greg,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, validate_iovcnt, validate_pselect6_nfds, wait_nfds_within_rlimit,
+        write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -6671,6 +6752,13 @@ mod tests {
         assert_eq!(validate_iovcnt(super::LINUX_IOV_MAX as u64), Ok(super::LINUX_IOV_MAX));
         assert_eq!(validate_iovcnt(super::LINUX_IOV_MAX as u64 + 1), Err(vmos_abi::ERR_EINVAL));
         assert_eq!(validate_iovcnt(u64::MAX), Err(vmos_abi::ERR_EINVAL));
+    }
+
+    #[test]
+    fn preadv_offset_reconstructs_split_linux_offset() {
+        assert_eq!(preadv_offset_from_split(0x89ab_cdef, 0x0123_4567), Ok(0x0123_4567_89ab_cdef));
+        assert_eq!(preadv_offset_from_split(0xffff_ffff, 0x7fff_ffff), Ok(i64::MAX as usize));
+        assert_eq!(preadv_offset_from_split(0, 0x8000_0000), Err(vmos_abi::ERR_EINVAL));
     }
 
     #[test]
