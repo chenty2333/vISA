@@ -20,6 +20,7 @@ pub const SYS_RT_SIGTIMEDWAIT: u64 = 128;
 pub const SYS_RT_SIGSUSPEND: u64 = 130;
 pub const SYS_SIGALTSTACK: u64 = 131;
 pub const SYS_IOCTL: u64 = 16;
+pub const SYS_READV: u64 = 19;
 pub const SYS_WRITEV: u64 = 20;
 pub const SYS_ACCESS: u64 = 21;
 pub const SYS_PIPE: u64 = 22;
