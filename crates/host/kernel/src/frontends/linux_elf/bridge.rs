@@ -28,15 +28,16 @@ use vmos_abi::{
     SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID,
     SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LINK,
     SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MADVISE, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT,
-    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
-    SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
-    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
-    SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT,
-    SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
+    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_RECVFROM,
+    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
+    SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
+    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
+    SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME,
+    SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext,
 };
 use x86_64::{VirtAddr, registers::model_specific::FsBase};
 
@@ -159,6 +160,7 @@ const MAP_SHARED: u64 = 0x01;
 const MAP_PRIVATE: u64 = 0x02;
 const MAP_FIXED: u64 = 0x10;
 const MAP_ANONYMOUS: u64 = 0x20;
+const MAP_FIXED_NOREPLACE: u64 = 0x100000;
 
 #[derive(Clone, Copy)]
 struct PselectFdSetSnapshot {
@@ -411,6 +413,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETSOCKOPT => sys_getsockopt(frame),
         SYS_FCNTL => sys_fcntl(frame),
         SYS_MMAP => sys_mmap(frame),
+        SYS_MREMAP => sys_mremap(frame),
         SYS_MPROTECT => sys_mprotect(frame),
         SYS_MSYNC => sys_msync(frame),
         SYS_MADVISE => sys_madvise(frame),
@@ -4686,6 +4689,8 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     }
     let anonymous = flags & MAP_ANONYMOUS != 0;
     let fixed = flags & MAP_FIXED != 0;
+    let fixed_noreplace = flags & MAP_FIXED_NOREPLACE != 0;
+    let fixed_address = fixed || fixed_noreplace;
     let file_bytes = if anonymous {
         None
     } else {
@@ -4705,7 +4710,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_ENOMEM);
     }
 
-    let addr = if frame.rdi != 0 {
+    let addr = if fixed_address || frame.rdi != 0 {
         if frame.rdi & 4095 != 0 {
             return Err(ERR_EINVAL);
         }
@@ -4716,6 +4721,9 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     };
 
     let existing_ranges = active_context().mapped_user_subranges(addr, len);
+    if fixed_noreplace && !existing_ranges.is_empty() {
+        return Err(vmos_abi::ERR_EEXIST);
+    }
     if fixed || file_bytes.is_some() {
         for (start, end) in existing_ranges {
             unmap_active_user_page_range(start, end - start)?;
@@ -4747,6 +4755,75 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         }
     }
     Ok(addr as i64)
+}
+
+fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
+    const MREMAP_MAYMOVE: u64 = 0x1;
+    const MREMAP_FIXED: u64 = 0x2;
+    const MREMAP_DONTUNMAP: u64 = 0x4;
+    const MREMAP_KNOWN_FLAGS: u64 = MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP;
+
+    let old_addr = frame.rdi;
+    let old_size = frame.rsi;
+    let new_size = frame.rdx;
+    let flags = frame.r10;
+
+    if old_addr & 4095 != 0 || flags & !MREMAP_KNOWN_FLAGS != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if old_size == 0 || new_size == 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & MREMAP_FIXED != 0 && flags & MREMAP_MAYMOVE == 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & MREMAP_DONTUNMAP != 0 && old_size != new_size {
+        return Err(ERR_EINVAL);
+    }
+    if flags & (MREMAP_FIXED | MREMAP_DONTUNMAP) != 0 {
+        return Err(ERR_ENOSYS);
+    }
+
+    let old_len = align_page(old_size).ok_or(ERR_EINVAL)?;
+    let new_len = align_page(new_size).ok_or(ERR_EINVAL)?;
+    validate_lower_user_address_range(old_addr, old_len)?;
+    validate_mapped_user_range(old_addr, old_len)?;
+    let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    let new_end = old_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+    let (readable, writable, executable) =
+        single_user_region_permissions(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+
+    if new_len == old_len {
+        return Ok(old_addr as i64);
+    }
+
+    if new_len < old_len {
+        let shrink_start = old_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+        let shrink_len = old_len - new_len;
+        unmap_active_user_page_range(shrink_start, shrink_len)?;
+        active_context().unmap_user_region(shrink_start, shrink_len);
+        active_context().supervisor.record_guest_memory_unmap(shrink_start, shrink_len);
+        return Ok(old_addr as i64);
+    }
+
+    validate_reserved_user_page_range(old_addr, new_len)?;
+    if !active_context().mapped_user_subranges(old_end, new_end - old_end).is_empty() {
+        return if flags & MREMAP_MAYMOVE != 0 { Err(ERR_ENOSYS) } else { Err(ERR_ENOMEM) };
+    }
+
+    let grow_len = new_len - old_len;
+    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+    if as_limit != u64::MAX
+        && active_context().mapped_user_bytes().saturating_add(grow_len) > as_limit
+    {
+        return Err(ERR_ENOMEM);
+    }
+
+    active_context().record_user_region(old_end, grow_len, readable, writable, executable);
+    active_context()
+        .supervisor
+        .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
+    Ok(old_addr as i64)
 }
 
 fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -6425,6 +6502,16 @@ fn validate_user_range(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
 
 fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
     validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
+}
+
+fn single_user_region_permissions(ptr: u64, len: u64) -> Option<(bool, bool, bool)> {
+    let end = ptr.checked_add(len)?;
+    let region = active_context()
+        .regions
+        .iter()
+        .rev()
+        .find(|region| ptr >= region.start && end <= region.end)?;
+    Some((region.readable, region.writable, region.executable))
 }
 
 fn validate_reserved_user_page_range(ptr: u64, len: u64) -> Result<(), i32> {

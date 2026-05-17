@@ -12,6 +12,7 @@ pub const SYS_DUP: u64 = 32;
 pub const SYS_DUP2: u64 = 33;
 pub const SYS_POLL: u64 = 7;
 pub const SYS_MMAP: u64 = 9;
+pub const SYS_MREMAP: u64 = 25;
 pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_RT_SIGRETURN: u64 = 15;
