@@ -32,9 +32,11 @@ pub(crate) struct ProcessAccessState {
     pub(crate) real_uid: u32,
     pub(crate) uid: u32,
     pub(crate) saved_uid: u32,
+    pub(crate) fsuid: u32,
     pub(crate) real_gid: u32,
     pub(crate) gid: u32,
     pub(crate) saved_gid: u32,
+    pub(crate) fsgid: u32,
     pub(crate) supplementary_groups: Vec<u32>,
     pub(crate) cap_permitted: u64,
     pub(crate) cap_effective: u64,
@@ -46,9 +48,11 @@ impl ProcessAccessState {
             real_uid: 0,
             uid: 0,
             saved_uid: 0,
+            fsuid: 0,
             real_gid: 0,
             gid: 0,
             saved_gid: 0,
+            fsgid: 0,
             supplementary_groups: Vec::new(),
             cap_permitted: LINUX_KNOWN_CAPS,
             cap_effective: LINUX_KNOWN_CAPS,
@@ -59,9 +63,11 @@ impl ProcessAccessState {
         real_uid: u32,
         effective_uid: u32,
         saved_uid: u32,
+        fsuid: u32,
         real_gid: u32,
         effective_gid: u32,
         saved_gid: u32,
+        fsgid: u32,
         supplementary_groups: Vec<u32>,
         cap_permitted: u64,
         cap_effective: u64,
@@ -70,9 +76,11 @@ impl ProcessAccessState {
             real_uid,
             uid: effective_uid,
             saved_uid,
+            fsuid,
             real_gid,
             gid: effective_gid,
             saved_gid,
+            fsgid,
             supplementary_groups,
             cap_permitted,
             cap_effective,
@@ -80,16 +88,18 @@ impl ProcessAccessState {
     }
 
     pub(crate) fn ids(&self) -> AccessIds<'_> {
-        AccessIds::with_caps(self.uid, self.gid, &self.supplementary_groups, self.cap_effective)
+        AccessIds::with_caps(self.fsuid, self.fsgid, &self.supplementary_groups, self.cap_effective)
     }
 
     pub(crate) fn credential_ids_differ(&self, other: &Self) -> bool {
         self.real_uid != other.real_uid
             || self.uid != other.uid
             || self.saved_uid != other.saved_uid
+            || self.fsuid != other.fsuid
             || self.real_gid != other.real_gid
             || self.gid != other.gid
             || self.saved_gid != other.saved_gid
+            || self.fsgid != other.fsgid
     }
 }
 

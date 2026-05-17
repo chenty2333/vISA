@@ -197,6 +197,8 @@ pub(crate) struct ActiveUserContext {
     egid: u32,
     suid: u32,
     sgid: u32,
+    fsuid: u32,
+    fsgid: u32,
     supplementary_groups: Vec<u32>,
     cap_bounding: u64,
     cap_inheritable: u64,
@@ -231,6 +233,8 @@ pub(crate) struct SuspendedVforkParent {
     egid: u32,
     suid: u32,
     sgid: u32,
+    fsuid: u32,
+    fsgid: u32,
     supplementary_groups: Vec<u32>,
     cap_bounding: u64,
     cap_inheritable: u64,
@@ -277,6 +281,8 @@ pub(crate) struct CredentialState {
     pub(crate) egid: u32,
     pub(crate) suid: u32,
     pub(crate) sgid: u32,
+    pub(crate) fsuid: u32,
+    pub(crate) fsgid: u32,
     pub(crate) supplementary_groups: Vec<u32>,
     pub(crate) cap_bounding: u64,
     pub(crate) cap_inheritable: u64,
@@ -331,6 +337,8 @@ impl ActiveUserContext {
             egid: 0,
             suid: 0,
             sgid: 0,
+            fsuid: 0,
+            fsgid: 0,
             supplementary_groups: Vec::new(),
             cap_bounding: LINUX_KNOWN_CAPS,
             cap_inheritable: 0,
@@ -487,6 +495,14 @@ impl ActiveUserContext {
         self.sgid
     }
 
+    pub(crate) fn fsuid(&self) -> u32 {
+        self.fsuid
+    }
+
+    pub(crate) fn fsgid(&self) -> u32 {
+        self.fsgid
+    }
+
     pub(crate) fn supplementary_groups(&self) -> &[u32] {
         &self.supplementary_groups
     }
@@ -535,6 +551,8 @@ impl ActiveUserContext {
             egid: self.egid,
             suid: self.suid,
             sgid: self.sgid,
+            fsuid: self.fsuid,
+            fsgid: self.fsgid,
             supplementary_groups: self.supplementary_groups.clone(),
             cap_bounding: self.cap_bounding,
             cap_inheritable: self.cap_inheritable,
@@ -552,6 +570,8 @@ impl ActiveUserContext {
         self.egid = state.egid;
         self.suid = state.suid;
         self.sgid = state.sgid;
+        self.fsuid = state.fsuid;
+        self.fsgid = state.fsgid;
         self.supplementary_groups = state.supplementary_groups;
         self.cap_bounding = state.cap_bounding;
         self.cap_inheritable = state.cap_inheritable;
@@ -587,6 +607,8 @@ impl ActiveUserContext {
         }
         self.suid = self.euid;
         self.sgid = self.egid;
+        self.fsuid = self.euid;
+        self.fsgid = self.egid;
 
         self.securebits &= !SECBIT_KEEP_CAPS;
         if privileged_exec {
@@ -628,11 +650,13 @@ impl ActiveUserContext {
             self.uid = uid;
             self.euid = uid;
             self.suid = uid;
+            self.fsuid = self.euid;
             self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
             return true;
         }
         if uid == self.uid || uid == self.euid || uid == self.suid {
             self.euid = uid;
+            self.fsuid = self.euid;
             self.fixup_capabilities_after_uid_change(old_uid, old_euid, old_suid);
             return true;
         }
@@ -644,10 +668,12 @@ impl ActiveUserContext {
             self.gid = gid;
             self.egid = gid;
             self.sgid = gid;
+            self.fsgid = self.egid;
             return true;
         }
         if gid == self.gid || gid == self.egid || gid == self.sgid {
             self.egid = gid;
+            self.fsgid = self.egid;
             return true;
         }
         false
@@ -670,6 +696,7 @@ impl ActiveUserContext {
         }
         if let Some(uid) = euid {
             self.euid = uid;
+            self.fsuid = self.euid;
         }
         if (privileged && (ruid.is_some() || euid.is_some()))
             || ruid.is_some()
@@ -698,6 +725,7 @@ impl ActiveUserContext {
         }
         if let Some(gid) = egid {
             self.egid = gid;
+            self.fsgid = self.egid;
         }
         if (privileged && (rgid.is_some() || egid.is_some()))
             || rgid.is_some()
@@ -706,6 +734,34 @@ impl ActiveUserContext {
             self.sgid = self.egid;
         }
         true
+    }
+
+    pub(crate) fn set_fsuid(&mut self, uid: u32) -> u32 {
+        let old = self.fsuid;
+        if uid != u32::MAX
+            && (self.has_effective_capability(CAP_SETUID)
+                || uid == self.uid
+                || uid == self.euid
+                || uid == self.suid
+                || uid == self.fsuid)
+        {
+            self.fsuid = uid;
+        }
+        old
+    }
+
+    pub(crate) fn set_fsgid(&mut self, gid: u32) -> u32 {
+        let old = self.fsgid;
+        if gid != u32::MAX
+            && (self.has_effective_capability(CAP_SETGID)
+                || gid == self.gid
+                || gid == self.egid
+                || gid == self.sgid
+                || gid == self.fsgid)
+        {
+            self.fsgid = gid;
+        }
+        old
     }
 
     pub(crate) fn set_groups(&mut self, groups: Vec<u32>) -> bool {
@@ -947,6 +1003,8 @@ impl ActiveUserContext {
             egid: self.egid,
             suid: self.suid,
             sgid: self.sgid,
+            fsuid: self.fsuid,
+            fsgid: self.fsgid,
             supplementary_groups: self.supplementary_groups.clone(),
             cap_bounding: self.cap_bounding,
             cap_inheritable: self.cap_inheritable,
@@ -1059,6 +1117,8 @@ impl ActiveUserContext {
             egid,
             suid,
             sgid,
+            fsuid,
+            fsgid,
             supplementary_groups,
             cap_bounding,
             cap_inheritable,
@@ -1086,6 +1146,8 @@ impl ActiveUserContext {
         self.egid = egid;
         self.suid = suid;
         self.sgid = sgid;
+        self.fsuid = fsuid;
+        self.fsgid = fsgid;
         self.supplementary_groups = supplementary_groups;
         self.cap_bounding = cap_bounding;
         self.cap_inheritable = cap_inheritable;

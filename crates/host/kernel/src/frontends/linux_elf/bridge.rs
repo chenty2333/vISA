@@ -88,6 +88,8 @@ const SYS_GETGROUPS: u64 = 115;
 const SYS_SETGROUPS: u64 = 116;
 const SYS_GETRESUID: u64 = 118;
 const SYS_GETRESGID: u64 = 120;
+const SYS_SETFSUID: u64 = 122;
+const SYS_SETFSGID: u64 = 123;
 const SYS_UMOUNT2: u64 = 166;
 const SYS_SYMLINKAT: u64 = 266;
 const SYS_EXECVEAT: u64 = 322;
@@ -314,6 +316,8 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SETGROUPS => sys_setgroups(frame),
         SYS_GETRESUID => sys_getresuid(frame),
         SYS_GETRESGID => sys_getresgid(frame),
+        SYS_SETFSUID => sys_setfsuid(frame),
+        SYS_SETFSGID => sys_setfsgid(frame),
         SYS_CHOWN | SYS_LCHOWN => sys_chown(frame),
         SYS_FCHOWNAT => sys_fchownat(frame),
         SYS_CAPGET => sys_capget(frame),
@@ -1407,6 +1411,38 @@ fn sys_getresgid(frame: &SyscallFrame) -> Result<i64, i32> {
     write_user_u32(frame.rsi, egid)?;
     write_user_u32(frame.rdx, active_context().sgid())?;
     Ok(0)
+}
+
+fn sys_setfsuid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let uid = frame.rdi as u32;
+    let before = active_context().credential_state();
+    let old = active_context().set_fsuid(uid);
+    if before.fsuid != active_context().fsuid()
+        && let Err(errno) = record_credential_transition(CredentialTransitionKind::SetFsuid {
+            old,
+            new: active_context().fsuid(),
+        })
+    {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(old as i64)
+}
+
+fn sys_setfsgid(frame: &SyscallFrame) -> Result<i64, i32> {
+    let gid = frame.rdi as u32;
+    let before = active_context().credential_state();
+    let old = active_context().set_fsgid(gid);
+    if before.fsgid != active_context().fsgid()
+        && let Err(errno) = record_credential_transition(CredentialTransitionKind::SetFsgid {
+            old,
+            new: active_context().fsgid(),
+        })
+    {
+        restore_credential_state(before);
+        return Err(errno);
+    }
+    Ok(old as i64)
 }
 
 fn sys_capget(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3067,9 +3103,11 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
                 credential.uid,
                 credential.euid,
                 credential.suid,
+                credential.fsuid,
                 credential.gid,
                 credential.egid,
                 credential.sgid,
+                credential.fsgid,
                 credential.supplementary_groups,
                 caps,
                 clear_child_tid,
@@ -3132,9 +3170,11 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
             credential.uid,
             credential.euid,
             credential.suid,
+            credential.fsuid,
             credential.gid,
             credential.egid,
             credential.sgid,
+            credential.fsgid,
             credential.supplementary_groups,
             caps,
             clear_child_tid,
@@ -3284,9 +3324,11 @@ fn sys_vfork(frame: &SyscallFrame) -> Result<i64, i32> {
         credential.uid,
         credential.euid,
         credential.suid,
+        credential.fsuid,
         credential.gid,
         credential.egid,
         credential.sgid,
+        credential.fsgid,
         credential.supplementary_groups,
         caps,
     )?;
@@ -5572,8 +5614,8 @@ fn real_access_snapshot() -> AccessSnapshot {
 fn effective_access_snapshot() -> AccessSnapshot {
     let context = active_context();
     AccessSnapshot {
-        uid: context.euid(),
-        gid: context.egid(),
+        uid: context.fsuid(),
+        gid: context.fsgid(),
         groups: context.supplementary_groups().to_vec(),
         cap_effective: context.cap_effective(),
     }
@@ -5589,9 +5631,11 @@ fn record_credential_transition(kind: CredentialTransitionKind) -> Result<(), i3
         state.uid,
         state.euid,
         state.suid,
+        state.fsuid,
         state.gid,
         state.egid,
         state.sgid,
+        state.fsgid,
         state.supplementary_groups,
         LinuxCapSets {
             bounding: state.cap_bounding,
