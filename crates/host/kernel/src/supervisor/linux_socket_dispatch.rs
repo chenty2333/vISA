@@ -15,6 +15,23 @@ const SOCK_CLOEXEC: u32 = 0o2000000;
 const SOCK_NONBLOCK: u32 = 0o0004000;
 const FD_CLOEXEC: u32 = 1;
 const O_NONBLOCK: u32 = 0o4000;
+const MSG_DONTWAIT: u32 = 0x40;
+const FDSET_WORDS: usize = 16;
+const FDSET_BITS: u32 = (FDSET_WORDS as u32) * 64;
+
+fn recvfrom_would_block(result: &LinuxCallResult) -> bool {
+    matches!(result, LinuxCallResult::Ret(ret) if *ret == -(ERR_EAGAIN as i64))
+}
+
+fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
+    if fd >= FDSET_BITS {
+        return None;
+    }
+    let mut bits = [0u64; FDSET_WORDS];
+    bits[(fd / 64) as usize] = 1u64 << (fd % 64);
+    let nfds = u16::try_from(fd.checked_add(1)?).ok()?;
+    Some((bits, nfds))
+}
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -569,6 +586,30 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let fd = u32::try_from(plan.args[0]).map_err(|_| "recvfrom fd overflowed")?;
         let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
+        let flags = plan.args[3] as u32;
+        let result = self.try_recvfrom_fd(fd, count)?;
+        if !recvfrom_would_block(&result) {
+            return Ok(result);
+        }
+
+        let status_flags = match self.file_status_flags(fd) {
+            Ok(flags) => flags,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if status_flags & O_NONBLOCK != 0 || flags & MSG_DONTWAIT != 0 {
+            return Ok(result);
+        }
+
+        let Some((read_bits, nfds)) = fdset_read_bits(fd) else {
+            return Ok(result);
+        };
+        match self.block_on_fdset_wait(read_bits, [0; FDSET_WORDS], [0; FDSET_WORDS], nfds, None) {
+            Ok(()) => self.try_recvfrom_fd(fd, count),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    fn try_recvfrom_fd(&mut self, fd: u32, count: u32) -> Result<LinuxCallResult, &'static str> {
         let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
