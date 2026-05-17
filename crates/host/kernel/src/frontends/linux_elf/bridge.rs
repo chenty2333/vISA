@@ -49,7 +49,7 @@ use super::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, cow_break_user_page, demo_program_host_path, load_demo_program,
         prepare_user_program, protect_user_page_range, switch_user_page_mappings,
-        unmap_user_page_range,
+        unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -843,11 +843,18 @@ fn execve_checked_path(
     }
     let access = effective_access_snapshot();
     let bytes = active_context().supervisor.read_vfs_file_path(resolved, access.ids())?;
+    let interpreter_path = user_elf_interpreter_path(&bytes).map_err(exec_load_errno)?;
+    let interpreter_bytes = if let Some(path) = interpreter_path {
+        Some(active_context().supervisor.read_vfs_file_path(&path, access.ids())?)
+    } else {
+        None
+    };
     let file_capabilities = read_exec_file_capabilities(resolved)?;
     execve_replace_image(
         frame,
         resolved,
         bytes,
+        interpreter_bytes,
         argv,
         envp,
         mode,
@@ -861,6 +868,7 @@ fn execve_replace_image(
     frame: &mut SyscallFrame,
     resolved: &[u8],
     bytes: Vec<u8>,
+    interpreter_bytes: Option<Vec<u8>>,
     argv: Vec<Vec<u8>>,
     envp: Vec<Vec<u8>>,
     mode: u32,
@@ -877,6 +885,7 @@ fn execve_replace_image(
             context.physical_memory_offset(),
             &mut context.frame_allocator,
             &bytes,
+            interpreter_bytes.as_deref(),
             &argv,
             &envp,
             resolved,
@@ -1086,10 +1095,27 @@ fn parse_exec_file_capabilities(value: &[u8]) -> Result<Option<ExecFileCapabilit
 fn exec_load_errno(err: &'static str) -> i32 {
     match err {
         "user ELF was invalid"
+        | "user ELF type unsupported"
+        | "user ELF address overflowed"
+        | "user ELF segment overflowed"
+        | "user ELF offset overflowed"
+        | "user ELF file size overflowed"
+        | "user ELF file range overflowed"
         | "user ELF referenced bytes outside the image"
         | "user ELF program header table is not mapped"
-        | "user ELF segment file exceeds memory size" => ERR_ENOEXEC,
-        "user ELF interpreter unsupported" => ERR_ENOSYS,
+        | "user ELF program header table overflowed"
+        | "user ELF segment file exceeds memory size"
+        | "user ELF interpreter invalid"
+        | "user ELF interpreter type unsupported"
+        | "user ELF interpreter nested"
+        | "user ELF interpreter provided for static image"
+        | "user ELF has multiple interpreters"
+        | "user ELF interpreter path invalid"
+        | "user ELF interpreter offset overflowed"
+        | "user ELF interpreter size overflowed"
+        | "user ELF interpreter range overflowed"
+        | "user ELF interpreter outside image" => ERR_ENOEXEC,
+        "user ELF interpreter missing" => ERR_ENOENT,
         "out of usable frames for user image" | "out of usable frames for user stack" => ERR_ENOMEM,
         "initial stack underflowed"
         | "initial stack overflowed"

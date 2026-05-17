@@ -12,7 +12,7 @@ use x86_64::{
         mapper::{FlagUpdateError, MapToError, UnmapError},
     },
 };
-use xmas_elf::{ElfFile, program::Type as ProgramType};
+use xmas_elf::{ElfFile, header::Type as ElfType, program::Type as ProgramType};
 
 use super::context::{LoadedUserImage, UserFrameAllocator, UserPageMapping, UserRegion};
 
@@ -21,6 +21,8 @@ const PAGE_SIZE: usize = 4096;
 const USER_STACK_PAGES: usize = 2048;
 const USER_STACK_TOP: u64 = 0x0000_0000_7000_0000;
 const USER_STACK_BASE: u64 = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE) as u64;
+const USER_PIE_BASE: u64 = 0x0000_0000_4000_0000;
+const USER_INTERP_BASE: u64 = 0x0000_0000_5000_0000;
 pub(crate) const USER_MMAP_BASE: u64 = 0x0000_0000_6000_0000;
 pub(crate) const USER_MMAP_PAGES: usize = 4096;
 pub(crate) const USER_MMAP_END: u64 = USER_MMAP_BASE + (USER_MMAP_PAGES * PAGE_SIZE) as u64;
@@ -44,6 +46,7 @@ const AT_CLKTCK: u64 = 17;
 const AT_SECURE: u64 = 23;
 const AT_RANDOM: u64 = 25;
 const AT_EXECFN: u64 = 31;
+const ELF_INTERPRETER_PATH_MAX: usize = 4096;
 
 #[repr(align(8))]
 struct AlignedElf<const N: usize>([u8; N]);
@@ -686,10 +689,42 @@ pub(crate) fn load_demo_program(
     load_user_program(boot_info, &LINUX_USER_DEMO_ELF.0)
 }
 
+pub(crate) fn user_elf_interpreter_path(bytes: &[u8]) -> Result<Option<Vec<u8>>, &'static str> {
+    let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
+    let mut interpreter = None;
+    for ph in elf.program_iter() {
+        if ph.get_type() != Ok(ProgramType::Interp) {
+            continue;
+        }
+        if interpreter.is_some() {
+            return Err("user ELF has multiple interpreters");
+        }
+        let file_start =
+            usize::try_from(ph.offset()).map_err(|_| "user ELF interpreter offset overflowed")?;
+        let file_size =
+            usize::try_from(ph.file_size()).map_err(|_| "user ELF interpreter size overflowed")?;
+        if file_size == 0 || file_size > ELF_INTERPRETER_PATH_MAX {
+            return Err("user ELF interpreter path invalid");
+        }
+        let file_end =
+            file_start.checked_add(file_size).ok_or("user ELF interpreter range overflowed")?;
+        let raw = bytes.get(file_start..file_end).ok_or("user ELF interpreter outside image")?;
+        let nul =
+            raw.iter().position(|byte| *byte == 0).ok_or("user ELF interpreter path invalid")?;
+        let path = &raw[..nul];
+        if path.is_empty() || path[0] != b'/' {
+            return Err("user ELF interpreter path invalid");
+        }
+        interpreter = Some(path.to_vec());
+    }
+    Ok(interpreter)
+}
+
 pub(crate) fn prepare_user_program(
     physical_memory_offset: u64,
     frame_allocator: &mut UserFrameAllocator,
     bytes: &[u8],
+    interpreter: Option<&[u8]>,
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
@@ -705,6 +740,7 @@ pub(crate) fn prepare_user_program(
         frame_allocator,
         bytes,
         &elf,
+        interpreter,
         argv,
         envp,
         execfn,
@@ -713,12 +749,9 @@ pub(crate) fn prepare_user_program(
         &mut page_mappings,
     );
     match result {
-        Ok(stack_top) => Ok(PreparedUserImage {
-            entry: elf.header.pt2.entry_point(),
-            stack_top,
-            regions,
-            page_mappings,
-        }),
+        Ok((entry, stack_top)) => {
+            Ok(PreparedUserImage { entry, stack_top, regions, page_mappings })
+        }
         Err(err) => {
             release_prepared_page_mappings(frame_allocator, &page_mappings);
             Err(err)
@@ -732,25 +765,95 @@ fn prepare_user_program_inner(
     frame_allocator: &mut UserFrameAllocator,
     bytes: &[u8],
     elf: &ElfFile<'_>,
+    interpreter: Option<&[u8]>,
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
     stack_credentials: ExecStackCredentials,
     regions: &mut Vec<UserRegion>,
     page_mappings: &mut Vec<UserPageMapping>,
-) -> Result<u64, &'static str> {
-    for ph in elf.program_iter() {
-        if ph.get_type() == Ok(ProgramType::Interp) {
-            return Err("user ELF interpreter unsupported");
-        }
+) -> Result<(u64, u64), &'static str> {
+    let main_interpreter = user_elf_interpreter_path(bytes)?;
+    match (main_interpreter.is_some(), interpreter.is_some()) {
+        (true, false) => return Err("user ELF interpreter missing"),
+        (false, true) => return Err("user ELF interpreter provided for static image"),
+        _ => {}
     }
 
+    let main_load_bias = elf_load_bias(elf, USER_PIE_BASE)?;
+    prepare_user_load_segments(
+        frame_allocator,
+        page_mappings,
+        phys_offset,
+        bytes,
+        elf,
+        main_load_bias,
+        regions,
+    )?;
+
+    let main_entry = biased_addr(elf.header.pt2.entry_point(), main_load_bias)?;
+    let (entry, at_base) = if let Some(interpreter_bytes) = interpreter {
+        let interpreter_elf =
+            ElfFile::new(interpreter_bytes).map_err(|_| "user ELF interpreter invalid")?;
+        if user_elf_interpreter_path(interpreter_bytes)?.is_some() {
+            return Err("user ELF interpreter nested");
+        }
+        let interpreter_load_bias = elf_interpreter_load_bias(&interpreter_elf)?;
+        prepare_user_load_segments(
+            frame_allocator,
+            page_mappings,
+            phys_offset,
+            interpreter_bytes,
+            &interpreter_elf,
+            interpreter_load_bias,
+            regions,
+        )?;
+        (
+            biased_addr(interpreter_elf.header.pt2.entry_point(), interpreter_load_bias)?,
+            interpreter_load_bias,
+        )
+    } else {
+        (main_entry, 0)
+    };
+
+    let initial_stack = build_exec_stack(
+        elf,
+        main_load_bias,
+        at_base,
+        main_entry,
+        argv,
+        envp,
+        execfn,
+        stack_credentials,
+    )?;
+    prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack)?;
+    regions.push(UserRegion {
+        start: USER_STACK_BASE,
+        end: USER_STACK_TOP,
+        readable: true,
+        writable: true,
+        executable: false,
+    });
+
+    Ok((entry, initial_stack.stack_pointer))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_user_load_segments(
+    frame_allocator: &mut UserFrameAllocator,
+    page_mappings: &mut Vec<UserPageMapping>,
+    phys_offset: VirtAddr,
+    bytes: &[u8],
+    elf: &ElfFile<'_>,
+    load_bias: u64,
+    regions: &mut Vec<UserRegion>,
+) -> Result<(), &'static str> {
     for ph in elf.program_iter() {
         if ph.get_type() != Ok(ProgramType::Load) {
             continue;
         }
 
-        let virt_start = ph.virtual_addr();
+        let virt_start = biased_addr(ph.virtual_addr(), load_bias)?;
         let virt_end =
             virt_start.checked_add(ph.mem_size()).ok_or("user ELF segment overflowed")?;
         let file_start = usize::try_from(ph.offset()).map_err(|_| "user ELF offset overflowed")?;
@@ -780,18 +883,7 @@ fn prepare_user_program_inner(
             executable: ph.flags().is_execute(),
         });
     }
-
-    let initial_stack = build_exec_stack(elf, argv, envp, execfn, stack_credentials)?;
-    prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack)?;
-    regions.push(UserRegion {
-        start: USER_STACK_BASE,
-        end: USER_STACK_TOP,
-        readable: true,
-        writable: true,
-        executable: false,
-    });
-
-    Ok(initial_stack.stack_pointer)
+    Ok(())
 }
 
 fn load_user_program(
@@ -806,6 +898,10 @@ fn load_user_program(
     let phys_offset = VirtAddr::new(phys_offset);
 
     let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
+    if user_elf_interpreter_path(bytes)?.is_some() {
+        return Err("initial user ELF interpreter unsupported");
+    }
+    let load_bias = elf_load_bias(&elf, USER_PIE_BASE)?;
     let level_4 = unsafe { active_level_4_table(phys_offset) };
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut frame_allocator = UserFrameAllocator::new(&boot_info.memory_regions);
@@ -817,12 +913,15 @@ fn load_user_program(
             continue;
         }
 
-        let virt_start = ph.virtual_addr();
+        let virt_start = biased_addr(ph.virtual_addr(), load_bias)?;
         let virt_end =
             virt_start.checked_add(ph.mem_size()).ok_or("user ELF segment overflowed")?;
         let file_start = usize::try_from(ph.offset()).map_err(|_| "user ELF offset overflowed")?;
         let file_size =
             usize::try_from(ph.file_size()).map_err(|_| "user ELF file size overflowed")?;
+        if ph.file_size() > ph.mem_size() {
+            return Err("user ELF segment file exceeds memory size");
+        }
         let file_end = file_start.checked_add(file_size).ok_or("user ELF file range overflowed")?;
         let segment_bytes =
             bytes.get(file_start..file_end).ok_or("user ELF referenced bytes outside the image")?;
@@ -855,7 +954,8 @@ fn load_user_program(
         });
     }
 
-    let initial_stack = build_initial_stack(&elf)?;
+    let entry = biased_addr(elf.header.pt2.entry_point(), load_bias)?;
+    let initial_stack = build_initial_stack(&elf, load_bias, entry)?;
     map_user_stack(
         &mut mapper,
         &mut frame_allocator,
@@ -872,7 +972,7 @@ fn load_user_program(
     });
 
     Ok(LoadedUserImage {
-        entry: elf.header.pt2.entry_point(),
+        entry,
         stack_top: initial_stack.stack_pointer,
         regions,
         page_mappings,
@@ -1052,18 +1152,35 @@ struct InitialStack {
     stack_pointer: u64,
 }
 
-fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> {
+fn build_initial_stack(
+    elf: &ElfFile<'_>,
+    load_bias: u64,
+    entry: u64,
+) -> Result<InitialStack, &'static str> {
     let argv = [b"/bin/vmos-ltp".as_slice()];
     let envp = [
         b"KCONFIG_SKIP_CHECK=1".as_slice(),
         b"LTP_DEV=/dev/loop0".as_slice(),
         b"LTP_SINGLE_FS_TYPE=tmpfs".as_slice(),
     ];
-    build_initial_stack_slices(elf, &argv, &envp, b"/bin/vmos-ltp", ExecStackCredentials::root())
+    build_initial_stack_slices(
+        elf,
+        load_bias,
+        0,
+        entry,
+        &argv,
+        &envp,
+        b"/bin/vmos-ltp",
+        ExecStackCredentials::root(),
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_exec_stack(
     elf: &ElfFile<'_>,
+    load_bias: u64,
+    at_base: u64,
+    at_entry: u64,
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
@@ -1071,11 +1188,24 @@ fn build_exec_stack(
 ) -> Result<InitialStack, &'static str> {
     let argv_refs: Vec<&[u8]> = argv.iter().map(Vec::as_slice).collect();
     let envp_refs: Vec<&[u8]> = envp.iter().map(Vec::as_slice).collect();
-    build_initial_stack_slices(elf, &argv_refs, &envp_refs, execfn, stack_credentials)
+    build_initial_stack_slices(
+        elf,
+        load_bias,
+        at_base,
+        at_entry,
+        &argv_refs,
+        &envp_refs,
+        execfn,
+        stack_credentials,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_initial_stack_slices(
     elf: &ElfFile<'_>,
+    load_bias: u64,
+    at_base: u64,
+    at_entry: u64,
     argv: &[&[u8]],
     envp: &[&[u8]],
     execfn_bytes: &[u8],
@@ -1100,15 +1230,14 @@ fn build_initial_stack_slices(
     envp_ptrs.reverse();
     cursor &= !15;
 
-    let entry = elf.header.pt2.entry_point();
     let auxv = [
-        (AT_PHDR, program_header_vaddr(elf)?),
+        (AT_PHDR, program_header_vaddr(elf, load_bias)?),
         (AT_PHENT, elf.header.pt2.ph_entry_size() as u64),
         (AT_PHNUM, elf.header.pt2.ph_count() as u64),
         (AT_PAGESZ, PAGE_SIZE as u64),
-        (AT_BASE, 0),
+        (AT_BASE, at_base),
         (AT_FLAGS, 0),
-        (AT_ENTRY, entry),
+        (AT_ENTRY, at_entry),
         (AT_UID, stack_credentials.uid as u64),
         (AT_EUID, stack_credentials.euid as u64),
         (AT_GID, stack_credentials.gid as u64),
@@ -1141,7 +1270,7 @@ fn build_initial_stack_slices(
     Ok(InitialStack { page_base, page_bytes, stack_pointer: cursor })
 }
 
-fn program_header_vaddr(elf: &ElfFile<'_>) -> Result<u64, &'static str> {
+fn program_header_vaddr(elf: &ElfFile<'_>, load_bias: u64) -> Result<u64, &'static str> {
     let ph_offset = elf.header.pt2.ph_offset();
     let ph_size =
         (elf.header.pt2.ph_entry_size() as u64).saturating_mul(elf.header.pt2.ph_count() as u64);
@@ -1152,10 +1281,33 @@ fn program_header_vaddr(elf: &ElfFile<'_>) -> Result<u64, &'static str> {
         let start = ph.offset();
         let end = start.checked_add(ph.file_size()).ok_or("user ELF segment overflowed")?;
         if ph_offset >= start && ph_offset.saturating_add(ph_size) <= end {
-            return Ok(ph.virtual_addr() + (ph_offset - start));
+            let phdr = ph
+                .virtual_addr()
+                .checked_add(ph_offset - start)
+                .ok_or("user ELF program header table overflowed")?;
+            return biased_addr(phdr, load_bias);
         }
     }
     Err("user ELF program header table is not mapped")
+}
+
+fn elf_load_bias(elf: &ElfFile<'_>, dyn_base: u64) -> Result<u64, &'static str> {
+    match elf.header.pt2.type_().as_type() {
+        ElfType::Executable => Ok(0),
+        ElfType::SharedObject => Ok(dyn_base),
+        _ => Err("user ELF type unsupported"),
+    }
+}
+
+fn elf_interpreter_load_bias(elf: &ElfFile<'_>) -> Result<u64, &'static str> {
+    match elf.header.pt2.type_().as_type() {
+        ElfType::SharedObject => Ok(USER_INTERP_BASE),
+        _ => Err("user ELF interpreter type unsupported"),
+    }
+}
+
+fn biased_addr(addr: u64, load_bias: u64) -> Result<u64, &'static str> {
+    addr.checked_add(load_bias).ok_or("user ELF address overflowed")
 }
 
 fn push_bytes(

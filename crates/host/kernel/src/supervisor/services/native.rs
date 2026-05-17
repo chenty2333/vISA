@@ -21,15 +21,16 @@ pub(crate) use native_network::{
 };
 
 const HELLO_TXT: &[u8] = b"sandbox file: supervisor world says hello\n";
-const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\nboot\nlib\n";
+const ROOT_DIR: &[u8] = b"sandbox\nproc\ndev\ntmp\nboot\nlib\nlib64\n";
 const SANDBOX_DIR: &[u8] = b"hello.txt\nreadme.link\n";
 const README_LINK: &[u8] = b"/sandbox/hello.txt";
 const BOOT_DIR: &[u8] = b"config-prototype2\n";
-const LIB_DIR: &[u8] = b"modules\nkernel\n";
+const LIB_DIR: &[u8] = b"modules\nkernel\nx86_64-linux-gnu\n";
 const LIB_MODULES_DIR: &[u8] = b"prototype2\n";
 const LIB_MODULES_PROTOTYPE2_DIR: &[u8] = b"build\nconfig\n";
 const LIB_MODULES_BUILD_DIR: &[u8] = b".config\n";
 const LIB_KERNEL_DIR: &[u8] = b"config-prototype2\n";
+const EMPTY_DIR: &[u8] = b"";
 const BOOT_CONFIG: &[u8] = b"CONFIG_EVENTFD=y\n\
 CONFIG_MODULES=n\n\
 CONFIG_MODULE_UNLOAD=n\n\
@@ -201,7 +202,9 @@ impl VfsService {
             | b"/lib/modules"
             | b"/lib/modules/prototype2"
             | b"/lib/modules/prototype2/build"
-            | b"/lib/kernel" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
+            | b"/lib/kernel"
+            | b"/lib64"
+            | b"/lib/x86_64-linux-gnu" => lookup(ServiceRoute::Vfs, NodeKind::Directory),
             b"/boot/config-prototype2"
             | b"/lib/modules/prototype2/build/.config"
             | b"/lib/modules/prototype2/config"
@@ -260,7 +263,9 @@ impl VfsService {
             | b"/lib/modules"
             | b"/lib/modules/prototype2"
             | b"/lib/modules/prototype2/build"
-            | b"/lib/kernel" => errno(ERR_EISDIR),
+            | b"/lib/kernel"
+            | b"/lib64"
+            | b"/lib/x86_64-linux-gnu" => errno(ERR_EISDIR),
             _ => errno(ERR_ENOENT),
         }
     }
@@ -287,6 +292,7 @@ impl VfsService {
             b"/lib/modules/prototype2" => Ok(LIB_MODULES_PROTOTYPE2_DIR.to_vec()),
             b"/lib/modules/prototype2/build" => Ok(LIB_MODULES_BUILD_DIR.to_vec()),
             b"/lib/kernel" => Ok(LIB_KERNEL_DIR.to_vec()),
+            b"/lib64" | b"/lib/x86_64-linux-gnu" => Ok(EMPTY_DIR.to_vec()),
             b"/sandbox/hello.txt"
             | b"/sandbox/readme.link"
             | b"/boot/config-prototype2"
@@ -924,7 +930,13 @@ impl VfsService {
         if LINUX_USER_RESOURCE_FILES.is_empty() {
             return;
         }
-        for path in [b"/tmp/datafiles".as_slice(), b"/sandbox/datafiles", b"/datafiles"] {
+        for path in [
+            b"/tmp/datafiles".as_slice(),
+            b"/sandbox/datafiles",
+            b"/datafiles",
+            b"/lib64",
+            b"/lib/x86_64-linux-gnu",
+        ] {
             self.install_dynamic_dir(path);
         }
         for resource in LINUX_USER_RESOURCE_FILES {
@@ -935,6 +947,8 @@ impl VfsService {
                 b"/datafiles",
                 b"/tmp",
                 b"/sandbox",
+                b"/lib64",
+                b"/lib/x86_64-linux-gnu",
                 b"",
             ] {
                 self.install_resource_file(root, name, resource.mode, resource.bytes);
@@ -2084,6 +2098,8 @@ fn looks_like_ltp_resource_path(path: &[u8], name: &[u8]) -> bool {
         || parent == b"/datafiles"
         || parent == b"/tmp/datafiles"
         || parent == b"/sandbox/datafiles"
+        || parent == b"/lib64"
+        || parent == b"/lib/x86_64-linux-gnu"
     {
         return true;
     }
