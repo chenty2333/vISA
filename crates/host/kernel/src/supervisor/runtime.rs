@@ -708,20 +708,30 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
-        self.scheduler.set_current_task(task);
-        let task_is_runnable = self.scheduler.is_task_runnable(task);
-        if !task_is_runnable && self.scheduler.highest_priority_runnable_task().is_none() {
+        let requested_is_runnable = self.scheduler.is_task_runnable(task);
+        let selected = self.scheduler.set_current_task_or_runnable_fallback(task);
+        let selected_is_runnable = self.scheduler.is_task_runnable(selected);
+        if selected != task {
+            crate::kwarn!(
+                "scheduler selected runnable fallback task {} instead of non-runnable task {}",
+                selected,
+                task
+            );
+        } else if !requested_is_runnable {
             crate::kwarn!(
                 "scheduler selected non-runnable task {} with no runnable fallback",
                 task
             );
         }
-        let should_mark_running = match self.threads.iter().find(|thread| thread.task_id == task) {
-            Some(thread) => task_is_runnable && thread.state == ThreadRuntimeStateKind::Running,
-            None => task_is_runnable,
-        };
+        let should_mark_running =
+            match self.threads.iter().find(|thread| thread.task_id == selected) {
+                Some(thread) => {
+                    selected_is_runnable && thread.state == ThreadRuntimeStateKind::Running
+                }
+                None => selected_is_runnable,
+            };
         if should_mark_running {
-            self.semantic.set_task_state(task, TaskState::Running);
+            self.semantic.set_task_state(selected, TaskState::Running);
         }
     }
 

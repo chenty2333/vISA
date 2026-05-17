@@ -46,8 +46,17 @@ impl Scheduler {
         self.current_task
     }
 
-    pub(crate) fn set_current_task(&mut self, task: TaskId) {
+    pub(crate) fn set_current_task_or_runnable_fallback(&mut self, task: TaskId) -> TaskId {
+        if self.is_task_runnable(task) {
+            self.current_task = task;
+            return task;
+        }
+        if let Some(fallback) = self.highest_priority_runnable_task() {
+            self.current_task = fallback;
+            return fallback;
+        }
         self.current_task = task;
+        task
     }
 
     pub(crate) fn allocate_task(&mut self) -> TaskId {
@@ -185,5 +194,48 @@ mod tests {
 
         assert!(!scheduler.mark_task_runnable(exited_high));
         assert_eq!(scheduler.highest_priority_runnable_task(), Some(blocked_high));
+    }
+
+    #[test]
+    fn current_task_selection_falls_back_from_non_runnable_request() {
+        let mut scheduler = Scheduler::new();
+        let runnable = scheduler.allocate_task();
+        let blocked = scheduler.allocate_task();
+        let exited = scheduler.allocate_task();
+
+        scheduler.boost_priority(runnable, 10);
+        scheduler.boost_priority(blocked, 20);
+        scheduler.mark_task_blocked(blocked);
+        scheduler.mark_task_exited(exited);
+
+        assert_eq!(scheduler.set_current_task_or_runnable_fallback(blocked), runnable);
+        assert_eq!(scheduler.current_task(), runnable);
+
+        assert_eq!(scheduler.set_current_task_or_runnable_fallback(exited), runnable);
+        assert_eq!(scheduler.current_task(), runnable);
+    }
+
+    #[test]
+    fn current_task_selection_preserves_runnable_request() {
+        let mut scheduler = Scheduler::new();
+        let low = scheduler.allocate_task();
+        let high = scheduler.allocate_task();
+
+        scheduler.boost_priority(high, 20);
+
+        assert_eq!(scheduler.set_current_task_or_runnable_fallback(low), low);
+        assert_eq!(scheduler.current_task(), low);
+    }
+
+    #[test]
+    fn current_task_selection_preserves_non_runnable_when_no_fallback_exists() {
+        let mut scheduler = Scheduler::new();
+        let blocked = scheduler.allocate_task();
+
+        scheduler.mark_task_blocked(scheduler.bootstrap_task());
+        scheduler.mark_task_blocked(blocked);
+
+        assert_eq!(scheduler.set_current_task_or_runnable_fallback(blocked), blocked);
+        assert_eq!(scheduler.current_task(), blocked);
     }
 }
