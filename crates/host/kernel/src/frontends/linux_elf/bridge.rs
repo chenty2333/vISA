@@ -5827,14 +5827,14 @@ fn collect_pselect_ready(snapshot: &PselectFdSetSnapshot) -> Result<PselectReady
     for fd in 0..snapshot.nfds {
         if fdset_bit(snapshot.read_bits, fd) {
             let revents = supervisor.fd_poll_revents(fd as u32, POLLIN)?;
-            if revents & POLLIN != 0 {
+            if pselect_read_revents_ready(revents) {
                 set_fd_bit(&mut ready.read_bits, fd);
                 ready.ready += 1;
             }
         }
         if fdset_bit(snapshot.write_bits, fd) {
             let revents = supervisor.fd_poll_revents(fd as u32, POLLOUT)?;
-            if revents & POLLOUT != 0 {
+            if pselect_write_revents_ready(revents) {
                 set_fd_bit(&mut ready.write_bits, fd);
                 ready.ready += 1;
             }
@@ -5844,6 +5844,22 @@ fn collect_pselect_ready(snapshot: &PselectFdSetSnapshot) -> Result<PselectReady
         }
     }
     Ok(ready)
+}
+
+fn pselect_read_revents_ready(revents: u16) -> bool {
+    const POLLIN: u16 = 0x001;
+    const POLLERR: u16 = 0x008;
+    const POLLHUP: u16 = 0x010;
+
+    revents & (POLLIN | POLLERR | POLLHUP) != 0
+}
+
+fn pselect_write_revents_ready(revents: u16) -> bool {
+    const POLLOUT: u16 = 0x004;
+    const POLLERR: u16 = 0x008;
+    const POLLHUP: u16 = 0x010;
+
+    revents & (POLLOUT | POLLERR | POLLHUP) != 0
 }
 
 fn write_pselect_result(
@@ -6373,7 +6389,8 @@ mod tests {
         UserReturnContext, decode_linux_ucontext_return, encode_linux_ucontext,
         futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, parse_clone3_request_bytes, read_linux_greg, sanitize_restored_rflags,
+        futex_pi_wait_word, parse_clone3_request_bytes, pselect_read_revents_ready,
+        pselect_write_revents_ready, read_linux_greg, sanitize_restored_rflags,
         validate_pselect6_nfds, wait_nfds_within_rlimit, write_linux_greg,
     };
 
@@ -6473,6 +6490,24 @@ mod tests {
             validate_pselect6_nfds((PSELECT6_MAX_FDS + 1) as u64, u64::MAX),
             Err(vmos_abi::ERR_EINVAL)
         );
+    }
+
+    #[test]
+    fn pselect_ready_sets_treat_hup_and_err_as_read_write_ready() {
+        const POLLIN: u16 = 0x001;
+        const POLLOUT: u16 = 0x004;
+        const POLLERR: u16 = 0x008;
+        const POLLHUP: u16 = 0x010;
+
+        assert!(pselect_read_revents_ready(POLLIN));
+        assert!(pselect_read_revents_ready(POLLHUP));
+        assert!(pselect_read_revents_ready(POLLERR));
+        assert!(!pselect_read_revents_ready(POLLOUT));
+
+        assert!(pselect_write_revents_ready(POLLOUT));
+        assert!(pselect_write_revents_ready(POLLHUP));
+        assert!(pselect_write_revents_ready(POLLERR));
+        assert!(!pselect_write_revents_ready(POLLIN));
     }
 
     #[test]
