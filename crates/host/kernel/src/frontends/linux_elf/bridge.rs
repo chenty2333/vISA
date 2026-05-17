@@ -101,6 +101,7 @@ const SYS_SYMLINKAT: u64 = 266;
 const SYS_EXECVEAT: u64 = 322;
 const ERR_ENOEXEC: i32 = 8;
 const ERR_ENODEV: i32 = 19;
+const ERR_ENOTTY: i32 = 25;
 const LINUX_TIMESPEC_SIZE: u64 = 16;
 const LINUX_RUSAGE_SIZE: usize = 144;
 const EPOLL_EVENT_SIZE: u64 = 12;
@@ -4466,13 +4467,22 @@ fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const BLKGETSIZE64: u64 = 0x8008_1272;
     const VMOS_LTP_LOOP_BYTES: u64 = 300 * 1024 * 1024;
 
+    let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
+    active_context().supervisor.fd_flags(fd)?;
     match frame.rsi {
-        LOOP_CTL_GET_FREE => Ok(0),
+        LOOP_CTL_GET_FREE => {
+            let path = active_context().supervisor.fd_path(fd).map_err(|_| ERR_ENOTTY)?;
+            if path == b"/dev/loop-control" { Ok(0) } else { Err(ERR_ENOTTY) }
+        }
         BLKGETSIZE64 => {
+            let path = active_context().supervisor.fd_path(fd).map_err(|_| ERR_ENOTTY)?;
+            if path != b"/dev/loop0" {
+                return Err(ERR_ENOTTY);
+            }
             write_user_u64(frame.rdx, VMOS_LTP_LOOP_BYTES)?;
             Ok(0)
         }
-        _ => Ok(0),
+        _ => Err(ERR_ENOTTY),
     }
 }
 
