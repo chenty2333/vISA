@@ -1226,6 +1226,22 @@ mod tests {
     }
 
     #[test]
+    fn mmap_plan_preserves_flags_fd_and_offset() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_MMAP, 0, 0x3000, 0x3, 0x22, u64::MAX, 0x1000);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mmap));
+        assert_eq!(plan_arg(0), 0);
+        assert_eq!(plan_arg(1), 0x3000);
+        assert_eq!(plan_arg(2), 0x3);
+        assert_eq!(plan_arg(3), 0x22);
+        assert_eq!(plan_arg(4), u64::MAX);
+        assert_eq!(plan_arg(5), 0x1000);
+    }
+
+    #[test]
     fn seccomp_plan_preserves_operation_flags_and_args_pointer() {
         let _guard = test_guard();
         let raw = dispatch(SYS_SECCOMP, 1, 2, 0x1234, 0, 0, 0);

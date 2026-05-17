@@ -119,6 +119,16 @@ pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_AS: usize = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GenericMmapRegion {
+    pub(crate) pid: Pid,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
+    pub(crate) readable: bool,
+    pub(crate) writable: bool,
+    pub(crate) executable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RuntimeClockAdjustmentState {
     pub(crate) freq_scaled_ppm: i64,
     pub(crate) maxerror_us: i64,

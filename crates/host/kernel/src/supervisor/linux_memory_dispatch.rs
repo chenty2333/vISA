@@ -1,12 +1,23 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EBADF, ERR_EINVAL, ERR_ENOSYS};
+use vmos_abi::{ERR_EBADF, ERR_EEXIST, ERR_EINVAL, ERR_ENOMEM, ERR_ENOSYS, ERR_EOPNOTSUPP};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
+    types::{GenericMmapRegion, RLIMIT_AS},
 };
 
+const PAGE_SIZE: u64 = 4096;
+const GENERIC_MMAP_ALLOC_BASE: u64 = 0x2000_0000;
+const GENERIC_MMAP_ALLOC_LIMIT: u64 = 0x3000_0000;
+const GENERIC_USER_MIN: u64 = 0x0001_0000;
+const GENERIC_USER_LIMIT: u64 = 0x0000_8000_0000_0000;
+const MAP_SHARED: u64 = 0x01;
+const MAP_PRIVATE: u64 = 0x02;
+const MAP_FIXED: u64 = 0x10;
+const MAP_ANONYMOUS: u64 = 0x20;
+const MAP_FIXED_NOREPLACE: u64 = 0x100000;
 const POLLFD_SIZE: usize = 8;
 const POLLIN: u16 = 0x001;
 const POLLOUT: u16 = 0x004;
@@ -28,17 +39,111 @@ struct PollFdEntry {
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_mmap(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        let addr = plan.args[0];
-        let len = plan.args[1];
-        let prot = plan.args[2];
-        let (readable, writable, executable) = prot_user_region_permissions(prot);
-        self.record_guest_memory_region(addr, len, readable, writable, executable);
-        Ok(LinuxCallResult::Ret(0))
+        match self.apply_generic_mmap(
+            plan.args[0],
+            plan.args[1],
+            plan.args[2],
+            plan.args[3],
+            plan.args[4],
+            plan.args[5],
+        ) {
+            Ok(addr) => Ok(LinuxCallResult::Ret(addr as i64)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
     }
 
     pub(super) fn plan_munmap(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        self.record_guest_memory_unmap(plan.args[0], plan.args[1]);
-        Ok(LinuxCallResult::Ret(0))
+        match self.apply_generic_munmap(plan.args[0], plan.args[1]) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
+    }
+
+    fn apply_generic_mmap(
+        &mut self,
+        hint: u64,
+        len: u64,
+        prot: u64,
+        flags: u64,
+        fd: u64,
+        offset: u64,
+    ) -> Result<u64, i32> {
+        let len = align_page(len).ok_or(ERR_EINVAL)?;
+        if len == 0 {
+            return Err(ERR_EINVAL);
+        }
+        let shared = flags & MAP_SHARED != 0;
+        let private = flags & MAP_PRIVATE != 0;
+        if shared == private {
+            return Err(ERR_EINVAL);
+        }
+        let anonymous = flags & MAP_ANONYMOUS != 0;
+        if !anonymous {
+            if offset & (PAGE_SIZE - 1) != 0 {
+                return Err(ERR_EINVAL);
+            }
+            if u32::try_from(fd).is_err() {
+                return Err(ERR_EBADF);
+            }
+            return Err(ERR_EOPNOTSUPP);
+        }
+
+        let pid = self.current_pid();
+        let fixed = flags & MAP_FIXED != 0;
+        let fixed_noreplace = flags & MAP_FIXED_NOREPLACE != 0;
+        let fixed_address = fixed || fixed_noreplace;
+        let addr = if fixed_address {
+            validate_generic_fixed_range(hint, len)?;
+            hint
+        } else {
+            self.allocate_generic_mmap_addr(pid, hint, len)?
+        };
+        let end = checked_range_end(addr, len).ok_or(ERR_EINVAL)?;
+
+        let overlap = self.generic_mmap_overlap_bytes(pid, addr, end);
+        if fixed_noreplace && overlap != 0 {
+            return Err(ERR_EEXIST);
+        }
+        let mapped_after = self
+            .generic_mmap_mapped_bytes(pid)
+            .saturating_sub(overlap)
+            .checked_add(len)
+            .ok_or(ERR_ENOMEM)?;
+        let as_limit = self.get_rlimit(pid, RLIMIT_AS).cur;
+        if as_limit != u64::MAX && mapped_after > as_limit {
+            return Err(ERR_ENOMEM);
+        }
+
+        if fixed {
+            self.remove_generic_mmap_range(pid, addr, end);
+        }
+        let (readable, writable, executable) = prot_user_region_permissions(prot);
+        self.generic_mmap_regions.push(GenericMmapRegion {
+            pid,
+            start: addr,
+            end,
+            readable,
+            writable,
+            executable,
+        });
+        self.record_guest_memory_region(addr, len, readable, writable, executable);
+        Ok(addr)
+    }
+
+    fn apply_generic_munmap(&mut self, addr: u64, len: u64) -> Result<(), i32> {
+        if addr & (PAGE_SIZE - 1) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        let len = align_page(len).ok_or(ERR_EINVAL)?;
+        if len == 0 {
+            return Err(ERR_EINVAL);
+        }
+        let end = checked_range_end(addr, len).ok_or(ERR_EINVAL)?;
+        if !generic_munmap_range_valid(addr, end) {
+            return Err(ERR_EINVAL);
+        }
+        self.remove_generic_mmap_range(self.current_pid(), addr, end);
+        Ok(())
     }
 
     pub(super) fn plan_poll(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -94,6 +199,108 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => return Ok(errno_ret(errno)),
         };
         self.write_pollfds(ptr, &entries, ready)
+    }
+
+    fn allocate_generic_mmap_addr(&mut self, pid: u32, hint: u64, len: u64) -> Result<u64, i32> {
+        if hint != 0
+            && hint & (PAGE_SIZE - 1) == 0
+            && checked_range_end(hint, len).is_some_and(|end| {
+                generic_user_range_valid(hint, end)
+                    && self.generic_mmap_range_is_free(pid, hint, end)
+            })
+        {
+            return Ok(hint);
+        }
+
+        let cursor = if self.generic_mmap_cursor < GENERIC_MMAP_ALLOC_BASE {
+            GENERIC_MMAP_ALLOC_BASE
+        } else {
+            align_page(self.generic_mmap_cursor).ok_or(ERR_ENOMEM)?
+        };
+        let addr = self
+            .find_generic_mmap_gap(pid, cursor, len)
+            .or_else(|| self.find_generic_mmap_gap(pid, GENERIC_MMAP_ALLOC_BASE, len))
+            .ok_or(ERR_ENOMEM)?;
+        self.generic_mmap_cursor = checked_range_end(addr, len).unwrap_or(GENERIC_MMAP_ALLOC_BASE);
+        if self.generic_mmap_cursor >= GENERIC_MMAP_ALLOC_LIMIT {
+            self.generic_mmap_cursor = GENERIC_MMAP_ALLOC_BASE;
+        }
+        Ok(addr)
+    }
+
+    fn find_generic_mmap_gap(&self, pid: u32, start: u64, len: u64) -> Option<u64> {
+        let mut ranges: Vec<(u64, u64)> = self
+            .generic_mmap_regions
+            .iter()
+            .filter(|region| region.pid == pid)
+            .map(|region| (region.start, region.end))
+            .collect();
+        ranges.sort_by_key(|range| range.0);
+
+        let mut cursor = core::cmp::max(align_page(start)?, GENERIC_MMAP_ALLOC_BASE);
+        for (region_start, region_end) in ranges {
+            if region_end <= cursor {
+                continue;
+            }
+            if cursor.checked_add(len)? <= region_start {
+                return Some(cursor);
+            }
+            cursor = align_page(region_end)?;
+            if cursor >= GENERIC_MMAP_ALLOC_LIMIT {
+                return None;
+            }
+        }
+        if cursor.checked_add(len)? <= GENERIC_MMAP_ALLOC_LIMIT { Some(cursor) } else { None }
+    }
+
+    fn generic_mmap_range_is_free(&self, pid: u32, start: u64, end: u64) -> bool {
+        self.generic_mmap_regions
+            .iter()
+            .filter(|region| region.pid == pid)
+            .all(|region| region.end <= start || end <= region.start)
+    }
+
+    fn generic_mmap_mapped_bytes(&self, pid: u32) -> u64 {
+        self.generic_mmap_regions
+            .iter()
+            .filter(|region| region.pid == pid)
+            .map(|region| region.end.saturating_sub(region.start))
+            .sum()
+    }
+
+    fn generic_mmap_overlap_bytes(&self, pid: u32, start: u64, end: u64) -> u64 {
+        self.generic_mmap_regions
+            .iter()
+            .filter(|region| region.pid == pid)
+            .map(|region| overlap_len(start, end, region.start, region.end))
+            .sum()
+    }
+
+    fn remove_generic_mmap_range(&mut self, pid: u32, start: u64, end: u64) -> u64 {
+        let mut next = Vec::new();
+        let mut removed = 0u64;
+        for region in core::mem::take(&mut self.generic_mmap_regions) {
+            if region.pid != pid || region.end <= start || end <= region.start {
+                next.push(region);
+                continue;
+            }
+
+            let remove_start = core::cmp::max(start, region.start);
+            let remove_end = core::cmp::min(end, region.end);
+            let remove_len = remove_end.saturating_sub(remove_start);
+            if remove_len != 0 {
+                self.record_guest_memory_unmap(remove_start, remove_len);
+                removed = removed.saturating_add(remove_len);
+            }
+            if region.start < remove_start {
+                next.push(GenericMmapRegion { end: remove_start, ..region });
+            }
+            if remove_end < region.end {
+                next.push(GenericMmapRegion { start: remove_end, ..region });
+            }
+        }
+        self.generic_mmap_regions = next;
+        removed
     }
 
     fn read_pollfds(&mut self, ptr: u32, nfds: usize) -> Result<Vec<PollFdEntry>, i32> {
@@ -155,6 +362,36 @@ fn prot_user_region_permissions(prot: u64) -> (bool, bool, bool) {
     let readable = writable || prot & PROT_READ != 0;
     let executable = prot & PROT_EXEC != 0;
     (readable, writable, executable)
+}
+
+fn align_page(len: u64) -> Option<u64> {
+    len.checked_add(PAGE_SIZE - 1).map(|value| value & !(PAGE_SIZE - 1))
+}
+
+fn checked_range_end(start: u64, len: u64) -> Option<u64> {
+    start.checked_add(len)
+}
+
+fn validate_generic_fixed_range(start: u64, len: u64) -> Result<(), i32> {
+    if start == 0 || start & (PAGE_SIZE - 1) != 0 {
+        return Err(ERR_EINVAL);
+    }
+    let end = checked_range_end(start, len).ok_or(ERR_EINVAL)?;
+    if generic_user_range_valid(start, end) { Ok(()) } else { Err(ERR_EINVAL) }
+}
+
+fn generic_user_range_valid(start: u64, end: u64) -> bool {
+    start >= GENERIC_USER_MIN && start < end && end <= GENERIC_USER_LIMIT
+}
+
+fn generic_munmap_range_valid(start: u64, end: u64) -> bool {
+    start < end && end <= GENERIC_USER_LIMIT
+}
+
+fn overlap_len(left_start: u64, left_end: u64, right_start: u64, right_end: u64) -> u64 {
+    let start = core::cmp::max(left_start, right_start);
+    let end = core::cmp::min(left_end, right_end);
+    end.saturating_sub(start)
 }
 
 fn poll_timeout_ms(timeout_arg: u64) -> Option<u32> {
