@@ -52,9 +52,10 @@ use super::{
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, cow_break_user_page, demo_program_host_path,
-        discard_user_page_range, load_demo_program, populate_user_page_range,
-        prefault_user_page_range, prepare_user_program, protect_user_page_range,
-        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
+        discard_user_page_range, discard_zero_user_page_range, load_demo_program,
+        populate_user_page_range, prefault_user_page_range, prepare_user_program,
+        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
+        user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -5024,6 +5025,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_SEQUENTIAL: u64 = 2;
     const MADV_WILLNEED: u64 = 3;
     const MADV_DONTNEED: u64 = 4;
+    const MADV_FREE: u64 = 8;
     const MADV_MERGEABLE: u64 = 12;
     const MADV_UNMERGEABLE: u64 = 13;
     const MADV_HUGEPAGE: u64 = 14;
@@ -5036,7 +5038,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_POPULATE_WRITE: u64 = 23;
 
     match frame.rdx {
-        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED
+        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED | MADV_FREE
         | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP
         | MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {}
         _ => return Err(ERR_EINVAL),
@@ -5054,6 +5056,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
         .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
     match frame.rdx {
         MADV_DONTNEED => discard_active_user_page_range(frame.rdi, len)?,
+        MADV_FREE => discard_active_zero_user_page_range(frame.rdi, len)?,
         MADV_POPULATE_READ => {
             validate_user_range_access(frame.rdi, len, UserRangeAccess::Read)?;
             prefault_active_user_page_range(frame.rdi, len, false)?;
@@ -6840,6 +6843,20 @@ fn discard_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
         } else {
             ERR_EFAULT
         }
+    })
+}
+
+fn discard_active_zero_user_page_range(start: u64, len: u64) -> Result<(), i32> {
+    let context = active_context();
+    discard_zero_user_page_range(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        start,
+        len,
+    )
+    .map_err(|err| {
+        if err == "user page range has non-zero-fill backing" { ERR_EINVAL } else { ERR_EFAULT }
     })
 }
 

@@ -654,10 +654,57 @@ pub(crate) fn discard_user_page_range(
     start: u64,
     len: u64,
 ) -> Result<(), &'static str> {
+    discard_user_page_range_with_policy(
+        physical_memory_offset,
+        page_mappings,
+        frame_allocator,
+        start,
+        len,
+        DiscardPolicy::Discardable,
+    )
+}
+
+pub(crate) fn discard_zero_user_page_range(
+    physical_memory_offset: u64,
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
+    start: u64,
+    len: u64,
+) -> Result<(), &'static str> {
+    discard_user_page_range_with_policy(
+        physical_memory_offset,
+        page_mappings,
+        frame_allocator,
+        start,
+        len,
+        DiscardPolicy::ZeroFillOnly,
+    )
+}
+
+enum DiscardPolicy {
+    Discardable,
+    ZeroFillOnly,
+}
+
+fn discard_user_page_range_with_policy(
+    physical_memory_offset: u64,
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
+    start: u64,
+    len: u64,
+    policy: DiscardPolicy,
+) -> Result<(), &'static str> {
     let end = start.checked_add(len).ok_or("user page range overflowed")?;
     for mapping in page_mappings.iter().filter(|mapping| mapping.va >= start && mapping.va < end) {
-        if !mapping.backing.is_discardable() {
-            return Err("user page range has non-discardable backing");
+        match (&policy, &mapping.backing) {
+            (DiscardPolicy::Discardable, backing) if backing.is_discardable() => {}
+            (DiscardPolicy::ZeroFillOnly, UserPageBacking::ZeroFill) => {}
+            (DiscardPolicy::ZeroFillOnly, _) => {
+                return Err("user page range has non-zero-fill backing");
+            }
+            (DiscardPolicy::Discardable, _) => {
+                return Err("user page range has non-discardable backing");
+            }
         }
     }
 
