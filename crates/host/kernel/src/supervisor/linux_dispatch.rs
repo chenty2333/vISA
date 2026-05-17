@@ -309,6 +309,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::TimerfdCreate => self.plan_timerfd_create(plan),
             PlanKind::TimerfdSettime => self.plan_timerfd_settime(plan),
             PlanKind::TimerfdGettime => self.plan_timerfd_gettime(plan),
+            PlanKind::SetRobustList => self.plan_set_robust_list(plan),
+            PlanKind::GetRobustList => self.plan_get_robust_list(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
@@ -323,8 +325,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Kill
             | PlanKind::Pause
             | PlanKind::FutexLockPi
-            | PlanKind::FutexUnlockPi
-            | PlanKind::SetRobustList => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::FutexUnlockPi => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

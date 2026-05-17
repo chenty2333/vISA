@@ -16,6 +16,7 @@ mod linux_fd;
 mod linux_fs_dispatch;
 mod linux_memory_dispatch;
 mod linux_resource_dispatch;
+mod linux_robust_dispatch;
 mod linux_seccomp_dispatch;
 mod linux_socket_dispatch;
 mod linux_timerfd_dispatch;

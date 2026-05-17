@@ -346,6 +346,7 @@ pub enum PlanKind {
     ClockGetres = 67,
     Prctl = 68,
     LinkAt = 69,
+    GetRobustList = 70,
 }
 
 impl PlanKind {
@@ -420,6 +421,7 @@ impl PlanKind {
             67 => Some(Self::ClockGetres),
             68 => Some(Self::Prctl),
             69 => Some(Self::LinkAt),
+            70 => Some(Self::GetRobustList),
             _ => None,
         }
     }

@@ -14,12 +14,12 @@ use vmos_abi::{
     SOL_SOCKET, SYS_ACCEPT, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SETRLIMIT,
-    SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WRITE, is_stdio_fd,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_TIMERFD_CREATE,
+    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -129,6 +129,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_PRCTL => plan_prctl(a0, a1, a2, a3, a4),
         SYS_SECCOMP => plan_seccomp(a0, a1, a2),
         SYS_BPF => plan_bpf(a0, a1, a2),
+        SYS_SET_ROBUST_LIST => plan_set_robust_list(a0, a1),
+        SYS_GET_ROBUST_LIST => plan_get_robust_list(a0, a1, a2),
         SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
@@ -596,6 +598,16 @@ fn plan_bpf(cmd: u64, attr_ptr: u64, attr_size: u64) -> PackedStep {
 fn plan_prctl(option: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> PackedStep {
     reset_plan(PlanKind::Prctl, [option, arg2, arg3, arg4, arg5, 0]);
     PackedStep::plan(PlanKind::Prctl)
+}
+
+fn plan_set_robust_list(head: u64, len: u64) -> PackedStep {
+    reset_plan(PlanKind::SetRobustList, [head, len, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetRobustList)
+}
+
+fn plan_get_robust_list(pid: u64, head_ptr: u64, len_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::GetRobustList, [pid, head_ptr, len_ptr, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetRobustList)
 }
 
 fn plan_write(fd: u64, ptr: u64, len: u64) -> PackedStep {
@@ -1410,6 +1422,23 @@ mod tests {
         assert_eq!(plan_arg(2), 0x1234);
         assert_eq!(plan_arg(3), 0x5678);
         assert_eq!(plan_arg(4), 0x9abc);
+    }
+
+    #[test]
+    fn robust_list_plans_preserve_registration_and_query_pointers() {
+        let _guard = test_guard();
+        let set = PackedStep::decode(dispatch(SYS_SET_ROBUST_LIST, 0x7000, 24, 0, 0, 0, 0));
+        assert_eq!(set.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(set.aux), Some(PlanKind::SetRobustList));
+        assert_eq!(plan_arg(0), 0x7000);
+        assert_eq!(plan_arg(1), 24);
+
+        let get = PackedStep::decode(dispatch(SYS_GET_ROBUST_LIST, 12, 0x7100, 0x7200, 0, 0, 0));
+        assert_eq!(get.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(get.aux), Some(PlanKind::GetRobustList));
+        assert_eq!(plan_arg(0), 12);
+        assert_eq!(plan_arg(1), 0x7100);
+        assert_eq!(plan_arg(2), 0x7200);
     }
 
     #[test]
