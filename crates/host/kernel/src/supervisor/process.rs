@@ -111,7 +111,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         if transitioned
             && let Some(process) = self.processes.iter_mut().find(|process| process.pid == pid)
         {
+            let old_access = process.access.clone();
             process.access = runtime_access;
+            if old_access.uid != process.access.uid || old_access.gid != process.access.gid {
+                process.dumpable = false;
+            }
         }
         transitioned
     }
@@ -202,6 +206,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sid: parent.sid,
             tgid: child_tid,
             access: runtime_access,
+            dumpable: parent.dumpable,
             exit_signal: Some(SIGCHLD),
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -341,6 +346,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sid: parent.sid,
             tgid: child_tid,
             access: runtime_access,
+            dumpable: parent.dumpable,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -473,6 +479,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sid: parent.sid,
             tgid: child_tid,
             access: runtime_access,
+            dumpable: parent.dumpable,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -612,11 +619,29 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == target_thread.pid && process.state != ProcessRuntimeStateKind::Dead
             })
             .ok_or(vmos_abi::ERR_ESRCH)?;
-        if robust_list_ptrace_may_access(&caller_process.access, &target_process.access) {
+        if robust_list_ptrace_may_access(caller_process, target_process) {
             Ok(target_thread.robust_list)
         } else {
             Err(vmos_abi::ERR_EPERM)
         }
+    }
+
+    pub(crate) fn process_dumpable(&self, pid: Pid) -> Result<bool, i32> {
+        self.processes
+            .iter()
+            .find(|process| process.pid == pid && process.state != ProcessRuntimeStateKind::Dead)
+            .map(|process| process.dumpable)
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
+    pub(crate) fn set_process_dumpable(&mut self, pid: Pid, dumpable: bool) -> Result<(), i32> {
+        let process = self
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == pid && process.state != ProcessRuntimeStateKind::Dead)
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        process.dumpable = dumpable;
+        Ok(())
     }
 
     pub(crate) fn get_process_group_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
@@ -880,9 +905,14 @@ fn wait_exit_status(exit_code: i32) -> u32 {
     ((exit_code as u32) & 0xff) << 8
 }
 
-fn robust_list_ptrace_may_access(caller: &ProcessAccessState, target: &ProcessAccessState) -> bool {
-    caller.cap_effective & CAP_SYS_PTRACE != 0
-        || (caller.uid == target.uid && caller.gid == target.gid)
+fn robust_list_ptrace_may_access(
+    caller: &ProcessRuntimeState,
+    target: &ProcessRuntimeState,
+) -> bool {
+    caller.access.cap_effective & CAP_SYS_PTRACE != 0
+        || (target.dumpable
+            && caller.access.uid == target.access.uid
+            && caller.access.gid == target.access.gid)
 }
 
 fn resolve_pid_arg(caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {

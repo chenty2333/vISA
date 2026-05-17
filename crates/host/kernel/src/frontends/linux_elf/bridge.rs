@@ -1518,6 +1518,8 @@ fn sys_rlimit(
 }
 
 fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
+    const PR_GET_DUMPABLE: u64 = 3;
+    const PR_SET_DUMPABLE: u64 = 4;
     const PR_GET_KEEPCAPS: u64 = 7;
     const PR_SET_KEEPCAPS: u64 = 8;
     const PR_SET_NO_NEW_PRIVS: u64 = 38;
@@ -1534,6 +1536,16 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
 
     match frame.rdi {
+        PR_GET_DUMPABLE => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            active_context()
+                .supervisor
+                .process_dumpable(active_context().pid)
+                .map(|dumpable| dumpable as i64)
+        }
+        PR_SET_DUMPABLE => sys_prctl_set_dumpable(frame.rsi, frame.rdx, frame.r10, frame.r8),
         PR_GET_KEEPCAPS => {
             if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
                 return Err(ERR_EINVAL);
@@ -1587,6 +1599,14 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
         PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_prctl_set_dumpable(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if value > 1 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    active_context().supervisor.set_process_dumpable(active_context().pid, value != 0)?;
+    Ok(0)
 }
 
 fn sys_prctl_set_keepcaps(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {

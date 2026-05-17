@@ -19,6 +19,8 @@ const SECCOMP_GET_NOTIF_SIZES: u64 = 3;
 const SECCOMP_MODE_STRICT: u64 = 1;
 const SECCOMP_MODE_FILTER: u64 = 2;
 
+const PR_GET_DUMPABLE: u64 = 3;
+const PR_SET_DUMPABLE: u64 = 4;
 const PR_GET_SECCOMP: u64 = 21;
 const PR_SET_SECCOMP: u64 = 22;
 const PR_SET_NO_NEW_PRIVS: u64 = 38;
@@ -97,6 +99,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         let arg5 = plan.args[4];
 
         match option {
+            PR_GET_DUMPABLE => {
+                if arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                match self.process_dumpable(self.current_pid()) {
+                    Ok(dumpable) => Ok(LinuxCallResult::Ret(dumpable as i64)),
+                    Err(errno) => Ok(errno_ret(errno)),
+                }
+            }
+            PR_SET_DUMPABLE => {
+                if arg2 > 1 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
+                    return Ok(errno_ret(ERR_EINVAL));
+                }
+                match self.set_process_dumpable(self.current_pid(), arg2 != 0) {
+                    Ok(()) => Ok(LinuxCallResult::Ret(0)),
+                    Err(errno) => Ok(errno_ret(errno)),
+                }
+            }
             PR_SET_NO_NEW_PRIVS => {
                 if arg2 != 1 || arg3 != 0 || arg4 != 0 || arg5 != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
