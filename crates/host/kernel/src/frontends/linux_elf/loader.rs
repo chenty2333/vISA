@@ -447,6 +447,7 @@ pub(crate) fn clone_user_page_mappings(
             present: mapping.present,
             owned: false,
             cow: true,
+            zero_on_discard: mapping.zero_on_discard,
         });
     }
     Ok(cloned)
@@ -597,6 +598,54 @@ pub(crate) fn cow_break_user_page(
     break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)
 }
 
+pub(crate) fn discard_zero_user_page_range(
+    physical_memory_offset: u64,
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
+    start: u64,
+    len: u64,
+) -> Result<(), &'static str> {
+    let end = start.checked_add(len).ok_or("user page range overflowed")?;
+    for mapping in page_mappings.iter().filter(|mapping| mapping.va >= start && mapping.va < end) {
+        if !mapping.zero_on_discard {
+            return Err("user page range has non-discardable backing");
+        }
+    }
+
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    {
+        let mut authority =
+            LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
+        for mapping in page_mappings
+            .iter()
+            .filter(|mapping| mapping.va >= start && mapping.va < end && mapping.present)
+        {
+            match authority.unmap_page(mapping.va) {
+                Ok(()) => {}
+                Err(err) if is_page_not_mapped(&err) => {}
+                Err(err) => return Err(map_page_table_error(err)),
+            }
+        }
+    }
+
+    let mut retained = Vec::new();
+    for mapping in page_mappings.drain(..) {
+        if mapping.va >= start && mapping.va < end {
+            if mapping.owned {
+                frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                    mapping.frame_start,
+                )));
+            }
+        } else {
+            retained.push(mapping);
+        }
+    }
+    *page_mappings = retained;
+    Ok(())
+}
+
 fn break_user_cow_page_with_authority(
     authority: &mut LiveUserPageTableAuthority<'_, '_>,
     page_addr: u64,
@@ -722,6 +771,7 @@ fn map_new_user_page(
                 present: true,
                 owned: true,
                 cow: false,
+                zero_on_discard: true,
             });
             Ok(())
         }
@@ -1017,6 +1067,7 @@ fn prepare_user_pages(
             present: true,
             owned: true,
             cow: false,
+            zero_on_discard: false,
         });
 
         let dest = frame_bytes(frame, phys_offset);
@@ -1053,6 +1104,7 @@ fn prepare_user_stack(
             present: true,
             owned: true,
             cow: false,
+            zero_on_discard: true,
         });
         let dest = frame_bytes(frame, phys_offset);
         dest.fill(0);

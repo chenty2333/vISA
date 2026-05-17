@@ -37,6 +37,7 @@ pub(crate) struct UserPageMapping {
     pub(crate) present: bool,
     pub(crate) owned: bool,
     pub(crate) cow: bool,
+    pub(crate) zero_on_discard: bool,
 }
 
 pub(crate) struct LoadedUserImage {

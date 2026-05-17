@@ -51,9 +51,10 @@ use super::{
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
-        clone_user_page_mappings, cow_break_user_page, demo_program_host_path, load_demo_program,
-        populate_user_page_range, prepare_user_program, protect_user_page_range,
-        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
+        clone_user_page_mappings, cow_break_user_page, demo_program_host_path,
+        discard_zero_user_page_range, load_demo_program, populate_user_page_range,
+        prepare_user_program, protect_user_page_range, switch_user_page_mappings,
+        unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -4753,6 +4754,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
             protect_active_user_page_range(addr, len, map_prot)?;
         }
         populate_active_user_page_range(addr, &bytes)?;
+        mark_active_user_page_range_zero_discard(addr, len, false);
         if map_prot != frame.rdx {
             protect_active_user_page_range(addr, len, frame.rdx)?;
         }
@@ -5021,6 +5023,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_RANDOM: u64 = 1;
     const MADV_SEQUENTIAL: u64 = 2;
     const MADV_WILLNEED: u64 = 3;
+    const MADV_DONTNEED: u64 = 4;
     const MADV_MERGEABLE: u64 = 12;
     const MADV_UNMERGEABLE: u64 = 13;
     const MADV_HUGEPAGE: u64 = 14;
@@ -5031,9 +5034,9 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_PAGEOUT: u64 = 21;
 
     match frame.rdx {
-        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_MERGEABLE
-        | MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP
-        | MADV_COLD | MADV_PAGEOUT => {}
+        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED
+        | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP
+        | MADV_DODUMP | MADV_COLD | MADV_PAGEOUT => {}
         _ => return Err(ERR_EINVAL),
     }
 
@@ -5047,6 +5050,9 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_lower_user_address_range(frame.rdi, len)?;
     validate_mapped_user_range(frame.rdi, len)
         .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
+    if frame.rdx == MADV_DONTNEED {
+        discard_active_zero_user_page_range(frame.rdi, len)?;
+    }
     Ok(0)
 }
 
@@ -6808,10 +6814,39 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     .map_err(|_| ERR_EFAULT)
 }
 
+fn discard_active_zero_user_page_range(start: u64, len: u64) -> Result<(), i32> {
+    let context = active_context();
+    discard_zero_user_page_range(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        start,
+        len,
+    )
+    .map_err(|err| {
+        if err == "user page range has non-discardable backing" {
+            vmos_abi::ERR_EOPNOTSUPP
+        } else {
+            ERR_EFAULT
+        }
+    })
+}
+
 fn populate_active_user_page_range(start: u64, bytes: &[u8]) -> Result<(), i32> {
     let context = active_context();
     populate_user_page_range(context.physical_memory_offset(), &context.page_mappings, start, bytes)
         .map_err(|_| ERR_EFAULT)
+}
+
+fn mark_active_user_page_range_zero_discard(start: u64, len: u64, zero_on_discard: bool) {
+    let Some(end) = start.checked_add(len) else {
+        return;
+    };
+    for mapping in &mut active_context().page_mappings {
+        if mapping.va >= start && mapping.va < end {
+            mapping.zero_on_discard = zero_on_discard;
+        }
+    }
 }
 
 fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
