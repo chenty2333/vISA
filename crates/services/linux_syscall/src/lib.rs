@@ -11,7 +11,7 @@ use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
-    SOL_SOCKET, SYS_ACCEPT, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
@@ -80,6 +80,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_CONNECT => plan_connect(a0, a1, a2, a3, a4, a5),
         SYS_LISTEN => plan_listen(a0, a1),
         SYS_ACCEPT => plan_accept(a0, a1, a2),
+        SYS_ACCEPT4 => plan_accept4(a0, a1, a2, a3),
         SYS_SENDTO => plan_sendto(a0, a1, a2, a3, a4, a5),
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
@@ -461,6 +462,11 @@ fn plan_listen(fd: u64, backlog: u64) -> PackedStep {
 
 fn plan_accept(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
     reset_plan(PlanKind::Accept, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Accept)
+}
+
+fn plan_accept4(fd: u64, addr: u64, addr_len: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::Accept, [fd, addr, addr_len, flags, 0, 0]);
     PackedStep::plan(PlanKind::Accept)
 }
 
@@ -1001,6 +1007,23 @@ mod tests {
         assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
         assert_eq!(plan_arg(4), ipv4 as u64);
         assert_eq!(plan_arg(5), 8080);
+    }
+
+    #[test]
+    fn accept4_plan_preserves_flags() {
+        let _guard = test_guard();
+        const SOCK_NONBLOCK: u64 = 0o4000;
+        const SOCK_CLOEXEC: u64 = 0o2000000;
+        let flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
+        let raw = dispatch(SYS_ACCEPT4, 8, 0x2100, 0x2200, flags, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Accept));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0x2100);
+        assert_eq!(plan_arg(2), 0x2200);
+        assert_eq!(plan_arg(3), flags);
     }
 
     #[test]

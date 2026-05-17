@@ -4,7 +4,7 @@ use vmos_abi::{
     ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
-    SOL_SOCKET, SYS_ACCEPT, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
+    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
@@ -67,6 +67,7 @@ impl LinuxFrontend {
             SYS_CONNECT => self.plan_connect(a0, a1, a2, a3, a4, a5),
             SYS_LISTEN => self.plan_listen(a0, a1),
             SYS_ACCEPT => self.plan_accept(a0, a1, a2),
+            SYS_ACCEPT4 => self.plan_accept4(a0, a1, a2, a3),
             SYS_SENDTO => self.plan_sendto(a0, a1, a2, a3, a4, a5),
             SYS_RECVFROM => self.plan_recvfrom(a0, a1, a2, a3, a4, a5),
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
@@ -487,6 +488,11 @@ impl LinuxFrontend {
 
     fn plan_accept(&mut self, fd: u64, addr: u64, addr_len: u64) -> PackedStep {
         self.reset_plan(PlanKind::Accept, [fd, addr, addr_len, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Accept)
+    }
+
+    fn plan_accept4(&mut self, fd: u64, addr: u64, addr_len: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Accept, [fd, addr, addr_len, flags, 0, 0]);
         PackedStep::plan(PlanKind::Accept)
     }
 
