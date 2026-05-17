@@ -52,9 +52,9 @@ use super::{
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, cow_break_user_page, demo_program_host_path,
-        discard_user_page_range, load_demo_program, populate_user_page_range, prepare_user_program,
-        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
-        user_elf_interpreter_path,
+        discard_user_page_range, load_demo_program, populate_user_page_range,
+        prefault_user_page_range, prepare_user_program, protect_user_page_range,
+        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -5032,11 +5032,13 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_DODUMP: u64 = 17;
     const MADV_COLD: u64 = 20;
     const MADV_PAGEOUT: u64 = 21;
+    const MADV_POPULATE_READ: u64 = 22;
+    const MADV_POPULATE_WRITE: u64 = 23;
 
     match frame.rdx {
         MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED
         | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP
-        | MADV_DODUMP | MADV_COLD | MADV_PAGEOUT => {}
+        | MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {}
         _ => return Err(ERR_EINVAL),
     }
 
@@ -5050,8 +5052,17 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_lower_user_address_range(frame.rdi, len)?;
     validate_mapped_user_range(frame.rdi, len)
         .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
-    if frame.rdx == MADV_DONTNEED {
-        discard_active_user_page_range(frame.rdi, len)?;
+    match frame.rdx {
+        MADV_DONTNEED => discard_active_user_page_range(frame.rdi, len)?,
+        MADV_POPULATE_READ => {
+            validate_user_range_access(frame.rdi, len, UserRangeAccess::Read)?;
+            prefault_active_user_page_range(frame.rdi, len, false)?;
+        }
+        MADV_POPULATE_WRITE => {
+            validate_user_range_access(frame.rdi, len, UserRangeAccess::Write)?;
+            prefault_active_user_page_range(frame.rdi, len, true)?;
+        }
+        _ => {}
     }
     Ok(0)
 }
@@ -6830,6 +6841,50 @@ fn discard_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
             ERR_EFAULT
         }
     })
+}
+
+fn prefault_active_user_page_range(start: u64, len: u64, write: bool) -> Result<(), i32> {
+    let raw_end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
+    let mut page = start;
+    while page < end {
+        let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
+        prefault_active_user_page(page, prot, write)?;
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
+    }
+    Ok(())
+}
+
+fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i32> {
+    let context = active_context();
+    let cow_pages = if write {
+        context
+            .page_mappings
+            .iter()
+            .filter(|mapping| mapping.cow && mapping.va == page)
+            .map(|mapping| mapping.va)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    prefault_user_page_range(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        page,
+        4096,
+        prot,
+        write,
+    )
+    .map_err(|_| ERR_EFAULT)?;
+
+    for page in cow_pages {
+        if context.page_mappings.iter().any(|mapping| mapping.va == page && !mapping.cow) {
+            context.supervisor.record_guest_memory_cow_break(page);
+        }
+    }
+    Ok(())
 }
 
 fn populate_active_user_page_range(start: u64, bytes: &[u8]) -> Result<(), i32> {

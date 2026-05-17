@@ -368,6 +368,53 @@ pub(crate) fn protect_user_page_range(
     Ok(())
 }
 
+pub(crate) fn prefault_user_page_range(
+    physical_memory_offset: u64,
+    page_mappings: &mut Vec<UserPageMapping>,
+    frame_allocator: &mut UserFrameAllocator,
+    start: u64,
+    len: u64,
+    prot: u64,
+    write: bool,
+) -> Result<(), &'static str> {
+    if prot_is_none(prot) {
+        return Err("user page range is not accessible");
+    }
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let level_4 = unsafe { active_level_4_table(phys_offset) };
+    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+    let mut authority =
+        LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
+    let flags = user_page_flags(prot);
+    for page_addr in user_page_iter(start, len)? {
+        if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr) {
+            if write && mapping.cow {
+                break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)?;
+                continue;
+            }
+            if mapping.present {
+                if write {
+                    let (writable, executable) = page_attrs_from_flags(flags);
+                    match authority.protect_page(page_addr, writable, executable) {
+                        Ok(()) => {}
+                        Err(err) if is_page_not_mapped(&err) => {
+                            mapping.present = false;
+                            remap_user_page(&mut authority, page_addr, mapping, flags)?;
+                        }
+                        Err(err) => return Err(map_page_table_error(err)),
+                    }
+                }
+                continue;
+            }
+            let mapping_flags = user_page_flags_for_mapping(prot, mapping);
+            remap_user_page(&mut authority, page_addr, mapping, mapping_flags)?;
+        } else {
+            map_new_user_page(&mut authority, page_mappings, page_addr, flags)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn populate_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &[UserPageMapping],
