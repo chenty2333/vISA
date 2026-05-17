@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 
 use vmos_abi::{
     EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ELOOP,
@@ -153,7 +153,7 @@ include!(concat!(env!("OUT_DIR"), "/linux_user_resources.rs"));
 #[derive(Clone, PartialEq, Eq)]
 enum FileLockKey {
     Node(u64),
-    Path(Vec<u8>),
+    Path(Arc<[u8]>),
 }
 
 #[derive(Clone)]
@@ -1100,9 +1100,9 @@ impl VfsService {
         }
         for lock in &mut self.locks {
             if let FileLockKey::Path(path) = &mut lock.key
-                && let Some(next_path) = replace_path_prefix(path, old_prefix, new_prefix)
+                && let Some(next_path) = replace_path_prefix(path.as_ref(), old_prefix, new_prefix)
             {
-                *path = next_path;
+                *path = shared_file_lock_path(next_path);
             }
         }
     }
@@ -1117,10 +1117,10 @@ impl VfsService {
         }
         for lock in &mut self.locks {
             if let FileLockKey::Path(path) = &mut lock.key {
-                if let Some(next_path) = replace_path_prefix(path, left, right) {
-                    *path = next_path;
-                } else if let Some(next_path) = replace_path_prefix(path, right, left) {
-                    *path = next_path;
+                if let Some(next_path) = replace_path_prefix(path.as_ref(), left, right) {
+                    *path = shared_file_lock_path(next_path);
+                } else if let Some(next_path) = replace_path_prefix(path.as_ref(), right, left) {
+                    *path = shared_file_lock_path(next_path);
                 }
             }
         }
@@ -1256,9 +1256,13 @@ impl VfsService {
         if let Some(id) = node_id.or_else(|| self.node_id_for_path(path)) {
             FileLockKey::Node(id)
         } else {
-            FileLockKey::Path(normalize_path(path))
+            FileLockKey::Path(shared_file_lock_path(normalize_path(path)))
         }
     }
+}
+
+fn shared_file_lock_path(path: Vec<u8>) -> Arc<[u8]> {
+    Arc::from(path.into_boxed_slice())
 }
 
 fn ranges_overlap(left_start: i64, left_len: i64, right_start: i64, right_len: i64) -> bool {
