@@ -494,6 +494,8 @@ pub(crate) struct TimerFdState {
     pub(crate) interval_ns: u64,
     pub(crate) next_expiration_ns: Option<u64>,
     pub(crate) expirations: u64,
+    pub(crate) cancel_on_set: bool,
+    pub(crate) canceled: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

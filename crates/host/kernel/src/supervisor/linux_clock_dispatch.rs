@@ -135,6 +135,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         if delta_ns != 0 {
             self.adjust_runtime_realtime_ns(delta_ns, tick, timer_hz);
+            self.cancel_realtime_timerfds_on_clock_set();
         }
 
         let current_ns = self.runtime_realtime_now_ns(tick, timer_hz);

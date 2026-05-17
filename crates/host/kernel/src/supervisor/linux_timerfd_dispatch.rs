@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EBADF, ERR_EFAULT, ERR_EINVAL};
+use vmos_abi::{ERR_EBADF, ERR_ECANCELED, ERR_EFAULT, ERR_EINVAL};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -48,7 +48,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => return Ok(errno_ret(errno)),
         };
         match self.timerfd_settime(fd, flags, value_ns, interval_ns) {
-            Ok((old_value_ns, old_interval_ns)) => {
+            Ok((old_value_ns, old_interval_ns, was_canceled)) => {
                 if plan.args[3] != 0 {
                     let old_ptr = match checked_user_ptr(plan.args[3]) {
                         Ok(ptr) => ptr,
@@ -58,6 +58,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     if self.linux.write_bytes(old_ptr, &old).is_err() {
                         return Ok(errno_ret(ERR_EFAULT));
                     }
+                }
+                if was_canceled {
+                    return Ok(errno_ret(ERR_ECANCELED));
                 }
                 Ok(LinuxCallResult::Ret(0))
             }

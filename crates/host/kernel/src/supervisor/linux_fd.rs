@@ -2,8 +2,8 @@ use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_EINVAL, ERR_EMFILE,
-    ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
+    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_ECANCELED, ERR_EINVAL,
+    ERR_EMFILE, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -1241,6 +1241,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             interval_ns: 0,
             next_expiration_ns: None,
             expirations: 0,
+            cancel_on_set: false,
+            canceled: false,
         });
         let fd = self.alloc_fd(FdEntry {
             resource: FdResource::TimerFd { timerfd_id },
@@ -1577,24 +1579,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         flags: u32,
         value_ns: u64,
         interval_ns: u64,
-    ) -> Result<(u64, u64), i32> {
+    ) -> Result<(u64, u64, bool), i32> {
         const TFD_TIMER_ABSTIME: u32 = 1;
         const TFD_TIMER_CANCEL_ON_SET: u32 = 2;
 
         if flags & !(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET) != 0 {
             return Err(ERR_EINVAL);
         }
-        if flags & TFD_TIMER_CANCEL_ON_SET != 0 {
-            return Err(ERR_EOPNOTSUPP);
-        }
         let timerfd_id = self.timerfd_id_for_fd(fd)?;
         self.refresh_timerfd(timerfd_id)?;
         let old = self.timerfd_gettime_by_id(timerfd_id)?;
         let clock_id = self.timerfd(timerfd_id)?.clock_id;
         let now_ns = self.timerfd_now_ns(clock_id)?;
+        let was_canceled = self.timerfd(timerfd_id)?.canceled;
         let timerfd = self.timerfd_mut(timerfd_id)?;
         timerfd.interval_ns = interval_ns;
         timerfd.expirations = 0;
+        timerfd.canceled = false;
+        timerfd.cancel_on_set = value_ns != 0
+            && flags & TFD_TIMER_ABSTIME != 0
+            && flags & TFD_TIMER_CANCEL_ON_SET != 0
+            && timerfd_clock_cancelable(clock_id);
         timerfd.next_expiration_ns = if value_ns == 0 {
             None
         } else if flags & TFD_TIMER_ABSTIME != 0 {
@@ -1606,7 +1611,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.timerfd(timerfd_id)?.expirations > 0 {
             self.notify_ready_key(timerfd_ready_key(timerfd_id), "timerfd read readiness");
         }
-        Ok(old)
+        Ok((old.0, old.1, was_canceled))
     }
 
     pub(crate) fn timerfd_gettime(&mut self, fd: u32) -> Result<(u64, u64), i32> {
@@ -1623,6 +1628,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.refresh_timerfd(timerfd_id)?;
         let value = {
             let timerfd = self.timerfd_mut(timerfd_id)?;
+            if timerfd.canceled {
+                timerfd.canceled = false;
+                return Err(ERR_ECANCELED);
+            }
             if timerfd.expirations == 0 {
                 return Err(ERR_EAGAIN);
             }
@@ -1768,7 +1777,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.refresh_timerfd(timerfd_id)?;
         let timerfd = self.timerfd(timerfd_id)?;
         let mut revents = 0u16;
-        if timerfd.expirations > 0 {
+        if timerfd.canceled || timerfd.expirations > 0 {
             revents |= requested_read_revents(events);
         }
         Ok(revents)
@@ -1782,18 +1791,34 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.refresh_timerfd(timerfd_id).is_err() {
             return false;
         }
-        self.timerfd(timerfd_id)
-            .is_ok_and(|timerfd| events & EPOLLIN != 0 && timerfd.expirations > 0)
+        self.timerfd(timerfd_id).is_ok_and(|timerfd| {
+            events & EPOLLIN != 0 && (timerfd.canceled || timerfd.expirations > 0)
+        })
     }
 
     pub(super) fn collect_timerfd_ready_keys(&mut self, out: &mut Vec<u64>) {
         for index in 0..self.timerfds.len() {
             let timerfd_id = self.timerfds[index].id;
             if self.refresh_timerfd(timerfd_id).is_ok()
-                && self.timerfd(timerfd_id).is_ok_and(|timerfd| timerfd.expirations > 0)
+                && self
+                    .timerfd(timerfd_id)
+                    .is_ok_and(|timerfd| timerfd.canceled || timerfd.expirations > 0)
             {
                 out.push(timerfd_ready_key(timerfd_id));
             }
+        }
+    }
+
+    pub(crate) fn cancel_realtime_timerfds_on_clock_set(&mut self) {
+        let mut ready_keys = Vec::new();
+        for timerfd in &mut self.timerfds {
+            if timerfd.cancel_on_set && timerfd.next_expiration_ns.is_some() {
+                timerfd.canceled = true;
+                ready_keys.push(timerfd_ready_key(timerfd.id));
+            }
+        }
+        for ready_key in ready_keys {
+            self.notify_ready_key(ready_key, "timerfd clock cancel");
         }
     }
 
@@ -2837,6 +2862,10 @@ fn eventfd_ready_key(eventfd_id: u64) -> u64 {
 
 fn timerfd_ready_key(timerfd_id: u64) -> u64 {
     TIMERFD_READY_TAG | timerfd_id
+}
+
+fn timerfd_clock_cancelable(clock_id: u64) -> bool {
+    matches!(clock_id, CLOCK_REALTIME | CLOCK_REALTIME_ALARM)
 }
 
 fn peer_endpoint(endpoint: u8) -> u8 {
