@@ -357,6 +357,7 @@ pub enum PlanKind {
     Eventfd = 71,
     Pipe = 72,
     SocketPair = 73,
+    Dup = 74,
 }
 
 impl PlanKind {
@@ -435,6 +436,7 @@ impl PlanKind {
             71 => Some(Self::Eventfd),
             72 => Some(Self::Pipe),
             73 => Some(Self::SocketPair),
+            74 => Some(Self::Dup),
             _ => None,
         }
     }

@@ -11,6 +11,7 @@ mod linux;
 mod linux_bpf;
 mod linux_clock_dispatch;
 mod linux_dispatch;
+mod linux_dup_dispatch;
 mod linux_epoll_dispatch;
 mod linux_eventfd_dispatch;
 mod linux_fd;

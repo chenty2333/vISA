@@ -260,6 +260,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::OpenAt => self.plan_openat(plan),
             PlanKind::Read => self.plan_read(plan),
             PlanKind::Close => self.plan_close(plan),
+            PlanKind::Dup => self.plan_dup(plan),
             PlanKind::GetDents64 => self.plan_getdents(plan),
             PlanKind::ReadLinkAt => self.plan_readlinkat(plan),
             PlanKind::GetCwd => Ok(LinuxCallResult::Bytes(CURRENT_CWD.to_vec())),

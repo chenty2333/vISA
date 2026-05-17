@@ -252,6 +252,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "fd.table",
             operation: "close",
         },
+        PlanKind::Dup => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "fd.table",
+            operation: "dup",
+        },
         PlanKind::GetDents64 => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "vfs_service",

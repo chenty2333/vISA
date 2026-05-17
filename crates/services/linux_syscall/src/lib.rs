@@ -12,15 +12,16 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
-    SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME,
-    SYS_WRITE, is_stdio_fd,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR,
+    SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
+    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -71,6 +72,9 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_READ => plan_read(a0, a2),
         SYS_WRITE => plan_write(a0, a1, a2),
         SYS_CLOSE => plan_close(a0),
+        SYS_DUP => plan_dup(a0, 0, 0, 0),
+        SYS_DUP2 => plan_dup(a0, a1, 0, 1),
+        SYS_DUP3 => plan_dup(a0, a1, a2, 2),
         SYS_NANOSLEEP => dispatch_nanosleep(a0, a1),
         SYS_FUTEX => dispatch_futex(a0, a1, a2, a3, a4, a5),
         SYS_EPOLL_CREATE => plan_epoll_create(a0),
@@ -674,6 +678,11 @@ fn plan_close(fd: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Close)
 }
 
+fn plan_dup(old_fd: u64, new_fd: u64, flags: u64, mode: u64) -> PackedStep {
+    reset_plan(PlanKind::Dup, [old_fd, new_fd, flags, mode, 0, 0]);
+    PackedStep::plan(PlanKind::Dup)
+}
+
 fn plan_getdents(fd: u64, count: u64) -> PackedStep {
     reset_plan(PlanKind::GetDents64, [fd, count, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::GetDents64)
@@ -1071,6 +1080,36 @@ mod tests {
         assert_eq!(plan_arg(1), ty);
         assert_eq!(plan_arg(2), 0);
         assert_eq!(plan_arg(3), 0x2300);
+    }
+
+    #[test]
+    fn dup_plans_preserve_mode_flags_and_targets() {
+        let _guard = test_guard();
+        const O_CLOEXEC: u64 = 0o2000000;
+
+        let dup = PackedStep::decode(dispatch(SYS_DUP, 8, 0xdead, 0xbeef, 0, 0, 0));
+        assert_eq!(dup.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(dup.aux), Some(PlanKind::Dup));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0);
+        assert_eq!(plan_arg(2), 0);
+        assert_eq!(plan_arg(3), 0);
+
+        let dup2 = PackedStep::decode(dispatch(SYS_DUP2, 8, 15, 0xbeef, 0, 0, 0));
+        assert_eq!(dup2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(dup2.aux), Some(PlanKind::Dup));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 15);
+        assert_eq!(plan_arg(2), 0);
+        assert_eq!(plan_arg(3), 1);
+
+        let dup3 = PackedStep::decode(dispatch(SYS_DUP3, 8, 16, O_CLOEXEC, 0, 0, 0));
+        assert_eq!(dup3.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(dup3.aux), Some(PlanKind::Dup));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 16);
+        assert_eq!(plan_arg(2), O_CLOEXEC);
+        assert_eq!(plan_arg(3), 2);
     }
 
     #[test]
