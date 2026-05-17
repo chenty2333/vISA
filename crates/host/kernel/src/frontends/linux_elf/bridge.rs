@@ -4838,7 +4838,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
 
     if dontunmap {
-        validate_active_user_page_range_zero_backing(old_addr, old_len)?;
+        validate_active_user_page_range_dontunmap_backing(old_addr, old_len)?;
         let new_addr = if fixed {
             let new_addr = frame.r8;
             if new_addr & 4095 != 0 {
@@ -4972,6 +4972,14 @@ fn move_active_user_mapping_range(
                 let mut moved = mapping.clone();
                 moved.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
                 next_mappings.push(moved);
+                if preserve_source_region {
+                    let mut source = mapping.clone();
+                    source.frame_start = 0;
+                    source.present = false;
+                    source.owned = false;
+                    source.cow = false;
+                    next_mappings.push(source);
+                }
             } else {
                 dropped_mappings.push(mapping.clone());
             }
@@ -7042,6 +7050,21 @@ fn validate_active_user_page_range_zero_backing(start: u64, len: u64) -> Result<
         .filter(|mapping| mapping.va >= start && mapping.va < end)
     {
         if !matches!(&mapping.backing, UserPageBacking::ZeroFill) {
+            return Err(ERR_EINVAL);
+        }
+    }
+    Ok(())
+}
+
+fn validate_active_user_page_range_dontunmap_backing(start: u64, len: u64) -> Result<(), i32> {
+    let end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    for mapping in active_context()
+        .page_mappings
+        .iter()
+        .filter(|mapping| mapping.va >= start && mapping.va < end)
+    {
+        if !matches!(&mapping.backing, UserPageBacking::ZeroFill | UserPageBacking::FilePrivate(_))
+        {
             return Err(ERR_EINVAL);
         }
     }
