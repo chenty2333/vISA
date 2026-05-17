@@ -19,6 +19,7 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) tgid: Tid,
     pub(crate) access: ProcessAccessState,
     pub(crate) dumpable: bool,
+    pub(crate) execed: bool,
     pub(crate) exit_signal: Option<u8>,
     pub(crate) state: ProcessRuntimeStateKind,
     pub(crate) exit_code: Option<i32>,

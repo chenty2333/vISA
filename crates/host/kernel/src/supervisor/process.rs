@@ -217,6 +217,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             tgid: child_tid,
             access: runtime_access,
             dumpable: parent.dumpable,
+            execed: false,
             exit_signal: Some(SIGCHLD),
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -362,6 +363,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             tgid: child_tid,
             access: runtime_access,
             dumpable: parent.dumpable,
+            execed: false,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -500,6 +502,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             tgid: child_tid,
             access: runtime_access,
             dumpable: parent.dumpable,
+            execed: false,
             exit_signal: if exit_signal == 0 { None } else { Some(exit_signal) },
             state: ProcessRuntimeStateKind::Running,
             exit_code: None,
@@ -664,6 +667,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    pub(crate) fn mark_process_execed(&mut self, pid: Pid) -> bool {
+        let Some(process) = self.processes.iter_mut().find(|process| {
+            process.pid == pid && process.state == ProcessRuntimeStateKind::Running
+        }) else {
+            return false;
+        };
+        process.execed = true;
+        true
+    }
+
     pub(crate) fn get_process_group_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
         let target_pid = resolve_pid_arg(caller_pid, pid_arg)?;
         self.processes
@@ -715,6 +728,9 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         if target_pid != caller_pid && target.ppid != caller_pid {
             return Err(vmos_abi::ERR_ESRCH);
+        }
+        if target_pid != caller_pid && target.execed {
+            return Err(vmos_abi::ERR_EACCES);
         }
         if target.sid != caller.sid || target.sid == target.pid {
             return Err(vmos_abi::ERR_EPERM);

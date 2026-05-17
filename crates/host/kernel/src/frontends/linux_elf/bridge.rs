@@ -894,6 +894,9 @@ fn execve_replace_image(
         if !context.supervisor.reset_signal_state_for_exec(context.pid, context.tid) {
             return Err(ERR_ESRCH);
         }
+        if !context.supervisor.mark_process_execed(context.pid) {
+            crate::kwarn!("execve could not mark pid {} execed", context.pid);
+        }
     }
 
     let mut next = ring3::capture_user_return(frame);
