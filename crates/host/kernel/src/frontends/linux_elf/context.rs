@@ -30,14 +30,27 @@ pub(crate) struct UserRegion {
     pub(crate) executable: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+pub(crate) enum UserPageBacking {
+    ZeroFill,
+    FilePrivate(Vec<u8>),
+    Preserve,
+}
+
+impl UserPageBacking {
+    pub(crate) fn is_discardable(&self) -> bool {
+        matches!(self, Self::ZeroFill | Self::FilePrivate(_))
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct UserPageMapping {
     pub(crate) va: u64,
     pub(crate) frame_start: u64,
     pub(crate) present: bool,
     pub(crate) owned: bool,
     pub(crate) cow: bool,
-    pub(crate) zero_on_discard: bool,
+    pub(crate) backing: UserPageBacking,
 }
 
 pub(crate) struct LoadedUserImage {

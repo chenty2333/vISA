@@ -14,7 +14,9 @@ use x86_64::{
 };
 use xmas_elf::{ElfFile, header::Type as ElfType, program::Type as ProgramType};
 
-use super::context::{LoadedUserImage, UserFrameAllocator, UserPageMapping, UserRegion};
+use super::context::{
+    LoadedUserImage, UserFrameAllocator, UserPageBacking, UserPageMapping, UserRegion,
+};
 use crate::supervisor::linux_user_resource_bytes_for_path;
 
 const LIVE_PAGE_TABLE_AUTHORITY: &str = "LiveUserPageTableAuthority";
@@ -423,7 +425,7 @@ pub(crate) fn unmap_user_page_range(
     let mut retained = Vec::new();
     for mapping in page_mappings.drain(..) {
         if mapping.va >= start && mapping.va < end {
-            if mapping.owned {
+            if mapping.owned && mapping.frame_start != 0 {
                 frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
                     mapping.frame_start,
                 )));
@@ -446,8 +448,8 @@ pub(crate) fn clone_user_page_mappings(
             frame_start: mapping.frame_start,
             present: mapping.present,
             owned: false,
-            cow: true,
-            zero_on_discard: mapping.zero_on_discard,
+            cow: mapping.frame_start != 0,
+            backing: mapping.backing.clone(),
         });
     }
     Ok(cloned)
@@ -532,7 +534,7 @@ pub(crate) fn switch_user_page_mappings(
 
     if reclaim_current {
         for mapping in current_mappings {
-            if mapping.owned {
+            if mapping.owned && mapping.frame_start != 0 {
                 authority.frame_allocator.deallocate_frame(PhysFrame::containing_address(
                     PhysAddr::new(mapping.frame_start),
                 ));
@@ -598,7 +600,7 @@ pub(crate) fn cow_break_user_page(
     break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)
 }
 
-pub(crate) fn discard_zero_user_page_range(
+pub(crate) fn discard_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,
     frame_allocator: &mut UserFrameAllocator,
@@ -607,7 +609,7 @@ pub(crate) fn discard_zero_user_page_range(
 ) -> Result<(), &'static str> {
     let end = start.checked_add(len).ok_or("user page range overflowed")?;
     for mapping in page_mappings.iter().filter(|mapping| mapping.va >= start && mapping.va < end) {
-        if !mapping.zero_on_discard {
+        if !mapping.backing.is_discardable() {
             return Err("user page range has non-discardable backing");
         }
     }
@@ -631,12 +633,19 @@ pub(crate) fn discard_zero_user_page_range(
     }
 
     let mut retained = Vec::new();
-    for mapping in page_mappings.drain(..) {
+    for mut mapping in page_mappings.drain(..) {
         if mapping.va >= start && mapping.va < end {
-            if mapping.owned {
+            if mapping.owned && mapping.frame_start != 0 {
                 frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
                     mapping.frame_start,
                 )));
+            }
+            if matches!(&mapping.backing, UserPageBacking::FilePrivate(_)) {
+                mapping.frame_start = 0;
+                mapping.present = false;
+                mapping.owned = false;
+                mapping.cow = false;
+                retained.push(mapping);
             }
         } else {
             retained.push(mapping);
@@ -657,6 +666,9 @@ fn break_user_cow_page_with_authority(
     }
 
     let old_frame_start = mapping.frame_start;
+    if old_frame_start == 0 {
+        return Err("COW page has no physical frame");
+    }
     let old_present = mapping.present;
     let old_owned = mapping.owned;
     let old_cow = mapping.cow;
@@ -733,6 +745,7 @@ fn remap_user_page(
     mapping: &mut UserPageMapping,
     flags: PageTableFlags,
 ) -> Result<(), &'static str> {
+    let allocated = materialize_user_page_frame(authority, mapping)?;
     let (writable, executable) = page_attrs_from_flags(flags);
     match authority.map_page(page_addr, mapping.frame_start, writable, executable) {
         Ok(()) => {
@@ -740,14 +753,67 @@ fn remap_user_page(
             Ok(())
         }
         Err(SubstrateError::ContractViolation { detail: "virtual page already mapped" }) => {
+            if allocated {
+                discard_materialized_user_page_frame(authority, mapping);
+                return Err("virtual page already mapped while materializing discarded page");
+            }
             mapping.present = true;
             match authority.protect_page(page_addr, writable, executable) {
                 Ok(()) => Ok(()),
                 Err(err) => Err(map_page_table_error(err)),
             }
         }
-        Err(err) => Err(map_page_table_error(err)),
+        Err(err) => {
+            if allocated {
+                discard_materialized_user_page_frame(authority, mapping);
+            }
+            Err(map_page_table_error(err))
+        }
     }
+}
+
+fn materialize_user_page_frame(
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    mapping: &mut UserPageMapping,
+) -> Result<bool, &'static str> {
+    if mapping.frame_start != 0 {
+        return Ok(false);
+    }
+
+    let frame_start = authority.alloc_frame().map_err(map_page_table_error)?;
+    let frame = PhysFrame::containing_address(PhysAddr::new(frame_start));
+    let dest = frame_bytes(frame, authority.phys_offset);
+    match &mapping.backing {
+        UserPageBacking::ZeroFill => dest.fill(0),
+        UserPageBacking::FilePrivate(bytes) => {
+            dest.fill(0);
+            let copy_len = core::cmp::min(bytes.len(), PAGE_SIZE);
+            dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        }
+        UserPageBacking::Preserve => {
+            authority.frame_allocator.deallocate_frame(frame);
+            return Err("preserved user page lost its physical frame");
+        }
+    }
+    mapping.frame_start = frame_start;
+    mapping.owned = true;
+    mapping.cow = false;
+    Ok(true)
+}
+
+fn discard_materialized_user_page_frame(
+    authority: &mut LiveUserPageTableAuthority<'_, '_>,
+    mapping: &mut UserPageMapping,
+) {
+    if mapping.frame_start != 0 {
+        authority
+            .frame_allocator
+            .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(mapping.frame_start)));
+    }
+    mapping.frame_start = 0;
+    mapping.present = false;
+    mapping.owned = false;
+    mapping.cow = false;
 }
 
 fn map_new_user_page(
@@ -771,7 +837,7 @@ fn map_new_user_page(
                 present: true,
                 owned: true,
                 cow: false,
-                zero_on_discard: true,
+                backing: UserPageBacking::ZeroFill,
             });
             Ok(())
         }
@@ -1067,7 +1133,7 @@ fn prepare_user_pages(
             present: true,
             owned: true,
             cow: false,
-            zero_on_discard: false,
+            backing: UserPageBacking::Preserve,
         });
 
         let dest = frame_bytes(frame, phys_offset);
@@ -1104,7 +1170,7 @@ fn prepare_user_stack(
             present: true,
             owned: true,
             cow: false,
-            zero_on_discard: true,
+            backing: UserPageBacking::ZeroFill,
         });
         let dest = frame_bytes(frame, phys_offset);
         dest.fill(0);
@@ -1120,7 +1186,8 @@ fn release_prepared_page_mappings(
     frame_allocator: &mut UserFrameAllocator,
     page_mappings: &[UserPageMapping],
 ) {
-    for mapping in page_mappings.iter().filter(|mapping| mapping.owned) {
+    for mapping in page_mappings.iter().filter(|mapping| mapping.owned && mapping.frame_start != 0)
+    {
         frame_allocator
             .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(mapping.frame_start)));
     }

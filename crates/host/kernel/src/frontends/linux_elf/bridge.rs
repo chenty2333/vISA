@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
@@ -46,15 +46,15 @@ use x86_64::{
 use super::{
     context::{
         ActiveUserContext, ClockAdjustmentState, CredentialState, ExecFileCapabilities,
-        UserAddressSpaceState, UserPageMapping, UserRegion, active_context, install_active_context,
-        try_active_context,
+        UserAddressSpaceState, UserPageBacking, UserPageMapping, UserRegion, active_context,
+        install_active_context, try_active_context,
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, cow_break_user_page, demo_program_host_path,
-        discard_zero_user_page_range, load_demo_program, populate_user_page_range,
-        prepare_user_program, protect_user_page_range, switch_user_page_mappings,
-        unmap_user_page_range, user_elf_interpreter_path,
+        discard_user_page_range, load_demo_program, populate_user_page_range, prepare_user_program,
+        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
+        user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -4754,7 +4754,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
             protect_active_user_page_range(addr, len, map_prot)?;
         }
         populate_active_user_page_range(addr, &bytes)?;
-        mark_active_user_page_range_zero_discard(addr, len, false);
+        mark_active_user_page_range_file_private(addr, len, &bytes);
         if map_prot != frame.rdx {
             protect_active_user_page_range(addr, len, frame.rdx)?;
         }
@@ -4889,16 +4889,16 @@ fn move_active_user_mapping_range(
     for mapping in &current_mappings {
         if mapping.va >= old_addr && mapping.va < old_end {
             if mapping.va < moved_end {
-                let mut moved = *mapping;
+                let mut moved = mapping.clone();
                 moved.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
                 next_mappings.push(moved);
             } else {
-                dropped_mappings.push(*mapping);
+                dropped_mappings.push(mapping.clone());
             }
         } else if replace_target && mapping.va >= new_addr && mapping.va < target_end {
-            dropped_mappings.push(*mapping);
+            dropped_mappings.push(mapping.clone());
         } else {
-            next_mappings.push(*mapping);
+            next_mappings.push(mapping.clone());
         }
     }
     if has_duplicate_user_page_mapping(&next_mappings) {
@@ -4924,7 +4924,7 @@ fn move_active_user_mapping_range(
 
     let context = active_context();
     for mapping in dropped_mappings {
-        if mapping.owned {
+        if mapping.owned && mapping.frame_start != 0 {
             context.frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
                 mapping.frame_start,
             )));
@@ -5051,7 +5051,7 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_mapped_user_range(frame.rdi, len)
         .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
     if frame.rdx == MADV_DONTNEED {
-        discard_active_zero_user_page_range(frame.rdi, len)?;
+        discard_active_user_page_range(frame.rdi, len)?;
     }
     Ok(0)
 }
@@ -6814,9 +6814,9 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     .map_err(|_| ERR_EFAULT)
 }
 
-fn discard_active_zero_user_page_range(start: u64, len: u64) -> Result<(), i32> {
+fn discard_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     let context = active_context();
-    discard_zero_user_page_range(
+    discard_user_page_range(
         context.physical_memory_offset(),
         &mut context.page_mappings,
         &mut context.frame_allocator,
@@ -6838,13 +6838,19 @@ fn populate_active_user_page_range(start: u64, bytes: &[u8]) -> Result<(), i32> 
         .map_err(|_| ERR_EFAULT)
 }
 
-fn mark_active_user_page_range_zero_discard(start: u64, len: u64, zero_on_discard: bool) {
+fn mark_active_user_page_range_file_private(start: u64, len: u64, bytes: &[u8]) {
     let Some(end) = start.checked_add(len) else {
         return;
     };
     for mapping in &mut active_context().page_mappings {
         if mapping.va >= start && mapping.va < end {
-            mapping.zero_on_discard = zero_on_discard;
+            let copied = (mapping.va - start) as usize;
+            let mut page_bytes = vec![0u8; 4096];
+            if copied < bytes.len() {
+                let copy_len = core::cmp::min(4096, bytes.len() - copied);
+                page_bytes[..copy_len].copy_from_slice(&bytes[copied..copied + copy_len]);
+            }
+            mapping.backing = UserPageBacking::FilePrivate(page_bytes);
         }
     }
 }
