@@ -1097,6 +1097,8 @@ fn prepare_user_program_inner(
         readable: true,
         writable: true,
         executable: false,
+        dont_fork: false,
+        wipe_on_fork: false,
     });
 
     Ok((entry, initial_stack.stack_pointer))
@@ -1145,6 +1147,8 @@ fn prepare_user_load_segments(
             readable: ph.flags().is_read(),
             writable: ph.flags().is_write(),
             executable: ph.flags().is_execute(),
+            dont_fork: false,
+            wipe_on_fork: false,
         });
     }
     Ok(())

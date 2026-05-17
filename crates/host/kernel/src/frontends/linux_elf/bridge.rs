@@ -4797,8 +4797,8 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_lower_user_address_range(old_addr, old_len)?;
     validate_mapped_user_range(old_addr, old_len)?;
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
-    let (readable, writable, executable) =
-        single_user_region_permissions(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+    let (readable, writable, executable, dont_fork, wipe_on_fork) =
+        single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
 
     if fixed {
         let new_addr = frame.r8;
@@ -4846,7 +4846,15 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_ENOMEM);
     }
 
-    active_context().record_user_region(old_end, grow_len, readable, writable, executable);
+    active_context().record_user_region_with_fork_advice(
+        old_end,
+        grow_len,
+        readable,
+        writable,
+        executable,
+        dont_fork,
+        wipe_on_fork,
+    );
     active_context()
         .supervisor
         .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
@@ -4868,8 +4876,7 @@ fn move_active_user_mapping_range(
     if !replace_target && !target_unmap_ranges.is_empty() {
         return Err(ERR_ENOMEM);
     }
-    let (readable, writable, executable) =
-        single_user_region_permissions(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+    let region_attrs = single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
 
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
@@ -4882,7 +4889,7 @@ fn move_active_user_mapping_range(
         &mut next_regions,
         new_addr,
         new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?,
-        Some((readable, writable, executable)),
+        Some(region_attrs),
     );
 
     let mut next_mappings = Vec::with_capacity(current_mappings.len());
@@ -4938,6 +4945,7 @@ fn move_active_user_mapping_range(
     for (start, end) in target_unmap_ranges {
         context.supervisor.record_guest_memory_unmap(start, end - start);
     }
+    let (readable, writable, executable, _, _) = region_attrs;
     context
         .supervisor
         .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
@@ -4991,7 +4999,7 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_mapped_user_range(frame.rdi, len)?;
     protect_active_user_page_range(frame.rdi, len, frame.rdx)?;
     let (readable, writable, executable) = prot_user_region_permissions(frame.rdx);
-    active_context().record_user_region(frame.rdi, len, readable, writable, executable);
+    active_context().protect_user_region(frame.rdi, len, readable, writable, executable);
     active_context()
         .supervisor
         .record_guest_memory_region(frame.rdi, len, readable, writable, executable);
@@ -5026,12 +5034,16 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     const MADV_WILLNEED: u64 = 3;
     const MADV_DONTNEED: u64 = 4;
     const MADV_FREE: u64 = 8;
+    const MADV_DONTFORK: u64 = 10;
+    const MADV_DOFORK: u64 = 11;
     const MADV_MERGEABLE: u64 = 12;
     const MADV_UNMERGEABLE: u64 = 13;
     const MADV_HUGEPAGE: u64 = 14;
     const MADV_NOHUGEPAGE: u64 = 15;
     const MADV_DONTDUMP: u64 = 16;
     const MADV_DODUMP: u64 = 17;
+    const MADV_WIPEONFORK: u64 = 18;
+    const MADV_KEEPONFORK: u64 = 19;
     const MADV_COLD: u64 = 20;
     const MADV_PAGEOUT: u64 = 21;
     const MADV_POPULATE_READ: u64 = 22;
@@ -5039,8 +5051,9 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
 
     match frame.rdx {
         MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED | MADV_FREE
-        | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP
-        | MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {}
+        | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_HUGEPAGE
+        | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP | MADV_WIPEONFORK | MADV_KEEPONFORK
+        | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE => {}
         _ => return Err(ERR_EINVAL),
     }
 
@@ -5057,6 +5070,13 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
     match frame.rdx {
         MADV_DONTNEED => discard_active_user_page_range(frame.rdi, len)?,
         MADV_FREE => discard_active_zero_user_page_range(frame.rdi, len)?,
+        MADV_DONTFORK => active_context().set_user_region_fork_advice(frame.rdi, len, true, false),
+        MADV_DOFORK => set_active_user_region_dofork(frame.rdi, len),
+        MADV_WIPEONFORK => {
+            validate_active_user_page_range_zero_backing(frame.rdi, len)?;
+            active_context().set_user_region_fork_advice(frame.rdi, len, false, true);
+        }
+        MADV_KEEPONFORK => set_active_user_region_keeponfork(frame.rdi, len),
         MADV_POPULATE_READ => {
             validate_user_range_access(frame.rdi, len, UserRangeAccess::Read)?;
             prefault_active_user_page_range(frame.rdi, len, false)?;
@@ -6639,21 +6659,27 @@ fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
     validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
 }
 
-fn single_user_region_permissions(ptr: u64, len: u64) -> Option<(bool, bool, bool)> {
+fn single_user_region_attributes(ptr: u64, len: u64) -> Option<(bool, bool, bool, bool, bool)> {
     let end = ptr.checked_add(len)?;
     let region = active_context()
         .regions
         .iter()
         .rev()
         .find(|region| ptr >= region.start && end <= region.end)?;
-    Some((region.readable, region.writable, region.executable))
+    Some((
+        region.readable,
+        region.writable,
+        region.executable,
+        region.dont_fork,
+        region.wipe_on_fork,
+    ))
 }
 
 fn replace_user_region_range_for_mremap(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement: Option<(bool, bool, bool)>,
+    replacement: Option<(bool, bool, bool, bool, bool)>,
 ) {
     if start >= end {
         return;
@@ -6671,6 +6697,8 @@ fn replace_user_region_range_for_mremap(
                 readable: region.readable,
                 writable: region.writable,
                 executable: region.executable,
+                dont_fork: region.dont_fork,
+                wipe_on_fork: region.wipe_on_fork,
             });
         }
         if region.end > end {
@@ -6680,11 +6708,21 @@ fn replace_user_region_range_for_mremap(
                 readable: region.readable,
                 writable: region.writable,
                 executable: region.executable,
+                dont_fork: region.dont_fork,
+                wipe_on_fork: region.wipe_on_fork,
             });
         }
     }
-    if let Some((readable, writable, executable)) = replacement {
-        updated.push(UserRegion { start, end, readable, writable, executable });
+    if let Some((readable, writable, executable, dont_fork, wipe_on_fork)) = replacement {
+        updated.push(UserRegion {
+            start,
+            end,
+            readable,
+            writable,
+            executable,
+            dont_fork,
+            wipe_on_fork,
+        });
     }
     updated.sort_by_key(|region| (region.start, region.end));
     for region in updated {
@@ -6695,6 +6733,8 @@ fn replace_user_region_range_for_mremap(
             && last.readable == region.readable
             && last.writable == region.writable
             && last.executable == region.executable
+            && last.dont_fork == region.dont_fork
+            && last.wipe_on_fork == region.wipe_on_fork
             && last.end >= region.start
         {
             last.end = last.end.max(region.end);
@@ -6860,6 +6900,66 @@ fn discard_active_zero_user_page_range(start: u64, len: u64) -> Result<(), i32> 
     })
 }
 
+fn set_active_user_region_dofork(start: u64, len: u64) {
+    let Some(end) = start.checked_add(len) else {
+        return;
+    };
+    for (range_start, range_end, wipe_on_fork) in active_context()
+        .regions
+        .iter()
+        .filter_map(|region| {
+            let range_start = region.start.max(start);
+            let range_end = region.end.min(end);
+            (range_start < range_end).then_some((range_start, range_end, region.wipe_on_fork))
+        })
+        .collect::<Vec<_>>()
+    {
+        active_context().set_user_region_fork_advice(
+            range_start,
+            range_end - range_start,
+            false,
+            wipe_on_fork,
+        );
+    }
+}
+
+fn set_active_user_region_keeponfork(start: u64, len: u64) {
+    let Some(end) = start.checked_add(len) else {
+        return;
+    };
+    for (range_start, range_end, dont_fork) in active_context()
+        .regions
+        .iter()
+        .filter_map(|region| {
+            let range_start = region.start.max(start);
+            let range_end = region.end.min(end);
+            (range_start < range_end).then_some((range_start, range_end, region.dont_fork))
+        })
+        .collect::<Vec<_>>()
+    {
+        active_context().set_user_region_fork_advice(
+            range_start,
+            range_end - range_start,
+            dont_fork,
+            false,
+        );
+    }
+}
+
+fn validate_active_user_page_range_zero_backing(start: u64, len: u64) -> Result<(), i32> {
+    let end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    for mapping in active_context()
+        .page_mappings
+        .iter()
+        .filter(|mapping| mapping.va >= start && mapping.va < end)
+    {
+        if !matches!(&mapping.backing, UserPageBacking::ZeroFill) {
+            return Err(ERR_EINVAL);
+        }
+    }
+    Ok(())
+}
+
 fn prefault_active_user_page_range(start: u64, len: u64, write: bool) -> Result<(), i32> {
     let raw_end = start.checked_add(len).ok_or(ERR_EFAULT)?;
     let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
@@ -6930,11 +7030,26 @@ fn mark_active_user_page_range_file_private(start: u64, len: u64, bytes: &[u8]) 
 fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
     let context = active_context();
     let child_allocator = context.frame_allocator.fork_child_allocator();
-    let page_mappings = clone_user_page_mappings(&context.page_mappings).map_err(|_| ERR_ENOMEM)?;
-    Ok(UserAddressSpaceState {
-        regions: context.regions.clone(),
-        page_mappings,
-        frame_allocator: child_allocator,
+    let regions =
+        context.regions.iter().copied().filter(|region| !region.dont_fork).collect::<Vec<_>>();
+    let forked_source_mappings = context
+        .page_mappings
+        .iter()
+        .filter(|mapping| {
+            child_region_for_page(&regions, mapping.va).is_some_and(|region| !region.wipe_on_fork)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let page_mappings =
+        clone_user_page_mappings(&forked_source_mappings).map_err(|_| ERR_ENOMEM)?;
+    Ok(UserAddressSpaceState { regions, page_mappings, frame_allocator: child_allocator })
+}
+
+fn child_region_for_page(regions: &[UserRegion], page: u64) -> Option<&UserRegion> {
+    regions.iter().rev().find(|region| {
+        page >= region.start
+            && page < region.end
+            && (region.readable || region.writable || region.executable)
     })
 }
 

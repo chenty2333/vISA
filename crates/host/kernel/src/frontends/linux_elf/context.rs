@@ -28,6 +28,8 @@ pub(crate) struct UserRegion {
     pub(crate) readable: bool,
     pub(crate) writable: bool,
     pub(crate) executable: bool,
+    pub(crate) dont_fork: bool,
+    pub(crate) wipe_on_fork: bool,
 }
 
 #[derive(Clone)]
@@ -480,8 +482,62 @@ impl ActiveUserContext {
                 &mut self.regions,
                 start,
                 end,
-                Some((readable, writable, executable)),
+                Some((readable, writable, executable, false, false)),
             );
+        }
+    }
+
+    pub(crate) fn record_user_region_with_fork_advice(
+        &mut self,
+        start: u64,
+        len: u64,
+        readable: bool,
+        writable: bool,
+        executable: bool,
+        dont_fork: bool,
+        wipe_on_fork: bool,
+    ) {
+        if let Some(end) = start.checked_add(len) {
+            replace_user_region_range(
+                &mut self.regions,
+                start,
+                end,
+                Some((readable, writable, executable, dont_fork, wipe_on_fork)),
+            );
+        }
+    }
+
+    pub(crate) fn protect_user_region(
+        &mut self,
+        start: u64,
+        len: u64,
+        readable: bool,
+        writable: bool,
+        executable: bool,
+    ) {
+        if let Some(end) = start.checked_add(len) {
+            rewrite_existing_user_region_range(&mut self.regions, start, end, |mut region| {
+                region.readable = readable;
+                region.writable = writable;
+                region.executable = executable;
+                Some(region)
+            });
+        }
+    }
+
+    pub(crate) fn set_user_region_fork_advice(
+        &mut self,
+        start: u64,
+        len: u64,
+        dont_fork: bool,
+        wipe_on_fork: bool,
+    ) {
+        if let Some(end) = start.checked_add(len) {
+            rewrite_existing_user_region_range(&mut self.regions, start, end, |mut region| {
+                region.dont_fork = dont_fork;
+                region.wipe_on_fork = wipe_on_fork;
+                Some(region)
+            });
         }
     }
 
@@ -1448,7 +1504,7 @@ fn replace_user_region_range(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement: Option<(bool, bool, bool)>,
+    replacement: Option<(bool, bool, bool, bool, bool)>,
 ) {
     if start >= end {
         return;
@@ -1467,6 +1523,8 @@ fn replace_user_region_range(
                 readable: region.readable,
                 writable: region.writable,
                 executable: region.executable,
+                dont_fork: region.dont_fork,
+                wipe_on_fork: region.wipe_on_fork,
             });
         }
         if region.end > end {
@@ -1476,15 +1534,69 @@ fn replace_user_region_range(
                 readable: region.readable,
                 writable: region.writable,
                 executable: region.executable,
+                dont_fork: region.dont_fork,
+                wipe_on_fork: region.wipe_on_fork,
             });
         }
     }
 
-    if let Some((readable, writable, executable)) = replacement {
-        updated.push(UserRegion { start, end, readable, writable, executable });
+    if let Some((readable, writable, executable, dont_fork, wipe_on_fork)) = replacement {
+        updated.push(UserRegion {
+            start,
+            end,
+            readable,
+            writable,
+            executable,
+            dont_fork,
+            wipe_on_fork,
+        });
     }
 
     updated.sort_by_key(|region| (region.start, region.end));
+    merge_user_regions(regions, updated);
+}
+
+fn rewrite_existing_user_region_range<F>(
+    regions: &mut Vec<UserRegion>,
+    start: u64,
+    end: u64,
+    mut rewrite: F,
+) where
+    F: FnMut(UserRegion) -> Option<UserRegion>,
+{
+    if start >= end {
+        return;
+    }
+
+    let mut updated = Vec::with_capacity(regions.len().saturating_add(2));
+    for region in regions.drain(..) {
+        if region.end <= start || region.start >= end {
+            updated.push(region);
+            continue;
+        }
+        if region.start < start {
+            updated.push(UserRegion { end: start, ..region });
+        }
+
+        let middle_start = region.start.max(start);
+        let middle_end = region.end.min(end);
+        if middle_start < middle_end {
+            let middle = UserRegion { start: middle_start, end: middle_end, ..region };
+            if let Some(rewritten) = rewrite(middle) {
+                updated.push(rewritten);
+            }
+        }
+
+        if region.end > end {
+            updated.push(UserRegion { start: end, ..region });
+        }
+    }
+
+    updated.sort_by_key(|region| (region.start, region.end));
+    merge_user_regions(regions, updated);
+}
+
+fn merge_user_regions(regions: &mut Vec<UserRegion>, updated: Vec<UserRegion>) {
     for region in updated {
         if region.start >= region.end {
             continue;
@@ -1493,6 +1605,8 @@ fn replace_user_region_range(
             && last.readable == region.readable
             && last.writable == region.writable
             && last.executable == region.executable
+            && last.dont_fork == region.dont_fork
+            && last.wipe_on_fork == region.wipe_on_fork
             && last.end >= region.start
         {
             last.end = last.end.max(region.end);
