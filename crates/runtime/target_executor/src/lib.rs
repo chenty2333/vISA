@@ -349,12 +349,13 @@ fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), 
         semantic.record_packet_received(interface, None, 0, len);
     }
     println!(
-        "host TAP runtime probe tap={} pump_steps={} completed_steps={} pump_sleep_ms={} require_established={} final_state={} final_can_send={} tx_frames={} tx_bytes={} rx_frames={} rx_bytes={} pump_backend_rx={} pump_driver_rx={} pump_stack_tx={} pump_driver_tx={}",
+        "host TAP runtime probe tap={} pump_steps={} completed_steps={} pump_sleep_ms={} require_established={} require_rx={} final_state={} final_can_send={} tx_frames={} tx_bytes={} rx_frames={} rx_bytes={} pump_backend_rx={} pump_driver_rx={} pump_stack_tx={} pump_driver_tx={}",
         report.tap_name,
         report.pump_steps,
         report.completed_steps,
         report.pump_sleep_ms,
         report.require_established,
+        report.require_rx,
         report.final_state,
         report.final_can_send,
         report.tx_frames,

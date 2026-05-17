@@ -15,6 +15,7 @@ const HOST_TAP_REMOTE_PORT_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_POR
 const HOST_TAP_PUMP_STEPS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_STEPS";
 const HOST_TAP_PUMP_SLEEP_MS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_SLEEP_MS";
 const HOST_TAP_REQUIRE_ESTABLISHED_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REQUIRE_ESTABLISHED";
+const HOST_TAP_REQUIRE_RX_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REQUIRE_RX";
 const HOST_TAP_DEFAULT_REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
 const HOST_TAP_DEFAULT_REMOTE_PORT: u16 = 80;
 const HOST_TAP_DEFAULT_PUMP_STEPS: u32 = 16;
@@ -29,6 +30,7 @@ pub(crate) struct HostTapRuntimeConfig {
     pump_steps: u32,
     pump_sleep_ms: u64,
     require_established: bool,
+    require_rx: bool,
 }
 
 impl HostTapRuntimeConfig {
@@ -39,6 +41,7 @@ impl HostTapRuntimeConfig {
         pump_steps: u32,
         pump_sleep_ms: u64,
         require_established: bool,
+        require_rx: bool,
     ) -> Result<Self, Box<dyn Error>> {
         if remote_port == 0 {
             return Err("host TAP remote port must be nonzero".into());
@@ -61,6 +64,7 @@ impl HostTapRuntimeConfig {
             pump_steps,
             pump_sleep_ms,
             require_established,
+            require_rx,
         })
     }
 
@@ -77,6 +81,7 @@ impl HostTapRuntimeConfig {
             host_tap_pump_steps()?,
             host_tap_pump_sleep_ms()?,
             host_tap_require_established()?,
+            host_tap_require_rx()?,
         )?))
     }
 }
@@ -87,6 +92,7 @@ pub(crate) struct HostTapRuntimeReport {
     pub(crate) completed_steps: u32,
     pub(crate) pump_sleep_ms: u64,
     pub(crate) require_established: bool,
+    pub(crate) require_rx: bool,
     pub(crate) final_state: &'static str,
     pub(crate) final_can_send: bool,
     pub(crate) tx_frames: usize,
@@ -132,7 +138,12 @@ pub(crate) fn run_host_tap_runtime_probe(
             .map_err(|error| format!("host TAP tcp snapshot failed: {error}"))?;
         final_state = snapshot.state;
         final_can_send = snapshot.can_send;
-        if config.require_established && final_state == "established" {
+        let established_satisfied = !config.require_established || final_state == "established";
+        let rx_satisfied = !config.require_rx || backend.rx_frames > 0;
+        if (config.require_established || config.require_rx)
+            && established_satisfied
+            && rx_satisfied
+        {
             break;
         }
         if config.pump_sleep_ms != 0 && completed_steps < config.pump_steps {
@@ -147,6 +158,9 @@ pub(crate) fn run_host_tap_runtime_probe(
             format!("host TAP probe did not establish TCP socket: state={final_state}").into()
         );
     }
+    if config.require_rx && backend.rx_frames == 0 {
+        return Err("host TAP probe received no backend RX frame".into());
+    }
 
     Ok(HostTapRuntimeReport {
         tap_name: config.tap_name,
@@ -154,6 +168,7 @@ pub(crate) fn run_host_tap_runtime_probe(
         completed_steps,
         pump_sleep_ms: config.pump_sleep_ms,
         require_established: config.require_established,
+        require_rx: config.require_rx,
         final_state,
         final_can_send,
         tx_frames: backend.tx_frames,
@@ -285,6 +300,13 @@ fn host_tap_require_established() -> Result<bool, Box<dyn Error>> {
     parse_bool(HOST_TAP_REQUIRE_ESTABLISHED_ENV, &raw)
 }
 
+fn host_tap_require_rx() -> Result<bool, Box<dyn Error>> {
+    let Ok(raw) = env::var(HOST_TAP_REQUIRE_RX_ENV) else {
+        return Ok(false);
+    };
+    parse_bool(HOST_TAP_REQUIRE_RX_ENV, &raw)
+}
+
 fn parse_ipv4(name: &'static str, raw: &str) -> Result<[u8; 4], Box<dyn Error>> {
     let mut out = [0u8; 4];
     let mut count = 0usize;
@@ -356,8 +378,10 @@ mod tests {
         assert!(parse_bool("BOOL", "true").unwrap());
         assert!(!parse_bool("BOOL", "0").unwrap());
         let config =
-            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 80, 16, 0, false).unwrap();
+            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 80, 16, 0, false, true)
+                .unwrap();
         assert_eq!(config.tap_name, "tap0");
+        assert!(config.require_rx);
     }
 
     #[test]
@@ -370,10 +394,12 @@ mod tests {
         assert!(parse_bounded_u64("SLEEP", "1001", 0, 1000).is_err());
         assert!(parse_bool("BOOL", "yes").is_err());
         assert!(
-            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 0, 16, 0, false).is_err()
+            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 0, 16, 0, false, false)
+                .is_err()
         );
         assert!(
-            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 80, 0, 0, false).is_err()
+            HostTapRuntimeConfig::new("tap0".to_owned(), [10, 0, 2, 2], 80, 0, 0, false, false)
+                .is_err()
         );
     }
 }
