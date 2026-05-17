@@ -260,6 +260,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::OpenAt => self.plan_openat(plan),
             PlanKind::Read => self.plan_read(plan),
             PlanKind::Close => self.plan_close(plan),
+            PlanKind::CloseRange => self.plan_close_range(plan),
             PlanKind::Dup => self.plan_dup(plan),
             PlanKind::GetDents64 => self.plan_getdents(plan),
             PlanKind::ReadLinkAt => self.plan_readlinkat(plan),

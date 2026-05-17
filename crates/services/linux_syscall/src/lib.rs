@@ -12,13 +12,13 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE,
-    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR,
-    SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETRLIMIT,
-    SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
+    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3,
+    SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
+    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR,
     SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
     is_stdio_fd,
@@ -72,6 +72,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_READ => plan_read(a0, a2),
         SYS_WRITE => plan_write(a0, a1, a2),
         SYS_CLOSE => plan_close(a0),
+        SYS_CLOSE_RANGE => plan_close_range(a0, a1, a2),
         SYS_DUP => plan_dup(a0, 0, 0, 0),
         SYS_DUP2 => plan_dup(a0, a1, 0, 1),
         SYS_DUP3 => plan_dup(a0, a1, a2, 2),
@@ -678,6 +679,11 @@ fn plan_close(fd: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Close)
 }
 
+fn plan_close_range(first: u64, last: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::CloseRange, [first, last, flags, 0, 0, 0]);
+    PackedStep::plan(PlanKind::CloseRange)
+}
+
 fn plan_dup(old_fd: u64, new_fd: u64, flags: u64, mode: u64) -> PackedStep {
     reset_plan(PlanKind::Dup, [old_fd, new_fd, flags, mode, 0, 0]);
     PackedStep::plan(PlanKind::Dup)
@@ -1110,6 +1116,20 @@ mod tests {
         assert_eq!(plan_arg(1), 16);
         assert_eq!(plan_arg(2), O_CLOEXEC);
         assert_eq!(plan_arg(3), 2);
+    }
+
+    #[test]
+    fn close_range_plan_preserves_bounds_and_flags() {
+        let _guard = test_guard();
+        const CLOSE_RANGE_CLOEXEC: u64 = 1 << 2;
+        let raw = dispatch(SYS_CLOSE_RANGE, 8, 128, CLOSE_RANGE_CLOEXEC, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::CloseRange));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 128);
+        assert_eq!(plan_arg(2), CLOSE_RANGE_CLOEXEC);
     }
 
     #[test]

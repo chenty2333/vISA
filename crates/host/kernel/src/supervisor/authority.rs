@@ -252,6 +252,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "fd.table",
             operation: "close",
         },
+        PlanKind::CloseRange => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "fd.table",
+            operation: "close-range",
+        },
         PlanKind::Dup => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
