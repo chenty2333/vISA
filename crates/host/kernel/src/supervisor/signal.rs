@@ -36,6 +36,10 @@ fn waitable_signal_set(wait_set: u64) -> u64 {
     wait_set & !linux_signal_bit(9) & !linux_signal_bit(19)
 }
 
+fn pending_signal_set(signals: &[PendingSignal]) -> u64 {
+    signals.iter().fold(0, |set, signal| set | linux_signal_bit(signal.signo))
+}
+
 enum SignalDefaultAction {
     Terminate { core: bool },
     Stop,
@@ -376,6 +380,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigmask)
     }
 
+    pub(crate) fn blocked_pending_signal_set(&self, tid: Tid) -> Option<u64> {
+        let thread = self.threads.iter().find(|t| t.tid == tid)?;
+        Some(pending_signal_set(&thread.pending_signals) & thread.sigmask)
+    }
+
     pub(crate) fn signal_alt_stack(&self, tid: Tid) -> Option<SignalAltStack> {
         self.threads.iter().find(|t| t.tid == tid).map(|t| t.sigaltstack)
     }
@@ -418,5 +427,29 @@ impl<'engine> PrototypeRuntime<'engine> {
         thread.robust_list = None;
         thread.rseq = None;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_signal_set_ignores_invalid_signal_numbers() {
+        let signals = alloc::vec![
+            PendingSignal::basic(2, 0, 0, 0),
+            PendingSignal::basic(31, 0, 0, 0),
+            PendingSignal::basic(0, 0, 0, 0),
+            PendingSignal::basic(65, 0, 0, 0),
+        ];
+
+        assert_eq!(pending_signal_set(&signals), linux_signal_bit(2) | linux_signal_bit(31));
+    }
+
+    #[test]
+    fn waitable_signal_set_removes_kill_and_stop() {
+        let set = linux_signal_bit(2) | linux_signal_bit(9) | linux_signal_bit(19);
+
+        assert_eq!(waitable_signal_set(set), linux_signal_bit(2));
     }
 }

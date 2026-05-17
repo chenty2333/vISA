@@ -33,12 +33,13 @@ use vmos_abi::{
     SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
     SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT,
     SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ,
-    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
-    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
-    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
+    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
+    SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
+    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, SyscallContext,
 };
 use x86_64::{
     PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
@@ -379,6 +380,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_RT_SIGACTION => sys_rt_sigaction(frame),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(frame),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(frame),
+        SYS_RT_SIGPENDING => sys_rt_sigpending(frame),
         SYS_RT_SIGTIMEDWAIT => sys_rt_sigtimedwait(frame),
         SYS_RT_SIGSUSPEND => sys_rt_sigsuspend(frame),
         SYS_SIGALTSTACK => sys_sigaltstack(frame),
@@ -2991,6 +2993,18 @@ fn sys_rt_sigprocmask(frame: &SyscallFrame) -> Result<i64, i32> {
             return Err(ERR_EINVAL);
         }
     }
+    Ok(0)
+}
+
+fn sys_rt_sigpending(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rsi != LINUX_SIGSET_BYTES as u64 {
+        return Err(ERR_EINVAL);
+    }
+    let pending = active_context()
+        .supervisor
+        .blocked_pending_signal_set(active_context().tid)
+        .ok_or(ERR_ESRCH)?;
+    write_user_bytes(frame.rdi, &pending.to_le_bytes())?;
     Ok(0)
 }
 

@@ -16,6 +16,7 @@ pub const SYS_MREMAP: u64 = 25;
 pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_RT_SIGRETURN: u64 = 15;
+pub const SYS_RT_SIGPENDING: u64 = 127;
 pub const SYS_RT_SIGTIMEDWAIT: u64 = 128;
 pub const SYS_RT_SIGSUSPEND: u64 = 130;
 pub const SYS_SIGALTSTACK: u64 = 131;
