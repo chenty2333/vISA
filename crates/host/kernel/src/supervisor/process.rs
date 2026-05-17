@@ -9,7 +9,7 @@ use super::{
     linux::LinuxCallResult,
     runtime::PrototypeRuntime,
     types::{
-        Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
+        CAP_SYS_PTRACE, Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
         RobustListRegistration, SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind,
         Tid,
     },
@@ -572,23 +572,51 @@ impl<'engine> PrototypeRuntime<'engine> {
         registration
     }
 
-    pub(crate) fn get_thread_robust_list(
+    pub(crate) fn get_thread_robust_list_for_caller(
         &self,
-        tid: Tid,
+        caller_pid: Pid,
+        caller_tid: Tid,
+        target_tid: Tid,
     ) -> Result<Option<RobustListRegistration>, i32> {
-        self.threads
+        let caller_thread = self
+            .threads
             .iter()
-            .find(|thread| thread.tid == tid)
-            .map(|thread| thread.robust_list)
-            .ok_or(vmos_abi::ERR_ESRCH)
-    }
+            .find(|thread| thread.tid == caller_tid && thread.pid == caller_pid)
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if caller_thread.state == ThreadRuntimeStateKind::Dead {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let target_thread = self
+            .threads
+            .iter()
+            .find(|thread| thread.tid == target_tid)
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if target_thread.state == ThreadRuntimeStateKind::Dead {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        if target_thread.tid == caller_thread.tid || target_thread.pid == caller_pid {
+            return Ok(target_thread.robust_list);
+        }
 
-    pub(crate) fn thread_pid(&self, tid: Tid) -> Result<Pid, i32> {
-        self.threads
+        let caller_process = self
+            .processes
             .iter()
-            .find(|thread| thread.tid == tid)
-            .map(|thread| thread.pid)
-            .ok_or(vmos_abi::ERR_ESRCH)
+            .find(|process| {
+                process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        let target_process = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == target_thread.pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if robust_list_ptrace_may_access(&caller_process.access, &target_process.access) {
+            Ok(target_thread.robust_list)
+        } else {
+            Err(vmos_abi::ERR_EPERM)
+        }
     }
 
     pub(crate) fn get_process_group_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
@@ -850,6 +878,11 @@ fn wait_selector_matches(
 
 fn wait_exit_status(exit_code: i32) -> u32 {
     ((exit_code as u32) & 0xff) << 8
+}
+
+fn robust_list_ptrace_may_access(caller: &ProcessAccessState, target: &ProcessAccessState) -> bool {
+    caller.cap_effective & CAP_SYS_PTRACE != 0
+        || (caller.uid == target.uid && caller.gid == target.gid)
 }
 
 fn resolve_pid_arg(caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {

@@ -3153,11 +3153,10 @@ fn sys_get_robust_list(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_user_range(frame.rsi, 8, true)?;
     validate_user_range(frame.rdx, 8, true)?;
     let target_tid = get_robust_list_target_tid(frame.rdi)?;
-    let target_pid = active_context().supervisor.thread_pid(target_tid)?;
-    if target_tid != active_context().tid && target_pid != active_context().pid {
-        return Err(ERR_EPERM);
-    }
-    let registration = active_context().supervisor.get_thread_robust_list(target_tid)?;
+    let (caller_pid, caller_tid) = (active_context().pid, active_context().tid);
+    let registration = active_context()
+        .supervisor
+        .get_thread_robust_list_for_caller(caller_pid, caller_tid, target_tid)?;
     let (head, len) = registration
         .map(|registration| (registration.head, registration.len))
         .unwrap_or((0, ROBUST_LIST_HEAD_SIZE));
