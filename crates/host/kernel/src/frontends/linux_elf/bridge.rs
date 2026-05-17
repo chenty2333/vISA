@@ -58,10 +58,11 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
-            LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, Rlimit, RobustListRegistration,
-            SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK,
-            ServiceCallError, SigAction, SignalAltStack, UserSignalDelivery,
+            AccessIds, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT, CAP_SYS_RESOURCE,
+            LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, Rlimit,
+            RobustListRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
+            SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
+            UserSignalDelivery,
         },
     },
 };
@@ -1290,11 +1291,17 @@ fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_chroot(frame: &SyscallFrame) -> Result<i64, i32> {
+    if !active_context().has_effective_capability(CAP_SYS_CHROOT) {
+        return Err(ERR_EPERM);
+    }
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.check_path_access(&resolved, 0x1, access.ids())?;
     if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
         return Err(vmos_abi::ERR_ENOTDIR);
     }
+    active_context().set_root(resolved);
     Ok(0)
 }
 
@@ -4594,7 +4601,7 @@ fn sys_getdents64(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_getcwd(frame: &SyscallFrame) -> Result<i64, i32> {
     let size = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
-    let cwd = active_context().cwd().to_vec();
+    let cwd = active_context().visible_cwd();
 
     if cwd.len() + 1 > size {
         return Err(ERR_EINVAL);
@@ -6341,7 +6348,7 @@ fn align_page(value: u64) -> Option<u64> {
 
 fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     if path.starts_with(b"/") {
-        return Ok(normalize_user_path(path));
+        return Ok(resolve_absolute_path(path));
     }
 
     let base = if dirfd == AT_FDCWD {
@@ -6363,7 +6370,7 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
         resolved.push(b'/');
     }
     resolved.extend_from_slice(path);
-    Ok(normalize_user_path(&resolved))
+    restrict_path_to_chroot(normalize_user_path(&resolved))
 }
 
 fn resolve_final_symlink_for_stat(path: Vec<u8>, follow: bool) -> Result<Vec<u8>, i32> {
@@ -6375,14 +6382,47 @@ fn resolve_final_symlink_for_stat(path: Vec<u8>, follow: bool) -> Result<Vec<u8>
     }
     let target = active_context().supervisor.read_link_path_bytes(&path)?;
     if target.starts_with(b"/") {
-        return Ok(normalize_user_path(&target));
+        return Ok(resolve_absolute_path(&target));
     }
     let mut base = parent_user_path(&path).unwrap_or_else(|| b"/".to_vec());
     if !base.ends_with(b"/") {
         base.push(b'/');
     }
     base.extend_from_slice(&target);
-    Ok(normalize_user_path(&base))
+    restrict_path_to_chroot(normalize_user_path(&base))
+}
+
+fn resolve_absolute_path(path: &[u8]) -> Vec<u8> {
+    let normalized = normalize_user_path(path);
+    let root = active_context().root().to_vec();
+    if root == b"/" {
+        return normalized;
+    }
+    if normalized == b"/" {
+        return root;
+    }
+
+    let mut resolved = root;
+    if !resolved.ends_with(b"/") {
+        resolved.push(b'/');
+    }
+    if let Some(rest) = normalized.strip_prefix(b"/") {
+        resolved.extend_from_slice(rest);
+    } else {
+        resolved.extend_from_slice(&normalized);
+    }
+    normalize_user_path(&resolved)
+}
+
+fn restrict_path_to_chroot(path: Vec<u8>) -> Result<Vec<u8>, i32> {
+    let root = active_context().root();
+    if path_is_inside_root(&path, root) { Ok(path) } else { Err(ERR_EACCES) }
+}
+
+fn path_is_inside_root(path: &[u8], root: &[u8]) -> bool {
+    root == b"/"
+        || path == root
+        || (path.len() > root.len() && path.starts_with(root) && path[root.len()] == b'/')
 }
 
 fn current_program_name() -> &'static str {

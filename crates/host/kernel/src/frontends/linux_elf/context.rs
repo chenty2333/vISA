@@ -185,6 +185,7 @@ pub(crate) struct ActiveUserContext {
     pub(crate) pid: u32,
     pub(crate) tid: u32,
     pub(crate) activation_id: u64,
+    root: Vec<u8>,
     cwd: Vec<u8>,
     brk_base: u64,
     brk_current: u64,
@@ -226,6 +227,7 @@ pub(crate) struct SuspendedVforkParent {
     pub(crate) child_pid: u32,
     pub(crate) next_activation_id: u64,
     pub(crate) return_context: UserReturnContext,
+    root: Vec<u8>,
     cwd: Vec<u8>,
     uid: u32,
     gid: u32,
@@ -259,6 +261,7 @@ pub(crate) struct SuspendedCloneParent {
     pub(crate) next_activation_id: u64,
     pub(crate) return_context: UserReturnContext,
     fs_shared: bool,
+    root: Vec<u8>,
     cwd: Vec<u8>,
     files_shared: bool,
     fd_snapshot: Option<FdTableSnapshot>,
@@ -325,6 +328,7 @@ impl ActiveUserContext {
             pid,
             tid,
             activation_id: 0,
+            root: b"/".to_vec(),
             cwd: b"/tmp".to_vec(),
             brk_base,
             brk_current: brk_base,
@@ -467,8 +471,23 @@ impl ActiveUserContext {
         &self.cwd
     }
 
+    pub(crate) fn root(&self) -> &[u8] {
+        &self.root
+    }
+
+    pub(crate) fn visible_cwd(&self) -> Vec<u8> {
+        path_inside_chroot(&self.cwd, &self.root).unwrap_or_else(|| b"/".to_vec())
+    }
+
     pub(crate) fn set_cwd(&mut self, path: Vec<u8>) {
         self.cwd = path;
+    }
+
+    pub(crate) fn set_root(&mut self, root: Vec<u8>) {
+        self.root = root;
+        if path_inside_chroot(&self.cwd, &self.root).is_none() {
+            self.cwd = self.root.clone();
+        }
     }
 
     pub(crate) fn uid(&self) -> u32 {
@@ -1061,6 +1080,7 @@ impl ActiveUserContext {
             child_pid,
             next_activation_id: self.next_activation_id,
             return_context,
+            root: self.root.clone(),
             cwd: self.cwd.clone(),
             uid: self.uid,
             gid: self.gid,
@@ -1127,6 +1147,7 @@ impl ActiveUserContext {
             next_activation_id: self.next_activation_id,
             return_context,
             fs_shared,
+            root: self.root.clone(),
             cwd: self.cwd.clone(),
             files_shared,
             fd_snapshot,
@@ -1175,6 +1196,7 @@ impl ActiveUserContext {
             child_pid: _,
             next_activation_id,
             return_context: _,
+            root,
             cwd,
             uid,
             gid,
@@ -1204,6 +1226,7 @@ impl ActiveUserContext {
         self.tid = tid;
         self.activation_id = 0;
         self.next_activation_id = next_activation_id;
+        self.root = root;
         self.cwd = cwd;
         self.uid = uid;
         self.gid = gid;
@@ -1250,6 +1273,7 @@ impl ActiveUserContext {
             next_activation_id,
             return_context: _,
             fs_shared,
+            root,
             cwd,
             files_shared,
             fd_snapshot,
@@ -1283,6 +1307,7 @@ impl ActiveUserContext {
         self.activation_id = 0;
         self.next_activation_id = next_activation_id;
         if !fs_shared {
+            self.root = root;
             self.cwd = cwd;
             self.umask = umask;
         }
@@ -1299,6 +1324,19 @@ impl ActiveUserContext {
 fn align_up(value: u64, align: u64) -> Option<u64> {
     let mask = align.checked_sub(1)?;
     value.checked_add(mask).map(|value| value & !mask)
+}
+
+fn path_inside_chroot(path: &[u8], root: &[u8]) -> Option<Vec<u8>> {
+    if root == b"/" {
+        return Some(path.to_vec());
+    }
+    if path == root {
+        return Some(b"/".to_vec());
+    }
+    if path.len() > root.len() && path.starts_with(root) && path[root.len()] == b'/' {
+        return Some(path[root.len()..].to_vec());
+    }
+    None
 }
 
 fn replace_user_region_range(
