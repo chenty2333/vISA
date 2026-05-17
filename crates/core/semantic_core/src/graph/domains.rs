@@ -1,4 +1,5 @@
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
+use core::ptr::addr_of_mut;
 
 use super::*;
 
@@ -23,23 +24,26 @@ pub(crate) struct SemanticDomains {
 }
 
 impl SemanticDomains {
-    pub(crate) fn new() -> Self {
-        Self {
-            capability: CapabilityDomain::new(),
-            resource: ResourceDomain::new(),
-            device: DeviceDomain::new(),
-            network: NetworkDomain::new(),
-            block: BlockDomain::new(),
-            wait: WaitDomain::new(),
-            io: IoDomain::new(),
-            runtime: RuntimeDomain::new(),
-            lifecycle: LifecycleDomain::new(),
-            display: DisplayDomain::new(),
-            scheduler: SchedulerDomain::new(),
-            simd: SimdDomain::new(),
-            integrated: IntegratedDomain::new(),
-            process: ProcessDomain::new(),
-            memory: MemoryDomain::new(),
+    pub(crate) fn boxed_new() -> Box<Self> {
+        let mut boxed = Box::<Self>::new_uninit();
+        let ptr = boxed.as_mut_ptr();
+        unsafe {
+            addr_of_mut!((*ptr).capability).write(CapabilityDomain::new());
+            addr_of_mut!((*ptr).resource).write(ResourceDomain::new());
+            addr_of_mut!((*ptr).device).write(DeviceDomain::new());
+            addr_of_mut!((*ptr).network).write(NetworkDomain::new());
+            addr_of_mut!((*ptr).block).write(BlockDomain::new());
+            addr_of_mut!((*ptr).wait).write(WaitDomain::new());
+            addr_of_mut!((*ptr).io).write(IoDomain::new());
+            addr_of_mut!((*ptr).runtime).write(RuntimeDomain::new());
+            addr_of_mut!((*ptr).lifecycle).write(LifecycleDomain::new());
+            addr_of_mut!((*ptr).display).write(DisplayDomain::new());
+            addr_of_mut!((*ptr).scheduler).write(SchedulerDomain::new());
+            addr_of_mut!((*ptr).simd).write(SimdDomain::new());
+            addr_of_mut!((*ptr).integrated).write(IntegratedDomain::new());
+            addr_of_mut!((*ptr).process).write(ProcessDomain::new());
+            addr_of_mut!((*ptr).memory).write(MemoryDomain::new());
+            boxed.assume_init()
         }
     }
 }

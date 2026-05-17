@@ -15,6 +15,7 @@ use x86_64::{
 use xmas_elf::{ElfFile, header::Type as ElfType, program::Type as ProgramType};
 
 use super::context::{LoadedUserImage, UserFrameAllocator, UserPageMapping, UserRegion};
+use crate::supervisor::linux_user_resource_bytes_for_path;
 
 const LIVE_PAGE_TABLE_AUTHORITY: &str = "LiveUserPageTableAuthority";
 const PAGE_SIZE: usize = 4096;
@@ -50,6 +51,26 @@ const ELF_INTERPRETER_PATH_MAX: usize = 4096;
 
 #[repr(align(8))]
 struct AlignedElf<const N: usize>([u8; N]);
+
+struct AlignedElfBuffer {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl AlignedElfBuffer {
+    fn copy_from(bytes: &[u8]) -> Self {
+        let mut words = vec![0u64; bytes.len().div_ceil(core::mem::size_of::<u64>())];
+        let ptr = words.as_mut_ptr().cast::<u8>();
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+        }
+        Self { words, len: bytes.len() }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.words.as_ptr().cast::<u8>(), self.len) }
+    }
+}
 
 static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")).len() }> =
     AlignedElf(*include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")));
@@ -720,7 +741,8 @@ pub(crate) fn load_demo_program(
 }
 
 pub(crate) fn user_elf_interpreter_path(bytes: &[u8]) -> Result<Option<Vec<u8>>, &'static str> {
-    let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
+    let aligned = AlignedElfBuffer::copy_from(bytes);
+    let elf = ElfFile::new(aligned.as_bytes()).map_err(|_| "user ELF was invalid")?;
     let mut interpreter = None;
     for ph in elf.program_iter() {
         if ph.get_type() != Ok(ProgramType::Interp) {
@@ -761,7 +783,8 @@ pub(crate) fn prepare_user_program(
     stack_credentials: ExecStackCredentials,
 ) -> Result<PreparedUserImage, &'static str> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
-    let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
+    let aligned = AlignedElfBuffer::copy_from(bytes);
+    let elf = ElfFile::new(aligned.as_bytes()).map_err(|_| "user ELF was invalid")?;
     let mut regions = Vec::new();
     let mut page_mappings = Vec::new();
 
@@ -823,8 +846,9 @@ fn prepare_user_program_inner(
 
     let main_entry = biased_addr(elf.header.pt2.entry_point(), main_load_bias)?;
     let (entry, at_base) = if let Some(interpreter_bytes) = interpreter {
-        let interpreter_elf =
-            ElfFile::new(interpreter_bytes).map_err(|_| "user ELF interpreter invalid")?;
+        let aligned_interpreter = AlignedElfBuffer::copy_from(interpreter_bytes);
+        let interpreter_elf = ElfFile::new(aligned_interpreter.as_bytes())
+            .map_err(|_| "user ELF interpreter invalid")?;
         if user_elf_interpreter_path(interpreter_bytes)?.is_some() {
             return Err("user ELF interpreter nested");
         }
@@ -920,143 +944,57 @@ fn load_user_program(
     boot_info: &'static BootInfo,
     bytes: &[u8],
 ) -> Result<LoadedUserImage, &'static str> {
-    let phys_offset = boot_info
+    let physical_memory_offset = boot_info
         .physical_memory_offset
         .as_ref()
         .copied()
         .ok_or("bootloader did not provide physical_memory_offset")?;
-    let phys_offset = VirtAddr::new(phys_offset);
-
-    let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
-    if user_elf_interpreter_path(bytes)?.is_some() {
-        return Err("initial user ELF interpreter unsupported");
-    }
-    let load_bias = elf_load_bias(&elf, USER_PIE_BASE)?;
-    let level_4 = unsafe { active_level_4_table(phys_offset) };
-    let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut frame_allocator = UserFrameAllocator::new(&boot_info.memory_regions);
-    let mut regions = Vec::new();
-    let mut page_mappings = Vec::new();
 
-    for ph in elf.program_iter() {
-        if ph.get_type() != Ok(ProgramType::Load) {
-            continue;
-        }
-
-        let virt_start = biased_addr(ph.virtual_addr(), load_bias)?;
-        let virt_end =
-            virt_start.checked_add(ph.mem_size()).ok_or("user ELF segment overflowed")?;
-        let file_start = usize::try_from(ph.offset()).map_err(|_| "user ELF offset overflowed")?;
-        let file_size =
-            usize::try_from(ph.file_size()).map_err(|_| "user ELF file size overflowed")?;
-        if ph.file_size() > ph.mem_size() {
-            return Err("user ELF segment file exceeds memory size");
-        }
-        let file_end = file_start.checked_add(file_size).ok_or("user ELF file range overflowed")?;
-        let segment_bytes =
-            bytes.get(file_start..file_end).ok_or("user ELF referenced bytes outside the image")?;
-
-        let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
-        if ph.flags().is_write() {
-            flags |= PageTableFlags::WRITABLE;
-        }
-        if !ph.flags().is_execute() {
-            flags |= PageTableFlags::NO_EXECUTE;
-        }
-
-        map_user_pages(
-            &mut mapper,
-            &mut frame_allocator,
-            &mut page_mappings,
-            phys_offset,
-            virt_start,
-            virt_end,
-            segment_bytes,
-            flags,
-        )?;
-
-        regions.push(UserRegion {
-            start: virt_start & !(PAGE_SIZE as u64 - 1),
-            end: align_up(virt_end as usize, PAGE_SIZE) as u64,
-            readable: ph.flags().is_read(),
-            writable: ph.flags().is_write(),
-            executable: ph.flags().is_execute(),
-        });
-    }
-
-    let entry = biased_addr(elf.header.pt2.entry_point(), load_bias)?;
-    let initial_stack = build_initial_stack(&elf, load_bias, entry)?;
-    map_user_stack(
-        &mut mapper,
+    let interpreter_path = user_elf_interpreter_path(bytes)?;
+    let interpreter_bytes = interpreter_path
+        .as_deref()
+        .map(|path| {
+            linux_user_resource_bytes_for_path(path).ok_or("initial user ELF interpreter missing")
+        })
+        .transpose()?;
+    let argv = vec![b"/bin/vmos-ltp".to_vec()];
+    let envp = vec![
+        b"KCONFIG_SKIP_CHECK=1".to_vec(),
+        b"LTP_DEV=/dev/loop0".to_vec(),
+        b"LTP_SINGLE_FS_TYPE=tmpfs".to_vec(),
+    ];
+    let image = prepare_user_program(
+        physical_memory_offset,
         &mut frame_allocator,
-        &mut page_mappings,
-        phys_offset,
-        &initial_stack,
+        bytes,
+        interpreter_bytes,
+        &argv,
+        &envp,
+        b"/bin/vmos-ltp",
+        ExecStackCredentials::root(),
     )?;
-    regions.push(UserRegion {
-        start: USER_STACK_BASE,
-        end: USER_STACK_TOP,
-        readable: true,
-        writable: true,
-        executable: false,
-    });
+    if let Err(err) = switch_user_page_mappings(
+        physical_memory_offset,
+        &[],
+        &[],
+        &image.page_mappings,
+        &image.regions,
+        &mut frame_allocator,
+        false,
+    ) {
+        image.release_frames(&mut frame_allocator);
+        crate::kwarn!("initial user page-table switch failed: {}", err.message());
+        return Err("failed to map initial user image");
+    }
 
     Ok(LoadedUserImage {
-        entry,
-        stack_top: initial_stack.stack_pointer,
-        regions,
-        page_mappings,
+        entry: image.entry,
+        stack_top: image.stack_top,
+        regions: image.regions,
+        page_mappings: image.page_mappings,
         frame_allocator,
     })
-}
-
-fn map_user_pages(
-    mapper: &mut OffsetPageTable<'_>,
-    frame_allocator: &mut UserFrameAllocator,
-    page_mappings: &mut Vec<UserPageMapping>,
-    phys_offset: VirtAddr,
-    virt_start: u64,
-    virt_end: u64,
-    file_bytes: &[u8],
-    flags: PageTableFlags,
-) -> Result<(), &'static str> {
-    let page_start = virt_start & !(PAGE_SIZE as u64 - 1);
-    let page_end = align_up(virt_end as usize, PAGE_SIZE) as u64;
-
-    for page_addr in (page_start..page_end).step_by(PAGE_SIZE) {
-        let frame =
-            frame_allocator.allocate_frame().ok_or("out of usable frames for user image")?;
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
-        unsafe {
-            mapper
-                .map_to(page, frame, flags, frame_allocator)
-                .map_err(|_| "failed to map user ELF page")?
-                .flush();
-        }
-        page_mappings.push(UserPageMapping {
-            va: page_addr,
-            frame_start: frame.start_address().as_u64(),
-            present: true,
-            owned: true,
-            cow: false,
-        });
-
-        let dest = frame_bytes(frame, phys_offset);
-        dest.fill(0);
-
-        let copy_start = core::cmp::max(page_addr, virt_start);
-        let copy_end =
-            core::cmp::min(page_addr + PAGE_SIZE as u64, virt_start + file_bytes.len() as u64);
-        if copy_start < copy_end {
-            let file_offset = (copy_start - virt_start) as usize;
-            let page_offset = (copy_start - page_addr) as usize;
-            let copy_len = (copy_end - copy_start) as usize;
-            dest[page_offset..page_offset + copy_len]
-                .copy_from_slice(&file_bytes[file_offset..file_offset + copy_len]);
-        }
-    }
-
-    Ok(())
 }
 
 fn prepare_user_pages(
@@ -1093,46 +1031,6 @@ fn prepare_user_pages(
             let copy_len = (copy_end - copy_start) as usize;
             dest[page_offset..page_offset + copy_len]
                 .copy_from_slice(&file_bytes[file_offset..file_offset + copy_len]);
-        }
-    }
-
-    Ok(())
-}
-
-fn map_user_stack(
-    mapper: &mut OffsetPageTable<'_>,
-    frame_allocator: &mut UserFrameAllocator,
-    page_mappings: &mut Vec<UserPageMapping>,
-    phys_offset: VirtAddr,
-    initial_stack: &InitialStack,
-) -> Result<(), &'static str> {
-    let flags = PageTableFlags::PRESENT
-        | PageTableFlags::WRITABLE
-        | PageTableFlags::USER_ACCESSIBLE
-        | PageTableFlags::NO_EXECUTE;
-
-    for index in 0..USER_STACK_PAGES {
-        let addr = USER_STACK_BASE + (index * PAGE_SIZE) as u64;
-        let frame =
-            frame_allocator.allocate_frame().ok_or("out of usable frames for user stack")?;
-        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(addr));
-        unsafe {
-            mapper
-                .map_to(page, frame, flags, frame_allocator)
-                .map_err(|_| "failed to map user stack page")?
-                .flush();
-        }
-        page_mappings.push(UserPageMapping {
-            va: addr,
-            frame_start: frame.start_address().as_u64(),
-            present: true,
-            owned: true,
-            cow: false,
-        });
-        let dest = frame_bytes(frame, phys_offset);
-        dest.fill(0);
-        if addr == initial_stack.page_base {
-            dest.copy_from_slice(&initial_stack.page_bytes);
         }
     }
 
@@ -1180,29 +1078,6 @@ struct InitialStack {
     page_base: u64,
     page_bytes: Vec<u8>,
     stack_pointer: u64,
-}
-
-fn build_initial_stack(
-    elf: &ElfFile<'_>,
-    load_bias: u64,
-    entry: u64,
-) -> Result<InitialStack, &'static str> {
-    let argv = [b"/bin/vmos-ltp".as_slice()];
-    let envp = [
-        b"KCONFIG_SKIP_CHECK=1".as_slice(),
-        b"LTP_DEV=/dev/loop0".as_slice(),
-        b"LTP_SINGLE_FS_TYPE=tmpfs".as_slice(),
-    ];
-    build_initial_stack_slices(
-        elf,
-        load_bias,
-        0,
-        entry,
-        &argv,
-        &envp,
-        b"/bin/vmos-ltp",
-        ExecStackCredentials::root(),
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -2092,6 +2092,10 @@ fn linux_user_resource_for_path(path: &[u8]) -> Option<&'static LinuxUserResourc
     LINUX_USER_RESOURCE_FILES.iter().find(|resource| file_name(resource.path) == Some(name))
 }
 
+pub(crate) fn linux_user_resource_bytes_for_path(path: &[u8]) -> Option<&'static [u8]> {
+    linux_user_resource_for_path(path).map(|resource| resource.bytes)
+}
+
 fn looks_like_ltp_resource_path(path: &[u8], name: &[u8]) -> bool {
     let Some(parent) = parent_path(path) else {
         return false;

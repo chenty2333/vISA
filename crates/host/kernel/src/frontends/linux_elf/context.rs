@@ -131,6 +131,9 @@ impl UserFrameAllocator {
             }
             if self.cursor_addr == 0 || self.cursor_addr < region.start {
                 self.cursor_addr = align_up_to_frame(region.start);
+                if self.cursor_addr == 0 {
+                    self.cursor_addr = 4096;
+                }
             }
             if self.cursor_addr >= region.end {
                 self.cursor_region += 1;

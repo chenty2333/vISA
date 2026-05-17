@@ -5,7 +5,7 @@ mod native;
 pub(crate) use native::{
     ConsoleService, DevfsService, DriverNetEventKind, DriverVirtioNetService, EpollService,
     FutexService, LinuxSocketService, NetCoreService, ProcfsService, ReplaySnapshotService,
-    VfsService, WasmApp,
+    VfsService, WasmApp, linux_user_resource_bytes_for_path,
 };
 
 #[cfg(not(target_os = "none"))]

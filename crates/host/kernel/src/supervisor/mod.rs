@@ -34,6 +34,7 @@ mod wait;
 
 pub(crate) use linux::LinuxCallResult;
 pub(crate) use runtime::{PrototypeRuntime, runtime};
+pub(crate) use services::linux_user_resource_bytes_for_path;
 pub(crate) use types::TaskId;
 
 pub(crate) fn run() -> Result<(), &'static str> {

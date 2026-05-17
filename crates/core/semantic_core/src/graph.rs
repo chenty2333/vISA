@@ -1,4 +1,5 @@
 use alloc::{
+    boxed::Box,
     format,
     string::{String, ToString},
     vec::Vec,
@@ -8,7 +9,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub struct SemanticGraph {
-    domains: SemanticDomains,
+    domains: Box<SemanticDomains>,
     event_log: EventLog,
     command_results: Vec<CommandResult>,
 }
@@ -144,7 +145,7 @@ impl SemanticGraph {
     }
     pub fn with_runtime_mode(runtime_mode: RuntimeMode) -> Self {
         Self {
-            domains: SemanticDomains::new(),
+            domains: SemanticDomains::boxed_new(),
             event_log: EventLog::with_runtime_mode(runtime_mode),
             command_results: Vec::new(),
         }

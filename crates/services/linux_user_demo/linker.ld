@@ -3,13 +3,13 @@ ENTRY(_start)
 
 PHDRS
 {
-  text PT_LOAD FLAGS(5);
+  text PT_LOAD FILEHDR PHDRS FLAGS(5);
   data PT_LOAD FLAGS(6);
 }
 
 SECTIONS
 {
-  . = 0x00400000;
+  . = 0x00400000 + SIZEOF_HEADERS;
 
   .text : ALIGN(0x1000)
   {

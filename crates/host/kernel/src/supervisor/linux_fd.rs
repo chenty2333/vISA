@@ -2540,7 +2540,11 @@ fn encode_stat_abi(
 }
 
 fn devfs_mode_for_path(path: &[u8]) -> u32 {
-    if path == b"/dev/loop0" { 0o060660 } else { 0o020666 }
+    match path {
+        b"/dev" => 0o040755,
+        b"/dev/loop0" => 0o060660,
+        _ => 0o020666,
+    }
 }
 
 fn write_u32(out: &mut [u8], offset: usize, value: u32) {
