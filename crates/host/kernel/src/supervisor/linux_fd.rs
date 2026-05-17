@@ -1227,9 +1227,21 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn create_socketpair(&mut self) -> Result<(u32, u32), i32> {
+        self.create_socketpair_with_flags(0)
+    }
+
+    pub(crate) fn create_socketpair_with_flags(&mut self, flags: u32) -> Result<(u32, u32), i32> {
+        const SOCK_CLOEXEC: u32 = 0o2000000;
+        const SOCK_NONBLOCK: u32 = O_NONBLOCK;
+
+        if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
+            return Err(ERR_EINVAL);
+        }
         if self.available_fd_slots() < 2 {
             return Err(ERR_EMFILE);
         }
+        let fd_flags = if flags & SOCK_CLOEXEC != 0 { 1 } else { 0 };
+        let status_flags = flags & SOCK_NONBLOCK;
         let pair_id = self.next_socketpair_id;
         self.next_socketpair_id = self.next_socketpair_id.saturating_add(1);
         self.socketpairs.push(SocketPairState {
@@ -1243,15 +1255,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd_a = self.alloc_fd(FdEntry {
             resource: FdResource::SocketPairEnd { pair_id, endpoint: 0 },
             cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
+            fd_flags,
+            status_flags,
             cursor_group: None,
         })?;
         let fd_b = self.alloc_fd(FdEntry {
             resource: FdResource::SocketPairEnd { pair_id, endpoint: 1 },
             cursor: 0,
-            fd_flags: 0,
-            status_flags: 0,
+            fd_flags,
+            status_flags,
             cursor_group: None,
         })?;
         Ok((fd_a, fd_b))

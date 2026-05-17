@@ -19,8 +19,8 @@ use vmos_abi::{
     SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
     SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
-    is_stdio_fd,
+    SYS_SOCKETPAIR, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME,
+    SYS_WRITE, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -83,6 +83,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_LISTEN => plan_listen(a0, a1),
         SYS_ACCEPT => plan_accept(a0, a1, a2),
         SYS_ACCEPT4 => plan_accept4(a0, a1, a2, a3),
+        SYS_SOCKETPAIR => plan_socketpair(a0, a1, a2, a3),
         SYS_SENDTO => plan_sendto(a0, a1, a2, a3, a4, a5),
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
@@ -482,6 +483,11 @@ fn plan_accept(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
 fn plan_accept4(fd: u64, addr: u64, addr_len: u64, flags: u64) -> PackedStep {
     reset_plan(PlanKind::Accept, [fd, addr, addr_len, flags, 0, 0]);
     PackedStep::plan(PlanKind::Accept)
+}
+
+fn plan_socketpair(domain: u64, ty: u64, protocol: u64, sv_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::SocketPair, [domain, ty, protocol, sv_ptr, 0, 0]);
+    PackedStep::plan(PlanKind::SocketPair)
 }
 
 fn plan_sendto(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u64) -> PackedStep {
@@ -1048,6 +1054,23 @@ mod tests {
         assert_eq!(plan_arg(1), 0x2100);
         assert_eq!(plan_arg(2), 0x2200);
         assert_eq!(plan_arg(3), flags);
+    }
+
+    #[test]
+    fn socketpair_plan_preserves_type_and_writeback_pointer() {
+        let _guard = test_guard();
+        const SOCK_NONBLOCK: u64 = 0o4000;
+        const SOCK_CLOEXEC: u64 = 0o2000000;
+        let ty = vmos_abi::SOCK_STREAM as u64 | SOCK_CLOEXEC | SOCK_NONBLOCK;
+        let raw = dispatch(SYS_SOCKETPAIR, vmos_abi::AF_UNIX as u64, ty, 0, 0x2300, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::SocketPair));
+        assert_eq!(plan_arg(0), vmos_abi::AF_UNIX as u64);
+        assert_eq!(plan_arg(1), ty);
+        assert_eq!(plan_arg(2), 0);
+        assert_eq!(plan_arg(3), 0x2300);
     }
 
     #[test]

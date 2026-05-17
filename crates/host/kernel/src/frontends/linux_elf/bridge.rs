@@ -4705,11 +4705,8 @@ fn sys_socketpair(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_EPROTONOSUPPORT);
     }
 
-    let (fd_a, fd_b) = active_context().supervisor.create_socketpair()?;
-    if ty & SOCK_CLOEXEC != 0 {
-        active_context().supervisor.set_fd_flags(fd_a, 1)?;
-        active_context().supervisor.set_fd_flags(fd_b, 1)?;
-    }
+    let flags = u32::try_from(ty & (SOCK_CLOEXEC | SOCK_NONBLOCK)).map_err(|_| ERR_EINVAL)?;
+    let (fd_a, fd_b) = active_context().supervisor.create_socketpair_with_flags(flags)?;
     let mut encoded = [0u8; 8];
     encoded[..4].copy_from_slice(&(fd_a as i32).to_le_bytes());
     encoded[4..].copy_from_slice(&(fd_b as i32).to_le_bytes());

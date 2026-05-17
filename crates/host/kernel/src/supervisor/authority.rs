@@ -320,6 +320,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "linux.socket",
             operation: "socket",
         },
+        PlanKind::SocketPair => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "fd.socketpair",
+            operation: "create",
+        },
         PlanKind::Bind => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

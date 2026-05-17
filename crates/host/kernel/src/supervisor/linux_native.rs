@@ -12,8 +12,8 @@ use vmos_abi::{
     SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
     SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE,
-    SyscallContext, is_stdio_fd,
+    SYS_SOCKETPAIR, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME,
+    SYS_WRITE, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -70,6 +70,7 @@ impl LinuxFrontend {
             SYS_LISTEN => self.plan_listen(a0, a1),
             SYS_ACCEPT => self.plan_accept(a0, a1, a2),
             SYS_ACCEPT4 => self.plan_accept4(a0, a1, a2, a3),
+            SYS_SOCKETPAIR => self.plan_socketpair(a0, a1, a2, a3),
             SYS_SENDTO => self.plan_sendto(a0, a1, a2, a3, a4, a5),
             SYS_RECVFROM => self.plan_recvfrom(a0, a1, a2, a3, a4, a5),
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
@@ -622,6 +623,11 @@ impl LinuxFrontend {
     fn plan_pipe(&mut self, fds_ptr: u64, flags: u64) -> PackedStep {
         self.reset_plan(PlanKind::Pipe, [fds_ptr, flags, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Pipe)
+    }
+
+    fn plan_socketpair(&mut self, domain: u64, ty: u64, protocol: u64, sv_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SocketPair, [domain, ty, protocol, sv_ptr, 0, 0]);
+        PackedStep::plan(PlanKind::SocketPair)
     }
 
     fn plan_poll(&mut self, ptr: u64, nfds: u64, timeout_ms: u64) -> PackedStep {

@@ -276,6 +276,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::EpollWait => self.plan_epoll_wait(plan),
             PlanKind::EpollReady => self.plan_epoll_ready(plan),
             PlanKind::Socket => self.plan_socket(plan),
+            PlanKind::SocketPair => self.plan_socketpair(plan),
             PlanKind::Bind => self.plan_socket_state(plan, "bind"),
             PlanKind::Listen => self.plan_socket_state(plan, "listen"),
             PlanKind::Accept => self.plan_accept(plan),
