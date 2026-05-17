@@ -896,10 +896,19 @@ fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard};
+
     use super::*;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn connect_plan_preserves_sockaddr_metadata() {
+        let _guard = test_guard();
         let ipv4 = u32::from_be_bytes([10, 0, 2, 2]);
         let raw = dispatch(SYS_CONNECT, 7, 0x1000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 80);
         let step = PackedStep::decode(raw);
@@ -916,6 +925,7 @@ mod tests {
 
     #[test]
     fn bind_plan_preserves_sockaddr_metadata() {
+        let _guard = test_guard();
         let ipv4 = u32::from_be_bytes([127, 0, 0, 1]);
         let raw = dispatch(SYS_BIND, 8, 0x2000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 8080);
         let step = PackedStep::decode(raw);
@@ -932,6 +942,7 @@ mod tests {
 
     #[test]
     fn futex_wait_requeue_pi_plans_distinct_wait_kind() {
+        let _guard = test_guard();
         let raw = dispatch_futex_raw(0x1000, FUTEX_WAIT_REQUEUE_PI as u64, 7, u64::MAX, 7);
         let step = PackedStep::decode(raw);
 
@@ -944,6 +955,7 @@ mod tests {
 
     #[test]
     fn fcntl_setlk_plan_decodes_flock_from_arg_buffer() {
+        let _guard = test_guard();
         const F_SETLK: u64 = 6;
         const F_WRLCK: i16 = 1;
         const SEEK_SET: i16 = 0;
@@ -978,6 +990,7 @@ mod tests {
 
     #[test]
     fn fcntl_getlk_plan_decodes_flock_from_arg_buffer() {
+        let _guard = test_guard();
         const F_GETLK: u64 = 5;
         const F_RDLCK: i16 = 0;
         const SEEK_SET: i16 = 0;
@@ -1012,6 +1025,7 @@ mod tests {
 
     #[test]
     fn renameat2_plan_preserves_paths_and_flags() {
+        let _guard = test_guard();
         const RENAME_NOREPLACE: u64 = 1;
 
         let old = b"/sandbox/old";
@@ -1049,6 +1063,7 @@ mod tests {
 
     #[test]
     fn rename_and_renameat_pack_lengths_without_flags() {
+        let _guard = test_guard();
         let old = b"/sandbox/a";
         let new = b"/sandbox/b";
         let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
@@ -1102,6 +1117,7 @@ mod tests {
 
     #[test]
     fn link_and_linkat_pack_lengths_and_flags() {
+        let _guard = test_guard();
         const AT_SYMLINK_FOLLOW: u64 = 0x400;
 
         let old = b"/sandbox/source";
@@ -1153,6 +1169,7 @@ mod tests {
 
     #[test]
     fn prlimit64_plan_preserves_limit_pointers() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_PRLIMIT64, 0, 7, 0x1000, 0x1010, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1168,6 +1185,7 @@ mod tests {
 
     #[test]
     fn legacy_rlimit_syscalls_plan_distinct_operations() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_GETRLIMIT, 7, 0x2000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1189,6 +1207,7 @@ mod tests {
 
     #[test]
     fn poll_plan_preserves_pollfd_pointer_count_and_timeout() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_POLL, 0x2000, 3, 250, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1202,6 +1221,7 @@ mod tests {
 
     #[test]
     fn seccomp_plan_preserves_operation_flags_and_args_pointer() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_SECCOMP, 1, 2, 0x1234, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1214,6 +1234,7 @@ mod tests {
 
     #[test]
     fn prctl_plan_preserves_option_and_arguments() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_PRCTL, 38, 1, 0x1234, 0x5678, 0x9abc, 0);
         let step = PackedStep::decode(raw);
 
@@ -1228,6 +1249,7 @@ mod tests {
 
     #[test]
     fn clock_adjtime_plan_preserves_clock_and_timex_pointer() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_CLOCK_ADJTIME, 0, 0x3000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1240,6 +1262,7 @@ mod tests {
 
     #[test]
     fn clock_gettime_plan_preserves_clock_and_timespec_pointer() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_CLOCK_GETTIME, 11, 0x3040, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1251,6 +1274,7 @@ mod tests {
 
     #[test]
     fn clock_getres_plan_preserves_clock_and_optional_timespec_pointer() {
+        let _guard = test_guard();
         let raw = dispatch(SYS_CLOCK_GETRES, 1, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
@@ -1262,6 +1286,7 @@ mod tests {
 
     #[test]
     fn xattr_plans_use_explicit_name_and_value_lengths() {
+        let _guard = test_guard();
         let name = b"user.demo";
         let value = b"value";
         let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
