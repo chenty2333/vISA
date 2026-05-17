@@ -857,7 +857,7 @@ impl VfsService {
         s: i64,
         l: i64,
     ) -> Result<(), i32> {
-        let key = file_lock_key(node_id, path);
+        let key = self.file_lock_key(node_id, path);
         for lock in &self.locks {
             if lock.key != key || lock.owner_pid == owner {
                 continue;
@@ -879,7 +879,7 @@ impl VfsService {
         s: i64,
         l: i64,
     ) {
-        let key = file_lock_key(node_id, path);
+        let key = self.file_lock_key(node_id, path);
         self.remove_owner_locks(&key, owner, s, l);
     }
 
@@ -889,7 +889,7 @@ impl VfsService {
         path: &[u8],
         owner: u32,
     ) -> bool {
-        let key = file_lock_key(node_id, path);
+        let key = self.file_lock_key(node_id, path);
         let before = self.locks.len();
         self.locks.retain(|lock| lock.key != key || lock.owner_pid != owner);
         before != self.locks.len()
@@ -910,7 +910,7 @@ impl VfsService {
         s: i64,
         l: i64,
     ) -> Option<(bool, u32, i64, i64)> {
-        let key = file_lock_key(node_id, path);
+        let key = self.file_lock_key(node_id, path);
         for lock in &self.locks {
             if lock.key != key || lock.owner_pid == owner {
                 continue;
@@ -970,15 +970,16 @@ impl VfsService {
         }
         self.locks = next;
     }
-}
 
-fn file_lock_key(node_id: Option<u64>, path: &[u8]) -> FileLockKey {
-    // Dynamic VFS fds carry a stable node id; static resources have no node
-    // record, so their advisory locks intentionally fall back to path identity.
-    if let Some(id) = node_id {
-        FileLockKey::Node(id)
-    } else {
-        FileLockKey::Path(normalize_path(path))
+    fn file_lock_key(&self, node_id: Option<u64>, path: &[u8]) -> FileLockKey {
+        // Callers normally pass the fd's stable dynamic VFS node id. Re-resolve
+        // by path when they do not, so dynamic files cannot split into a Node
+        // lock key and a Path lock key for the same inode.
+        if let Some(id) = node_id.or_else(|| self.node_id_for_path(path)) {
+            FileLockKey::Node(id)
+        } else {
+            FileLockKey::Path(normalize_path(path))
+        }
     }
 }
 
