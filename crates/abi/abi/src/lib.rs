@@ -189,6 +189,7 @@ pub const ERR_EAGAIN: i32 = 11;
 pub const ERR_ENOMEM: i32 = 12;
 pub const ERR_EACCES: i32 = 13;
 pub const ERR_EFAULT: i32 = 14;
+pub const ERR_EBUSY: i32 = 16;
 pub const ERR_EEXIST: i32 = 17;
 pub const ERR_ENOTDIR: i32 = 20;
 pub const ERR_EISDIR: i32 = 21;

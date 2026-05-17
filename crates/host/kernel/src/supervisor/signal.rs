@@ -416,6 +416,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         thread.sigaltstack = SignalAltStack::default();
         thread.sigsuspend_restore_mask = None;
         thread.robust_list = None;
+        thread.rseq = None;
         true
     }
 }

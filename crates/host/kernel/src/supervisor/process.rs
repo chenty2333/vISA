@@ -10,8 +10,8 @@ use super::{
     runtime::PrototypeRuntime,
     types::{
         CAP_SYS_PTRACE, Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
-        RobustListRegistration, SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind,
-        Tid,
+        RobustListRegistration, RseqRegistration, SignalAltStack, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -245,6 +245,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
             no_new_privs: parent_thread.no_new_privs,
+            rseq: None,
         });
 
         Ok((child_task_id, child_pid, child_tid))
@@ -395,6 +396,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
             no_new_privs: parent_thread.no_new_privs,
+            rseq: None,
         });
 
         Ok((child_task_id, child_pid, child_tid))
@@ -538,6 +540,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
             no_new_privs: parent_thread.no_new_privs,
+            rseq: None,
         });
 
         Ok((child_task_id, child_pid, child_tid))
@@ -663,6 +666,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             Err(vmos_abi::ERR_EPERM)
         }
+    }
+
+    pub(crate) fn thread_rseq_registration(&self, tid: Tid) -> Option<RseqRegistration> {
+        self.threads.iter().find(|thread| thread.tid == tid).and_then(|thread| thread.rseq)
+    }
+
+    pub(crate) fn register_thread_rseq(
+        &mut self,
+        tid: Tid,
+        registration: RseqRegistration,
+    ) -> Result<(), i32> {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        if thread.rseq.is_some() {
+            return Err(vmos_abi::ERR_EBUSY);
+        }
+        thread.rseq = Some(registration);
+        Ok(())
+    }
+
+    pub(crate) fn unregister_thread_rseq(
+        &mut self,
+        tid: Tid,
+        registration: RseqRegistration,
+    ) -> Result<(), i32> {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        if thread.rseq != Some(registration) {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        thread.rseq = None;
+        Ok(())
     }
 
     pub(crate) fn process_dumpable(&self, pid: Pid) -> Result<bool, i32> {

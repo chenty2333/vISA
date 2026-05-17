@@ -235,6 +235,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     pending_signals: Vec::new(),
                     seccomp: SeccompMode::Disabled,
                     no_new_privs: false,
+                    rseq: None,
                 });
                 thrds
             },
@@ -311,6 +312,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             pending_signals: Vec::new(),
             seccomp: SeccompMode::Disabled,
             no_new_privs: false,
+            rseq: None,
         });
         tid
     }

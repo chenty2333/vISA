@@ -247,12 +247,20 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) pending_signals: Vec<PendingSignal>,
     pub(crate) seccomp: SeccompMode,
     pub(crate) no_new_privs: bool,
+    pub(crate) rseq: Option<RseqRegistration>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RobustListRegistration {
     pub(crate) head: u64,
     pub(crate) len: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RseqRegistration {
+    pub(crate) ptr: u64,
+    pub(crate) len: u32,
+    pub(crate) signature: u32,
 }
 
 pub(crate) const SIGALTSTACK_SS_ONSTACK: u32 = 1;
