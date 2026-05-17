@@ -120,6 +120,7 @@ impl UserFrameAllocator {
 
     pub(crate) fn absorb_child_allocator(&mut self, mut child: Self) {
         self.free_frames.append(&mut child.free_frames);
+        self.merge_child_domain_if_sibling(&child);
     }
 
     fn allocate_fresh_frame(&mut self) -> Option<PhysFrame> {
@@ -158,6 +159,33 @@ impl UserFrameAllocator {
 
     fn frame_in_domain(&self, addr: u64) -> bool {
         frame_in_domain_for(addr, self.domain_stride, self.domain_remainder)
+    }
+
+    fn merge_child_domain_if_sibling(&mut self, child: &Self) {
+        if self.memory_regions.as_ptr() != child.memory_regions.as_ptr()
+            || self.memory_regions.len() != child.memory_regions.len()
+            || self.domain_stride != child.domain_stride
+            || self.domain_stride <= 1
+        {
+            return;
+        }
+
+        let parent_stride = self.domain_stride / 2;
+        if self.domain_remainder % parent_stride != child.domain_remainder % parent_stride
+            || self.domain_remainder == child.domain_remainder
+        {
+            return;
+        }
+
+        // The parent is suspended while the child runs. Use the later cursor so
+        // the merged fresh stream cannot revisit frames the child allocated and
+        // later returned through its free list.
+        if (child.cursor_region, child.cursor_addr) > (self.cursor_region, self.cursor_addr) {
+            self.cursor_region = child.cursor_region;
+            self.cursor_addr = child.cursor_addr;
+        }
+        self.domain_stride = parent_stride;
+        self.domain_remainder %= parent_stride;
     }
 }
 
