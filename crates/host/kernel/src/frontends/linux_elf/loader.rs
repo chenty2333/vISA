@@ -345,6 +345,36 @@ pub(crate) fn protect_user_page_range(
     Ok(())
 }
 
+pub(crate) fn populate_user_page_range(
+    physical_memory_offset: u64,
+    page_mappings: &[UserPageMapping],
+    start: u64,
+    bytes: &[u8],
+) -> Result<(), &'static str> {
+    let end = start.checked_add(bytes.len() as u64).ok_or("user page range overflowed")?;
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let mut cursor = start;
+    while cursor < end {
+        let page_addr = cursor & !(PAGE_SIZE as u64 - 1);
+        let page_offset = (cursor - page_addr) as usize;
+        let remaining_in_page = PAGE_SIZE - page_offset;
+        let copied = (cursor - start) as usize;
+        let copy_len = core::cmp::min(remaining_in_page, bytes.len() - copied);
+        let mapping = page_mappings
+            .iter()
+            .find(|mapping| mapping.va == page_addr)
+            .ok_or("user page is not mapped")?;
+        if !mapping.present {
+            return Err("user page is not mapped");
+        }
+        let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
+        frame_bytes(frame, phys_offset)[page_offset..page_offset + copy_len]
+            .copy_from_slice(&bytes[copied..copied + copy_len]);
+        cursor = cursor.checked_add(copy_len as u64).ok_or("user page range overflowed")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn unmap_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,

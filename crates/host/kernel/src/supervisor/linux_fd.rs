@@ -116,6 +116,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(chunk)
     }
 
+    pub(crate) fn read_vfs_fd_range(
+        &mut self,
+        fd: u32,
+        offset: usize,
+        count: usize,
+    ) -> Result<Vec<u8>, i32> {
+        let count = u32::try_from(count).map_err(|_| ERR_EINVAL)?;
+        self.require_fd_readable(fd).map_err(errno_from_service_error)?;
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(ERR_EINVAL);
+        }
+        if node == NodeKind::Directory {
+            return Err(vmos_abi::ERR_EISDIR);
+        }
+        if node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        self.vfs
+            .read_file_range_by_id(vfs_node_id, &path, offset, count)
+            .map_err(errno_from_service_error)
+    }
+
     pub(super) fn write_to_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<usize, ServiceCallError> {
         self.require_fd_writable(fd)?;
         let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;

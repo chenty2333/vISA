@@ -48,8 +48,8 @@ use super::{
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, cow_break_user_page, demo_program_host_path, load_demo_program,
-        prepare_user_program, protect_user_page_range, switch_user_page_mappings,
-        unmap_user_page_range, user_elf_interpreter_path,
+        populate_user_page_range, prepare_user_program, protect_user_page_range,
+        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -83,6 +83,7 @@ const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
 const SECURITY_CAPABILITY_XATTR: &[u8] = b"security.capability";
 const SYS_EXECVE: u64 = 59;
+const SYS_PREAD64: u64 = 17;
 const SYS_SYMLINK: u64 = 88;
 const SYS_SETUID: u64 = 105;
 const SYS_SETGID: u64 = 106;
@@ -154,6 +155,10 @@ const RFLAGS_RESTORABLE_USER_MASK: u64 = 0x0024_0cd5;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
+const MAP_SHARED: u64 = 0x01;
+const MAP_PRIVATE: u64 = 0x02;
+const MAP_FIXED: u64 = 0x10;
+const MAP_ANONYMOUS: u64 = 0x20;
 
 #[derive(Clone, Copy)]
 struct PselectFdSetSnapshot {
@@ -267,6 +272,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_WRITE => sys_write(frame),
         SYS_WRITEV => sys_writev(frame),
         SYS_READ => sys_read(frame),
+        SYS_PREAD64 => sys_pread64(frame),
         SYS_LSEEK => sys_lseek(frame),
         SYS_OPEN => sys_open(frame),
         SYS_OPENAT => sys_openat(frame),
@@ -626,6 +632,16 @@ fn sys_read(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_pread64(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    let offset = usize::try_from(frame.r10).map_err(|_| ERR_EINVAL)?;
+    let bytes = active_context().supervisor.read_vfs_fd_range(fd, offset, count)?;
+    let mut dest = user_lease(frame.rsi, bytes.len() as u64, true)?;
+    dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&bytes);
+    Ok(bytes.len() as i64)
 }
 
 fn sys_lseek(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -4658,6 +4674,28 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     if len == 0 {
         return Err(ERR_EINVAL);
     }
+    let flags = frame.r10;
+    let shared = flags & MAP_SHARED != 0;
+    let private = flags & MAP_PRIVATE != 0;
+    if shared == private {
+        return Err(ERR_EINVAL);
+    }
+    let anonymous = flags & MAP_ANONYMOUS != 0;
+    let fixed = flags & MAP_FIXED != 0;
+    let file_bytes = if anonymous {
+        None
+    } else {
+        if !private {
+            return Err(vmos_abi::ERR_EOPNOTSUPP);
+        }
+        if frame.r9 & 4095 != 0 {
+            return Err(ERR_EINVAL);
+        }
+        let fd = u32::try_from(frame.r8).map_err(|_| ERR_EBADF)?;
+        let offset = usize::try_from(frame.r9).map_err(|_| ERR_EINVAL)?;
+        let count = usize::try_from(len).map_err(|_| ERR_ENOMEM)?;
+        Some(active_context().supervisor.read_vfs_fd_range(fd, offset, count)?)
+    };
     let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
     if as_limit != u64::MAX && active_context().mapped_user_bytes().saturating_add(len) > as_limit {
         return Err(ERR_ENOMEM);
@@ -4674,8 +4712,16 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     };
 
     let existing_ranges = active_context().mapped_user_subranges(addr, len);
-    for (start, end) in existing_ranges {
-        protect_active_user_page_range(start, end - start, frame.rdx)?;
+    if fixed || file_bytes.is_some() {
+        for (start, end) in existing_ranges {
+            unmap_active_user_page_range(start, end - start)?;
+            active_context().unmap_user_region(start, end - start);
+            active_context().supervisor.record_guest_memory_unmap(start, end - start);
+        }
+    } else {
+        for (start, end) in existing_ranges {
+            protect_active_user_page_range(start, end - start, frame.rdx)?;
+        }
     }
     let _ = dispatch_ret(
         "ring3_mmap",
@@ -4686,6 +4732,16 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context()
         .supervisor
         .record_guest_memory_region(addr, len, readable, writable, executable);
+    if let Some(bytes) = file_bytes {
+        let map_prot = if frame.rdx == 0 { PROT_READ } else { frame.rdx };
+        if map_prot != 0 {
+            protect_active_user_page_range(addr, len, map_prot)?;
+        }
+        populate_active_user_page_range(addr, &bytes)?;
+        if map_prot != frame.rdx {
+            protect_active_user_page_range(addr, len, frame.rdx)?;
+        }
+    }
     Ok(addr as i64)
 }
 
@@ -6419,6 +6475,12 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
         len,
     )
     .map_err(|_| ERR_EFAULT)
+}
+
+fn populate_active_user_page_range(start: u64, bytes: &[u8]) -> Result<(), i32> {
+    let context = active_context();
+    populate_user_page_range(context.physical_memory_offset(), &context.page_mappings, start, bytes)
+        .map_err(|_| ERR_EFAULT)
 }
 
 fn clone_active_user_address_space() -> Result<UserAddressSpaceState, i32> {
