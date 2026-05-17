@@ -2,7 +2,8 @@ use net_stack_adapter::{
     SmoltcpAdapterConfig, SmoltcpPacketStack, pump_driver_backend, pump_stack_driver_backend,
 };
 use service_core::driver::DriverVirtioNetState;
-use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
+use substrate_api::PacketDeviceBackend;
+use substrate_virtio::net::InMemoryVirtioNetBackend;
 
 use super::super::super::*;
 
@@ -99,7 +100,13 @@ pub(crate) fn record_network_runtime_n21_evidence(
     if submitted != N21_TX_FRAME_LEN_U32 {
         return Err(format!("n21 driver submitted {submitted} bytes").into());
     }
-    let mut backend = HostValidationPacketBackend::with_rx_frame(&N21_RX_FRAME);
+    let mut backend = InMemoryVirtioNetBackend::default();
+    backend
+        .init([0x52, 0x54, 0x00, 0x12, 0x34, 0x56])
+        .map_err(|error| format!("n21 packet backend init failed: {error:?}"))?;
+    backend
+        .inject_rx_frame(&N21_RX_FRAME)
+        .map_err(|error| format!("n21 backend rx injection failed: {error:?}"))?;
     let pump = pump_driver_backend(&mut driver, &mut backend, 21)
         .map_err(|error| format!("n21 driver/backend pump failed: {error:?}"))?;
     if pump.rx_frames_delivered != 1 || pump.tx_frames_submitted != 1 {
@@ -109,7 +116,15 @@ pub(crate) fn record_network_runtime_n21_evidence(
         )
         .into());
     }
-    if backend.tx_frames.len() != 1 || backend.tx_frames[0].as_slice() != N21_TX_FRAME {
+    if backend.pending_tx_frames() != 1 {
+        return Err(format!(
+            "n21 backend expected one submitted tx frame, got {}",
+            backend.pending_tx_frames()
+        )
+        .into());
+    }
+    let tx_frame = take_backend_tx_frame(&mut backend, "n21 tx frame")?;
+    if tx_frame.as_slice() != N21_TX_FRAME {
         return Err("n21 backend did not receive the exact queued tx frame".into());
     }
     if driver.pending_tx_frames() != 0 || driver.pending_rx_frames() != 1 {
@@ -227,10 +242,13 @@ pub(crate) fn record_network_runtime_n22_evidence(
     let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
         .map_err(|error| format!("n22 smoltcp stack init failed: {error}"))?;
     let mut driver = DriverVirtioNetState::new();
-    let mut backend = HostValidationPacketBackend::with_rx_frame(&N22_BACKEND_RX_ARP_REQUEST);
+    let mut backend = InMemoryVirtioNetBackend::default();
     stack
         .init_backend(&mut backend)
         .map_err(|error| format!("n22 packet backend init failed: {error:?}"))?;
+    backend
+        .inject_rx_frame(&N22_BACKEND_RX_ARP_REQUEST)
+        .map_err(|error| format!("n22 backend rx injection failed: {error:?}"))?;
     let pump = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 22, 22)
         .map_err(|error| format!("n22 stack/driver/backend pump failed: {error:?}"))?;
     if pump.backend_rx_frames_delivered_to_driver != 1
@@ -247,7 +265,15 @@ pub(crate) fn record_network_runtime_n22_evidence(
         )
         .into());
     }
-    if backend.tx_frames.len() != 1 || backend.tx_frames[0].as_slice() != N22_BACKEND_TX_ARP_REPLY {
+    if backend.pending_tx_frames() != 1 {
+        return Err(format!(
+            "n22 backend expected one submitted tx frame, got {}",
+            backend.pending_tx_frames()
+        )
+        .into());
+    }
+    let tx_frame = take_backend_tx_frame(&mut backend, "n22 arp reply")?;
+    if tx_frame.as_slice() != N22_BACKEND_TX_ARP_REPLY {
         return Err("n22 backend did not receive the exact smoltcp ARP reply".into());
     }
     if driver.pending_tx_frames() != 0 || driver.pending_rx_frames() != 0 {
@@ -367,7 +393,7 @@ pub(crate) fn record_network_runtime_n23_evidence(
     let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
         .map_err(|error| format!("n23 smoltcp stack init failed: {error}"))?;
     let mut driver = DriverVirtioNetState::new();
-    let mut backend = HostValidationPacketBackend::empty();
+    let mut backend = InMemoryVirtioNetBackend::default();
     stack
         .init_backend(&mut backend)
         .map_err(|error| format!("n23 packet backend init failed: {error:?}"))?;
@@ -382,32 +408,37 @@ pub(crate) fn record_network_runtime_n23_evidence(
         .map_err(|error| format!("n23 arp pump failed: {error:?}"))?;
     if arp_pump.stack_tx_frames_submitted_to_driver != 1
         || arp_pump.driver_tx_frames_submitted_to_backend != 1
-        || backend.tx_frames.len() != 1
-        || !is_arp_request(&backend.tx_frames[0])
+        || backend.pending_tx_frames() != 1
     {
         return Err(format!(
             "n23 expected one emitted arp request, stack_tx={} driver_tx={} tx_frames={}",
             arp_pump.stack_tx_frames_submitted_to_driver,
             arp_pump.driver_tx_frames_submitted_to_backend,
-            backend.tx_frames.len()
+            backend.pending_tx_frames()
         )
         .into());
     }
+    let arp_request = take_backend_tx_frame(&mut backend, "n23 arp request")?;
+    if !is_arp_request(&arp_request) {
+        return Err("n23 first backend tx frame was not an ARP request".into());
+    }
 
-    backend.push_rx_frame(arp_reply_frame(
+    let arp_reply = arp_reply_frame(
         N23_REMOTE_MAC,
         N23_REMOTE_IP,
         [0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01],
         [10, 0, 2, 15],
-    ));
+    );
+    backend
+        .inject_rx_frame(&arp_reply)
+        .map_err(|error| format!("n23 backend arp reply injection failed: {error:?}"))?;
     let syn_pump = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 24, 24)
         .map_err(|error| format!("n23 syn pump failed: {error:?}"))?;
     if syn_pump.backend_rx_frames_delivered_to_driver != 1
         || syn_pump.driver_rx_frames_delivered_to_stack != 1
         || syn_pump.stack_tx_frames_submitted_to_driver != 1
         || syn_pump.driver_tx_frames_submitted_to_backend != 1
-        || backend.tx_frames.len() != 2
-        || !is_tcp_syn(&backend.tx_frames[1])
+        || backend.pending_tx_frames() != 1
     {
         return Err(format!(
             "n23 expected arp reply to produce one tcp syn, backend_rx={} driver_rx={} stack_tx={} driver_tx={} tx_frames={}",
@@ -415,13 +446,19 @@ pub(crate) fn record_network_runtime_n23_evidence(
             syn_pump.driver_rx_frames_delivered_to_stack,
             syn_pump.stack_tx_frames_submitted_to_driver,
             syn_pump.driver_tx_frames_submitted_to_backend,
-            backend.tx_frames.len()
+            backend.pending_tx_frames()
         )
         .into());
     }
+    let syn_frame = take_backend_tx_frame(&mut backend, "n23 tcp syn")?;
+    if !is_tcp_syn(&syn_frame) {
+        return Err("n23 second backend tx frame was not a TCP SYN".into());
+    }
 
-    let syn_ack = tcp_syn_ack_for_syn(&backend.tx_frames[1], N23_REMOTE_MAC, N23_SERVER_SEQ)?;
-    backend.push_rx_frame(syn_ack);
+    let syn_ack = tcp_syn_ack_for_syn(&syn_frame, N23_REMOTE_MAC, N23_SERVER_SEQ)?;
+    backend
+        .inject_rx_frame(&syn_ack)
+        .map_err(|error| format!("n23 backend syn-ack injection failed: {error:?}"))?;
     let established_pump = pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, 25, 25)
         .map_err(|error| format!("n23 established pump failed: {error:?}"))?;
     let snapshot =
@@ -430,8 +467,7 @@ pub(crate) fn record_network_runtime_n23_evidence(
         || established_pump.driver_rx_frames_delivered_to_stack != 1
         || established_pump.stack_tx_frames_submitted_to_driver != 1
         || established_pump.driver_tx_frames_submitted_to_backend != 1
-        || backend.tx_frames.len() != 3
-        || !is_tcp_ack(&backend.tx_frames[2])
+        || backend.pending_tx_frames() != 1
         || snapshot.state != "established"
         || !snapshot.can_send
     {
@@ -441,11 +477,15 @@ pub(crate) fn record_network_runtime_n23_evidence(
             established_pump.driver_rx_frames_delivered_to_stack,
             established_pump.stack_tx_frames_submitted_to_driver,
             established_pump.driver_tx_frames_submitted_to_backend,
-            backend.tx_frames.len(),
+            backend.pending_tx_frames(),
             snapshot.state,
             snapshot.can_send
         )
         .into());
+    }
+    let ack_frame = take_backend_tx_frame(&mut backend, "n23 final tcp ack")?;
+    if !is_tcp_ack(&ack_frame) {
+        return Err("n23 third backend tx frame was not a TCP ACK".into());
     }
     if driver.pending_tx_frames() != 0 || driver.pending_rx_frames() != 0 {
         return Err(format!(
@@ -531,58 +571,13 @@ pub(crate) fn record_network_runtime_n23_evidence(
     Ok(())
 }
 
-struct HostValidationPacketBackend {
-    init_mac: Option<[u8; 6]>,
-    rx_frames: Vec<Vec<u8>>,
-    tx_frames: Vec<Vec<u8>>,
-}
-
-impl HostValidationPacketBackend {
-    fn empty() -> Self {
-        Self { init_mac: None, rx_frames: Vec::new(), tx_frames: Vec::new() }
-    }
-
-    fn with_rx_frame(frame: &[u8]) -> Self {
-        Self { init_mac: None, rx_frames: vec![frame.to_vec()], tx_frames: Vec::new() }
-    }
-
-    fn push_rx_frame<F: Into<Vec<u8>>>(&mut self, frame: F) {
-        self.rx_frames.push(frame.into());
-    }
-}
-
-impl PacketDeviceBackend for HostValidationPacketBackend {
-    fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
-        self.init_mac = Some(mac);
-        Ok(())
-    }
-
-    fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
-        self.tx_frames.push(frame.to_vec());
-        Ok(())
-    }
-
-    fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
-        let count = self.rx_frames.len().min(out.len());
-        for slot in out.iter_mut().take(count) {
-            let frame = self.rx_frames.remove(0);
-            if frame.len() > slot.data.len() {
-                return Err(SubstrateError::ContractViolation {
-                    detail: "host validation packet frame exceeds slot capacity",
-                });
-            }
-            slot.len =
-                u16::try_from(frame.len()).map_err(|_| SubstrateError::ContractViolation {
-                    detail: "host validation packet frame length overflow",
-                })?;
-            slot.data[..frame.len()].copy_from_slice(&frame);
-        }
-        Ok(count)
-    }
-
-    fn mtu(&self) -> usize {
-        1500
-    }
+fn take_backend_tx_frame(
+    backend: &mut InMemoryVirtioNetBackend,
+    label: &'static str,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    backend
+        .take_tx_frame()
+        .ok_or_else(|| format!("{label} was not submitted to packet backend").into())
 }
 
 fn arp_reply_frame(
