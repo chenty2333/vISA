@@ -46,9 +46,10 @@ use super::{
         UserAddressSpaceState, active_context, install_active_context, try_active_context,
     },
     loader::{
-        USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END, clone_user_page_mappings,
-        cow_break_user_page, demo_program_host_path, load_demo_program, prepare_user_program,
-        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
+        ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
+        clone_user_page_mappings, cow_break_user_page, demo_program_host_path, load_demo_program,
+        prepare_user_program, protect_user_page_range, switch_user_page_mappings,
+        unmap_user_page_range,
     },
 };
 use crate::{
@@ -859,6 +860,9 @@ fn execve_replace_image(
     owner_gid: u32,
     file_capabilities: Option<ExecFileCapabilities>,
 ) -> Result<i64, i32> {
+    let stack_credentials =
+        exec_stack_credentials_for_file(mode, owner_uid, owner_gid, file_capabilities.is_some());
+    let envp = sanitize_secure_exec_envp(envp, stack_credentials.secure);
     let image = {
         let context = active_context();
         prepare_user_program(
@@ -868,6 +872,7 @@ fn execve_replace_image(
             &argv,
             &envp,
             resolved,
+            stack_credentials,
         )
         .map_err(exec_load_errno)?
     };
@@ -931,6 +936,56 @@ fn execve_replace_image(
     next.fs_base = 0;
     ring3::install_user_return(frame, next);
     Ok(0)
+}
+
+fn exec_stack_credentials_for_file(
+    mode: u32,
+    owner_uid: u32,
+    owner_gid: u32,
+    has_file_capabilities: bool,
+) -> ExecStackCredentials {
+    const S_ISUID: u32 = 0o4000;
+    const S_ISGID: u32 = 0o2000;
+
+    let context = active_context();
+    let uid = context.uid();
+    let gid = context.gid();
+    let euid = if mode & S_ISUID != 0 { owner_uid } else { context.euid() };
+    let egid = if mode & S_ISGID != 0 { owner_gid } else { context.egid() };
+    ExecStackCredentials {
+        uid,
+        euid,
+        gid,
+        egid,
+        secure: has_file_capabilities || euid != uid || egid != gid,
+    }
+}
+
+fn sanitize_secure_exec_envp(envp: Vec<Vec<u8>>, secure: bool) -> Vec<Vec<u8>> {
+    if !secure {
+        return envp;
+    }
+    envp.into_iter().filter(|entry| !is_secure_exec_unsafe_env(entry)).collect()
+}
+
+fn is_secure_exec_unsafe_env(entry: &[u8]) -> bool {
+    const UNSAFE_PREFIXES: &[&[u8]] = &[
+        b"LD_",
+        b"GLIBC_TUNABLES=",
+        b"GCONV_PATH=",
+        b"GETCONF_DIR=",
+        b"HOSTALIASES=",
+        b"LOCALDOMAIN=",
+        b"LOCPATH=",
+        b"MALLOC_",
+        b"NLSPATH=",
+        b"RESOLV_HOST_CONF=",
+        b"RES_OPTIONS=",
+        b"TMPDIR=",
+        b"TZDIR=",
+    ];
+
+    UNSAFE_PREFIXES.iter().any(|prefix| entry.starts_with(prefix))
 }
 
 fn apply_exec_credential_fixup(

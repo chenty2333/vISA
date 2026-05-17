@@ -58,6 +58,21 @@ pub(crate) struct PreparedUserImage {
     pub(crate) page_mappings: Vec<UserPageMapping>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExecStackCredentials {
+    pub(crate) uid: u32,
+    pub(crate) euid: u32,
+    pub(crate) gid: u32,
+    pub(crate) egid: u32,
+    pub(crate) secure: bool,
+}
+
+impl ExecStackCredentials {
+    fn root() -> Self {
+        Self { uid: 0, euid: 0, gid: 0, egid: 0, secure: false }
+    }
+}
+
 impl PreparedUserImage {
     pub(crate) fn release_frames(self, frame_allocator: &mut UserFrameAllocator) {
         release_prepared_page_mappings(frame_allocator, &self.page_mappings);
@@ -678,6 +693,7 @@ pub(crate) fn prepare_user_program(
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
+    stack_credentials: ExecStackCredentials,
 ) -> Result<PreparedUserImage, &'static str> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
     let elf = ElfFile::new(bytes).map_err(|_| "user ELF was invalid")?;
@@ -692,6 +708,7 @@ pub(crate) fn prepare_user_program(
         argv,
         envp,
         execfn,
+        stack_credentials,
         &mut regions,
         &mut page_mappings,
     );
@@ -718,6 +735,7 @@ fn prepare_user_program_inner(
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
+    stack_credentials: ExecStackCredentials,
     regions: &mut Vec<UserRegion>,
     page_mappings: &mut Vec<UserPageMapping>,
 ) -> Result<u64, &'static str> {
@@ -763,7 +781,7 @@ fn prepare_user_program_inner(
         });
     }
 
-    let initial_stack = build_exec_stack(elf, argv, envp, execfn)?;
+    let initial_stack = build_exec_stack(elf, argv, envp, execfn, stack_credentials)?;
     prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack)?;
     regions.push(UserRegion {
         start: USER_STACK_BASE,
@@ -1041,7 +1059,7 @@ fn build_initial_stack(elf: &ElfFile<'_>) -> Result<InitialStack, &'static str> 
         b"LTP_DEV=/dev/loop0".as_slice(),
         b"LTP_SINGLE_FS_TYPE=tmpfs".as_slice(),
     ];
-    build_initial_stack_slices(elf, &argv, &envp, b"/bin/vmos-ltp")
+    build_initial_stack_slices(elf, &argv, &envp, b"/bin/vmos-ltp", ExecStackCredentials::root())
 }
 
 fn build_exec_stack(
@@ -1049,10 +1067,11 @@ fn build_exec_stack(
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
+    stack_credentials: ExecStackCredentials,
 ) -> Result<InitialStack, &'static str> {
     let argv_refs: Vec<&[u8]> = argv.iter().map(Vec::as_slice).collect();
     let envp_refs: Vec<&[u8]> = envp.iter().map(Vec::as_slice).collect();
-    build_initial_stack_slices(elf, &argv_refs, &envp_refs, execfn)
+    build_initial_stack_slices(elf, &argv_refs, &envp_refs, execfn, stack_credentials)
 }
 
 fn build_initial_stack_slices(
@@ -1060,6 +1079,7 @@ fn build_initial_stack_slices(
     argv: &[&[u8]],
     envp: &[&[u8]],
     execfn_bytes: &[u8],
+    stack_credentials: ExecStackCredentials,
 ) -> Result<InitialStack, &'static str> {
     let page_base = USER_STACK_TOP - PAGE_SIZE as u64;
     let mut page_bytes = vec![0; PAGE_SIZE];
@@ -1089,12 +1109,12 @@ fn build_initial_stack_slices(
         (AT_BASE, 0),
         (AT_FLAGS, 0),
         (AT_ENTRY, entry),
-        (AT_UID, 0),
-        (AT_EUID, 0),
-        (AT_GID, 0),
-        (AT_EGID, 0),
+        (AT_UID, stack_credentials.uid as u64),
+        (AT_EUID, stack_credentials.euid as u64),
+        (AT_GID, stack_credentials.gid as u64),
+        (AT_EGID, stack_credentials.egid as u64),
         (AT_CLKTCK, 100),
-        (AT_SECURE, 0),
+        (AT_SECURE, u64::from(stack_credentials.secure)),
         (AT_RANDOM, random),
         (AT_EXECFN, execfn),
         (AT_PLATFORM, platform),
