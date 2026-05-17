@@ -10,28 +10,28 @@ use service_core::seccomp::{
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EBUSY,
     ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG, ERR_ENOENT,
-    ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR,
-    FD_STDOUT, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI,
-    FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_REQUEUE, FUTEX_TID_MASK,
-    FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
-    FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM, SYS_ACCEPT,
-    SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL, SYS_BIND, SYS_BPF, SYS_BRK,
-    SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN, SYS_CHROOT, SYS_CLOCK_ADJTIME,
-    SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_CLONE,
-    SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT, SYS_DUP, SYS_DUP2, SYS_DUP3,
-    SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2,
-    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FACCESSAT,
-    SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FGETXATTR,
-    SYS_FLISTXATTR, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS,
-    SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID,
-    SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID,
-    SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID,
-    SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN, SYS_LINK,
-    SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MADVISE, SYS_MKDIR, SYS_MKDIRAT, SYS_MKNODAT,
-    SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL,
-    SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_RECVFROM,
-    SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
+    ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EOPNOTSUPP, ERR_EPERM, ERR_EPROTONOSUPPORT, ERR_ESRCH,
+    FD_STDERR, FD_STDOUT, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
+    FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_REQUEUE,
+    FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
+    FUTEX_WAIT_REQUEUE_PI, FUTEX_WAITERS, FUTEX_WAKE, FUTEX_WAKE_BITSET, SOCK_DGRAM, SOCK_RAW,
+    SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_ACCESS, SYS_ADD_KEY, SYS_ALARM, SYS_ARCH_PRCTL,
+    SYS_BIND, SYS_BPF, SYS_BRK, SYS_CAPGET, SYS_CAPSET, SYS_CHDIR, SYS_CHMOD, SYS_CHOWN,
+    SYS_CHROOT, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP,
+    SYS_CLOCK_SETTIME, SYS_CLONE, SYS_CLONE3, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_CREAT,
+    SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_PWAIT, SYS_EPOLL_PWAIT2, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT,
+    SYS_EXIT_GROUP, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FALLOCATE, SYS_FCHMODAT, SYS_FCHOWNAT,
+    SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FORK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT,
+    SYS_FSTATFS, SYS_FTRUNCATE, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
+    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID,
+    SYS_GETPPID, SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
+    SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
+    SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MADVISE, SYS_MKDIR, SYS_MKDIRAT,
+    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
+    SYS_PPOLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PSELECT6, SYS_READ, SYS_READLINK, SYS_READLINKAT,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION,
     SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
     SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS,
     SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET,
@@ -88,6 +88,15 @@ const RENAME_SUPPORTED_FLAGS: u64 = RENAME_NOREPLACE | RENAME_EXCHANGE;
 const PATH_MAX: usize = 4096;
 const NAME_MAX: usize = 255;
 const SECURITY_CAPABILITY_XATTR: &[u8] = b"security.capability";
+const BPF_MAP_CREATE: u32 = 0;
+const BPF_MAP_LOOKUP_ELEM: u32 = 1;
+const BPF_MAP_UPDATE_ELEM: u32 = 2;
+const BPF_MAP_DELETE_ELEM: u32 = 3;
+const BPF_ATTR_MAX_SIZE: usize = 256;
+const BPF_ATTR_MAP_CREATE_SIZE: usize = 20;
+const BPF_ATTR_MAP_LOOKUP_SIZE: usize = 24;
+const BPF_ATTR_MAP_UPDATE_SIZE: usize = 32;
+const BPF_ATTR_MAP_DELETE_SIZE: usize = 16;
 const SYS_EXECVE: u64 = 59;
 const SYS_PREAD64: u64 = 17;
 const SYS_SYMLINK: u64 = 88;
@@ -383,7 +392,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FGETXATTR => sys_fgetxattr(frame),
         SYS_FLISTXATTR => sys_flistxattr(frame),
         SYS_FREMOVEXATTR => sys_fremovexattr(frame),
-        SYS_BPF => Err(ERR_EPERM),
+        SYS_BPF => sys_bpf(frame),
         SYS_ADD_KEY | SYS_KEYCTL => Err(ERR_EPERM),
         SYS_CLONE | SYS_FORK | SYS_VFORK => sys_fork_like(frame),
         SYS_CLONE3 => sys_clone3(frame),
@@ -1832,6 +1841,75 @@ fn sys_fremovexattr(frame: &SyscallFrame) -> Result<i64, i32> {
     let access = effective_access_snapshot();
     active_context().supervisor.fremovexattr_fd(fd, &name, access.ids())?;
     Ok(0)
+}
+
+fn sys_bpf(frame: &SyscallFrame) -> Result<i64, i32> {
+    let cmd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let attr_size = usize::try_from(frame.rdx).map_err(|_| ERR_E2BIG)?;
+    match cmd {
+        BPF_MAP_CREATE => {
+            if !active_context().has_effective_capability(CAP_SYS_ADMIN) {
+                return Err(ERR_EPERM);
+            }
+            let attr = read_bpf_attr(frame.rsi, attr_size, BPF_ATTR_MAP_CREATE_SIZE)?;
+            let map_type = read_u32_from(&attr, 0)?;
+            let key_size = read_u32_from(&attr, 4)?;
+            let value_size = read_u32_from(&attr, 8)?;
+            let max_entries = read_u32_from(&attr, 12)?;
+            let map_flags = read_u32_from(&attr, 16)?;
+            active_context()
+                .supervisor
+                .bpf_map_create(map_type, key_size, value_size, max_entries, map_flags)
+                .map(|fd| fd as i64)
+        }
+        BPF_MAP_LOOKUP_ELEM => {
+            let attr = read_bpf_attr(frame.rsi, attr_size, BPF_ATTR_MAP_LOOKUP_SIZE)?;
+            let map_fd = read_u32_from(&attr, 0)?;
+            let key_ptr = read_u64_from(&attr, 8)?;
+            let value_ptr = read_u64_from(&attr, 16)?;
+            let (key_size, _) = active_context().supervisor.bpf_map_shape_for_fd(map_fd)?;
+            let key = read_user_bytes(key_ptr, key_size)?;
+            let value = active_context().supervisor.bpf_map_lookup_elem(map_fd, &key)?;
+            write_user_bytes(value_ptr, &value)?;
+            Ok(0)
+        }
+        BPF_MAP_UPDATE_ELEM => {
+            let attr = read_bpf_attr(frame.rsi, attr_size, BPF_ATTR_MAP_UPDATE_SIZE)?;
+            let map_fd = read_u32_from(&attr, 0)?;
+            let key_ptr = read_u64_from(&attr, 8)?;
+            let value_ptr = read_u64_from(&attr, 16)?;
+            let flags = read_u64_from(&attr, 24)?;
+            let (key_size, value_size) =
+                active_context().supervisor.bpf_map_shape_for_fd(map_fd)?;
+            let key = read_user_bytes(key_ptr, key_size)?;
+            let value = read_user_bytes(value_ptr, value_size)?;
+            active_context().supervisor.bpf_map_update_elem(map_fd, &key, &value, flags)?;
+            Ok(0)
+        }
+        BPF_MAP_DELETE_ELEM => {
+            let attr = read_bpf_attr(frame.rsi, attr_size, BPF_ATTR_MAP_DELETE_SIZE)?;
+            let map_fd = read_u32_from(&attr, 0)?;
+            let key_ptr = read_u64_from(&attr, 8)?;
+            let (key_size, _) = active_context().supervisor.bpf_map_shape_for_fd(map_fd)?;
+            let key = read_user_bytes(key_ptr, key_size)?;
+            active_context().supervisor.bpf_map_delete_elem(map_fd, &key)?;
+            Ok(0)
+        }
+        _ => Err(ERR_EOPNOTSUPP),
+    }
+}
+
+fn read_bpf_attr(ptr: u64, size: usize, min_size: usize) -> Result<Vec<u8>, i32> {
+    if ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    if size < min_size {
+        return Err(ERR_EINVAL);
+    }
+    if size > BPF_ATTR_MAX_SIZE {
+        return Err(ERR_E2BIG);
+    }
+    read_user_bytes(ptr, size)
 }
 
 fn sys_getrlimit(frame: &SyscallFrame) -> Result<i64, i32> {

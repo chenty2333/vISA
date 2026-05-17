@@ -1678,6 +1678,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             _ => None,
         });
+        let closing_bpf_map = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::BpfMap { map_id } => Some(*map_id),
+            _ => None,
+        });
+        let closing_bpf_map_last_ref = closing_bpf_map
+            .map(|map_id| !self.has_other_bpf_map_fd_ref(fd, map_id))
+            .unwrap_or(false);
         if let Some(socket_id) = closing_socket
             && closing_socket_last_ref
         {
@@ -1724,6 +1731,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.wake_ready_file_lock_waits();
         }
         self.vfs.release_open_inode(closing_vfs_inode);
+        if let Some(map_id) = closing_bpf_map
+            && closing_bpf_map_last_ref
+        {
+            self.remove_bpf_map(map_id);
+        }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
         {
@@ -2163,6 +2175,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. }
                 | FdResource::SocketPairEnd { .. }
                 | FdResource::EventFd { .. }
+                | FdResource::BpfMap { .. }
         ) {
             return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1, VfsTimestamps::default()));
         }
@@ -2386,6 +2399,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 
@@ -2404,6 +2418,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::SocketPairEnd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 

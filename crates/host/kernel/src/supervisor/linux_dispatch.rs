@@ -110,6 +110,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::PipeEnd { .. } => Err(ERR_EBADF),
             FdResource::SocketPairEnd { .. } => Err(ERR_EBADF),
             FdResource::EventFd { .. } => Err(ERR_EBADF),
+            FdResource::BpfMap { .. } => Err(ERR_EBADF),
         }
     }
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {

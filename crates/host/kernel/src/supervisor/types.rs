@@ -409,6 +409,7 @@ pub(crate) enum FdResource {
     PipeEnd { pipe_id: u64, readable: bool, writable: bool },
     SocketPairEnd { pair_id: u64, endpoint: u8 },
     EventFd { eventfd_id: u64 },
+    BpfMap { map_id: u64 },
 }
 
 #[derive(Clone, Debug)]
@@ -424,6 +425,28 @@ pub(crate) struct FdEntry {
 pub(crate) struct FdTableSnapshot {
     pub(crate) fd_table: Vec<Option<FdEntry>>,
     pub(crate) fd_handles: Vec<Option<ResourceHandle>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BpfMapKind {
+    Hash,
+    Array,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BpfMapEntry {
+    pub(crate) key: Vec<u8>,
+    pub(crate) value: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BpfMapState {
+    pub(crate) id: u64,
+    pub(crate) kind: BpfMapKind,
+    pub(crate) key_size: u32,
+    pub(crate) value_size: u32,
+    pub(crate) max_entries: u32,
+    pub(crate) entries: Vec<BpfMapEntry>,
 }
 
 #[derive(Debug)]
