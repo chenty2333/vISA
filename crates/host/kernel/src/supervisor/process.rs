@@ -85,10 +85,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.processes.iter().all(|process| process.pid != pid) {
             return false;
         }
-        let runtime_access = ProcessAccessState::from_effective(
+        let runtime_access = ProcessAccessState::from_credentials(
+            uid,
             euid,
+            suid,
+            gid,
             egid,
+            sgid,
             supplementary_groups.clone(),
+            capability_sets.permitted,
             capability_sets.effective,
         );
         let transitioned = self
@@ -113,7 +118,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         {
             let old_access = process.access.clone();
             process.access = runtime_access;
-            if old_access.uid != process.access.uid || old_access.gid != process.access.gid {
+            if old_access.credential_ids_differ(&process.access) {
                 process.dumpable = false;
             }
         }
@@ -170,10 +175,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
-        let runtime_access = ProcessAccessState::from_effective(
+        let runtime_access = ProcessAccessState::from_credentials(
+            uid,
             euid,
+            suid,
+            gid,
             egid,
+            sgid,
             supplementary_groups.clone(),
+            capability_sets.permitted,
             capability_sets.effective,
         );
         let child_task_id = self.allocate_task();
@@ -304,10 +314,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
-        let runtime_access = ProcessAccessState::from_effective(
+        let runtime_access = ProcessAccessState::from_credentials(
+            uid,
             euid,
+            suid,
+            gid,
             egid,
+            sgid,
             supplementary_groups.clone(),
+            capability_sets.permitted,
             capability_sets.effective,
         );
         let child_task_id = self.allocate_task();
@@ -437,10 +452,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_EAGAIN);
         }
 
-        let runtime_access = ProcessAccessState::from_effective(
+        let runtime_access = ProcessAccessState::from_credentials(
+            uid,
             euid,
+            suid,
+            gid,
             egid,
+            sgid,
             supplementary_groups.clone(),
+            capability_sets.permitted,
             capability_sets.effective,
         );
         let child_task_id = self.allocate_task();
@@ -909,10 +929,17 @@ fn robust_list_ptrace_may_access(
     caller: &ProcessRuntimeState,
     target: &ProcessRuntimeState,
 ) -> bool {
-    caller.access.cap_effective & CAP_SYS_PTRACE != 0
-        || (target.dumpable
-            && caller.access.uid == target.access.uid
-            && caller.access.gid == target.access.gid)
+    caller.access.cap_permitted & CAP_SYS_PTRACE != 0
+        || (target.dumpable && ptrace_credentials_match(&caller.access, &target.access))
+}
+
+fn ptrace_credentials_match(caller: &ProcessAccessState, target: &ProcessAccessState) -> bool {
+    caller.real_uid == target.real_uid
+        && caller.real_uid == target.uid
+        && caller.real_uid == target.saved_uid
+        && caller.real_gid == target.real_gid
+        && caller.real_gid == target.gid
+        && caller.real_gid == target.saved_gid
 }
 
 fn resolve_pid_arg(caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
