@@ -1857,7 +1857,6 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const PR_SET_TIMERSLACK: u64 = 29;
     const PR_GET_TIMERSLACK: u64 = 30;
     const PR_CAP_AMBIENT: u64 = 47;
-    const DEFAULT_TIMERSLACK_NS: i64 = 50_000;
 
     match frame.rdi {
         PR_GET_DUMPABLE => {
@@ -1918,11 +1917,24 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
             Ok(active_context().securebits() as i64)
         }
         PR_SET_SECUREBITS => sys_prctl_set_securebits(frame.rsi, frame.rdx, frame.r10, frame.r8),
-        PR_SET_TIMERSLACK => Ok(0),
-        PR_GET_TIMERSLACK => Ok(DEFAULT_TIMERSLACK_NS),
+        PR_SET_TIMERSLACK => sys_prctl_set_timerslack(frame.rsi, frame.rdx, frame.r10, frame.r8),
+        PR_GET_TIMERSLACK => {
+            if frame.rsi != 0 || frame.rdx != 0 || frame.r10 != 0 || frame.r8 != 0 {
+                return Err(ERR_EINVAL);
+            }
+            Ok(active_context().timer_slack_ns().min(i64::MAX as u64) as i64)
+        }
         PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_prctl_set_timerslack(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    if arg3 != 0 || arg4 != 0 || arg5 != 0 || value > i64::MAX as u64 {
+        return Err(ERR_EINVAL);
+    }
+    active_context().set_timer_slack_ns(value);
+    Ok(0)
 }
 
 fn sys_prctl_set_dumpable(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {

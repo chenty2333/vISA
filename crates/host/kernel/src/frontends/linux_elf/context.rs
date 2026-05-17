@@ -175,6 +175,7 @@ unsafe impl FrameAllocator<Size4KiB> for UserFrameAllocator {
 }
 
 pub(crate) type ClockAdjustmentState = RuntimeClockAdjustmentState;
+pub(crate) const DEFAULT_TIMER_SLACK_NS: u64 = 50_000;
 
 pub(crate) struct ActiveUserContext {
     pub(crate) supervisor: &'static mut PrototypeRuntime<'static>,
@@ -215,6 +216,7 @@ pub(crate) struct ActiveUserContext {
     pending_io_signal: Option<u32>,
     next_activation_id: u64,
     alarm_seconds: u64,
+    timer_slack_ns: u64,
     physical_memory_offset: u64,
     suspended_vfork_parent: Option<SuspendedVforkParent>,
     suspended_clone_parent: Option<SuspendedCloneParent>,
@@ -251,6 +253,7 @@ pub(crate) struct SuspendedVforkParent {
     io_signal: u32,
     pending_io_signal: Option<u32>,
     alarm_seconds: u64,
+    timer_slack_ns: u64,
 }
 
 pub(crate) struct SuspendedCloneParent {
@@ -273,6 +276,7 @@ pub(crate) struct SuspendedCloneParent {
     io_signal: u32,
     pending_io_signal: Option<u32>,
     alarm_seconds: u64,
+    timer_slack_ns: u64,
     pub(crate) address_space: Option<UserAddressSpaceState>,
 }
 
@@ -358,6 +362,7 @@ impl ActiveUserContext {
             pending_io_signal: None,
             next_activation_id: (task_id as u64) << 32 | 1,
             alarm_seconds: 0,
+            timer_slack_ns: DEFAULT_TIMER_SLACK_NS,
             physical_memory_offset,
             suspended_vfork_parent: None,
             suspended_clone_parent: None,
@@ -1045,6 +1050,14 @@ impl ActiveUserContext {
         previous
     }
 
+    pub(crate) fn timer_slack_ns(&self) -> u64 {
+        self.timer_slack_ns
+    }
+
+    pub(crate) fn set_timer_slack_ns(&mut self, slack_ns: u64) {
+        self.timer_slack_ns = if slack_ns == 0 { DEFAULT_TIMER_SLACK_NS } else { slack_ns };
+    }
+
     pub(crate) fn realtime_now_ns(&self, tick_count: u64, timer_hz: u64) -> u64 {
         self.supervisor.runtime_realtime_now_ns(tick_count, timer_hz)
     }
@@ -1104,6 +1117,7 @@ impl ActiveUserContext {
             io_signal: self.io_signal,
             pending_io_signal: self.pending_io_signal,
             alarm_seconds: self.alarm_seconds,
+            timer_slack_ns: self.timer_slack_ns,
         });
         self.task_id = child_task_id;
         self.pid = child_pid;
@@ -1159,6 +1173,7 @@ impl ActiveUserContext {
             io_signal: self.io_signal,
             pending_io_signal: self.pending_io_signal,
             alarm_seconds: self.alarm_seconds,
+            timer_slack_ns: self.timer_slack_ns,
             address_space,
         });
         self.task_id = child_task_id;
@@ -1220,6 +1235,7 @@ impl ActiveUserContext {
             io_signal,
             pending_io_signal,
             alarm_seconds,
+            timer_slack_ns,
         } = parent;
         self.task_id = task_id;
         self.pid = pid;
@@ -1250,6 +1266,7 @@ impl ActiveUserContext {
         self.io_signal = io_signal;
         self.pending_io_signal = pending_io_signal;
         self.alarm_seconds = alarm_seconds;
+        self.timer_slack_ns = timer_slack_ns;
     }
 
     pub(crate) fn take_clone_parent_for_child(
@@ -1285,6 +1302,7 @@ impl ActiveUserContext {
             io_signal,
             pending_io_signal,
             alarm_seconds,
+            timer_slack_ns,
             address_space,
         } = parent;
         if let Some(address_space) = address_space {
@@ -1318,6 +1336,7 @@ impl ActiveUserContext {
         self.io_signal = io_signal;
         self.pending_io_signal = pending_io_signal;
         self.alarm_seconds = alarm_seconds;
+        self.timer_slack_ns = timer_slack_ns;
     }
 }
 
