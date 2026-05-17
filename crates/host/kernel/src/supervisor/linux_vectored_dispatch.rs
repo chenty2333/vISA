@@ -33,6 +33,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Err(errno) = self.prevalidate_iovec_writes(&iovecs) {
             return Ok(errno_ret(errno));
         }
+        if self.is_eventfd_fd(fd) {
+            let total_len = match total_iovec_len(&iovecs) {
+                Ok(total_len) => total_len,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            let bytes = match self.read_eventfd_value(fd, total_len) {
+                Ok(bytes) => bytes,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            if let Err(errno) = self.write_iovec_bytes(&iovecs, &bytes) {
+                return Ok(errno_ret(errno));
+            }
+            return Ok(LinuxCallResult::Ret(bytes.len() as i64));
+        }
 
         let mut total = 0usize;
         for iov in iovecs {
@@ -93,6 +107,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         if iovecs.is_empty() {
             return Ok(LinuxCallResult::Ret(0));
+        }
+        if self.is_eventfd_fd(fd) {
+            let total_len = match total_iovec_len(&iovecs) {
+                Ok(total_len) => total_len,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            let value_bytes = match self.read_iovec_prefix(&iovecs, 8) {
+                Ok(bytes) if bytes.len() == 8 => bytes,
+                Ok(_) => return Ok(errno_ret(ERR_EINVAL)),
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            let value = u64::from_le_bytes(
+                value_bytes[..8].try_into().map_err(|_| "eventfd writev value was short")?,
+            );
+            return match self.write_eventfd_value(fd, value, total_len) {
+                Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                Err(errno) => Ok(errno_ret(errno)),
+            };
         }
 
         let mut chunks = Vec::new();
@@ -184,8 +216,48 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn fd_uses_blocking_socket_path(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
     }
+
+    fn write_iovec_bytes(&mut self, iovecs: &[LinuxIovec], bytes: &[u8]) -> Result<(), i32> {
+        let mut offset = 0usize;
+        for iov in iovecs {
+            if offset == bytes.len() {
+                break;
+            }
+            let len = (iov.len as usize).min(bytes.len() - offset);
+            if len == 0 {
+                continue;
+            }
+            self.linux
+                .write_bytes(iov.base, &bytes[offset..offset + len])
+                .map_err(|_| ERR_EFAULT)?;
+            offset += len;
+        }
+        if offset == bytes.len() { Ok(()) } else { Err(ERR_EINVAL) }
+    }
+
+    fn read_iovec_prefix(&mut self, iovecs: &[LinuxIovec], len: usize) -> Result<Vec<u8>, i32> {
+        let mut out = Vec::with_capacity(len);
+        for iov in iovecs {
+            if out.len() == len {
+                break;
+            }
+            let take = (iov.len as usize).min(len - out.len());
+            if take == 0 {
+                continue;
+            }
+            let take = u32::try_from(take).map_err(|_| ERR_EINVAL)?;
+            out.extend_from_slice(&self.linux.read_bytes(iov.base, take).map_err(|_| ERR_EFAULT)?);
+        }
+        Ok(out)
+    }
 }
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+fn total_iovec_len(iovecs: &[LinuxIovec]) -> Result<usize, i32> {
+    iovecs
+        .iter()
+        .try_fold(0usize, |total, iov| total.checked_add(iov.len as usize).ok_or(ERR_EINVAL))
 }

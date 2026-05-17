@@ -1392,6 +1392,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         if !readable {
             return Err(ERR_EBADF);
         }
+        if count == 0 {
+            return Ok(Vec::new());
+        }
         let pipe = self.pipe_mut(pipe_id)?;
         if !pipe.read_open {
             return Err(ERR_EBADF);
@@ -1500,6 +1503,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::SocketPairEnd { pair_id, endpoint } => (*pair_id, *endpoint),
             _ => return Err(ERR_EBADF),
         };
+        if count == 0 {
+            return Ok(Vec::new());
+        }
         let pair = self.socketpair_mut(pair_id)?;
         let (incoming, peer_open) = if endpoint == 0 {
             (&mut pair.b_to_a, pair.open_b)

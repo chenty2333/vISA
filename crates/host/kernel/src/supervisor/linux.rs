@@ -1,23 +1,23 @@
 use alloc::vec::Vec;
 
 use vmos_abi::PlanKind;
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 use vmos_abi::{PackedStep, SyscallContext};
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 use super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 use super::types::WaitRestartClass;
 use super::types::WaitToken;
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test))]
 #[path = "linux_native.rs"]
 mod native;
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test))]
 pub(super) use native::LinuxFrontend;
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 const LINUX_SYSCALL_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SYSCALL_WASM"));
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ pub(super) struct LinuxPlan {
     pub(super) args: [u64; 6],
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 pub(super) struct LinuxFrontend {
     module: ModuleInstance,
     arg_buffer_ptr: u32,
@@ -53,7 +53,7 @@ pub(super) struct LinuxFrontend {
     encode_epoll_events: WasmFn<(u32, u32, u32), i32>,
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", test)))]
 impl LinuxFrontend {
     pub(super) fn new(engine: &SupervisorEngine) -> Result<Self, &'static str> {
         let mut module = ModuleInstance::instantiate(

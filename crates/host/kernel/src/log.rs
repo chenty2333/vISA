@@ -1,5 +1,6 @@
 use core::fmt;
 
+#[cfg(not(test))]
 use crate::{debugcon, serial};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -14,6 +15,7 @@ pub enum Level {
 const SERIAL_LEVEL: Level = Level::Warn;
 const DEBUGCON_LEVEL: Level = Level::Trace;
 
+#[cfg(not(test))]
 pub fn log(level: Level, args: fmt::Arguments<'_>) {
     if level <= DEBUGCON_LEVEL {
         debugcon::_print(format_args!("[{}] ", level.as_str()));
@@ -26,6 +28,11 @@ pub fn log(level: Level, args: fmt::Arguments<'_>) {
         serial::_print(args);
         serial::_print(format_args!("\n"));
     }
+}
+
+#[cfg(test)]
+pub fn log(level: Level, args: fmt::Arguments<'_>) {
+    let _ = (level, args);
 }
 
 impl Level {

@@ -50,6 +50,28 @@ impl<'engine> PrototypeRuntime<'engine> {
                 args: [fd as u64, ptr as u64, len as u64, 0, 0, 0],
             });
         }
+        if self.is_pipe_fd(fd) {
+            return match self.write_pipe_fd_bytes(fd, &bytes) {
+                Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
+        if self.is_socketpair_fd(fd) {
+            return match self.write_socketpair_fd_bytes(fd, &bytes) {
+                Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
+        if self.is_eventfd_fd(fd) {
+            let value = match bytes.get(..8).and_then(|bytes| bytes.try_into().ok()) {
+                Some(bytes) => u64::from_le_bytes(bytes),
+                None => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+            };
+            return match self.write_eventfd_value(fd, value, bytes.len()) {
+                Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
 
         let entry = self.fd_entry(fd).ok_or("write targeted an unknown file descriptor")?;
         match &entry.resource {
@@ -192,6 +214,24 @@ impl<'engine> PrototypeRuntime<'engine> {
             .is_some_and(|entry| matches!(entry.resource, FdResource::TimerFd { .. }))
         {
             return match self.read_timerfd_value(fd, count as usize) {
+                Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
+        if self.is_pipe_fd(fd) {
+            return match self.read_pipe_fd_bytes(fd, count as usize) {
+                Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
+        if self.is_socketpair_fd(fd) {
+            return match self.read_socketpair_fd_bytes(fd, count as usize) {
+                Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
+                Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        }
+        if self.is_eventfd_fd(fd) {
+            return match self.read_eventfd_value(fd, count as usize) {
                 Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
                 Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             };
@@ -465,4 +505,118 @@ fn normalize_plan_path(path: &[u8]) -> Vec<u8> {
         out.extend_from_slice(component);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{boxed::Box, vec::Vec};
+
+    use vmos_abi::{SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV, SyscallContext};
+
+    use super::{
+        super::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime},
+        *,
+    };
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected integer return, got {other:?}"),
+        }
+    }
+
+    fn expect_bytes(result: LinuxCallResult) -> Vec<u8> {
+        match result {
+            LinuxCallResult::Bytes(bytes) => bytes,
+            other => panic!("expected bytes return, got {other:?}"),
+        }
+    }
+
+    fn write_fd(runtime: &mut PrototypeRuntime<'_>, fd: u32, bytes: &[u8]) -> i64 {
+        let (ptr, len) = runtime.write_linux_arg_bytes(bytes).expect("arg bytes");
+        let result = runtime
+            .dispatch_linux_syscall(
+                "test_write",
+                SyscallContext::new(SYS_WRITE, [fd as u64, ptr as u64, len as u64, 0, 0, 0]),
+            )
+            .expect("write dispatch");
+        expect_ret(result)
+    }
+
+    fn read_fd(runtime: &mut PrototypeRuntime<'_>, fd: u32, count: u64) -> Vec<u8> {
+        let result = runtime
+            .dispatch_linux_syscall(
+                "test_read",
+                SyscallContext::new(SYS_READ, [fd as u64, 0, count, 0, 0, 0]),
+            )
+            .expect("read dispatch");
+        expect_bytes(result)
+    }
+
+    fn push_iovec(raw: &mut Vec<u8>, base: u32, len: u64) {
+        raw.extend_from_slice(&(base as u64).to_le_bytes());
+        raw.extend_from_slice(&len.to_le_bytes());
+    }
+
+    #[test]
+    fn generic_read_write_support_pipe_socketpair_and_eventfd() {
+        let mut runtime = test_runtime();
+
+        let (pipe_read, pipe_write) = runtime.create_pipe_pair().expect("pipe pair");
+        assert_eq!(write_fd(&mut runtime, pipe_write, b"pipe"), 4);
+        assert_eq!(read_fd(&mut runtime, pipe_read, 4), b"pipe");
+
+        let (sock_a, sock_b) = runtime.create_socketpair().expect("socketpair");
+        assert_eq!(write_fd(&mut runtime, sock_a, b"pair"), 4);
+        assert_eq!(read_fd(&mut runtime, sock_b, 4), b"pair");
+
+        let eventfd = runtime.create_eventfd(0, 0).expect("eventfd");
+        assert_eq!(write_fd(&mut runtime, eventfd, &7u64.to_le_bytes()), 8);
+        assert_eq!(read_fd(&mut runtime, eventfd, 8), 7u64.to_le_bytes());
+    }
+
+    #[test]
+    fn generic_eventfd_readv_writev_support_split_iovecs() {
+        let mut runtime = test_runtime();
+        let eventfd = runtime.create_eventfd(0, 0).expect("eventfd");
+
+        let (base, _) = runtime.write_linux_arg_bytes(&[]).expect("arg base");
+        let data_base = base + 32;
+        let mut writev_raw = Vec::new();
+        push_iovec(&mut writev_raw, data_base, 4);
+        push_iovec(&mut writev_raw, data_base + 4, 4);
+        writev_raw.extend_from_slice(&11u64.to_le_bytes());
+        let (iov_ptr, _) = runtime.write_linux_arg_bytes(&writev_raw).expect("writev iovecs");
+        let writev_result = runtime
+            .dispatch_linux_syscall(
+                "test_eventfd_writev",
+                SyscallContext::new(SYS_WRITEV, [eventfd as u64, iov_ptr as u64, 2, 0, 0, 0]),
+            )
+            .expect("writev dispatch");
+        assert_eq!(expect_ret(writev_result), 8);
+
+        let (base, _) = runtime.write_linux_arg_bytes(&[]).expect("arg base");
+        let data_base = base + 32;
+        let mut readv_raw = Vec::new();
+        push_iovec(&mut readv_raw, data_base, 4);
+        push_iovec(&mut readv_raw, data_base + 4, 4);
+        readv_raw.extend_from_slice(&[0; 8]);
+        let (iov_ptr, _) = runtime.write_linux_arg_bytes(&readv_raw).expect("readv iovecs");
+        let readv_result = runtime
+            .dispatch_linux_syscall(
+                "test_eventfd_readv",
+                SyscallContext::new(SYS_READV, [eventfd as u64, iov_ptr as u64, 2, 0, 0, 0]),
+            )
+            .expect("readv dispatch");
+        assert_eq!(expect_ret(readv_result), 8);
+        assert_eq!(
+            runtime.linux.read_bytes(data_base, 8).expect("readv output"),
+            11u64.to_le_bytes()
+        );
+    }
 }
