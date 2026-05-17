@@ -1,5 +1,10 @@
+use alloc::vec::Vec;
+
+use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
+
 pub const VIRTIO_NET_BACKEND_PROVIDER: &str = "substrate_virtio";
 pub const VIRTIO_NET_BACKEND_PROFILE: &str = "virtio-net-backend-skeleton-v1";
+pub const VIRTIO_NET_QUEUE_BACKEND_PROFILE: &str = "virtio-net-in-memory-queue-v1";
 pub const VIRTIO_NET_BACKEND_MODEL: &str = "virtio-net";
 
 pub const VIRTIO_NET_F_MAC: u64 = 1 << 5;
@@ -7,6 +12,10 @@ pub const VIRTIO_NET_F_STATUS: u64 = 1 << 16;
 pub const VIRTIO_NET_SKELETON_FEATURES: u64 = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
 pub const VIRTIO_NET_RX_QUEUE_INDEX: u16 = 0;
 pub const VIRTIO_NET_TX_QUEUE_INDEX: u16 = 1;
+const ETHERNET_HEADER_LEN: usize = 14;
+const VLAN_HEADER_LEN: usize = 4;
+const DEFAULT_MTU: usize = 1500;
+const MAX_ETHERNET_FRAME_LEN: usize = DEFAULT_MTU + ETHERNET_HEADER_LEN + VLAN_HEADER_LEN;
 
 #[cfg(all(feature = "host-tap", not(target_os = "linux")))]
 compile_error!("substrate_virtio host-tap feature requires Linux /dev/net/tun");
@@ -375,6 +384,144 @@ impl Default for VirtioNetBackendSkeleton {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VirtioNetQueueBackendEvidence {
+    pub provider: &'static str,
+    pub profile: &'static str,
+    pub model: &'static str,
+    pub config: VirtioNetBackendConfig,
+    pub initialized: bool,
+    pub mac: Option<[u8; 6]>,
+    pub rx_queue_len: usize,
+    pub tx_queue_len: usize,
+}
+
+/// Bounded in-memory packet backend for virtio-net queue semantics.
+///
+/// This models the queue handoff boundary that a real virtio-net transport must
+/// provide without claiming host TAP or hardware evidence.
+pub struct InMemoryVirtioNetBackend {
+    config: VirtioNetBackendConfig,
+    initialized: bool,
+    mac: Option<[u8; 6]>,
+    rx_queue: Vec<Vec<u8>>,
+    tx_queue: Vec<Vec<u8>>,
+}
+
+impl InMemoryVirtioNetBackend {
+    pub const fn new(config: VirtioNetBackendConfig) -> Self {
+        Self { config, initialized: false, mac: None, rx_queue: Vec::new(), tx_queue: Vec::new() }
+    }
+
+    pub const fn config(&self) -> VirtioNetBackendConfig {
+        self.config
+    }
+
+    pub fn evidence(&self) -> VirtioNetQueueBackendEvidence {
+        VirtioNetQueueBackendEvidence {
+            provider: VIRTIO_NET_BACKEND_PROVIDER,
+            profile: VIRTIO_NET_QUEUE_BACKEND_PROFILE,
+            model: VIRTIO_NET_BACKEND_MODEL,
+            config: self.config,
+            initialized: self.initialized,
+            mac: self.mac,
+            rx_queue_len: self.rx_queue.len(),
+            tx_queue_len: self.tx_queue.len(),
+        }
+    }
+
+    pub fn inject_rx_frame(&mut self, frame: &[u8]) -> SubstrateResult<()> {
+        self.ensure_initialized()?;
+        validate_frame_len(frame.len())?;
+        self.ensure_rx_capacity()?;
+        self.rx_queue.push(frame.to_vec());
+        Ok(())
+    }
+
+    pub fn take_tx_frame(&mut self) -> Option<Vec<u8>> {
+        if self.tx_queue.is_empty() { None } else { Some(self.tx_queue.remove(0)) }
+    }
+
+    pub fn pending_rx_frames(&self) -> usize {
+        self.rx_queue.len()
+    }
+
+    pub fn pending_tx_frames(&self) -> usize {
+        self.tx_queue.len()
+    }
+
+    fn queue_capacity(&self) -> usize {
+        usize::from(self.config.queue_size)
+    }
+
+    fn ensure_initialized(&self) -> SubstrateResult<()> {
+        if self.initialized {
+            Ok(())
+        } else {
+            Err(SubstrateError::InvalidObject { object: "virtio-net-backend" })
+        }
+    }
+
+    fn ensure_rx_capacity(&self) -> SubstrateResult<()> {
+        if self.rx_queue.len() < self.queue_capacity() {
+            Ok(())
+        } else {
+            Err(SubstrateError::ContractViolation { detail: "virtio net rx queue is full" })
+        }
+    }
+
+    fn ensure_tx_capacity(&self) -> SubstrateResult<()> {
+        if self.tx_queue.len() < self.queue_capacity() {
+            Ok(())
+        } else {
+            Err(SubstrateError::ContractViolation { detail: "virtio net tx queue is full" })
+        }
+    }
+}
+
+impl Default for InMemoryVirtioNetBackend {
+    fn default() -> Self {
+        Self::new(VirtioNetBackendConfig::net0())
+    }
+}
+
+impl PacketDeviceBackend for InMemoryVirtioNetBackend {
+    fn init(&mut self, mac: [u8; 6]) -> SubstrateResult<()> {
+        validate_config(self.config)
+            .map_err(|detail| SubstrateError::ContractViolation { detail })?;
+        self.mac = Some(mac);
+        self.initialized = true;
+        self.rx_queue.clear();
+        self.tx_queue.clear();
+        Ok(())
+    }
+
+    fn submit_tx(&mut self, frame: &[u8]) -> SubstrateResult<()> {
+        self.ensure_initialized()?;
+        validate_frame_len(frame.len())?;
+        self.ensure_tx_capacity()?;
+        self.tx_queue.push(frame.to_vec());
+        Ok(())
+    }
+
+    fn poll_rx(&mut self, out: &mut [PacketFrameSlot]) -> SubstrateResult<usize> {
+        self.ensure_initialized()?;
+        let count = core::cmp::min(out.len(), self.rx_queue.len());
+        for slot in out.iter_mut().take(count) {
+            let frame = self.rx_queue.remove(0);
+            slot.data[..frame.len()].copy_from_slice(&frame);
+            slot.len = u16::try_from(frame.len()).map_err(|_| {
+                SubstrateError::ContractViolation { detail: "virtio net rx frame length overflow" }
+            })?;
+        }
+        Ok(count)
+    }
+
+    fn mtu(&self) -> usize {
+        DEFAULT_MTU
+    }
+}
+
 pub fn validate_config(config: VirtioNetBackendConfig) -> Result<(), &'static str> {
     if config.queue_size == 0 {
         return Err("virtio net backend queue size is zero");
@@ -402,8 +549,25 @@ pub fn validate_config(config: VirtioNetBackendConfig) -> Result<(), &'static st
     Ok(())
 }
 
+fn validate_frame_len(len: usize) -> SubstrateResult<()> {
+    if len == 0 {
+        return Err(SubstrateError::ContractViolation { detail: "virtio net frame is empty" });
+    }
+    if len > MAX_ETHERNET_FRAME_LEN {
+        return Err(SubstrateError::ContractViolation {
+            detail: "virtio net frame exceeds supported ethernet length",
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use substrate_api::{
+        PacketDeviceBackend,
+        conformance::{ConformanceFixtures, packet_device_tx_poll_smoke},
+    };
+
     use super::*;
 
     #[test]
@@ -463,5 +627,89 @@ mod tests {
             validate_config(config),
             Err("virtio net backend negotiated features exceed device features")
         );
+    }
+
+    #[test]
+    fn in_memory_virtio_net_backend_passes_packet_device_smoke() {
+        let mut backend = InMemoryVirtioNetBackend::default();
+        let fixtures = ConformanceFixtures::default();
+
+        packet_device_tx_poll_smoke(&mut backend, &fixtures).unwrap();
+
+        let evidence = backend.evidence();
+        assert_eq!(evidence.provider, VIRTIO_NET_BACKEND_PROVIDER);
+        assert_eq!(evidence.profile, VIRTIO_NET_QUEUE_BACKEND_PROFILE);
+        assert!(evidence.initialized);
+        assert_eq!(evidence.mac, Some(fixtures.packet_mac));
+        assert_eq!(evidence.tx_queue_len, 1);
+    }
+
+    #[test]
+    fn in_memory_virtio_net_backend_moves_bounded_tx_and_rx_frames() {
+        let mut backend = InMemoryVirtioNetBackend::default();
+        let tx = [0x12u8; 64];
+        let rx = [0x34u8; 96];
+
+        backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
+        backend.submit_tx(&tx).unwrap();
+        assert_eq!(backend.pending_tx_frames(), 1);
+        assert_eq!(backend.take_tx_frame().unwrap().as_slice(), &tx);
+        assert_eq!(backend.pending_tx_frames(), 0);
+
+        backend.inject_rx_frame(&rx).unwrap();
+        let mut slots = [PacketFrameSlot::new(), PacketFrameSlot::new()];
+        assert_eq!(backend.poll_rx(&mut slots).unwrap(), 1);
+        assert_eq!(slots[0].len, rx.len() as u16);
+        assert_eq!(&slots[0].data[..rx.len()], &rx);
+        assert_eq!(backend.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn in_memory_virtio_net_backend_reinit_clears_old_queue_state() {
+        let mut backend = InMemoryVirtioNetBackend::default();
+        let frame = [0x66u8; 64];
+
+        backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
+        backend.submit_tx(&frame).unwrap();
+        backend.inject_rx_frame(&frame).unwrap();
+        assert_eq!(backend.pending_tx_frames(), 1);
+        assert_eq!(backend.pending_rx_frames(), 1);
+
+        backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 2]).unwrap();
+        let evidence = backend.evidence();
+        assert_eq!(evidence.mac, Some([2, 0x56, 0x4d, 0x4f, 0x53, 2]));
+        assert_eq!(evidence.tx_queue_len, 0);
+        assert_eq!(evidence.rx_queue_len, 0);
+    }
+
+    #[test]
+    fn in_memory_virtio_net_backend_enforces_init_frame_and_queue_contracts() {
+        let mut backend = InMemoryVirtioNetBackend::default();
+        assert_eq!(
+            backend.submit_tx(&[0u8; 64]),
+            Err(SubstrateError::InvalidObject { object: "virtio-net-backend" })
+        );
+
+        backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
+        assert_eq!(
+            backend.submit_tx(&[]),
+            Err(SubstrateError::ContractViolation { detail: "virtio net frame is empty" })
+        );
+        assert_eq!(
+            backend.submit_tx(&[0u8; MAX_ETHERNET_FRAME_LEN + 1]),
+            Err(SubstrateError::ContractViolation {
+                detail: "virtio net frame exceeds supported ethernet length"
+            })
+        );
+
+        let frame = [0x55u8; 64];
+        for _ in 0..backend.config().queue_size {
+            backend.inject_rx_frame(&frame).unwrap();
+        }
+        assert_eq!(
+            backend.inject_rx_frame(&frame),
+            Err(SubstrateError::ContractViolation { detail: "virtio net rx queue is full" })
+        );
+        assert_eq!(backend.pending_rx_frames(), usize::from(backend.config().queue_size));
     }
 }
