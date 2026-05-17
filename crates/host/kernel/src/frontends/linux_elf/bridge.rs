@@ -39,7 +39,9 @@ use vmos_abi::{
     SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     SyscallContext,
 };
-use x86_64::{VirtAddr, registers::model_specific::FsBase};
+use x86_64::{
+    PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
+};
 
 use super::{
     context::{
@@ -4775,13 +4777,15 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     if old_size == 0 || new_size == 0 {
         return Err(ERR_EINVAL);
     }
-    if flags & MREMAP_FIXED != 0 && flags & MREMAP_MAYMOVE == 0 {
+    let fixed = flags & MREMAP_FIXED != 0;
+    let dontunmap = flags & MREMAP_DONTUNMAP != 0;
+    if (fixed || dontunmap) && flags & MREMAP_MAYMOVE == 0 {
         return Err(ERR_EINVAL);
     }
-    if flags & MREMAP_DONTUNMAP != 0 && old_size != new_size {
+    if dontunmap && old_size != new_size {
         return Err(ERR_EINVAL);
     }
-    if flags & (MREMAP_FIXED | MREMAP_DONTUNMAP) != 0 {
+    if dontunmap {
         return Err(ERR_ENOSYS);
     }
 
@@ -4790,9 +4794,22 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_lower_user_address_range(old_addr, old_len)?;
     validate_mapped_user_range(old_addr, old_len)?;
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
-    let new_end = old_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
     let (readable, writable, executable) =
         single_user_region_permissions(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+
+    if fixed {
+        let new_addr = frame.r8;
+        if new_addr & 4095 != 0 {
+            return Err(ERR_EINVAL);
+        }
+        validate_reserved_user_page_range(new_addr, new_len).map_err(|_| ERR_EINVAL)?;
+        let target_end = new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+        if ranges_overlap_for_mremap(old_addr, old_end, new_addr, target_end) {
+            return Err(ERR_EINVAL);
+        }
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, true)?;
+        return Ok(new_addr as i64);
+    }
 
     if new_len == old_len {
         return Ok(old_addr as i64);
@@ -4808,12 +4825,13 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 
     validate_reserved_user_page_range(old_addr, new_len)?;
+    let new_end = old_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
     if !active_context().mapped_user_subranges(old_end, new_end - old_end).is_empty() {
         if flags & MREMAP_MAYMOVE == 0 {
             return Err(ERR_ENOMEM);
         }
         let new_addr = active_context().find_mmap_gap(new_len, 4096).ok_or(ERR_ENOMEM)?;
-        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len)?;
+        move_active_user_mapping_range(old_addr, old_len, new_addr, new_len, false)?;
         return Ok(new_addr as i64);
     }
 
@@ -4837,10 +4855,14 @@ fn move_active_user_mapping_range(
     old_len: u64,
     new_addr: u64,
     new_len: u64,
+    replace_target: bool,
 ) -> Result<(), i32> {
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    let moved_end = old_addr.checked_add(old_len.min(new_len)).ok_or(ERR_EINVAL)?;
+    let target_end = new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
     validate_reserved_user_page_range(new_addr, new_len)?;
-    if !active_context().mapped_user_subranges(new_addr, new_len).is_empty() {
+    let target_unmap_ranges = active_context().mapped_user_subranges(new_addr, new_len);
+    if !replace_target && !target_unmap_ranges.is_empty() {
         return Err(ERR_ENOMEM);
     }
     let (readable, writable, executable) =
@@ -4850,6 +4872,9 @@ fn move_active_user_mapping_range(
     let current_mappings = active_context().page_mappings.clone();
     let mut next_regions = current_regions.clone();
     replace_user_region_range_for_mremap(&mut next_regions, old_addr, old_end, None);
+    if replace_target {
+        replace_user_region_range_for_mremap(&mut next_regions, new_addr, target_end, None);
+    }
     replace_user_region_range_for_mremap(
         &mut next_regions,
         new_addr,
@@ -4857,10 +4882,21 @@ fn move_active_user_mapping_range(
         Some((readable, writable, executable)),
     );
 
-    let mut next_mappings = current_mappings.clone();
-    for mapping in &mut next_mappings {
+    let mut next_mappings = Vec::with_capacity(current_mappings.len());
+    let mut dropped_mappings = Vec::new();
+    for mapping in &current_mappings {
         if mapping.va >= old_addr && mapping.va < old_end {
-            mapping.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
+            if mapping.va < moved_end {
+                let mut moved = *mapping;
+                moved.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
+                next_mappings.push(moved);
+            } else {
+                dropped_mappings.push(*mapping);
+            }
+        } else if replace_target && mapping.va >= new_addr && mapping.va < target_end {
+            dropped_mappings.push(*mapping);
+        } else {
+            next_mappings.push(*mapping);
         }
     }
     if has_duplicate_user_page_mapping(&next_mappings) {
@@ -4885,10 +4921,20 @@ fn move_active_user_mapping_range(
     }
 
     let context = active_context();
+    for mapping in dropped_mappings {
+        if mapping.owned {
+            context.frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                mapping.frame_start,
+            )));
+        }
+    }
     context.page_mappings = next_mappings;
     context.regions = next_regions;
     context.commit_mmap_allocation(new_addr, new_len).ok_or(ERR_EINVAL)?;
     context.supervisor.record_guest_memory_unmap(old_addr, old_len);
+    for (start, end) in target_unmap_ranges {
+        context.supervisor.record_guest_memory_unmap(start, end - start);
+    }
     context
         .supervisor
         .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
@@ -6645,6 +6691,15 @@ fn has_duplicate_user_page_mapping(mappings: &[UserPageMapping]) -> bool {
         }
     }
     false
+}
+
+fn ranges_overlap_for_mremap(
+    left_start: u64,
+    left_end: u64,
+    right_start: u64,
+    right_end: u64,
+) -> bool {
+    left_start < right_end && right_start < left_end
 }
 
 fn validate_reserved_user_page_range(ptr: u64, len: u64) -> Result<(), i32> {
