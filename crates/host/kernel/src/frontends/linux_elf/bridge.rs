@@ -404,7 +404,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_FCNTL => sys_fcntl(frame),
         SYS_MMAP => sys_mmap(frame),
         SYS_MPROTECT => sys_mprotect(frame),
-        SYS_MSYNC => Ok(0),
+        SYS_MSYNC => sys_msync(frame),
         SYS_MUNMAP => sys_munmap(frame),
         SYS_ARCH_PRCTL => sys_arch_prctl(frame),
         SYS_FUTEX => sys_futex(frame),
@@ -4640,6 +4640,27 @@ fn sys_mprotect(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context()
         .supervisor
         .record_guest_memory_region(frame.rdi, len, readable, writable, executable);
+    Ok(0)
+}
+
+fn sys_msync(frame: &SyscallFrame) -> Result<i64, i32> {
+    const MS_ASYNC: u64 = 0x1;
+    const MS_INVALIDATE: u64 = 0x2;
+    const MS_SYNC: u64 = 0x4;
+    const MS_SUPPORTED: u64 = MS_ASYNC | MS_INVALIDATE | MS_SYNC;
+
+    if frame.rdi & 4095 != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if frame.rdx & !MS_SUPPORTED != 0 || frame.rdx & (MS_ASYNC | MS_SYNC) == MS_ASYNC | MS_SYNC {
+        return Err(ERR_EINVAL);
+    }
+    let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
+    if len == 0 {
+        return Ok(0);
+    }
+    validate_mapped_user_range(frame.rdi, len)
+        .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
     Ok(0)
 }
 
