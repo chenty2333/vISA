@@ -4818,7 +4818,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     if old_addr & 4095 != 0 || flags & !MREMAP_KNOWN_FLAGS != 0 {
         return Err(ERR_EINVAL);
     }
-    if old_size == 0 || new_size == 0 {
+    if new_size == 0 {
         return Err(ERR_EINVAL);
     }
     let fixed = flags & MREMAP_FIXED != 0;
@@ -4826,8 +4826,14 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     if (fixed || dontunmap) && flags & MREMAP_MAYMOVE == 0 {
         return Err(ERR_EINVAL);
     }
-    let old_len = align_page(old_size).ok_or(ERR_EINVAL)?;
     let new_len = align_page(new_size).ok_or(ERR_EINVAL)?;
+    if old_size == 0 {
+        if flags & MREMAP_MAYMOVE == 0 || dontunmap {
+            return Err(ERR_EINVAL);
+        }
+        return clone_active_shared_mapping_for_mremap(old_addr, new_len, fixed, frame.r8);
+    }
+    let old_len = align_page(old_size).ok_or(ERR_EINVAL)?;
     if dontunmap && old_len != new_len {
         return Err(ERR_EINVAL);
     }
@@ -4928,6 +4934,128 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         .supervisor
         .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
     Ok(old_addr as i64)
+}
+
+fn clone_active_shared_mapping_for_mremap(
+    old_addr: u64,
+    new_len: u64,
+    fixed: bool,
+    fixed_target: u64,
+) -> Result<i64, i32> {
+    validate_lower_user_address_range(old_addr, new_len)?;
+    validate_mapped_user_range(old_addr, new_len)?;
+    let old_end = old_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+    let region_attrs = single_user_region_attributes(old_addr, new_len).ok_or(ERR_ENOSYS)?;
+    validate_active_user_page_range_file_shared(old_addr, new_len)?;
+    sync_active_file_shared_page_range(old_addr, new_len)?;
+
+    let new_addr = if fixed {
+        if fixed_target & 4095 != 0 {
+            return Err(ERR_EINVAL);
+        }
+        validate_reserved_user_page_range(fixed_target, new_len).map_err(|_| ERR_EINVAL)?;
+        let target_end = fixed_target.checked_add(new_len).ok_or(ERR_EINVAL)?;
+        if ranges_overlap_for_mremap(old_addr, old_end, fixed_target, target_end) {
+            return Err(ERR_EINVAL);
+        }
+        fixed_target
+    } else {
+        active_context().find_mmap_gap(new_len, 4096).ok_or(ERR_ENOMEM)?
+    };
+    let target_end = new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?;
+    let target_unmap_ranges = active_context().mapped_user_subranges(new_addr, new_len);
+    let target_unmap_len = subranges_total_len(&target_unmap_ranges);
+    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+    if as_limit != u64::MAX
+        && active_context()
+            .mapped_user_bytes()
+            .saturating_sub(target_unmap_len)
+            .saturating_add(new_len)
+            > as_limit
+    {
+        return Err(ERR_ENOMEM);
+    }
+
+    let current_regions = active_context().regions.clone();
+    let current_mappings = active_context().page_mappings.clone();
+    let mut next_regions = current_regions.clone();
+    if fixed {
+        replace_user_region_range_for_mremap(&mut next_regions, new_addr, target_end, None);
+    }
+    replace_user_region_range_for_mremap(
+        &mut next_regions,
+        new_addr,
+        target_end,
+        Some(region_attrs),
+    );
+
+    let mut next_mappings = Vec::with_capacity(
+        current_mappings
+            .len()
+            .saturating_add(usize::try_from(new_len / 4096).map_err(|_| ERR_ENOMEM)?),
+    );
+    let mut cloned_mappings = Vec::new();
+    let mut dropped_mappings = Vec::new();
+    for mapping in &current_mappings {
+        if fixed && mapping.va >= new_addr && mapping.va < target_end {
+            dropped_mappings.push(mapping.clone());
+            continue;
+        }
+        next_mappings.push(mapping.clone());
+        if mapping.va >= old_addr && mapping.va < old_end {
+            let mut cloned = mapping.clone();
+            cloned.va = new_addr.checked_add(mapping.va - old_addr).ok_or(ERR_EINVAL)?;
+            cloned.frame_start = 0;
+            cloned.present = false;
+            cloned.owned = false;
+            cloned.cow = false;
+            cloned_mappings.push(cloned.clone());
+            next_mappings.push(cloned);
+        }
+    }
+    if has_duplicate_user_page_mapping(&next_mappings) {
+        return Err(ERR_ENOMEM);
+    }
+    sync_file_shared_page_mappings(&dropped_mappings)?;
+
+    let switch_result = {
+        let context = active_context();
+        switch_user_page_mappings(
+            context.physical_memory_offset(),
+            &current_mappings,
+            &current_regions,
+            &next_mappings,
+            &next_regions,
+            &mut context.frame_allocator,
+            false,
+        )
+    };
+    if let Err(err) = switch_result {
+        crate::kwarn!("mremap shared clone page-table switch failed: {}", err.message());
+        return Err(ERR_EFAULT);
+    }
+
+    release_file_shared_page_refs(&dropped_mappings);
+    retain_file_shared_page_refs(&cloned_mappings);
+    let context = active_context();
+    for mapping in dropped_mappings {
+        if mapping.owned && mapping.frame_start != 0 {
+            context.frame_allocator.deallocate_frame(PhysFrame::containing_address(PhysAddr::new(
+                mapping.frame_start,
+            )));
+        }
+    }
+    context.page_mappings = next_mappings;
+    context.regions = next_regions;
+    context.commit_mmap_allocation(new_addr, new_len).ok_or(ERR_EINVAL)?;
+    for (start, end) in target_unmap_ranges {
+        context.supervisor.record_guest_memory_unmap(start, end - start);
+    }
+    let (readable, writable, executable, _, _) = region_attrs;
+    context
+        .supervisor
+        .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
+    Ok(new_addr as i64)
 }
 
 fn move_active_user_mapping_range(
@@ -7067,6 +7195,23 @@ fn validate_active_user_page_range_dontunmap_backing(start: u64, len: u64) -> Re
         {
             return Err(ERR_EINVAL);
         }
+    }
+    Ok(())
+}
+
+fn validate_active_user_page_range_file_shared(start: u64, len: u64) -> Result<(), i32> {
+    let end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    let mut page = start;
+    while page < end {
+        let mapping = active_context()
+            .page_mappings
+            .iter()
+            .find(|mapping| mapping.va == page)
+            .ok_or(ERR_EINVAL)?;
+        if !matches!(&mapping.backing, UserPageBacking::FileShared { .. }) {
+            return Err(ERR_EINVAL);
+        }
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
     Ok(())
 }
