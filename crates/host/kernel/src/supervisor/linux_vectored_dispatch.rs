@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EOPNOTSUPP, PlanKind};
+use vmos_abi::{ERR_EFAULT, ERR_EINVAL, PlanKind};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -20,8 +20,9 @@ struct LinuxIovec {
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_readv(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "readv fd overflowed")?;
-        if self.fd_uses_blocking_socket_path(fd) {
-            return Ok(errno_ret(ERR_EOPNOTSUPP));
+        let is_socket = self.fd_is_socket(fd);
+        if is_socket && let Err(result) = self.require_socket_recv_capability() {
+            return Ok(result);
         }
         let iovecs = match self.read_iovecs(plan.args[1], plan.args[2]) {
             Ok(iovecs) => iovecs,
@@ -46,6 +47,30 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return Ok(errno_ret(errno));
             }
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
+        }
+        if is_socket {
+            let total_len = match total_iovec_len(&iovecs) {
+                Ok(total_len) => total_len,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            if total_len == 0 {
+                return Ok(LinuxCallResult::Ret(0));
+            }
+            let total_len = match u32::try_from(total_len) {
+                Ok(total_len) => total_len,
+                Err(_) => return Ok(errno_ret(ERR_EINVAL)),
+            };
+            let received = self.recv_socket_bytes_from_fd_authorized(fd, total_len, 0)?;
+            return match received {
+                LinuxCallResult::Bytes(bytes) => {
+                    if let Err(errno) = self.write_iovec_bytes(&iovecs, &bytes) {
+                        Ok(errno_ret(errno))
+                    } else {
+                        Ok(LinuxCallResult::Ret(bytes.len() as i64))
+                    }
+                }
+                other => Ok(other),
+            };
         }
 
         let mut total = 0usize;
@@ -98,8 +123,9 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(super) fn plan_writev(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "writev fd overflowed")?;
-        if self.fd_uses_blocking_socket_path(fd) {
-            return Ok(errno_ret(ERR_EOPNOTSUPP));
+        let is_socket = self.fd_is_socket(fd);
+        if is_socket && let Err(result) = self.require_socket_send_capability() {
+            return Ok(result);
         }
         let iovecs = match self.read_iovecs(plan.args[1], plan.args[2]) {
             Ok(iovecs) => iovecs,
@@ -125,6 +151,16 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
                 Err(errno) => Ok(errno_ret(errno)),
             };
+        }
+        if is_socket {
+            let bytes = match self.read_iovec_bytes(&iovecs) {
+                Ok(bytes) => bytes,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            if bytes.is_empty() {
+                return Ok(LinuxCallResult::Ret(0));
+            }
+            return self.send_socket_bytes_from_fd_authorized(fd, &bytes, 0);
         }
 
         let mut chunks = Vec::new();
@@ -213,7 +249,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
-    fn fd_uses_blocking_socket_path(&self, fd: u32) -> bool {
+    fn fd_is_socket(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
     }
 
@@ -247,6 +283,20 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             let take = u32::try_from(take).map_err(|_| ERR_EINVAL)?;
             out.extend_from_slice(&self.linux.read_bytes(iov.base, take).map_err(|_| ERR_EFAULT)?);
+        }
+        Ok(out)
+    }
+
+    fn read_iovec_bytes(&mut self, iovecs: &[LinuxIovec]) -> Result<Vec<u8>, i32> {
+        let total_len = total_iovec_len(iovecs)?;
+        let mut out = Vec::with_capacity(total_len);
+        for iov in iovecs {
+            if iov.len == 0 {
+                continue;
+            }
+            out.extend_from_slice(
+                &self.linux.read_bytes(iov.base, iov.len).map_err(|_| ERR_EFAULT)?,
+            );
         }
         Ok(out)
     }

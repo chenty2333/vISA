@@ -507,18 +507,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Ret(accepted_fd as i64))
     }
     pub(super) fn plan_sendto(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
-        if self.require_capability("linux_syscall", "linux.socket", "send").is_err()
-            || self.require_capability("net_core", "net.socket", "send").is_err()
-        {
-            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        if let Err(result) = self.require_socket_send_capability() {
+            return Ok(result);
         }
-
         let fd = u32::try_from(plan.args[0]).map_err(|_| "sendto fd overflowed")?;
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "sendto ptr overflowed")?;
         let len = u32::try_from(plan.args[2]).map_err(|_| "sendto len overflowed")?;
         let flags = plan.args[3] as u32;
         let bytes = self.linux.read_bytes(ptr, len)?;
-        let result = self.try_sendto_fd(fd, len, &bytes)?;
+        self.send_socket_bytes_from_fd_authorized(fd, &bytes, flags)
+    }
+
+    pub(super) fn send_socket_bytes_from_fd_authorized(
+        &mut self,
+        fd: u32,
+        bytes: &[u8],
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let len = u32::try_from(bytes.len()).map_err(|_| "sendto len overflowed")?;
+        let result = self.try_sendto_fd(fd, len, bytes)?;
         if !call_would_block(&result) {
             return Ok(result);
         }
@@ -537,6 +544,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.block_on_fdset_wait([0; FDSET_WORDS], write_bits, [0; FDSET_WORDS], nfds, None) {
             Ok(()) => self.try_sendto_fd(fd, len, &bytes),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn require_socket_send_capability(&mut self) -> Result<(), LinuxCallResult> {
+        if self.require_capability("linux_syscall", "linux.socket", "send").is_err()
+            || self.require_capability("net_core", "net.socket", "send").is_err()
+        {
+            Err(LinuxCallResult::Ret(-(ERR_EPERM as i64)))
+        } else {
+            Ok(())
         }
     }
 
@@ -615,15 +632,21 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self.require_capability("linux_syscall", "linux.socket", "recv").is_err()
-            || self.require_capability("net_core", "net.socket", "recv").is_err()
-        {
-            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        if let Err(result) = self.require_socket_recv_capability() {
+            return Ok(result);
         }
-
         let fd = u32::try_from(plan.args[0]).map_err(|_| "recvfrom fd overflowed")?;
         let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
         let flags = plan.args[3] as u32;
+        self.recv_socket_bytes_from_fd_authorized(fd, count, flags)
+    }
+
+    pub(super) fn recv_socket_bytes_from_fd_authorized(
+        &mut self,
+        fd: u32,
+        count: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         let result = self.try_recvfrom_fd(fd, count)?;
         if !call_would_block(&result) {
             return Ok(result);
@@ -643,6 +666,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         match self.block_on_fdset_wait(read_bits, [0; FDSET_WORDS], [0; FDSET_WORDS], nfds, None) {
             Ok(()) => self.try_recvfrom_fd(fd, count),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn require_socket_recv_capability(&mut self) -> Result<(), LinuxCallResult> {
+        if self.require_capability("linux_syscall", "linux.socket", "recv").is_err()
+            || self.require_capability("net_core", "net.socket", "recv").is_err()
+        {
+            Err(LinuxCallResult::Ret(-(ERR_EPERM as i64)))
+        } else {
+            Ok(())
         }
     }
 

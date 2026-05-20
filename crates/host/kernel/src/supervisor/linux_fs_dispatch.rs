@@ -511,10 +511,17 @@ fn normalize_plan_path(path: &[u8]) -> Vec<u8> {
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
-    use vmos_abi::{SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV, SyscallContext};
+    use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
+    use vmos_abi::{
+        AF_INET, SOCK_STREAM, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    };
 
     use super::{
-        super::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime},
+        super::{
+            engine::RuntimeOnlyExecutor,
+            runtime::PrototypeRuntime,
+            types::{FdEntry, FdResource},
+        },
         *,
     };
 
@@ -561,6 +568,26 @@ mod tests {
     fn push_iovec(raw: &mut Vec<u8>, base: u32, len: u64) {
         raw.extend_from_slice(&(base as u64).to_le_bytes());
         raw.extend_from_slice(&len.to_le_bytes());
+    }
+
+    fn create_legacy_socket_fd(runtime: &mut PrototypeRuntime<'_>) -> (u32, u32) {
+        let socket_id =
+            runtime.net_core.create_socket(AF_INET, SOCK_STREAM, 0).expect("legacy socket");
+        let ready_key = runtime.net_core.ready_key(socket_id).expect("legacy socket ready key");
+        runtime
+            .linux_socket
+            .register_socket(socket_id, AF_INET, SOCK_STREAM, 0, ready_key)
+            .expect("legacy linux socket registration");
+        let fd = runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .expect("legacy socket fd");
+        (fd, socket_id)
     }
 
     #[test]
@@ -618,5 +645,51 @@ mod tests {
             runtime.linux.read_bytes(data_base, 8).expect("readv output"),
             11u64.to_le_bytes()
         );
+    }
+
+    #[test]
+    fn generic_socket_readv_writev_use_socket_transfer_path() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+
+        let (base, _) = runtime.write_linux_arg_bytes(&[]).expect("arg base");
+        let data_base = base + 32;
+        let mut writev_raw = Vec::new();
+        push_iovec(&mut writev_raw, data_base, 5);
+        push_iovec(&mut writev_raw, data_base + 5, 5);
+        writev_raw.extend_from_slice(b"helloworld");
+        let (iov_ptr, _) = runtime.write_linux_arg_bytes(&writev_raw).expect("socket writev");
+        let writev_result = runtime
+            .dispatch_linux_syscall(
+                "test_socket_writev",
+                SyscallContext::new(SYS_WRITEV, [fd as u64, iov_ptr as u64, 2, 0, 0, 0]),
+            )
+            .expect("socket writev dispatch");
+        assert_eq!(expect_ret(writev_result), 10);
+
+        let payload = b"abcde";
+        let meta = PacketFrameMeta::demo_http_response(1, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, payload, &mut frame).expect("encode rx frame");
+        runtime.net_core.deliver_packet_frame(&frame[..frame_len]).expect("deliver socket rx");
+
+        let (base, _) = runtime.write_linux_arg_bytes(&[]).expect("arg base");
+        let data_base = base + 32;
+        let mut readv_raw = Vec::new();
+        push_iovec(&mut readv_raw, data_base, 2);
+        push_iovec(&mut readv_raw, data_base + 2, 3);
+        readv_raw.extend_from_slice(&[0; 5]);
+        let (iov_ptr, _) = runtime.write_linux_arg_bytes(&readv_raw).expect("socket readv");
+        let readv_result = runtime
+            .dispatch_linux_syscall(
+                "test_socket_readv",
+                SyscallContext::new(SYS_READV, [fd as u64, iov_ptr as u64, 2, 0, 0, 0]),
+            )
+            .expect("socket readv dispatch");
+        assert_eq!(expect_ret(readv_result), 5);
+        assert_eq!(runtime.linux.read_bytes(data_base, 5).expect("readv output"), payload);
+
+        let _ = runtime.close_fd_number(fd);
+        let _ = runtime.net_core.close_socket(socket_id);
     }
 }
