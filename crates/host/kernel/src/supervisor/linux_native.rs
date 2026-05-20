@@ -1,8 +1,9 @@
 use alloc::vec::Vec;
 
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
-    FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
+    ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
+    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_REQUEUE,
+    FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3,
@@ -286,6 +287,13 @@ impl LinuxFrontend {
                     }
                 }
             }
+            FUTEX_LOCK_PI | FUTEX_LOCK_PI2 => {
+                if timeout_ptr == 0 || timeout_len == 0 {
+                    u64::MAX
+                } else {
+                    0
+                }
+            }
             FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
             _ => u64::MAX,
         };
@@ -323,6 +331,10 @@ impl LinuxFrontend {
             FUTEX_WAKE_BITSET => self.plan_futex_wake_bitset(key, val, current_word),
             FUTEX_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, false),
             FUTEX_CMP_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, true),
+            FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
+                self.plan_futex_lock_pi(key, op as u32, timeout_ms)
+            }
+            FUTEX_UNLOCK_PI => self.plan_futex_unlock_pi(key, op as u32),
             _ => PackedStep::error(-ERR_EINVAL),
         }
     }
@@ -427,6 +439,50 @@ impl LinuxFrontend {
             ],
         );
         PackedStep::plan(kind)
+    }
+
+    fn plan_futex_lock_pi(&mut self, key: u64, raw_op: u32, timeout_ms: u64) -> PackedStep {
+        let command = raw_op & FUTEX_CMD_MASK;
+        if key & 0x3 != 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        if command == FUTEX_TRYLOCK_PI && raw_op & FUTEX_CLOCK_REALTIME != 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        let key_ptr = match u32::try_from(key) {
+            Ok(ptr) => ptr,
+            Err(_) => return PackedStep::error(-ERR_EFAULT),
+        };
+        let current_word = match self.arg_u32(key_ptr) {
+            Ok(word) => word,
+            Err(errno) => return PackedStep::error(errno),
+        };
+        let try_only = u64::from(command == FUTEX_TRYLOCK_PI);
+        let timeout_present = u64::from(timeout_ms != u64::MAX);
+        self.reset_plan(
+            PlanKind::FutexLockPi,
+            [key, current_word as u64, try_only, timeout_present, 0, 0],
+        );
+        PackedStep::plan(PlanKind::FutexLockPi)
+    }
+
+    fn plan_futex_unlock_pi(&mut self, key: u64, raw_op: u32) -> PackedStep {
+        if key & 0x3 != 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        let key_ptr = match u32::try_from(key) {
+            Ok(ptr) => ptr,
+            Err(_) => return PackedStep::error(-ERR_EFAULT),
+        };
+        let current_word = match self.arg_u32(key_ptr) {
+            Ok(word) => word,
+            Err(errno) => return PackedStep::error(errno),
+        };
+        self.reset_plan(PlanKind::FutexUnlockPi, [key, current_word as u64, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::FutexUnlockPi)
     }
 
     fn plan_epoll_create1(&mut self, flags: u64) -> PackedStep {
@@ -956,6 +1012,11 @@ impl LinuxFrontend {
             [epfd as u64, max_events as u64, timeout_ms, resume_cookie as u64, 0, 0],
         );
         PackedStep::plan(PlanKind::EpollWait)
+    }
+
+    fn arg_u32(&mut self, ptr: u32) -> Result<u32, i32> {
+        let bytes = self.read_bytes(ptr, 4).map_err(|_| -ERR_EFAULT)?;
+        Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| -ERR_EFAULT)?))
     }
 
     fn parse_timespec_ms(&mut self, ptr: u32, len: u32) -> Result<u64, i32> {

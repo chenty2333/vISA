@@ -275,6 +275,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::FutexWaitRequeuePi => self.plan_futex_wait_requeue_pi(plan),
             PlanKind::FutexWakeBitset => self.plan_futex_wake_bitset(plan),
             PlanKind::FutexRequeue | PlanKind::FutexCmpRequeue => self.plan_futex_requeue(plan),
+            PlanKind::FutexLockPi => self.plan_futex_lock_pi(plan),
+            PlanKind::FutexUnlockPi => self.plan_futex_unlock_pi(plan),
             PlanKind::EpollCreate1 => self.plan_epoll_create1(plan),
             PlanKind::EpollCtl => self.plan_epoll_ctl(plan),
             PlanKind::EpollWait => self.plan_epoll_wait(plan),
@@ -330,9 +332,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Tgkill
             | PlanKind::RtSigreturn
             | PlanKind::Kill
-            | PlanKind::Pause
-            | PlanKind::FutexLockPi
-            | PlanKind::FutexUnlockPi => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::Pause => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

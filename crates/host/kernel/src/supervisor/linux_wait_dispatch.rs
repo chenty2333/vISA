@@ -1,7 +1,10 @@
 use alloc::{vec, vec::Vec};
 
 use semantic_core::FailureEffect;
-use vmos_abi::{ERR_EFAULT, ERR_EINTR, ERR_EPERM};
+use vmos_abi::{
+    ERR_EAGAIN, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM,
+    FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS,
+};
 
 use super::{
     events::Event,
@@ -195,6 +198,229 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    pub(super) fn plan_futex_lock_pi(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let key = plan.args[0];
+        let try_only = plan.args[2] != 0;
+        let timeout_present = plan.args[3] != 0;
+        let tid = self.current_tid() & FUTEX_TID_MASK;
+        let word = match self.read_generic_futex_word(key) {
+            Ok(word) => word,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let owner = word & FUTEX_TID_MASK;
+
+        if owner == 0 {
+            return self.write_generic_futex_word_ret(key, futex_pi_owner_word(word, tid));
+        }
+        if owner == tid {
+            return Ok(LinuxCallResult::Ret(-(ERR_EDEADLK as i64)));
+        }
+        if try_only {
+            return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
+        }
+        if timeout_present {
+            return Ok(LinuxCallResult::Ret(-(ERR_ENOSYS as i64)));
+        }
+        if self.require_capability("futex_service", "futex.waitset", "wait").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+
+        let wait_word = futex_pi_wait_word(word);
+        if wait_word != word {
+            let result = self.write_generic_futex_word_ret(key, wait_word)?;
+            if let LinuxCallResult::Ret(ret) = result
+                && ret < 0
+            {
+                return Ok(LinuxCallResult::Ret(ret));
+            }
+        }
+        let owner_task = self.task_id_for_tid(owner);
+        let wait_priority = self.current_task_priority();
+        if let Some(owner_task) = owner_task {
+            self.register_futex_pi_boost(owner_task, key, wait_priority);
+        }
+
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0 },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        match self.futex.register_wait_with_priority(key, token.id, wait_priority) {
+            Ok(()) => self.record_wait_token(token),
+            Err(ServiceCallError::Errno(errno)) => {
+                self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
+                if let Some(owner_task) = owner_task {
+                    self.refresh_futex_pi_boost(owner_task, key);
+                }
+                self.semantic.record_wait_cancelled(token.id, errno);
+                self.semantic.record_failure_effect(FailureEffect::CancelWaitToken {
+                    wait: token.id,
+                    errno,
+                });
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
+                crate::kwarn!("futex_lock_pi: {}", reason);
+                return Err("futex_service trapped during futex pi lock");
+            }
+            Err(ServiceCallError::Invalid(err)) => {
+                self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
+                return Err(err);
+            }
+        }
+
+        match self.block_on_wait("generic_futex_lock_pi", token)? {
+            LinuxCallResult::Ret(0) => {
+                let current_word = match self.read_generic_futex_word(key) {
+                    Ok(word) => word,
+                    Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                };
+                let next_word = futex_pi_owner_word(current_word, tid);
+                let result = self.write_generic_futex_word_ret(key, next_word)?;
+                self.adopt_futex_pi_after_wait(key, owner_task);
+                Ok(result)
+            }
+            LinuxCallResult::Ret(ret) => {
+                self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
+                if let Some(owner_task) = owner_task {
+                    self.refresh_futex_pi_boost(owner_task, key);
+                }
+                Ok(LinuxCallResult::Ret(ret))
+            }
+            _ => {
+                self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
+                Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)))
+            }
+        }
+    }
+
+    pub(super) fn plan_futex_unlock_pi(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let key = plan.args[0];
+        let tid = self.current_tid() & FUTEX_TID_MASK;
+        let word = match self.read_generic_futex_word(key) {
+            Ok(word) => word,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let owner = word & FUTEX_TID_MASK;
+        if owner != tid {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let owner_task = self.current_task_id();
+        if word & FUTEX_WAITERS != 0 {
+            match self.prepare_futex_pi_handoff(key) {
+                Ok(Some(handoff)) => {
+                    let next_word = futex_pi_handoff_word(
+                        word,
+                        handoff.next_owner_tid & FUTEX_TID_MASK,
+                        handoff.has_more_waiters,
+                    );
+                    let result = self.write_generic_futex_word_ret(key, next_word)?;
+                    if matches!(result, LinuxCallResult::Ret(0)) {
+                        match self.complete_futex_pi_handoff(key, owner_task, handoff) {
+                            Ok(()) => return Ok(result),
+                            Err(ServiceCallError::Errno(errno)) => {
+                                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                            }
+                            Err(ServiceCallError::Trap(reason)) => {
+                                crate::kwarn!("futex_unlock_pi handoff: {}", reason);
+                                return Err("futex_service trapped during futex pi unlock");
+                            }
+                            Err(ServiceCallError::Invalid(err)) => return Err(err),
+                        }
+                    }
+                    return Ok(result);
+                }
+                Ok(None) => {
+                    let result =
+                        self.write_generic_futex_word_ret(key, futex_pi_unlock_empty_word(word))?;
+                    self.release_futex_pi_boost(owner_task, key);
+                    return Ok(result);
+                }
+                Err(ServiceCallError::Errno(errno)) => {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("futex_unlock_pi prepare handoff: {}", reason);
+                    return Err("futex_service trapped during futex pi unlock");
+                }
+                Err(ServiceCallError::Invalid(err)) => return Err(err),
+            }
+        }
+        let result = self.write_generic_futex_word_ret(key, 0)?;
+        self.release_futex_pi_boost(owner_task, key);
+        Ok(result)
+    }
+
+    fn read_generic_futex_word(&mut self, ptr: u64) -> Result<u32, i32> {
+        if ptr & 0x3 != 0 {
+            return Err(ERR_EINVAL);
+        }
+        let ptr = u32::try_from(ptr).map_err(|_| ERR_EFAULT)?;
+        let bytes = self.linux.read_bytes(ptr, 4).map_err(|_| ERR_EFAULT)?;
+        Ok(u32::from_le_bytes(bytes[..4].try_into().map_err(|_| ERR_EFAULT)?))
+    }
+
+    fn write_generic_futex_word_ret(
+        &mut self,
+        ptr: u64,
+        value: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if ptr & 0x3 != 0 {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        let ptr = match u32::try_from(ptr) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
+        match self.linux.write_bytes(ptr, &value.to_le_bytes()) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(_) => Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        }
+    }
+
+    fn restore_generic_futex_wait_word_if_unwaited(
+        &mut self,
+        key: u64,
+        original_word: u32,
+        wait_word: u32,
+    ) {
+        let Ok(waiters) = self.futex.waiter_count(key) else {
+            crate::kwarn!("generic futex pi restore skipped after waiter-count failure");
+            return;
+        };
+        if waiters != 0 {
+            return;
+        }
+        let Ok(current_word) = self.read_generic_futex_word(key) else {
+            crate::kwarn!("generic futex pi restore skipped after word read failure");
+            return;
+        };
+        if current_word != wait_word {
+            return;
+        }
+        match self.write_generic_futex_word_ret(key, original_word) {
+            Ok(LinuxCallResult::Ret(0)) => {}
+            Ok(LinuxCallResult::Ret(errno)) => {
+                crate::kwarn!("generic futex pi restore write returned {}", errno);
+            }
+            Ok(other) => {
+                crate::kwarn!("generic futex pi restore returned unexpected {:?}", other);
+            }
+            Err(err) => {
+                crate::kwarn!("generic futex pi restore failed: {}", err);
+            }
+        }
+    }
+
     pub(super) fn block_on_wait(
         &mut self,
         label: &str,
@@ -285,6 +511,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::FdSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SignalSet { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::Futex if resolution.resume_cookie == 0 => {
+                            Ok(LinuxCallResult::Ret(0))
+                        }
                         _ => {
                             let resumed = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.execute_linux_step("linux_resume", resumed)
@@ -328,17 +557,21 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::FdWritable => {}
                             super::types::WaitKind::Signal => {}
                         }
-                        if matches!(
-                            resolution.source,
-                            WaitSource::SocketConnect { .. }
-                                | WaitSource::SocketAccept { .. }
-                                | WaitSource::FileLock { .. }
-                                | WaitSource::Flock { .. }
-                                | WaitSource::ChildExit { .. }
-                                | WaitSource::FdSet { .. }
-                                | WaitSource::Signal
-                                | WaitSource::SignalSet { .. }
-                        ) {
+                        let manual_futex_wait = matches!(resolution.source, WaitSource::Futex)
+                            && resolution.resume_cookie == 0;
+                        if manual_futex_wait
+                            || matches!(
+                                resolution.source,
+                                WaitSource::SocketConnect { .. }
+                                    | WaitSource::SocketAccept { .. }
+                                    | WaitSource::FileLock { .. }
+                                    | WaitSource::Flock { .. }
+                                    | WaitSource::ChildExit { .. }
+                                    | WaitSource::FdSet { .. }
+                                    | WaitSource::Signal
+                                    | WaitSource::SignalSet { .. }
+                            )
+                        {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }
                         let cancelled = self.linux.cancel_wait(resolution.resume_cookie, errno)?;
@@ -350,6 +583,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                         self.semantic.record_failure_effect(FailureEffect::RestartSyscall {
                             wait: Some(token.id),
                         });
+                        if matches!(resolution.source, WaitSource::Futex)
+                            && resolution.resume_cookie == 0
+                        {
+                            return Ok(LinuxCallResult::Ret(-(ERR_EINTR as i64)));
+                        }
                         let restarted = self.linux.restart_wait(resolution.resume_cookie, class)?;
                         Ok(match self.execute_linux_step("linux_restart", restarted)? {
                             LinuxCallResult::Pending(next) => self.block_on_wait(label, next),
@@ -481,5 +719,102 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         self.pump_network_runtime();
         self.drain_event_queue();
+    }
+}
+
+fn futex_pi_owner_word(word: u32, tid: u32) -> u32 {
+    (word & (FUTEX_OWNER_DIED | FUTEX_WAITERS)) | (tid & FUTEX_TID_MASK)
+}
+
+fn futex_pi_wait_word(word: u32) -> u32 {
+    word | FUTEX_WAITERS
+}
+
+fn futex_pi_handoff_word(word: u32, tid: u32, has_more_waiters: bool) -> u32 {
+    let mut next = (word & FUTEX_OWNER_DIED) | (tid & FUTEX_TID_MASK);
+    if has_more_waiters {
+        next |= FUTEX_WAITERS;
+    }
+    next
+}
+
+fn futex_pi_unlock_empty_word(word: u32) -> u32 {
+    word & FUTEX_OWNER_DIED
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use vmos_abi::{
+        ERR_EAGAIN, ERR_EDEADLK, FUTEX_LOCK_PI, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
+        SYS_FUTEX, SyscallContext,
+    };
+
+    use super::*;
+    use crate::supervisor::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime};
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn read_word(runtime: &mut PrototypeRuntime<'_>, ptr: u32) -> u32 {
+        let bytes = runtime.linux.read_bytes(ptr, 4).expect("futex word bytes");
+        u32::from_le_bytes(bytes.try_into().expect("word len"))
+    }
+
+    #[test]
+    fn generic_futex_pi_lock_unlock_updates_arg_buffer_word() {
+        let mut runtime = test_runtime();
+        let (ptr, _) = runtime.write_linux_arg_bytes(&0u32.to_le_bytes()).expect("futex word");
+
+        let lock = runtime
+            .dispatch_linux_syscall(
+                "test_futex_lock_pi",
+                SyscallContext::new(SYS_FUTEX, [ptr as u64, FUTEX_LOCK_PI as u64, 0, 0, 0, 0]),
+            )
+            .expect("lock dispatch");
+        assert_eq!(expect_ret(lock), 0);
+        assert_eq!(read_word(&mut runtime, ptr) & FUTEX_TID_MASK, runtime.current_tid());
+
+        let relock = runtime
+            .dispatch_linux_syscall(
+                "test_futex_lock_pi_deadlock",
+                SyscallContext::new(SYS_FUTEX, [ptr as u64, FUTEX_LOCK_PI as u64, 0, 0, 0, 0]),
+            )
+            .expect("relock dispatch");
+        assert_eq!(expect_ret(relock), -(ERR_EDEADLK as i64));
+
+        let unlock = runtime
+            .dispatch_linux_syscall(
+                "test_futex_unlock_pi",
+                SyscallContext::new(SYS_FUTEX, [ptr as u64, FUTEX_UNLOCK_PI as u64, 0, 0, 0, 0]),
+            )
+            .expect("unlock dispatch");
+        assert_eq!(expect_ret(unlock), 0);
+        assert_eq!(read_word(&mut runtime, ptr), 0);
+    }
+
+    #[test]
+    fn generic_futex_trylock_pi_reports_busy_owner() {
+        let mut runtime = test_runtime();
+        let (ptr, _) = runtime.write_linux_arg_bytes(&99u32.to_le_bytes()).expect("futex word");
+
+        let trylock = runtime
+            .dispatch_linux_syscall(
+                "test_futex_trylock_pi",
+                SyscallContext::new(SYS_FUTEX, [ptr as u64, FUTEX_TRYLOCK_PI as u64, 0, 0, 0, 0]),
+            )
+            .expect("trylock dispatch");
+        assert_eq!(expect_ret(trylock), -(ERR_EAGAIN as i64));
+        assert_eq!(read_word(&mut runtime, ptr), 99);
     }
 }

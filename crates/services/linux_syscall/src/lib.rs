@@ -8,8 +8,9 @@ use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE,
-    FUTEX_CMP_REQUEUE_PI, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
+    EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
+    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_REQUEUE,
+    FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
     SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3,
@@ -313,6 +314,13 @@ fn dispatch_futex(
                 }
             }
         }
+        FUTEX_LOCK_PI | FUTEX_LOCK_PI2 => {
+            if timeout_ptr == 0 || timeout_len == 0 {
+                u64::MAX
+            } else {
+                0
+            }
+        }
         FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
         _ => u64::MAX,
     };
@@ -332,6 +340,10 @@ fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -
         FUTEX_WAKE_BITSET => plan_futex_wake_bitset(key, val, current_word),
         FUTEX_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, false),
         FUTEX_CMP_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, true),
+        FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
+            plan_futex_lock_pi(key, op as u32, timeout_ms)
+        }
+        FUTEX_UNLOCK_PI => plan_futex_unlock_pi(key, op as u32),
         _ => PackedStep::error(-ERR_EINVAL),
     }
 }
@@ -409,6 +421,47 @@ fn plan_futex_requeue(
     let kind = if compare_checked { PlanKind::FutexCmpRequeue } else { PlanKind::FutexRequeue };
     reset_plan(kind, [src_key, requeue_count, dst_key, wake_count, 0, 0]);
     PackedStep::plan(kind)
+}
+
+fn plan_futex_lock_pi(key: u64, raw_op: u32, timeout_ms: u64) -> PackedStep {
+    let command = raw_op & FUTEX_CMD_MASK;
+    if key & 0x3 != 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    if command == FUTEX_TRYLOCK_PI && raw_op & FUTEX_CLOCK_REALTIME != 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    let key_ptr = match u32::try_from(key) {
+        Ok(ptr) => ptr,
+        Err(_) => return PackedStep::error(-ERR_EFAULT),
+    };
+    let current_word = match arg_u32(key_ptr) {
+        Ok(word) => word,
+        Err(errno) => return PackedStep::error(errno),
+    };
+    let try_only = u64::from(command == FUTEX_TRYLOCK_PI);
+    let timeout_present = u64::from(timeout_ms != u64::MAX);
+    reset_plan(PlanKind::FutexLockPi, [key, current_word as u64, try_only, timeout_present, 0, 0]);
+    PackedStep::plan(PlanKind::FutexLockPi)
+}
+
+fn plan_futex_unlock_pi(key: u64, raw_op: u32) -> PackedStep {
+    if key & 0x3 != 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    if raw_op & FUTEX_CLOCK_REALTIME != 0 {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    let key_ptr = match u32::try_from(key) {
+        Ok(ptr) => ptr,
+        Err(_) => return PackedStep::error(-ERR_EFAULT),
+    };
+    let current_word = match arg_u32(key_ptr) {
+        Ok(word) => word,
+        Err(errno) => return PackedStep::error(errno),
+    };
+    reset_plan(PlanKind::FutexUnlockPi, [key, current_word as u64, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::FutexUnlockPi)
 }
 
 fn plan_epoll_create1(flags: u64) -> PackedStep {
@@ -923,6 +976,11 @@ fn arg_bytes(ptr: u32, len: u32) -> Result<&'static [u8], i32> {
     Ok(unsafe { slice::from_raw_parts(base_ptr.add(offset as usize), len as usize) })
 }
 
+fn arg_u32(ptr: u32) -> Result<u32, i32> {
+    let bytes = arg_bytes(ptr, 4).map_err(|_| -ERR_EFAULT)?;
+    Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| -ERR_EFAULT)?))
+}
+
 fn write_result_bytes(bytes: &[u8]) -> i32 {
     if bytes.len() > RESULT_BUFFER_CAPACITY {
         return -ERR_EINVAL;
@@ -1244,6 +1302,43 @@ mod tests {
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), u64::MAX);
         assert_ne!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn futex_pi_plans_from_arg_buffer_word() {
+        let _guard = test_guard();
+        let (ptr, host_ptr) = unsafe {
+            let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+            let base_addr = base as usize;
+            let aligned = (base_addr + 3) & !3usize;
+            core::ptr::copy_nonoverlapping(0u32.to_le_bytes().as_ptr(), aligned as *mut u8, 4);
+            (aligned as u32, aligned as *mut u8)
+        };
+
+        let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI as u64, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
+        assert_eq!(plan_arg(0), ptr as u64);
+        assert_eq!(plan_arg(1), 0);
+        assert_eq!(plan_arg(2), 0);
+        assert_eq!(plan_arg(3), 0);
+
+        unsafe {
+            core::ptr::copy_nonoverlapping(7u32.to_le_bytes().as_ptr(), host_ptr, 4);
+        }
+        let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_TRYLOCK_PI as u64, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
+        assert_eq!(plan_arg(1), 7);
+        assert_eq!(plan_arg(2), 1);
+
+        let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_UNLOCK_PI as u64, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexUnlockPi));
+        assert_eq!(plan_arg(1), 7);
     }
 
     #[test]

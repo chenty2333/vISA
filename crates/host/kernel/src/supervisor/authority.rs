@@ -320,6 +320,18 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "futex.waitset",
             operation: "requeue",
         },
+        PlanKind::FutexLockPi => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "futex_service",
+            object: "futex.waitset",
+            operation: "lock-pi",
+        },
+        PlanKind::FutexUnlockPi => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "futex_service",
+            object: "futex.waitset",
+            operation: "unlock-pi",
+        },
         PlanKind::EpollCreate1 => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "epoll_service",
