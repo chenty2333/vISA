@@ -332,6 +332,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::RtSigaction => self.plan_rt_sigaction(plan),
             PlanKind::RtSigprocmask => self.plan_rt_sigprocmask(plan),
             PlanKind::Wait4 => self.plan_wait4(plan),
+            PlanKind::GetPid => self.plan_getpid(plan),
+            PlanKind::GetPpid => self.plan_getppid(plan),
+            PlanKind::GetTid => self.plan_gettid(plan),
+            PlanKind::GetPgid => self.plan_getpgid(plan),
+            PlanKind::GetSid => self.plan_getsid(plan),
+            PlanKind::SetPgid => self.plan_setpgid(plan),
+            PlanKind::SetSid => self.plan_setsid(plan),
             PlanKind::Exit => self.plan_exit(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone

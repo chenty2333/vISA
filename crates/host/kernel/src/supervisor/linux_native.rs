@@ -11,11 +11,12 @@ use vmos_abi::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKOPT,
+    SYS_GETTID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
+    SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
     SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
     SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
@@ -97,6 +98,14 @@ impl LinuxFrontend {
             SYS_RT_SIGACTION => self.plan_rt_sigaction(a0, a1, a2, a3),
             SYS_RT_SIGPROCMASK => self.plan_rt_sigprocmask(a0, a1, a2, a3),
             SYS_WAIT4 => self.plan_wait4(a0, a1, a2, a3),
+            SYS_GETPID => self.plan_simple(PlanKind::GetPid),
+            SYS_GETPPID => self.plan_simple(PlanKind::GetPpid),
+            SYS_GETTID => self.plan_simple(PlanKind::GetTid),
+            SYS_GETPGID => self.plan_getpgid(a0),
+            SYS_GETPGRP => self.plan_getpgid(0),
+            SYS_GETSID => self.plan_getsid(a0),
+            SYS_SETPGID => self.plan_setpgid(a0, a1),
+            SYS_SETSID => self.plan_simple(PlanKind::SetSid),
             SYS_PAUSE => self.plan_simple(PlanKind::Pause),
             SYS_UNAME => self.plan_simple(PlanKind::Uname),
             SYS_GETCWD => self.plan_getcwd(a1),
@@ -1007,6 +1016,21 @@ impl LinuxFrontend {
     fn plan_wait4(&mut self, selector: u64, status: u64, options: u64, rusage: u64) -> PackedStep {
         self.reset_plan(PlanKind::Wait4, [selector, status, options, rusage, 0, 0]);
         PackedStep::plan(PlanKind::Wait4)
+    }
+
+    fn plan_getpgid(&mut self, pid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::GetPgid, [pid, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::GetPgid)
+    }
+
+    fn plan_getsid(&mut self, pid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::GetSid, [pid, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::GetSid)
+    }
+
+    fn plan_setpgid(&mut self, pid: u64, pgid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetPgid, [pid, pgid, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetPgid)
     }
 
     fn plan_exit(&mut self, code: u64) -> PackedStep {

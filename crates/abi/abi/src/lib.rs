@@ -364,6 +364,13 @@ pub enum PlanKind {
     CloseRange = 75,
     Readv = 76,
     Writev = 77,
+    GetPid = 78,
+    GetPpid = 79,
+    GetTid = 80,
+    GetPgid = 81,
+    GetSid = 82,
+    SetPgid = 83,
+    SetSid = 84,
 }
 
 impl PlanKind {
@@ -446,6 +453,13 @@ impl PlanKind {
             75 => Some(Self::CloseRange),
             76 => Some(Self::Readv),
             77 => Some(Self::Writev),
+            78 => Some(Self::GetPid),
+            79 => Some(Self::GetPpid),
+            80 => Some(Self::GetTid),
+            81 => Some(Self::GetPgid),
+            82 => Some(Self::GetSid),
+            83 => Some(Self::SetPgid),
+            84 => Some(Self::SetSid),
             _ => None,
         }
     }

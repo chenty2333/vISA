@@ -312,6 +312,30 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "process.child",
             operation: "wait",
         },
+        PlanKind::GetPid | PlanKind::GetPpid | PlanKind::GetTid => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "process.metadata",
+            operation: "query-id",
+        },
+        PlanKind::GetPgid | PlanKind::GetSid => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "process.group",
+            operation: "query",
+        },
+        PlanKind::SetPgid => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.group",
+            operation: "setpgid",
+        },
+        PlanKind::SetSid => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.session",
+            operation: "setsid",
+        },
         PlanKind::Exit => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

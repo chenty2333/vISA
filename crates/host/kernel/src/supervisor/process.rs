@@ -56,6 +56,7 @@ const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
 const SIGCHLD: u8 = 17;
 const CLD_EXITED: i32 = 1;
+const SA_NOCLDWAIT: u64 = 0x2;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
 const LINUX_RUSAGE_SIZE: usize = 144;
 
@@ -843,14 +844,38 @@ impl<'engine> PrototypeRuntime<'engine> {
     /// Transition a process to Zombie state with the given exit code.
     pub(crate) fn process_exit(&mut self, pid: Pid, exit_code: i32) {
         let mut parent_signal = None;
+        let mut auto_reap = false;
+        let mut exited_live_process = false;
+        if let Some(proc) = self.processes.iter().find(|p| p.pid == pid) {
+            exited_live_process = proc.state != ProcessRuntimeStateKind::Zombie
+                && proc.state != ProcessRuntimeStateKind::Dead;
+            if exited_live_process && proc.exit_signal == Some(SIGCHLD) {
+                let parent_sigchld = self
+                    .processes
+                    .iter()
+                    .find(|parent| parent.pid == proc.ppid)
+                    .map(|parent| parent.sigactions[SIGCHLD as usize])
+                    .unwrap_or_default();
+                auto_reap = parent_sigchld.handler == 1 || parent_sigchld.flags & SA_NOCLDWAIT != 0;
+                if parent_sigchld.handler != 1 {
+                    parent_signal = Some((proc.ppid, SIGCHLD));
+                }
+            } else if exited_live_process {
+                parent_signal = proc.exit_signal.map(|signal| (proc.ppid, signal));
+            }
+        }
         if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
             if proc.state != ProcessRuntimeStateKind::Zombie
                 && proc.state != ProcessRuntimeStateKind::Dead
             {
-                parent_signal = proc.exit_signal.map(|signal| (proc.ppid, signal));
+                if auto_reap {
+                    proc.state = ProcessRuntimeStateKind::Dead;
+                    proc.exit_code = None;
+                } else {
+                    proc.state = ProcessRuntimeStateKind::Zombie;
+                    proc.exit_code = Some(exit_code);
+                }
             }
-            proc.state = ProcessRuntimeStateKind::Zombie;
-            proc.exit_code = Some(exit_code);
         }
         let mut exited_tasks = Vec::new();
         for thread in self.threads.iter_mut().filter(|thread| thread.pid == pid) {
@@ -868,7 +893,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.queue_signal_to_process(parent_pid, signal, CLD_EXITED, pid, 0);
             }
         }
-        self.semantic.transition_process_state_by_pid(pid, ProcessState::Zombie { exit_code });
+        if exited_live_process {
+            let state =
+                if auto_reap { ProcessState::Dead } else { ProcessState::Zombie { exit_code } };
+            self.semantic.transition_process_state_by_pid(pid, state);
+        }
         self.notify_child_exit_waiters();
     }
 
@@ -918,7 +947,10 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn wait4_child_is_ready(&self, caller_pid: Pid, selector: i64) -> bool {
-        self.query_wait4(caller_pid, selector, WNOHANG).ok().flatten().is_some()
+        match self.query_wait4(caller_pid, selector, WNOHANG) {
+            Ok(Some(_)) | Err(vmos_abi::ERR_ECHILD) => true,
+            Ok(None) | Err(_) => false,
+        }
     }
 
     pub(crate) fn block_on_wait4_child_exit(
@@ -1001,6 +1033,82 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Exit(code))
     }
 
+    pub(super) fn plan_getpid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_pid() as i64))
+    }
+
+    pub(super) fn plan_getppid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let pid = self.current_pid();
+        let ppid = self.query_process(pid).map(|process| process.ppid).unwrap_or(pid);
+        Ok(LinuxCallResult::Ret(ppid as i64))
+    }
+
+    pub(super) fn plan_gettid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_tid() as i64))
+    }
+
+    pub(super) fn plan_getpgid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let pid_arg = match linux_i32_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.get_process_group_id(self.current_pid(), pid_arg) {
+            Ok(pgid) => Ok(LinuxCallResult::Ret(pgid as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_getsid(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let pid_arg = match linux_i32_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.get_session_id(self.current_pid(), pid_arg) {
+            Ok(sid) => Ok(LinuxCallResult::Ret(sid as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_setpgid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let pid_arg = match linux_i32_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let pgid_arg = match linux_i32_arg(plan.args[1]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.set_process_group_id(self.current_pid(), pid_arg, pgid_arg) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_setsid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        match self.create_session_for_process(self.current_pid()) {
+            Ok(sid) => Ok(LinuxCallResult::Ret(sid as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
     fn notify_child_exit_waiters(&mut self) {
         let ready_waits: Vec<u64> = self
             .waits
@@ -1060,6 +1168,11 @@ fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {
     if raw == 0 { Ok(None) } else { u32::try_from(raw).map(Some).map_err(|_| vmos_abi::ERR_EFAULT) }
 }
 
+fn linux_i32_arg(raw: u64) -> Result<i32, i32> {
+    let value = raw as i32;
+    if raw == value as i64 as u64 { Ok(value) } else { Err(vmos_abi::ERR_EINVAL) }
+}
+
 fn robust_list_ptrace_may_access(
     caller: &ProcessRuntimeState,
     target: &ProcessRuntimeState,
@@ -1070,12 +1183,15 @@ fn robust_list_ptrace_may_access(
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
+    use alloc::{boxed::Box, vec::Vec};
 
-    use vmos_abi::{ERR_EFAULT, SYS_EXIT, SYS_WAIT4, SyscallContext};
+    use vmos_abi::{
+        ERR_ECHILD, ERR_EFAULT, SYS_EXIT, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID,
+        SYS_GETTID, SYS_SETPGID, SYS_SETSID, SYS_WAIT4, SyscallContext,
+    };
 
     use super::*;
-    use crate::supervisor::engine::RuntimeOnlyExecutor;
+    use crate::supervisor::{engine::RuntimeOnlyExecutor, types::SigAction};
 
     fn test_runtime() -> PrototypeRuntime<'static> {
         let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
@@ -1097,11 +1213,27 @@ mod tests {
     }
 
     fn create_zombie_child(runtime: &mut PrototypeRuntime<'static>, exit_code: i32) -> Pid {
+        let child = create_running_child(runtime);
+        runtime.process_exit(child, exit_code);
+        child
+    }
+
+    fn create_running_child(runtime: &mut PrototypeRuntime<'static>) -> Pid {
         let parent = runtime.current_pid();
         let child = runtime.allocate_process(parent, parent, parent);
         let task = runtime.allocate_task();
         runtime.allocate_thread(task, child);
-        runtime.process_exit(child, exit_code);
+        child
+    }
+
+    fn create_running_sigchld_child(runtime: &mut PrototypeRuntime<'static>) -> Pid {
+        let child = create_running_child(runtime);
+        runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == child)
+            .expect("child process")
+            .exit_signal = Some(SIGCHLD);
         child
     }
 
@@ -1189,6 +1321,121 @@ mod tests {
         assert_eq!(runtime.query_thread(tid).unwrap().state, ThreadRuntimeStateKind::Dead);
         assert!(!runtime.is_pipe_fd(read_fd));
         assert!(!runtime.is_pipe_fd(write_fd));
+    }
+
+    #[test]
+    fn generic_process_metadata_queries_use_runtime_state() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+
+        let getpid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getpid",
+                SyscallContext::new(SYS_GETPID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getpid dispatch");
+        assert_eq!(expect_ret(getpid), pid as i64);
+
+        let gettid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_gettid",
+                SyscallContext::new(SYS_GETTID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("gettid dispatch");
+        assert_eq!(expect_ret(gettid), tid as i64);
+
+        let getppid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getppid",
+                SyscallContext::new(SYS_GETPPID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getppid dispatch");
+        assert_eq!(expect_ret(getppid), 0);
+
+        let getpgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getpgid",
+                SyscallContext::new(SYS_GETPGID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getpgid dispatch");
+        assert_eq!(expect_ret(getpgid), pid as i64);
+
+        let getsid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getsid",
+                SyscallContext::new(SYS_GETSID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getsid dispatch");
+        assert_eq!(expect_ret(getsid), pid as i64);
+    }
+
+    #[test]
+    fn generic_process_group_and_session_mutations_report_runtime_errors() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+
+        let setsid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setsid",
+                SyscallContext::new(SYS_SETSID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("setsid dispatch");
+        assert_eq!(expect_ret(setsid), -(vmos_abi::ERR_EPERM as i64));
+
+        let bad_pgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setpgid_bad",
+                SyscallContext::new(SYS_SETPGID, [pid as u64, u64::MAX, 0, 0, 0, 0]),
+            )
+            .expect("bad setpgid dispatch");
+        assert_eq!(expect_ret(bad_pgid), -(vmos_abi::ERR_EINVAL as i64));
+    }
+
+    #[test]
+    fn ignored_sigchld_auto_reaps_child_and_wait4_reports_echild() {
+        let mut runtime = test_runtime();
+        let parent = runtime.current_pid();
+        assert!(runtime.set_sigaction(
+            parent,
+            SIGCHLD,
+            SigAction { handler: 1, ..SigAction::default() },
+        ));
+        let child = create_running_sigchld_child(&mut runtime);
+
+        runtime.process_exit(child, 9);
+
+        let process = runtime.query_process(child).expect("child process");
+        assert_eq!(process.state, ProcessRuntimeStateKind::Dead);
+        assert_eq!(process.exit_code, None);
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_wait4_ignored_sigchld",
+                SyscallContext::new(SYS_WAIT4, [child as u64, 0, 0, 0, 0, 0]),
+            )
+            .expect("wait4 dispatch");
+        assert_eq!(expect_ret(waited), -(ERR_ECHILD as i64));
+    }
+
+    #[test]
+    fn no_cldwait_auto_reaps_child_but_keeps_sigchld_delivery() {
+        let mut runtime = test_runtime();
+        let parent = runtime.current_pid();
+        let parent_tid = runtime.current_tid();
+        assert!(runtime.set_sigaction(
+            parent,
+            SIGCHLD,
+            SigAction { flags: SA_NOCLDWAIT, ..SigAction::default() },
+        ));
+        let child = create_running_sigchld_child(&mut runtime);
+
+        runtime.process_exit(child, 11);
+
+        let process = runtime.query_process(child).expect("child process");
+        assert_eq!(process.state, ProcessRuntimeStateKind::Dead);
+        assert_eq!(process.exit_code, None);
+        let parent_thread = runtime.query_thread(parent_tid).expect("parent thread");
+        assert!(parent_thread.pending_signals.iter().any(|signal| signal.signo == SIGCHLD));
     }
 }
 
