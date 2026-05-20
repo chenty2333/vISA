@@ -6,7 +6,7 @@ use semantic_core::{
 
 use super::{
     events::Event,
-    linux::LinuxCallResult,
+    linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{
         CAP_SYS_PTRACE, Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
@@ -57,6 +57,7 @@ const WCONTINUED: u64 = 0x8;
 const SIGCHLD: u8 = 17;
 const CLD_EXITED: i32 = 1;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
+const LINUX_RUSAGE_SIZE: usize = 144;
 
 // Flags that require namespace support (currently unsupported)
 const CLONE_NS_MASK: u64 = CLONE_NEWNS
@@ -939,6 +940,59 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_wait4(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let selector = plan.args[0] as i64;
+        let status_ptr = match optional_linux_ptr(plan.args[1]) {
+            Ok(ptr) => ptr,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let options = plan.args[2];
+        let rusage_ptr = match optional_linux_ptr(plan.args[3]) {
+            Ok(ptr) => ptr,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let caller_pid = self.current_pid();
+
+        loop {
+            match self.query_wait4(caller_pid, selector, options) {
+                Ok(Some((pid, status))) => {
+                    if let Some(ptr) = status_ptr {
+                        if self.linux.read_bytes(ptr, 4).is_err() {
+                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                        }
+                    }
+                    if let Some(ptr) = rusage_ptr {
+                        if self.linux.read_bytes(ptr, LINUX_RUSAGE_SIZE as u32).is_err() {
+                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                        }
+                    }
+                    if let Some(ptr) = status_ptr {
+                        if self.linux.write_bytes(ptr, &status.to_le_bytes()).is_err() {
+                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                        }
+                    }
+                    if let Some(ptr) = rusage_ptr {
+                        if self.linux.write_bytes(ptr, &[0u8; LINUX_RUSAGE_SIZE]).is_err() {
+                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                        }
+                    }
+                    match self.reap_wait4_child(caller_pid, pid) {
+                        Ok(()) => return Ok(LinuxCallResult::Ret(pid as i64)),
+                        Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                    }
+                }
+                Ok(None) => return Ok(LinuxCallResult::Ret(0)),
+                Err(vmos_abi::ERR_ENOSYS) => {
+                    match self.block_on_wait4_child_exit(caller_pid, selector) {
+                        Ok(()) => {}
+                        Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+                    }
+                }
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            }
+        }
+    }
+
     fn notify_child_exit_waiters(&mut self) {
         let ready_waits: Vec<u64> = self
             .waits
@@ -994,12 +1048,108 @@ fn wait_exit_status(exit_code: i32) -> u32 {
     ((exit_code as u32) & 0xff) << 8
 }
 
+fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {
+    if raw == 0 { Ok(None) } else { u32::try_from(raw).map(Some).map_err(|_| vmos_abi::ERR_EFAULT) }
+}
+
 fn robust_list_ptrace_may_access(
     caller: &ProcessRuntimeState,
     target: &ProcessRuntimeState,
 ) -> bool {
     caller.access.cap_permitted & CAP_SYS_PTRACE != 0
         || (target.dumpable && ptrace_credentials_match(&caller.access, &target.access))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use vmos_abi::{ERR_EFAULT, SYS_WAIT4, SyscallContext};
+
+    use super::*;
+    use crate::supervisor::engine::RuntimeOnlyExecutor;
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn create_zombie_child(runtime: &mut PrototypeRuntime<'static>, exit_code: i32) -> Pid {
+        let parent = runtime.current_pid();
+        let child = runtime.allocate_process(parent, parent, parent);
+        let task = runtime.allocate_task();
+        runtime.allocate_thread(task, child);
+        runtime.process_exit(child, exit_code);
+        child
+    }
+
+    #[test]
+    fn generic_wait4_reaps_zombie_and_writes_status() {
+        let mut runtime = test_runtime();
+        let child = create_zombie_child(&mut runtime, 7);
+        let (base, _) = runtime
+            .linux
+            .write_arg_bytes(&alloc::vec![0xff; 4 + LINUX_RUSAGE_SIZE])
+            .expect("arg buffer");
+        let status_ptr = base;
+        let rusage_ptr = base + 4;
+
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_wait4_zombie",
+                SyscallContext::new(
+                    SYS_WAIT4,
+                    [child as u64, status_ptr as u64, 0, rusage_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("wait4 dispatch");
+
+        assert_eq!(expect_ret(waited), child as i64);
+        let status = runtime.linux.read_bytes(status_ptr, 4).expect("status");
+        assert_eq!(u32::from_le_bytes(status[..4].try_into().unwrap()), wait_exit_status(7));
+        let rusage = runtime.linux.read_bytes(rusage_ptr, LINUX_RUSAGE_SIZE as u32).unwrap();
+        assert!(rusage.iter().all(|byte| *byte == 0));
+        assert_eq!(runtime.query_process(child).unwrap().state, ProcessRuntimeStateKind::Dead);
+    }
+
+    #[test]
+    fn generic_wait4_writeback_failure_does_not_reap_child() {
+        let mut runtime = test_runtime();
+        let child = create_zombie_child(&mut runtime, 3);
+
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_wait4_bad_status",
+                SyscallContext::new(SYS_WAIT4, [child as u64, 0xdead_beef, 0, 0, 0, 0]),
+            )
+            .expect("wait4 dispatch");
+
+        assert_eq!(expect_ret(waited), -(ERR_EFAULT as i64));
+        assert_eq!(runtime.query_process(child).unwrap().state, ProcessRuntimeStateKind::Zombie);
+    }
+
+    #[test]
+    fn generic_wait4_pointer_overflow_returns_efault_without_reaping() {
+        let mut runtime = test_runtime();
+        let child = create_zombie_child(&mut runtime, 5);
+
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_wait4_overflow_status",
+                SyscallContext::new(SYS_WAIT4, [child as u64, u32::MAX as u64 + 1, 0, 0, 0, 0]),
+            )
+            .expect("wait4 dispatch");
+
+        assert_eq!(expect_ret(waited), -(ERR_EFAULT as i64));
+        assert_eq!(runtime.query_process(child).unwrap().state, ProcessRuntimeStateKind::Zombie);
+    }
 }
 
 fn ptrace_credentials_match(caller: &ProcessAccessState, target: &ProcessAccessState) -> bool {

@@ -23,8 +23,8 @@ use vmos_abi::{
     SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
     SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV,
-    is_stdio_fd,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -109,6 +109,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_TGKILL => plan_tgkill(a0, a1, a2),
         SYS_RT_SIGACTION => plan_rt_sigaction(a0, a1, a2, a3),
         SYS_RT_SIGPROCMASK => plan_rt_sigprocmask(a0, a1, a2, a3),
+        SYS_WAIT4 => plan_wait4(a0, a1, a2, a3),
         SYS_PAUSE => plan_simple(PlanKind::Pause),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
@@ -913,6 +914,11 @@ fn plan_rt_sigprocmask(how: u64, set: u64, oldset: u64, sigsetsize: u64) -> Pack
     PackedStep::plan(PlanKind::RtSigprocmask)
 }
 
+fn plan_wait4(selector: u64, status: u64, options: u64, rusage: u64) -> PackedStep {
+    reset_plan(PlanKind::Wait4, [selector, status, options, rusage, 0, 0]);
+    PackedStep::plan(PlanKind::Wait4)
+}
+
 fn reset_plan(kind: PlanKind, args: [u64; 6]) {
     let _ = kind;
     unsafe {
@@ -1355,6 +1361,20 @@ mod tests {
 
         assert_eq!(step.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Pause));
+    }
+
+    #[test]
+    fn wait4_plan_preserves_selector_status_options_and_rusage() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_WAIT4, u64::MAX, 0x1000, 1, 0x2000, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Wait4));
+        assert_eq!(plan_arg(0), u64::MAX);
+        assert_eq!(plan_arg(1), 0x1000);
+        assert_eq!(plan_arg(2), 1);
+        assert_eq!(plan_arg(3), 0x2000);
     }
 
     #[test]

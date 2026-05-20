@@ -306,6 +306,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "signal.wait",
             operation: "pause",
         },
+        PlanKind::Wait4 => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "linux_syscall",
+            object: "process.child",
+            operation: "wait",
+        },
         PlanKind::Kill => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

@@ -3152,6 +3152,9 @@ fn sys_rt_sigaction(frame: &SyscallFrame) -> Result<i64, i32> {
     } else {
         SigAction::default()
     };
+    if frame.rsi != 0 && matches!(signo, 9 | 19) {
+        return Err(ERR_EINVAL);
+    }
     let pid = active_context().pid;
     let supervisor = &mut active_context().supervisor;
     // Return old action
@@ -3164,8 +3167,8 @@ fn sys_rt_sigaction(frame: &SyscallFrame) -> Result<i64, i32> {
         buf[24..32].copy_from_slice(&old.mask.to_le_bytes());
         write_user_bytes(frame.rdx, &buf)?;
     }
-    if frame.rsi != 0 {
-        supervisor.set_sigaction(pid, signo, new_act);
+    if frame.rsi != 0 && !supervisor.set_sigaction(pid, signo, new_act) {
+        return Err(ERR_EINVAL);
     }
     Ok(0)
 }

@@ -234,6 +234,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             None
         };
+        if new_action.is_some() && matches!(signo, 9 | 19) {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
 
         let old = self.get_sigaction(pid, signo).unwrap_or_default();
         if plan.args[2] != 0 {
@@ -631,9 +634,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signo == 0 || signo >= 64 {
             return false;
         }
-        // SIGKILL and SIGSTOP cannot be caught
+        // SIGKILL and SIGSTOP dispositions may be queried but cannot be changed.
         if signo == 9 || signo == 19 {
-            return true; // silently ignored per POSIX
+            return false;
         }
         if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
             proc.sigactions[signo as usize] = action;
@@ -877,6 +880,17 @@ mod tests {
             .read_bytes(old_only_ptr, LINUX_SIGACTION_BYTES as u32)
             .expect("old action query");
         assert_eq!(decode_linux_sigaction(&old_only), Ok(new_action));
+
+        let rejected = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigaction_sigkill",
+                SyscallContext::new(
+                    SYS_RT_SIGACTION,
+                    [9, base as u64, 0, LINUX_SIGSET_BYTES as u64, 0, 0],
+                ),
+            )
+            .expect("rt_sigaction SIGKILL dispatch");
+        assert_eq!(expect_ret(rejected), -(ERR_EINVAL as i64));
     }
 
     #[test]

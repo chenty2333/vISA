@@ -325,12 +325,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Tgkill => self.plan_tgkill(plan),
             PlanKind::RtSigaction => self.plan_rt_sigaction(plan),
             PlanKind::RtSigprocmask => self.plan_rt_sigprocmask(plan),
+            PlanKind::Wait4 => self.plan_wait4(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
             | PlanKind::Vfork
             | PlanKind::Execve
-            | PlanKind::Wait4
             | PlanKind::Exit
             | PlanKind::RtSigreturn => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
