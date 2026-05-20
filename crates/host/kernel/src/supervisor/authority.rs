@@ -318,6 +318,14 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "process.metadata",
             operation: "query-id",
         },
+        PlanKind::GetUid | PlanKind::GetGid | PlanKind::GetEuid | PlanKind::GetEgid => {
+            HostcallBinding {
+                class: HostcallClass::PureQuery,
+                subject: "linux_syscall",
+                object: "process.credential",
+                operation: "query-id",
+            }
+        }
         PlanKind::GetPgid | PlanKind::GetSid => HostcallBinding {
             class: HostcallClass::PureQuery,
             subject: "linux_syscall",

@@ -371,6 +371,10 @@ pub enum PlanKind {
     GetSid = 82,
     SetPgid = 83,
     SetSid = 84,
+    GetUid = 85,
+    GetGid = 86,
+    GetEuid = 87,
+    GetEgid = 88,
 }
 
 impl PlanKind {
@@ -460,6 +464,10 @@ impl PlanKind {
             82 => Some(Self::GetSid),
             83 => Some(Self::SetPgid),
             84 => Some(Self::SetSid),
+            85 => Some(Self::GetUid),
+            86 => Some(Self::GetGid),
+            87 => Some(Self::GetEuid),
+            88 => Some(Self::GetEgid),
             _ => None,
         }
     }

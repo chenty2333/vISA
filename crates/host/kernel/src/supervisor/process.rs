@@ -1056,6 +1056,34 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Ret(self.current_tid() as i64))
     }
 
+    pub(super) fn plan_getuid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_access_state().real_uid as i64))
+    }
+
+    pub(super) fn plan_getgid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_access_state().real_gid as i64))
+    }
+
+    pub(super) fn plan_geteuid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_access_state().uid as i64))
+    }
+
+    pub(super) fn plan_getegid(
+        &mut self,
+        _plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        Ok(LinuxCallResult::Ret(self.current_access_state().gid as i64))
+    }
+
     pub(super) fn plan_getpgid(
         &mut self,
         plan: LinuxPlan,
@@ -1186,8 +1214,9 @@ mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{
-        ERR_ECHILD, ERR_EFAULT, SYS_EXIT, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID,
-        SYS_GETTID, SYS_SETPGID, SYS_SETSID, SYS_WAIT4, SyscallContext,
+        ERR_ECHILD, ERR_EFAULT, SYS_EXIT, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPGID,
+        SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETPGID, SYS_SETSID,
+        SYS_WAIT4, SyscallContext,
     };
 
     use super::*;
@@ -1328,6 +1357,22 @@ mod tests {
         let mut runtime = test_runtime();
         let pid = runtime.current_pid();
         let tid = runtime.current_tid();
+        let Some(process) = runtime.processes.iter_mut().find(|process| process.pid == pid) else {
+            panic!("current process missing");
+        };
+        process.access = ProcessAccessState::from_credentials(
+            1000,
+            2000,
+            3000,
+            4000,
+            100,
+            200,
+            300,
+            400,
+            Vec::new(),
+            0,
+            0,
+        );
 
         let getpid = runtime
             .dispatch_linux_syscall_raw(
@@ -1344,6 +1389,38 @@ mod tests {
             )
             .expect("gettid dispatch");
         assert_eq!(expect_ret(gettid), tid as i64);
+
+        let getuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getuid",
+                SyscallContext::new(SYS_GETUID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getuid dispatch");
+        assert_eq!(expect_ret(getuid), 1000);
+
+        let geteuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_geteuid",
+                SyscallContext::new(SYS_GETEUID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("geteuid dispatch");
+        assert_eq!(expect_ret(geteuid), 2000);
+
+        let getgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getgid",
+                SyscallContext::new(SYS_GETGID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getgid dispatch");
+        assert_eq!(expect_ret(getgid), 100);
+
+        let getegid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getegid",
+                SyscallContext::new(SYS_GETEGID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getegid dispatch");
+        assert_eq!(expect_ret(getegid), 200);
 
         let getppid = runtime
             .dispatch_linux_syscall_raw(

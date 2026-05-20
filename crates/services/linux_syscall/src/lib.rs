@@ -18,14 +18,15 @@ use vmos_abi::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKOPT,
-    SYS_GETTID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
-    SYS_WRITEV, is_stdio_fd,
+    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID,
+    SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK,
+    SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE,
+    SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV,
+    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE,
+    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -114,6 +115,10 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETPID => plan_simple(PlanKind::GetPid),
         SYS_GETPPID => plan_simple(PlanKind::GetPpid),
         SYS_GETTID => plan_simple(PlanKind::GetTid),
+        SYS_GETUID => plan_simple(PlanKind::GetUid),
+        SYS_GETGID => plan_simple(PlanKind::GetGid),
+        SYS_GETEUID => plan_simple(PlanKind::GetEuid),
+        SYS_GETEGID => plan_simple(PlanKind::GetEgid),
         SYS_GETPGID => plan_getpgid(a0),
         SYS_GETPGRP => plan_getpgid(0),
         SYS_GETSID => plan_getsid(a0),
@@ -1428,6 +1433,22 @@ mod tests {
         let gettid = PackedStep::decode(dispatch(SYS_GETTID, 0, 0, 0, 0, 0, 0));
         assert_eq!(gettid.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(gettid.aux), Some(PlanKind::GetTid));
+
+        let getuid = PackedStep::decode(dispatch(SYS_GETUID, 0, 0, 0, 0, 0, 0));
+        assert_eq!(getuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getuid.aux), Some(PlanKind::GetUid));
+
+        let getgid = PackedStep::decode(dispatch(SYS_GETGID, 0, 0, 0, 0, 0, 0));
+        assert_eq!(getgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getgid.aux), Some(PlanKind::GetGid));
+
+        let geteuid = PackedStep::decode(dispatch(SYS_GETEUID, 0, 0, 0, 0, 0, 0));
+        assert_eq!(geteuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(geteuid.aux), Some(PlanKind::GetEuid));
+
+        let getegid = PackedStep::decode(dispatch(SYS_GETEGID, 0, 0, 0, 0, 0, 0));
+        assert_eq!(getegid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getegid.aux), Some(PlanKind::GetEgid));
 
         let getpgid = PackedStep::decode(dispatch(SYS_GETPGID, 42, 0, 0, 0, 0, 0));
         assert_eq!(getpgid.tag, vmos_abi::StepTag::Plan);
