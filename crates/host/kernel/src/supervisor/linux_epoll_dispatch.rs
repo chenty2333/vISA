@@ -2,6 +2,7 @@ use semantic_core::FailureEffect;
 use vmos_abi::ERR_EPERM;
 
 use super::{
+    events::Event,
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{FdEntry, FdResource, ServiceCallError},
@@ -86,7 +87,22 @@ impl<'engine> PrototypeRuntime<'engine> {
                     || self.eventfd_ready_key_matches_events(ready_key, events)
                     || self.timerfd_ready_key_matches_events(ready_key, events)
                 {
-                    let _ = self.epoll.notify_ready(ready_key);
+                    match self.epoll.notify_ready(ready_key) {
+                        Ok(wait_ids) => {
+                            for wait_id in wait_ids {
+                                self.scheduler.push_event(Event::WaitReady(wait_id));
+                            }
+                            self.drain_event_queue();
+                        }
+                        Err(ServiceCallError::Errno(errno)) => {
+                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("epoll_ctl notify_ready: {}", reason);
+                            return Err("epoll_service trapped during epoll_ctl notify_ready");
+                        }
+                        Err(ServiceCallError::Invalid(err)) => return Err(err),
+                    }
                 }
                 Ok(LinuxCallResult::Ret(0))
             }
