@@ -2,8 +2,9 @@ use alloc::{vec, vec::Vec};
 
 use semantic_core::FailureEffect;
 use vmos_abi::{
-    ERR_EAGAIN, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM,
-    FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS,
+    ERR_EAGAIN, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_EPERM, ERR_ETIMEDOUT,
+    FUTEX_OWNER_DIED, FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME,
+    FUTEX_TID_MASK, FUTEX_WAITERS,
 };
 
 use super::{
@@ -15,6 +16,8 @@ use super::{
     wait::{WaitOutcome, WaitRegistration, WaitSource},
 };
 use crate::interrupts;
+
+const GENERIC_TIMESPEC_SIZE: usize = 16;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_sleep(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -205,7 +208,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let key = plan.args[0];
         let try_only = plan.args[2] != 0;
-        let timeout_present = plan.args[3] != 0;
+        let timeout_ms =
+            match self.generic_futex_pi_timeout_ms(plan.args[3], plan.args[4], plan.args[5]) {
+                Ok(timeout_ms) => timeout_ms,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
         let tid = self.current_tid() & FUTEX_TID_MASK;
         let word = match self.read_generic_futex_word(key) {
             Ok(word) => word,
@@ -222,8 +229,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         if try_only {
             return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
         }
-        if timeout_present {
-            return Ok(LinuxCallResult::Ret(-(ERR_ENOSYS as i64)));
+        if timeout_ms == Some(0) {
+            return Ok(LinuxCallResult::Ret(-(ERR_ETIMEDOUT as i64)));
         }
         if self.require_capability("futex_service", "futex.waitset", "wait").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
@@ -246,7 +253,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0 },
+            WaitRegistration::Futex { timeout_ms, resume_cookie: 0 },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -385,6 +392,40 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(_) => Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
         }
+    }
+
+    fn generic_futex_pi_timeout_ms(
+        &mut self,
+        timeout_ptr: u64,
+        timeout_len: u64,
+        timeout_clock: u64,
+    ) -> Result<Option<u32>, i32> {
+        if timeout_clock == FUTEX_PI_TIMEOUT_NONE {
+            return Ok(None);
+        }
+        if timeout_ptr == 0 || timeout_len != GENERIC_TIMESPEC_SIZE as u64 {
+            return Err(ERR_EINVAL);
+        }
+        let ptr = u32::try_from(timeout_ptr).map_err(|_| ERR_EFAULT)?;
+        let bytes =
+            self.linux.read_bytes(ptr, GENERIC_TIMESPEC_SIZE as u32).map_err(|_| ERR_EFAULT)?;
+        let sec = i64::from_le_bytes(bytes[0..8].try_into().map_err(|_| ERR_EINVAL)?);
+        let nsec = i64::from_le_bytes(bytes[8..16].try_into().map_err(|_| ERR_EINVAL)?);
+        if sec < 0 || !(0..1_000_000_000).contains(&nsec) {
+            return Err(ERR_EINVAL);
+        }
+        let target_ns = (sec as u64).saturating_mul(1_000_000_000).saturating_add(nsec as u64);
+        let tick = interrupts::tick_count();
+        let timer_hz = interrupts::TIMER_HZ as u64;
+        let now_ns = match timeout_clock {
+            FUTEX_PI_TIMEOUT_REALTIME => self.runtime_realtime_now_ns(tick, timer_hz),
+            FUTEX_PI_TIMEOUT_MONOTONIC => 1_000_000_000u64
+                .saturating_add(tick.saturating_mul(1_000_000_000) / timer_hz.max(1)),
+            _ => return Err(ERR_EINVAL),
+        };
+        let delay_ms =
+            target_ns.saturating_sub(now_ns).div_ceil(1_000_000).min(u32::MAX as u64) as u32;
+        Ok(Some(delay_ms))
     }
 
     fn restore_generic_futex_wait_word_if_unwaited(
@@ -747,8 +788,8 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EAGAIN, ERR_EDEADLK, FUTEX_LOCK_PI, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
-        SYS_FUTEX, SyscallContext,
+        ERR_EAGAIN, ERR_EDEADLK, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
+        FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, SYS_FUTEX, SyscallContext,
     };
 
     use super::*;
@@ -815,6 +856,41 @@ mod tests {
             )
             .expect("trylock dispatch");
         assert_eq!(expect_ret(trylock), -(ERR_EAGAIN as i64));
+        assert_eq!(read_word(&mut runtime, ptr), 99);
+    }
+
+    #[test]
+    fn generic_futex_lock_pi2_timeout_restores_waiters_word() {
+        let mut runtime = test_runtime();
+        let mut args = [0u8; 24];
+        args[0..4].copy_from_slice(&99u32.to_le_bytes());
+        args[8..16].copy_from_slice(&0i64.to_le_bytes());
+        args[16..24].copy_from_slice(&0i64.to_le_bytes());
+        let (ptr, _) = runtime.write_linux_arg_bytes(&args).expect("futex args");
+        let timeout_ptr = ptr + 8;
+
+        let timed = runtime
+            .dispatch_linux_syscall(
+                "test_futex_lock_pi2_timeout",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 16, 0],
+                ),
+            )
+            .expect("timed lock dispatch");
+        assert_eq!(expect_ret(timed), -(ERR_ETIMEDOUT as i64));
+        assert_eq!(read_word(&mut runtime, ptr), 99);
+
+        let malformed = runtime
+            .dispatch_linux_syscall(
+                "test_futex_lock_pi2_bad_timeout_len",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("malformed timeout dispatch");
+        assert_eq!(expect_ret(malformed), -(ERR_EINVAL as i64));
         assert_eq!(read_word(&mut runtime, ptr), 99);
     }
 }

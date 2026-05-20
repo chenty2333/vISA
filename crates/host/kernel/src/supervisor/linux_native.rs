@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use vmos_abi::{
     ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
-    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_REQUEUE,
+    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
+    FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
@@ -276,6 +277,12 @@ impl LinuxFrontend {
         current_word: u64,
     ) -> PackedStep {
         let command = (op as u32) & FUTEX_CMD_MASK;
+        if matches!(command, FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI) {
+            return self.plan_futex_lock_pi(key, op as u32, timeout_ptr, timeout_len);
+        }
+        if command == FUTEX_UNLOCK_PI {
+            return self.plan_futex_unlock_pi(key, op as u32);
+        }
         let timeout_ms = match command {
             FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
                 if timeout_ptr == 0 || timeout_len == 0 {
@@ -285,13 +292,6 @@ impl LinuxFrontend {
                         Ok(ms) => ms,
                         Err(_) => return PackedStep::error(-ERR_EINVAL),
                     }
-                }
-            }
-            FUTEX_LOCK_PI | FUTEX_LOCK_PI2 => {
-                if timeout_ptr == 0 || timeout_len == 0 {
-                    u64::MAX
-                } else {
-                    0
                 }
             }
             FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
@@ -332,7 +332,7 @@ impl LinuxFrontend {
             FUTEX_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, false),
             FUTEX_CMP_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, true),
             FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
-                self.plan_futex_lock_pi(key, op as u32, timeout_ms)
+                self.plan_futex_lock_pi(key, op as u32, 0, 0)
             }
             FUTEX_UNLOCK_PI => self.plan_futex_unlock_pi(key, op as u32),
             _ => PackedStep::error(-ERR_EINVAL),
@@ -441,7 +441,13 @@ impl LinuxFrontend {
         PackedStep::plan(kind)
     }
 
-    fn plan_futex_lock_pi(&mut self, key: u64, raw_op: u32, timeout_ms: u64) -> PackedStep {
+    fn plan_futex_lock_pi(
+        &mut self,
+        key: u64,
+        raw_op: u32,
+        timeout_ptr: u64,
+        timeout_len: u64,
+    ) -> PackedStep {
         let command = raw_op & FUTEX_CMD_MASK;
         if key & 0x3 != 0 {
             return PackedStep::error(-ERR_EINVAL);
@@ -458,12 +464,26 @@ impl LinuxFrontend {
             Err(errno) => return PackedStep::error(errno),
         };
         let try_only = u64::from(command == FUTEX_TRYLOCK_PI);
-        let timeout_present = u64::from(timeout_ms != u64::MAX);
+        let (timeout_ptr, timeout_len) =
+            if command == FUTEX_TRYLOCK_PI { (0, 0) } else { (timeout_ptr, timeout_len) };
+        let timeout_clock = Self::futex_pi_timeout_clock(raw_op, timeout_ptr, timeout_len);
         self.reset_plan(
             PlanKind::FutexLockPi,
-            [key, current_word as u64, try_only, timeout_present, 0, 0],
+            [key, current_word as u64, try_only, timeout_ptr, timeout_len, timeout_clock],
         );
         PackedStep::plan(PlanKind::FutexLockPi)
+    }
+
+    fn futex_pi_timeout_clock(raw_op: u32, timeout_ptr: u64, timeout_len: u64) -> u64 {
+        if timeout_ptr == 0 && timeout_len == 0 {
+            return FUTEX_PI_TIMEOUT_NONE;
+        }
+        let command = raw_op & FUTEX_CMD_MASK;
+        if command == FUTEX_LOCK_PI2 && raw_op & FUTEX_CLOCK_REALTIME == 0 {
+            FUTEX_PI_TIMEOUT_MONOTONIC
+        } else {
+            FUTEX_PI_TIMEOUT_REALTIME
+        }
     }
 
     fn plan_futex_unlock_pi(&mut self, key: u64, raw_op: u32) -> PackedStep {

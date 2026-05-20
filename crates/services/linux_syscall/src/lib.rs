@@ -9,7 +9,8 @@ use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
     EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
-    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_REQUEUE,
+    FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
+    FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
     SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
@@ -303,6 +304,12 @@ fn dispatch_futex(
     current_word: u64,
 ) -> PackedStep {
     let command = (op as u32) & FUTEX_CMD_MASK;
+    if matches!(command, FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI) {
+        return plan_futex_lock_pi(key, op as u32, timeout_ptr, timeout_len);
+    }
+    if command == FUTEX_UNLOCK_PI {
+        return plan_futex_unlock_pi(key, op as u32);
+    }
     let timeout_ms = match command {
         FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
             if timeout_ptr == 0 || timeout_len == 0 {
@@ -312,13 +319,6 @@ fn dispatch_futex(
                     Ok(ms) => ms,
                     Err(_) => return PackedStep::error(-ERR_EINVAL),
                 }
-            }
-        }
-        FUTEX_LOCK_PI | FUTEX_LOCK_PI2 => {
-            if timeout_ptr == 0 || timeout_len == 0 {
-                u64::MAX
-            } else {
-                0
             }
         }
         FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
@@ -341,7 +341,7 @@ fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -
         FUTEX_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, false),
         FUTEX_CMP_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, true),
         FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
-            plan_futex_lock_pi(key, op as u32, timeout_ms)
+            plan_futex_lock_pi(key, op as u32, 0, 0)
         }
         FUTEX_UNLOCK_PI => plan_futex_unlock_pi(key, op as u32),
         _ => PackedStep::error(-ERR_EINVAL),
@@ -423,7 +423,7 @@ fn plan_futex_requeue(
     PackedStep::plan(kind)
 }
 
-fn plan_futex_lock_pi(key: u64, raw_op: u32, timeout_ms: u64) -> PackedStep {
+fn plan_futex_lock_pi(key: u64, raw_op: u32, timeout_ptr: u64, timeout_len: u64) -> PackedStep {
     let command = raw_op & FUTEX_CMD_MASK;
     if key & 0x3 != 0 {
         return PackedStep::error(-ERR_EINVAL);
@@ -440,9 +440,26 @@ fn plan_futex_lock_pi(key: u64, raw_op: u32, timeout_ms: u64) -> PackedStep {
         Err(errno) => return PackedStep::error(errno),
     };
     let try_only = u64::from(command == FUTEX_TRYLOCK_PI);
-    let timeout_present = u64::from(timeout_ms != u64::MAX);
-    reset_plan(PlanKind::FutexLockPi, [key, current_word as u64, try_only, timeout_present, 0, 0]);
+    let (timeout_ptr, timeout_len) =
+        if command == FUTEX_TRYLOCK_PI { (0, 0) } else { (timeout_ptr, timeout_len) };
+    let timeout_clock = futex_pi_timeout_clock(raw_op, timeout_ptr, timeout_len);
+    reset_plan(
+        PlanKind::FutexLockPi,
+        [key, current_word as u64, try_only, timeout_ptr, timeout_len, timeout_clock],
+    );
     PackedStep::plan(PlanKind::FutexLockPi)
+}
+
+fn futex_pi_timeout_clock(raw_op: u32, timeout_ptr: u64, timeout_len: u64) -> u64 {
+    if timeout_ptr == 0 && timeout_len == 0 {
+        return FUTEX_PI_TIMEOUT_NONE;
+    }
+    let command = raw_op & FUTEX_CMD_MASK;
+    if command == FUTEX_LOCK_PI2 && raw_op & FUTEX_CLOCK_REALTIME == 0 {
+        FUTEX_PI_TIMEOUT_MONOTONIC
+    } else {
+        FUTEX_PI_TIMEOUT_REALTIME
+    }
 }
 
 fn plan_futex_unlock_pi(key: u64, raw_op: u32) -> PackedStep {
@@ -1323,6 +1340,8 @@ mod tests {
         assert_eq!(plan_arg(1), 0);
         assert_eq!(plan_arg(2), 0);
         assert_eq!(plan_arg(3), 0);
+        assert_eq!(plan_arg(4), 0);
+        assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_NONE);
 
         unsafe {
             core::ptr::copy_nonoverlapping(7u32.to_le_bytes().as_ptr(), host_ptr, 4);
@@ -1333,12 +1352,69 @@ mod tests {
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(1), 7);
         assert_eq!(plan_arg(2), 1);
+        assert_eq!(plan_arg(3), 0);
+        assert_eq!(plan_arg(4), 0);
+        assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_NONE);
 
         let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_UNLOCK_PI as u64, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
         assert_eq!(step.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexUnlockPi));
         assert_eq!(plan_arg(1), 7);
+    }
+
+    #[test]
+    fn futex_pi_plan_preserves_timeout_pointer_and_clock() {
+        let _guard = test_guard();
+        let (ptr, timeout_ptr) = unsafe {
+            let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+            let base_addr = base as usize;
+            let aligned = (base_addr + 3) & !3usize;
+            core::ptr::copy_nonoverlapping(9u32.to_le_bytes().as_ptr(), aligned as *mut u8, 4);
+            let timeout = (aligned as *mut u8).add(8);
+            core::ptr::copy_nonoverlapping(2i64.to_le_bytes().as_ptr(), timeout, 8);
+            core::ptr::copy_nonoverlapping(
+                500_000_000i64.to_le_bytes().as_ptr(),
+                timeout.add(8),
+                8,
+            );
+            (aligned as u32, timeout as u32)
+        };
+
+        let raw =
+            dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 16, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
+        assert_eq!(plan_arg(0), ptr as u64);
+        assert_eq!(plan_arg(1), 9);
+        assert_eq!(plan_arg(2), 0);
+        assert_eq!(plan_arg(3), timeout_ptr as u64);
+        assert_eq!(plan_arg(4), 16);
+        assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_MONOTONIC);
+
+        let raw = dispatch(
+            SYS_FUTEX,
+            ptr as u64,
+            (FUTEX_LOCK_PI2 | FUTEX_CLOCK_REALTIME) as u64,
+            0,
+            timeout_ptr as u64,
+            16,
+            0,
+        );
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
+        assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_REALTIME);
+
+        let raw =
+            dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 0, 0);
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
+        assert_eq!(plan_arg(3), timeout_ptr as u64);
+        assert_eq!(plan_arg(4), 0);
+        assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_MONOTONIC);
     }
 
     #[test]
