@@ -1,17 +1,25 @@
 use alloc::vec::Vec;
 
 use super::{
-    linux::LinuxCallResult,
+    linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{
-        PendingSignal, Pid, SigAction, SignalAltStack, TaskId, ThreadRuntimeStateKind, Tid,
-        UserSignalDelivery,
+        PendingSignal, Pid, ProcessRuntimeStateKind, SigAction, SignalAltStack, TaskId,
+        ThreadRuntimeStateKind, Tid, UserSignalDelivery,
     },
     wait::WaitRegistration,
 };
 use crate::{frontends::linux_elf::handle_user_fault, interrupts};
 
 const SA_NODEFER: u64 = 0x4000_0000;
+
+#[derive(Clone, Copy)]
+enum KillTarget {
+    Process(Pid),
+    ProcessGroup(Pid),
+    CurrentProcessGroup,
+    Broadcast,
+}
 
 /// Linux signal default actions.
 fn signal_default_action(signo: u8) -> SignalDefaultAction {
@@ -34,6 +42,35 @@ fn linux_signal_bit(signo: u8) -> u64 {
 
 fn waitable_signal_set(wait_set: u64) -> u64 {
     wait_set & !linux_signal_bit(9) & !linux_signal_bit(19)
+}
+
+fn decode_signal_arg(raw: u64) -> Result<u8, i32> {
+    if raw >= 64 { Err(vmos_abi::ERR_EINVAL) } else { Ok(raw as u8) }
+}
+
+fn decode_positive_u32_arg(raw: u64) -> Result<u32, i32> {
+    match u32::try_from(raw) {
+        Ok(value) if value != 0 => Ok(value),
+        _ => Err(vmos_abi::ERR_EINVAL),
+    }
+}
+
+fn decode_kill_target(raw: u64) -> Result<KillTarget, i32> {
+    let pid = raw as i32;
+    if raw != pid as i64 as u64 {
+        return Err(vmos_abi::ERR_EINVAL);
+    }
+    kill_target_from_pid(pid)
+}
+
+fn kill_target_from_pid(pid: i32) -> Result<KillTarget, i32> {
+    match pid {
+        1..=i32::MAX => Ok(KillTarget::Process(pid as u32)),
+        0 => Ok(KillTarget::CurrentProcessGroup),
+        -1 => Ok(KillTarget::Broadcast),
+        i32::MIN => Err(vmos_abi::ERR_EINVAL),
+        -2147483647..=-2 => Ok(KillTarget::ProcessGroup(pid.unsigned_abs())),
+    }
 }
 
 fn pending_signal_set(signals: &[PendingSignal]) -> u64 {
@@ -60,7 +97,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signo == 0 || signo >= 64 {
             return;
         }
-        if let Some(thread) = self.threads.iter_mut().find(|t| t.tid == tid) {
+        if let Some(thread) = self
+            .threads
+            .iter_mut()
+            .find(|t| t.tid == tid && t.state != ThreadRuntimeStateKind::Dead)
+        {
             thread.pending_signals.push(PendingSignal::basic(signo, si_code, si_pid, si_uid));
         }
     }
@@ -96,6 +137,128 @@ impl<'engine> PrototypeRuntime<'engine> {
         for tid in tids {
             self.queue_signal_to_thread(tid, signo, si_code, si_pid, si_uid);
         }
+    }
+
+    pub(super) fn plan_kill(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let target = match decode_kill_target(plan.args[0]) {
+            Ok(target) => target,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let signal = match decode_signal_arg(plan.args[1]) {
+            Ok(signal) => signal,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.queue_signal_to_kill_target(self.current_pid(), target, signal) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_tgkill(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let tgid = match decode_positive_u32_arg(plan.args[0]) {
+            Ok(tgid) => tgid,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let tid = match decode_positive_u32_arg(plan.args[1]) {
+            Ok(tid) => tid,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let signal = match decode_signal_arg(plan.args[2]) {
+            Ok(signal) => signal,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        match self.queue_signal_by_tgkill(self.current_pid(), tgid, tid, signal) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(crate) fn queue_signal_by_tgkill(
+        &mut self,
+        sender_pid: Pid,
+        tgid: Pid,
+        tid: Tid,
+        signal: u8,
+    ) -> Result<(), i32> {
+        if signal >= 64 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let exists = self.threads.iter().any(|thread| {
+            thread.pid == tgid && thread.tid == tid && thread.state != ThreadRuntimeStateKind::Dead
+        });
+        if !exists {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        if signal == 0 {
+            return Ok(());
+        }
+        self.queue_signal_to_thread(tid, signal, 0, sender_pid, 0);
+        Ok(())
+    }
+
+    pub(crate) fn queue_signal_by_kill_selector(
+        &mut self,
+        sender_pid: Pid,
+        pid_arg: i32,
+        signal: u8,
+    ) -> Result<(), i32> {
+        if signal >= 64 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let target = kill_target_from_pid(pid_arg)?;
+        self.queue_signal_to_kill_target(sender_pid, target, signal)
+    }
+
+    fn queue_signal_to_kill_target(
+        &mut self,
+        sender_pid: Pid,
+        target: KillTarget,
+        signal: u8,
+    ) -> Result<(), i32> {
+        let pids = self.kill_target_pids(target)?;
+        if signal == 0 {
+            return Ok(());
+        }
+        for pid in pids {
+            self.queue_signal_to_process(pid, signal, 0, sender_pid, 0);
+        }
+        Ok(())
+    }
+
+    fn kill_target_pids(&self, target: KillTarget) -> Result<Vec<Pid>, i32> {
+        let pids: Vec<Pid> = match target {
+            KillTarget::Process(pid) => self
+                .processes
+                .iter()
+                .filter(|process| {
+                    process.pid == pid && process.state != ProcessRuntimeStateKind::Dead
+                })
+                .map(|process| process.pid)
+                .collect(),
+            KillTarget::CurrentProcessGroup => {
+                let Some(pgid) = self.query_process(self.current_pid()).map(|process| process.pgid)
+                else {
+                    return Err(vmos_abi::ERR_ESRCH);
+                };
+                self.processes
+                    .iter()
+                    .filter(|process| {
+                        process.pgid == pgid && process.state != ProcessRuntimeStateKind::Dead
+                    })
+                    .map(|process| process.pid)
+                    .collect()
+            }
+            KillTarget::ProcessGroup(pgid) => self
+                .processes
+                .iter()
+                .filter(|process| {
+                    process.pgid == pgid && process.state != ProcessRuntimeStateKind::Dead
+                })
+                .map(|process| process.pid)
+                .collect(),
+            KillTarget::Broadcast => return Err(vmos_abi::ERR_ENOSYS),
+        };
+        if pids.is_empty() { Err(vmos_abi::ERR_ESRCH) } else { Ok(pids) }
     }
 
     /// Check and deliver pending signals for the current thread.
@@ -432,7 +595,24 @@ impl<'engine> PrototypeRuntime<'engine> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+
+    use vmos_abi::{ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_TGKILL, SyscallContext};
+
     use super::*;
+    use crate::supervisor::engine::RuntimeOnlyExecutor;
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
 
     #[test]
     fn pending_signal_set_ignores_invalid_signal_numbers() {
@@ -451,5 +631,109 @@ mod tests {
         let set = linux_signal_bit(2) | linux_signal_bit(9) | linux_signal_bit(19);
 
         assert_eq!(waitable_signal_set(set), linux_signal_bit(2));
+    }
+
+    #[test]
+    fn generic_kill_queues_signal_and_checks_process_existence() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+
+        let exists = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill_zero",
+                SyscallContext::new(SYS_KILL, [pid as u64, 0, 0, 0, 0, 0]),
+            )
+            .expect("kill zero dispatch");
+        assert_eq!(expect_ret(exists), 0);
+        assert!(runtime.query_thread(tid).unwrap().pending_signals.is_empty());
+
+        let queued = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill",
+                SyscallContext::new(SYS_KILL, [pid as u64, 10, 0, 0, 0, 0]),
+            )
+            .expect("kill dispatch");
+        assert_eq!(expect_ret(queued), 0);
+        let pending = &runtime.query_thread(tid).unwrap().pending_signals;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].signo, 10);
+        assert_eq!(pending[0].si_pid, pid);
+
+        let missing = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill_missing",
+                SyscallContext::new(SYS_KILL, [99_999, 10, 0, 0, 0, 0]),
+            )
+            .expect("missing kill dispatch");
+        assert_eq!(expect_ret(missing), -(ERR_ESRCH as i64));
+
+        let invalid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill_invalid_signal",
+                SyscallContext::new(SYS_KILL, [pid as u64, 64, 0, 0, 0, 0]),
+            )
+            .expect("invalid signal kill dispatch");
+        assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
+    }
+
+    #[test]
+    fn generic_kill_current_process_group_targets_live_group_members() {
+        let mut runtime = test_runtime();
+        let parent_pid = runtime.current_pid();
+        let parent_tid = runtime.current_tid();
+        let child_pid = runtime.allocate_process(parent_pid, parent_pid, parent_pid);
+        let child_task = runtime.allocate_task();
+        let child_tid = runtime.allocate_thread(child_task, child_pid);
+
+        let queued = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill_pgrp",
+                SyscallContext::new(SYS_KILL, [0, 15, 0, 0, 0, 0]),
+            )
+            .expect("kill process group dispatch");
+        assert_eq!(expect_ret(queued), 0);
+
+        let parent_pending = &runtime.query_thread(parent_tid).unwrap().pending_signals;
+        assert_eq!(parent_pending.len(), 1);
+        assert_eq!(parent_pending[0].signo, 15);
+        let child_pending = &runtime.query_thread(child_tid).unwrap().pending_signals;
+        assert_eq!(child_pending.len(), 1);
+        assert_eq!(child_pending[0].signo, 15);
+    }
+
+    #[test]
+    fn generic_tgkill_targets_thread_and_rejects_broadcast_kill() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+
+        let queued = runtime
+            .dispatch_linux_syscall_raw(
+                "test_tgkill",
+                SyscallContext::new(SYS_TGKILL, [pid as u64, tid as u64, 12, 0, 0, 0]),
+            )
+            .expect("tgkill dispatch");
+        assert_eq!(expect_ret(queued), 0);
+        let pending = &runtime.query_thread(tid).unwrap().pending_signals;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].signo, 12);
+        assert_eq!(pending[0].si_pid, pid);
+
+        let unsupported = runtime
+            .dispatch_linux_syscall_raw(
+                "test_kill_broadcast",
+                SyscallContext::new(SYS_KILL, [-1i64 as u64, 12, 0, 0, 0, 0]),
+            )
+            .expect("broadcast kill dispatch");
+        assert_eq!(expect_ret(unsupported), -(ERR_ENOSYS as i64));
+
+        let invalid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_tgkill_invalid_signal",
+                SyscallContext::new(SYS_TGKILL, [pid as u64, tid as u64, 64, 0, 0, 0]),
+            )
+            .expect("invalid signal tgkill dispatch");
+        assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
     }
 }

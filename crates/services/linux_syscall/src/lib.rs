@@ -18,12 +18,12 @@ use vmos_abi::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME,
-    SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT,
+    SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -104,6 +104,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_PIPE => plan_pipe(a0, 0),
         SYS_PIPE2 => plan_pipe(a0, a1),
         SYS_POLL => plan_poll(a0, a1, a2),
+        SYS_KILL => plan_kill(a0, a1),
+        SYS_TGKILL => plan_tgkill(a0, a1, a2),
         SYS_PAUSE => plan_simple(PlanKind::Pause),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
@@ -888,6 +890,16 @@ fn plan_simple(kind: PlanKind) -> PackedStep {
     PackedStep::plan(kind)
 }
 
+fn plan_kill(pid: u64, signal: u64) -> PackedStep {
+    reset_plan(PlanKind::Kill, [pid, signal, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Kill)
+}
+
+fn plan_tgkill(tgid: u64, tid: u64, signal: u64) -> PackedStep {
+    reset_plan(PlanKind::Tgkill, [tgid, tid, signal, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Tgkill)
+}
+
 fn reset_plan(kind: PlanKind, args: [u64; 6]) {
     let _ = kind;
     unsafe {
@@ -1330,6 +1342,23 @@ mod tests {
 
         assert_eq!(step.tag, vmos_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Pause));
+    }
+
+    #[test]
+    fn kill_and_tgkill_plan_signal_delivery() {
+        let _guard = test_guard();
+        let kill = PackedStep::decode(dispatch(vmos_abi::SYS_KILL, 12, 10, 0, 0, 0, 0));
+        assert_eq!(kill.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(kill.aux), Some(PlanKind::Kill));
+        assert_eq!(plan_arg(0), 12);
+        assert_eq!(plan_arg(1), 10);
+
+        let tgkill = PackedStep::decode(dispatch(SYS_TGKILL, 12, 13, 15, 0, 0, 0));
+        assert_eq!(tgkill.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(tgkill.aux), Some(PlanKind::Tgkill));
+        assert_eq!(plan_arg(0), 12);
+        assert_eq!(plan_arg(1), 13);
+        assert_eq!(plan_arg(2), 15);
     }
 
     #[test]

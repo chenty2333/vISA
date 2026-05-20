@@ -11,12 +11,12 @@ use vmos_abi::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
     SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
     SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME,
-    SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT,
+    SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -91,6 +91,8 @@ impl LinuxFrontend {
             SYS_PIPE => self.plan_pipe(a0, 0),
             SYS_PIPE2 => self.plan_pipe(a0, a1),
             SYS_POLL => self.plan_poll(a0, a1, a2),
+            SYS_KILL => self.plan_kill(a0, a1),
+            SYS_TGKILL => self.plan_tgkill(a0, a1, a2),
             SYS_PAUSE => self.plan_simple(PlanKind::Pause),
             SYS_UNAME => self.plan_simple(PlanKind::Uname),
             SYS_GETCWD => self.plan_getcwd(a1),
@@ -964,6 +966,16 @@ impl LinuxFrontend {
     fn plan_simple(&mut self, kind: PlanKind) -> PackedStep {
         self.reset_plan(kind, [0, 0, 0, 0, 0, 0]);
         PackedStep::plan(kind)
+    }
+
+    fn plan_kill(&mut self, pid: u64, signal: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Kill, [pid, signal, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Kill)
+    }
+
+    fn plan_tgkill(&mut self, tgid: u64, tid: u64, signal: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Tgkill, [tgid, tid, signal, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Tgkill)
     }
 
     fn setsockopt_u32_value(

@@ -321,6 +321,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::TimerfdGettime => self.plan_timerfd_gettime(plan),
             PlanKind::SetRobustList => self.plan_set_robust_list(plan),
             PlanKind::GetRobustList => self.plan_get_robust_list(plan),
+            PlanKind::Kill => self.plan_kill(plan),
+            PlanKind::Tgkill => self.plan_tgkill(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
@@ -330,9 +332,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Exit
             | PlanKind::RtSigaction
             | PlanKind::RtSigprocmask
-            | PlanKind::Tgkill
-            | PlanKind::RtSigreturn
-            | PlanKind::Kill => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::RtSigreturn => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

@@ -3645,28 +3645,23 @@ fn sys_rt_sigtimedwait(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_tgkill(frame: &SyscallFrame) -> Result<i64, i32> {
-    let tgid = frame.rdi;
-    let tid = frame.rsi;
+    let tgid = linux_pid_arg(frame.rdi)?;
+    let tid = linux_pid_arg(frame.rsi)?;
     let signal = frame.rdx;
 
-    if signal == 0 {
-        return Ok(0);
+    if tgid <= 0 || tid <= 0 {
+        return Err(ERR_EINVAL);
     }
     if signal >= 64 {
         return Err(ERR_EINVAL);
     }
-    let supervisor = &mut active_context().supervisor;
-    // Find the target thread
-    let target_tid = supervisor
-        .threads
-        .iter()
-        .find(|t| t.pid as u64 == tgid as u64 && t.tid as u64 == tid as u64)
-        .map(|t| t.tid);
-    let Some(target_tid) = target_tid else {
-        return Err(ERR_ESRCH);
-    };
     let sender_pid = active_context().pid;
-    supervisor.queue_signal_to_thread(target_tid, signal as u8, 0, sender_pid, 0);
+    active_context().supervisor.queue_signal_by_tgkill(
+        sender_pid,
+        tgid as u32,
+        tid as u32,
+        signal as u8,
+    )?;
     Ok(0)
 }
 
@@ -4226,24 +4221,13 @@ fn sys_wait4(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_kill(frame: &SyscallFrame) -> Result<i64, i32> {
-    let pid = frame.rdi as u32;
+    let pid = linux_pid_arg(frame.rdi)?;
     let sig = frame.rsi;
-    if sig == 0 {
-        // Existence check
-        let supervisor = &active_context().supervisor;
-        let found = supervisor.processes.iter().any(|p| p.pid == pid || pid == 0);
-        return if found { Ok(0) } else { Err(ERR_ESRCH) };
-    }
     if sig >= 64 {
         return Err(ERR_EINVAL);
     }
-    let supervisor = &mut active_context().supervisor;
     let current_pid = active_context().pid;
-    if pid == 0 || pid == current_pid {
-        supervisor.queue_signal_to_process(current_pid, sig as u8, 0, current_pid, 0);
-    } else {
-        supervisor.queue_signal_to_process(pid, sig as u8, 0, current_pid, 0);
-    }
+    active_context().supervisor.queue_signal_by_kill_selector(current_pid, pid, sig as u8)?;
     Ok(0)
 }
 

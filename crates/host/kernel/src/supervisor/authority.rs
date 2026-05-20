@@ -306,6 +306,18 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "signal.wait",
             operation: "pause",
         },
+        PlanKind::Kill => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "signal.delivery",
+            operation: "kill",
+        },
+        PlanKind::Tgkill => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "signal.delivery",
+            operation: "tgkill",
+        },
         PlanKind::FutexWait | PlanKind::FutexWaitBitset | PlanKind::FutexWaitRequeuePi => {
             HostcallBinding {
                 class: HostcallClass::AsyncOp,
