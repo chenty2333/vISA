@@ -312,6 +312,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "process.child",
             operation: "wait",
         },
+        PlanKind::Exit => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.lifecycle",
+            operation: "exit",
+        },
         PlanKind::Kill => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
@@ -611,5 +617,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         lifetime: &str,
     ) {
         self.authority.grant(&mut self.semantic, subject, object, operations, lifetime);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use semantic_core::HostcallClass;
+    use vmos_abi::PlanKind;
+
+    use super::hostcall_binding;
+
+    #[test]
+    fn exit_hostcall_binding_records_process_lifecycle_effect() {
+        let binding = hostcall_binding(PlanKind::Exit);
+
+        assert_eq!(binding.class, HostcallClass::ImmediatePrivilegedOp);
+        assert_eq!(binding.subject, "linux_syscall");
+        assert_eq!(binding.object, "process.lifecycle");
+        assert_eq!(binding.operation, "exit");
     }
 }
