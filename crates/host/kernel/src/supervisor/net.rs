@@ -1091,3 +1091,108 @@ fn net_stack_now_ms() -> i64 {
     let ms = interrupts::tick_count().saturating_mul(1000) / hz;
     ms.min(i64::MAX as u64) as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use vmos_abi::{AF_INET, SOCK_STREAM, SYS_BIND, SYS_LISTEN, SYS_SOCKET, SyscallContext};
+
+    use super::{LinuxCallResult, PrototypeRuntime};
+    use crate::supervisor::engine::RuntimeOnlyExecutor;
+
+    const REMOTE_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
+    const REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
+    const VMOS_IPV4: [u8; 4] = [10, 0, 2, 15];
+    const ARP_FRAME_LEN: usize = 42;
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected integer return, got {other:?}"),
+        }
+    }
+
+    fn dispatch_ret(
+        runtime: &mut PrototypeRuntime<'_>,
+        label: &'static str,
+        nr: u64,
+        args: [u64; 6],
+    ) -> i64 {
+        let result = runtime
+            .dispatch_linux_syscall(label, SyscallContext::new(nr, args))
+            .expect("linux syscall dispatch");
+        expect_ret(result)
+    }
+
+    fn arp_request() -> [u8; ARP_FRAME_LEN] {
+        let mut frame = [0u8; ARP_FRAME_LEN];
+        frame[0..6].copy_from_slice(&[0xff; 6]);
+        frame[6..12].copy_from_slice(&REMOTE_MAC);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+        frame[14..16].copy_from_slice(&[0x00, 0x01]);
+        frame[16..18].copy_from_slice(&[0x08, 0x00]);
+        frame[18] = 0x06;
+        frame[19] = 0x04;
+        frame[20..22].copy_from_slice(&[0x00, 0x01]);
+        frame[22..28].copy_from_slice(&REMOTE_MAC);
+        frame[28..32].copy_from_slice(&REMOTE_IPV4);
+        frame[32..38].copy_from_slice(&[0; 6]);
+        frame[38..42].copy_from_slice(&VMOS_IPV4);
+        frame
+    }
+
+    fn event_log_contains(runtime: &PrototypeRuntime<'_>, needle: &str) -> bool {
+        runtime
+            .semantic
+            .event_log()
+            .events()
+            .iter()
+            .any(|event| event.kind.summary().contains(needle))
+    }
+
+    #[test]
+    fn kernel_reference_backend_rx_reaches_smoltcp_and_records_tx_completion() {
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+
+        let local_port = 8080u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [fd as u64, 0, 16, AF_INET as u64, 0, local_port],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_listen", SYS_LISTEN, [fd as u64, 1, 0, 0, 0, 0]),
+            0
+        );
+
+        let request = arp_request();
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&request)
+            .expect("inject backend rx frame");
+        runtime.pump_network_runtime();
+
+        assert_eq!(runtime.reference_packet_backend.pending_rx_frames(), 0);
+        assert_eq!(runtime.reference_packet_backend.pending_tx_frames(), 0);
+        assert_eq!(runtime.net_driver.pending_rx_frames().expect("driver rx"), 0);
+        assert_eq!(runtime.net_driver.pending_tx_frames().expect("driver tx"), 0);
+        assert!(event_log_contains(&runtime, "PacketReceived"));
+        assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+}
