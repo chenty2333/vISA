@@ -9,9 +9,9 @@ use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{
-        CAP_SYS_PTRACE, Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind,
-        RobustListRegistration, RseqRegistration, SignalAltStack, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid,
+        CAP_SETGID, CAP_SETUID, CAP_SYS_PTRACE, LINUX_KNOWN_CAPS, Pid, ProcessAccessState,
+        ProcessRuntimeState, ProcessRuntimeStateKind, RobustListRegistration, RseqRegistration,
+        SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -1084,6 +1084,106 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Ret(self.current_access_state().gid as i64))
     }
 
+    pub(super) fn plan_setuid(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let uid = match linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let before = self.current_access_state();
+        let old = before.real_uid;
+        let Some(after) = access_setuid(before, uid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        self.apply_current_credential_transition(
+            after.clone(),
+            CredentialTransitionKind::SetUid { old, new: after.real_uid },
+        )
+    }
+
+    pub(super) fn plan_setgid(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let gid = match linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let before = self.current_access_state();
+        let old = before.real_gid;
+        let Some(after) = access_setgid(before, gid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        self.apply_current_credential_transition(
+            after.clone(),
+            CredentialTransitionKind::SetGid { old, new: after.real_gid },
+        )
+    }
+
+    pub(super) fn plan_setreuid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let ruid = match optional_linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let euid = match optional_linux_id_arg(plan.args[1]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let Some(after) = access_setreuid(self.current_access_state(), ruid, euid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        self.apply_current_credential_transition(
+            after.clone(),
+            CredentialTransitionKind::SetReUid { ruid: after.real_uid, euid: after.uid },
+        )
+    }
+
+    pub(super) fn plan_setregid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let rgid = match optional_linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let egid = match optional_linux_id_arg(plan.args[1]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let Some(after) = access_setregid(self.current_access_state(), rgid, egid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        self.apply_current_credential_transition(
+            after.clone(),
+            CredentialTransitionKind::SetReGid { rgid: after.real_gid, egid: after.gid },
+        )
+    }
+
+    fn apply_current_credential_transition(
+        &mut self,
+        access: ProcessAccessState,
+        kind: CredentialTransitionKind,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let pid = self.current_pid();
+        if self.record_credential_transition(
+            pid,
+            access.real_uid,
+            access.uid,
+            access.saved_uid,
+            access.fsuid,
+            access.real_gid,
+            access.gid,
+            access.saved_gid,
+            access.fsgid,
+            access.supplementary_groups.clone(),
+            linux_cap_sets_from_access(&access),
+            kind,
+        ) {
+            Ok(LinuxCallResult::Ret(0))
+        } else {
+            Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)))
+        }
+    }
+
     pub(super) fn plan_getpgid(
         &mut self,
         plan: LinuxPlan,
@@ -1201,6 +1301,153 @@ fn linux_i32_arg(raw: u64) -> Result<i32, i32> {
     if raw == value as i64 as u64 { Ok(value) } else { Err(vmos_abi::ERR_EINVAL) }
 }
 
+fn linux_id_arg(raw: u64) -> Result<u32, i32> {
+    u32::try_from(raw).map_err(|_| vmos_abi::ERR_EINVAL)
+}
+
+fn optional_linux_id_arg(raw: u64) -> Result<Option<u32>, i32> {
+    if raw == u64::MAX || raw as u32 == u32::MAX { Ok(None) } else { linux_id_arg(raw).map(Some) }
+}
+
+fn access_setuid(mut access: ProcessAccessState, uid: u32) -> Option<ProcessAccessState> {
+    let old_real = access.real_uid;
+    let old_effective = access.uid;
+    let old_saved = access.saved_uid;
+    if access_has_capability(&access, CAP_SETUID) {
+        access.real_uid = uid;
+        access.uid = uid;
+        access.saved_uid = uid;
+        access.fsuid = access.uid;
+        fixup_access_caps_after_uid_change(&mut access, old_real, old_effective, old_saved);
+        return Some(access);
+    }
+    if uid == access.real_uid || uid == access.uid || uid == access.saved_uid {
+        access.uid = uid;
+        access.fsuid = access.uid;
+        fixup_access_caps_after_uid_change(&mut access, old_real, old_effective, old_saved);
+        return Some(access);
+    }
+    None
+}
+
+fn access_setgid(mut access: ProcessAccessState, gid: u32) -> Option<ProcessAccessState> {
+    if access_has_capability(&access, CAP_SETGID) {
+        access.real_gid = gid;
+        access.gid = gid;
+        access.saved_gid = gid;
+        access.fsgid = access.gid;
+        return Some(access);
+    }
+    if gid == access.real_gid || gid == access.gid || gid == access.saved_gid {
+        access.gid = gid;
+        access.fsgid = access.gid;
+        return Some(access);
+    }
+    None
+}
+
+fn access_setreuid(
+    mut access: ProcessAccessState,
+    ruid: Option<u32>,
+    euid: Option<u32>,
+) -> Option<ProcessAccessState> {
+    let privileged = access_has_capability(&access, CAP_SETUID);
+    let old_real = access.real_uid;
+    let old_effective = access.uid;
+    let old_saved = access.saved_uid;
+    if !privileged {
+        for uid in [ruid, euid].into_iter().flatten() {
+            if uid != old_real && uid != old_effective && uid != old_saved {
+                return None;
+            }
+        }
+    }
+    if let Some(uid) = ruid {
+        access.real_uid = uid;
+    }
+    if let Some(uid) = euid {
+        access.uid = uid;
+        access.fsuid = access.uid;
+    }
+    if (privileged && (ruid.is_some() || euid.is_some()))
+        || ruid.is_some()
+        || euid.is_some_and(|uid| uid != old_real)
+    {
+        access.saved_uid = access.uid;
+    }
+    fixup_access_caps_after_uid_change(&mut access, old_real, old_effective, old_saved);
+    Some(access)
+}
+
+fn access_setregid(
+    mut access: ProcessAccessState,
+    rgid: Option<u32>,
+    egid: Option<u32>,
+) -> Option<ProcessAccessState> {
+    let privileged = access_has_capability(&access, CAP_SETGID);
+    let old_real = access.real_gid;
+    let old_effective = access.gid;
+    let old_saved = access.saved_gid;
+    if !privileged {
+        for gid in [rgid, egid].into_iter().flatten() {
+            if gid != old_real && gid != old_effective && gid != old_saved {
+                return None;
+            }
+        }
+    }
+    if let Some(gid) = rgid {
+        access.real_gid = gid;
+    }
+    if let Some(gid) = egid {
+        access.gid = gid;
+        access.fsgid = access.gid;
+    }
+    if (privileged && (rgid.is_some() || egid.is_some()))
+        || rgid.is_some()
+        || egid.is_some_and(|gid| gid != old_real)
+    {
+        access.saved_gid = access.gid;
+    }
+    Some(access)
+}
+
+fn access_has_capability(access: &ProcessAccessState, capability: u64) -> bool {
+    access.cap_effective & capability != 0
+}
+
+fn fixup_access_caps_after_uid_change(
+    access: &mut ProcessAccessState,
+    old_real: u32,
+    old_effective: u32,
+    old_saved: u32,
+) {
+    let had_root_uid = old_real == 0 || old_effective == 0 || old_saved == 0;
+    let has_root_uid = access.real_uid == 0 || access.uid == 0 || access.saved_uid == 0;
+    if had_root_uid && !has_root_uid {
+        access.cap_effective = 0;
+        access.cap_permitted = 0;
+        return;
+    }
+    if old_effective == 0 && access.uid != 0 {
+        access.cap_effective = 0;
+        return;
+    }
+    if old_effective != 0 && access.uid == 0 {
+        access.cap_effective = access.cap_permitted & LINUX_KNOWN_CAPS;
+    }
+}
+
+fn linux_cap_sets_from_access(access: &ProcessAccessState) -> LinuxCapSets {
+    LinuxCapSets {
+        bounding: LINUX_KNOWN_CAPS,
+        inheritable: 0,
+        permitted: access.cap_permitted & LINUX_KNOWN_CAPS,
+        effective: access.cap_effective & LINUX_KNOWN_CAPS,
+        ambient: 0,
+        securebits: 0,
+    }
+}
+
 fn robust_list_ptrace_may_access(
     caller: &ProcessRuntimeState,
     target: &ProcessRuntimeState,
@@ -1214,9 +1461,9 @@ mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{
-        ERR_ECHILD, ERR_EFAULT, SYS_EXIT, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPGID,
-        SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETPGID, SYS_SETSID,
-        SYS_WAIT4, SyscallContext,
+        ERR_ECHILD, ERR_EFAULT, ERR_EPERM, SYS_EXIT, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+        SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETGID,
+        SYS_SETPGID, SYS_SETREGID, SYS_SETREUID, SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
     };
 
     use super::*;
@@ -1467,6 +1714,98 @@ mod tests {
             )
             .expect("bad setpgid dispatch");
         assert_eq!(expect_ret(bad_pgid), -(vmos_abi::ERR_EINVAL as i64));
+    }
+
+    #[test]
+    fn generic_credential_mutations_update_runtime_state() {
+        let mut runtime = test_runtime();
+
+        let setgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setgid",
+                SyscallContext::new(SYS_SETGID, [100, 0, 0, 0, 0, 0]),
+            )
+            .expect("setgid dispatch");
+        assert_eq!(expect_ret(setgid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_gid, 100);
+        assert_eq!(access.gid, 100);
+        assert_eq!(access.saved_gid, 100);
+        assert_eq!(access.fsgid, 100);
+
+        let setuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setuid",
+                SyscallContext::new(SYS_SETUID, [1000, 0, 0, 0, 0, 0]),
+            )
+            .expect("setuid dispatch");
+        assert_eq!(expect_ret(setuid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_uid, 1000);
+        assert_eq!(access.uid, 1000);
+        assert_eq!(access.saved_uid, 1000);
+        assert_eq!(access.fsuid, 1000);
+        assert_eq!(access.cap_permitted, 0);
+        assert_eq!(access.cap_effective, 0);
+
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setuid_denied",
+                SyscallContext::new(SYS_SETUID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("setuid denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+    }
+
+    #[test]
+    fn generic_reuid_regid_mutations_follow_saved_id_rules() {
+        let mut runtime = test_runtime();
+
+        let setreuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setreuid",
+                SyscallContext::new(SYS_SETREUID, [1000, 2000, 0, 0, 0, 0]),
+            )
+            .expect("setreuid dispatch");
+        assert_eq!(expect_ret(setreuid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_uid, 1000);
+        assert_eq!(access.uid, 2000);
+        assert_eq!(access.saved_uid, 2000);
+        assert_eq!(access.fsuid, 2000);
+        assert_eq!(access.cap_permitted, 0);
+        assert_eq!(access.cap_effective, 0);
+
+        let regain_saved = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setreuid_saved",
+                SyscallContext::new(SYS_SETREUID, [u64::MAX, 1000, 0, 0, 0, 0]),
+            )
+            .expect("setreuid saved dispatch");
+        assert_eq!(expect_ret(regain_saved), 0);
+        assert_eq!(runtime.current_access_state().uid, 1000);
+
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setreuid_denied",
+                SyscallContext::new(SYS_SETREUID, [u64::MAX, 3000, 0, 0, 0, 0]),
+            )
+            .expect("setreuid denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+
+        let mut runtime = test_runtime();
+        let setregid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setregid",
+                SyscallContext::new(SYS_SETREGID, [100, 200, 0, 0, 0, 0]),
+            )
+            .expect("setregid dispatch");
+        assert_eq!(expect_ret(setregid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_gid, 100);
+        assert_eq!(access.gid, 200);
+        assert_eq!(access.saved_gid, 200);
+        assert_eq!(access.fsgid, 200);
     }
 
     #[test]

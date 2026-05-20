@@ -306,6 +306,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "signal.wait",
             operation: "pause",
         },
+        PlanKind::RtSigpending => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "signal.pending",
+            operation: "rt-sigpending",
+        },
         PlanKind::Wait4 => HostcallBinding {
             class: HostcallClass::AsyncOp,
             subject: "linux_syscall",
@@ -324,6 +330,14 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
                 subject: "linux_syscall",
                 object: "process.credential",
                 operation: "query-id",
+            }
+        }
+        PlanKind::SetUid | PlanKind::SetGid | PlanKind::SetReUid | PlanKind::SetReGid => {
+            HostcallBinding {
+                class: HostcallClass::ImmediatePrivilegedOp,
+                subject: "linux_syscall",
+                object: "process.credential",
+                operation: "transition-id",
             }
         }
         PlanKind::GetPgid | PlanKind::GetSid => HostcallBinding {

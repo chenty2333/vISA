@@ -304,6 +304,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Ret(0))
     }
 
+    pub(super) fn plan_rt_sigpending(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if plan.args[1] != LINUX_SIGSET_BYTES as u64 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+        let set_ptr = match checked_linux_ptr(plan.args[0]) {
+            Ok(ptr) => ptr,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let pending = match self.blocked_pending_signal_set(self.current_tid()) {
+            Some(pending) => pending,
+            None => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ESRCH as i64))),
+        };
+        if self.linux.write_bytes(set_ptr, &pending.to_le_bytes()).is_err() {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
     pub(crate) fn queue_signal_by_tgkill(
         &mut self,
         sender_pid: Pid,
@@ -732,8 +753,8 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-        SYS_TGKILL, SyscallContext,
+        ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
+        SYS_RT_SIGPROCMASK, SYS_TGKILL, SyscallContext,
     };
 
     use super::*;
@@ -950,6 +971,53 @@ mod tests {
                 SyscallContext::new(SYS_RT_SIGPROCMASK, [0, 0, 0, 4, 0, 0]),
             )
             .expect("invalid rt_sigprocmask dispatch");
+        assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
+    }
+
+    #[test]
+    fn generic_rt_sigpending_reports_blocked_pending_signals() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        let requested = linux_signal_bit(2);
+        let mut buffer = alloc::vec![0u8; LINUX_SIGSET_BYTES * 2];
+        buffer[0..LINUX_SIGSET_BYTES].copy_from_slice(&requested.to_le_bytes());
+        let (base, _) = runtime.linux.write_arg_bytes(&buffer).expect("arg buffer");
+        let pending_ptr = base + LINUX_SIGSET_BYTES as u32;
+
+        let blocked = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigpending_mask",
+                SyscallContext::new(
+                    SYS_RT_SIGPROCMASK,
+                    [0, base as u64, 0, LINUX_SIGSET_BYTES as u64, 0, 0],
+                ),
+            )
+            .expect("rt_sigprocmask dispatch");
+        assert_eq!(expect_ret(blocked), 0);
+        runtime.queue_signal_to_thread(tid, 2, 0, pid, 0);
+        runtime.queue_signal_to_thread(tid, 3, 0, pid, 0);
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigpending",
+                SyscallContext::new(
+                    SYS_RT_SIGPENDING,
+                    [pending_ptr as u64, LINUX_SIGSET_BYTES as u64, 0, 0, 0, 0],
+                ),
+            )
+            .expect("rt_sigpending dispatch");
+        assert_eq!(expect_ret(pending), 0);
+        let bytes =
+            runtime.linux.read_bytes(pending_ptr, LINUX_SIGSET_BYTES as u32).expect("pending set");
+        assert_eq!(u64::from_le_bytes(bytes[..8].try_into().unwrap()), linux_signal_bit(2));
+
+        let invalid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigpending_bad_size",
+                SyscallContext::new(SYS_RT_SIGPENDING, [pending_ptr as u64, 4, 0, 0, 0, 0]),
+            )
+            .expect("invalid rt_sigpending dispatch");
         assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
     }
 

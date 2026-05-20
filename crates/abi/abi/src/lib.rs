@@ -83,12 +83,16 @@ pub const SYS_CAPGET: u64 = 125;
 pub const SYS_CAPSET: u64 = 126;
 pub const SYS_GETUID: u64 = 102;
 pub const SYS_GETGID: u64 = 104;
+pub const SYS_SETUID: u64 = 105;
+pub const SYS_SETGID: u64 = 106;
 pub const SYS_GETEUID: u64 = 107;
 pub const SYS_GETEGID: u64 = 108;
 pub const SYS_SETPGID: u64 = 109;
 pub const SYS_GETPPID: u64 = 110;
 pub const SYS_GETPGRP: u64 = 111;
 pub const SYS_SETSID: u64 = 112;
+pub const SYS_SETREUID: u64 = 113;
+pub const SYS_SETREGID: u64 = 114;
 pub const SYS_STATFS: u64 = 137;
 pub const SYS_FSTATFS: u64 = 138;
 pub const SYS_MOUNT: u64 = 165;
@@ -375,6 +379,11 @@ pub enum PlanKind {
     GetGid = 86,
     GetEuid = 87,
     GetEgid = 88,
+    RtSigpending = 89,
+    SetUid = 90,
+    SetGid = 91,
+    SetReUid = 92,
+    SetReGid = 93,
 }
 
 impl PlanKind {
@@ -468,6 +477,11 @@ impl PlanKind {
             86 => Some(Self::GetGid),
             87 => Some(Self::GetEuid),
             88 => Some(Self::GetEgid),
+            89 => Some(Self::RtSigpending),
+            90 => Some(Self::SetUid),
+            91 => Some(Self::SetGid),
+            92 => Some(Self::SetReUid),
+            93 => Some(Self::SetReGid),
             _ => None,
         }
     }
