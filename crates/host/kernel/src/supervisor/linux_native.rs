@@ -14,9 +14,10 @@ use vmos_abi::{
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
     SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
     SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
-    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV,
+    SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -93,6 +94,8 @@ impl LinuxFrontend {
             SYS_POLL => self.plan_poll(a0, a1, a2),
             SYS_KILL => self.plan_kill(a0, a1),
             SYS_TGKILL => self.plan_tgkill(a0, a1, a2),
+            SYS_RT_SIGACTION => self.plan_rt_sigaction(a0, a1, a2, a3),
+            SYS_RT_SIGPROCMASK => self.plan_rt_sigprocmask(a0, a1, a2, a3),
             SYS_PAUSE => self.plan_simple(PlanKind::Pause),
             SYS_UNAME => self.plan_simple(PlanKind::Uname),
             SYS_GETCWD => self.plan_getcwd(a1),
@@ -976,6 +979,28 @@ impl LinuxFrontend {
     fn plan_tgkill(&mut self, tgid: u64, tid: u64, signal: u64) -> PackedStep {
         self.reset_plan(PlanKind::Tgkill, [tgid, tid, signal, 0, 0, 0]);
         PackedStep::plan(PlanKind::Tgkill)
+    }
+
+    fn plan_rt_sigaction(
+        &mut self,
+        signo: u64,
+        act: u64,
+        oldact: u64,
+        sigsetsize: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::RtSigaction, [signo, act, oldact, sigsetsize, 0, 0]);
+        PackedStep::plan(PlanKind::RtSigaction)
+    }
+
+    fn plan_rt_sigprocmask(
+        &mut self,
+        how: u64,
+        set: u64,
+        oldset: u64,
+        sigsetsize: u64,
+    ) -> PackedStep {
+        self.reset_plan(PlanKind::RtSigprocmask, [how, set, oldset, sigsetsize, 0, 0]);
+        PackedStep::plan(PlanKind::RtSigprocmask)
     }
 
     fn setsockopt_u32_value(

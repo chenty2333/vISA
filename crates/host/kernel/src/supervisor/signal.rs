@@ -12,6 +12,8 @@ use super::{
 use crate::{frontends::linux_elf::handle_user_fault, interrupts};
 
 const SA_NODEFER: u64 = 0x4000_0000;
+const LINUX_SIGSET_BYTES: usize = 8;
+const LINUX_SIGACTION_BYTES: usize = 32;
 
 #[derive(Clone, Copy)]
 enum KillTarget {
@@ -48,6 +50,11 @@ fn decode_signal_arg(raw: u64) -> Result<u8, i32> {
     if raw >= 64 { Err(vmos_abi::ERR_EINVAL) } else { Ok(raw as u8) }
 }
 
+fn decode_action_signal_arg(raw: u64) -> Result<u8, i32> {
+    let signo = decode_signal_arg(raw)?;
+    if signo == 0 { Err(vmos_abi::ERR_EINVAL) } else { Ok(signo) }
+}
+
 fn decode_positive_u32_arg(raw: u64) -> Result<u32, i32> {
     match u32::try_from(raw) {
         Ok(value) if value != 0 => Ok(value),
@@ -71,6 +78,31 @@ fn kill_target_from_pid(pid: i32) -> Result<KillTarget, i32> {
         i32::MIN => Err(vmos_abi::ERR_EINVAL),
         -2147483647..=-2 => Ok(KillTarget::ProcessGroup(pid.unsigned_abs())),
     }
+}
+
+fn checked_linux_ptr(raw: u64) -> Result<u32, i32> {
+    u32::try_from(raw).map_err(|_| vmos_abi::ERR_EFAULT)
+}
+
+fn decode_linux_sigaction(bytes: &[u8]) -> Result<SigAction, i32> {
+    if bytes.len() < LINUX_SIGACTION_BYTES {
+        return Err(vmos_abi::ERR_EFAULT);
+    }
+    Ok(SigAction {
+        handler: u64::from_le_bytes(bytes[0..8].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
+        flags: u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
+        restorer: u64::from_le_bytes(bytes[16..24].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
+        mask: u64::from_le_bytes(bytes[24..32].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
+    })
+}
+
+fn encode_linux_sigaction(action: SigAction) -> [u8; LINUX_SIGACTION_BYTES] {
+    let mut out = [0u8; LINUX_SIGACTION_BYTES];
+    out[0..8].copy_from_slice(&action.handler.to_le_bytes());
+    out[8..16].copy_from_slice(&action.flags.to_le_bytes());
+    out[16..24].copy_from_slice(&action.restorer.to_le_bytes());
+    out[24..32].copy_from_slice(&action.mask.to_le_bytes());
+    out
 }
 
 fn pending_signal_set(signals: &[PendingSignal]) -> u64 {
@@ -171,6 +203,101 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
+    }
+
+    pub(super) fn plan_rt_sigaction(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let signo = match decode_action_signal_arg(plan.args[0]) {
+            Ok(signo) => signo,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if plan.args[3] != LINUX_SIGSET_BYTES as u64 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+
+        let pid = self.current_pid();
+        let new_action = if plan.args[1] != 0 {
+            let act_ptr = match checked_linux_ptr(plan.args[1]) {
+                Ok(ptr) => ptr,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+            let bytes = match self.linux.read_bytes(act_ptr, LINUX_SIGACTION_BYTES as u32) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+            };
+            match decode_linux_sigaction(&bytes) {
+                Ok(action) => Some(action),
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            }
+        } else {
+            None
+        };
+
+        let old = self.get_sigaction(pid, signo).unwrap_or_default();
+        if plan.args[2] != 0 {
+            let old_ptr = match checked_linux_ptr(plan.args[2]) {
+                Ok(ptr) => ptr,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+            if self.linux.write_bytes(old_ptr, &encode_linux_sigaction(old)).is_err() {
+                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+            }
+        }
+
+        if let Some(action) = new_action {
+            if !self.set_sigaction(pid, signo, action) {
+                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            }
+        }
+
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_rt_sigprocmask(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if plan.args[3] != LINUX_SIGSET_BYTES as u64 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+
+        let tid = self.current_tid();
+        let old_mask = self.get_sigmask(tid).unwrap_or(0);
+        if plan.args[2] != 0 {
+            let old_ptr = match checked_linux_ptr(plan.args[2]) {
+                Ok(ptr) => ptr,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+            if self.linux.write_bytes(old_ptr, &old_mask.to_le_bytes()).is_err() {
+                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+            }
+        }
+
+        if plan.args[1] != 0 {
+            let set_ptr = match checked_linux_ptr(plan.args[1]) {
+                Ok(ptr) => ptr,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+            let bytes = match self.linux.read_bytes(set_ptr, LINUX_SIGSET_BYTES as u32) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+            };
+            let set = match bytes[..LINUX_SIGSET_BYTES].try_into() {
+                Ok(raw) => u64::from_le_bytes(raw),
+                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+            };
+            let how = match u32::try_from(plan.args[0]) {
+                Ok(how) => how,
+                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+            };
+            if self.set_sigmask(tid, how, set).is_none() {
+                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            }
+        }
+
+        Ok(LinuxCallResult::Ret(0))
     }
 
     pub(crate) fn queue_signal_by_tgkill(
@@ -597,7 +724,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_TGKILL, SyscallContext};
+    use vmos_abi::{
+        ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+        SYS_TGKILL, SyscallContext,
+    };
 
     use super::*;
     use crate::supervisor::engine::RuntimeOnlyExecutor;
@@ -700,6 +830,86 @@ mod tests {
         let child_pending = &runtime.query_thread(child_tid).unwrap().pending_signals;
         assert_eq!(child_pending.len(), 1);
         assert_eq!(child_pending[0].signo, 15);
+    }
+
+    #[test]
+    fn generic_rt_sigaction_updates_and_reports_disposition() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let new_action =
+            SigAction { handler: 0x4000, flags: 0x0400_0004, restorer: 0x5000, mask: 0x22 };
+        let mut buffer = alloc::vec![0u8; LINUX_SIGACTION_BYTES * 2];
+        buffer[0..LINUX_SIGACTION_BYTES].copy_from_slice(&encode_linux_sigaction(new_action));
+        let (base, _) = runtime.linux.write_arg_bytes(&buffer).expect("arg buffer");
+        let old_ptr = base + LINUX_SIGACTION_BYTES as u32;
+
+        let installed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigaction",
+                SyscallContext::new(
+                    SYS_RT_SIGACTION,
+                    [2, base as u64, old_ptr as u64, LINUX_SIGSET_BYTES as u64, 0, 0],
+                ),
+            )
+            .expect("rt_sigaction dispatch");
+        assert_eq!(expect_ret(installed), 0);
+        assert_eq!(runtime.get_sigaction(pid, 2), Some(new_action));
+        let old = runtime
+            .linux
+            .read_bytes(old_ptr, LINUX_SIGACTION_BYTES as u32)
+            .expect("old action writeback");
+        assert_eq!(decode_linux_sigaction(&old), Ok(SigAction::default()));
+
+        let mut old_only = alloc::vec![0u8; LINUX_SIGACTION_BYTES];
+        let (old_only_ptr, _) = runtime.linux.write_arg_bytes(&old_only).expect("arg buffer");
+        let queried = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigaction_old",
+                SyscallContext::new(
+                    SYS_RT_SIGACTION,
+                    [2, 0, old_only_ptr as u64, LINUX_SIGSET_BYTES as u64, 0, 0],
+                ),
+            )
+            .expect("rt_sigaction old dispatch");
+        assert_eq!(expect_ret(queried), 0);
+        old_only = runtime
+            .linux
+            .read_bytes(old_only_ptr, LINUX_SIGACTION_BYTES as u32)
+            .expect("old action query");
+        assert_eq!(decode_linux_sigaction(&old_only), Ok(new_action));
+    }
+
+    #[test]
+    fn generic_rt_sigprocmask_updates_mask_and_reports_old_value() {
+        let mut runtime = test_runtime();
+        let tid = runtime.current_tid();
+        let requested = linux_signal_bit(2) | linux_signal_bit(9) | linux_signal_bit(19);
+        let mut buffer = alloc::vec![0u8; LINUX_SIGSET_BYTES * 2];
+        buffer[0..LINUX_SIGSET_BYTES].copy_from_slice(&requested.to_le_bytes());
+        let (base, _) = runtime.linux.write_arg_bytes(&buffer).expect("arg buffer");
+        let old_ptr = base + LINUX_SIGSET_BYTES as u32;
+
+        let blocked = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigprocmask",
+                SyscallContext::new(
+                    SYS_RT_SIGPROCMASK,
+                    [0, base as u64, old_ptr as u64, LINUX_SIGSET_BYTES as u64, 0, 0],
+                ),
+            )
+            .expect("rt_sigprocmask dispatch");
+        assert_eq!(expect_ret(blocked), 0);
+        assert_eq!(runtime.get_sigmask(tid), Some(linux_signal_bit(2)));
+        let old = runtime.linux.read_bytes(old_ptr, LINUX_SIGSET_BYTES as u32).expect("old mask");
+        assert_eq!(u64::from_le_bytes(old[..8].try_into().unwrap()), 0);
+
+        let invalid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_rt_sigprocmask_bad_size",
+                SyscallContext::new(SYS_RT_SIGPROCMASK, [0, 0, 0, 4, 0, 0]),
+            )
+            .expect("invalid rt_sigprocmask dispatch");
+        assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
     }
 
     #[test]

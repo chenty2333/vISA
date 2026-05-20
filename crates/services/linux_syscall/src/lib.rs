@@ -21,9 +21,10 @@ use vmos_abi::{
     SYS_GETRLIMIT, SYS_GETSOCKOPT, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
     SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
     SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
-    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETRLIMIT, SYS_SETSOCKOPT, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WRITE, SYS_WRITEV,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -106,6 +107,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_POLL => plan_poll(a0, a1, a2),
         SYS_KILL => plan_kill(a0, a1),
         SYS_TGKILL => plan_tgkill(a0, a1, a2),
+        SYS_RT_SIGACTION => plan_rt_sigaction(a0, a1, a2, a3),
+        SYS_RT_SIGPROCMASK => plan_rt_sigprocmask(a0, a1, a2, a3),
         SYS_PAUSE => plan_simple(PlanKind::Pause),
         SYS_UNAME => plan_simple(PlanKind::Uname),
         SYS_GETCWD => plan_getcwd(a1),
@@ -900,6 +903,16 @@ fn plan_tgkill(tgid: u64, tid: u64, signal: u64) -> PackedStep {
     PackedStep::plan(PlanKind::Tgkill)
 }
 
+fn plan_rt_sigaction(signo: u64, act: u64, oldact: u64, sigsetsize: u64) -> PackedStep {
+    reset_plan(PlanKind::RtSigaction, [signo, act, oldact, sigsetsize, 0, 0]);
+    PackedStep::plan(PlanKind::RtSigaction)
+}
+
+fn plan_rt_sigprocmask(how: u64, set: u64, oldset: u64, sigsetsize: u64) -> PackedStep {
+    reset_plan(PlanKind::RtSigprocmask, [how, set, oldset, sigsetsize, 0, 0]);
+    PackedStep::plan(PlanKind::RtSigprocmask)
+}
+
 fn reset_plan(kind: PlanKind, args: [u64; 6]) {
     let _ = kind;
     unsafe {
@@ -1359,6 +1372,27 @@ mod tests {
         assert_eq!(plan_arg(0), 12);
         assert_eq!(plan_arg(1), 13);
         assert_eq!(plan_arg(2), 15);
+    }
+
+    #[test]
+    fn rt_signal_plans_preserve_abi_pointers() {
+        let _guard = test_guard();
+        let sigaction = PackedStep::decode(dispatch(SYS_RT_SIGACTION, 2, 0x1000, 0x2000, 8, 0, 0));
+        assert_eq!(sigaction.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(sigaction.aux), Some(PlanKind::RtSigaction));
+        assert_eq!(plan_arg(0), 2);
+        assert_eq!(plan_arg(1), 0x1000);
+        assert_eq!(plan_arg(2), 0x2000);
+        assert_eq!(plan_arg(3), 8);
+
+        let sigprocmask =
+            PackedStep::decode(dispatch(SYS_RT_SIGPROCMASK, 1, 0x3000, 0x4000, 8, 0, 0));
+        assert_eq!(sigprocmask.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(sigprocmask.aux), Some(PlanKind::RtSigprocmask));
+        assert_eq!(plan_arg(0), 1);
+        assert_eq!(plan_arg(1), 0x3000);
+        assert_eq!(plan_arg(2), 0x4000);
+        assert_eq!(plan_arg(3), 8);
     }
 
     #[test]
