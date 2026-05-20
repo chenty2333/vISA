@@ -6743,26 +6743,90 @@ fn linux_call_result(result: LinuxCallResult) -> Result<i64, i32> {
 #[cfg(test)]
 mod tests {
     use vmos_abi::{
-        FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK,
-        FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAITERS,
+        ERR_EINTR, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED,
+        FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
+        FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CONNECT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX,
+        SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     };
 
     use super::{
-        CloneRequest, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX,
-        LINUX_GREG_RIP, LINUX_GREG_RSP, PSELECT6_MAX_FDS, SignalAltStack, SyscallFrame,
-        UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return, encode_linux_ucontext,
-        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
-        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, parse_clone3_request_bytes, positioned_io_offset,
-        preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
-        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
-        read_linux_greg, sanitize_restored_rflags, select_remaining_timeout_ms,
-        select_timeval_bytes, select_timeval_ms, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        CloneRequest, FCNTL_F_SETLKW, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11,
+        LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, PSELECT6_MAX_FDS, SA_RESTART,
+        SignalAltStack, SyscallFrame, UserReturnContext, VectoredIoOffset,
+        decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
+        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
+        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
+        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
+        preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
+        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
+        restartable_interrupted_syscall, sanitize_restored_rflags, select_remaining_timeout_ms,
+        select_timeval_bytes, select_timeval_ms, signal_restart_syscall, validate_iovcnt,
+        validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
+        wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn syscall_frame_with_ret(ret: i64) -> SyscallFrame {
+        SyscallFrame {
+            r9: 0,
+            r8: 0,
+            r10: 0,
+            rdx: 0,
+            rsi: 0,
+            rdi: 0,
+            rax: ret as u64,
+            rcx: 0x4000,
+            r11: 0x202,
+        }
+    }
+
+    #[test]
+    fn sa_restart_covers_current_blocking_syscall_set() {
+        let mut frame = syscall_frame_with_ret(-(ERR_EINTR as i64));
+        for syscall in [
+            SYS_READ,
+            SYS_READV,
+            SYS_WRITE,
+            SYS_WRITEV,
+            SYS_WAIT4,
+            SYS_ACCEPT,
+            SYS_ACCEPT4,
+            SYS_CONNECT,
+            SYS_SENDTO,
+            SYS_RECVFROM,
+            SYS_FLOCK,
+        ] {
+            assert!(restartable_interrupted_syscall(&frame, syscall));
+            assert_eq!(signal_restart_syscall(&frame, syscall, SA_RESTART), Some(syscall));
+        }
+
+        frame.rsi = FCNTL_F_SETLKW;
+        assert!(restartable_interrupted_syscall(&frame, SYS_FCNTL));
+        assert_eq!(signal_restart_syscall(&frame, SYS_FCNTL, SA_RESTART), Some(SYS_FCNTL));
+
+        frame.rsi = FUTEX_WAIT as u64;
+        assert!(restartable_interrupted_syscall(&frame, SYS_FUTEX));
+        frame.rsi = FUTEX_WAIT_BITSET as u64;
+        assert!(restartable_interrupted_syscall(&frame, SYS_FUTEX));
+    }
+
+    #[test]
+    fn sa_restart_rejects_non_restartable_or_non_eintr_results() {
+        let mut frame = syscall_frame_with_ret(-(ERR_EINTR as i64));
+        assert_eq!(signal_restart_syscall(&frame, SYS_READ, 0), None);
+        assert_eq!(signal_restart_syscall(&frame, vmos_abi::SYS_GETPID, SA_RESTART), None);
+
+        frame.rax = 0;
+        assert_eq!(signal_restart_syscall(&frame, SYS_READ, SA_RESTART), None);
+
+        frame.rax = (-(ERR_EINTR as i64)) as u64;
+        frame.rsi = 0;
+        assert!(!restartable_interrupted_syscall(&frame, SYS_FCNTL));
+        frame.rsi = vmos_abi::FUTEX_WAKE as u64;
+        assert!(!restartable_interrupted_syscall(&frame, SYS_FUTEX));
     }
 
     #[test]
