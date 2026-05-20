@@ -1158,6 +1158,243 @@ impl<'engine> PrototypeRuntime<'engine> {
         )
     }
 
+    pub(super) fn plan_setresuid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let ruid = match optional_linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let euid = match optional_linux_id_arg(plan.args[1]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let suid = match optional_linux_id_arg(plan.args[2]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let before = self.current_access_state();
+        let Some(after) = access_setresuid(before.clone(), ruid, euid, suid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        if before.credential_ids_differ(&after)
+            || before.cap_permitted != after.cap_permitted
+            || before.cap_effective != after.cap_effective
+        {
+            return self.apply_current_credential_transition(
+                after.clone(),
+                CredentialTransitionKind::SetResUid {
+                    ruid: after.real_uid,
+                    euid: after.uid,
+                    suid: after.saved_uid,
+                },
+            );
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_getresuid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let access = self.current_access_state();
+        match self.write_linux_u32(plan.args[0], access.real_uid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        match self.write_linux_u32(plan.args[1], access.uid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        match self.write_linux_u32(plan.args[2], access.saved_uid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_setresgid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let rgid = match optional_linux_id_arg(plan.args[0]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let egid = match optional_linux_id_arg(plan.args[1]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let sgid = match optional_linux_id_arg(plan.args[2]) {
+            Ok(value) => value,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let before = self.current_access_state();
+        let Some(after) = access_setresgid(before.clone(), rgid, egid, sgid) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        if before.credential_ids_differ(&after) {
+            return self.apply_current_credential_transition(
+                after.clone(),
+                CredentialTransitionKind::SetResGid {
+                    rgid: after.real_gid,
+                    egid: after.gid,
+                    sgid: after.saved_gid,
+                },
+            );
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_getresgid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let access = self.current_access_state();
+        match self.write_linux_u32(plan.args[0], access.real_gid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        match self.write_linux_u32(plan.args[1], access.gid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        match self.write_linux_u32(plan.args[2], access.saved_gid) {
+            Ok(()) => {}
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_getgroups(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let size = match usize::try_from(plan.args[0]) {
+            Ok(value) => value,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+        };
+        let groups = self.current_access_state().supplementary_groups;
+        if size == 0 {
+            return Ok(LinuxCallResult::Ret(groups.len() as i64));
+        }
+        if size < groups.len() {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+        let mut encoded = Vec::with_capacity(groups.len() * 4);
+        for group in &groups {
+            encoded.extend_from_slice(&group.to_le_bytes());
+        }
+        match self.write_linux_bytes(plan.args[1], &encoded) {
+            Ok(()) => Ok(LinuxCallResult::Ret(groups.len() as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_setgroups(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        const NGROUPS_MAX: usize = 65_536;
+
+        let size = match usize::try_from(plan.args[0]) {
+            Ok(value) => value,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+        };
+        if size > NGROUPS_MAX {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        }
+        if !access_has_capability(&self.current_access_state(), CAP_SETGID) {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        }
+        let len = match size.checked_mul(4).and_then(|value| u32::try_from(value).ok()) {
+            Some(value) => value,
+            None => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+        };
+        let bytes = if size == 0 {
+            Vec::new()
+        } else {
+            match self.read_linux_bytes(plan.args[1], len) {
+                Ok(bytes) => bytes,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            }
+        };
+        let mut groups = Vec::with_capacity(size);
+        for chunk in bytes.chunks_exact(4) {
+            groups.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        let mut after = self.current_access_state();
+        let old_len = after.supplementary_groups.len();
+        after.supplementary_groups = groups;
+        self.apply_current_credential_transition(
+            after,
+            CredentialTransitionKind::SetGroups { old_len, new_len: size },
+        )
+    }
+
+    pub(super) fn plan_capget(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let (version, pid) = match self.read_linux_cap_header(plan.args[0]) {
+            Ok(header) => header,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if let Err(errno) = self.validate_capability_pid(pid) {
+            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+        }
+        let Some(data_len) = capability_data_len(version) else {
+            let _ = self.write_linux_u32(plan.args[0], LINUX_CAPABILITY_VERSION_3);
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        };
+        if plan.args[1] != 0 {
+            let access = self.current_access_state();
+            let encoded = encode_capability_data(access.cap_effective, access.cap_permitted, 0);
+            if let Err(errno) = self.write_linux_bytes(plan.args[1], &encoded[..data_len]) {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+        }
+        Ok(LinuxCallResult::Ret(0))
+    }
+
+    pub(super) fn plan_capset(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        if plan.args[1] == 0 {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+        }
+        let (version, pid) = match self.read_linux_cap_header(plan.args[0]) {
+            Ok(header) => header,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if let Err(errno) = self.validate_capability_pid(pid) {
+            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+        }
+        let Some(data_len) = capability_data_len(version) else {
+            let _ = self.write_linux_u32(plan.args[0], LINUX_CAPABILITY_VERSION_3);
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+        };
+        let bytes = match self.read_linux_bytes(plan.args[1], data_len as u32) {
+            Ok(bytes) => bytes,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let (effective, permitted, inheritable) = match decode_capability_data(&bytes) {
+            Ok(values) => values,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let before = self.current_access_state();
+        let Some(after) = access_capset(before.clone(), permitted, effective, inheritable) else {
+            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+        };
+        self.apply_current_credential_transition(
+            after.clone(),
+            CredentialTransitionKind::CapSet {
+                bounding: false,
+                inheritable: false,
+                permitted: before.cap_permitted != after.cap_permitted,
+                effective: before.cap_effective != after.cap_effective,
+                ambient: false,
+                securebits: false,
+            },
+        )
+    }
+
     fn apply_current_credential_transition(
         &mut self,
         access: ProcessAccessState,
@@ -1182,6 +1419,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)))
         }
+    }
+
+    fn read_linux_bytes(&mut self, ptr: u64, len: u32) -> Result<Vec<u8>, i32> {
+        let ptr = checked_linux_ptr(ptr)?;
+        self.linux.read_bytes(ptr, len).map_err(|_| vmos_abi::ERR_EFAULT)
+    }
+
+    fn write_linux_bytes(&mut self, ptr: u64, bytes: &[u8]) -> Result<(), i32> {
+        let ptr = checked_linux_ptr(ptr)?;
+        self.linux.write_bytes(ptr, bytes).map_err(|_| vmos_abi::ERR_EFAULT)
+    }
+
+    fn write_linux_u32(&mut self, ptr: u64, value: u32) -> Result<(), i32> {
+        self.write_linux_bytes(ptr, &value.to_le_bytes())
+    }
+
+    fn read_linux_cap_header(&mut self, ptr: u64) -> Result<(u32, i32), i32> {
+        let bytes = self.read_linux_bytes(ptr, 8)?;
+        let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let pid = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        Ok((version, pid))
+    }
+
+    fn validate_capability_pid(&self, pid: i32) -> Result<(), i32> {
+        if pid < 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        if pid != 0 && pid as u32 != self.current_pid() {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        Ok(())
     }
 
     pub(super) fn plan_getpgid(
@@ -1294,6 +1562,14 @@ fn wait_exit_status(exit_code: i32) -> u32 {
 
 fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {
     if raw == 0 { Ok(None) } else { u32::try_from(raw).map(Some).map_err(|_| vmos_abi::ERR_EFAULT) }
+}
+
+fn checked_linux_ptr(raw: u64) -> Result<u32, i32> {
+    if raw == 0 {
+        Err(vmos_abi::ERR_EFAULT)
+    } else {
+        u32::try_from(raw).map_err(|_| vmos_abi::ERR_EFAULT)
+    }
 }
 
 fn linux_i32_arg(raw: u64) -> Result<i32, i32> {
@@ -1411,6 +1687,88 @@ fn access_setregid(
     Some(access)
 }
 
+fn access_setresuid(
+    mut access: ProcessAccessState,
+    ruid: Option<u32>,
+    euid: Option<u32>,
+    suid: Option<u32>,
+) -> Option<ProcessAccessState> {
+    let privileged = access_has_capability(&access, CAP_SETUID);
+    let old_real = access.real_uid;
+    let old_effective = access.uid;
+    let old_saved = access.saved_uid;
+    if !privileged {
+        for uid in [ruid, euid, suid].into_iter().flatten() {
+            if uid != old_real && uid != old_effective && uid != old_saved {
+                return None;
+            }
+        }
+    }
+    if let Some(uid) = ruid {
+        access.real_uid = uid;
+    }
+    if let Some(uid) = euid {
+        access.uid = uid;
+    }
+    if let Some(uid) = suid {
+        access.saved_uid = uid;
+    }
+    if ruid.is_some() || euid.is_some() || suid.is_some() {
+        access.fsuid = access.uid;
+        fixup_access_caps_after_uid_change(&mut access, old_real, old_effective, old_saved);
+    }
+    Some(access)
+}
+
+fn access_setresgid(
+    mut access: ProcessAccessState,
+    rgid: Option<u32>,
+    egid: Option<u32>,
+    sgid: Option<u32>,
+) -> Option<ProcessAccessState> {
+    let privileged = access_has_capability(&access, CAP_SETGID);
+    let old_real = access.real_gid;
+    let old_effective = access.gid;
+    let old_saved = access.saved_gid;
+    if !privileged {
+        for gid in [rgid, egid, sgid].into_iter().flatten() {
+            if gid != old_real && gid != old_effective && gid != old_saved {
+                return None;
+            }
+        }
+    }
+    if let Some(gid) = rgid {
+        access.real_gid = gid;
+    }
+    if let Some(gid) = egid {
+        access.gid = gid;
+    }
+    if let Some(gid) = sgid {
+        access.saved_gid = gid;
+    }
+    if rgid.is_some() || egid.is_some() || sgid.is_some() {
+        access.fsgid = access.gid;
+    }
+    Some(access)
+}
+
+fn access_capset(
+    mut access: ProcessAccessState,
+    permitted: u64,
+    effective: u64,
+    inheritable: u64,
+) -> Option<ProcessAccessState> {
+    let permitted = permitted & LINUX_KNOWN_CAPS;
+    let effective = effective & LINUX_KNOWN_CAPS;
+    let inheritable = inheritable & LINUX_KNOWN_CAPS;
+    if inheritable != 0 || permitted & !access.cap_permitted != 0 || effective & !permitted != 0 {
+        return None;
+    }
+    access.cap_permitted = permitted;
+    access.cap_effective = effective;
+    Some(access)
+}
+
 fn access_has_capability(access: &ProcessAccessState, capability: u64) -> bool {
     access.cap_effective & capability != 0
 }
@@ -1448,6 +1806,54 @@ fn linux_cap_sets_from_access(access: &ProcessAccessState) -> LinuxCapSets {
     }
 }
 
+const LINUX_CAPABILITY_VERSION_1: u32 = 0x1998_0330;
+const LINUX_CAPABILITY_VERSION_2: u32 = 0x2007_1026;
+const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+fn capability_data_len(version: u32) -> Option<usize> {
+    match version {
+        LINUX_CAPABILITY_VERSION_1 => Some(12),
+        LINUX_CAPABILITY_VERSION_2 | LINUX_CAPABILITY_VERSION_3 => Some(24),
+        _ => None,
+    }
+}
+
+fn encode_capability_data(effective: u64, permitted: u64, inheritable: u64) -> [u8; 24] {
+    let words = [
+        effective as u32,
+        permitted as u32,
+        inheritable as u32,
+        (effective >> 32) as u32,
+        (permitted >> 32) as u32,
+        (inheritable >> 32) as u32,
+    ];
+    let mut out = [0u8; 24];
+    let mut index = 0;
+    while index < words.len() {
+        out[index * 4..index * 4 + 4].copy_from_slice(&words[index].to_le_bytes());
+        index += 1;
+    }
+    out
+}
+
+fn decode_capability_data(bytes: &[u8]) -> Result<(u64, u64, u64), i32> {
+    if bytes.len() != 12 && bytes.len() != 24 {
+        return Err(vmos_abi::ERR_EINVAL);
+    }
+    let read = |index: usize| -> u32 {
+        u32::from_le_bytes([
+            bytes[index * 4],
+            bytes[index * 4 + 1],
+            bytes[index * 4 + 2],
+            bytes[index * 4 + 3],
+        ])
+    };
+    let effective = read(0) as u64 | if bytes.len() == 24 { (read(3) as u64) << 32 } else { 0 };
+    let permitted = read(1) as u64 | if bytes.len() == 24 { (read(4) as u64) << 32 } else { 0 };
+    let inheritable = read(2) as u64 | if bytes.len() == 24 { (read(5) as u64) << 32 } else { 0 };
+    Ok((effective, permitted, inheritable))
+}
+
 fn robust_list_ptrace_may_access(
     caller: &ProcessRuntimeState,
     target: &ProcessRuntimeState,
@@ -1461,9 +1867,11 @@ mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{
-        ERR_ECHILD, ERR_EFAULT, ERR_EPERM, SYS_EXIT, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
-        SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETGID,
-        SYS_SETPGID, SYS_SETREGID, SYS_SETREUID, SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
+        ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, SYS_CAPGET, SYS_CAPSET, SYS_EXIT,
+        SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
+        SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETGID,
+        SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
+        SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
     };
 
     use super::*;
@@ -1806,6 +2214,184 @@ mod tests {
         assert_eq!(access.gid, 200);
         assert_eq!(access.saved_gid, 200);
         assert_eq!(access.fsgid, 200);
+    }
+
+    #[test]
+    fn generic_resuid_resgid_and_groups_use_runtime_credentials() {
+        let mut runtime = test_runtime();
+
+        let setresuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setresuid",
+                SyscallContext::new(SYS_SETRESUID, [1000, 2000, 3000, 0, 0, 0]),
+            )
+            .expect("setresuid dispatch");
+        assert_eq!(expect_ret(setresuid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_uid, 1000);
+        assert_eq!(access.uid, 2000);
+        assert_eq!(access.saved_uid, 3000);
+        assert_eq!(access.fsuid, 2000);
+        assert_eq!(access.cap_permitted, 0);
+        assert_eq!(access.cap_effective, 0);
+
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setresuid_denied",
+                SyscallContext::new(SYS_SETRESUID, [u64::MAX, 4000, u64::MAX, 0, 0, 0]),
+            )
+            .expect("setresuid denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+
+        let (uid_ptr, _) = runtime.linux.write_arg_bytes(&[0; 12]).expect("uid buffer");
+        let getresuid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getresuid",
+                SyscallContext::new(
+                    SYS_GETRESUID,
+                    [uid_ptr as u64, uid_ptr as u64 + 4, uid_ptr as u64 + 8, 0, 0, 0],
+                ),
+            )
+            .expect("getresuid dispatch");
+        assert_eq!(expect_ret(getresuid), 0);
+        let uid_bytes = runtime.linux.read_bytes(uid_ptr, 12).expect("uid bytes");
+        assert_eq!(u32::from_le_bytes(uid_bytes[0..4].try_into().unwrap()), 1000);
+        assert_eq!(u32::from_le_bytes(uid_bytes[4..8].try_into().unwrap()), 2000);
+        assert_eq!(u32::from_le_bytes(uid_bytes[8..12].try_into().unwrap()), 3000);
+
+        let mut runtime = test_runtime();
+        let empty_null = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getgroups_empty_null",
+                SyscallContext::new(SYS_GETGROUPS, [1, 0, 0, 0, 0, 0]),
+            )
+            .expect("getgroups empty null dispatch");
+        assert_eq!(expect_ret(empty_null), -(ERR_EFAULT as i64));
+
+        let setgroups_bytes = [10u32.to_le_bytes(), 20u32.to_le_bytes()].concat();
+        let (groups_ptr, _) =
+            runtime.linux.write_arg_bytes(&setgroups_bytes).expect("groups input");
+        let setgroups = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setgroups",
+                SyscallContext::new(SYS_SETGROUPS, [2, groups_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("setgroups dispatch");
+        assert_eq!(expect_ret(setgroups), 0);
+        assert_eq!(runtime.current_access_state().supplementary_groups, &[10, 20]);
+
+        let count_only = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getgroups_count",
+                SyscallContext::new(SYS_GETGROUPS, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getgroups count dispatch");
+        assert_eq!(expect_ret(count_only), 2);
+
+        let (groups_out_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("groups output");
+        let getgroups = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getgroups",
+                SyscallContext::new(SYS_GETGROUPS, [2, groups_out_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("getgroups dispatch");
+        assert_eq!(expect_ret(getgroups), 2);
+        let out = runtime.linux.read_bytes(groups_out_ptr, 8).expect("groups bytes");
+        assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 10);
+        assert_eq!(u32::from_le_bytes(out[4..8].try_into().unwrap()), 20);
+
+        let short = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getgroups_short",
+                SyscallContext::new(SYS_GETGROUPS, [1, groups_out_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("getgroups short dispatch");
+        assert_eq!(expect_ret(short), -(ERR_EINVAL as i64));
+
+        let setresgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setresgid",
+                SyscallContext::new(SYS_SETRESGID, [100, 200, 300, 0, 0, 0]),
+            )
+            .expect("setresgid dispatch");
+        assert_eq!(expect_ret(setresgid), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.real_gid, 100);
+        assert_eq!(access.gid, 200);
+        assert_eq!(access.saved_gid, 300);
+        assert_eq!(access.fsgid, 200);
+
+        let (gid_ptr, _) = runtime.linux.write_arg_bytes(&[0; 12]).expect("gid buffer");
+        let getresgid = runtime
+            .dispatch_linux_syscall_raw(
+                "test_getresgid",
+                SyscallContext::new(
+                    SYS_GETRESGID,
+                    [gid_ptr as u64, gid_ptr as u64 + 4, gid_ptr as u64 + 8, 0, 0, 0],
+                ),
+            )
+            .expect("getresgid dispatch");
+        assert_eq!(expect_ret(getresgid), 0);
+        let gid_bytes = runtime.linux.read_bytes(gid_ptr, 12).expect("gid bytes");
+        assert_eq!(u32::from_le_bytes(gid_bytes[0..4].try_into().unwrap()), 100);
+        assert_eq!(u32::from_le_bytes(gid_bytes[4..8].try_into().unwrap()), 200);
+        assert_eq!(u32::from_le_bytes(gid_bytes[8..12].try_into().unwrap()), 300);
+    }
+
+    #[test]
+    fn generic_capget_capset_uses_bounded_runtime_capability_sets() {
+        let mut runtime = test_runtime();
+        let mut cap_buffer = Vec::new();
+        cap_buffer.extend_from_slice(&LINUX_CAPABILITY_VERSION_3.to_le_bytes());
+        cap_buffer.extend_from_slice(&0i32.to_le_bytes());
+        cap_buffer.extend_from_slice(&[0; 24]);
+        let (header_ptr, _) = runtime.linux.write_arg_bytes(&cap_buffer).expect("cap buffer");
+        let data_ptr = header_ptr + 8;
+
+        let capget = runtime
+            .dispatch_linux_syscall_raw(
+                "test_capget",
+                SyscallContext::new(SYS_CAPGET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("capget dispatch");
+        assert_eq!(expect_ret(capget), 0);
+        let data = runtime.linux.read_bytes(data_ptr, 24).expect("capget data");
+        assert_eq!(u32::from_le_bytes(data[0..4].try_into().unwrap()), LINUX_KNOWN_CAPS as u32);
+        assert_eq!(u32::from_le_bytes(data[4..8].try_into().unwrap()), LINUX_KNOWN_CAPS as u32);
+        assert_eq!(u32::from_le_bytes(data[8..12].try_into().unwrap()), 0);
+
+        let lowered = encode_capability_data(CAP_SETUID, CAP_SETUID, 0);
+        runtime.linux.write_bytes(data_ptr, &lowered).expect("capset data");
+        let capset = runtime
+            .dispatch_linux_syscall_raw(
+                "test_capset",
+                SyscallContext::new(SYS_CAPSET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("capset dispatch");
+        assert_eq!(expect_ret(capset), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.cap_permitted, CAP_SETUID);
+        assert_eq!(access.cap_effective, CAP_SETUID);
+
+        let raised = encode_capability_data(LINUX_KNOWN_CAPS, LINUX_KNOWN_CAPS, 0);
+        runtime.linux.write_bytes(data_ptr, &raised).expect("raised capset data");
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_capset_raise_denied",
+                SyscallContext::new(SYS_CAPSET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("capset raise denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+
+        let inheritable = encode_capability_data(CAP_SETUID, CAP_SETUID, CAP_SETUID);
+        runtime.linux.write_bytes(data_ptr, &inheritable).expect("inheritable capset data");
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_capset_inheritable_denied",
+                SyscallContext::new(SYS_CAPSET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("capset inheritable denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
     }
 
     #[test]

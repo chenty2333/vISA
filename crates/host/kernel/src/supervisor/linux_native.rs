@@ -6,20 +6,21 @@ use vmos_abi::{
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
-    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3,
-    SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID,
-    SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK,
-    SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE,
-    SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
-    SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETPGID,
-    SYS_SETREGID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CAPGET, SYS_CAPSET,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
+    SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
+    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID,
+    SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT,
+    SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -111,6 +112,14 @@ impl LinuxFrontend {
             SYS_SETGID => self.plan_setgid(a0),
             SYS_SETREUID => self.plan_setreuid(a0, a1),
             SYS_SETREGID => self.plan_setregid(a0, a1),
+            SYS_SETRESUID => self.plan_setresuid(a0, a1, a2),
+            SYS_GETRESUID => self.plan_getresuid(a0, a1, a2),
+            SYS_SETRESGID => self.plan_setresgid(a0, a1, a2),
+            SYS_GETRESGID => self.plan_getresgid(a0, a1, a2),
+            SYS_GETGROUPS => self.plan_getgroups(a0, a1),
+            SYS_SETGROUPS => self.plan_setgroups(a0, a1),
+            SYS_CAPGET => self.plan_capget(a0, a1),
+            SYS_CAPSET => self.plan_capset(a0, a1),
             SYS_GETPGID => self.plan_getpgid(a0),
             SYS_GETPGRP => self.plan_getpgid(0),
             SYS_GETSID => self.plan_getsid(a0),
@@ -1061,6 +1070,46 @@ impl LinuxFrontend {
     fn plan_setregid(&mut self, rgid: u64, egid: u64) -> PackedStep {
         self.reset_plan(PlanKind::SetReGid, [rgid, egid, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::SetReGid)
+    }
+
+    fn plan_setresuid(&mut self, ruid: u64, euid: u64, suid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetResUid, [ruid, euid, suid, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetResUid)
+    }
+
+    fn plan_getresuid(&mut self, ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::GetResUid, [ruid_ptr, euid_ptr, suid_ptr, 0, 0, 0]);
+        PackedStep::plan(PlanKind::GetResUid)
+    }
+
+    fn plan_setresgid(&mut self, rgid: u64, egid: u64, sgid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetResGid, [rgid, egid, sgid, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetResGid)
+    }
+
+    fn plan_getresgid(&mut self, rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::GetResGid, [rgid_ptr, egid_ptr, sgid_ptr, 0, 0, 0]);
+        PackedStep::plan(PlanKind::GetResGid)
+    }
+
+    fn plan_getgroups(&mut self, size: u64, list_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::GetGroups, [size, list_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::GetGroups)
+    }
+
+    fn plan_setgroups(&mut self, size: u64, list_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetGroups, [size, list_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetGroups)
+    }
+
+    fn plan_capget(&mut self, header_ptr: u64, data_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::CapGet, [header_ptr, data_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::CapGet)
+    }
+
+    fn plan_capset(&mut self, header_ptr: u64, data_ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::CapSet, [header_ptr, data_ptr, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::CapSet)
     }
 
     fn plan_setpgid(&mut self, pid: u64, pgid: u64) -> PackedStep {

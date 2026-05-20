@@ -324,22 +324,32 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "process.metadata",
             operation: "query-id",
         },
-        PlanKind::GetUid | PlanKind::GetGid | PlanKind::GetEuid | PlanKind::GetEgid => {
-            HostcallBinding {
-                class: HostcallClass::PureQuery,
-                subject: "linux_syscall",
-                object: "process.credential",
-                operation: "query-id",
-            }
-        }
-        PlanKind::SetUid | PlanKind::SetGid | PlanKind::SetReUid | PlanKind::SetReGid => {
-            HostcallBinding {
-                class: HostcallClass::ImmediatePrivilegedOp,
-                subject: "linux_syscall",
-                object: "process.credential",
-                operation: "transition-id",
-            }
-        }
+        PlanKind::GetUid
+        | PlanKind::GetGid
+        | PlanKind::GetEuid
+        | PlanKind::GetEgid
+        | PlanKind::GetResUid
+        | PlanKind::GetResGid
+        | PlanKind::GetGroups
+        | PlanKind::CapGet => HostcallBinding {
+            class: HostcallClass::PureQuery,
+            subject: "linux_syscall",
+            object: "process.credential",
+            operation: "query-id",
+        },
+        PlanKind::SetUid
+        | PlanKind::SetGid
+        | PlanKind::SetReUid
+        | PlanKind::SetReGid
+        | PlanKind::SetResUid
+        | PlanKind::SetResGid
+        | PlanKind::SetGroups
+        | PlanKind::CapSet => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.credential",
+            operation: "transition-id",
+        },
         PlanKind::GetPgid | PlanKind::GetSid => HostcallBinding {
             class: HostcallClass::PureQuery,
             subject: "linux_syscall",

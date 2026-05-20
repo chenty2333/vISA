@@ -93,6 +93,12 @@ pub const SYS_GETPGRP: u64 = 111;
 pub const SYS_SETSID: u64 = 112;
 pub const SYS_SETREUID: u64 = 113;
 pub const SYS_SETREGID: u64 = 114;
+pub const SYS_GETGROUPS: u64 = 115;
+pub const SYS_SETGROUPS: u64 = 116;
+pub const SYS_SETRESUID: u64 = 117;
+pub const SYS_GETRESUID: u64 = 118;
+pub const SYS_SETRESGID: u64 = 119;
+pub const SYS_GETRESGID: u64 = 120;
 pub const SYS_STATFS: u64 = 137;
 pub const SYS_FSTATFS: u64 = 138;
 pub const SYS_MOUNT: u64 = 165;
@@ -384,6 +390,14 @@ pub enum PlanKind {
     SetGid = 91,
     SetReUid = 92,
     SetReGid = 93,
+    GetGroups = 94,
+    SetGroups = 95,
+    SetResUid = 96,
+    GetResUid = 97,
+    SetResGid = 98,
+    GetResGid = 99,
+    CapGet = 100,
+    CapSet = 101,
 }
 
 impl PlanKind {
@@ -482,6 +496,14 @@ impl PlanKind {
             91 => Some(Self::SetGid),
             92 => Some(Self::SetReUid),
             93 => Some(Self::SetReGid),
+            94 => Some(Self::GetGroups),
+            95 => Some(Self::SetGroups),
+            96 => Some(Self::SetResUid),
+            97 => Some(Self::GetResUid),
+            98 => Some(Self::SetResGid),
+            99 => Some(Self::GetResGid),
+            100 => Some(Self::CapGet),
+            101 => Some(Self::CapSet),
             _ => None,
         }
     }

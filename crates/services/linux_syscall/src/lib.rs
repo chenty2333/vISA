@@ -13,20 +13,21 @@ use vmos_abi::{
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
     FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
-    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES,
-    SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE, SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3,
-    SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK,
-    SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST, SYS_GETCWD, SYS_GETDENTS64,
-    SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID,
-    SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK,
-    SYS_LINKAT, SYS_LISTEN, SYS_MMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE,
-    SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV,
-    SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
-    SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETPGID,
-    SYS_SETREGID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CAPGET, SYS_CAPSET,
+    SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE,
+    SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+    SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
+    SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
+    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID,
+    SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT,
+    SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -124,6 +125,14 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_SETGID => plan_setgid(a0),
         SYS_SETREUID => plan_setreuid(a0, a1),
         SYS_SETREGID => plan_setregid(a0, a1),
+        SYS_SETRESUID => plan_setresuid(a0, a1, a2),
+        SYS_GETRESUID => plan_getresuid(a0, a1, a2),
+        SYS_SETRESGID => plan_setresgid(a0, a1, a2),
+        SYS_GETRESGID => plan_getresgid(a0, a1, a2),
+        SYS_GETGROUPS => plan_getgroups(a0, a1),
+        SYS_SETGROUPS => plan_setgroups(a0, a1),
+        SYS_CAPGET => plan_capget(a0, a1),
+        SYS_CAPSET => plan_capset(a0, a1),
         SYS_GETPGID => plan_getpgid(a0),
         SYS_GETPGRP => plan_getpgid(0),
         SYS_GETSID => plan_getsid(a0),
@@ -973,6 +982,46 @@ fn plan_setregid(rgid: u64, egid: u64) -> PackedStep {
     PackedStep::plan(PlanKind::SetReGid)
 }
 
+fn plan_setresuid(ruid: u64, euid: u64, suid: u64) -> PackedStep {
+    reset_plan(PlanKind::SetResUid, [ruid, euid, suid, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetResUid)
+}
+
+fn plan_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::GetResUid, [ruid_ptr, euid_ptr, suid_ptr, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetResUid)
+}
+
+fn plan_setresgid(rgid: u64, egid: u64, sgid: u64) -> PackedStep {
+    reset_plan(PlanKind::SetResGid, [rgid, egid, sgid, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetResGid)
+}
+
+fn plan_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::GetResGid, [rgid_ptr, egid_ptr, sgid_ptr, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetResGid)
+}
+
+fn plan_getgroups(size: u64, list_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::GetGroups, [size, list_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetGroups)
+}
+
+fn plan_setgroups(size: u64, list_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::SetGroups, [size, list_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetGroups)
+}
+
+fn plan_capget(header_ptr: u64, data_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::CapGet, [header_ptr, data_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::CapGet)
+}
+
+fn plan_capset(header_ptr: u64, data_ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::CapSet, [header_ptr, data_ptr, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::CapSet)
+}
+
 fn plan_setpgid(pid: u64, pgid: u64) -> PackedStep {
     reset_plan(PlanKind::SetPgid, [pid, pgid, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::SetPgid)
@@ -1505,6 +1554,58 @@ mod tests {
         assert_eq!(PlanKind::from_raw(setregid.aux), Some(PlanKind::SetReGid));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 200);
+
+        let setresuid = PackedStep::decode(dispatch(SYS_SETRESUID, u64::MAX, 2000, 3000, 0, 0, 0));
+        assert_eq!(setresuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(setresuid.aux), Some(PlanKind::SetResUid));
+        assert_eq!(plan_arg(0), u64::MAX);
+        assert_eq!(plan_arg(1), 2000);
+        assert_eq!(plan_arg(2), 3000);
+
+        let getresuid = PackedStep::decode(dispatch(SYS_GETRESUID, 0x10, 0x14, 0x18, 0, 0, 0));
+        assert_eq!(getresuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getresuid.aux), Some(PlanKind::GetResUid));
+        assert_eq!(plan_arg(0), 0x10);
+        assert_eq!(plan_arg(1), 0x14);
+        assert_eq!(plan_arg(2), 0x18);
+
+        let setresgid = PackedStep::decode(dispatch(SYS_SETRESGID, u64::MAX, 200, 300, 0, 0, 0));
+        assert_eq!(setresgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(setresgid.aux), Some(PlanKind::SetResGid));
+        assert_eq!(plan_arg(0), u64::MAX);
+        assert_eq!(plan_arg(1), 200);
+        assert_eq!(plan_arg(2), 300);
+
+        let getresgid = PackedStep::decode(dispatch(SYS_GETRESGID, 0x20, 0x24, 0x28, 0, 0, 0));
+        assert_eq!(getresgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getresgid.aux), Some(PlanKind::GetResGid));
+        assert_eq!(plan_arg(0), 0x20);
+        assert_eq!(plan_arg(1), 0x24);
+        assert_eq!(plan_arg(2), 0x28);
+
+        let getgroups = PackedStep::decode(dispatch(SYS_GETGROUPS, 4, 0x30, 0, 0, 0, 0));
+        assert_eq!(getgroups.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getgroups.aux), Some(PlanKind::GetGroups));
+        assert_eq!(plan_arg(0), 4);
+        assert_eq!(plan_arg(1), 0x30);
+
+        let setgroups = PackedStep::decode(dispatch(SYS_SETGROUPS, 2, 0x40, 0, 0, 0, 0));
+        assert_eq!(setgroups.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(setgroups.aux), Some(PlanKind::SetGroups));
+        assert_eq!(plan_arg(0), 2);
+        assert_eq!(plan_arg(1), 0x40);
+
+        let capget = PackedStep::decode(dispatch(SYS_CAPGET, 0x50, 0x58, 0, 0, 0, 0));
+        assert_eq!(capget.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(capget.aux), Some(PlanKind::CapGet));
+        assert_eq!(plan_arg(0), 0x50);
+        assert_eq!(plan_arg(1), 0x58);
+
+        let capset = PackedStep::decode(dispatch(SYS_CAPSET, 0x60, 0x68, 0, 0, 0, 0));
+        assert_eq!(capset.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(capset.aux), Some(PlanKind::CapSet));
+        assert_eq!(plan_arg(0), 0x60);
+        assert_eq!(plan_arg(1), 0x68);
 
         let getpgid = PackedStep::decode(dispatch(SYS_GETPGID, 42, 0, 0, 0, 0, 0));
         assert_eq!(getpgid.tag, vmos_abi::StepTag::Plan);
