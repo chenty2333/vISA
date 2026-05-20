@@ -12,6 +12,7 @@ use super::{
 use crate::{frontends::linux_elf::handle_user_fault, interrupts};
 
 const SA_NODEFER: u64 = 0x4000_0000;
+const SA_RESETHAND: u64 = 0x8000_0000;
 const LINUX_SIGSET_BYTES: usize = 8;
 const LINUX_SIGACTION_BYTES: usize = 32;
 
@@ -512,6 +513,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             next_mask |= linux_signal_bit(signal.signo);
         }
         self.threads[thread_index].sigmask = next_mask;
+        if action.flags & SA_RESETHAND != 0 {
+            let _ = self.set_sigaction(pid, signal.signo, SigAction::default());
+        }
 
         Some(UserSignalDelivery { signal, action, old_sigmask })
     }
@@ -764,6 +768,29 @@ mod tests {
         let set = linux_signal_bit(2) | linux_signal_bit(9) | linux_signal_bit(19);
 
         assert_eq!(waitable_signal_set(set), linux_signal_bit(2));
+    }
+
+    #[test]
+    fn reset_hand_handler_resets_disposition_when_taken() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        let action = SigAction {
+            handler: 0x4000,
+            flags: SA_RESETHAND,
+            restorer: 0x5000,
+            mask: linux_signal_bit(3),
+        };
+        assert!(runtime.set_sigaction(pid, 2, action));
+        runtime.queue_signal_to_thread(tid, 2, 0, pid, 0);
+
+        let delivery = runtime.take_pending_user_handler_signal(tid).expect("handler delivery");
+        assert_eq!(delivery.signal.signo, 2);
+        assert_eq!(delivery.action, action);
+        assert_eq!(runtime.get_sigaction(pid, 2), Some(SigAction::default()));
+        let thread = runtime.query_thread(tid).expect("thread");
+        assert_eq!(thread.sigmask, linux_signal_bit(2) | linux_signal_bit(3));
+        assert!(thread.pending_signals.is_empty());
     }
 
     #[test]

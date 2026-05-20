@@ -244,7 +244,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.console.write_bytes(&bytes, false)?;
                 Ok(LinuxCallResult::Ret(len as i64))
             }
-            StepTag::Exit => Ok(LinuxCallResult::Exit(decoded.value)),
+            StepTag::Exit => {
+                let code = decoded.value;
+                let pid = self.current_pid();
+                self.close_active_fd_table_for_process_exit();
+                self.process_exit(pid, code);
+                Ok(LinuxCallResult::Exit(code))
+            }
             StepTag::Error => Ok(LinuxCallResult::Ret(decoded.value as i64)),
         }
     }
@@ -326,12 +332,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::RtSigaction => self.plan_rt_sigaction(plan),
             PlanKind::RtSigprocmask => self.plan_rt_sigprocmask(plan),
             PlanKind::Wait4 => self.plan_wait4(plan),
+            PlanKind::Exit => self.plan_exit(plan),
             // Stubs for unimplemented PlanKind variants
             PlanKind::Clone
             | PlanKind::Fork
             | PlanKind::Vfork
             | PlanKind::Execve
-            | PlanKind::Exit
             | PlanKind::RtSigreturn => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }

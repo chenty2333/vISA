@@ -993,6 +993,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_exit(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let code = plan.args[0] as i32;
+        let pid = self.current_pid();
+        self.close_active_fd_table_for_process_exit();
+        self.process_exit(pid, code);
+        Ok(LinuxCallResult::Exit(code))
+    }
+
     fn notify_child_exit_waiters(&mut self) {
         let ready_waits: Vec<u64> = self
             .waits
@@ -1064,7 +1072,7 @@ fn robust_list_ptrace_may_access(
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{ERR_EFAULT, SYS_WAIT4, SyscallContext};
+    use vmos_abi::{ERR_EFAULT, SYS_EXIT, SYS_WAIT4, SyscallContext};
 
     use super::*;
     use crate::supervisor::engine::RuntimeOnlyExecutor;
@@ -1078,6 +1086,13 @@ mod tests {
         match result {
             LinuxCallResult::Ret(ret) => ret,
             other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn expect_exit(result: LinuxCallResult) -> i32 {
+        match result {
+            LinuxCallResult::Exit(code) => code,
+            other => panic!("expected Exit, got {other:?}"),
         }
     }
 
@@ -1149,6 +1164,31 @@ mod tests {
 
         assert_eq!(expect_ret(waited), -(ERR_EFAULT as i64));
         assert_eq!(runtime.query_process(child).unwrap().state, ProcessRuntimeStateKind::Zombie);
+    }
+
+    #[test]
+    fn generic_exit_marks_process_zombie_and_closes_fds() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        let (read_fd, write_fd) = runtime.create_pipe_pair().expect("pipe pair");
+        assert!(runtime.is_pipe_fd(read_fd));
+        assert!(runtime.is_pipe_fd(write_fd));
+
+        let exited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_exit",
+                SyscallContext::new(SYS_EXIT, [23, 0, 0, 0, 0, 0]),
+            )
+            .expect("exit dispatch");
+
+        assert_eq!(expect_exit(exited), 23);
+        let process = runtime.query_process(pid).expect("current process");
+        assert_eq!(process.state, ProcessRuntimeStateKind::Zombie);
+        assert_eq!(process.exit_code, Some(23));
+        assert_eq!(runtime.query_thread(tid).unwrap().state, ThreadRuntimeStateKind::Dead);
+        assert!(!runtime.is_pipe_fd(read_fd));
+        assert!(!runtime.is_pipe_fd(write_fd));
     }
 }
 

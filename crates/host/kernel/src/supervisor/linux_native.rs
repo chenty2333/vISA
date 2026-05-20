@@ -142,7 +142,7 @@ impl LinuxFrontend {
             SYS_BPF => self.plan_bpf(a0, a1, a2),
             SYS_SET_ROBUST_LIST => self.plan_set_robust_list(a0, a1),
             SYS_GET_ROBUST_LIST => self.plan_get_robust_list(a0, a1, a2),
-            SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
+            SYS_EXIT | SYS_EXIT_GROUP => self.plan_exit(a0),
             _ => PackedStep::error(-ERR_ENOSYS),
         };
         Ok(step.raw())
@@ -1007,6 +1007,11 @@ impl LinuxFrontend {
     fn plan_wait4(&mut self, selector: u64, status: u64, options: u64, rusage: u64) -> PackedStep {
         self.reset_plan(PlanKind::Wait4, [selector, status, options, rusage, 0, 0]);
         PackedStep::plan(PlanKind::Wait4)
+    }
+
+    fn plan_exit(&mut self, code: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Exit, [code, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Exit)
     }
 
     fn setsockopt_u32_value(

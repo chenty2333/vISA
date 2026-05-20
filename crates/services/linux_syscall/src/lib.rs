@@ -155,7 +155,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_BPF => plan_bpf(a0, a1, a2),
         SYS_SET_ROBUST_LIST => plan_set_robust_list(a0, a1),
         SYS_GET_ROBUST_LIST => plan_get_robust_list(a0, a1, a2),
-        SYS_EXIT | SYS_EXIT_GROUP => PackedStep::exit(a0 as i32),
+        SYS_EXIT | SYS_EXIT_GROUP => plan_exit(a0),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
 
@@ -919,6 +919,11 @@ fn plan_wait4(selector: u64, status: u64, options: u64, rusage: u64) -> PackedSt
     PackedStep::plan(PlanKind::Wait4)
 }
 
+fn plan_exit(code: u64) -> PackedStep {
+    reset_plan(PlanKind::Exit, [code, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Exit)
+}
+
 fn reset_plan(kind: PlanKind, args: [u64; 6]) {
     let _ = kind;
     unsafe {
@@ -1375,6 +1380,17 @@ mod tests {
         assert_eq!(plan_arg(1), 0x1000);
         assert_eq!(plan_arg(2), 1);
         assert_eq!(plan_arg(3), 0x2000);
+    }
+
+    #[test]
+    fn exit_plans_process_exit_instead_of_terminal_step() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_EXIT, 23, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Exit));
+        assert_eq!(plan_arg(0), 23);
     }
 
     #[test]
