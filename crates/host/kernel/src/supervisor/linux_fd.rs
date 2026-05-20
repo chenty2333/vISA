@@ -2410,8 +2410,12 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
         match self.epoll.notify_ready(ready_key) {
             Ok(wait_ids) => {
+                let had_waiters = !wait_ids.is_empty();
                 for wait_id in wait_ids {
                     self.scheduler.push_event(Event::WaitReady(wait_id));
+                }
+                if had_waiters {
+                    self.drain_event_queue();
                 }
             }
             Err(ServiceCallError::Trap(reason)) => {
