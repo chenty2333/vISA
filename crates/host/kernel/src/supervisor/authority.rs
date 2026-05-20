@@ -300,6 +300,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "timer.sleep",
             operation: "arm",
         },
+        PlanKind::Pause => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "linux_syscall",
+            object: "signal.wait",
+            operation: "pause",
+        },
         PlanKind::FutexWait | PlanKind::FutexWaitBitset | PlanKind::FutexWaitRequeuePi => {
             HostcallBinding {
                 class: HostcallClass::AsyncOp,

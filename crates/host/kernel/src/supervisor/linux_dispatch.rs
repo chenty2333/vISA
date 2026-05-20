@@ -269,6 +269,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::GetCwd => Ok(LinuxCallResult::Bytes(CURRENT_CWD.to_vec())),
             PlanKind::Uname => Ok(LinuxCallResult::Bytes(UNAME_BYTES.to_vec())),
             PlanKind::Sleep => self.plan_sleep(plan),
+            PlanKind::Pause => self.plan_pause(plan),
             PlanKind::FutexWait => self.plan_futex_wait(plan),
             PlanKind::FutexWake => self.plan_futex_wake(plan),
             PlanKind::FutexWaitBitset => self.plan_futex_wait_bitset(plan),
@@ -331,8 +332,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::RtSigprocmask
             | PlanKind::Tgkill
             | PlanKind::RtSigreturn
-            | PlanKind::Kill
-            | PlanKind::Pause => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::Kill => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
         }
     }
 }

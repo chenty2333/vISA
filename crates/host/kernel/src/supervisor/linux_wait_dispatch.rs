@@ -36,6 +36,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.record_wait_token(token);
         Ok(LinuxCallResult::Pending(token))
     }
+
+    pub(super) fn plan_pause(&mut self, _plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::Signal,
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        Ok(LinuxCallResult::Pending(token))
+    }
+
     pub(super) fn plan_futex_wait(
         &mut self,
         plan: LinuxPlan,
@@ -788,12 +800,15 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EAGAIN, ERR_EDEADLK, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
-        FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, SYS_FUTEX, SyscallContext,
+        ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_LOCK_PI,
+        FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, SYS_FUTEX, SYS_PAUSE,
+        SyscallContext,
     };
 
     use super::*;
-    use crate::supervisor::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime};
+    use crate::supervisor::{
+        engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime, types::WaitKind,
+    };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
         let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
@@ -810,6 +825,25 @@ mod tests {
     fn read_word(runtime: &mut PrototypeRuntime<'_>, ptr: u32) -> u32 {
         let bytes = runtime.linux.read_bytes(ptr, 4).expect("futex word bytes");
         u32::from_le_bytes(bytes.try_into().expect("word len"))
+    }
+
+    #[test]
+    fn generic_pause_registers_signal_wait_and_resumes_eintr() {
+        let mut runtime = test_runtime();
+        let pause = runtime
+            .dispatch_linux_syscall_raw("test_pause", SyscallContext::new(SYS_PAUSE, [0; 6]))
+            .expect("pause dispatch");
+        let token = match pause {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending pause wait, got {other:?}"),
+        };
+        assert_eq!(token.kind, WaitKind::Signal);
+
+        runtime.scheduler.push_event(Event::WaitCancelled(token.id, ERR_EINTR));
+        runtime.drain_event_queue();
+        let resolution = runtime.waits.take_resolution(token).expect("pause resolution");
+        assert_eq!(resolution.source, WaitSource::Signal);
+        assert_eq!(resolution.outcome, WaitOutcome::Cancelled(ERR_EINTR));
     }
 
     #[test]
