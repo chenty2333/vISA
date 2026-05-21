@@ -1,7 +1,7 @@
 use vmos_abi::{
     AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
-    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_STREAM,
-    SOL_SOCKET,
+    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE,
+    SOCK_STREAM, SOL_SOCKET,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -380,6 +380,9 @@ impl LinuxSocketState {
             (SOL_SOCKET, SO_TYPE) => Ok(self.sockets[index].ty),
             (SOL_SOCKET, SO_REUSEADDR) => Ok(self.sockets[index].reuse_addr as u32),
             (SOL_SOCKET, SO_REUSEPORT) => Ok(self.sockets[index].reuse_port as u32),
+            (SOL_SOCKET, SO_ACCEPTCONN) => {
+                Ok((self.sockets[index].state == SOCKET_LISTENING) as u32)
+            }
             _ => Err(ERR_EOPNOTSUPP),
         }
     }
@@ -511,8 +514,8 @@ impl Default for LinuxSocketState {
 mod tests {
     use vmos_abi::{
         AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL,
-        ERR_EOPNOTSUPP, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_DGRAM, SOCK_STREAM,
-        SOL_SOCKET,
+        ERR_EOPNOTSUPP, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_DGRAM,
+        SOCK_STREAM, SOL_SOCKET,
     };
 
     use super::*;
@@ -768,6 +771,7 @@ mod tests {
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_TYPE), Ok(SOCK_STREAM));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(1));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(1));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
 
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 4, 0), Ok(()));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(0));
@@ -780,6 +784,7 @@ mod tests {
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.setsockopt(1, SOL_SOCKET + 1, SO_REUSEADDR, 4, 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_ERROR, 4, 0), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_ACCEPTCONN, 4, 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 3, 1), Err(ERR_EINVAL));
         assert_eq!(state.setsockopt(99, SOL_SOCKET, SO_REUSEADDR, 4, 1), Err(ERR_EBADF));
     }
@@ -855,7 +860,25 @@ mod tests {
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_TYPE), Ok(SOCK_STREAM));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(0));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR + 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.getsockopt(99, SOL_SOCKET, SO_ERROR), Err(ERR_EBADF));
+    }
+
+    #[test]
+    fn getsockopt_acceptconn_tracks_listener_state() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
+
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, 1), Ok(()));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(1));
+
+        assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
+        assert_eq!(connect_ipv4(&mut state, 2, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.accept_socket(1, 7, 99), Ok(7));
+        assert_eq!(state.getsockopt(7, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
     }
 }

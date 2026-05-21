@@ -1159,9 +1159,10 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
-        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT,
-        SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EINTR, SO_ACCEPTCONN, SOCK_STREAM, SYS_ACCEPT,
+        SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
+        SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE,
+        SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1230,6 +1231,23 @@ mod tests {
     fn write_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, bytes: &[u8]) -> i64 {
         let (ptr, len) = runtime.write_linux_arg_bytes(bytes).expect("write buffer");
         dispatch_ret(runtime, "test_write", SYS_WRITE, [fd as u64, ptr as u64, len as u64, 0, 0, 0])
+    }
+
+    fn getsockopt_u32(runtime: &mut PrototypeRuntime<'_>, fd: i64, optname: u64) -> u32 {
+        let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
+        runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");
+        assert_eq!(
+            dispatch_ret(
+                runtime,
+                "test_getsockopt_u32",
+                SYS_GETSOCKOPT,
+                [fd as u64, SOL_SOCKET, optname, opt_ptr as u64, (opt_ptr + 4) as u64, 0],
+            ),
+            0
+        );
+        let bytes = runtime.linux.read_bytes(opt_ptr, 8).expect("getsockopt output");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap())
     }
 
     fn assert_epoll_event(bytes: &[u8], events: u32, data: u64) {
@@ -1975,6 +1993,54 @@ mod tests {
         let written = runtime.linux.read_bytes(addr_ptr, 20).expect("accept4 writeback");
         assert_sockaddr_in(&written[..16], REMOTE_IPV4, remote_port);
         assert_eq!(u32::from_le_bytes(written[16..20].try_into().unwrap()), 16);
+    }
+
+    #[test]
+    fn packet_backed_so_acceptconn_tracks_listener_and_child() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_ACCEPTCONN as u64), 0);
+
+        let local_port = 18090u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_ACCEPTCONN as u64), 1);
+
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, 40_009, 0x9192_9394);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_ACCEPTCONN as u64), 0);
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_ACCEPTCONN as u64), 1);
     }
 
     #[test]
