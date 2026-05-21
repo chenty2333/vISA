@@ -1146,6 +1146,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(new_fd)
     }
 
+    pub(crate) fn add_seccomp_notif_fd(
+        &mut self,
+        src_fd: u32,
+        new_fd: Option<u32>,
+        fd_flags: u32,
+    ) -> Result<u32, i32> {
+        let mut entry = self.dup_source_entry(src_fd)?;
+        entry.fd_flags = fd_flags;
+
+        let Some(new_fd) = new_fd else {
+            let allocated_fd = (3..self.fd_allocation_limit())
+                .find(|fd| self.fd_table.get(*fd as usize).is_none_or(Option::is_none))
+                .ok_or(ERR_EMFILE)?;
+            self.install_fd_at(allocated_fd, entry);
+            return Ok(allocated_fd);
+        };
+
+        if new_fd >= self.fd_allocation_limit() {
+            return Err(ERR_EBADF);
+        }
+        if src_fd == new_fd && self.fd_entry(new_fd).is_some() {
+            let slot = self.fd_table.get_mut(new_fd as usize).and_then(Option::as_mut);
+            let Some(current) = slot else {
+                return Err(ERR_EBADF);
+            };
+            current.fd_flags = fd_flags;
+            return Ok(new_fd);
+        }
+
+        self.close_fd_if_present(new_fd)?;
+        self.install_fd_at(new_fd, entry);
+        Ok(new_fd)
+    }
+
     pub(crate) fn close_fd_number(&mut self, fd: u32) -> Result<(), i32> {
         if self.require_capability("linux_syscall", "fd.table", "close").is_err() {
             return Err(ERR_EPERM);

@@ -3,11 +3,11 @@ use alloc::{vec, vec::Vec};
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, LINUX_SECCOMP_NOTIF_RESP_SIZE, SECCOMP_FILTER_FLAG_LOG,
-    SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_IOCTL_NOTIF_ADDFD,
-    SECCOMP_IOCTL_NOTIF_ID_VALID, SECCOMP_IOCTL_NOTIF_RECV, SECCOMP_IOCTL_NOTIF_SEND,
-    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
-    seccomp_action_available,
+    AUDIT_ARCH_X86_64, LINUX_SECCOMP_NOTIF_ADDFD_SIZE, LINUX_SECCOMP_NOTIF_RESP_SIZE,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_TSYNC,
+    SECCOMP_IOCTL_NOTIF_ADDFD, SECCOMP_IOCTL_NOTIF_ID_VALID, SECCOMP_IOCTL_NOTIF_RECV,
+    SECCOMP_IOCTL_NOTIF_SEND, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    linux_seccomp_notif_sizes_bytes, seccomp_action_available,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EBUSY,
@@ -5183,7 +5183,11 @@ fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
             let bytes = read_user_bytes(frame.rdx, 8)?;
             active_context().supervisor.seccomp_listener_id_valid(fd, &bytes)
         }
-        SECCOMP_IOCTL_NOTIF_ADDFD => Err(ERR_EOPNOTSUPP),
+        SECCOMP_IOCTL_NOTIF_ADDFD => {
+            active_context().supervisor.seccomp_listener_id_for_fd(fd)?;
+            let bytes = read_user_bytes(frame.rdx, LINUX_SECCOMP_NOTIF_ADDFD_SIZE as usize)?;
+            active_context().supervisor.seccomp_listener_add_fd(fd, &bytes)
+        }
         LOOP_CTL_GET_FREE => {
             let path = active_context().supervisor.fd_path(fd).map_err(|_| ERR_ENOTTY)?;
             if path == b"/dev/loop-control" { Ok(0) } else { Err(ERR_ENOTTY) }

@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use semantic_core::CredentialTransitionKind;
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
+    AUDIT_ARCH_X86_64, LINUX_SECCOMP_NOTIF_ADDFD_SIZE, SECCOMP_ADDFD_FLAG_SEND,
+    SECCOMP_ADDFD_FLAG_SETFD, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
     SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_IOCTL_NOTIF_ADDFD, SECCOMP_IOCTL_NOTIF_ID_VALID,
     SECCOMP_IOCTL_NOTIF_RECV, SECCOMP_IOCTL_NOTIF_SEND, SECCOMP_USER_NOTIF_FLAG_CONTINUE,
     SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
@@ -57,6 +58,8 @@ const PR_CAP_AMBIENT_LOWER: u64 = 3;
 const PR_CAP_AMBIENT_CLEAR_ALL: u64 = 4;
 const MAX_SECCOMP_PENDING_NOTIFICATIONS_PER_LISTENER: usize = 64;
 const ERR_ENOTTY: i32 = 25;
+const LINUX_O_CLOEXEC: u32 = 0o2000000;
+const LINUX_FD_CLOEXEC: u32 = 1;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn apply_generic_seccomp_decision(
@@ -738,6 +741,50 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(0)
     }
 
+    pub(crate) fn seccomp_listener_add_fd(&mut self, fd: u32, bytes: &[u8]) -> Result<i64, i32> {
+        let listener_id = self.seccomp_listener_id_for_fd(fd)?;
+        let id = read_u64_le(bytes, 0)?;
+        let flags = read_u32_le(bytes, 8)?;
+        let srcfd = read_u32_le(bytes, 12)?;
+        let newfd = read_u32_le(bytes, 16)?;
+        let newfd_flags = read_u32_le(bytes, 20)?;
+        if flags & !(SECCOMP_ADDFD_FLAG_SETFD | SECCOMP_ADDFD_FLAG_SEND) != 0 {
+            return Err(ERR_EINVAL);
+        }
+        if newfd_flags & !LINUX_O_CLOEXEC != 0 {
+            return Err(ERR_EINVAL);
+        }
+        if flags & SECCOMP_ADDFD_FLAG_SETFD != 0 && newfd == fd && srcfd != fd {
+            return Err(ERR_EINVAL);
+        }
+        if !self.seccomp_notifications.iter().any(|entry| {
+            entry.listener_id == listener_id
+                && entry.id == id
+                && entry.state == SeccompNotificationState::Delivered
+        }) {
+            return Err(ERR_ENOENT);
+        }
+
+        let requested_fd = if flags & SECCOMP_ADDFD_FLAG_SETFD != 0 { Some(newfd) } else { None };
+        let fd_flags = if newfd_flags & LINUX_O_CLOEXEC != 0 { LINUX_FD_CLOEXEC } else { 0 };
+        let installed_fd = self.add_seccomp_notif_fd(srcfd, requested_fd, fd_flags)?;
+        if flags & SECCOMP_ADDFD_FLAG_SEND != 0 {
+            let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
+                entry.listener_id == listener_id
+                    && entry.id == id
+                    && entry.state == SeccompNotificationState::Delivered
+            }) else {
+                return Err(ERR_ENOENT);
+            };
+            notification.response = Some(SeccompNotificationResponse::Return(installed_fd as i64));
+            notification.state = SeccompNotificationState::Responded;
+            let wait_token_id = notification.wait_token_id;
+            self.scheduler.push_event(Event::WaitReady(wait_token_id));
+            self.drain_event_queue();
+        }
+        Ok(installed_fd as i64)
+    }
+
     pub(crate) fn seccomp_listener_id_valid(&mut self, fd: u32, bytes: &[u8]) -> Result<i64, i32> {
         let listener_id = self.seccomp_listener_id_for_fd(fd)?;
         let id = read_u64_le(bytes, 0)?;
@@ -777,7 +824,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 let bytes = self.linux.read_bytes(ptr, 8).map_err(|_| ERR_EFAULT)?;
                 self.seccomp_listener_id_valid(fd, &bytes)
             }
-            SECCOMP_IOCTL_NOTIF_ADDFD => Err(ERR_EOPNOTSUPP),
+            SECCOMP_IOCTL_NOTIF_ADDFD => {
+                let bytes = self
+                    .linux
+                    .read_bytes(ptr, LINUX_SECCOMP_NOTIF_ADDFD_SIZE as u32)
+                    .map_err(|_| ERR_EFAULT)?;
+                self.seccomp_listener_add_fd(fd, &bytes)
+            }
             _ => Err(ERR_ENOTTY),
         }
     }
@@ -865,7 +918,7 @@ fn write_u32_le(out: &mut [u8], offset: usize, value: u32) {
 mod tests {
     use service_core::seccomp::{SECCOMP_RET_ALLOW, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF};
     use vmos_abi::{
-        ERR_EACCES, ERR_EINTR, ERR_EOPNOTSUPP, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext,
+        ERR_EACCES, ERR_EINTR, ERR_EINVAL, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext,
     };
 
     use super::{
@@ -910,6 +963,16 @@ mod tests {
         seccomp_args[20..24].copy_from_slice(&ret.to_le_bytes());
         runtime.linux.write_bytes(fprog_ptr, &seccomp_args).expect("seccomp buffer write");
         fprog_ptr
+    }
+
+    fn addfd_bytes(id: u64, flags: u32, srcfd: u32, newfd: u32, newfd_flags: u32) -> [u8; 24] {
+        let mut bytes = [0u8; 24];
+        write_u64_le(&mut bytes, 0, id);
+        write_u32_le(&mut bytes, 8, flags);
+        write_u32_le(&mut bytes, 12, srcfd);
+        write_u32_le(&mut bytes, 16, newfd);
+        write_u32_le(&mut bytes, 20, newfd_flags);
+        bytes
     }
 
     fn cap_arg(capability: u64) -> u64 {
@@ -995,13 +1058,136 @@ mod tests {
     }
 
     #[test]
-    fn generic_seccomp_listener_addfd_is_explicitly_unsupported() {
+    fn generic_seccomp_user_notif_addfd_installs_fd_and_keeps_notification_pending() {
+        let mut runtime = test_runtime();
+        let src_fd = runtime.create_eventfd(0, 0).expect("eventfd source");
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_USER_NOTIF);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("seccomp user-notif install");
+        let listener_fd = expect_ret(install) as u32;
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_addfd_pending",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp user-notif dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp notification, got {other:?}"),
+        };
+
+        let (notif_ptr, _) =
+            runtime.linux.write_arg_bytes(&[0u8; 80]).expect("notification buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_RECV, notif_ptr)
+                .expect("recv notification"),
+            0
+        );
+        let notif = runtime.linux.read_bytes(notif_ptr, 80).expect("read notification");
+        let id = read_u64_le(&notif, 0).expect("notification id");
+        let addfd = addfd_bytes(id, SECCOMP_ADDFD_FLAG_SETFD, src_fd, 42, LINUX_O_CLOEXEC);
+        let (addfd_ptr, _) = runtime.linux.write_arg_bytes(&addfd).expect("addfd buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, addfd_ptr)
+                .expect("addfd"),
+            42
+        );
+        assert!(runtime.is_eventfd_fd(src_fd));
+        assert!(runtime.is_eventfd_fd(42));
+        assert_eq!(runtime.fd_flags(42), Ok(LINUX_FD_CLOEXEC));
+        assert_eq!(runtime.seccomp_notifications[0].state, SeccompNotificationState::Delivered);
+
+        let mut response = [0u8; 24];
+        response[0..8].copy_from_slice(&id.to_le_bytes());
+        response[8..16].copy_from_slice(&5678i64.to_le_bytes());
+        let (response_ptr, _) = runtime.linux.write_arg_bytes(&response).expect("response buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_SEND, response_ptr)
+                .expect("send response"),
+            0
+        );
+
+        let resumed = runtime.block_on_wait("test_seccomp_addfd_resume", token).expect("resume");
+        assert_eq!(expect_ret(resumed), 5678);
+        assert!(runtime.seccomp_notifications.is_empty());
+    }
+
+    #[test]
+    fn generic_seccomp_user_notif_addfd_send_wakes_with_added_fd() {
+        let mut runtime = test_runtime();
+        let src_fd = runtime.create_eventfd(0, 0).expect("eventfd source");
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_USER_NOTIF);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("seccomp user-notif install");
+        let listener_fd = expect_ret(install) as u32;
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_addfd_send",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp user-notif dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp notification, got {other:?}"),
+        };
+
+        let (notif_ptr, _) =
+            runtime.linux.write_arg_bytes(&[0u8; 80]).expect("notification buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_RECV, notif_ptr)
+                .expect("recv notification"),
+            0
+        );
+        let notif = runtime.linux.read_bytes(notif_ptr, 80).expect("read notification");
+        let id = read_u64_le(&notif, 0).expect("notification id");
+        let addfd = addfd_bytes(id, SECCOMP_ADDFD_FLAG_SEND, src_fd, 0, 0);
+        let (addfd_ptr, _) = runtime.linux.write_arg_bytes(&addfd).expect("addfd buffer");
+        let installed_fd = runtime
+            .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, addfd_ptr)
+            .expect("addfd");
+        assert!(installed_fd >= 3);
+        assert!(runtime.is_eventfd_fd(installed_fd as u32));
+        assert_eq!(runtime.seccomp_notifications[0].state, SeccompNotificationState::Responded);
+
+        let resumed =
+            runtime.block_on_wait("test_seccomp_addfd_send_resume", token).expect("resume");
+        assert_eq!(expect_ret(resumed), installed_fd);
+        assert!(runtime.seccomp_notifications.is_empty());
+    }
+
+    #[test]
+    fn generic_seccomp_user_notif_addfd_rejects_unknown_flags() {
         let mut runtime = test_runtime();
         let listener_fd = runtime.create_seccomp_listener_fd().expect("listener fd");
+        let addfd = addfd_bytes(1, 4, listener_fd, 0, 0);
+        let (addfd_ptr, _) = runtime.linux.write_arg_bytes(&addfd).expect("addfd buffer");
 
         assert_eq!(
-            runtime.seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, 1),
-            Err(ERR_EOPNOTSUPP)
+            runtime.seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, addfd_ptr),
+            Err(ERR_EINVAL)
+        );
+
+        let addfd = addfd_bytes(1, 0, listener_fd, 0, LINUX_O_CLOEXEC << 1);
+        let (addfd_ptr, _) = runtime.linux.write_arg_bytes(&addfd).expect("addfd buffer");
+        assert_eq!(
+            runtime.seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, addfd_ptr),
+            Err(ERR_EINVAL)
         );
     }
 
