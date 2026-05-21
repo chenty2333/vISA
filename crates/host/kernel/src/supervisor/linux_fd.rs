@@ -398,6 +398,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (vfs_node_id, path, start, len) = self.fcntl_lock_target(fd, whence, start, len)?;
         match lock_type {
             F_RDLCK | F_WRLCK => {
+                if lock_type == F_RDLCK {
+                    self.require_fd_readable(fd).map_err(errno_from_service_error)?;
+                } else {
+                    self.require_fd_writable(fd).map_err(errno_from_service_error)?;
+                }
                 let result = self.vfs.fcntl_setlk(
                     vfs_node_id,
                     &path,
@@ -3157,4 +3162,75 @@ fn write_u64(out: &mut [u8], offset: usize, value: u64) {
 fn write_timespec_ns(out: &mut [u8], offset: usize, value: u64) {
     write_u64(out, offset, value / 1_000_000_000);
     write_u64(out, offset + 8, value % 1_000_000_000);
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use super::*;
+    use crate::supervisor::{
+        engine::RuntimeOnlyExecutor,
+        runtime::PrototypeRuntime,
+        types::{FdEntry, FdResource},
+    };
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn open_vfs_file(runtime: &mut PrototypeRuntime<'_>, path: &[u8], status_flags: u32) -> u32 {
+        runtime.vfs.create_file(path, 0o600, 0, 0).expect("create dynamic file");
+        let vfs_node_id = runtime.vfs.node_id_for_path(path);
+        runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::ServiceNode {
+                    route: ServiceRoute::Vfs,
+                    node: NodeKind::File,
+                    path: path.to_vec(),
+                    vfs_node_id,
+                },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags,
+                cursor_group: None,
+            })
+            .expect("install vfs fd")
+    }
+
+    #[test]
+    fn fcntl_setlk_requires_matching_open_mode() {
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const F_UNLCK: i16 = 2;
+
+        let mut runtime = test_runtime();
+        let read_only = open_vfs_file(&mut runtime, b"/tmp/read-lock-mode", 0);
+        let write_only = open_vfs_file(&mut runtime, b"/tmp/write-lock-mode", O_WRONLY);
+        let read_write = open_vfs_file(&mut runtime, b"/tmp/rw-lock-mode", O_RDWR);
+
+        assert_eq!(runtime.fcntl_setlk_fd(read_only, 100, F_WRLCK, 0, 0, 10), Err(ERR_EBADF));
+        assert_eq!(runtime.fcntl_setlkw_fd(write_only, 100, F_RDLCK, 0, 0, 10), Err(ERR_EBADF));
+
+        runtime
+            .fcntl_setlk_fd(read_only, 100, F_RDLCK, 0, 0, 10)
+            .expect("read lock on readable fd");
+        runtime
+            .fcntl_setlk_fd(write_only, 100, F_WRLCK, 0, 0, 10)
+            .expect("write lock on writable fd");
+        runtime
+            .fcntl_setlk_fd(read_write, 100, F_RDLCK, 0, 0, 10)
+            .expect("read lock on read-write fd");
+        runtime
+            .fcntl_setlk_fd(read_write, 100, F_WRLCK, 0, 0, 10)
+            .expect("write lock on read-write fd");
+
+        runtime
+            .fcntl_setlk_fd(read_only, 100, F_UNLCK, 0, 0, 10)
+            .expect("unlock does not require write mode");
+        runtime
+            .fcntl_setlk_fd(write_only, 100, F_UNLCK, 0, 0, 10)
+            .expect("unlock does not require read mode");
+    }
 }
