@@ -245,6 +245,17 @@ pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str>
     ring3::enter_user_mode(image.entry, image.stack_top);
 }
 
+pub(crate) fn charge_user_timer_tick(timer_hz: u64) -> Option<i32> {
+    let context = try_active_context()?;
+    context.supervisor.set_current_task(context.task_id);
+    context.supervisor.charge_current_cpu_timer_tick(timer_hz)
+}
+
+pub(crate) fn handle_user_forced_exit(status: i32) -> ! {
+    crate::kdebug!("forced user exit status={status}");
+    handle_exit(status)
+}
+
 pub(crate) extern "C" fn syscall_dispatch_from_asm(frame: *mut SyscallFrame) {
     let frame = unsafe { &mut *frame };
     let syscall_nr = frame.rax;

@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use pic8259::ChainedPics;
 use spin::{Lazy, Mutex};
 use x86_64::{
+    PrivilegeLevel,
     instructions::{interrupts, port::Port},
     structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
 };
@@ -118,9 +119,17 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     panic!("general protection fault (code={error_code:#x})\n{stack_frame:#?}");
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Release);
+    let forced_exit = if stack_frame.code_segment.rpl() == PrivilegeLevel::Ring3 {
+        crate::frontends::linux_elf::charge_user_timer_tick(TIMER_HZ as u64)
+    } else {
+        None
+    };
     unsafe {
         PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+    }
+    if let Some(status) = forced_exit {
+        crate::frontends::linux_elf::handle_user_forced_exit(status);
     }
 }

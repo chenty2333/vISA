@@ -18,6 +18,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.charge_current_cpu_time_ns(CPU_DISPATCH_QUANTUM_NS)
     }
 
+    pub(crate) fn charge_current_cpu_timer_tick(&mut self, timer_hz: u64) -> Option<i32> {
+        let tick_ns = NS_PER_SECOND / timer_hz.max(1);
+        self.charge_current_cpu_time_ns(tick_ns.max(1))
+    }
+
     pub(crate) fn charge_current_cpu_time_ns(&mut self, charged_ns: u64) -> Option<i32> {
         if charged_ns == 0 {
             return None;
@@ -248,6 +253,14 @@ mod tests {
         let thread =
             runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
         assert_eq!(thread.pending_signals.len(), 1);
+    }
+
+    #[test]
+    fn rlimit_cpu_timer_tick_charges_tick_quantum() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        assert_eq!(runtime.charge_current_cpu_timer_tick(1_000), None);
+        assert_eq!(runtime.query_process(pid).expect("current process").cpu_time_ns, 1_000_000);
     }
 
     #[test]
