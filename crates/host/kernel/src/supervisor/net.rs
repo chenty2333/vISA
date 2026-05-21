@@ -23,6 +23,7 @@ use crate::interrupts;
 
 const DEFAULT_DRIVER_PACKAGE: &str = "driver_virtio_net";
 const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
+const NETWORK_RUNTIME_PUMP_LIMIT: usize = 16;
 const REFERENCE_PACKET_BACKEND_RX_BATCH: usize = 4;
 const MAX_NET_STACK_PENDING_ACCEPTS: usize = 16;
 
@@ -704,35 +705,41 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: Option<ResourceId>,
     ) {
-        self.pump_reference_packet_backend(socket_resource, ready_key);
-        self.poll_network_driver_events();
-        self.poll_active_net_stack(socket_resource, ready_key);
-        self.pump_reference_packet_backend(socket_resource, ready_key);
+        self.pump_network_runtime_scoped(socket_resource, ready_key);
     }
 
     pub(super) fn pump_network_runtime(&mut self) {
-        self.pump_reference_packet_backend(None, 0);
-        self.poll_network_driver_events();
-        self.poll_active_net_stack(None, 0);
-        self.pump_reference_packet_backend(None, 0);
+        self.pump_network_runtime_scoped(None, 0);
     }
 
-    fn pump_reference_packet_backend(
+    fn pump_network_runtime_scoped(&mut self, socket_resource: Option<ResourceId>, ready_key: u64) {
+        for _ in 0..NETWORK_RUNTIME_PUMP_LIMIT {
+            if !self.pump_network_runtime_once(socket_resource, ready_key) {
+                break;
+            }
+        }
+    }
+
+    fn pump_network_runtime_once(
         &mut self,
         socket_resource: Option<ResourceId>,
         ready_key: u64,
-    ) {
-        self.pump_reference_packet_backend_rx();
-        self.pump_reference_packet_backend_tx(socket_resource, ready_key);
+    ) -> bool {
+        let mut progressed = false;
+        progressed |= self.pump_reference_packet_backend_rx() != 0;
+        progressed |= self.poll_network_driver_events() != 0;
+        progressed |= self.poll_active_net_stack(socket_resource, ready_key);
+        progressed |= self.pump_reference_packet_backend_tx(socket_resource, ready_key) != 0;
+        progressed
     }
 
-    fn pump_reference_packet_backend_rx(&mut self) {
+    fn pump_reference_packet_backend_rx(&mut self) -> usize {
         match self.net_driver.pending_rx_frames() {
             Ok(0) => {}
-            Ok(_) => return,
+            Ok(_) => return 0,
             Err(err) => {
                 self.warn_driver_service_error("driver_virtio_net pending rx", err);
-                return;
+                return 0;
             }
         }
         let mut slots: [PacketFrameSlot; REFERENCE_PACKET_BACKEND_RX_BATCH] =
@@ -741,13 +748,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(frames) => frames,
             Err(err) => {
                 crate::kwarn!("reference packet backend rx poll: {}", err);
-                return;
+                return 0;
             }
         };
         if frames > slots.len() {
             crate::kwarn!("reference packet backend overreported rx frames");
-            return;
+            return 0;
         }
+        let mut delivered = 0usize;
         let now_ticks = interrupts::tick_count();
         for slot in slots.iter().take(frames) {
             let len = slot.len as usize;
@@ -757,15 +765,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             if let Err(err) = self.net_driver.deliver_rx_frame(now_ticks, &slot.data[..len]) {
                 self.warn_driver_service_error("driver_virtio_net backend rx", err);
+            } else {
+                delivered += 1;
             }
         }
+        delivered
     }
 
     fn pump_reference_packet_backend_tx(
         &mut self,
         socket_resource: Option<ResourceId>,
         ready_key: u64,
-    ) {
+    ) -> usize {
+        let mut submitted_count = 0usize;
         loop {
             let frame = match self.net_driver.take_tx_frame() {
                 Ok(Some(frame)) => frame,
@@ -792,6 +804,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             crate::kwarn!("reference packet backend lost submitted tx frame");
                         }
                     }
+                    submitted_count += 1;
                 }
                 Err(err) => {
                     crate::kwarn!("reference packet backend tx submit: {}", err);
@@ -807,6 +820,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
         }
+        submitted_count
     }
 
     fn warn_driver_service_error(&self, context: &str, err: ServiceCallError) {
@@ -817,8 +831,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    pub(super) fn poll_network_driver_events(&mut self) {
+    pub(super) fn poll_network_driver_events(&mut self) -> usize {
         let now_ticks = interrupts::tick_count();
+        let mut events = 0usize;
         for _ in 0..NET_STACK_DRIVER_EVENT_LIMIT {
             let event = match self.net_driver.poll_device(now_ticks) {
                 Ok(event) => event,
@@ -835,8 +850,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                     break;
                 }
             };
+            if event.kind == DriverNetEventKind::None {
+                break;
+            }
+            events += 1;
             match event.kind {
-                DriverNetEventKind::None => break,
+                DriverNetEventKind::None => unreachable!(),
                 DriverNetEventKind::Irq => self.semantic.record_device_irq_delivered(
                     self.net.irq.id,
                     self.net.device.id,
@@ -860,6 +879,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
         }
+        events
     }
 
     fn deliver_network_driver_rx_frame(&mut self, frame: &[u8], reported_len: usize) {
@@ -909,13 +929,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets.iter().any(|binding| binding.mode != NetStackSocketMode::Idle)
     }
 
-    fn poll_active_net_stack(&mut self, socket_resource: Option<ResourceId>, ready_key: u64) {
+    fn poll_active_net_stack(
+        &mut self,
+        socket_resource: Option<ResourceId>,
+        ready_key: u64,
+    ) -> bool {
         if !self.has_active_net_stack_socket() {
-            return;
+            return false;
         }
-        let _ = self.net_stack.poll(net_stack_now_ms());
+        let poll = self.net_stack.poll(net_stack_now_ms());
+        let progressed = poll.poll_result != "none"
+            || poll.rx_frames_before != poll.rx_frames_after
+            || poll.tx_frames_before != poll.tx_frames_after;
         self.refresh_active_net_stack_sockets();
-        self.flush_net_stack_tx_frames(socket_resource, ready_key);
+        self.flush_net_stack_tx_frames(socket_resource, ready_key) != 0 || progressed
     }
 
     fn refresh_active_net_stack_sockets(&mut self) {
@@ -950,7 +977,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         None
     }
 
-    fn flush_net_stack_tx_frames(&mut self, socket_resource: Option<ResourceId>, ready_key: u64) {
+    fn flush_net_stack_tx_frames(
+        &mut self,
+        socket_resource: Option<ResourceId>,
+        ready_key: u64,
+    ) -> usize {
+        let mut submitted_count = 0usize;
         while let Some(frame) = self.net_stack.take_tx_frame() {
             match self.net_driver.submit_tx_frame(interrupts::tick_count(), &frame) {
                 Ok(submitted) if submitted > 0 => {
@@ -960,6 +992,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         ready_key,
                         frame.len(),
                     );
+                    submitted_count += 1;
                 }
                 Ok(_) => {
                     crate::kwarn!("driver_virtio_net ignored smoltcp tx frame");
@@ -975,6 +1008,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
         }
+        submitted_count
     }
 
     fn refresh_net_stack_socket_state(
@@ -1358,6 +1392,16 @@ mod tests {
             .any(|event| event.kind.summary().contains(needle))
     }
 
+    fn event_log_count(runtime: &PrototypeRuntime<'_>, needle: &str) -> usize {
+        runtime
+            .semantic
+            .event_log()
+            .events()
+            .iter()
+            .filter(|event| event.kind.summary().contains(needle))
+            .count()
+    }
+
     #[test]
     fn kernel_reference_backend_rx_reaches_smoltcp_and_records_tx_completion() {
         let _guard = test_guard();
@@ -1399,6 +1443,53 @@ mod tests {
         assert_eq!(runtime.net_driver.pending_tx_frames().expect("driver tx"), 0);
         assert!(event_log_contains(&runtime, "PacketReceived"));
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn network_runtime_pump_drains_batched_backend_rx_frames() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+
+        let local_port = 8081u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [fd as u64, 0, 16, AF_INET as u64, 0, local_port],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_listen", SYS_LISTEN, [fd as u64, 1, 0, 0, 0, 0]),
+            0
+        );
+
+        let request = arp_request();
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&request)
+            .expect("inject first backend rx frame");
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&request)
+            .expect("inject second backend rx frame");
+        runtime.pump_network_runtime();
+
+        assert_eq!(runtime.reference_packet_backend.pending_rx_frames(), 0);
+        assert_eq!(runtime.reference_packet_backend.pending_tx_frames(), 0);
+        assert_eq!(runtime.net_driver.pending_rx_frames().expect("driver rx"), 0);
+        assert_eq!(runtime.net_driver.pending_tx_frames().expect("driver tx"), 0);
+        assert!(event_log_count(&runtime, "PacketReceived") >= 2);
+        assert!(event_log_count(&runtime, "PacketTransmitted") >= 2);
     }
 
     #[test]

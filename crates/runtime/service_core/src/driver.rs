@@ -199,7 +199,8 @@ impl DriverVirtioNetState {
     }
 
     pub fn dequeue_rx_frame(&mut self, out: &mut [u8]) -> Result<u32, i32> {
-        let len = if self.raw_rx_len != 0 {
+        let dequeued_raw = self.raw_rx_len != 0;
+        let len = if dequeued_raw {
             self.dequeue_raw_rx_frame(out)?
         } else {
             self.device.dequeue_rx_frame(out)?
@@ -207,6 +208,9 @@ impl DriverVirtioNetState {
         if len != 0 {
             self.ready = false;
             self.phase = DriverNetEventKind::None;
+            if dequeued_raw && self.raw_rx_len != 0 {
+                self.next_tick = 0;
+            }
         }
         Ok(len)
     }
@@ -385,6 +389,30 @@ mod tests {
         assert_eq!(len, frame.len() as u32);
         assert_eq!(&out[..frame.len()], &frame);
         assert_eq!(driver.pending_rx_frames(), 0);
+    }
+
+    #[test]
+    fn delivered_raw_ethernet_rx_batch_rearms_after_dequeue() {
+        let mut driver = DriverVirtioNetState::new();
+        let mut frame = [0u8; 42];
+        frame[..6].copy_from_slice(&[0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01]);
+        frame[6..12].copy_from_slice(&[0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+
+        assert_eq!(driver.deliver_rx_frame(12, &frame).unwrap(), frame.len() as u32);
+        assert_eq!(driver.deliver_rx_frame(12, &frame).unwrap(), frame.len() as u32);
+        for _ in 0..5 {
+            driver.poll_device(12);
+        }
+
+        let mut out = [0u8; PACKET_FRAME_CAPACITY];
+        assert_eq!(driver.dequeue_rx_frame(&mut out).unwrap(), frame.len() as u32);
+        assert_eq!(driver.pending_rx_frames(), 1);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::Irq);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DmaSubmitted);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DmaCompleted);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::DriverCompletion);
+        assert_eq!(driver.poll_device(12).kind, DriverNetEventKind::PacketRx);
     }
 
     #[test]
