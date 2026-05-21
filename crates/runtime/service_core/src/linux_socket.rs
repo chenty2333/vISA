@@ -817,6 +817,24 @@ mod tests {
     }
 
     #[test]
+    fn listen_clamps_oversized_backlog_to_bounded_accept_queue() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
+        assert_eq!(state.listen_socket(1, u32::MAX), Ok(()));
+        for socket_id in 2..=MAX_SOCKETS as u32 {
+            assert!(
+                state
+                    .register_socket(socket_id, AF_INET, SOCK_STREAM, 0, u64::from(40 + socket_id))
+                    .is_ok()
+            );
+            assert_eq!(connect_ipv4(&mut state, socket_id, LOOPBACK, 8080), Ok(()));
+        }
+        assert_eq!(state.pending_accept_count(1), Ok((MAX_SOCKETS - 1) as u32));
+    }
+
+    #[test]
     fn connect_exposes_listener_ready_key_for_accept_waiters() {
         let mut state = LinuxSocketState::new();
 

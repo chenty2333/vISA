@@ -220,8 +220,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.linux_socket.bind_socket(socket_id, addr_len, family, local_ipv4, local_port)
             }
             PlanKind::Listen => {
-                let backlog =
-                    u32::try_from(plan.args[1]).map_err(|_| "listen backlog overflowed")?;
+                let backlog = linux_listen_backlog_arg(plan.args[1]);
                 if let Some(result) =
                     self.listen_net_stack_tcp(socket_id, backlog, ready_key, handle)?
                 {
@@ -1000,6 +999,26 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Err(err) = self.net_core.close_socket(socket_id) {
             log_cleanup_error(context, err);
         }
+    }
+}
+
+fn linux_listen_backlog_arg(raw: u64) -> u32 {
+    let backlog = raw as i32;
+    if backlog < 0 { u32::MAX } else { backlog as u32 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::linux_listen_backlog_arg;
+
+    #[test]
+    fn listen_backlog_arg_uses_linux_i32_shape_before_internal_clamp() {
+        assert_eq!(linux_listen_backlog_arg(0), 0);
+        assert_eq!(linux_listen_backlog_arg(1), 1);
+        assert_eq!(linux_listen_backlog_arg(i32::MAX as u64), i32::MAX as u32);
+        assert_eq!(linux_listen_backlog_arg(u64::MAX), u32::MAX);
+        assert_eq!(linux_listen_backlog_arg(u32::MAX as u64), u32::MAX);
+        assert_eq!(linux_listen_backlog_arg(1u64 << 32), 0);
     }
 }
 
