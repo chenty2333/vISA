@@ -44,6 +44,10 @@ impl UserPageBacking {
     pub(crate) fn is_discardable(&self) -> bool {
         matches!(self, Self::ZeroFill | Self::FilePrivate(_))
     }
+
+    pub(crate) fn is_file_shared(&self) -> bool {
+        matches!(self, Self::FileShared { .. })
+    }
 }
 
 #[derive(Clone)]

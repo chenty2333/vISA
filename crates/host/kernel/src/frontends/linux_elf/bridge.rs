@@ -4011,6 +4011,7 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
         child_return.fs_base = fs_base.as_u64();
     }
     switch_active_user_address_space_to_child(&mut child_address_space)?;
+    retain_file_shared_page_refs(&child_address_space.page_mappings);
     let parent_task_id = active_context().task_id;
     active_context().supervisor.mark_task_blocked(parent_task_id);
     active_context().suspend_for_clone_child(

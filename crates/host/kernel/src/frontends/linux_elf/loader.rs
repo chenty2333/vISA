@@ -495,7 +495,7 @@ pub(crate) fn clone_user_page_mappings(
             frame_start: mapping.frame_start,
             present: mapping.present,
             owned: false,
-            cow: mapping.frame_start != 0,
+            cow: mapping.frame_start != 0 && !mapping.backing.is_file_shared(),
             backing: mapping.backing.clone(),
         });
     }
@@ -1581,5 +1581,48 @@ mod tests {
             stack_pages_for_rlimit(PAGE_SIZE as u64 - 1),
             Err("initial stack exceeded rlimit")
         );
+    }
+
+    #[test]
+    fn clone_user_page_mappings_marks_private_frames_cow() {
+        let mappings = [UserPageMapping {
+            va: 0x4000,
+            frame_start: 0x20_000,
+            present: true,
+            owned: true,
+            cow: false,
+            backing: UserPageBacking::ZeroFill,
+        }];
+
+        let cloned = clone_user_page_mappings(&mappings).expect("clone mappings");
+
+        assert_eq!(cloned.len(), 1);
+        assert_eq!(cloned[0].frame_start, 0x20_000);
+        assert!(!cloned[0].owned);
+        assert!(cloned[0].cow);
+    }
+
+    #[test]
+    fn clone_user_page_mappings_keeps_file_shared_frames_shared() {
+        let mappings = [UserPageMapping {
+            va: 0x8000,
+            frame_start: 0x24_000,
+            present: true,
+            owned: true,
+            cow: false,
+            backing: UserPageBacking::FileShared {
+                vfs_node_id: 7,
+                path: b"/tmp/shared".to_vec(),
+                offset: 0,
+                bytes: vec![1, 2, 3],
+            },
+        }];
+
+        let cloned = clone_user_page_mappings(&mappings).expect("clone mappings");
+
+        assert_eq!(cloned.len(), 1);
+        assert_eq!(cloned[0].frame_start, 0x24_000);
+        assert!(!cloned[0].owned);
+        assert!(!cloned[0].cow);
     }
 }
