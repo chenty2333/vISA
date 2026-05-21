@@ -1294,6 +1294,13 @@ mod tests {
         runtime.net_driver.take_tx_frame().expect("driver tx service").expect("driver tx frame")
     }
 
+    fn is_remote_arp_request(frame: &[u8]) -> bool {
+        frame.len() == ARP_FRAME_LEN
+            && &frame[0..6] == &[0xff; 6]
+            && &frame[12..14] == &[0x08, 0x06]
+            && &frame[38..42] == &REMOTE_IPV4
+    }
+
     fn accept_sockaddr_buffer() -> [u8; 20] {
         let mut buffer = [0u8; 20];
         buffer[16..20].copy_from_slice(&16u32.to_le_bytes());
@@ -1317,20 +1324,20 @@ mod tests {
         runtime.pump_reference_packet_backend_rx();
         runtime.poll_network_driver_events();
 
-        let arp_request = take_driver_tx(runtime);
-        assert_eq!(&arp_request[0..6], &[0xff; 6]);
-        assert_eq!(&arp_request[38..42], &REMOTE_IPV4);
-
-        let arp_reply = arp_reply(
-            REMOTE_MAC,
-            REMOTE_IPV4,
-            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-            VMOS_IPV4,
-        );
-        runtime.net_driver.deliver_rx_frame(0, &arp_reply).expect("deliver arp reply");
-        runtime.poll_network_driver_events();
-
-        let syn_ack = take_driver_tx(runtime);
+        let first_tx = take_driver_tx(runtime);
+        let syn_ack = if is_remote_arp_request(&first_tx) {
+            let arp_reply = arp_reply(
+                REMOTE_MAC,
+                REMOTE_IPV4,
+                service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+                VMOS_IPV4,
+            );
+            runtime.net_driver.deliver_rx_frame(0, &arp_reply).expect("deliver arp reply");
+            runtime.poll_network_driver_events();
+            take_driver_tx(runtime)
+        } else {
+            first_tx
+        };
         assert_eq!(syn_ack[47] & 0x12, 0x12);
 
         let ack = tcp_ack_for_syn_ack(&syn_ack);
@@ -1447,6 +1454,82 @@ mod tests {
         assert_eq!(peer.port, remote_port);
         assert!(event_log_contains(&runtime, "PacketReceived"));
         assert!(event_log_contains(&runtime, "accept-ready"));
+    }
+
+    #[test]
+    fn packet_backed_accept_dequeues_two_established_connections_fifo() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18083u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 2, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let first_remote_port = 40_003u16;
+        let second_remote_port = 40_004u16;
+        drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            first_remote_port,
+            0x1112_1314,
+        );
+        drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            second_remote_port,
+            0x2122_2324,
+        );
+
+        let (addr_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("accept buffer");
+        let len_ptr = addr_ptr + 16;
+
+        let first_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_first",
+            SYS_ACCEPT,
+            [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+        );
+        assert!(first_fd >= 0);
+        let first_written = runtime.linux.read_bytes(addr_ptr, 20).expect("first writeback");
+        assert_sockaddr_in(&first_written[..16], REMOTE_IPV4, first_remote_port);
+        assert_eq!(u32::from_le_bytes(first_written[16..20].try_into().unwrap()), 16);
+
+        let second_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_second",
+            SYS_ACCEPT,
+            [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+        );
+        assert!(second_fd >= 0);
+        assert_ne!(first_fd, second_fd);
+        let second_written = runtime.linux.read_bytes(addr_ptr, 20).expect("second writeback");
+        assert_sockaddr_in(&second_written[..16], REMOTE_IPV4, second_remote_port);
+        assert_eq!(u32::from_le_bytes(second_written[16..20].try_into().unwrap()), 16);
     }
 
     #[test]
