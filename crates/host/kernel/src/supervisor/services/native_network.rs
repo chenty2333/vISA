@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-use core::ptr::addr_of_mut;
 
 pub(crate) use service_core::driver::DriverNetEventKind;
 use service_core::{
@@ -15,12 +14,12 @@ use crate::supervisor::{engine::SupervisorEngine, types::ServiceCallError};
 const ETHERNET_HEADER_LEN: usize = 14;
 
 pub(crate) struct NetCoreService {
-    state: &'static mut NetCoreState,
+    state: NetCoreState,
 }
 
 impl NetCoreService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self { state: unsafe { net_core_state() } })
+        Ok(Self { state: NetCoreState::new() })
     }
 
     pub(crate) fn create_socket(
@@ -90,12 +89,12 @@ impl NetCoreService {
 }
 
 pub(crate) struct LinuxSocketService {
-    state: &'static mut LinuxSocketState,
+    state: LinuxSocketState,
 }
 
 impl LinuxSocketService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self { state: unsafe { linux_socket_state() } })
+        Ok(Self { state: LinuxSocketState::new() })
     }
 
     pub(crate) fn register_socket(
@@ -239,12 +238,12 @@ pub(crate) struct DriverNetEvent {
 }
 
 pub(crate) struct DriverVirtioNetService {
-    state: &'static mut DriverVirtioNetState,
+    state: DriverVirtioNetState,
 }
 
 impl DriverVirtioNetService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self { state: unsafe { driver_state() } })
+        Ok(Self { state: DriverVirtioNetState::new() })
     }
 
     pub(crate) fn reset_sequence(&mut self, now_ticks: u64) -> Result<(), ServiceCallError> {
@@ -320,12 +319,12 @@ fn driver_rx_len(frame: &[u8]) -> Result<u32, ServiceCallError> {
 }
 
 pub(crate) struct ReplaySnapshotService {
-    state: &'static mut ReplaySnapshotState,
+    state: ReplaySnapshotState,
 }
 
 impl ReplaySnapshotService {
     pub(crate) fn new(_engine: &SupervisorEngine) -> Result<Self, &'static str> {
-        Ok(Self { state: unsafe { replay_snapshot_state() } })
+        Ok(Self { state: ReplaySnapshotState::new() })
     }
 
     pub(crate) fn validate_barrier(
@@ -358,25 +357,4 @@ fn map_errno<T>(result: Result<T, i32>) -> Result<T, ServiceCallError> {
 
 fn errno<T>(errno: i32) -> Result<T, ServiceCallError> {
     Err(ServiceCallError::Errno(errno))
-}
-
-static mut NET_CORE_STATE: NetCoreState = NetCoreState::new();
-static mut LINUX_SOCKET_STATE: LinuxSocketState = LinuxSocketState::new();
-static mut DRIVER_STATE: DriverVirtioNetState = DriverVirtioNetState::new();
-static mut REPLAY_SNAPSHOT_STATE: ReplaySnapshotState = ReplaySnapshotState::new();
-
-unsafe fn net_core_state() -> &'static mut NetCoreState {
-    unsafe { &mut *addr_of_mut!(NET_CORE_STATE) }
-}
-
-unsafe fn linux_socket_state() -> &'static mut LinuxSocketState {
-    unsafe { &mut *addr_of_mut!(LINUX_SOCKET_STATE) }
-}
-
-unsafe fn driver_state() -> &'static mut DriverVirtioNetState {
-    unsafe { &mut *addr_of_mut!(DRIVER_STATE) }
-}
-
-unsafe fn replay_snapshot_state() -> &'static mut ReplaySnapshotState {
-    unsafe { &mut *addr_of_mut!(REPLAY_SNAPSHOT_STATE) }
 }
