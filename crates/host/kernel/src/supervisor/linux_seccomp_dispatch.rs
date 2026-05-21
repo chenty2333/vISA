@@ -3,8 +3,10 @@ use alloc::vec::Vec;
 use semantic_core::CredentialTransitionKind;
 use service_core::seccomp::{
     AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
-    SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
-    linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
+    SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_IOCTL_NOTIF_ADDFD, SECCOMP_IOCTL_NOTIF_ID_VALID,
+    SECCOMP_IOCTL_NOTIF_RECV, SECCOMP_IOCTL_NOTIF_SEND, SECCOMP_USER_NOTIF_FLAG_CONTINUE,
+    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    seccomp_action_available,
 };
 use vmos_abi::{
     ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOENT, ERR_ENOSYS,
@@ -52,10 +54,6 @@ const PR_CAP_AMBIENT_IS_SET: u64 = 1;
 const PR_CAP_AMBIENT_RAISE: u64 = 2;
 const PR_CAP_AMBIENT_LOWER: u64 = 3;
 const PR_CAP_AMBIENT_CLEAR_ALL: u64 = 4;
-const SECCOMP_IOCTL_NOTIF_RECV: u64 = 3_226_476_800;
-const SECCOMP_IOCTL_NOTIF_SEND: u64 = 3_222_806_785;
-const SECCOMP_IOCTL_NOTIF_ID_VALID: u64 = 1_074_274_562;
-const SECCOMP_USER_NOTIF_FLAG_CONTINUE: u32 = 1;
 const MAX_SECCOMP_PENDING_NOTIFICATIONS_PER_LISTENER: usize = 64;
 const ERR_ENOTTY: i32 = 25;
 
@@ -563,7 +561,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.next_seccomp_listener_id
     }
 
-    fn queue_seccomp_user_notification(
+    pub(crate) fn queue_seccomp_user_notification(
         &mut self,
         syscall: u64,
         instruction_pointer: u64,
@@ -614,6 +612,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(token)
     }
 
+    pub(crate) fn block_on_seccomp_user_notification(
+        &mut self,
+        syscall: u64,
+        instruction_pointer: u64,
+        args: [u64; 6],
+    ) -> Result<i64, i32> {
+        let token = self.queue_seccomp_user_notification(syscall, instruction_pointer, args)?;
+        match self.block_on_wait("ring3_seccomp_user_notif", token).map_err(|_| ERR_EINVAL)? {
+            LinuxCallResult::Ret(ret) => Ok(ret),
+            _ => Err(ERR_EINVAL),
+        }
+    }
+
     pub(crate) fn cancel_seccomp_listener_notifications(&mut self, listener_id: u64, errno: i32) {
         let mut wait_token_ids = Vec::new();
         for notification in self.seccomp_notifications.iter_mut().filter(|entry| {
@@ -629,6 +640,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.drain_event_queue();
     }
 
+    pub(crate) fn cancel_seccomp_notification(&mut self, notification_id: u64) -> bool {
+        let Some(index) = self.seccomp_notifications.iter().position(|entry| {
+            entry.id == notification_id && entry.state != SeccompNotificationState::Responded
+        }) else {
+            return false;
+        };
+        self.seccomp_notifications.remove(index);
+        true
+    }
+
     fn seccomp_listener_is_open(&self, listener_id: u64) -> bool {
         self.fd_table.iter().filter_map(Option::as_ref).any(|entry| {
             matches!(entry.resource, FdResource::SeccompListener { listener_id: other } if other == listener_id)
@@ -639,79 +660,123 @@ impl<'engine> PrototypeRuntime<'engine> {
         })
     }
 
+    pub(crate) fn seccomp_listener_id_for_fd(&mut self, fd: u32) -> Result<u64, i32> {
+        self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
+        match self.fd_entry(fd).map(|entry| &entry.resource) {
+            Some(FdResource::SeccompListener { listener_id }) => Ok(*listener_id),
+            Some(_) => Err(ERR_ENOTTY),
+            None => Err(ERR_EBADF),
+        }
+    }
+
+    pub(crate) fn seccomp_listener_recv_notification(
+        &mut self,
+        fd: u32,
+    ) -> Result<(u64, [u8; 80]), i32> {
+        let listener_id = self.seccomp_listener_id_for_fd(fd)?;
+        let Some(notification) = self.seccomp_notifications.iter().find(|entry| {
+            entry.listener_id == listener_id && entry.state == SeccompNotificationState::Queued
+        }) else {
+            return Err(ERR_EAGAIN);
+        };
+        Ok((notification.id, encode_seccomp_notification(notification)))
+    }
+
+    pub(crate) fn seccomp_listener_mark_notification_delivered(
+        &mut self,
+        fd: u32,
+        notification_id: u64,
+    ) -> Result<(), i32> {
+        let listener_id = self.seccomp_listener_id_for_fd(fd)?;
+        let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
+            entry.listener_id == listener_id
+                && entry.id == notification_id
+                && entry.state == SeccompNotificationState::Queued
+        }) else {
+            return Err(ERR_ENOENT);
+        };
+        notification.state = SeccompNotificationState::Delivered;
+        Ok(())
+    }
+
+    pub(crate) fn seccomp_listener_send_response(
+        &mut self,
+        fd: u32,
+        bytes: &[u8],
+    ) -> Result<i64, i32> {
+        let listener_id = self.seccomp_listener_id_for_fd(fd)?;
+        let id = read_u64_le(bytes, 0)?;
+        let val = read_i64_le(bytes, 8)?;
+        let error = read_i32_le(bytes, 16)?;
+        let flags = read_u32_le(bytes, 20)?;
+        if flags & !SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
+            return Err(ERR_EINVAL);
+        }
+        if flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
+            return Err(ERR_EOPNOTSUPP);
+        }
+        let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
+            entry.listener_id == listener_id
+                && entry.id == id
+                && entry.state == SeccompNotificationState::Delivered
+        }) else {
+            return Err(ERR_ENOENT);
+        };
+        let response = if error == 0 {
+            val
+        } else if error < 0 {
+            error as i64
+        } else {
+            -(error as i64)
+        };
+        notification.response = Some(response);
+        notification.state = SeccompNotificationState::Responded;
+        let wait_token_id = notification.wait_token_id;
+        self.scheduler.push_event(Event::WaitReady(wait_token_id));
+        self.drain_event_queue();
+        Ok(0)
+    }
+
+    pub(crate) fn seccomp_listener_id_valid(&mut self, fd: u32, bytes: &[u8]) -> Result<i64, i32> {
+        let listener_id = self.seccomp_listener_id_for_fd(fd)?;
+        let id = read_u64_le(bytes, 0)?;
+        if self.seccomp_notifications.iter().any(|entry| {
+            entry.listener_id == listener_id
+                && entry.id == id
+                && entry.state != SeccompNotificationState::Responded
+        }) {
+            Ok(0)
+        } else {
+            Err(ERR_ENOENT)
+        }
+    }
+
     pub(crate) fn seccomp_listener_ioctl(
         &mut self,
         fd: u32,
         request: u64,
         ptr: u32,
     ) -> Result<i64, i32> {
-        self.validate_fd_handle(fd).map_err(|_| ERR_EBADF)?;
-        let listener_id = match self.fd_entry(fd).map(|entry| &entry.resource) {
-            Some(FdResource::SeccompListener { listener_id }) => *listener_id,
-            Some(_) => return Err(ERR_ENOTTY),
-            None => return Err(ERR_EBADF),
-        };
+        self.seccomp_listener_id_for_fd(fd)?;
         if ptr == 0 {
             return Err(ERR_EFAULT);
         }
         match request {
             SECCOMP_IOCTL_NOTIF_RECV => {
-                let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
-                    entry.listener_id == listener_id
-                        && entry.state == SeccompNotificationState::Queued
-                }) else {
-                    return Err(ERR_EAGAIN);
-                };
-                let bytes = encode_seccomp_notification(notification);
+                let (notification_id, bytes) = self.seccomp_listener_recv_notification(fd)?;
                 self.linux.write_bytes(ptr, &bytes).map_err(|_| ERR_EFAULT)?;
-                notification.state = SeccompNotificationState::Delivered;
+                self.seccomp_listener_mark_notification_delivered(fd, notification_id)?;
                 Ok(0)
             }
             SECCOMP_IOCTL_NOTIF_SEND => {
                 let bytes = self.linux.read_bytes(ptr, 24).map_err(|_| ERR_EFAULT)?;
-                let id = read_u64_le(&bytes, 0)?;
-                let val = read_i64_le(&bytes, 8)?;
-                let error = read_i32_le(&bytes, 16)?;
-                let flags = read_u32_le(&bytes, 20)?;
-                if flags & !SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
-                    return Err(ERR_EINVAL);
-                }
-                if flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
-                    return Err(ERR_EOPNOTSUPP);
-                }
-                let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
-                    entry.listener_id == listener_id
-                        && entry.id == id
-                        && entry.state == SeccompNotificationState::Delivered
-                }) else {
-                    return Err(ERR_ENOENT);
-                };
-                let response = if error == 0 {
-                    val
-                } else if error < 0 {
-                    error as i64
-                } else {
-                    -(error as i64)
-                };
-                notification.response = Some(response);
-                notification.state = SeccompNotificationState::Responded;
-                self.scheduler.push_event(Event::WaitReady(notification.wait_token_id));
-                self.drain_event_queue();
-                Ok(0)
+                self.seccomp_listener_send_response(fd, &bytes)
             }
             SECCOMP_IOCTL_NOTIF_ID_VALID => {
                 let bytes = self.linux.read_bytes(ptr, 8).map_err(|_| ERR_EFAULT)?;
-                let id = read_u64_le(&bytes, 0)?;
-                if self.seccomp_notifications.iter().any(|entry| {
-                    entry.listener_id == listener_id
-                        && entry.id == id
-                        && entry.state != SeccompNotificationState::Responded
-                }) {
-                    Ok(0)
-                } else {
-                    Err(ERR_ENOENT)
-                }
+                self.seccomp_listener_id_valid(fd, &bytes)
             }
+            SECCOMP_IOCTL_NOTIF_ADDFD => Err(ERR_EOPNOTSUPP),
             _ => Err(ERR_ENOTTY),
         }
     }
@@ -731,7 +796,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 }
 
 fn is_supported_seccomp_action(action: u32) -> bool {
-    seccomp_action_available_without_listener(action)
+    seccomp_action_available(action)
 }
 
 fn capability_bit_from_prctl_arg(cap: u64) -> Result<u64, i32> {
@@ -794,7 +859,9 @@ fn write_u32_le(out: &mut [u8], offset: usize, value: u32) {
 #[cfg(test)]
 mod tests {
     use service_core::seccomp::{SECCOMP_RET_ALLOW, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF};
-    use vmos_abi::{ERR_EACCES, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext};
+    use vmos_abi::{
+        ERR_EACCES, ERR_EINTR, ERR_EOPNOTSUPP, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext,
+    };
 
     use super::{
         super::types::{SeccompNotificationState, WaitKind},
@@ -920,6 +987,17 @@ mod tests {
             .expect("listener ioctl dispatch");
 
         assert_eq!(expect_ret(result), -(ERR_ENOENT as i64));
+    }
+
+    #[test]
+    fn generic_seccomp_listener_addfd_is_explicitly_unsupported() {
+        let mut runtime = test_runtime();
+        let listener_fd = runtime.create_seccomp_listener_fd().expect("listener fd");
+
+        assert_eq!(
+            runtime.seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ADDFD, 1),
+            Err(ERR_EOPNOTSUPP)
+        );
     }
 
     #[test]
@@ -1085,6 +1163,72 @@ mod tests {
             )
             .expect("seccomp user-notif dispatch after listener close");
         assert_eq!(expect_ret(result), -(ERR_ENOSYS as i64));
+    }
+
+    #[test]
+    fn generic_seccomp_user_notif_cancel_removes_notification() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_USER_NOTIF);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("seccomp user-notif install");
+        let listener_fd = expect_ret(install) as u32;
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_user_notif_cancel",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp user-notif dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp notification, got {other:?}"),
+        };
+        assert_eq!(runtime.seccomp_notifications.len(), 1);
+        let notification_id = runtime.seccomp_notifications[0].id;
+
+        runtime.scheduler.push_event(Event::WaitCancelled(token.id, ERR_EINTR));
+        runtime.drain_event_queue();
+        let resumed =
+            runtime.block_on_wait("test_seccomp_user_notif_cancel_resume", token).expect("resume");
+
+        assert_eq!(expect_ret(resumed), -(ERR_EINTR as i64));
+        assert!(runtime.seccomp_notifications.is_empty());
+        let (id_ptr, _) =
+            runtime.linux.write_arg_bytes(&notification_id.to_le_bytes()).expect("id buffer");
+        assert_eq!(
+            runtime.seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_ID_VALID, id_ptr),
+            Err(ERR_ENOENT)
+        );
+    }
+
+    #[test]
+    fn ring3_seccomp_user_notif_wait_is_interruptible_and_cleans_queue() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_USER_NOTIF);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("seccomp user-notif install");
+        assert!(expect_ret(install) >= 3);
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        runtime.queue_signal_to_thread(tid, 2, 0, pid, 0);
+
+        let ret = runtime
+            .block_on_seccomp_user_notification(SYS_GETPID, 0x44, [1, 2, 3, 4, 5, 6])
+            .expect("ring3 seccomp wait");
+
+        assert_eq!(ret, -(ERR_EINTR as i64));
+        assert!(runtime.seccomp_notifications.is_empty());
     }
 
     #[test]

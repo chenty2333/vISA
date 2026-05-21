@@ -3,9 +3,11 @@ use alloc::{vec, vec::Vec};
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
-    SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
-    linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
+    AUDIT_ARCH_X86_64, LINUX_SECCOMP_NOTIF_RESP_SIZE, SECCOMP_FILTER_FLAG_LOG,
+    SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_TSYNC, SECCOMP_IOCTL_NOTIF_ADDFD,
+    SECCOMP_IOCTL_NOTIF_ID_VALID, SECCOMP_IOCTL_NOTIF_RECV, SECCOMP_IOCTL_NOTIF_SEND,
+    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    seccomp_action_available,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EBUSY,
@@ -307,7 +309,14 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
             );
             return Ok(syscall_nr as i64);
         }
-        SeccompDecision::Trace | SeccompDecision::UserNotif => return Err(ERR_ENOSYS),
+        SeccompDecision::Trace => return Err(ERR_ENOSYS),
+        SeccompDecision::UserNotif => {
+            return active_context().supervisor.block_on_seccomp_user_notification(
+                syscall_nr,
+                seccomp_call_addr,
+                [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
+            );
+        }
         SeccompDecision::Kill { signal } => {
             crate::kwarn!("seccomp killed syscall {}", syscall_nr);
             return handle_exit_syscall(frame, 128 + signal as i32);
@@ -2643,11 +2652,7 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn seccomp_get_action_avail(ptr: u64) -> Result<i64, i32> {
     let action = read_user_u32(ptr)?;
-    if seccomp_action_available_without_listener(action) {
-        Ok(0)
-    } else {
-        Err(vmos_abi::ERR_EOPNOTSUPP)
-    }
+    if seccomp_action_available(action) { Ok(0) } else { Err(vmos_abi::ERR_EOPNOTSUPP) }
 }
 
 fn seccomp_get_notif_sizes(ptr: u64) -> Result<i64, i32> {
@@ -5156,6 +5161,26 @@ fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
     active_context().supervisor.fd_flags(fd)?;
     match frame.rsi {
+        SECCOMP_IOCTL_NOTIF_RECV => {
+            let (notification_id, bytes) =
+                active_context().supervisor.seccomp_listener_recv_notification(fd)?;
+            write_user_bytes(frame.rdx, &bytes)?;
+            active_context()
+                .supervisor
+                .seccomp_listener_mark_notification_delivered(fd, notification_id)?;
+            Ok(0)
+        }
+        SECCOMP_IOCTL_NOTIF_SEND => {
+            active_context().supervisor.seccomp_listener_id_for_fd(fd)?;
+            let bytes = read_user_bytes(frame.rdx, LINUX_SECCOMP_NOTIF_RESP_SIZE as usize)?;
+            active_context().supervisor.seccomp_listener_send_response(fd, &bytes)
+        }
+        SECCOMP_IOCTL_NOTIF_ID_VALID => {
+            active_context().supervisor.seccomp_listener_id_for_fd(fd)?;
+            let bytes = read_user_bytes(frame.rdx, 8)?;
+            active_context().supervisor.seccomp_listener_id_valid(fd, &bytes)
+        }
+        SECCOMP_IOCTL_NOTIF_ADDFD => Err(ERR_EOPNOTSUPP),
         LOOP_CTL_GET_FREE => {
             let path = active_context().supervisor.fd_path(fd).map_err(|_| ERR_ENOTTY)?;
             if path == b"/dev/loop-control" { Ok(0) } else { Err(ERR_ENOTTY) }

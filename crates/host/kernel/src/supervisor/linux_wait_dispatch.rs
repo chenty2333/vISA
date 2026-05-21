@@ -593,6 +593,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                             wait: token.id,
                             errno,
                         });
+                        if let WaitSource::SeccompUserNotif { notification_id } = resolution.source
+                        {
+                            self.cancel_seccomp_notification(notification_id);
+                        }
                         match token.kind {
                             super::types::WaitKind::Futex => {
                                 match self.futex.cancel_wait(token.id) {

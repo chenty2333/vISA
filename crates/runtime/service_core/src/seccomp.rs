@@ -24,6 +24,11 @@ const BPF_MEM_WORDS: usize = 16;
 pub const LINUX_SECCOMP_NOTIF_SIZE: u16 = 80;
 pub const LINUX_SECCOMP_NOTIF_RESP_SIZE: u16 = 24;
 pub const LINUX_SECCOMP_DATA_SIZE: u16 = SECCOMP_DATA_LEN as u16;
+pub const SECCOMP_IOCTL_NOTIF_RECV: u64 = 3_226_476_800;
+pub const SECCOMP_IOCTL_NOTIF_SEND: u64 = 3_222_806_785;
+pub const SECCOMP_IOCTL_NOTIF_ID_VALID: u64 = 1_074_274_562;
+pub const SECCOMP_IOCTL_NOTIF_ADDFD: u64 = 1_075_323_139;
+pub const SECCOMP_USER_NOTIF_FLAG_CONTINUE: u32 = 1;
 
 const BPF_CLASS_MASK: u16 = 0x07;
 const BPF_LD: u16 = 0x00;
@@ -112,7 +117,7 @@ pub fn linux_seccomp_notif_sizes_bytes() -> [u8; 6] {
     [notif[0], notif[1], resp[0], resp[1], data[0], data[1]]
 }
 
-pub fn seccomp_action_available_without_listener(action: u32) -> bool {
+pub fn seccomp_action_available(action: u32) -> bool {
     matches!(
         action,
         SECCOMP_RET_KILL_PROCESS
@@ -120,6 +125,7 @@ pub fn seccomp_action_available_without_listener(action: u32) -> bool {
             | SECCOMP_RET_TRAP
             | SECCOMP_RET_ERRNO
             | SECCOMP_RET_TRACE
+            | SECCOMP_RET_USER_NOTIF
             | SECCOMP_RET_LOG
             | SECCOMP_RET_ALLOW
     )
@@ -627,9 +633,9 @@ mod tests {
     }
 
     #[test]
-    fn action_availability_includes_trace_but_not_user_notification() {
-        assert!(seccomp_action_available_without_listener(SECCOMP_RET_TRACE));
-        assert!(!seccomp_action_available_without_listener(SECCOMP_RET_USER_NOTIF));
+    fn action_availability_includes_listener_notification() {
+        assert!(seccomp_action_available(SECCOMP_RET_TRACE));
+        assert!(seccomp_action_available(SECCOMP_RET_USER_NOTIF));
     }
 
     #[test]
