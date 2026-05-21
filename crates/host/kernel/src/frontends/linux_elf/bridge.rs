@@ -2683,6 +2683,8 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
                 return Err(ERR_EMFILE);
             }
             let program = read_seccomp_filter_program(arg)?;
+            let listener_id = (flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0)
+                .then_some(active_context().supervisor.next_seccomp_listener_id());
             active_context()
                 .supervisor
                 .set_seccomp_filter(
@@ -2691,6 +2693,7 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
                     privileged,
                     flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
+                    listener_id,
                 )
                 .and_then(|()| {
                     if flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0 {

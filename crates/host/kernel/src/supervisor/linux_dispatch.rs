@@ -144,7 +144,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Exit(status));
         }
         let decision = self.check_seccomp_syscall(self.current_tid(), ctx.nr, 0, ctx.args);
-        if let Some(result) = self.apply_generic_seccomp_decision(ctx.nr, decision) {
+        if let Some(result) = self.apply_generic_seccomp_decision(ctx.nr, 0, ctx.args, decision) {
             return Ok(result);
         }
         let step = self.linux.dispatch(ctx)?;
@@ -326,6 +326,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Munlockall => self.plan_munlockall(plan),
             PlanKind::Poll => self.plan_poll(plan),
             PlanKind::Pipe => self.plan_pipe(plan),
+            PlanKind::Ioctl => self.plan_ioctl(plan),
             PlanKind::Prctl => self.plan_prctl(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
             PlanKind::Bpf => self.plan_bpf(plan),

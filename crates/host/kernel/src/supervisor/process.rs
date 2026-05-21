@@ -253,6 +253,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
+            seccomp_user_notif_listener: parent_thread.seccomp_user_notif_listener,
             no_new_privs: parent_thread.no_new_privs,
             rseq: None,
         });
@@ -408,6 +409,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
+            seccomp_user_notif_listener: parent_thread.seccomp_user_notif_listener,
             no_new_privs: parent_thread.no_new_privs,
             rseq: None,
         });
@@ -577,6 +579,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: parent_thread.seccomp.clone(),
+            seccomp_user_notif_listener: parent_thread.seccomp_user_notif_listener,
             no_new_privs: parent_thread.no_new_privs,
             rseq: None,
         });

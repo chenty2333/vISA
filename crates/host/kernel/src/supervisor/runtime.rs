@@ -34,8 +34,8 @@ use super::{
         BpfMapState, DEFAULT_RLIMIT_STACK_BYTES, EventFdState, FdEntry, GenericLockedMmapRange,
         GenericMmapRegion, InjectedFault, Pid, PipeState, ProcessAccessState, ProcessRuntimeState,
         ProcessRuntimeStateKind, RLIMIT_CPU, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit,
-        RuntimeClockAdjustmentState, SeccompMode, ServiceCallError, SigAction, SocketPairState,
-        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid, TimerFdState,
+        RuntimeClockAdjustmentState, SeccompMode, SeccompNotification, ServiceCallError, SigAction,
+        SocketPairState, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid, TimerFdState,
     },
     wait::WaitRegistry,
 };
@@ -103,6 +103,8 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) bpf_maps: Vec<BpfMapState>,
     pub(super) next_bpf_map_id: u64,
     pub(super) next_seccomp_listener_id: u64,
+    pub(super) next_seccomp_notification_id: u64,
+    pub(super) seccomp_notifications: Vec<SeccompNotification>,
     pub(super) generic_mmap_regions: Vec<GenericMmapRegion>,
     pub(super) generic_locked_mmap_ranges: Vec<GenericLockedMmapRange>,
     pub(super) generic_mlock_future_pids: Vec<Pid>,
@@ -259,6 +261,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     sigsuspend_restore_mask: None,
                     pending_signals: Vec::new(),
                     seccomp: SeccompMode::Disabled,
+                    seccomp_user_notif_listener: None,
                     no_new_privs: false,
                     rseq: None,
                 });
@@ -280,6 +283,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             bpf_maps: Vec::new(),
             next_bpf_map_id: 1,
             next_seccomp_listener_id: 1,
+            next_seccomp_notification_id: 1,
+            seccomp_notifications: Vec::new(),
             generic_mmap_regions: Vec::new(),
             generic_locked_mmap_ranges: Vec::new(),
             generic_mlock_future_pids: Vec::new(),
@@ -347,6 +352,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigsuspend_restore_mask: None,
             pending_signals: Vec::new(),
             seccomp: SeccompMode::Disabled,
+            seccomp_user_notif_listener: None,
             no_new_privs: false,
             rseq: None,
         });
@@ -635,6 +641,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         privileged: bool,
         sync_threads: bool,
         log_non_allow: bool,
+        user_notif_listener: Option<u64>,
     ) -> Result<(), i32> {
         let Some(caller) = self.threads.iter().find(|thread| thread.tid == tid) else {
             return Err(vmos_abi::ERR_ESRCH);
@@ -671,6 +678,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     program.clone(),
                     log_non_allow,
                 )?;
+                if user_notif_listener.is_some() {
+                    self.threads[index].seccomp_user_notif_listener = user_notif_listener;
+                }
             }
             return Ok(());
         }
@@ -678,7 +688,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
             return Err(vmos_abi::ERR_ESRCH);
         };
-        install_seccomp_filter_on_mode(&mut thread.seccomp, program, log_non_allow)
+        install_seccomp_filter_on_mode(&mut thread.seccomp, program, log_non_allow)?;
+        if user_notif_listener.is_some() {
+            thread.seccomp_user_notif_listener = user_notif_listener;
+        }
+        Ok(())
     }
 
     pub(crate) fn set_no_new_privs(&mut self, tid: Tid, enabled: bool) -> bool {

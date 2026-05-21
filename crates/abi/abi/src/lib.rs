@@ -412,6 +412,7 @@ pub enum PlanKind {
     Munlockall = 105,
     SetFsUid = 106,
     SetFsGid = 107,
+    Ioctl = 108,
 }
 
 impl PlanKind {
@@ -524,6 +525,7 @@ impl PlanKind {
             105 => Some(Self::Munlockall),
             106 => Some(Self::SetFsUid),
             107 => Some(Self::SetFsGid),
+            108 => Some(Self::Ioctl),
             _ => None,
         }
     }

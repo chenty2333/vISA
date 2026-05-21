@@ -440,6 +440,7 @@ fn semantic_wait_kind(kind: WaitKind) -> SemanticWaitKind {
         WaitKind::Epoll => SemanticWaitKind::Epoll,
         WaitKind::SocketConnect => SemanticWaitKind::SocketWritable,
         WaitKind::SocketAccept => SemanticWaitKind::SocketAccept,
+        WaitKind::SeccompUserNotif => SemanticWaitKind::SeccompUserNotif,
         WaitKind::FileLock => SemanticWaitKind::FileLock,
         WaitKind::Flock => SemanticWaitKind::FileLock,
         WaitKind::ChildExit => SemanticWaitKind::ChildExit,

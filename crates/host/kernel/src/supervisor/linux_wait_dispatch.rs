@@ -570,6 +570,10 @@ impl<'engine> PrototypeRuntime<'engine> {
                             addr_len_ptr,
                             write_addr,
                         ),
+                        WaitSource::SeccompUserNotif { notification_id } => self
+                            .take_seccomp_notification_response(notification_id)
+                            .map(LinuxCallResult::Ret)
+                            .map_err(|_| "seccomp user notification missing response"),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Flock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
@@ -615,6 +619,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::Timer => {}
                             super::types::WaitKind::SocketConnect => {}
                             super::types::WaitKind::SocketAccept => {}
+                            super::types::WaitKind::SeccompUserNotif => {}
                             super::types::WaitKind::FileLock => {}
                             super::types::WaitKind::Flock => {}
                             super::types::WaitKind::ChildExit => {}
@@ -629,6 +634,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 resolution.source,
                                 WaitSource::SocketConnect { .. }
                                     | WaitSource::SocketAccept { .. }
+                                    | WaitSource::SeccompUserNotif { .. }
                                     | WaitSource::FileLock { .. }
                                     | WaitSource::Flock { .. }
                                     | WaitSource::ChildExit { .. }

@@ -20,10 +20,10 @@ use vmos_abi::{
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
     SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MLOCK,
-    SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
+    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
     SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
@@ -103,6 +103,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
         SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
+        SYS_IOCTL => plan_ioctl(a0, a1, a2),
         SYS_FCNTL => plan_fcntl(a0, a1, a2),
         SYS_FLOCK => plan_flock(a0, a1),
         SYS_MMAP => plan_mmap(a0, a1, a2, a3, a4, a5),
@@ -685,6 +686,11 @@ fn plan_fcntl(fd: u64, cmd: u64, arg: u64) -> PackedStep {
 fn plan_flock(fd: u64, operation: u64) -> PackedStep {
     reset_plan(PlanKind::Flock, [fd, operation, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Flock)
+}
+
+fn plan_ioctl(fd: u64, request: u64, ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::Ioctl, [fd, request, ptr, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Ioctl)
 }
 
 fn plan_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64) -> PackedStep {
@@ -1915,6 +1921,19 @@ mod tests {
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Flock));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), LOCK_EX | LOCK_NB);
+    }
+
+    #[test]
+    fn ioctl_plan_preserves_fd_request_and_pointer() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_IOCTL, 9, 0x1234_5678, 0x2000, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Ioctl));
+        assert_eq!(plan_arg(0), 9);
+        assert_eq!(plan_arg(1), 0x1234_5678);
+        assert_eq!(plan_arg(2), 0x2000);
     }
 
     #[test]

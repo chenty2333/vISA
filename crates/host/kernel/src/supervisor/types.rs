@@ -309,8 +309,29 @@ pub(crate) struct ThreadRuntimeState {
     pub(crate) sigsuspend_restore_mask: Option<u64>,
     pub(crate) pending_signals: Vec<PendingSignal>,
     pub(crate) seccomp: SeccompMode,
+    pub(crate) seccomp_user_notif_listener: Option<u64>,
     pub(crate) no_new_privs: bool,
     pub(crate) rseq: Option<RseqRegistration>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompNotificationState {
+    Queued,
+    Delivered,
+    Responded,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SeccompNotification {
+    pub(crate) id: u64,
+    pub(crate) listener_id: u64,
+    pub(crate) pid: Pid,
+    pub(crate) syscall: u32,
+    pub(crate) instruction_pointer: u64,
+    pub(crate) args: [u64; 6],
+    pub(crate) wait_token_id: u64,
+    pub(crate) response: Option<i64>,
+    pub(crate) state: SeccompNotificationState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -449,6 +470,7 @@ pub(crate) enum WaitKind {
     Epoll,
     SocketConnect,
     SocketAccept,
+    SeccompUserNotif,
     FileLock,
     Flock,
     ChildExit,

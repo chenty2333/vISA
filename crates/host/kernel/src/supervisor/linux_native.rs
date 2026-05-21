@@ -13,10 +13,10 @@ use vmos_abi::{
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
     SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MLOCK,
-    SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
+    SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
+    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
     SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
     SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
@@ -90,6 +90,7 @@ impl LinuxFrontend {
             SYS_RECVFROM => self.plan_recvfrom(a0, a1, a2, a3, a4, a5),
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
             SYS_GETSOCKOPT => self.plan_getsockopt(a0, a1, a2, a3, a4),
+            SYS_IOCTL => self.plan_ioctl(a0, a1, a2),
             SYS_FCNTL => self.plan_fcntl(a0, a1, a2),
             SYS_FLOCK => self.plan_flock(a0, a1),
             SYS_MMAP => self.plan_mmap(a0, a1, a2, a3, a4, a5),
@@ -727,6 +728,11 @@ impl LinuxFrontend {
     fn plan_flock(&mut self, fd: u64, operation: u64) -> PackedStep {
         self.reset_plan(PlanKind::Flock, [fd, operation, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Flock)
+    }
+
+    fn plan_ioctl(&mut self, fd: u64, request: u64, ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Ioctl, [fd, request, ptr, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Ioctl)
     }
 
     fn plan_mmap(

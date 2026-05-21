@@ -3,7 +3,8 @@ use alloc::{vec, vec::Vec};
 use semantic_core::ResourceHandle;
 use vmos_abi::{
     EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_ECANCELED, ERR_EFBIG,
-    ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
+    ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind,
+    ServiceRoute,
 };
 
 use super::{
@@ -2096,6 +2097,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         });
         let closing_timerfd_last_ref =
             closing_timerfd.map(|timerfd_id| !self.has_other_timerfd_fd_ref(fd, timerfd_id));
+        let closing_seccomp_listener = self.fd_entry(fd).and_then(|entry| match &entry.resource {
+            FdResource::SeccompListener { listener_id } => Some(*listener_id),
+            _ => None,
+        });
+        let closing_seccomp_listener_last_ref = closing_seccomp_listener
+            .map(|listener_id| !self.has_other_seccomp_listener_fd_ref(fd, listener_id))
+            .unwrap_or(false);
         if let Some(socket_id) = closing_socket
             && closing_socket_last_ref
         {
@@ -2157,6 +2165,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             && closing_timerfd_last_ref.unwrap_or(false)
         {
             self.remove_timerfd(timerfd_id);
+        }
+        if let Some(listener_id) = closing_seccomp_listener
+            && closing_seccomp_listener_last_ref
+        {
+            self.cancel_seccomp_listener_notifications(listener_id, ERR_ENOSYS);
         }
         if let Some(slot) = self.fd_handles.get_mut(fd as usize)
             && let Some(handle) = slot.take()
@@ -2286,6 +2299,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         }) || self.hidden_fd_table_refs.iter().any(|table| {
             table.iter().filter_map(Option::as_ref).any(|entry| {
                 matches!(entry.resource, FdResource::TimerFd { timerfd_id: other } if other == timerfd_id)
+            })
+        })
+    }
+
+    fn has_other_seccomp_listener_fd_ref(&self, closing_fd: u32, listener_id: u64) -> bool {
+        self.fd_table.iter().enumerate().any(|(fd, entry)| {
+            fd != closing_fd as usize
+                && matches!(
+                    entry.as_ref().map(|entry| &entry.resource),
+                    Some(FdResource::SeccompListener { listener_id: other }) if *other == listener_id
+                )
+        }) || self.hidden_fd_table_refs.iter().any(|table| {
+            table.iter().filter_map(Option::as_ref).any(|entry| {
+                matches!(entry.resource, FdResource::SeccompListener { listener_id: other } if other == listener_id)
             })
         })
     }
