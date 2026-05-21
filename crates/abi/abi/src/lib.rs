@@ -104,6 +104,8 @@ pub const SYS_SETRESUID: u64 = 117;
 pub const SYS_GETRESUID: u64 = 118;
 pub const SYS_SETRESGID: u64 = 119;
 pub const SYS_GETRESGID: u64 = 120;
+pub const SYS_SETFSUID: u64 = 122;
+pub const SYS_SETFSGID: u64 = 123;
 pub const SYS_STATFS: u64 = 137;
 pub const SYS_FSTATFS: u64 = 138;
 pub const SYS_MOUNT: u64 = 165;
@@ -408,6 +410,8 @@ pub enum PlanKind {
     Munlock = 103,
     Mlockall = 104,
     Munlockall = 105,
+    SetFsUid = 106,
+    SetFsGid = 107,
 }
 
 impl PlanKind {
@@ -518,6 +522,8 @@ impl PlanKind {
             103 => Some(Self::Munlock),
             104 => Some(Self::Mlockall),
             105 => Some(Self::Munlockall),
+            106 => Some(Self::SetFsUid),
+            107 => Some(Self::SetFsGid),
             _ => None,
         }
     }

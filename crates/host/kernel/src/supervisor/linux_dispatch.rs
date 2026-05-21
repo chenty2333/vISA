@@ -359,6 +359,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::GetResUid => self.plan_getresuid(plan),
             PlanKind::SetResGid => self.plan_setresgid(plan),
             PlanKind::GetResGid => self.plan_getresgid(plan),
+            PlanKind::SetFsUid => self.plan_setfsuid(plan),
+            PlanKind::SetFsGid => self.plan_setfsgid(plan),
             PlanKind::GetGroups => self.plan_getgroups(plan),
             PlanKind::SetGroups => self.plan_setgroups(plan),
             PlanKind::CapGet => self.plan_capget(plan),

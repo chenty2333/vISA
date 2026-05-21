@@ -18,10 +18,11 @@ use vmos_abi::{
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
     SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
-    SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
+    SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE,
+    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -122,6 +123,8 @@ impl LinuxFrontend {
             SYS_GETRESUID => self.plan_getresuid(a0, a1, a2),
             SYS_SETRESGID => self.plan_setresgid(a0, a1, a2),
             SYS_GETRESGID => self.plan_getresgid(a0, a1, a2),
+            SYS_SETFSUID => self.plan_setfsuid(a0),
+            SYS_SETFSGID => self.plan_setfsgid(a0),
             SYS_GETGROUPS => self.plan_getgroups(a0, a1),
             SYS_SETGROUPS => self.plan_setgroups(a0, a1),
             SYS_CAPGET => self.plan_capget(a0, a1),
@@ -1116,6 +1119,16 @@ impl LinuxFrontend {
     fn plan_getresgid(&mut self, rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> PackedStep {
         self.reset_plan(PlanKind::GetResGid, [rgid_ptr, egid_ptr, sgid_ptr, 0, 0, 0]);
         PackedStep::plan(PlanKind::GetResGid)
+    }
+
+    fn plan_setfsuid(&mut self, uid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetFsUid, [uid, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetFsUid)
+    }
+
+    fn plan_setfsgid(&mut self, gid: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetFsGid, [gid, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetFsGid)
     }
 
     fn plan_getgroups(&mut self, size: u64, list_ptr: u64) -> PackedStep {

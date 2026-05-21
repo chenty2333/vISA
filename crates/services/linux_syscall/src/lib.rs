@@ -25,10 +25,11 @@ use vmos_abi::{
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
     SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
     SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
-    SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
+    SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE,
+    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+    is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -135,6 +136,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_GETRESUID => plan_getresuid(a0, a1, a2),
         SYS_SETRESGID => plan_setresgid(a0, a1, a2),
         SYS_GETRESGID => plan_getresgid(a0, a1, a2),
+        SYS_SETFSUID => plan_setfsuid(a0),
+        SYS_SETFSGID => plan_setfsgid(a0),
         SYS_GETGROUPS => plan_getgroups(a0, a1),
         SYS_SETGROUPS => plan_setgroups(a0, a1),
         SYS_CAPGET => plan_capget(a0, a1),
@@ -1028,6 +1031,16 @@ fn plan_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> PackedStep {
     PackedStep::plan(PlanKind::GetResGid)
 }
 
+fn plan_setfsuid(uid: u64) -> PackedStep {
+    reset_plan(PlanKind::SetFsUid, [uid, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetFsUid)
+}
+
+fn plan_setfsgid(gid: u64) -> PackedStep {
+    reset_plan(PlanKind::SetFsGid, [gid, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetFsGid)
+}
+
 fn plan_getgroups(size: u64, list_ptr: u64) -> PackedStep {
     reset_plan(PlanKind::GetGroups, [size, list_ptr, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::GetGroups)
@@ -1608,6 +1621,16 @@ mod tests {
         assert_eq!(plan_arg(0), 0x20);
         assert_eq!(plan_arg(1), 0x24);
         assert_eq!(plan_arg(2), 0x28);
+
+        let setfsuid = PackedStep::decode(dispatch(SYS_SETFSUID, 3000, 0, 0, 0, 0, 0));
+        assert_eq!(setfsuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(setfsuid.aux), Some(PlanKind::SetFsUid));
+        assert_eq!(plan_arg(0), 3000);
+
+        let setfsgid = PackedStep::decode(dispatch(SYS_SETFSGID, 300, 0, 0, 0, 0, 0));
+        assert_eq!(setfsgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(setfsgid.aux), Some(PlanKind::SetFsGid));
+        assert_eq!(plan_arg(0), 300);
 
         let getgroups = PackedStep::decode(dispatch(SYS_GETGROUPS, 4, 0x30, 0, 0, 0, 0));
         assert_eq!(getgroups.tag, vmos_abi::StepTag::Plan);

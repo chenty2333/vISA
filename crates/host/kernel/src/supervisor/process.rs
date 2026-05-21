@@ -1298,6 +1298,40 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Ret(0))
     }
 
+    pub(super) fn plan_setfsuid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let before = self.current_access_state();
+        let old = before.fsuid;
+        let after = access_setfsuid(before.clone(), plan.args[0] as u32);
+        if before.credential_ids_differ(&after) {
+            return self.apply_current_credential_transition_ret(
+                after.clone(),
+                CredentialTransitionKind::SetFsuid { old, new: after.fsuid },
+                old as i64,
+            );
+        }
+        Ok(LinuxCallResult::Ret(old as i64))
+    }
+
+    pub(super) fn plan_setfsgid(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let before = self.current_access_state();
+        let old = before.fsgid;
+        let after = access_setfsgid(before.clone(), plan.args[0] as u32);
+        if before.credential_ids_differ(&after) {
+            return self.apply_current_credential_transition_ret(
+                after.clone(),
+                CredentialTransitionKind::SetFsgid { old, new: after.fsgid },
+                old as i64,
+            );
+        }
+        Ok(LinuxCallResult::Ret(old as i64))
+    }
+
     pub(super) fn plan_getgroups(
         &mut self,
         plan: LinuxPlan,
@@ -1431,6 +1465,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         access: ProcessAccessState,
         kind: CredentialTransitionKind,
     ) -> Result<LinuxCallResult, &'static str> {
+        self.apply_current_credential_transition_ret(access, kind, 0)
+    }
+
+    fn apply_current_credential_transition_ret(
+        &mut self,
+        access: ProcessAccessState,
+        kind: CredentialTransitionKind,
+        ret: i64,
+    ) -> Result<LinuxCallResult, &'static str> {
         let pid = self.current_pid();
         if self.record_credential_transition(
             pid,
@@ -1446,7 +1489,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             linux_cap_sets_from_access(&access),
             kind,
         ) {
-            Ok(LinuxCallResult::Ret(0))
+            Ok(LinuxCallResult::Ret(ret))
         } else {
             Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)))
         }
@@ -1783,6 +1826,32 @@ fn access_setresgid(
     Some(access)
 }
 
+fn access_setfsuid(mut access: ProcessAccessState, uid: u32) -> ProcessAccessState {
+    if uid != u32::MAX
+        && (access_has_capability(&access, CAP_SETUID)
+            || uid == access.real_uid
+            || uid == access.uid
+            || uid == access.saved_uid
+            || uid == access.fsuid)
+    {
+        access.fsuid = uid;
+    }
+    access
+}
+
+fn access_setfsgid(mut access: ProcessAccessState, gid: u32) -> ProcessAccessState {
+    if gid != u32::MAX
+        && (access_has_capability(&access, CAP_SETGID)
+            || gid == access.real_gid
+            || gid == access.gid
+            || gid == access.saved_gid
+            || gid == access.fsgid)
+    {
+        access.fsgid = gid;
+    }
+    access
+}
+
 fn access_capset(
     mut access: ProcessAccessState,
     permitted: u64,
@@ -1900,9 +1969,9 @@ mod tests {
     use vmos_abi::{
         ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, SYS_CAPGET, SYS_CAPSET, SYS_EXIT,
         SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
-        SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETGID,
-        SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
-        SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
+        SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETFSGID,
+        SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
+        SYS_SETRESUID, SYS_SETREUID, SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
     };
 
     use super::*;
@@ -2208,6 +2277,62 @@ mod tests {
             )
             .expect("setuid denied dispatch");
         assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+    }
+
+    #[test]
+    fn generic_fsuid_fsgid_mutations_return_old_ids_and_gate_changes() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        runtime.processes.iter_mut().find(|process| process.pid == pid).unwrap().access =
+            ProcessAccessState::from_credentials(
+                1000,
+                2000,
+                3000,
+                2000,
+                100,
+                200,
+                300,
+                200,
+                Vec::new(),
+                0,
+                0,
+            );
+
+        let setfsuid_saved = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setfsuid_saved",
+                SyscallContext::new(SYS_SETFSUID, [3000, 0, 0, 0, 0, 0]),
+            )
+            .expect("setfsuid saved dispatch");
+        assert_eq!(expect_ret(setfsuid_saved), 2000);
+        assert_eq!(runtime.current_access_state().fsuid, 3000);
+
+        let setfsuid_denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setfsuid_denied",
+                SyscallContext::new(SYS_SETFSUID, [4000, 0, 0, 0, 0, 0]),
+            )
+            .expect("setfsuid denied dispatch");
+        assert_eq!(expect_ret(setfsuid_denied), 3000);
+        assert_eq!(runtime.current_access_state().fsuid, 3000);
+
+        let setfsgid_saved = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setfsgid_saved",
+                SyscallContext::new(SYS_SETFSGID, [300, 0, 0, 0, 0, 0]),
+            )
+            .expect("setfsgid saved dispatch");
+        assert_eq!(expect_ret(setfsgid_saved), 200);
+        assert_eq!(runtime.current_access_state().fsgid, 300);
+
+        let setfsgid_denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_setfsgid_denied",
+                SyscallContext::new(SYS_SETFSGID, [400, 0, 0, 0, 0, 0]),
+            )
+            .expect("setfsgid denied dispatch");
+        assert_eq!(expect_ret(setfsgid_denied), 300);
+        assert_eq!(runtime.current_access_state().fsgid, 300);
     }
 
     #[test]
