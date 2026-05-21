@@ -288,6 +288,8 @@ pub(crate) struct ActiveUserContext {
     pub(crate) regions: Vec<UserRegion>,
     pub(crate) page_mappings: Vec<UserPageMapping>,
     pub(crate) frame_allocator: UserFrameAllocator,
+    locked_user_ranges: Vec<(u64, u64)>,
+    lock_future_user_mappings: bool,
     pub(crate) task_id: TaskId,
     pub(crate) pid: u32,
     pub(crate) tid: u32,
@@ -385,6 +387,8 @@ pub(crate) struct SuspendedCloneParent {
     alarm_seconds: u64,
     timer_slack_ns: u64,
     pub(crate) address_space: Option<UserAddressSpaceState>,
+    locked_user_ranges: Option<Vec<(u64, u64)>>,
+    lock_future_user_mappings: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -436,6 +440,8 @@ impl ActiveUserContext {
             regions,
             page_mappings,
             frame_allocator,
+            locked_user_ranges: Vec::new(),
+            lock_future_user_mappings: false,
             task_id,
             pid,
             tid,
@@ -603,6 +609,7 @@ impl ActiveUserContext {
     pub(crate) fn unmap_user_region(&mut self, start: u64, len: u64) {
         if let Some(end) = start.checked_add(len) {
             replace_user_region_range(&mut self.regions, start, end, None);
+            remove_range(&mut self.locked_user_ranges, start, end);
         }
     }
 
@@ -625,6 +632,61 @@ impl ActiveUserContext {
                 (range_start < range_end).then_some((range_start, range_end))
             })
             .collect()
+    }
+
+    pub(crate) fn locked_user_bytes(&self) -> u64 {
+        range_total_len(&self.locked_user_ranges)
+    }
+
+    pub(crate) fn locked_user_additional_bytes(&self, start: u64, len: u64) -> u64 {
+        let Some(end) = start.checked_add(len) else {
+            return u64::MAX;
+        };
+        let overlap: u64 = self
+            .locked_user_ranges
+            .iter()
+            .map(|(locked_start, locked_end)| overlap_len(start, end, *locked_start, *locked_end))
+            .sum();
+        end.saturating_sub(start).saturating_sub(overlap)
+    }
+
+    pub(crate) fn locked_user_subranges(&self, start: u64, len: u64) -> Vec<(u64, u64)> {
+        let Some(end) = start.checked_add(len) else {
+            return Vec::new();
+        };
+        self.locked_user_ranges
+            .iter()
+            .filter_map(|(locked_start, locked_end)| {
+                let range_start = core::cmp::max(start, *locked_start);
+                let range_end = core::cmp::min(end, *locked_end);
+                (range_start < range_end).then_some((range_start, range_end))
+            })
+            .collect()
+    }
+
+    pub(crate) fn record_locked_user_range(&mut self, start: u64, len: u64) {
+        if let Some(end) = start.checked_add(len) {
+            insert_range(&mut self.locked_user_ranges, start, end);
+        }
+    }
+
+    pub(crate) fn remove_locked_user_range(&mut self, start: u64, len: u64) {
+        if let Some(end) = start.checked_add(len) {
+            remove_range(&mut self.locked_user_ranges, start, end);
+        }
+    }
+
+    pub(crate) fn clear_user_memory_locks(&mut self) {
+        self.locked_user_ranges.clear();
+        self.lock_future_user_mappings = false;
+    }
+
+    pub(crate) fn lock_future_user_mappings(&self) -> bool {
+        self.lock_future_user_mappings
+    }
+
+    pub(crate) fn set_lock_future_user_mappings(&mut self, enabled: bool) {
+        self.lock_future_user_mappings = enabled;
     }
 
     pub(crate) fn physical_memory_offset(&self) -> u64 {
@@ -654,6 +716,7 @@ impl ActiveUserContext {
     ) {
         self.regions = regions;
         self.page_mappings = page_mappings;
+        self.clear_user_memory_locks();
         self.brk_base = brk_base;
         self.brk_current = brk_base;
         self.brk_end = brk_end;
@@ -1335,6 +1398,11 @@ impl ActiveUserContext {
         child_address_space: Option<UserAddressSpaceState>,
     ) {
         debug_assert!(self.suspended_clone_parent.is_none());
+        let independent_address_space = child_address_space.is_some();
+        let locked_user_ranges =
+            independent_address_space.then(|| core::mem::take(&mut self.locked_user_ranges));
+        let lock_future_user_mappings = independent_address_space
+            .then(|| core::mem::replace(&mut self.lock_future_user_mappings, false));
         let address_space = child_address_space.map(|child_address_space| {
             let UserAddressSpaceState {
                 regions: child_regions,
@@ -1372,6 +1440,8 @@ impl ActiveUserContext {
             alarm_seconds: self.alarm_seconds,
             timer_slack_ns: self.timer_slack_ns,
             address_space,
+            locked_user_ranges,
+            lock_future_user_mappings,
         });
         self.task_id = child_task_id;
         self.pid = child_pid;
@@ -1501,6 +1571,8 @@ impl ActiveUserContext {
             alarm_seconds,
             timer_slack_ns,
             address_space,
+            locked_user_ranges,
+            lock_future_user_mappings,
         } = parent;
         if let Some(address_space) = address_space {
             let child_allocator =
@@ -1508,6 +1580,12 @@ impl ActiveUserContext {
             self.frame_allocator.absorb_child_allocator(child_allocator);
             self.regions = address_space.regions;
             self.page_mappings = address_space.page_mappings;
+        }
+        if let Some(locked_user_ranges) = locked_user_ranges {
+            self.locked_user_ranges = locked_user_ranges;
+        }
+        if let Some(lock_future_user_mappings) = lock_future_user_mappings {
+            self.lock_future_user_mappings = lock_future_user_mappings;
         }
         if !files_shared {
             self.supervisor.close_active_fd_table_for_process_exit();
@@ -1544,6 +1622,58 @@ fn align_up(value: u64, align: u64) -> Option<u64> {
 
 fn ranges_overlap(left_start: u64, left_end: u64, right_start: u64, right_end: u64) -> bool {
     left_start < right_end && right_start < left_end
+}
+
+fn overlap_len(left_start: u64, left_end: u64, right_start: u64, right_end: u64) -> u64 {
+    let start = core::cmp::max(left_start, right_start);
+    let end = core::cmp::min(left_end, right_end);
+    end.saturating_sub(start)
+}
+
+fn range_total_len(ranges: &[(u64, u64)]) -> u64 {
+    ranges.iter().map(|(start, end)| end.saturating_sub(*start)).sum()
+}
+
+fn insert_range(ranges: &mut Vec<(u64, u64)>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    ranges.push((start, end));
+    ranges.sort_by_key(|range| (range.0, range.1));
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (range_start, range_end) in ranges.drain(..) {
+        if range_start >= range_end {
+            continue;
+        }
+        if let Some(last) = merged.last_mut()
+            && range_start <= last.1
+        {
+            last.1 = last.1.max(range_end);
+            continue;
+        }
+        merged.push((range_start, range_end));
+    }
+    *ranges = merged;
+}
+
+fn remove_range(ranges: &mut Vec<(u64, u64)>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    let mut next = Vec::with_capacity(ranges.len().saturating_add(1));
+    for (range_start, range_end) in ranges.drain(..) {
+        if range_end <= start || end <= range_start {
+            next.push((range_start, range_end));
+            continue;
+        }
+        if range_start < start {
+            next.push((range_start, start));
+        }
+        if end < range_end {
+            next.push((end, range_end));
+        }
+    }
+    *ranges = next;
 }
 
 fn path_inside_chroot(path: &[u8], root: &[u8]) -> Option<Vec<u8>> {

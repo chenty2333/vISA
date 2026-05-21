@@ -13,6 +13,11 @@ pub const SYS_DUP2: u64 = 33;
 pub const SYS_POLL: u64 = 7;
 pub const SYS_MMAP: u64 = 9;
 pub const SYS_MREMAP: u64 = 25;
+pub const SYS_MLOCK: u64 = 149;
+pub const SYS_MUNLOCK: u64 = 150;
+pub const SYS_MLOCKALL: u64 = 151;
+pub const SYS_MUNLOCKALL: u64 = 152;
+pub const SYS_MLOCK2: u64 = 325;
 pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_RT_SIGRETURN: u64 = 15;
@@ -399,6 +404,10 @@ pub enum PlanKind {
     GetResGid = 99,
     CapGet = 100,
     CapSet = 101,
+    Mlock = 102,
+    Munlock = 103,
+    Mlockall = 104,
+    Munlockall = 105,
 }
 
 impl PlanKind {
@@ -505,6 +514,10 @@ impl PlanKind {
             99 => Some(Self::GetResGid),
             100 => Some(Self::CapGet),
             101 => Some(Self::CapSet),
+            102 => Some(Self::Mlock),
+            103 => Some(Self::Munlock),
+            104 => Some(Self::Mlockall),
+            105 => Some(Self::Munlockall),
             _ => None,
         }
     }

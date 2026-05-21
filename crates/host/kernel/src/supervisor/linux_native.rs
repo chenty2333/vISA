@@ -13,14 +13,15 @@ use vmos_abi::{
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
     SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID,
-    SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT,
-    SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
-    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MLOCK,
+    SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
+    SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -91,6 +92,11 @@ impl LinuxFrontend {
             SYS_FCNTL => self.plan_fcntl(a0, a1, a2),
             SYS_FLOCK => self.plan_flock(a0, a1),
             SYS_MMAP => self.plan_mmap(a0, a1, a2, a3, a4, a5),
+            SYS_MLOCK => self.plan_mlock(a0, a1, 0),
+            SYS_MLOCK2 => self.plan_mlock(a0, a1, a2),
+            SYS_MUNLOCK => self.plan_munlock(a0, a1),
+            SYS_MLOCKALL => self.plan_mlockall(a0),
+            SYS_MUNLOCKALL => self.plan_munlockall(),
             SYS_MUNMAP => self.plan_munmap(a0, a1),
             SYS_PIPE => self.plan_pipe(a0, 0),
             SYS_PIPE2 => self.plan_pipe(a0, a1),
@@ -736,6 +742,26 @@ impl LinuxFrontend {
     fn plan_munmap(&mut self, addr: u64, len: u64) -> PackedStep {
         self.reset_plan(PlanKind::Munmap, [addr, len, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::Munmap)
+    }
+
+    fn plan_mlock(&mut self, addr: u64, len: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Mlock, [addr, len, flags, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Mlock)
+    }
+
+    fn plan_munlock(&mut self, addr: u64, len: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Munlock, [addr, len, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Munlock)
+    }
+
+    fn plan_mlockall(&mut self, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Mlockall, [flags, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Mlockall)
+    }
+
+    fn plan_munlockall(&mut self) -> PackedStep {
+        self.reset_plan(PlanKind::Munlockall, [0, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Munlockall)
     }
 
     fn plan_pipe(&mut self, fds_ptr: u64, flags: u64) -> PackedStep {

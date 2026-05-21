@@ -20,14 +20,15 @@ use vmos_abi::{
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
     SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
     SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MMAP,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID,
-    SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT,
-    SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
-    SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MLOCK,
+    SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
+    SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -104,6 +105,11 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_FCNTL => plan_fcntl(a0, a1, a2),
         SYS_FLOCK => plan_flock(a0, a1),
         SYS_MMAP => plan_mmap(a0, a1, a2, a3, a4, a5),
+        SYS_MLOCK => plan_mlock(a0, a1, 0),
+        SYS_MLOCK2 => plan_mlock(a0, a1, a2),
+        SYS_MUNLOCK => plan_munlock(a0, a1),
+        SYS_MLOCKALL => plan_mlockall(a0),
+        SYS_MUNLOCKALL => plan_munlockall(),
         SYS_MUNMAP => plan_munmap(a0, a1),
         SYS_PIPE => plan_pipe(a0, 0),
         SYS_PIPE2 => plan_pipe(a0, a1),
@@ -686,6 +692,26 @@ fn plan_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64) -
 fn plan_munmap(addr: u64, len: u64) -> PackedStep {
     reset_plan(PlanKind::Munmap, [addr, len, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Munmap)
+}
+
+fn plan_mlock(addr: u64, len: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::Mlock, [addr, len, flags, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Mlock)
+}
+
+fn plan_munlock(addr: u64, len: u64) -> PackedStep {
+    reset_plan(PlanKind::Munlock, [addr, len, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Munlock)
+}
+
+fn plan_mlockall(flags: u64) -> PackedStep {
+    reset_plan(PlanKind::Mlockall, [flags, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Mlockall)
+}
+
+fn plan_munlockall() -> PackedStep {
+    reset_plan(PlanKind::Munlockall, [0, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Munlockall)
 }
 
 fn plan_pipe(fds_ptr: u64, flags: u64) -> PackedStep {
@@ -2095,6 +2121,49 @@ mod tests {
         assert_eq!(plan_arg(3), 0x22);
         assert_eq!(plan_arg(4), u64::MAX);
         assert_eq!(plan_arg(5), 0x1000);
+    }
+
+    #[test]
+    fn memlock_syscalls_plan_distinct_operations() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_MLOCK, 0x4003, 0x2000, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlock));
+        assert_eq!(plan_arg(0), 0x4003);
+        assert_eq!(plan_arg(1), 0x2000);
+        assert_eq!(plan_arg(2), 0);
+
+        let raw = dispatch(SYS_MLOCK2, 0x5000, 0x1000, 1, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlock));
+        assert_eq!(plan_arg(0), 0x5000);
+        assert_eq!(plan_arg(1), 0x1000);
+        assert_eq!(plan_arg(2), 1);
+
+        let raw = dispatch(SYS_MUNLOCK, 0x4000, 0x1000, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Munlock));
+        assert_eq!(plan_arg(0), 0x4000);
+        assert_eq!(plan_arg(1), 0x1000);
+
+        let raw = dispatch(SYS_MLOCKALL, 0x3, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlockall));
+        assert_eq!(plan_arg(0), 0x3);
+
+        let raw = dispatch(SYS_MUNLOCKALL, 0, 0, 0, 0, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Munlockall));
     }
 
     #[test]

@@ -532,7 +532,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "fd.pipe",
             operation: "create",
         },
-        PlanKind::Mmap | PlanKind::Munmap => HostcallBinding {
+        PlanKind::Mmap
+        | PlanKind::Munmap
+        | PlanKind::Mlock
+        | PlanKind::Munlock
+        | PlanKind::Mlockall
+        | PlanKind::Munlockall => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
             object: "process.memory",

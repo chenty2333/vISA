@@ -29,17 +29,18 @@ use vmos_abi::{
     SYS_GETPPID, SYS_GETRANDOM, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT,
     SYS_GETTID, SYS_GETTIMEOFDAY, SYS_GETUID, SYS_IOCTL, SYS_KEYCTL, SYS_KILL, SYS_LCHOWN,
     SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_LSEEK, SYS_LSTAT, SYS_MADVISE, SYS_MKDIR, SYS_MKDIRAT,
-    SYS_MKNODAT, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL,
-    SYS_PPOLL, SYS_PRCTL, SYS_PREADV, SYS_PREADV2, SYS_PRLIMIT64, SYS_PSELECT6, SYS_PWRITEV,
-    SYS_PWRITEV2, SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
-    SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
-    SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO, SYS_SET_ROBUST_LIST,
-    SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK,
-    SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK,
-    SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_MKNODAT, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT,
+    SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
+    SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL,
+    SYS_PREADV, SYS_PREADV2, SYS_PRLIMIT64, SYS_PSELECT6, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ,
+    SYS_READLINK, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
+    SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
+    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, SyscallContext,
 };
 use x86_64::{
     PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
@@ -66,11 +67,12 @@ use crate::{
     supervisor::{
         LinuxCallResult, runtime,
         types::{
-            AccessIds, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT, CAP_SYS_RESOURCE,
-            LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal, RLIMIT_AS, RLIMIT_NOFILE,
-            Rlimit, RobustListRegistration, RseqRegistration, SIGALTSTACK_SS_AUTODISARM,
-            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction,
-            SignalAltStack, UserSignalDelivery,
+            AccessIds, CAP_IPC_LOCK, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT,
+            CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal,
+            RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, Rlimit, RobustListRegistration,
+            RseqRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
+            SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
+            UserSignalDelivery,
         },
     },
 };
@@ -183,6 +185,10 @@ const MAP_PRIVATE: u64 = 0x02;
 const MAP_FIXED: u64 = 0x10;
 const MAP_ANONYMOUS: u64 = 0x20;
 const MAP_FIXED_NOREPLACE: u64 = 0x100000;
+const MCL_CURRENT: u64 = 0x1;
+const MCL_FUTURE: u64 = 0x2;
+const MCL_ONFAULT: u64 = 0x4;
+const MLOCK_ONFAULT: u64 = 0x1;
 
 #[derive(Clone, Copy)]
 struct PselectFdSetSnapshot {
@@ -451,6 +457,11 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_MPROTECT => sys_mprotect(frame),
         SYS_MSYNC => sys_msync(frame),
         SYS_MADVISE => sys_madvise(frame),
+        SYS_MLOCK => sys_mlock(frame),
+        SYS_MLOCK2 => sys_mlock2(frame),
+        SYS_MUNLOCK => sys_munlock(frame),
+        SYS_MLOCKALL => sys_mlockall(frame),
+        SYS_MUNLOCKALL => sys_munlockall(frame),
         SYS_MUNMAP => sys_munmap(frame),
         SYS_ARCH_PRCTL => sys_arch_prctl(frame),
         SYS_FUTEX => sys_futex(frame),
@@ -5295,6 +5306,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     if fixed_noreplace && !existing_ranges.is_empty() {
         return Err(vmos_abi::ERR_EEXIST);
     }
+    check_future_user_lock_range(addr, len)?;
     if fixed || file_backing.is_some() {
         for (start, end) in existing_ranges {
             unmap_active_user_page_range(start, end - start)?;
@@ -5315,6 +5327,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context()
         .supervisor
         .record_guest_memory_region(addr, len, readable, writable, executable);
+    record_future_user_lock_range(addr, len);
     if let Some(file_backing) = file_backing {
         let map_prot = if frame.rdx == 0 { PROT_READ } else { frame.rdx };
         if map_prot != 0 {
@@ -5465,6 +5478,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     {
         return Err(ERR_ENOMEM);
     }
+    check_future_user_lock_range(old_end, grow_len)?;
 
     active_context().record_user_region_with_fork_advice(
         old_end,
@@ -5478,6 +5492,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     active_context()
         .supervisor
         .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
+    record_future_user_lock_range(old_end, grow_len);
     Ok(old_addr as i64)
 }
 
@@ -5520,6 +5535,20 @@ fn clone_active_shared_mapping_for_mremap(
     {
         return Err(ERR_ENOMEM);
     }
+    let cloned_locked_ranges = if active_context().lock_future_user_mappings() {
+        vec![(new_addr, target_end)]
+    } else {
+        active_context()
+            .locked_user_subranges(old_addr, new_len)
+            .into_iter()
+            .filter_map(|(start, end)| {
+                let moved_start = new_addr.checked_add(start.checked_sub(old_addr)?)?;
+                let moved_end = new_addr.checked_add(end.checked_sub(old_addr)?)?;
+                Some((moved_start, moved_end))
+            })
+            .collect::<Vec<_>>()
+    };
+    enforce_memlock_limit_for_ranges(&cloned_locked_ranges)?;
 
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
@@ -5596,6 +5625,12 @@ fn clone_active_shared_mapping_for_mremap(
     for (start, end) in target_unmap_ranges {
         context.supervisor.record_guest_memory_unmap(start, end - start);
     }
+    if fixed {
+        context.remove_locked_user_range(new_addr, new_len);
+    }
+    for (start, end) in cloned_locked_ranges {
+        context.record_locked_user_range(start, end - start);
+    }
     let (readable, writable, executable, _, _) = region_attrs;
     context
         .supervisor
@@ -5620,6 +5655,27 @@ fn move_active_user_mapping_range(
         return Err(ERR_ENOMEM);
     }
     let region_attrs = single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+    let moved_locked_ranges =
+        active_context().locked_user_subranges(old_addr, old_len.min(new_len));
+    let mut additional_lock_ranges = Vec::new();
+    if preserve_source_region {
+        for (start, end) in &moved_locked_ranges {
+            let Some(moved_start) = new_addr.checked_add(start - old_addr) else {
+                return Err(ERR_EINVAL);
+            };
+            let Some(moved_end) = new_addr.checked_add(end - old_addr) else {
+                return Err(ERR_EINVAL);
+            };
+            additional_lock_ranges.push((moved_start, moved_end));
+        }
+    }
+    if active_context().lock_future_user_mappings() && new_len > old_len {
+        additional_lock_ranges.push((
+            new_addr.checked_add(old_len).ok_or(ERR_EINVAL)?,
+            new_addr.checked_add(new_len).ok_or(ERR_EINVAL)?,
+        ));
+    }
+    enforce_memlock_limit_for_ranges(&additional_lock_ranges)?;
 
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
@@ -5698,9 +5754,21 @@ fn move_active_user_mapping_range(
     context.commit_mmap_allocation(new_addr, new_len).ok_or(ERR_EINVAL)?;
     if !preserve_source_region {
         context.supervisor.record_guest_memory_unmap(old_addr, old_len);
+        context.remove_locked_user_range(old_addr, old_len);
+    }
+    if replace_target {
+        context.remove_locked_user_range(new_addr, new_len);
     }
     for (start, end) in target_unmap_ranges {
         context.supervisor.record_guest_memory_unmap(start, end - start);
+    }
+    for (start, end) in moved_locked_ranges {
+        let moved_start = new_addr.checked_add(start - old_addr).ok_or(ERR_EINVAL)?;
+        let moved_end = new_addr.checked_add(end - old_addr).ok_or(ERR_EINVAL)?;
+        context.record_locked_user_range(moved_start, moved_end - moved_start);
+    }
+    for (start, end) in additional_lock_ranges {
+        context.record_locked_user_range(start, end - start);
     }
     let (readable, writable, executable, _, _) = region_attrs;
     context
@@ -5725,6 +5793,7 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let start = align_page(current).ok_or(ERR_EINVAL)?;
         let end = align_page(requested).ok_or(ERR_EINVAL)?;
         if end > start {
+            check_future_user_lock_range(start, end - start)?;
             active_context().record_user_region(start, end - start, true, true, false);
             active_context().supervisor.record_guest_memory_region(
                 start,
@@ -5733,6 +5802,7 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
                 true,
                 false,
             );
+            record_future_user_lock_range(start, end - start);
         }
     } else if requested < current {
         let start = align_page(requested).ok_or(ERR_EINVAL)?;
@@ -5848,6 +5918,74 @@ fn sys_madvise(frame: &SyscallFrame) -> Result<i64, i32> {
         }
         _ => {}
     }
+    Ok(0)
+}
+
+fn sys_mlock(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_mlock_range(frame.rdi, frame.rsi, 0)
+}
+
+fn sys_mlock2(frame: &SyscallFrame) -> Result<i64, i32> {
+    sys_mlock_range(frame.rdi, frame.rsi, frame.rdx)
+}
+
+fn sys_mlock_range(addr: u64, len: u64, flags: u64) -> Result<i64, i32> {
+    if flags & !MLOCK_ONFAULT != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & MLOCK_ONFAULT != 0 {
+        return Err(ERR_ENOSYS);
+    }
+    let Some((start, rounded_len)) = page_rounded_lock_range(addr, len)? else {
+        return Ok(0);
+    };
+    validate_lower_user_address_range(start, rounded_len)?;
+    validate_mapped_user_range(start, rounded_len)
+        .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
+    enforce_memlock_limit_for_ranges(&[(start, start + rounded_len)])?;
+    active_context().record_locked_user_range(start, rounded_len);
+    Ok(0)
+}
+
+fn sys_munlock(frame: &SyscallFrame) -> Result<i64, i32> {
+    let Some((start, rounded_len)) = page_rounded_lock_range(frame.rdi, frame.rsi)? else {
+        return Ok(0);
+    };
+    validate_lower_user_address_range(start, rounded_len)?;
+    validate_mapped_user_range(start, rounded_len)
+        .map_err(|errno| if errno == ERR_EFAULT { ERR_ENOMEM } else { errno })?;
+    active_context().remove_locked_user_range(start, rounded_len);
+    Ok(0)
+}
+
+fn sys_mlockall(frame: &SyscallFrame) -> Result<i64, i32> {
+    let flags = frame.rdi;
+    if flags == 0 || flags & !(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0 {
+        return Err(ERR_EINVAL);
+    }
+    if flags & MCL_ONFAULT != 0 {
+        return Err(ERR_ENOSYS);
+    }
+    if flags & MCL_CURRENT != 0 {
+        let ranges = active_context()
+            .regions
+            .iter()
+            .filter(|region| region.start < region.end)
+            .map(|region| (region.start, region.end))
+            .collect::<Vec<_>>();
+        enforce_memlock_limit_for_ranges(&ranges)?;
+        for (start, end) in ranges {
+            active_context().record_locked_user_range(start, end - start);
+        }
+    }
+    if flags & MCL_FUTURE != 0 {
+        active_context().set_lock_future_user_mappings(true);
+    }
+    Ok(0)
+}
+
+fn sys_munlockall(_frame: &SyscallFrame) -> Result<i64, i32> {
+    active_context().clear_user_memory_locks();
     Ok(0)
 }
 
@@ -8454,6 +8592,72 @@ fn prot_user_region_permissions(prot: u64) -> (bool, bool, bool) {
 
 fn align_page(value: u64) -> Option<u64> {
     value.checked_add(4095).map(|value| value & !4095)
+}
+
+fn page_rounded_lock_range(addr: u64, len: u64) -> Result<Option<(u64, u64)>, i32> {
+    if len == 0 {
+        return Ok(None);
+    }
+    let start = addr & !4095;
+    let raw_end = addr.checked_add(len).ok_or(ERR_EINVAL)?;
+    let end = align_page(raw_end).ok_or(ERR_EINVAL)?;
+    let rounded_len = end.checked_sub(start).ok_or(ERR_EINVAL)?;
+    Ok(Some((start, rounded_len)))
+}
+
+fn enforce_memlock_limit_for_ranges(ranges: &[(u64, u64)]) -> Result<(), i32> {
+    if active_context().has_effective_capability(CAP_IPC_LOCK) {
+        return Ok(());
+    }
+    let mut candidates = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if start < end {
+            insert_candidate_range(&mut candidates, *start, *end);
+        }
+    }
+    let additional = candidates
+        .iter()
+        .map(|(start, end)| active_context().locked_user_additional_bytes(*start, end - start))
+        .fold(0u64, u64::saturating_add);
+    let current = active_context().locked_user_bytes();
+    let limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_MEMLOCK).cur;
+    if limit != u64::MAX && current.saturating_add(additional) > limit {
+        return Err(ERR_ENOMEM);
+    }
+    Ok(())
+}
+
+fn check_future_user_lock_range(start: u64, len: u64) -> Result<(), i32> {
+    if active_context().lock_future_user_mappings() {
+        let end = start.checked_add(len).ok_or(ERR_EINVAL)?;
+        enforce_memlock_limit_for_ranges(&[(start, end)])?;
+    }
+    Ok(())
+}
+
+fn record_future_user_lock_range(start: u64, len: u64) {
+    if active_context().lock_future_user_mappings() {
+        active_context().record_locked_user_range(start, len);
+    }
+}
+
+fn insert_candidate_range(ranges: &mut Vec<(u64, u64)>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    ranges.push((start, end));
+    ranges.sort_by_key(|range| (range.0, range.1));
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (range_start, range_end) in ranges.drain(..) {
+        if let Some(last) = merged.last_mut()
+            && range_start <= last.1
+        {
+            last.1 = last.1.max(range_end);
+            continue;
+        }
+        merged.push((range_start, range_end));
+    }
+    *ranges = merged;
 }
 
 fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {

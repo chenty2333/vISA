@@ -118,6 +118,7 @@ impl Default for Rlimit {
 pub(crate) const RLIMIT_FSIZE: usize = 1;
 pub(crate) const RLIMIT_NPROC: usize = 6;
 pub(crate) const RLIMIT_NOFILE: usize = 7;
+pub(crate) const RLIMIT_MEMLOCK: usize = 8;
 pub(crate) const RLIMIT_AS: usize = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +129,13 @@ pub(crate) struct GenericMmapRegion {
     pub(crate) readable: bool,
     pub(crate) writable: bool,
     pub(crate) executable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GenericLockedMmapRange {
+    pub(crate) pid: Pid,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +172,7 @@ pub(crate) const CAP_FOWNER: u64 = 1 << 3;
 pub(crate) const CAP_SETGID: u64 = 1 << 6;
 pub(crate) const CAP_SETUID: u64 = 1 << 7;
 pub(crate) const CAP_SETPCAP: u64 = 1 << 8;
+pub(crate) const CAP_IPC_LOCK: u64 = 1 << 14;
 pub(crate) const CAP_SYS_CHROOT: u64 = 1 << 18;
 pub(crate) const CAP_SYS_PTRACE: u64 = 1 << 19;
 pub(crate) const CAP_SYS_ADMIN: u64 = 1 << 21;
@@ -175,6 +184,7 @@ pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_SETGID
     | CAP_SETUID
     | CAP_SETPCAP
+    | CAP_IPC_LOCK
     | CAP_SYS_CHROOT
     | CAP_SYS_PTRACE
     | CAP_SYS_ADMIN
