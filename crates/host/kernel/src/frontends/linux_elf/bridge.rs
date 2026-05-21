@@ -6923,17 +6923,17 @@ mod tests {
     use super::{
         CloneRequest, FCNTL_F_SETLKW, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11,
         LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, PSELECT6_MAX_FDS, SA_RESTART,
-        SignalAltStack, SyscallFrame, UserReturnContext, VectoredIoOffset,
-        decode_linux_ucontext_return, encode_linux_ucontext, futex_pi_handoff_word,
-        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
-        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
-        preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
-        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
-        restartable_interrupted_syscall, sanitize_restored_rflags, select_remaining_timeout_ms,
-        select_timeval_bytes, select_timeval_ms, signal_restart_syscall, validate_iovcnt,
-        validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
-        wait_nfds_within_rlimit, write_linux_greg,
+        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserReturnContext,
+        VectoredIoOffset, decode_linux_ucontext_return, demand_mapping_candidate_page,
+        encode_linux_ucontext, futex_pi_handoff_word, futex_pi_lock_timeout_clock,
+        futex_pi_non_timeout_flags_valid, futex_pi_owner_word, futex_pi_restore_wait_word,
+        futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
+        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
+        preadv2_offset_from_split, pselect_read_revents_ready, pselect_write_revents_ready,
+        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7082,6 +7082,41 @@ mod tests {
         assert!(wait_nfds_within_rlimit(0, 0));
         assert!(wait_nfds_within_rlimit(1024, 1024));
         assert!(!wait_nfds_within_rlimit(1025, 1024));
+    }
+
+    #[test]
+    fn demand_mapping_candidates_track_only_unmaterialized_pages() {
+        let mappings = [
+            UserPageMapping {
+                va: 0x1000,
+                frame_start: 0,
+                present: false,
+                owned: false,
+                cow: false,
+                backing: UserPageBacking::ZeroFill,
+            },
+            UserPageMapping {
+                va: 0x2000,
+                frame_start: 0x20_000,
+                present: false,
+                owned: true,
+                cow: false,
+                backing: UserPageBacking::ZeroFill,
+            },
+            UserPageMapping {
+                va: 0x3000,
+                frame_start: 0x30_000,
+                present: true,
+                owned: true,
+                cow: false,
+                backing: UserPageBacking::ZeroFill,
+            },
+        ];
+
+        assert!(demand_mapping_candidate_page(&mappings, 0x1000));
+        assert!(!demand_mapping_candidate_page(&mappings, 0x2000));
+        assert!(!demand_mapping_candidate_page(&mappings, 0x3000));
+        assert!(demand_mapping_candidate_page(&mappings, 0x4000));
     }
 
     #[test]
@@ -8243,9 +8278,9 @@ fn prefault_active_user_page_range(start: u64, len: u64, write: bool) -> Result<
 }
 
 fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i32> {
-    let context = active_context();
+    let demand_pages = demand_mapping_candidate_pages(page, 4096)?;
     let cow_pages = if write {
-        context
+        active_context()
             .page_mappings
             .iter()
             .filter(|mapping| mapping.cow && mapping.va == page)
@@ -8255,18 +8290,23 @@ fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i3
         Vec::new()
     };
 
-    prefault_user_page_range(
-        context.physical_memory_offset(),
-        &mut context.page_mappings,
-        &mut context.frame_allocator,
-        page,
-        4096,
-        prot,
-        write,
-    )
-    .map_err(|_| ERR_EFAULT)?;
+    {
+        let context = active_context();
+        prefault_user_page_range(
+            context.physical_memory_offset(),
+            &mut context.page_mappings,
+            &mut context.frame_allocator,
+            page,
+            4096,
+            prot,
+            write,
+        )
+        .map_err(|_| ERR_EFAULT)?;
+    }
 
+    record_guest_memory_demand_mappings_for_materialized_pages(&demand_pages);
     for page in cow_pages {
+        let context = active_context();
         if context.page_mappings.iter().any(|mapping| mapping.va == page && !mapping.cow) {
             context.supervisor.record_guest_memory_cow_break(page);
         }
@@ -8556,13 +8596,53 @@ fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
     let raw_end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
     let start = ptr & !4095;
     let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
+    let demand_pages = demand_mapping_candidate_pages(start, end - start)?;
     let mut page = start;
     while page < end {
         let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
         protect_active_user_page_range(page, 4096, prot)?;
         page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
+    record_guest_memory_demand_mappings_for_materialized_pages(&demand_pages);
     Ok(())
+}
+
+fn demand_mapping_candidate_pages(start: u64, len: u64) -> Result<Vec<u64>, i32> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let raw_end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    let page_start = start & !4095;
+    let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
+    let mappings = &active_context().page_mappings;
+    let mut pages = Vec::new();
+    let mut page = page_start;
+    while page < end {
+        if demand_mapping_candidate_page(mappings, page) {
+            pages.push(page);
+        }
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
+    }
+    Ok(pages)
+}
+
+fn demand_mapping_candidate_page(mappings: &[UserPageMapping], page: u64) -> bool {
+    match mappings.iter().find(|mapping| mapping.va == page) {
+        Some(mapping) => !mapping.present && mapping.frame_start == 0,
+        None => true,
+    }
+}
+
+fn record_guest_memory_demand_mappings_for_materialized_pages(pages: &[u64]) {
+    if pages.is_empty() {
+        return;
+    }
+    let context = active_context();
+    for page in pages {
+        if context.page_mappings.iter().any(|mapping| mapping.va == *page && mapping.present) {
+            context.supervisor.record_guest_memory_demand_mapping(*page);
+        }
+    }
 }
 
 fn user_page_region_prot(page: u64) -> Option<u64> {
@@ -8626,8 +8706,11 @@ pub(crate) fn try_handle_user_page_fault(
         }
         return cow_break_active_user_page(page, prot).is_ok();
     }
+    let Ok(demand_pages) = demand_mapping_candidate_pages(page, 4096) else {
+        return false;
+    };
     if protect_active_user_page_range(page, 4096, prot).is_ok() {
-        active_context().supervisor.record_guest_memory_demand_mapping(page);
+        record_guest_memory_demand_mappings_for_materialized_pages(&demand_pages);
         true
     } else {
         false
