@@ -34,15 +34,15 @@ use vmos_abi::{
     SYS_MKNODAT, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MOUNT, SYS_MPROTECT,
     SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT,
     SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL,
-    SYS_PREADV, SYS_PREADV2, SYS_PRLIMIT64, SYS_PSELECT6, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ,
-    SYS_READLINK, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
-    SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
-    SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
-    SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
-    SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
-    SYS_WRITEV, SyscallContext,
+    SYS_PREADV, SYS_PREADV2, SYS_PRLIMIT64, SYS_PSELECT6, SYS_PTRACE, SYS_PWRITEV, SYS_PWRITEV2,
+    SYS_READ, SYS_READLINK, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
+    SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP,
+    SYS_SELECT, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT,
+    SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS,
+    SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
+    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{
     PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
@@ -419,6 +419,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETRLIMIT => sys_getrlimit(frame),
         SYS_SETRLIMIT => sys_setrlimit(frame),
         SYS_PRLIMIT64 => sys_prlimit64(frame),
+        SYS_PTRACE => sys_ptrace(frame),
         SYS_PRCTL => sys_prctl(frame),
         SYS_SECCOMP => sys_seccomp(frame),
         SYS_GETRANDOM => sys_getrandom(frame),
@@ -2440,6 +2441,31 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
         PR_CAP_AMBIENT => sys_prctl_cap_ambient(frame.rsi, frame.rdx, frame.r10, frame.r8),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_ptrace(frame: &SyscallFrame) -> Result<i64, i32> {
+    if frame.rdi == vmos_abi::PTRACE_GETEVENTMSG {
+        let msg = active_context().supervisor.ptrace_geteventmsg(frame.rsi)?;
+        write_user_u64(frame.r10, msg)?;
+        return Ok(0);
+    }
+    if frame.rdi == vmos_abi::PTRACE_CONT || frame.rdi == vmos_abi::PTRACE_DETACH {
+        let result = if frame.rdi == vmos_abi::PTRACE_CONT {
+            active_context().supervisor.ptrace_continue(frame.rsi, frame.r10)
+        } else {
+            active_context().supervisor.ptrace_detach_from_ring3(frame.rsi, frame.r10)
+        };
+        return result;
+    }
+    linux_call_result(
+        active_context()
+            .supervisor
+            .dispatch_linux_syscall(
+                "ring3_ptrace",
+                SyscallContext::new(SYS_PTRACE, [frame.rdi, frame.rsi, frame.rdx, frame.r10, 0, 0]),
+            )
+            .map_err(|_| ERR_EINVAL)?,
+    )
 }
 
 fn sys_prctl_set_timerslack(value: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {

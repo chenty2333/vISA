@@ -82,6 +82,7 @@ pub const SYS_CHOWN: u64 = 92;
 pub const SYS_LCHOWN: u64 = 94;
 pub const SYS_GETTIMEOFDAY: u64 = 96;
 pub const SYS_GETRLIMIT: u64 = 97;
+pub const SYS_PTRACE: u64 = 101;
 pub const SYS_UMASK: u64 = 95;
 pub const SYS_TIME: u64 = 201;
 pub const SYS_CAPGET: u64 = 125;
@@ -198,6 +199,14 @@ pub const FUTEX_TID_MASK: u32 = 0x3fff_ffff;
 pub const FUTEX_PI_TIMEOUT_NONE: u64 = 0;
 pub const FUTEX_PI_TIMEOUT_REALTIME: u64 = 1;
 pub const FUTEX_PI_TIMEOUT_MONOTONIC: u64 = 2;
+pub const PTRACE_TRACEME: u64 = 0;
+pub const PTRACE_CONT: u64 = 7;
+pub const PTRACE_ATTACH: u64 = 16;
+pub const PTRACE_DETACH: u64 = 17;
+pub const PTRACE_SETOPTIONS: u64 = 0x4200;
+pub const PTRACE_GETEVENTMSG: u64 = 0x4201;
+pub const PTRACE_SEIZE: u64 = 0x4206;
+pub const PTRACE_O_TRACESECCOMP: u64 = 1 << 7;
 pub const EPOLL_CTL_ADD: u32 = 1;
 pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLL_CTL_MOD: u32 = 3;
@@ -413,6 +422,7 @@ pub enum PlanKind {
     SetFsUid = 106,
     SetFsGid = 107,
     Ioctl = 108,
+    Ptrace = 109,
 }
 
 impl PlanKind {
@@ -526,6 +536,7 @@ impl PlanKind {
             106 => Some(Self::SetFsUid),
             107 => Some(Self::SetFsGid),
             108 => Some(Self::Ioctl),
+            109 => Some(Self::Ptrace),
             _ => None,
         }
     }

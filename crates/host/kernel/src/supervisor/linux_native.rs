@@ -16,13 +16,13 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
     SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
-    SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
-    SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
-    SyscallContext, is_stdio_fd,
+    SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS,
+    SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT,
+    SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -176,6 +176,7 @@ impl LinuxFrontend {
             ),
             SYS_LINKAT => self.plan_linkat(a0, a1, a2, a3, a4, a5),
             SYS_PRCTL => self.plan_prctl(a0, a1, a2, a3, a4),
+            SYS_PTRACE => self.plan_ptrace(a0, a1, a2, a3),
             SYS_SECCOMP => self.plan_seccomp(a0, a1, a2),
             SYS_BPF => self.plan_bpf(a0, a1, a2),
             SYS_SET_ROBUST_LIST => self.plan_set_robust_list(a0, a1),
@@ -849,6 +850,11 @@ impl LinuxFrontend {
     ) -> PackedStep {
         self.reset_plan(PlanKind::Prctl, [option, arg2, arg3, arg4, arg5, 0]);
         PackedStep::plan(PlanKind::Prctl)
+    }
+
+    fn plan_ptrace(&mut self, request: u64, pid: u64, addr: u64, data: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Ptrace, [request, pid, addr, data, 0, 0]);
+        PackedStep::plan(PlanKind::Ptrace)
     }
 
     fn plan_set_robust_list(&mut self, head: u64, len: u64) -> PackedStep {

@@ -352,6 +352,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Pipe => self.plan_pipe(plan),
             PlanKind::Ioctl => self.plan_ioctl(plan),
             PlanKind::Prctl => self.plan_prctl(plan),
+            PlanKind::Ptrace => self.plan_ptrace(plan),
             PlanKind::Seccomp => self.plan_seccomp(plan),
             PlanKind::Bpf => self.plan_bpf(plan),
             PlanKind::ClockAdjtime => self.plan_clock_adjtime(plan),

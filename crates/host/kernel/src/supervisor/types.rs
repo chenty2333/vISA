@@ -383,6 +383,16 @@ pub(crate) struct SeccompTraceCompletion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PtraceAttachment {
+    pub(crate) tracer_pid: Pid,
+    pub(crate) tracer_tid: Tid,
+    pub(crate) tracee_pid: Pid,
+    pub(crate) tracee_tid: Tid,
+    pub(crate) options: u64,
+    pub(crate) last_event_msg: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompAuditAction {
     Log,
     Errno,

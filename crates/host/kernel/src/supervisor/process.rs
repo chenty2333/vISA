@@ -11,9 +11,9 @@ use super::{
     types::{
         CAP_SETGID, CAP_SETUID, CAP_SYS_ADMIN, CAP_SYS_PTRACE, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
         LINUX_SUPPORTED_SECUREBITS, Pid, ProcessAccessState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NPROC, RobustListRegistration, RseqRegistration,
-        SECBIT_KEEP_CAPS, SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_SETUID_FIXUP, SECBIT_NOROOT,
-        SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        ProcessRuntimeStateKind, PtraceAttachment, RLIMIT_NPROC, RobustListRegistration,
+        RseqRegistration, SECBIT_KEEP_CAPS, SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_SETUID_FIXUP,
+        SECBIT_NOROOT, SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -38,6 +38,7 @@ const CLONE_NEWUSER: u64 = 0x10000000;
 const CLONE_NEWPID: u64 = 0x20000000;
 const CLONE_NEWNET: u64 = 0x40000000;
 const CLONE_IO: u64 = 0x80000000;
+const SUPPORTED_PTRACE_OPTIONS: u64 = vmos_abi::PTRACE_O_TRACESECCOMP;
 const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
     | CLONE_VM
     | CLONE_FS
@@ -1009,6 +1010,234 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
             _ => Err(vmos_abi::ERR_EINVAL),
         }
+    }
+
+    pub(super) fn plan_ptrace(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+        let request = plan.args[0];
+        let pid_arg = plan.args[1];
+        let _addr = plan.args[2];
+        let data = plan.args[3];
+        let result = match request {
+            vmos_abi::PTRACE_TRACEME => self.ptrace_traceme(),
+            vmos_abi::PTRACE_ATTACH => self.ptrace_attach(pid_arg, 0),
+            vmos_abi::PTRACE_SEIZE => self.ptrace_attach(pid_arg, data),
+            vmos_abi::PTRACE_SETOPTIONS => self.ptrace_setoptions(pid_arg, data),
+            vmos_abi::PTRACE_GETEVENTMSG => match self.ptrace_geteventmsg(pid_arg) {
+                Ok(msg) => self.write_linux_bytes(data, &msg.to_le_bytes()).map(|()| 0),
+                Err(errno) => Err(errno),
+            },
+            vmos_abi::PTRACE_CONT => self.ptrace_continue(pid_arg, data),
+            vmos_abi::PTRACE_DETACH => self.ptrace_detach(pid_arg, data),
+            _ => Err(vmos_abi::ERR_EINVAL),
+        };
+        Ok(match result {
+            Ok(ret) => LinuxCallResult::Ret(ret),
+            Err(errno) => LinuxCallResult::Ret(-(errno as i64)),
+        })
+    }
+
+    pub(crate) fn ptrace_geteventmsg(&self, pid_arg: u64) -> Result<u64, i32> {
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        let Some(attachment) = self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        attachment.last_event_msg.ok_or(vmos_abi::ERR_EINVAL)
+    }
+
+    pub(crate) fn ptrace_continue(&mut self, pid_arg: u64, signal: u64) -> Result<i64, i32> {
+        if signal != 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let trace_id = self
+            .seccomp_trace_events
+            .iter()
+            .find(|event| {
+                event.state == super::types::SeccompTraceState::Queued
+                    && (event.tid == tracee_tid || event.pid == tracee_pid)
+            })
+            .map(|event| event.id);
+        if let Some(trace_id) = trace_id {
+            self.seccomp_trace_continue(trace_id)?;
+        }
+        Ok(0)
+    }
+
+    fn ptrace_traceme(&mut self) -> Result<i64, i32> {
+        let tracee_pid = self.current_pid();
+        let tracee_tid = self.current_tid();
+        let tracer_pid = self
+            .processes
+            .iter()
+            .find(|process| process.pid == tracee_pid)
+            .map(|process| process.ppid)
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if tracer_pid == 0 || tracer_pid == tracee_pid {
+            return Err(vmos_abi::ERR_EPERM);
+        }
+        let tracer_tid = self
+            .threads
+            .iter()
+            .find(|thread| thread.pid == tracer_pid && thread.state != ThreadRuntimeStateKind::Dead)
+            .map(|thread| thread.tid)
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if self
+            .ptrace_attachments
+            .iter()
+            .any(|entry| entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
+        {
+            return Err(vmos_abi::ERR_EBUSY);
+        }
+        self.ptrace_attachments.push(PtraceAttachment {
+            tracer_pid,
+            tracer_tid,
+            tracee_pid,
+            tracee_tid,
+            options: 0,
+            last_event_msg: None,
+        });
+        Ok(0)
+    }
+
+    fn ptrace_attach(&mut self, pid_arg: u64, options: u64) -> Result<i64, i32> {
+        self.validate_ptrace_options(options)?;
+        let caller_pid = self.current_pid();
+        let caller_tid = self.current_tid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        if tracee_pid == caller_pid {
+            return Err(vmos_abi::ERR_EPERM);
+        }
+        self.ptrace_may_access(caller_pid, tracee_pid)?;
+        if self
+            .ptrace_attachments
+            .iter()
+            .any(|entry| entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
+        {
+            return Err(vmos_abi::ERR_EBUSY);
+        }
+        self.ptrace_attachments.push(PtraceAttachment {
+            tracer_pid: caller_pid,
+            tracer_tid: caller_tid,
+            tracee_pid,
+            tracee_tid,
+            options,
+            last_event_msg: None,
+        });
+        Ok(0)
+    }
+
+    fn ptrace_setoptions(&mut self, pid_arg: u64, options: u64) -> Result<i64, i32> {
+        self.validate_ptrace_options(options)?;
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        let Some(index) = self.ptrace_attachment_index(caller_pid, tracee_tid, tracee_pid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        self.ptrace_attachments[index].options = options;
+        Ok(0)
+    }
+
+    pub(crate) fn ptrace_detach_from_ring3(
+        &mut self,
+        pid_arg: u64,
+        signal: u64,
+    ) -> Result<i64, i32> {
+        self.ptrace_detach(pid_arg, signal)
+    }
+
+    fn ptrace_detach(&mut self, pid_arg: u64, signal: u64) -> Result<i64, i32> {
+        if signal != 0 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        let Some(index) = self.ptrace_attachment_index(caller_pid, tracee_tid, tracee_pid) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        self.ptrace_attachments.remove(index);
+        if let Some(trace_id) = self
+            .seccomp_trace_events
+            .iter()
+            .find(|event| event.tid == tracee_tid || event.pid == tracee_pid)
+            .map(|event| event.id)
+        {
+            self.seccomp_trace_continue(trace_id)?;
+        }
+        Ok(0)
+    }
+
+    fn ptrace_target_thread(&self, pid_arg: u64) -> Result<(Tid, Pid), i32> {
+        if pid_arg == 0 || pid_arg > u32::MAX as u64 {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let raw = pid_arg as u32;
+        if let Some(thread) = self
+            .threads
+            .iter()
+            .find(|thread| thread.tid == raw && thread.state != ThreadRuntimeStateKind::Dead)
+        {
+            return Ok((thread.tid, thread.pid));
+        }
+        self.threads
+            .iter()
+            .find(|thread| thread.pid == raw && thread.state != ThreadRuntimeStateKind::Dead)
+            .map(|thread| (thread.tid, thread.pid))
+            .ok_or(vmos_abi::ERR_ESRCH)
+    }
+
+    fn ptrace_may_access(&self, caller_pid: Pid, tracee_pid: Pid) -> Result<(), i32> {
+        let caller = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        let tracee = self
+            .processes
+            .iter()
+            .find(|process| {
+                process.pid == tracee_pid && process.state != ProcessRuntimeStateKind::Dead
+            })
+            .ok_or(vmos_abi::ERR_ESRCH)?;
+        if robust_list_ptrace_may_access(caller, tracee) {
+            Ok(())
+        } else {
+            Err(vmos_abi::ERR_EPERM)
+        }
+    }
+
+    fn ptrace_attachment(
+        &self,
+        tracer_pid: Pid,
+        tracee_tid: Tid,
+        tracee_pid: Pid,
+    ) -> Option<&PtraceAttachment> {
+        self.ptrace_attachments.iter().find(|entry| {
+            entry.tracer_pid == tracer_pid
+                && (entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
+        })
+    }
+
+    fn ptrace_attachment_index(
+        &self,
+        tracer_pid: Pid,
+        tracee_tid: Tid,
+        tracee_pid: Pid,
+    ) -> Option<usize> {
+        self.ptrace_attachments.iter().position(|entry| {
+            entry.tracer_pid == tracer_pid
+                && (entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
+        })
+    }
+
+    fn validate_ptrace_options(&self, options: u64) -> Result<(), i32> {
+        if options & !SUPPORTED_PTRACE_OPTIONS != 0 { Err(vmos_abi::ERR_EINVAL) } else { Ok(()) }
     }
 
     pub(super) fn plan_wait4(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {

@@ -23,13 +23,13 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
     SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
-    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
-    SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
-    SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE,
-    SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
-    is_stdio_fd,
+    SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
+    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS,
+    SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT,
+    SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -189,6 +189,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         ),
         SYS_LINKAT => plan_linkat(a0, a1, a2, a3, a4, a5),
         SYS_PRCTL => plan_prctl(a0, a1, a2, a3, a4),
+        SYS_PTRACE => plan_ptrace(a0, a1, a2, a3),
         SYS_SECCOMP => plan_seccomp(a0, a1, a2),
         SYS_BPF => plan_bpf(a0, a1, a2),
         SYS_SET_ROBUST_LIST => plan_set_robust_list(a0, a1),
@@ -781,6 +782,11 @@ fn plan_bpf(cmd: u64, attr_ptr: u64, attr_size: u64) -> PackedStep {
 fn plan_prctl(option: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> PackedStep {
     reset_plan(PlanKind::Prctl, [option, arg2, arg3, arg4, arg5, 0]);
     PackedStep::plan(PlanKind::Prctl)
+}
+
+fn plan_ptrace(request: u64, pid: u64, addr: u64, data: u64) -> PackedStep {
+    reset_plan(PlanKind::Ptrace, [request, pid, addr, data, 0, 0]);
+    PackedStep::plan(PlanKind::Ptrace)
 }
 
 fn plan_set_robust_list(head: u64, len: u64) -> PackedStep {
@@ -2247,6 +2253,20 @@ mod tests {
         assert_eq!(plan_arg(2), 0x1234);
         assert_eq!(plan_arg(3), 0x5678);
         assert_eq!(plan_arg(4), 0x9abc);
+    }
+
+    #[test]
+    fn ptrace_plan_preserves_request_pid_addr_and_data() {
+        let _guard = test_guard();
+        let raw = dispatch(SYS_PTRACE, 0x4206, 42, 0x1234, 0x80, 0, 0);
+        let step = PackedStep::decode(raw);
+
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Ptrace));
+        assert_eq!(plan_arg(0), 0x4206);
+        assert_eq!(plan_arg(1), 42);
+        assert_eq!(plan_arg(2), 0x1234);
+        assert_eq!(plan_arg(3), 0x80);
     }
 
     #[test]

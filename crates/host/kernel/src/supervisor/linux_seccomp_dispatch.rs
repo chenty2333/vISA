@@ -652,7 +652,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         args: [u64; 6],
         data: u16,
     ) -> Result<WaitToken, i32> {
-        if !self.seccomp_trace_listener_enabled {
+        let pid = self.current_pid();
+        let tid = self.current_tid();
+        let mut tracer = None;
+        for attachment in &mut self.ptrace_attachments {
+            if (attachment.tracee_tid == tid || attachment.tracee_pid == pid)
+                && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+            {
+                attachment.last_event_msg = Some(data as u64);
+                tracer = Some((attachment.tracer_pid, attachment.tracer_tid));
+                break;
+            }
+        }
+        if !self.seccomp_trace_listener_enabled && tracer.is_none() {
             return Err(ERR_ENOSYS);
         }
         let trace_id = self.next_seccomp_trace_id;
@@ -666,8 +678,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.record_wait_token(token);
         self.seccomp_trace_events.push(SeccompTraceEvent {
             id: trace_id,
-            pid: self.current_pid(),
-            tid: self.current_tid(),
+            pid,
+            tid,
             syscall: syscall.min(u32::MAX as u64) as u32,
             instruction_pointer,
             args,
@@ -1045,8 +1057,9 @@ mod tests {
         SECCOMP_RET_TRACE, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
     };
     use vmos_abi::{
-        ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL,
-        SyscallContext,
+        ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, PTRACE_CONT, PTRACE_GETEVENTMSG,
+        PTRACE_O_TRACESECCOMP, PTRACE_SEIZE, PTRACE_SETOPTIONS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL,
+        SYS_PTRACE, SyscallContext,
     };
 
     use super::{
@@ -1338,6 +1351,162 @@ mod tests {
         let resumed =
             runtime.block_on_wait("test_seccomp_trace_return_resume", token).expect("resume");
         assert_eq!(expect_ret(resumed), 4321);
+        assert!(runtime.seccomp_trace_events.is_empty());
+    }
+
+    #[test]
+    fn generic_ptrace_seccomp_trace_continue_resumes_original_syscall() {
+        let mut runtime = test_runtime();
+        let tracer_task = runtime.current_task_id();
+        let tracer_pid = runtime.current_pid();
+        let tracee_task = runtime.allocate_task();
+        let tracee_pid = runtime.allocate_process(tracer_pid, tracer_pid, tracer_pid);
+        let tracee_tid = runtime.allocate_thread(tracee_task, tracee_pid);
+
+        let seize = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_seize",
+                SyscallContext::new(SYS_PTRACE, [PTRACE_SEIZE, tracee_tid as u64, 0, 0, 0, 0]),
+            )
+            .expect("ptrace seize");
+        assert_eq!(expect_ret(seize), 0);
+        let setoptions = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_setoptions",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_SETOPTIONS, tracee_tid as u64, 0, PTRACE_O_TRACESECCOMP, 0, 0],
+                ),
+            )
+            .expect("ptrace setoptions");
+        assert_eq!(expect_ret(setoptions), 0);
+
+        runtime.set_current_task(tracee_task);
+        runtime.set_no_new_privs(tracee_tid, true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 91);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_seccomp_trace",
+                SyscallContext::new(SYS_GETPID, [11, 12, 13, 14, 15, 16]),
+            )
+            .expect("seccomp trace dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp trace, got {other:?}"),
+        };
+        assert_eq!(token.kind, WaitKind::SeccompTrace);
+        assert_eq!(runtime.seccomp_trace_events.len(), 1);
+
+        runtime.set_current_task(tracer_task);
+        let (msg_ptr, _) = runtime.linux.write_arg_bytes(&[0u8; 8]).expect("event msg buffer");
+        let getmsg = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_geteventmsg",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_GETEVENTMSG, tracee_tid as u64, 0, msg_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace geteventmsg");
+        assert_eq!(expect_ret(getmsg), 0);
+        let msg = runtime.linux.read_bytes(msg_ptr, 8).expect("event msg");
+        assert_eq!(u64::from_le_bytes(msg.try_into().expect("msg bytes")), 91);
+
+        let cont = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_cont",
+                SyscallContext::new(SYS_PTRACE, [PTRACE_CONT, tracee_tid as u64, 0, 0, 0, 0]),
+            )
+            .expect("ptrace cont");
+        assert_eq!(expect_ret(cont), 0);
+        let resumed =
+            runtime.block_on_wait("test_ptrace_seccomp_trace_resume", token).expect("resume");
+        let (syscall, args) = match resumed {
+            LinuxCallResult::SeccompContinue { syscall, args } => (syscall, args),
+            other => panic!("expected seccomp trace continue, got {other:?}"),
+        };
+        assert_eq!(syscall, SYS_GETPID);
+        assert_eq!(args, [11, 12, 13, 14, 15, 16]);
+
+        runtime.set_current_task(tracee_task);
+        let continued = runtime
+            .dispatch_linux_syscall_after_seccomp_continue(
+                "test_ptrace_seccomp_trace_execute",
+                SyscallContext::new(syscall, args),
+            )
+            .expect("continued syscall");
+        assert_eq!(expect_ret(continued), tracee_pid as i64);
+        assert!(runtime.seccomp_trace_events.is_empty());
+    }
+
+    #[test]
+    fn generic_ptrace_seize_requires_ptrace_permission() {
+        let mut runtime = test_runtime();
+        let tracee_task = runtime.allocate_task();
+        let tracee_pid = runtime.allocate_process(1, 1, 1);
+        let tracee_tid = runtime.allocate_thread(tracee_task, tracee_pid);
+        let tracee = runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == tracee_pid)
+            .expect("tracee process");
+        tracee.access.real_uid = 1000;
+        tracee.access.uid = 1000;
+        tracee.access.saved_uid = 1000;
+        tracee.access.real_gid = 1000;
+        tracee.access.gid = 1000;
+        tracee.access.saved_gid = 1000;
+        set_current_effective_caps(&mut runtime, 0);
+
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_seize_denied",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_SEIZE, tracee_tid as u64, 0, PTRACE_O_TRACESECCOMP, 0, 0],
+                ),
+            )
+            .expect("ptrace seize denied");
+
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+        assert!(runtime.ptrace_attachments.is_empty());
+    }
+
+    #[test]
+    fn generic_seccomp_trace_attached_without_trace_option_returns_enosys() {
+        let mut runtime = test_runtime();
+        let tracer_pid = runtime.current_pid();
+        let tracee_task = runtime.allocate_task();
+        let tracee_pid = runtime.allocate_process(tracer_pid, tracer_pid, tracer_pid);
+        let tracee_tid = runtime.allocate_thread(tracee_task, tracee_pid);
+        let seize = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_seize_without_trace_option",
+                SyscallContext::new(SYS_PTRACE, [PTRACE_SEIZE, tracee_tid as u64, 0, 0, 0, 0]),
+            )
+            .expect("ptrace seize");
+        assert_eq!(expect_ret(seize), 0);
+
+        runtime.set_current_task(tracee_task);
+        runtime.set_no_new_privs(tracee_tid, true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 3);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_trace_no_ptrace_option",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp trace dispatch");
+
+        assert_eq!(expect_ret(result), -(ERR_ENOSYS as i64));
         assert!(runtime.seccomp_trace_events.is_empty());
     }
 

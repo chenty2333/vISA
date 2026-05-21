@@ -597,6 +597,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "thread.cleanup",
             operation: "get-robust-list",
         },
+        PlanKind::Ptrace => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "process.ptrace",
+            operation: "control",
+        },
         PlanKind::Seccomp | PlanKind::Prctl => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
