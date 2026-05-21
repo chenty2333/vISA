@@ -9,6 +9,7 @@ use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
+    types::CAP_SYS_ADMIN,
 };
 
 const SECCOMP_SET_MODE_STRICT: u64 = 0;
@@ -179,7 +180,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 match self.set_seccomp_filter(
                     self.current_tid(),
                     program,
-                    false,
+                    self.current_access_state().cap_effective & CAP_SYS_ADMIN != 0,
                     flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
                 ) {
@@ -264,4 +265,72 @@ fn is_supported_seccomp_action(action: u32) -> bool {
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use service_core::seccomp::SECCOMP_RET_ALLOW;
+    use vmos_abi::ERR_EACCES;
+
+    use super::*;
+    use crate::supervisor::engine::RuntimeOnlyExecutor;
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn set_current_effective_caps(runtime: &mut PrototypeRuntime<'_>, caps: u64) {
+        let pid = runtime.current_pid();
+        let process =
+            runtime.processes.iter_mut().find(|process| process.pid == pid).expect("process");
+        process.access.cap_permitted = caps;
+        process.access.cap_effective = caps;
+    }
+
+    fn write_allow_filter(runtime: &mut PrototypeRuntime<'_>) -> u32 {
+        const BPF_RET_K: u16 = 0x06;
+        let mut seccomp_args = [0u8; 24];
+        let (fprog_ptr, _) = runtime.linux.write_arg_bytes(&seccomp_args).expect("seccomp buffer");
+        let filter_ptr = fprog_ptr + 16;
+
+        seccomp_args[0..2].copy_from_slice(&1u16.to_le_bytes());
+        seccomp_args[8..16].copy_from_slice(&(filter_ptr as u64).to_le_bytes());
+        seccomp_args[16..18].copy_from_slice(&BPF_RET_K.to_le_bytes());
+        seccomp_args[20..24].copy_from_slice(&SECCOMP_RET_ALLOW.to_le_bytes());
+        runtime.linux.write_bytes(fprog_ptr, &seccomp_args).expect("seccomp buffer write");
+        fprog_ptr
+    }
+
+    #[test]
+    fn generic_seccomp_filter_cap_sys_admin_bypasses_no_new_privs_requirement() {
+        let mut denied_runtime = test_runtime();
+        set_current_effective_caps(&mut denied_runtime, 0);
+        let denied_fprog = write_allow_filter(&mut denied_runtime);
+        let denied = denied_runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, denied_fprog as u64, 0)
+            .expect("denied seccomp install");
+        assert_eq!(expect_ret(denied), -(ERR_EACCES as i64));
+        assert_eq!(denied_runtime.seccomp_mode(denied_runtime.current_tid()), Some(0));
+
+        let mut privileged_runtime = test_runtime();
+        set_current_effective_caps(&mut privileged_runtime, CAP_SYS_ADMIN);
+        let privileged_fprog = write_allow_filter(&mut privileged_runtime);
+        let allowed = privileged_runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, privileged_fprog as u64, 0)
+            .expect("privileged seccomp install");
+        assert_eq!(expect_ret(allowed), 0);
+        assert!(!privileged_runtime.no_new_privs(privileged_runtime.current_tid()));
+        assert_eq!(
+            privileged_runtime.seccomp_mode(privileged_runtime.current_tid()),
+            Some(SECCOMP_MODE_FILTER)
+        );
+    }
 }
