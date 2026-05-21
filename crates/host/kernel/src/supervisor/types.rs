@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use semantic_core::{ResourceHandle, ResourceId};
+use semantic_core::{LinuxCapSets, ResourceHandle, ResourceId};
 use service_core::seccomp::SeccompFilterChain;
 use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
 
@@ -40,8 +40,12 @@ pub(crate) struct ProcessAccessState {
     pub(crate) saved_gid: u32,
     pub(crate) fsgid: u32,
     pub(crate) supplementary_groups: Vec<u32>,
+    pub(crate) cap_bounding: u64,
+    pub(crate) cap_inheritable: u64,
     pub(crate) cap_permitted: u64,
     pub(crate) cap_effective: u64,
+    pub(crate) cap_ambient: u64,
+    pub(crate) securebits: u32,
 }
 
 impl ProcessAccessState {
@@ -56,8 +60,12 @@ impl ProcessAccessState {
             saved_gid: 0,
             fsgid: 0,
             supplementary_groups: Vec::new(),
+            cap_bounding: LINUX_KNOWN_CAPS,
+            cap_inheritable: 0,
             cap_permitted: LINUX_KNOWN_CAPS,
             cap_effective: LINUX_KNOWN_CAPS,
+            cap_ambient: 0,
+            securebits: 0,
         }
     }
 
@@ -84,9 +92,24 @@ impl ProcessAccessState {
             saved_gid,
             fsgid,
             supplementary_groups,
+            cap_bounding: LINUX_KNOWN_CAPS,
+            cap_inheritable: 0,
             cap_permitted,
             cap_effective,
+            cap_ambient: 0,
+            securebits: 0,
         }
+    }
+
+    pub(crate) fn with_linux_cap_sets(mut self, capability_sets: &LinuxCapSets) -> Self {
+        self.cap_bounding = capability_sets.bounding & LINUX_KNOWN_CAPS;
+        self.cap_inheritable = capability_sets.inheritable & LINUX_KNOWN_CAPS;
+        self.cap_permitted = capability_sets.permitted & LINUX_KNOWN_CAPS;
+        self.cap_effective = capability_sets.effective & self.cap_permitted;
+        self.cap_ambient =
+            capability_sets.ambient & self.cap_permitted & self.cap_inheritable & LINUX_KNOWN_CAPS;
+        self.securebits = capability_sets.securebits & LINUX_SUPPORTED_SECUREBITS;
+        self
     }
 
     pub(crate) fn ids(&self) -> AccessIds<'_> {
@@ -102,6 +125,15 @@ impl ProcessAccessState {
             || self.gid != other.gid
             || self.saved_gid != other.saved_gid
             || self.fsgid != other.fsgid
+    }
+
+    pub(crate) fn capability_state_differs(&self, other: &Self) -> bool {
+        self.cap_bounding != other.cap_bounding
+            || self.cap_inheritable != other.cap_inheritable
+            || self.cap_permitted != other.cap_permitted
+            || self.cap_effective != other.cap_effective
+            || self.cap_ambient != other.cap_ambient
+            || self.securebits != other.securebits
     }
 }
 

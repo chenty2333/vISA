@@ -10,9 +10,10 @@ use super::{
     runtime::PrototypeRuntime,
     types::{
         CAP_SETGID, CAP_SETUID, CAP_SYS_ADMIN, CAP_SYS_PTRACE, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
-        Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind, RLIMIT_NPROC,
-        RobustListRegistration, RseqRegistration, SignalAltStack, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid,
+        LINUX_SUPPORTED_SECUREBITS, Pid, ProcessAccessState, ProcessRuntimeState,
+        ProcessRuntimeStateKind, RLIMIT_NPROC, RobustListRegistration, RseqRegistration,
+        SECBIT_KEEP_CAPS, SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_SETUID_FIXUP, SECBIT_NOROOT,
+        SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -102,7 +103,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups.clone(),
             capability_sets.permitted,
             capability_sets.effective,
-        );
+        )
+        .with_linux_cap_sets(&capability_sets);
         let transitioned = self
             .semantic
             .transition_process_credential_by_pid(
@@ -196,7 +198,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups.clone(),
             capability_sets.permitted,
             capability_sets.effective,
-        );
+        )
+        .with_linux_cap_sets(&capability_sets);
         self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
@@ -344,7 +347,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups.clone(),
             capability_sets.permitted,
             capability_sets.effective,
-        );
+        )
+        .with_linux_cap_sets(&capability_sets);
         self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
@@ -512,7 +516,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups.clone(),
             capability_sets.permitted,
             capability_sets.effective,
-        );
+        )
+        .with_linux_cap_sets(&capability_sets);
         self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
@@ -1209,10 +1214,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some(after) = access_setresuid(before.clone(), ruid, euid, suid) else {
             return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
         };
-        if before.credential_ids_differ(&after)
-            || before.cap_permitted != after.cap_permitted
-            || before.cap_effective != after.cap_effective
-        {
+        if before.credential_ids_differ(&after) || before.capability_state_differs(&after) {
             return self.apply_current_credential_transition(
                 after.clone(),
                 CredentialTransitionKind::SetResUid {
@@ -1412,7 +1414,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         if plan.args[1] != 0 {
             let access = self.current_access_state();
-            let encoded = encode_capability_data(access.cap_effective, access.cap_permitted, 0);
+            let encoded = encode_capability_data(
+                access.cap_effective,
+                access.cap_permitted,
+                access.cap_inheritable,
+            );
             if let Err(errno) = self.write_linux_bytes(plan.args[1], &encoded[..data_len]) {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
@@ -1451,16 +1457,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             after.clone(),
             CredentialTransitionKind::CapSet {
                 bounding: false,
-                inheritable: false,
+                inheritable: before.cap_inheritable != after.cap_inheritable,
                 permitted: before.cap_permitted != after.cap_permitted,
                 effective: before.cap_effective != after.cap_effective,
-                ambient: false,
-                securebits: false,
+                ambient: before.cap_ambient != after.cap_ambient,
+                securebits: before.securebits != after.securebits,
             },
         )
     }
 
-    fn apply_current_credential_transition(
+    pub(super) fn apply_current_credential_transition(
         &mut self,
         access: ProcessAccessState,
         kind: CredentialTransitionKind,
@@ -1468,7 +1474,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.apply_current_credential_transition_ret(access, kind, 0)
     }
 
-    fn apply_current_credential_transition_ret(
+    pub(super) fn apply_current_credential_transition_ret(
         &mut self,
         access: ProcessAccessState,
         kind: CredentialTransitionKind,
@@ -1861,12 +1867,96 @@ fn access_capset(
     let permitted = permitted & LINUX_KNOWN_CAPS;
     let effective = effective & LINUX_KNOWN_CAPS;
     let inheritable = inheritable & LINUX_KNOWN_CAPS;
-    if inheritable != 0 || permitted & !access.cap_permitted != 0 || effective & !permitted != 0 {
+    let newly_inheritable = inheritable & !access.cap_inheritable;
+    if permitted & !access.cap_permitted != 0
+        || newly_inheritable & !access.cap_bounding != 0
+        || effective & !permitted != 0
+    {
         return None;
     }
     access.cap_permitted = permitted;
     access.cap_effective = effective;
+    access.cap_inheritable = inheritable;
+    access.cap_ambient &= access.cap_permitted & access.cap_inheritable;
     Some(access)
+}
+
+pub(super) fn access_set_keepcaps(
+    mut access: ProcessAccessState,
+    enabled: bool,
+) -> Option<ProcessAccessState> {
+    if access.securebits & super::types::SECBIT_KEEP_CAPS_LOCKED != 0 {
+        return None;
+    }
+    if enabled {
+        access.securebits |= SECBIT_KEEP_CAPS;
+    } else {
+        access.securebits &= !SECBIT_KEEP_CAPS;
+    }
+    Some(access)
+}
+
+pub(super) fn access_set_securebits(
+    mut access: ProcessAccessState,
+    securebits: u32,
+) -> Option<ProcessAccessState> {
+    if securebits & !LINUX_SUPPORTED_SECUREBITS != 0 {
+        return None;
+    }
+    for (bit, lock) in [
+        (SECBIT_NOROOT, super::types::SECBIT_NOROOT_LOCKED),
+        (SECBIT_NO_SETUID_FIXUP, super::types::SECBIT_NO_SETUID_FIXUP_LOCKED),
+        (SECBIT_KEEP_CAPS, super::types::SECBIT_KEEP_CAPS_LOCKED),
+        (SECBIT_NO_CAP_AMBIENT_RAISE, super::types::SECBIT_NO_CAP_AMBIENT_RAISE_LOCKED),
+    ] {
+        if access.securebits & lock != 0
+            && (securebits & (bit | lock)) != (access.securebits & (bit | lock))
+        {
+            return None;
+        }
+    }
+    access.securebits = securebits;
+    Some(access)
+}
+
+pub(super) fn access_drop_bounding_capability(
+    mut access: ProcessAccessState,
+    capability: u64,
+) -> Option<ProcessAccessState> {
+    if !access_has_capability(&access, super::types::CAP_SETPCAP) {
+        return None;
+    }
+    access.cap_bounding &= !capability;
+    Some(access)
+}
+
+pub(super) fn access_raise_ambient_capability(
+    mut access: ProcessAccessState,
+    capability: u64,
+) -> Option<ProcessAccessState> {
+    if access.securebits & SECBIT_NO_CAP_AMBIENT_RAISE != 0 {
+        return None;
+    }
+    if access.cap_permitted & capability == 0 || access.cap_inheritable & capability == 0 {
+        return None;
+    }
+    access.cap_ambient |= capability & LINUX_KNOWN_CAPS;
+    Some(access)
+}
+
+pub(super) fn access_lower_ambient_capability(
+    mut access: ProcessAccessState,
+    capability: u64,
+) -> ProcessAccessState {
+    access.cap_ambient &= !capability;
+    access
+}
+
+pub(super) fn access_clear_ambient_capabilities(
+    mut access: ProcessAccessState,
+) -> ProcessAccessState {
+    access.cap_ambient = 0;
+    access
 }
 
 fn access_has_capability(access: &ProcessAccessState, capability: u64) -> bool {
@@ -1879,30 +1969,36 @@ fn fixup_access_caps_after_uid_change(
     old_effective: u32,
     old_saved: u32,
 ) {
+    if access.securebits & SECBIT_NO_SETUID_FIXUP != 0 {
+        return;
+    }
     let had_root_uid = old_real == 0 || old_effective == 0 || old_saved == 0;
     let has_root_uid = access.real_uid == 0 || access.uid == 0 || access.saved_uid == 0;
     if had_root_uid && !has_root_uid {
         access.cap_effective = 0;
-        access.cap_permitted = 0;
+        if access.securebits & SECBIT_KEEP_CAPS == 0 {
+            access.cap_permitted = 0;
+            access.cap_ambient = 0;
+        }
         return;
     }
     if old_effective == 0 && access.uid != 0 {
         access.cap_effective = 0;
         return;
     }
-    if old_effective != 0 && access.uid == 0 {
-        access.cap_effective = access.cap_permitted & LINUX_KNOWN_CAPS;
+    if old_effective != 0 && access.uid == 0 && access.securebits & SECBIT_NOROOT == 0 {
+        access.cap_effective = access.cap_permitted & access.cap_bounding;
     }
 }
 
 fn linux_cap_sets_from_access(access: &ProcessAccessState) -> LinuxCapSets {
     LinuxCapSets {
-        bounding: LINUX_KNOWN_CAPS,
-        inheritable: 0,
+        bounding: access.cap_bounding & LINUX_KNOWN_CAPS,
+        inheritable: access.cap_inheritable & LINUX_KNOWN_CAPS,
         permitted: access.cap_permitted & LINUX_KNOWN_CAPS,
         effective: access.cap_effective & LINUX_KNOWN_CAPS,
-        ambient: 0,
-        securebits: 0,
+        ambient: access.cap_ambient & LINUX_KNOWN_CAPS,
+        securebits: access.securebits & LINUX_SUPPORTED_SECUREBITS,
     }
 }
 
@@ -2542,6 +2638,7 @@ mod tests {
         let access = runtime.current_access_state();
         assert_eq!(access.cap_permitted, CAP_SETUID);
         assert_eq!(access.cap_effective, CAP_SETUID);
+        assert_eq!(access.cap_inheritable, 0);
 
         let raised = encode_capability_data(LINUX_KNOWN_CAPS, LINUX_KNOWN_CAPS, 0);
         runtime.linux.write_bytes(data_ptr, &raised).expect("raised capset data");
@@ -2555,13 +2652,25 @@ mod tests {
 
         let inheritable = encode_capability_data(CAP_SETUID, CAP_SETUID, CAP_SETUID);
         runtime.linux.write_bytes(data_ptr, &inheritable).expect("inheritable capset data");
-        let denied = runtime
+        let allowed = runtime
             .dispatch_linux_syscall_raw(
-                "test_capset_inheritable_denied",
+                "test_capset_inheritable_allowed",
                 SyscallContext::new(SYS_CAPSET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
             )
-            .expect("capset inheritable denied dispatch");
-        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+            .expect("capset inheritable allowed dispatch");
+        assert_eq!(expect_ret(allowed), 0);
+        let access = runtime.current_access_state();
+        assert_eq!(access.cap_inheritable, CAP_SETUID);
+
+        let capget = runtime
+            .dispatch_linux_syscall_raw(
+                "test_capget_inheritable",
+                SyscallContext::new(SYS_CAPGET, [header_ptr as u64, data_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("capget inheritable dispatch");
+        assert_eq!(expect_ret(capget), 0);
+        let data = runtime.linux.read_bytes(data_ptr, 24).expect("capget data buffer");
+        assert_eq!(u32::from_le_bytes(data[8..12].try_into().unwrap()), CAP_SETUID as u32);
     }
 
     #[test]
