@@ -33,9 +33,9 @@ use super::{
     types::{
         BpfMapState, DEFAULT_RLIMIT_STACK_BYTES, EventFdState, FdEntry, GenericLockedMmapRange,
         GenericMmapRegion, InjectedFault, Pid, PipeState, ProcessAccessState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit, RuntimeClockAdjustmentState,
-        SeccompMode, ServiceCallError, SigAction, SocketPairState, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid, TimerFdState,
+        ProcessRuntimeStateKind, RLIMIT_CPU, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit,
+        RuntimeClockAdjustmentState, SeccompMode, ServiceCallError, SigAction, SocketPairState,
+        TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid, TimerFdState,
     },
     wait::WaitRegistry,
 };
@@ -238,6 +238,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                     exit_code: None,
                     sigactions: [SigAction::default(); 64],
                     rlimits: default_process_rlimits(),
+                    cpu_time_ns: 0,
+                    rlimit_cpu_soft_notified: false,
                 });
                 procs
             },
@@ -321,6 +323,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             exit_code: None,
             sigactions: [SigAction::default(); 64],
             rlimits: default_process_rlimits(),
+            cpu_time_ns: 0,
+            rlimit_cpu_soft_notified: false,
         });
         pid
     }
@@ -600,6 +604,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
             if resource < 16 {
                 proc.rlimits[resource] = rlim;
+                if resource == RLIMIT_CPU
+                    && (rlim.cur == u64::MAX
+                        || proc.cpu_time_ns <= rlim.cur.saturating_mul(1_000_000_000))
+                {
+                    proc.rlimit_cpu_soft_notified = false;
+                }
                 return true;
             }
         }

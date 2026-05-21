@@ -265,6 +265,9 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
     };
     let _activation = ActivationGuard { activation_id };
     active_context().supervisor.set_current_task(task_id);
+    if let Some(status) = active_context().supervisor.charge_current_cpu_dispatch_quantum() {
+        return handle_exit_syscall(frame, status);
+    }
     let seccomp_call_addr = seccomp_syscall_instruction_addr(frame);
     match active_context().supervisor.check_seccomp_syscall(
         active_context().tid,

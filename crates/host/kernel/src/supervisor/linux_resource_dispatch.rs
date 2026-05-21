@@ -3,13 +3,53 @@ use vmos_abi::{ERR_EINVAL, ERR_EPERM, ERR_ESRCH};
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{CAP_SYS_RESOURCE, Pid, Rlimit},
+    types::{CAP_SYS_RESOURCE, Pid, ProcessRuntimeStateKind, RLIMIT_CPU, Rlimit},
 };
 
 const RLIMIT_COUNT: usize = 16;
 const RLIMIT64_SIZE: usize = 16;
+const CPU_DISPATCH_QUANTUM_NS: u64 = 1_000_000;
+const NS_PER_SECOND: u64 = 1_000_000_000;
+const SIGXCPU: u8 = 24;
+const SIGKILL_STATUS: i32 = 128 + 9;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(crate) fn charge_current_cpu_dispatch_quantum(&mut self) -> Option<i32> {
+        self.charge_current_cpu_time_ns(CPU_DISPATCH_QUANTUM_NS)
+    }
+
+    pub(crate) fn charge_current_cpu_time_ns(&mut self, charged_ns: u64) -> Option<i32> {
+        if charged_ns == 0 {
+            return None;
+        }
+        let pid = self.current_pid();
+        let tid = self.current_tid();
+        let mut queue_soft_signal = false;
+        let mut hard_kill = false;
+
+        if let Some(process) = self.processes.iter_mut().find(|process| process.pid == pid) {
+            if process.state != ProcessRuntimeStateKind::Running {
+                return None;
+            }
+            process.cpu_time_ns = process.cpu_time_ns.saturating_add(charged_ns);
+            let hard_limit_ns = rlimit_cpu_seconds_to_ns(process.rlimits[RLIMIT_CPU].max);
+            if process.cpu_time_ns > hard_limit_ns {
+                hard_kill = true;
+            } else {
+                let soft_limit_ns = rlimit_cpu_seconds_to_ns(process.rlimits[RLIMIT_CPU].cur);
+                if process.cpu_time_ns > soft_limit_ns && !process.rlimit_cpu_soft_notified {
+                    process.rlimit_cpu_soft_notified = true;
+                    queue_soft_signal = true;
+                }
+            }
+        }
+
+        if queue_soft_signal {
+            self.queue_signal_to_thread(tid, SIGXCPU, 0, pid, 0);
+        }
+        hard_kill.then_some(SIGKILL_STATUS)
+    }
+
     pub(super) fn plan_prlimit64(
         &mut self,
         plan: LinuxPlan,
@@ -136,6 +176,10 @@ fn decode_rlimit(bytes: &[u8]) -> Result<Rlimit, i32> {
     Ok(Rlimit { cur, max })
 }
 
+fn rlimit_cpu_seconds_to_ns(seconds: u64) -> u64 {
+    if seconds == u64::MAX { u64::MAX } else { seconds.saturating_mul(NS_PER_SECOND) }
+}
+
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
 }
@@ -144,7 +188,7 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{ERR_EPERM, SYS_PRLIMIT64, SyscallContext};
+    use vmos_abi::{ERR_EPERM, SYS_GETPID, SYS_PRLIMIT64, SyscallContext};
 
     use super::{
         super::{
@@ -174,6 +218,57 @@ mod tests {
             runtime.get_rlimit(pid, RLIMIT_STACK),
             Rlimit { cur: DEFAULT_RLIMIT_STACK_BYTES, max: DEFAULT_RLIMIT_STACK_BYTES }
         );
+    }
+
+    #[test]
+    fn rlimit_cpu_soft_limit_queues_sigxcpu_once() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_CPU, Rlimit { cur: 1, max: 2 }));
+
+        assert_eq!(runtime.charge_current_cpu_time_ns(NS_PER_SECOND), None);
+        assert!(
+            runtime
+                .threads
+                .iter()
+                .find(|thread| thread.tid == tid)
+                .expect("current thread")
+                .pending_signals
+                .is_empty()
+        );
+
+        assert_eq!(runtime.charge_current_cpu_time_ns(1), None);
+        let thread =
+            runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
+        assert_eq!(thread.pending_signals.len(), 1);
+        assert_eq!(thread.pending_signals[0].signo, SIGXCPU);
+
+        assert_eq!(runtime.charge_current_cpu_time_ns(1), None);
+        let thread =
+            runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
+        assert_eq!(thread.pending_signals.len(), 1);
+    }
+
+    #[test]
+    fn rlimit_cpu_hard_limit_exits_current_process() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_CPU, Rlimit { cur: 0, max: 0 }));
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_cpu_limit",
+                SyscallContext::new(SYS_GETPID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("getpid dispatch");
+        match result {
+            LinuxCallResult::Exit(status) => assert_eq!(status, SIGKILL_STATUS),
+            other => panic!("expected cpu hard limit exit, got {other:?}"),
+        }
+        let process = runtime.query_process(pid).expect("current process");
+        assert_eq!(process.state, ProcessRuntimeStateKind::Zombie);
+        assert_eq!(process.exit_code, Some(SIGKILL_STATUS));
     }
 
     #[test]

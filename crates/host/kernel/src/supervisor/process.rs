@@ -235,6 +235,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             exit_code: None,
             sigactions: parent.sigactions,
             rlimits: parent.rlimits,
+            cpu_time_ns: 0,
+            rlimit_cpu_soft_notified: false,
         });
         self.threads.push(ThreadRuntimeState {
             tid: child_tid,
@@ -387,6 +389,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             exit_code: None,
             sigactions: parent.sigactions,
             rlimits: parent.rlimits,
+            cpu_time_ns: 0,
+            rlimit_cpu_soft_notified: false,
         });
         self.threads.push(ThreadRuntimeState {
             tid: child_tid,
@@ -553,6 +557,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             exit_code: None,
             sigactions: parent.sigactions,
             rlimits: parent.rlimits,
+            cpu_time_ns: 0,
+            rlimit_cpu_soft_notified: false,
         });
         self.threads.push(ThreadRuntimeState {
             tid: child_tid,

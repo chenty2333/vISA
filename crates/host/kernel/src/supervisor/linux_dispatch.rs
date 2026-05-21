@@ -136,6 +136,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         ctx: SyscallContext,
     ) -> Result<LinuxCallResult, &'static str> {
+        if let Some(status) = self.charge_current_cpu_dispatch_quantum() {
+            let pid = self.current_pid();
+            self.close_active_fd_table_for_process_exit();
+            self.process_exit(pid, status);
+            return Ok(LinuxCallResult::Exit(status));
+        }
         let decision = self.check_seccomp_syscall(self.current_tid(), ctx.nr, 0, ctx.args);
         if let Some(result) = self.apply_generic_seccomp_decision(ctx.nr, decision) {
             return Ok(result);

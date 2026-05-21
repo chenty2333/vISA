@@ -25,6 +25,8 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) exit_code: Option<i32>,
     pub(crate) sigactions: [SigAction; 64],
     pub(crate) rlimits: [Rlimit; 16],
+    pub(crate) cpu_time_ns: u64,
+    pub(crate) rlimit_cpu_soft_notified: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -115,6 +117,7 @@ impl Default for Rlimit {
     }
 }
 
+pub(crate) const RLIMIT_CPU: usize = 0;
 pub(crate) const RLIMIT_FSIZE: usize = 1;
 pub(crate) const RLIMIT_STACK: usize = 3;
 pub(crate) const RLIMIT_NPROC: usize = 6;
