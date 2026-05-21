@@ -3022,6 +3022,7 @@ fn validate_pselect6_nfds(nfds_arg: u64, nofile: u64) -> Result<usize, i32> {
 
 fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     const CLOCK_REALTIME: u64 = 0;
+    const CLOCK_TAI: u64 = 11;
     const TIMEX_SIZE: usize = 208;
     const ADJ_OFFSET: u32 = 0x0001;
     const ADJ_FREQUENCY: u32 = 0x0002;
@@ -3053,7 +3054,8 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     if frame.rsi == 0 {
         return Err(ERR_EFAULT);
     }
-    if frame.rdi != CLOCK_REALTIME {
+    let clock_id = frame.rdi;
+    if clock_id != CLOCK_REALTIME && clock_id != CLOCK_TAI {
         return Err(ERR_EINVAL);
     }
 
@@ -3063,8 +3065,18 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     if modes & !SUPPORTED_MODES != 0 || modes & ADJ_MICRO != 0 && modes & ADJ_NANO != 0 {
         return Err(ERR_EINVAL);
     }
+    if clock_id == CLOCK_TAI && modes != 0 {
+        return Err(ERR_EINVAL);
+    }
     if modes != 0 && !active_context().has_effective_capability(CAP_SYS_TIME) {
         return Err(ERR_EPERM);
+    }
+
+    if clock_id == CLOCK_TAI {
+        let state = active_context().clock_adj_state();
+        write_timex_snapshot(&mut tx, modes, state, current_tai_ns())?;
+        tx_lease.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&tx);
+        return if state.status & STA_UNSYNC != 0 { Ok(TIME_ERROR) } else { Ok(TIME_OK) };
     }
 
     let tick = crate::interrupts::tick_count();

@@ -94,7 +94,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn apply_clock_adjtime(&mut self, plan: LinuxPlan) -> Result<i64, i32> {
         let clock_id = plan.args[0];
         let tx_ptr = checked_user_ptr(plan.args[1])?;
-        if clock_id != CLOCK_REALTIME {
+        if clock_id != CLOCK_REALTIME && clock_id != CLOCK_TAI {
             return Err(ERR_EINVAL);
         }
 
@@ -106,12 +106,24 @@ impl<'engine> PrototypeRuntime<'engine> {
         if modes & !SUPPORTED_MODES != 0 || modes & ADJ_MICRO != 0 && modes & ADJ_NANO != 0 {
             return Err(ERR_EINVAL);
         }
+        if clock_id == CLOCK_TAI && modes != 0 {
+            return Err(ERR_EINVAL);
+        }
         if modes != 0 && self.current_access_state().cap_effective & CAP_SYS_TIME == 0 {
             return Err(ERR_EPERM);
         }
 
         let tick = crate::interrupts::tick_count();
         let timer_hz = crate::interrupts::TIMER_HZ as u64;
+        if clock_id == CLOCK_TAI {
+            let state = self.clock_adj;
+            write_timex_snapshot(&mut tx, modes, state, self.runtime_tai_now_ns(tick, timer_hz))?;
+            if self.linux.write_bytes(tx_ptr, &tx).is_err() {
+                return Err(ERR_EFAULT);
+            }
+            return if state.status & STA_UNSYNC != 0 { Ok(TIME_ERROR) } else { Ok(TIME_OK) };
+        }
+
         let current_ns = self.runtime_realtime_now_ns(tick, timer_hz);
         self.set_runtime_realtime_ns(current_ns, tick);
 
@@ -186,16 +198,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             CLOCK_REALTIME | CLOCK_REALTIME_COARSE | CLOCK_REALTIME_ALARM => {
                 Ok(self.runtime_realtime_now_ns(tick, timer_hz))
             }
-            CLOCK_TAI => {
-                let realtime_ns = self.runtime_realtime_now_ns(tick, timer_hz);
-                let offset_ns = self.clock_adj.tai as i128 * 1_000_000_000i128;
-                if offset_ns >= 0 {
-                    Ok(realtime_ns.saturating_add(offset_ns as u64))
-                } else {
-                    Ok(realtime_ns.saturating_sub((-offset_ns) as u64))
-                }
-            }
+            CLOCK_TAI => Ok(self.runtime_tai_now_ns(tick, timer_hz)),
             _ => Ok(monotonic_ns),
+        }
+    }
+
+    fn runtime_tai_now_ns(&self, tick: u64, timer_hz: u64) -> u64 {
+        let realtime_ns = self.runtime_realtime_now_ns(tick, timer_hz);
+        let offset_ns = self.clock_adj.tai as i128 * 1_000_000_000i128;
+        if offset_ns >= 0 {
+            realtime_ns.saturating_add(offset_ns as u64)
+        } else {
+            realtime_ns.saturating_sub((-offset_ns) as u64)
         }
     }
 
@@ -294,7 +308,7 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
-    use vmos_abi::{ERR_EPERM, SYS_CLOCK_ADJTIME, SyscallContext};
+    use vmos_abi::{ERR_EINVAL, ERR_EPERM, SYS_CLOCK_ADJTIME, SyscallContext};
 
     use super::{
         super::{
@@ -388,5 +402,44 @@ mod tests {
             .expect("allowed clock_adjtime dispatch");
         assert_eq!(expect_ret(allowed), TIME_OK);
         assert_eq!(runtime.clock_adj.freq_scaled_ppm, 123);
+    }
+
+    #[test]
+    fn generic_clock_adjtime_clock_tai_returns_read_only_snapshot() {
+        let mut runtime = test_runtime();
+        let tick = crate::interrupts::tick_count();
+        runtime.set_runtime_realtime_ns(2_000_000_000, tick);
+        runtime.clock_adj.tai = 37;
+
+        let read_only = vec![0u8; TIMEX_SIZE as usize];
+        let (read_ptr, _) = runtime.linux.write_arg_bytes(&read_only).expect("tai timex");
+        let read_result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_tai_read",
+                SyscallContext::new(SYS_CLOCK_ADJTIME, [CLOCK_TAI, read_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("read-only tai clock_adjtime dispatch");
+        assert_eq!(expect_ret(read_result), TIME_OK);
+
+        let snapshot = runtime.linux.read_bytes(read_ptr, TIMEX_SIZE).expect("tai snapshot");
+        assert_eq!(read_i32_from(&snapshot, 160).expect("tai field"), 37);
+        assert!(read_i64_from(&snapshot, 72).expect("tai seconds") >= 39);
+
+        let mut mutating = vec![0u8; TIMEX_SIZE as usize];
+        mutating[0..4].copy_from_slice(&ADJ_TAI.to_le_bytes());
+        mutating[160..164].copy_from_slice(&40i32.to_le_bytes());
+        let (mutating_ptr, _) =
+            runtime.linux.write_arg_bytes(&mutating).expect("mutating tai timex");
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_tai_mutation_denied",
+                SyscallContext::new(
+                    SYS_CLOCK_ADJTIME,
+                    [CLOCK_TAI, mutating_ptr as u64, 0, 0, 0, 0],
+                ),
+            )
+            .expect("mutating tai clock_adjtime dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EINVAL as i64));
+        assert_eq!(runtime.clock_adj.tai, 37);
     }
 }
