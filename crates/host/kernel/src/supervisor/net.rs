@@ -1094,6 +1094,8 @@ fn net_stack_now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use vmos_abi::{AF_INET, SOCK_STREAM, SYS_BIND, SYS_LISTEN, SYS_SOCKET, SyscallContext};
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1103,6 +1105,7 @@ mod tests {
     const REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
     const VMOS_IPV4: [u8; 4] = [10, 0, 2, 15];
     const ARP_FRAME_LEN: usize = 42;
+    const ETHERNET_HEADER_LEN: usize = 14;
 
     fn test_runtime() -> PrototypeRuntime<'static> {
         let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
@@ -1143,6 +1146,143 @@ mod tests {
         frame[32..38].copy_from_slice(&[0; 6]);
         frame[38..42].copy_from_slice(&VMOS_IPV4);
         frame
+    }
+
+    fn arp_reply(
+        sender_mac: [u8; 6],
+        sender_ip: [u8; 4],
+        target_mac: [u8; 6],
+        target_ip: [u8; 4],
+    ) -> [u8; ARP_FRAME_LEN] {
+        let mut frame = [0u8; ARP_FRAME_LEN];
+        frame[0..6].copy_from_slice(&target_mac);
+        frame[6..12].copy_from_slice(&sender_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x06]);
+        frame[14..16].copy_from_slice(&[0x00, 0x01]);
+        frame[16..18].copy_from_slice(&[0x08, 0x00]);
+        frame[18] = 6;
+        frame[19] = 4;
+        frame[20..22].copy_from_slice(&[0x00, 0x02]);
+        frame[22..28].copy_from_slice(&sender_mac);
+        frame[28..32].copy_from_slice(&sender_ip);
+        frame[32..38].copy_from_slice(&target_mac);
+        frame[38..42].copy_from_slice(&target_ip);
+        frame
+    }
+
+    fn tcp_syn_to_listener(remote_port: u16, local_port: u16, remote_seq: u32) -> Vec<u8> {
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&service_core::net_contract::VIRTIO_NET0_CONTRACT.mac);
+        frame[6..12].copy_from_slice(&REMOTE_MAC);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&REMOTE_IPV4);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&VMOS_IPV4);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&remote_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&local_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&remote_seq.to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x02;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&REMOTE_IPV4, &VMOS_IPV4, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
+    fn tcp_ack_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
+        let syn_ack_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
+        let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
+        let server_mac: [u8; 6] = syn_ack[6..12].try_into().expect("server mac");
+        let client_mac: [u8; 6] = syn_ack[0..6].try_into().expect("client mac");
+        let server_ip: [u8; 4] = syn_ack[26..30].try_into().expect("server ip");
+        let client_ip: [u8; 4] = syn_ack[30..34].try_into().expect("client ip");
+        let server_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start], syn_ack[syn_ack_tcp_start + 1]]);
+        let client_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start + 2], syn_ack[syn_ack_tcp_start + 3]]);
+        let server_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 4],
+            syn_ack[syn_ack_tcp_start + 5],
+            syn_ack[syn_ack_tcp_start + 6],
+            syn_ack[syn_ack_tcp_start + 7],
+        ]);
+        let client_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 8],
+            syn_ack[syn_ack_tcp_start + 9],
+            syn_ack[syn_ack_tcp_start + 10],
+            syn_ack[syn_ack_tcp_start + 11],
+        ]);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&server_mac);
+        frame[6..12].copy_from_slice(&client_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&client_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&server_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x10;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
+    fn tcp_ipv4_checksum(src_ip: &[u8; 4], dst_ip: &[u8; 4], tcp_segment: &[u8]) -> u16 {
+        let mut checksum_input = Vec::with_capacity(12 + tcp_segment.len());
+        checksum_input.extend_from_slice(src_ip);
+        checksum_input.extend_from_slice(dst_ip);
+        checksum_input.push(0);
+        checksum_input.push(6);
+        checksum_input.extend_from_slice(&(tcp_segment.len() as u16).to_be_bytes());
+        checksum_input.extend_from_slice(tcp_segment);
+        internet_checksum(&checksum_input)
+    }
+
+    fn internet_checksum(bytes: &[u8]) -> u16 {
+        let mut sum = 0u32;
+        for chunk in bytes.chunks(2) {
+            let word = if chunk.len() == 2 {
+                u16::from_be_bytes([chunk[0], chunk[1]]) as u32
+            } else {
+                (chunk[0] as u32) << 8
+            };
+            sum = sum.wrapping_add(word);
+        }
+        while (sum >> 16) != 0 {
+            sum = (sum & 0xffff) + (sum >> 16);
+        }
+        !(sum as u16)
+    }
+
+    fn take_driver_tx(runtime: &mut PrototypeRuntime<'_>) -> Vec<u8> {
+        runtime.net_driver.take_tx_frame().expect("driver tx service").expect("driver tx frame")
     }
 
     fn event_log_contains(runtime: &PrototypeRuntime<'_>, needle: &str) -> bool {
@@ -1194,5 +1334,80 @@ mod tests {
         assert_eq!(runtime.net_driver.pending_tx_frames().expect("driver tx"), 0);
         assert!(event_log_contains(&runtime, "PacketReceived"));
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn reference_backend_tcp_handshake_drives_accept_fd_with_peer_metadata() {
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18080u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0,],
+            ),
+            0
+        );
+
+        let remote_port = 40_000u16;
+        let syn = tcp_syn_to_listener(remote_port, local_port, 0x0102_0304);
+        runtime.reference_packet_backend.inject_rx_frame(&syn).expect("inject tcp syn");
+        runtime.pump_reference_packet_backend_rx();
+        runtime.poll_network_driver_events();
+
+        let arp_request = take_driver_tx(&mut runtime);
+        assert_eq!(&arp_request[0..6], &[0xff; 6]);
+        assert_eq!(&arp_request[38..42], &REMOTE_IPV4);
+
+        let arp_reply = arp_reply(
+            REMOTE_MAC,
+            REMOTE_IPV4,
+            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+            VMOS_IPV4,
+        );
+        runtime.net_driver.deliver_rx_frame(0, &arp_reply).expect("deliver arp reply");
+        runtime.poll_network_driver_events();
+
+        let syn_ack = take_driver_tx(&mut runtime);
+        assert_eq!(syn_ack[47] & 0x12, 0x12);
+
+        let ack = tcp_ack_for_syn_ack(&syn_ack);
+        runtime.net_driver.deliver_rx_frame(0, &ack).expect("deliver final ack");
+        runtime.poll_network_driver_events();
+
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            vmos_abi::SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        let peer = runtime
+            .socket_ipv4_endpoint(accepted_fd as u32, true)
+            .expect("accepted peer endpoint")
+            .expect("accepted peer");
+        assert_eq!(peer.addr, REMOTE_IPV4);
+        assert_eq!(peer.port, remote_port);
+        assert!(event_log_contains(&runtime, "PacketReceived"));
+        assert!(event_log_contains(&runtime, "accept-ready"));
     }
 }
