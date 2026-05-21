@@ -1,9 +1,9 @@
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL};
+use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EPERM};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::RuntimeClockAdjustmentState,
+    types::{CAP_SYS_TIME, RuntimeClockAdjustmentState},
 };
 
 const CLOCK_REALTIME: u64 = 0;
@@ -105,6 +105,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         let modes = read_u32_from(&tx, 0)?;
         if modes & !SUPPORTED_MODES != 0 || modes & ADJ_MICRO != 0 && modes & ADJ_NANO != 0 {
             return Err(ERR_EINVAL);
+        }
+        if modes != 0 && self.current_access_state().cap_effective & CAP_SYS_TIME == 0 {
+            return Err(ERR_EPERM);
         }
 
         let tick = crate::interrupts::tick_count();
@@ -285,4 +288,105 @@ fn write_bytes(bytes: &mut [u8], offset: usize, value: &[u8]) -> Result<(), i32>
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{boxed::Box, vec::Vec};
+
+    use vmos_abi::{ERR_EPERM, SYS_CLOCK_ADJTIME, SyscallContext};
+
+    use super::{
+        super::{
+            engine::RuntimeOnlyExecutor,
+            types::{CAP_SYS_TIME, ProcessAccessState},
+        },
+        *,
+    };
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn timex_with_i64(mode: u32, offset: usize, value: i64) -> Vec<u8> {
+        let mut bytes = vec![0u8; TIMEX_SIZE as usize];
+        bytes[0..4].copy_from_slice(&mode.to_le_bytes());
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn generic_clock_adjtime_requires_cap_sys_time_for_mutation() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        runtime.processes.iter_mut().find(|process| process.pid == pid).unwrap().access =
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                0,
+                0,
+            );
+
+        let read_only = vec![0u8; TIMEX_SIZE as usize];
+        let (read_ptr, _) = runtime.linux.write_arg_bytes(&read_only).expect("read timex");
+        let read_result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_read",
+                SyscallContext::new(
+                    SYS_CLOCK_ADJTIME,
+                    [CLOCK_REALTIME, read_ptr as u64, 0, 0, 0, 0],
+                ),
+            )
+            .expect("read-only clock_adjtime dispatch");
+        assert_eq!(expect_ret(read_result), TIME_OK);
+
+        let input = timex_with_i64(ADJ_FREQUENCY, 16, 123);
+        let (tx_ptr, _) = runtime.linux.write_arg_bytes(&input).expect("mutating timex");
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_denied",
+                SyscallContext::new(SYS_CLOCK_ADJTIME, [CLOCK_REALTIME, tx_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("denied clock_adjtime dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+        assert_eq!(runtime.clock_adj, RuntimeClockAdjustmentState::default());
+
+        runtime.processes.iter_mut().find(|process| process.pid == pid).unwrap().access =
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                CAP_SYS_TIME,
+                CAP_SYS_TIME,
+            );
+        let allowed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_allowed",
+                SyscallContext::new(SYS_CLOCK_ADJTIME, [CLOCK_REALTIME, tx_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("allowed clock_adjtime dispatch");
+        assert_eq!(expect_ret(allowed), TIME_OK);
+        assert_eq!(runtime.clock_adj.freq_scaled_ppm, 123);
+    }
 }

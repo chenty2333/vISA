@@ -68,11 +68,11 @@ use crate::{
         LinuxCallResult, runtime,
         types::{
             AccessIds, CAP_IPC_LOCK, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT,
-            CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal,
-            RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit, RobustListRegistration,
-            RseqRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
-            SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
-            UserSignalDelivery,
+            CAP_SYS_RESOURCE, CAP_SYS_TIME, LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS,
+            PendingSignal, RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit,
+            RobustListRegistration, RseqRegistration, SIGALTSTACK_SS_AUTODISARM,
+            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction,
+            SignalAltStack, UserSignalDelivery,
         },
     },
 };
@@ -3062,6 +3062,9 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     let modes = read_u32_from(&tx, 0)?;
     if modes & !SUPPORTED_MODES != 0 || modes & ADJ_MICRO != 0 && modes & ADJ_NANO != 0 {
         return Err(ERR_EINVAL);
+    }
+    if modes != 0 && !active_context().has_effective_capability(CAP_SYS_TIME) {
+        return Err(ERR_EPERM);
     }
 
     let tick = crate::interrupts::tick_count();

@@ -184,6 +184,7 @@ pub(crate) const CAP_SYS_CHROOT: u64 = 1 << 18;
 pub(crate) const CAP_SYS_PTRACE: u64 = 1 << 19;
 pub(crate) const CAP_SYS_ADMIN: u64 = 1 << 21;
 pub(crate) const CAP_SYS_RESOURCE: u64 = 1 << 24;
+pub(crate) const CAP_SYS_TIME: u64 = 1 << 25;
 pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_DAC_OVERRIDE
     | CAP_DAC_READ_SEARCH
@@ -195,7 +196,8 @@ pub(crate) const LINUX_KNOWN_CAPS: u64 = CAP_CHOWN
     | CAP_SYS_CHROOT
     | CAP_SYS_PTRACE
     | CAP_SYS_ADMIN
-    | CAP_SYS_RESOURCE;
+    | CAP_SYS_RESOURCE
+    | CAP_SYS_TIME;
 
 pub(crate) const SECBIT_NOROOT: u32 = 1 << 0;
 pub(crate) const SECBIT_NOROOT_LOCKED: u32 = 1 << 1;
