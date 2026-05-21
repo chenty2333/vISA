@@ -586,6 +586,22 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 }
                             })
                         }
+                        WaitSource::SeccompTrace { trace_id } => {
+                            let completion = self
+                                .take_seccomp_trace_response(trace_id)
+                                .map_err(|_| "seccomp trace missing response")?;
+                            Ok(match completion.response {
+                                super::types::SeccompTraceResponse::Return(ret) => {
+                                    LinuxCallResult::Ret(ret)
+                                }
+                                super::types::SeccompTraceResponse::Continue => {
+                                    LinuxCallResult::SeccompContinue {
+                                        syscall: completion.syscall,
+                                        args: completion.args,
+                                    }
+                                }
+                            })
+                        }
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Flock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
@@ -608,6 +624,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                         if let WaitSource::SeccompUserNotif { notification_id } = resolution.source
                         {
                             self.cancel_seccomp_notification(notification_id);
+                        }
+                        if let WaitSource::SeccompTrace { trace_id } = resolution.source {
+                            self.cancel_seccomp_trace_event(trace_id);
                         }
                         match token.kind {
                             super::types::WaitKind::Futex => {
@@ -636,6 +655,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::SocketConnect => {}
                             super::types::WaitKind::SocketAccept => {}
                             super::types::WaitKind::SeccompUserNotif => {}
+                            super::types::WaitKind::SeccompTrace => {}
                             super::types::WaitKind::FileLock => {}
                             super::types::WaitKind::Flock => {}
                             super::types::WaitKind::ChildExit => {}
@@ -651,6 +671,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 WaitSource::SocketConnect { .. }
                                     | WaitSource::SocketAccept { .. }
                                     | WaitSource::SeccompUserNotif { .. }
+                                    | WaitSource::SeccompTrace { .. }
                                     | WaitSource::FileLock { .. }
                                     | WaitSource::Flock { .. }
                                     | WaitSource::ChildExit { .. }

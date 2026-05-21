@@ -73,8 +73,9 @@ use crate::{
             CAP_SYS_RESOURCE, CAP_SYS_TIME, LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS,
             PendingSignal, RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit,
             RobustListRegistration, RseqRegistration, SIGALTSTACK_SS_AUTODISARM,
-            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, SeccompUserNotifOutcome,
-            ServiceCallError, SigAction, SignalAltStack, UserSignalDelivery,
+            SIGALTSTACK_SS_DISABLE, SIGALTSTACK_SS_ONSTACK, SeccompTraceOutcome,
+            SeccompUserNotifOutcome, ServiceCallError, SigAction, SignalAltStack,
+            UserSignalDelivery,
         },
     },
 };
@@ -309,7 +310,17 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
             );
             return Ok(syscall_nr as i64);
         }
-        SeccompDecision::Trace => return Err(ERR_ENOSYS),
+        SeccompDecision::Trace { data } => {
+            match active_context().supervisor.block_on_seccomp_trace_event(
+                syscall_nr,
+                seccomp_call_addr,
+                [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9],
+                data,
+            )? {
+                SeccompTraceOutcome::Return(ret) => return Ok(ret),
+                SeccompTraceOutcome::Continue => {}
+            }
+        }
         SeccompDecision::UserNotif => {
             match active_context().supervisor.block_on_seccomp_user_notification(
                 syscall_nr,

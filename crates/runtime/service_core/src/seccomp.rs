@@ -148,7 +148,7 @@ pub enum SeccompDecision {
     Log { data: u16 },
     Errno(u16),
     Trap { errno: u16 },
-    Trace,
+    Trace { data: u16 },
     UserNotif,
     Kill { signal: u8 },
 }
@@ -518,7 +518,7 @@ fn seccomp_return_to_decision(ret: u32) -> SeccompDecision {
         SECCOMP_RET_ERRNO => SeccompDecision::Errno((ret & SECCOMP_RET_DATA) as u16),
         SECCOMP_RET_KILL_PROCESS | SECCOMP_RET_KILL_THREAD => SeccompDecision::Kill { signal: 31 },
         SECCOMP_RET_TRAP => SeccompDecision::Trap { errno: (ret & SECCOMP_RET_DATA) as u16 },
-        SECCOMP_RET_TRACE => SeccompDecision::Trace,
+        SECCOMP_RET_TRACE => SeccompDecision::Trace { data: (ret & SECCOMP_RET_DATA) as u16 },
         SECCOMP_RET_USER_NOTIF => SeccompDecision::UserNotif,
         _ => SeccompDecision::Kill { signal: 31 },
     }
@@ -626,7 +626,7 @@ mod tests {
         .expect("user-notif filter");
 
         assert_eq!(trap.evaluate(data(1)), Ok(SeccompDecision::Trap { errno: 7 }));
-        assert_eq!(trace.evaluate(data(1)), Ok(SeccompDecision::Trace));
+        assert_eq!(trace.evaluate(data(1)), Ok(SeccompDecision::Trace { data: 8 }));
         assert_eq!(user_notif.evaluate(data(1)), Ok(SeccompDecision::UserNotif));
     }
 

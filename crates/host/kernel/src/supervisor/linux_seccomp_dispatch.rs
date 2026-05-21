@@ -26,7 +26,8 @@ use super::{
     types::{
         CAP_SETPCAP, CAP_SYS_ADMIN, FdEntry, FdResource, LINUX_KNOWN_CAPS, SeccompNotification,
         SeccompNotificationCompletion, SeccompNotificationResponse, SeccompNotificationState,
-        SeccompUserNotifOutcome, WaitToken,
+        SeccompTraceCompletion, SeccompTraceEvent, SeccompTraceOutcome, SeccompTraceResponse,
+        SeccompTraceState, SeccompUserNotifOutcome, WaitToken,
     },
     wait::WaitRegistration,
 };
@@ -98,7 +99,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                     Err(errno) => errno_ret(errno),
                 },
             ),
-            SeccompDecision::Trace => Some(errno_ret(ERR_ENOSYS)),
+            SeccompDecision::Trace { data } => Some(
+                match self.queue_seccomp_trace_event(syscall, instruction_pointer, args, data) {
+                    Ok(token) => LinuxCallResult::Pending(token),
+                    Err(errno) => errno_ret(errno),
+                },
+            ),
             SeccompDecision::Kill { signal } => {
                 crate::kwarn!("generic seccomp killed syscall {}", syscall);
                 let status = 128 + signal as i32;
@@ -634,6 +640,120 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn enable_seccomp_trace_listener(&mut self) {
+        self.seccomp_trace_listener_enabled = true;
+    }
+
+    pub(crate) fn queue_seccomp_trace_event(
+        &mut self,
+        syscall: u64,
+        instruction_pointer: u64,
+        args: [u64; 6],
+        data: u16,
+    ) -> Result<WaitToken, i32> {
+        if !self.seccomp_trace_listener_enabled {
+            return Err(ERR_ENOSYS);
+        }
+        let trace_id = self.next_seccomp_trace_id;
+        self.next_seccomp_trace_id = self.next_seccomp_trace_id.saturating_add(1);
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::SeccompTrace { trace_id },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        self.seccomp_trace_events.push(SeccompTraceEvent {
+            id: trace_id,
+            pid: self.current_pid(),
+            tid: self.current_tid(),
+            syscall: syscall.min(u32::MAX as u64) as u32,
+            instruction_pointer,
+            args,
+            data,
+            wait_token_id: token.id,
+            response: None,
+            state: SeccompTraceState::Queued,
+        });
+        Ok(token)
+    }
+
+    pub(crate) fn block_on_seccomp_trace_event(
+        &mut self,
+        syscall: u64,
+        instruction_pointer: u64,
+        args: [u64; 6],
+        data: u16,
+    ) -> Result<SeccompTraceOutcome, i32> {
+        let token = self.queue_seccomp_trace_event(syscall, instruction_pointer, args, data)?;
+        match self.block_on_wait("ring3_seccomp_trace", token).map_err(|_| ERR_EINVAL)? {
+            LinuxCallResult::Ret(ret) => Ok(SeccompTraceOutcome::Return(ret)),
+            LinuxCallResult::SeccompContinue { .. } => Ok(SeccompTraceOutcome::Continue),
+            _ => Err(ERR_EINVAL),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn seccomp_trace_continue(&mut self, trace_id: u64) -> Result<(), i32> {
+        self.seccomp_trace_respond(trace_id, SeccompTraceResponse::Continue)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn seccomp_trace_return(&mut self, trace_id: u64, ret: i64) -> Result<(), i32> {
+        self.seccomp_trace_respond(trace_id, SeccompTraceResponse::Return(ret))
+    }
+
+    #[allow(dead_code)]
+    fn seccomp_trace_respond(
+        &mut self,
+        trace_id: u64,
+        response: SeccompTraceResponse,
+    ) -> Result<(), i32> {
+        let Some(event) = self
+            .seccomp_trace_events
+            .iter_mut()
+            .find(|entry| entry.id == trace_id && entry.state == SeccompTraceState::Queued)
+        else {
+            return Err(ERR_ENOENT);
+        };
+        event.response = Some(response);
+        event.state = SeccompTraceState::Responded;
+        let wait_token_id = event.wait_token_id;
+        self.scheduler.push_event(Event::WaitReady(wait_token_id));
+        self.drain_event_queue();
+        Ok(())
+    }
+
+    pub(crate) fn take_seccomp_trace_response(
+        &mut self,
+        trace_id: u64,
+    ) -> Result<SeccompTraceCompletion, i32> {
+        let index = self
+            .seccomp_trace_events
+            .iter()
+            .position(|entry| entry.id == trace_id && entry.response.is_some())
+            .ok_or(ERR_EAGAIN)?;
+        let event = self.seccomp_trace_events.remove(index);
+        Ok(SeccompTraceCompletion {
+            response: event.response.expect("checked response"),
+            syscall: event.syscall as u64,
+            args: event.args,
+        })
+    }
+
+    pub(crate) fn cancel_seccomp_trace_event(&mut self, trace_id: u64) -> bool {
+        let Some(index) = self
+            .seccomp_trace_events
+            .iter()
+            .position(|entry| entry.id == trace_id && entry.state != SeccompTraceState::Responded)
+        else {
+            return false;
+        };
+        self.seccomp_trace_events.remove(index);
+        true
+    }
+
     pub(crate) fn cancel_seccomp_listener_notifications(&mut self, listener_id: u64, errno: i32) {
         let mut wait_token_ids = Vec::new();
         for notification in self.seccomp_notifications.iter_mut().filter(|entry| {
@@ -922,10 +1042,11 @@ fn write_u32_le(out: &mut [u8], offset: usize, value: u32) {
 mod tests {
     use service_core::seccomp::{
         SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_LOG,
-        SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
+        SECCOMP_RET_TRACE, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
     };
     use vmos_abi::{
-        ERR_EACCES, ERR_EINTR, ERR_EINVAL, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext,
+        ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL,
+        SyscallContext,
     };
 
     use super::{
@@ -1117,6 +1238,107 @@ mod tests {
         assert_eq!(process.exit_code, Some(159));
         assert_eq!(runtime.query_thread(tid).expect("thread").state, ThreadRuntimeStateKind::Dead);
         assert!(!runtime.is_eventfd_fd(fd));
+    }
+
+    #[test]
+    fn generic_seccomp_trace_without_listener_returns_enosys() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 77);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_trace_no_listener",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp trace dispatch");
+
+        assert_eq!(expect_ret(result), -(ERR_ENOSYS as i64));
+        assert!(runtime.seccomp_trace_events.is_empty());
+    }
+
+    #[test]
+    fn generic_seccomp_trace_listener_continue_resumes_original_syscall() {
+        let mut runtime = test_runtime();
+        runtime.enable_seccomp_trace_listener();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 77);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_trace_continue",
+                SyscallContext::new(SYS_GETPID, [1, 2, 3, 4, 5, 6]),
+            )
+            .expect("seccomp trace dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp trace, got {other:?}"),
+        };
+        assert_eq!(token.kind, WaitKind::SeccompTrace);
+        assert_eq!(runtime.seccomp_trace_events.len(), 1);
+        let event = &runtime.seccomp_trace_events[0];
+        assert_eq!(event.pid, runtime.current_pid());
+        assert_eq!(event.tid, runtime.current_tid());
+        assert_eq!(event.syscall, SYS_GETPID as u32);
+        assert_eq!(event.args, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(event.data, 77);
+        let trace_id = event.id;
+
+        runtime.seccomp_trace_continue(trace_id).expect("trace continue");
+        let resumed =
+            runtime.block_on_wait("test_seccomp_trace_continue_resume", token).expect("resume");
+        let (syscall, args) = match resumed {
+            LinuxCallResult::SeccompContinue { syscall, args } => (syscall, args),
+            other => panic!("expected seccomp trace continue, got {other:?}"),
+        };
+        assert_eq!(syscall, SYS_GETPID);
+        assert_eq!(args, [1, 2, 3, 4, 5, 6]);
+        let continued = runtime
+            .dispatch_linux_syscall_after_seccomp_continue(
+                "test_seccomp_trace_continue_execute",
+                SyscallContext::new(syscall, args),
+            )
+            .expect("continued syscall");
+        assert_eq!(expect_ret(continued), runtime.current_pid() as i64);
+        assert!(runtime.seccomp_trace_events.is_empty());
+    }
+
+    #[test]
+    fn generic_seccomp_trace_listener_return_overrides_syscall() {
+        let mut runtime = test_runtime();
+        runtime.enable_seccomp_trace_listener();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 9);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_trace_return",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp trace dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp trace, got {other:?}"),
+        };
+        let trace_id = runtime.seccomp_trace_events[0].id;
+
+        runtime.seccomp_trace_return(trace_id, 4321).expect("trace return");
+        let resumed =
+            runtime.block_on_wait("test_seccomp_trace_return_resume", token).expect("resume");
+        assert_eq!(expect_ret(resumed), 4321);
+        assert!(runtime.seccomp_trace_events.is_empty());
     }
 
     #[test]

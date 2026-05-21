@@ -348,6 +348,41 @@ pub(crate) struct SeccompNotificationCompletion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompTraceState {
+    Queued,
+    Responded,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct SeccompTraceEvent {
+    pub(crate) id: u64,
+    pub(crate) pid: Pid,
+    pub(crate) tid: Tid,
+    pub(crate) syscall: u32,
+    pub(crate) instruction_pointer: u64,
+    pub(crate) args: [u64; 6],
+    pub(crate) data: u16,
+    pub(crate) wait_token_id: u64,
+    pub(crate) response: Option<SeccompTraceResponse>,
+    pub(crate) state: SeccompTraceState,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompTraceResponse {
+    Return(i64),
+    Continue,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SeccompTraceCompletion {
+    pub(crate) response: SeccompTraceResponse,
+    pub(crate) syscall: u64,
+    pub(crate) args: [u64; 6],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompAuditAction {
     Log,
     Errno,
@@ -369,6 +404,12 @@ pub(crate) struct SeccompAuditRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompUserNotifOutcome {
+    Return(i64),
+    Continue,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompTraceOutcome {
     Return(i64),
     Continue,
 }
@@ -510,6 +551,7 @@ pub(crate) enum WaitKind {
     SocketConnect,
     SocketAccept,
     SeccompUserNotif,
+    SeccompTrace,
     FileLock,
     Flock,
     ChildExit,
