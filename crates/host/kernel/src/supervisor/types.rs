@@ -441,6 +441,7 @@ pub(crate) enum FdResource {
     EventFd { eventfd_id: u64 },
     TimerFd { timerfd_id: u64 },
     BpfMap { map_id: u64 },
+    SeccompListener { listener_id: u64 },
 }
 
 #[derive(Clone, Debug)]

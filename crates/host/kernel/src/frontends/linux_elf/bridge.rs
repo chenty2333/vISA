@@ -3,14 +3,14 @@ use alloc::{vec, vec::Vec};
 use bootloader_api::BootInfo;
 use semantic_core::{CredentialTransitionKind, LinuxCapSets, ResourceHandle};
 use service_core::seccomp::{
-    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision,
-    SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
-    seccomp_action_available_without_listener,
+    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
+    SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
 };
 use vmos_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EBUSY,
-    ERR_ECANCELED, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_ENAMETOOLONG,
-    ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EOPNOTSUPP, ERR_EPERM,
+    ERR_ECANCELED, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_EMFILE,
+    ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EOPNOTSUPP, ERR_EPERM,
     ERR_EPROTONOSUPPORT, ERR_ESRCH, FD_STDERR, FD_STDOUT, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED,
     FUTEX_REQUEUE, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT,
@@ -2667,13 +2667,20 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
             active_context().supervisor.set_seccomp_strict(active_context().tid).map(|()| 0)
         }
         SECCOMP_MODE_FILTER => {
-            let supported_flags = SECCOMP_FILTER_FLAG_LOG | SECCOMP_FILTER_FLAG_TSYNC;
+            let supported_flags = SECCOMP_FILTER_FLAG_LOG
+                | SECCOMP_FILTER_FLAG_NEW_LISTENER
+                | SECCOMP_FILTER_FLAG_TSYNC;
             if flags & !supported_flags != 0 {
                 return Err(ERR_EINVAL);
             }
             let privileged = active_context().has_effective_capability(CAP_SYS_ADMIN);
             if !privileged && !active_context().supervisor.no_new_privs(active_context().tid) {
                 return Err(ERR_EACCES);
+            }
+            if flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0
+                && !active_context().supervisor.can_allocate_fds(1)
+            {
+                return Err(ERR_EMFILE);
             }
             let program = read_seccomp_filter_program(arg)?;
             active_context()
@@ -2685,7 +2692,13 @@ fn install_seccomp_mode(mode: u64, arg: u64, flags: u64) -> Result<i64, i32> {
                     flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
                 )
-                .map(|()| 0)
+                .and_then(|()| {
+                    if flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0 {
+                        active_context().supervisor.create_seccomp_listener_fd().map(|fd| fd as i64)
+                    } else {
+                        Ok(0)
+                    }
+                })
         }
         _ => Err(ERR_EINVAL),
     }

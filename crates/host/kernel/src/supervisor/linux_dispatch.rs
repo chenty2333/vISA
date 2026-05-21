@@ -112,6 +112,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::EventFd { .. } => Err(ERR_EBADF),
             FdResource::TimerFd { .. } => Err(ERR_EBADF),
             FdResource::BpfMap { .. } => Err(ERR_EBADF),
+            FdResource::SeccompListener { .. } => Err(ERR_EBADF),
         }
     }
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {

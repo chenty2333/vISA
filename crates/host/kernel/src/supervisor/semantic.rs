@@ -106,6 +106,7 @@ pub(super) fn fd_resource_kind(resource: &FdResource) -> ResourceKind {
         FdResource::EventFd { .. } => ResourceKind::Fd,
         FdResource::TimerFd { .. } => ResourceKind::Fd,
         FdResource::BpfMap { .. } => ResourceKind::Fd,
+        FdResource::SeccompListener { .. } => ResourceKind::Fd,
     }
 }
 
@@ -126,6 +127,9 @@ pub(super) fn fd_resource_label(resource: &FdResource) -> String {
         FdResource::EventFd { eventfd_id } => format!("eventfd:{eventfd_id}"),
         FdResource::TimerFd { timerfd_id } => format!("timerfd:{timerfd_id}"),
         FdResource::BpfMap { map_id } => format!("bpf-map:{map_id}"),
+        FdResource::SeccompListener { listener_id } => {
+            format!("seccomp-listener:{listener_id}")
+        }
     }
 }
 

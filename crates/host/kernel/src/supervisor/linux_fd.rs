@@ -2666,6 +2666,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 | FdResource::EventFd { .. }
                 | FdResource::TimerFd { .. }
                 | FdResource::BpfMap { .. }
+                | FdResource::SeccompListener { .. }
         ) {
             return Ok(encode_stat_abi(0o010666, 0, 0, 0, 1, VfsTimestamps::default()));
         }
@@ -2891,6 +2892,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::TimerFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::SeccompListener { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 
@@ -2911,6 +2913,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             FdResource::EventFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::TimerFd { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
             FdResource::BpfMap { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
+            FdResource::SeccompListener { .. } => Err(ServiceCallError::Errno(ERR_EBADF)),
         }
     }
 

@@ -13,6 +13,7 @@ pub const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 
 pub const SECCOMP_FILTER_FLAG_TSYNC: u64 = 1 << 0;
 pub const SECCOMP_FILTER_FLAG_LOG: u64 = 1 << 1;
+pub const SECCOMP_FILTER_FLAG_NEW_LISTENER: u64 = 1 << 3;
 
 const SECCOMP_RET_ACTION_FULL: u32 = 0xffff_0000;
 const SECCOMP_RET_DATA: u32 = 0x0000_ffff;
@@ -635,6 +636,7 @@ mod tests {
     fn linux_filter_flag_values_match_abi() {
         assert_eq!(SECCOMP_FILTER_FLAG_TSYNC, 1);
         assert_eq!(SECCOMP_FILTER_FLAG_LOG, 2);
+        assert_eq!(SECCOMP_FILTER_FLAG_NEW_LISTENER, 8);
     }
 
     #[test]

@@ -1,15 +1,16 @@
 use alloc::vec::Vec;
 
 use service_core::seccomp::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram,
-    SeccompInstruction, linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
+    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_TSYNC,
+    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
+    seccomp_action_available_without_listener,
 };
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
+use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_ESRCH};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::CAP_SYS_ADMIN,
+    types::{CAP_SYS_ADMIN, FdEntry, FdResource},
 };
 
 const SECCOMP_SET_MODE_STRICT: u64 = 0;
@@ -169,9 +170,14 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
             SECCOMP_MODE_FILTER => {
-                let supported_flags = SECCOMP_FILTER_FLAG_LOG | SECCOMP_FILTER_FLAG_TSYNC;
+                let supported_flags = SECCOMP_FILTER_FLAG_LOG
+                    | SECCOMP_FILTER_FLAG_NEW_LISTENER
+                    | SECCOMP_FILTER_FLAG_TSYNC;
                 if flags & !supported_flags != 0 {
                     return Ok(errno_ret(ERR_EINVAL));
+                }
+                if flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0 && !self.can_allocate_fds(1) {
+                    return Ok(errno_ret(ERR_EMFILE));
                 }
                 let program = match self.read_generic_seccomp_filter_program(arg) {
                     Ok(program) => program,
@@ -184,6 +190,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                     flags & SECCOMP_FILTER_FLAG_TSYNC != 0,
                     flags & SECCOMP_FILTER_FLAG_LOG != 0,
                 ) {
+                    Ok(()) if flags & SECCOMP_FILTER_FLAG_NEW_LISTENER != 0 => {
+                        match self.create_seccomp_listener_fd() {
+                            Ok(fd) => Ok(LinuxCallResult::Ret(fd as i64)),
+                            Err(errno) => Ok(errno_ret(errno)),
+                        }
+                    }
                     Ok(()) => Ok(LinuxCallResult::Ret(0)),
                     Err(errno) => Ok(errno_ret(errno)),
                 }
@@ -256,6 +268,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             ));
         }
         SeccompFilterProgram::new(instructions).map_err(|_| ERR_EINVAL)
+    }
+
+    pub(crate) fn create_seccomp_listener_fd(&mut self) -> Result<u32, i32> {
+        const FD_CLOEXEC: u32 = 1;
+        let listener_id = self.next_seccomp_listener_id;
+        self.next_seccomp_listener_id = self.next_seccomp_listener_id.saturating_add(1);
+        self.alloc_fd(FdEntry {
+            resource: FdResource::SeccompListener { listener_id },
+            cursor: 0,
+            fd_flags: FD_CLOEXEC,
+            status_flags: 0,
+            cursor_group: None,
+        })
     }
 }
 
@@ -332,5 +357,29 @@ mod tests {
             privileged_runtime.seccomp_mode(privileged_runtime.current_tid()),
             Some(SECCOMP_MODE_FILTER)
         );
+    }
+
+    #[test]
+    fn generic_seccomp_new_listener_returns_cloexec_listener_fd() {
+        const FD_CLOEXEC: u32 = 1;
+
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_allow_filter(&mut runtime);
+        let result = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("listener seccomp install");
+        let fd = expect_ret(result);
+        assert!(fd >= 3);
+        assert_eq!(runtime.seccomp_mode(runtime.current_tid()), Some(SECCOMP_MODE_FILTER));
+
+        let entry = runtime.fd_entry(fd as u32).expect("listener fd");
+        assert_eq!(entry.fd_flags, FD_CLOEXEC);
+        assert_eq!(entry.status_flags, 0);
+        assert!(matches!(entry.resource, FdResource::SeccompListener { listener_id: 1 }));
     }
 }
