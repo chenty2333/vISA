@@ -2,9 +2,9 @@ use alloc::vec::Vec;
 
 use semantic_core::CredentialTransitionKind;
 use service_core::seccomp::{
-    SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_FILTER_FLAG_TSYNC,
-    SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
-    seccomp_action_available_without_listener,
+    AUDIT_ARCH_X86_64, SECCOMP_FILTER_FLAG_LOG, SECCOMP_FILTER_FLAG_NEW_LISTENER,
+    SECCOMP_FILTER_FLAG_TSYNC, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
+    linux_seccomp_notif_sizes_bytes, seccomp_action_available_without_listener,
 };
 use vmos_abi::{
     ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_EOPNOTSUPP, ERR_EPERM, ERR_ESRCH,
@@ -64,9 +64,18 @@ impl<'engine> PrototypeRuntime<'engine> {
                 None
             }
             SeccompDecision::Errno(errno) => Some(errno_ret(errno as i32)),
-            SeccompDecision::Trap { .. } | SeccompDecision::Trace | SeccompDecision::UserNotif => {
-                Some(errno_ret(ERR_ENOSYS))
+            SeccompDecision::Trap { errno } => {
+                let syscall_nr = syscall.min(u32::MAX as u64) as u32;
+                self.queue_seccomp_trap_to_thread(
+                    self.current_tid(),
+                    0,
+                    syscall_nr,
+                    AUDIT_ARCH_X86_64,
+                    errno,
+                );
+                Some(LinuxCallResult::Ret(syscall.min(i64::MAX as u64) as i64))
             }
+            SeccompDecision::Trace | SeccompDecision::UserNotif => Some(errno_ret(ERR_ENOSYS)),
             SeccompDecision::Kill { signal } => {
                 crate::kwarn!("generic seccomp killed syscall {}", syscall);
                 Some(LinuxCallResult::Exit(128 + signal as i32))
@@ -539,8 +548,8 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 
 #[cfg(test)]
 mod tests {
-    use service_core::seccomp::SECCOMP_RET_ALLOW;
-    use vmos_abi::{ERR_EACCES, SYS_PRCTL, SyscallContext};
+    use service_core::seccomp::{SECCOMP_RET_ALLOW, SECCOMP_RET_TRAP};
+    use vmos_abi::{ERR_EACCES, SYS_GETPID, SYS_PRCTL, SyscallContext};
 
     use super::*;
     use crate::supervisor::engine::RuntimeOnlyExecutor;
@@ -566,6 +575,10 @@ mod tests {
     }
 
     fn write_allow_filter(runtime: &mut PrototypeRuntime<'_>) -> u32 {
+        write_return_filter(runtime, SECCOMP_RET_ALLOW)
+    }
+
+    fn write_return_filter(runtime: &mut PrototypeRuntime<'_>, ret: u32) -> u32 {
         const BPF_RET_K: u16 = 0x06;
         let mut seccomp_args = [0u8; 24];
         let (fprog_ptr, _) = runtime.linux.write_arg_bytes(&seccomp_args).expect("seccomp buffer");
@@ -574,7 +587,7 @@ mod tests {
         seccomp_args[0..2].copy_from_slice(&1u16.to_le_bytes());
         seccomp_args[8..16].copy_from_slice(&(filter_ptr as u64).to_le_bytes());
         seccomp_args[16..18].copy_from_slice(&BPF_RET_K.to_le_bytes());
-        seccomp_args[20..24].copy_from_slice(&SECCOMP_RET_ALLOW.to_le_bytes());
+        seccomp_args[20..24].copy_from_slice(&ret.to_le_bytes());
         runtime.linux.write_bytes(fprog_ptr, &seccomp_args).expect("seccomp buffer write");
         fprog_ptr
     }
@@ -640,6 +653,36 @@ mod tests {
         assert_eq!(entry.fd_flags, FD_CLOEXEC);
         assert_eq!(entry.status_flags, 0);
         assert!(matches!(entry.resource, FdResource::SeccompListener { listener_id: 1 }));
+    }
+
+    #[test]
+    fn generic_seccomp_trap_queues_sigsys_metadata() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRAP | 77);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trap install");
+        assert_eq!(expect_ret(install), 0);
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_trap",
+                SyscallContext::new(SYS_GETPID, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("seccomp trap dispatch");
+        assert_eq!(expect_ret(result), SYS_GETPID as i64);
+
+        let current_tid = runtime.current_tid();
+        let thread = runtime.query_thread(current_tid).expect("current thread");
+        assert_eq!(thread.pending_signals.len(), 1);
+        let signal = &thread.pending_signals[0];
+        assert_eq!(signal.signo, 31);
+        assert_eq!(signal.si_errno, 77);
+        assert_eq!(signal.si_code, 1);
+        assert_eq!(signal.si_call_addr, 0);
+        assert_eq!(signal.si_syscall, SYS_GETPID as u32);
+        assert_eq!(signal.si_arch, AUDIT_ARCH_X86_64);
     }
 
     #[test]
