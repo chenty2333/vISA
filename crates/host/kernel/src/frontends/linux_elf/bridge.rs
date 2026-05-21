@@ -3071,6 +3071,7 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     if modes != 0 && !active_context().has_effective_capability(CAP_SYS_TIME) {
         return Err(ERR_EPERM);
     }
+    validate_clock_adjtime_timex(modes, &tx)?;
 
     if clock_id == CLOCK_TAI {
         let state = active_context().clock_adj_state();
@@ -3103,7 +3104,7 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
         let frac = read_i64_from(&tx, 80)? as i128;
         delta_ns = delta_ns
             .saturating_add(sec.saturating_mul(1_000_000_000))
-            .saturating_add(frac.saturating_mul(unit_ns));
+            .saturating_add(frac.saturating_mul(clock_setoffset_unit_ns(modes)));
     }
     if delta_ns != 0 {
         active_context().adjust_realtime_ns(delta_ns, tick, timer_hz);
@@ -3144,6 +3145,37 @@ fn sys_clock_adjtime(frame: &SyscallFrame) -> Result<i64, i32> {
     tx_lease.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(&tx);
 
     if state.status & STA_UNSYNC != 0 { Ok(TIME_ERROR) } else { Ok(TIME_OK) }
+}
+
+fn validate_clock_adjtime_timex(modes: u32, tx: &[u8]) -> Result<(), i32> {
+    const ADJ_SETOFFSET: u32 = 0x0100;
+    const ADJ_NANO: u32 = 0x2000;
+    const ADJ_TICK: u32 = 0x4000;
+    const ADJ_TICK_MIN_US: i64 = 9_000;
+    const ADJ_TICK_MAX_US: i64 = 11_000;
+
+    if modes & ADJ_TICK != 0 {
+        let tick = read_i64_from(tx, 88)?;
+        if !(ADJ_TICK_MIN_US..=ADJ_TICK_MAX_US).contains(&tick) {
+            return Err(ERR_EINVAL);
+        }
+    }
+    if modes & ADJ_SETOFFSET != 0 {
+        let frac = read_i64_from(tx, 80)?;
+        if frac < 0 {
+            return Err(ERR_EINVAL);
+        }
+        let limit = if modes & ADJ_NANO != 0 { 1_000_000_000 } else { 1_000_000 };
+        if frac >= limit {
+            return Err(ERR_EINVAL);
+        }
+    }
+    Ok(())
+}
+
+fn clock_setoffset_unit_ns(modes: u32) -> i128 {
+    const ADJ_NANO: u32 = 0x2000;
+    if modes & ADJ_NANO != 0 { 1 } else { 1_000 }
 }
 
 fn write_timex_snapshot(

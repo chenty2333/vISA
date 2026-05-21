@@ -24,6 +24,8 @@ const ADJ_SETOFFSET: u32 = 0x0100;
 const ADJ_MICRO: u32 = 0x1000;
 const ADJ_NANO: u32 = 0x2000;
 const ADJ_TICK: u32 = 0x4000;
+const ADJ_TICK_MIN_US: i64 = 9_000;
+const ADJ_TICK_MAX_US: i64 = 11_000;
 const SUPPORTED_MODES: u32 = ADJ_OFFSET
     | ADJ_FREQUENCY
     | ADJ_MAXERROR
@@ -112,6 +114,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if modes != 0 && self.current_access_state().cap_effective & CAP_SYS_TIME == 0 {
             return Err(ERR_EPERM);
         }
+        validate_clock_adjtime_timex(modes, &tx)?;
 
         let tick = crate::interrupts::tick_count();
         let timer_hz = crate::interrupts::TIMER_HZ as u64;
@@ -146,7 +149,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             let frac = read_i64_from(&tx, 80)? as i128;
             delta_ns = delta_ns
                 .saturating_add(sec.saturating_mul(1_000_000_000))
-                .saturating_add(frac.saturating_mul(unit_ns));
+                .saturating_add(frac.saturating_mul(setoffset_unit_ns(modes)));
         }
         if delta_ns != 0 {
             self.adjust_runtime_realtime_ns(delta_ns, tick, timer_hz);
@@ -222,6 +225,30 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         Ok(())
     }
+}
+
+fn validate_clock_adjtime_timex(modes: u32, tx: &[u8]) -> Result<(), i32> {
+    if modes & ADJ_TICK != 0 {
+        let tick = read_i64_from(tx, 88)?;
+        if !(ADJ_TICK_MIN_US..=ADJ_TICK_MAX_US).contains(&tick) {
+            return Err(ERR_EINVAL);
+        }
+    }
+    if modes & ADJ_SETOFFSET != 0 {
+        let frac = read_i64_from(tx, 80)?;
+        if frac < 0 {
+            return Err(ERR_EINVAL);
+        }
+        let limit = if modes & ADJ_NANO != 0 { 1_000_000_000 } else { 1_000_000 };
+        if frac >= limit {
+            return Err(ERR_EINVAL);
+        }
+    }
+    Ok(())
+}
+
+fn setoffset_unit_ns(modes: u32) -> i128 {
+    if modes & ADJ_NANO != 0 { 1 } else { 1_000 }
 }
 
 fn checked_user_ptr(value: u64) -> Result<u32, i32> {
@@ -337,6 +364,32 @@ mod tests {
         bytes
     }
 
+    fn timex_setoffset(mode: u32, sec: i64, frac: i64) -> Vec<u8> {
+        let mut bytes = vec![0u8; TIMEX_SIZE as usize];
+        bytes[0..4].copy_from_slice(&mode.to_le_bytes());
+        bytes[72..80].copy_from_slice(&sec.to_le_bytes());
+        bytes[80..88].copy_from_slice(&frac.to_le_bytes());
+        bytes
+    }
+
+    fn grant_cap_sys_time(runtime: &mut PrototypeRuntime<'_>) {
+        let pid = runtime.current_pid();
+        runtime.processes.iter_mut().find(|process| process.pid == pid).unwrap().access =
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                CAP_SYS_TIME,
+                CAP_SYS_TIME,
+            );
+    }
+
     #[test]
     fn generic_clock_adjtime_requires_cap_sys_time_for_mutation() {
         let mut runtime = test_runtime();
@@ -402,6 +455,80 @@ mod tests {
             .expect("allowed clock_adjtime dispatch");
         assert_eq!(expect_ret(allowed), TIME_OK);
         assert_eq!(runtime.clock_adj.freq_scaled_ppm, 123);
+    }
+
+    #[test]
+    fn generic_clock_adjtime_setoffset_uses_explicit_resolution_and_bounds_fraction() {
+        let mut runtime = test_runtime();
+        grant_cap_sys_time(&mut runtime);
+        let tick = crate::interrupts::tick_count();
+        let timer_hz = crate::interrupts::TIMER_HZ as u64;
+        runtime.set_runtime_realtime_ns(2_000_000_000, tick);
+
+        let input = timex_setoffset(ADJ_SETOFFSET, 1, 500_000);
+        let (tx_ptr, _) = runtime.linux.write_arg_bytes(&input).expect("setoffset timex");
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_setoffset_default_micro",
+                SyscallContext::new(SYS_CLOCK_ADJTIME, [CLOCK_REALTIME, tx_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("clock_adjtime setoffset dispatch");
+        assert_eq!(expect_ret(result), TIME_OK);
+        let now = runtime.runtime_realtime_now_ns(crate::interrupts::tick_count(), timer_hz);
+        assert!((3_500_000_000..3_600_000_000).contains(&now));
+
+        for (mode, frac) in [
+            (ADJ_SETOFFSET, -1),
+            (ADJ_SETOFFSET, 1_000_000),
+            (ADJ_SETOFFSET | ADJ_NANO, 1_000_000_000),
+        ] {
+            let invalid = timex_setoffset(mode, 0, frac);
+            let (invalid_ptr, _) =
+                runtime.linux.write_arg_bytes(&invalid).expect("invalid setoffset timex");
+            let denied = runtime
+                .dispatch_linux_syscall_raw(
+                    "test_clock_adjtime_setoffset_invalid_fraction",
+                    SyscallContext::new(
+                        SYS_CLOCK_ADJTIME,
+                        [CLOCK_REALTIME, invalid_ptr as u64, 0, 0, 0, 0],
+                    ),
+                )
+                .expect("invalid clock_adjtime setoffset dispatch");
+            assert_eq!(expect_ret(denied), -(ERR_EINVAL as i64));
+        }
+    }
+
+    #[test]
+    fn generic_clock_adjtime_tick_is_bounded_like_linux_user_hz() {
+        let mut runtime = test_runtime();
+        grant_cap_sys_time(&mut runtime);
+
+        for tick in [ADJ_TICK_MIN_US - 1, ADJ_TICK_MAX_US + 1] {
+            let input = timex_with_i64(ADJ_TICK, 88, tick);
+            let (tx_ptr, _) = runtime.linux.write_arg_bytes(&input).expect("invalid tick timex");
+            let denied = runtime
+                .dispatch_linux_syscall_raw(
+                    "test_clock_adjtime_bad_tick",
+                    SyscallContext::new(
+                        SYS_CLOCK_ADJTIME,
+                        [CLOCK_REALTIME, tx_ptr as u64, 0, 0, 0, 0],
+                    ),
+                )
+                .expect("invalid tick dispatch");
+            assert_eq!(expect_ret(denied), -(ERR_EINVAL as i64));
+            assert_eq!(runtime.clock_adj.tick_us, RuntimeClockAdjustmentState::default().tick_us);
+        }
+
+        let input = timex_with_i64(ADJ_TICK, 88, 10_500);
+        let (tx_ptr, _) = runtime.linux.write_arg_bytes(&input).expect("valid tick timex");
+        let allowed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clock_adjtime_good_tick",
+                SyscallContext::new(SYS_CLOCK_ADJTIME, [CLOCK_REALTIME, tx_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("valid tick dispatch");
+        assert_eq!(expect_ret(allowed), TIME_OK);
+        assert_eq!(runtime.clock_adj.tick_us, 10_500);
     }
 
     #[test]
