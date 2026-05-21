@@ -1160,8 +1160,8 @@ mod tests {
 
     use vmos_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
-        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_LISTEN,
-        SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT,
+        SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1176,6 +1176,8 @@ mod tests {
     const SOCK_NONBLOCK: u64 = 0o0004000;
     const FD_CLOEXEC: u32 = 1;
     const O_NONBLOCK: u32 = 0o4000;
+    const SOL_SOCKET: u64 = 1;
+    const SO_ERROR: u64 = 4;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -1632,6 +1634,33 @@ mod tests {
         let connected =
             expect_ret(runtime.block_on_wait("test_connect_resume", token).expect("connect wait"));
         assert_eq!(connected, 0);
+        syn_ack
+    }
+
+    fn drive_reference_backend_nonblocking_connect(
+        runtime: &mut PrototypeRuntime<'_>,
+        remote_port: u16,
+        server_seq: u32,
+    ) -> Vec<u8> {
+        let arp_reply = arp_reply(
+            REMOTE_MAC,
+            REMOTE_IPV4,
+            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+            VMOS_IPV4,
+        );
+        runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
+        runtime.pump_network_runtime();
+
+        let syn = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("nonblocking connect emitted tcp syn")
+            .to_vec();
+        assert_eq!(syn[47] & 0x02, 0x02);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), remote_port);
+
+        let syn_ack = tcp_syn_ack_for_syn(&syn, REMOTE_MAC, server_seq);
+        runtime.reference_packet_backend.inject_rx_frame(&syn_ack).expect("inject syn ack");
         syn_ack
     }
 
@@ -2193,6 +2222,200 @@ mod tests {
                 SYS_CLOSE,
                 [listener_fd as u64, 0, 0, 0, 0, 0],
             ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
+            0
+        );
+    }
+
+    #[test]
+    fn packet_tcp_handshake_wakes_listener_epoll_before_accept() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18088u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xace0_0001u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl",
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    listener_fd as u64,
+                    EPOLLIN as u64,
+                    epoll_data,
+                    0,
+                ],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_listener",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait listener dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending listener epoll_wait, got {other:?}"),
+        };
+
+        let remote_port = 40_008u16;
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, remote_port, 0x7172_7374);
+        let event_bytes = expect_bytes(
+            runtime
+                .block_on_wait("test_epoll_listener_resume", token)
+                .expect("listener epoll wait"),
+        );
+        assert_epoll_event(&event_bytes, EPOLLIN, epoll_data);
+
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_after_epoll",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        assert!(event_log_contains(&runtime, "accept-ready"));
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_close_accepted",
+                SYS_CLOSE,
+                [accepted_fd as u64, 0, 0, 0, 0, 0],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_close_listener",
+                SYS_CLOSE,
+                [listener_fd as u64, 0, 0, 0, 0, 0],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
+            0
+        );
+    }
+
+    #[test]
+    fn packet_nonblocking_connect_wakes_epollout_and_reports_so_error_zero() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64 | SOCK_NONBLOCK, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+        let remote_port = 18089u16;
+        let remote_ipv4 = u32::from_be_bytes(REMOTE_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_connect_nonblocking",
+                SYS_CONNECT,
+                [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
+            ),
+            -(vmos_abi::ERR_EINPROGRESS as i64)
+        );
+        assert!(is_remote_arp_request(
+            runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
+        ));
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xace0_0002u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl",
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    fd as u64,
+                    vmos_abi::EPOLLOUT as u64,
+                    epoll_data,
+                    0,
+                ],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_connect",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait connect dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending connect epoll_wait, got {other:?}"),
+        };
+
+        drive_reference_backend_nonblocking_connect(&mut runtime, remote_port, 0x8182_8384);
+        let event_bytes = expect_bytes(
+            runtime.block_on_wait("test_epoll_connect_resume", token).expect("connect epoll wait"),
+        );
+        assert_epoll_event(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
+
+        let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
+        runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_getsockopt_so_error",
+                SYS_GETSOCKOPT,
+                [fd as u64, SOL_SOCKET, SO_ERROR, opt_ptr as u64, (opt_ptr + 4) as u64, 0],
+            ),
+            0
+        );
+        let so_error = runtime.linux.read_bytes(opt_ptr, 8).expect("getsockopt output");
+        assert_eq!(u32::from_le_bytes(so_error[0..4].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(so_error[4..8].try_into().unwrap()), 4);
+        assert!(event_log_contains(&runtime, "connected"));
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_close_socket", SYS_CLOSE, [fd as u64, 0, 0, 0, 0, 0]),
             0
         );
         assert_eq!(
