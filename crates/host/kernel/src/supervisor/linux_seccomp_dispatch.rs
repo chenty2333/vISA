@@ -101,7 +101,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             SeccompDecision::Trace => Some(errno_ret(ERR_ENOSYS)),
             SeccompDecision::Kill { signal } => {
                 crate::kwarn!("generic seccomp killed syscall {}", syscall);
-                Some(LinuxCallResult::Exit(128 + signal as i32))
+                let status = 128 + signal as i32;
+                let pid = self.current_pid();
+                self.close_active_fd_table_for_process_exit();
+                self.process_exit(pid, status);
+                Some(LinuxCallResult::Exit(status))
             }
         }
     }
@@ -916,13 +920,19 @@ fn write_u32_le(out: &mut [u8], offset: usize, value: u32) {
 
 #[cfg(test)]
 mod tests {
-    use service_core::seccomp::{SECCOMP_RET_ALLOW, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF};
+    use service_core::seccomp::{
+        SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_LOG,
+        SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
+    };
     use vmos_abi::{
         ERR_EACCES, ERR_EINTR, ERR_EINVAL, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SyscallContext,
     };
 
     use super::{
-        super::types::{SeccompNotificationState, WaitKind},
+        super::types::{
+            ProcessRuntimeStateKind, SeccompAuditAction, SeccompNotificationState,
+            ThreadRuntimeStateKind, WaitKind,
+        },
         *,
     };
     use crate::supervisor::engine::RuntimeOnlyExecutor;
@@ -936,6 +946,13 @@ mod tests {
         match result {
             LinuxCallResult::Ret(ret) => ret,
             other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    fn expect_exit(result: LinuxCallResult) -> i32 {
+        match result {
+            LinuxCallResult::Exit(status) => status,
+            other => panic!("expected Exit, got {other:?}"),
         }
     }
 
@@ -1012,6 +1029,94 @@ mod tests {
             privileged_runtime.seccomp_mode(privileged_runtime.current_tid()),
             Some(SECCOMP_MODE_FILTER)
         );
+    }
+
+    #[test]
+    fn generic_seccomp_log_records_structured_audit_event() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_LOG | 44);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp log install");
+        assert_eq!(expect_ret(install), 0);
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_log_audit",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp log dispatch");
+
+        assert_eq!(expect_ret(result), runtime.current_pid() as i64);
+        assert_eq!(runtime.seccomp_audit.len(), 1);
+        let record = runtime.seccomp_audit[0];
+        assert_eq!(record.pid, runtime.current_pid());
+        assert_eq!(record.tid, runtime.current_tid());
+        assert_eq!(record.syscall, SYS_GETPID);
+        assert_eq!(record.action, SeccompAuditAction::Log);
+        assert_eq!(record.data, 44);
+        assert!(!record.filter_flag);
+    }
+
+    #[test]
+    fn generic_seccomp_filter_log_flag_records_non_allow_audit_event() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_ERRNO | 13);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_LOG,
+            )
+            .expect("seccomp filter-log install");
+        assert_eq!(expect_ret(install), 0);
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_filter_log_audit",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp filter-log dispatch");
+
+        assert_eq!(expect_ret(result), -13);
+        assert_eq!(runtime.seccomp_audit.len(), 1);
+        let record = runtime.seccomp_audit[0];
+        assert_eq!(record.pid, runtime.current_pid());
+        assert_eq!(record.tid, runtime.current_tid());
+        assert_eq!(record.syscall, SYS_GETPID);
+        assert_eq!(record.action, SeccompAuditAction::Errno);
+        assert_eq!(record.data, 13);
+        assert!(record.filter_flag);
+    }
+
+    #[test]
+    fn generic_seccomp_kill_transitions_current_process() {
+        let mut runtime = test_runtime();
+        let fd = runtime.create_eventfd(0, 0).expect("eventfd");
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_KILL_PROCESS);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp kill install");
+        assert_eq!(expect_ret(install), 0);
+
+        let result = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_kill_process",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("seccomp kill dispatch");
+
+        assert_eq!(expect_exit(result), 159);
+        let process = runtime.query_process(pid).expect("process");
+        assert_eq!(process.state, ProcessRuntimeStateKind::Zombie);
+        assert_eq!(process.exit_code, Some(159));
+        assert_eq!(runtime.query_thread(tid).expect("thread").state, ThreadRuntimeStateKind::Dead);
+        assert!(!runtime.is_eventfd_fd(fd));
     }
 
     #[test]

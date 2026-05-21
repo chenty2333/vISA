@@ -34,8 +34,9 @@ use super::{
         BpfMapState, DEFAULT_RLIMIT_STACK_BYTES, EventFdState, FdEntry, GenericLockedMmapRange,
         GenericMmapRegion, InjectedFault, Pid, PipeState, ProcessAccessState, ProcessRuntimeState,
         ProcessRuntimeStateKind, RLIMIT_CPU, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit,
-        RuntimeClockAdjustmentState, SeccompMode, SeccompNotification, ServiceCallError, SigAction,
-        SocketPairState, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid, TimerFdState,
+        RuntimeClockAdjustmentState, SeccompAuditAction, SeccompAuditRecord, SeccompMode,
+        SeccompNotification, ServiceCallError, SigAction, SocketPairState, TaskId,
+        ThreadRuntimeState, ThreadRuntimeStateKind, Tid, TimerFdState,
     },
     wait::WaitRegistry,
 };
@@ -105,6 +106,7 @@ pub(crate) struct PrototypeRuntime<'engine> {
     pub(super) next_seccomp_listener_id: u64,
     pub(super) next_seccomp_notification_id: u64,
     pub(super) seccomp_notifications: Vec<SeccompNotification>,
+    pub(super) seccomp_audit: Vec<SeccompAuditRecord>,
     pub(super) generic_mmap_regions: Vec<GenericMmapRegion>,
     pub(super) generic_locked_mmap_ranges: Vec<GenericLockedMmapRange>,
     pub(super) generic_mlock_future_pids: Vec<Pid>,
@@ -285,6 +287,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             next_seccomp_listener_id: 1,
             next_seccomp_notification_id: 1,
             seccomp_notifications: Vec::new(),
+            seccomp_audit: Vec::new(),
             generic_mmap_regions: Vec::new(),
             generic_locked_mmap_ranges: Vec::new(),
             generic_mlock_future_pids: Vec::new(),
@@ -723,7 +726,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn check_seccomp_syscall(
-        &self,
+        &mut self,
         tid: Tid,
         syscall: u64,
         instruction_pointer: u64,
@@ -750,7 +753,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                     args,
                 }) {
                     Ok((decision, log_non_allow)) => {
-                        if log_non_allow && seccomp_filter_flag_should_log(decision) {
+                        let filter_flag = log_non_allow && seccomp_filter_flag_should_log(decision);
+                        if filter_flag {
                             crate::kinfo!(
                                 "seccomp filter-log syscall={} tid={} decision={}",
                                 syscall,
@@ -758,12 +762,39 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 seccomp_decision_name(decision)
                             );
                         }
+                        if filter_flag || matches!(decision, SeccompDecision::Log { .. }) {
+                            self.record_seccomp_audit(tid, syscall, decision, filter_flag);
+                        }
                         decision
                     }
                     Err(_) => SeccompDecision::Kill { signal: 31 },
                 }
             }
         }
+    }
+
+    fn record_seccomp_audit(
+        &mut self,
+        tid: Tid,
+        syscall: u64,
+        decision: SeccompDecision,
+        filter_flag: bool,
+    ) {
+        let Some((action, data)) = seccomp_audit_action(decision) else {
+            return;
+        };
+        let pid = self.threads.iter().find(|thread| thread.tid == tid).map(|thread| thread.pid);
+        let Some(pid) = pid else {
+            return;
+        };
+        self.seccomp_audit.push(SeccompAuditRecord {
+            pid,
+            tid,
+            syscall,
+            action,
+            data,
+            filter_flag,
+        });
     }
 
     pub(crate) fn set_current_task(&mut self, task: TaskId) {
@@ -892,6 +923,18 @@ fn install_seccomp_filter_on_mode(
 
 fn seccomp_filter_flag_should_log(decision: SeccompDecision) -> bool {
     !matches!(decision, SeccompDecision::Allow | SeccompDecision::Log { .. })
+}
+
+fn seccomp_audit_action(decision: SeccompDecision) -> Option<(SeccompAuditAction, u16)> {
+    match decision {
+        SeccompDecision::Allow => None,
+        SeccompDecision::Log { data } => Some((SeccompAuditAction::Log, data)),
+        SeccompDecision::Errno(errno) => Some((SeccompAuditAction::Errno, errno)),
+        SeccompDecision::Trap { errno } => Some((SeccompAuditAction::Trap, errno)),
+        SeccompDecision::Trace => Some((SeccompAuditAction::Trace, 0)),
+        SeccompDecision::UserNotif => Some((SeccompAuditAction::UserNotif, 0)),
+        SeccompDecision::Kill { signal } => Some((SeccompAuditAction::Kill, signal as u16)),
+    }
 }
 
 fn seccomp_decision_name(decision: SeccompDecision) -> &'static str {

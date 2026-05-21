@@ -348,6 +348,26 @@ pub(crate) struct SeccompNotificationCompletion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompAuditAction {
+    Log,
+    Errno,
+    Trap,
+    Trace,
+    UserNotif,
+    Kill,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SeccompAuditRecord {
+    pub(crate) pid: Pid,
+    pub(crate) tid: Tid,
+    pub(crate) syscall: u64,
+    pub(crate) action: SeccompAuditAction,
+    pub(crate) data: u16,
+    pub(crate) filter_flag: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompUserNotifOutcome {
     Return(i64),
     Continue,
