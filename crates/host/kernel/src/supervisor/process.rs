@@ -13,7 +13,8 @@ use super::{
         LINUX_SUPPORTED_SECUREBITS, Pid, ProcessAccessState, ProcessRuntimeState,
         ProcessRuntimeStateKind, PtraceAttachment, RLIMIT_NPROC, RobustListRegistration,
         RseqRegistration, SECBIT_KEEP_CAPS, SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_SETUID_FIXUP,
-        SECBIT_NOROOT, SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        SECBIT_NOROOT, SeccompTraceState, SignalAltStack, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -58,6 +59,7 @@ const WNOHANG: u64 = 0x1;
 const WUNTRACED: u64 = 0x2;
 const WCONTINUED: u64 = 0x8;
 const SIGCHLD: u8 = 17;
+const SIGTRAP: u32 = 5;
 const CLD_EXITED: i32 = 1;
 const SA_NOCLDWAIT: u64 = 0x2;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
@@ -72,6 +74,19 @@ const CLONE_NS_MASK: u64 = CLONE_NEWNS
     | CLONE_NEWPID
     | CLONE_NEWNET
     | CLONE_IO;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Wait4Match {
+    pub(crate) pid: Pid,
+    pub(crate) status: u32,
+    action: Wait4Action,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wait4Action {
+    ReapZombie,
+    MarkPtraceSeccompReported { trace_id: u64 },
+}
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn record_credential_transition(
@@ -938,7 +953,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if auto_reap { ProcessState::Dead } else { ProcessState::Zombie { exit_code } };
             self.semantic.transition_process_state_by_pid(pid, state);
         }
-        self.notify_child_exit_waiters();
+        self.notify_wait4_waiters();
     }
 
     pub(crate) fn query_wait4(
@@ -946,7 +961,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         caller_pid: Pid,
         selector: i64,
         options: u64,
-    ) -> Result<Option<(Pid, u32)>, i32> {
+    ) -> Result<Option<Wait4Match>, i32> {
         if options & !SUPPORTED_WAIT_OPTIONS != 0 {
             return Err(vmos_abi::ERR_EINVAL);
         }
@@ -970,10 +985,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let Some(idx) = zombie_index else {
-            if saw_matching_child && options & WNOHANG != 0 {
+            if let Some(stopped) =
+                self.query_ptrace_seccomp_wait4(caller_pid, selector, caller_pgid)
+            {
+                return Ok(Some(stopped));
+            }
+            let saw_matching_ptrace =
+                self.has_matching_ptrace_wait_target(caller_pid, selector, caller_pgid);
+            if (saw_matching_child || saw_matching_ptrace) && options & WNOHANG != 0 {
                 return Ok(None);
             }
-            return if saw_matching_child {
+            return if saw_matching_child || saw_matching_ptrace {
                 Err(vmos_abi::ERR_ENOSYS)
             } else {
                 Err(vmos_abi::ERR_ECHILD)
@@ -983,7 +1005,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let child = &self.processes[idx];
         let pid = child.pid;
         let status = wait_exit_status(child.exit_code.unwrap_or(0));
-        Ok(Some((pid, status)))
+        Ok(Some(Wait4Match { pid, status, action: Wait4Action::ReapZombie }))
     }
 
     pub(crate) fn wait4_child_is_ready(&self, caller_pid: Pid, selector: i64) -> bool {
@@ -1010,6 +1032,100 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
             _ => Err(vmos_abi::ERR_EINVAL),
         }
+    }
+
+    fn query_ptrace_seccomp_wait4(
+        &self,
+        caller_pid: Pid,
+        selector: i64,
+        caller_pgid: Option<Pid>,
+    ) -> Option<Wait4Match> {
+        for attachment in self.ptrace_attachments.iter().filter(|entry| {
+            entry.tracer_pid == caller_pid && entry.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+        }) {
+            let Some(tracee) = self.processes.iter().find(|process| {
+                process.pid == attachment.tracee_pid
+                    && process.state != ProcessRuntimeStateKind::Dead
+            }) else {
+                continue;
+            };
+            if !wait_selector_matches(selector, tracee.pid, tracee.pgid, caller_pgid) {
+                continue;
+            }
+            let Some(trace_id) = self
+                .seccomp_trace_events
+                .iter()
+                .find(|event| {
+                    event.state == SeccompTraceState::Queued
+                        && (event.tid == attachment.tracee_tid
+                            || event.pid == attachment.tracee_pid)
+                })
+                .map(|event| event.id)
+            else {
+                continue;
+            };
+            return Some(Wait4Match {
+                pid: tracee.pid,
+                status: wait_ptrace_event_status(SIGTRAP, vmos_abi::PTRACE_EVENT_SECCOMP),
+                action: Wait4Action::MarkPtraceSeccompReported { trace_id },
+            });
+        }
+        None
+    }
+
+    fn has_matching_ptrace_wait_target(
+        &self,
+        caller_pid: Pid,
+        selector: i64,
+        caller_pgid: Option<Pid>,
+    ) -> bool {
+        self.ptrace_attachments.iter().filter(|entry| entry.tracer_pid == caller_pid).any(
+            |attachment| {
+                self.processes.iter().any(|process| {
+                    process.pid == attachment.tracee_pid
+                        && process.state != ProcessRuntimeStateKind::Dead
+                        && wait_selector_matches(selector, process.pid, process.pgid, caller_pgid)
+                })
+            },
+        )
+    }
+
+    pub(crate) fn finish_wait4_match(
+        &mut self,
+        caller_pid: Pid,
+        matched: Wait4Match,
+    ) -> Result<(), i32> {
+        match matched.action {
+            Wait4Action::ReapZombie => self.reap_wait4_child(caller_pid, matched.pid),
+            Wait4Action::MarkPtraceSeccompReported { trace_id } => {
+                self.mark_ptrace_seccomp_wait_reported(caller_pid, trace_id)
+            }
+        }
+    }
+
+    fn mark_ptrace_seccomp_wait_reported(
+        &mut self,
+        caller_pid: Pid,
+        trace_id: u64,
+    ) -> Result<(), i32> {
+        let Some(index) = self
+            .seccomp_trace_events
+            .iter()
+            .position(|event| event.id == trace_id && event.state == SeccompTraceState::Queued)
+        else {
+            return Err(vmos_abi::ERR_ECHILD);
+        };
+        let event = &self.seccomp_trace_events[index];
+        let traced_by_caller = self.ptrace_attachments.iter().any(|attachment| {
+            attachment.tracer_pid == caller_pid
+                && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+                && (attachment.tracee_tid == event.tid || attachment.tracee_pid == event.pid)
+        });
+        if !traced_by_caller {
+            return Err(vmos_abi::ERR_ECHILD);
+        }
+        self.seccomp_trace_events[index].state = SeccompTraceState::WaitReported;
+        Ok(())
     }
 
     pub(super) fn plan_ptrace(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -1058,8 +1174,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             .seccomp_trace_events
             .iter()
             .find(|event| {
-                event.state == super::types::SeccompTraceState::Queued
-                    && (event.tid == tracee_tid || event.pid == tracee_pid)
+                matches!(
+                    event.state,
+                    super::types::SeccompTraceState::Queued
+                        | super::types::SeccompTraceState::WaitReported
+                ) && (event.tid == tracee_tid || event.pid == tracee_pid)
             })
             .map(|event| event.id);
         if let Some(trace_id) = trace_id {
@@ -1163,7 +1282,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Some(trace_id) = self
             .seccomp_trace_events
             .iter()
-            .find(|event| event.tid == tracee_tid || event.pid == tracee_pid)
+            .find(|event| {
+                matches!(
+                    event.state,
+                    super::types::SeccompTraceState::Queued
+                        | super::types::SeccompTraceState::WaitReported
+                ) && (event.tid == tracee_tid || event.pid == tracee_pid)
+            })
             .map(|event| event.id)
         {
             self.seccomp_trace_continue(trace_id)?;
@@ -1255,7 +1380,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         loop {
             match self.query_wait4(caller_pid, selector, options) {
-                Ok(Some((pid, status))) => {
+                Ok(Some(wait)) => {
                     if let Some(ptr) = status_ptr {
                         if self.linux.read_bytes(ptr, 4).is_err() {
                             return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
@@ -1267,7 +1392,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         }
                     }
                     if let Some(ptr) = status_ptr {
-                        if self.linux.write_bytes(ptr, &status.to_le_bytes()).is_err() {
+                        if self.linux.write_bytes(ptr, &wait.status.to_le_bytes()).is_err() {
                             return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
                         }
                     }
@@ -1276,8 +1401,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                             return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
                         }
                     }
-                    match self.reap_wait4_child(caller_pid, pid) {
-                        Ok(()) => return Ok(LinuxCallResult::Ret(pid as i64)),
+                    match self.finish_wait4_match(caller_pid, wait) {
+                        Ok(()) => return Ok(LinuxCallResult::Ret(wait.pid as i64)),
                         Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
                     }
                 }
@@ -1817,7 +1942,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn notify_child_exit_waiters(&mut self) {
+    pub(super) fn notify_wait4_waiters(&mut self) {
         let ready_waits: Vec<u64> = self
             .waits
             .pending_sources()
@@ -1870,6 +1995,10 @@ fn wait_selector_matches(
 
 fn wait_exit_status(exit_code: i32) -> u32 {
     ((exit_code as u32) & 0xff) << 8
+}
+
+fn wait_ptrace_event_status(signal: u32, event: u32) -> u32 {
+    (event << 16) | (signal << 8) | 0x7f
 }
 
 fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {

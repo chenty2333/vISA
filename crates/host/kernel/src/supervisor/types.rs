@@ -350,6 +350,7 @@ pub(crate) struct SeccompNotificationCompletion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeccompTraceState {
     Queued,
+    WaitReported,
     Responded,
 }
 

@@ -207,6 +207,7 @@ pub const PTRACE_SETOPTIONS: u64 = 0x4200;
 pub const PTRACE_GETEVENTMSG: u64 = 0x4201;
 pub const PTRACE_SEIZE: u64 = 0x4206;
 pub const PTRACE_O_TRACESECCOMP: u64 = 1 << 7;
+pub const PTRACE_EVENT_SECCOMP: u32 = 7;
 pub const EPOLL_CTL_ADD: u32 = 1;
 pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLL_CTL_MOD: u32 = 3;

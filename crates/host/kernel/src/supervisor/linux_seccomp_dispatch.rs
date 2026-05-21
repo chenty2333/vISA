@@ -688,6 +688,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             response: None,
             state: SeccompTraceState::Queued,
         });
+        self.notify_wait4_waiters();
         Ok(token)
     }
 
@@ -722,11 +723,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         trace_id: u64,
         response: SeccompTraceResponse,
     ) -> Result<(), i32> {
-        let Some(event) = self
-            .seccomp_trace_events
-            .iter_mut()
-            .find(|entry| entry.id == trace_id && entry.state == SeccompTraceState::Queued)
-        else {
+        let Some(event) = self.seccomp_trace_events.iter_mut().find(|entry| {
+            entry.id == trace_id
+                && matches!(
+                    entry.state,
+                    SeccompTraceState::Queued | SeccompTraceState::WaitReported
+                )
+        }) else {
             return Err(ERR_ENOENT);
         };
         event.response = Some(response);
@@ -1057,15 +1060,15 @@ mod tests {
         SECCOMP_RET_TRACE, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
     };
     use vmos_abi::{
-        ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, PTRACE_CONT, PTRACE_GETEVENTMSG,
-        PTRACE_O_TRACESECCOMP, PTRACE_SEIZE, PTRACE_SETOPTIONS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL,
-        SYS_PTRACE, SyscallContext,
+        ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, PTRACE_CONT,
+        PTRACE_EVENT_SECCOMP, PTRACE_GETEVENTMSG, PTRACE_O_TRACESECCOMP, PTRACE_SEIZE,
+        PTRACE_SETOPTIONS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SYS_PTRACE, SYS_WAIT4, SyscallContext,
     };
 
     use super::{
         super::types::{
             ProcessRuntimeStateKind, SeccompAuditAction, SeccompNotificationState,
-            ThreadRuntimeStateKind, WaitKind,
+            SeccompTraceState, ThreadRuntimeStateKind, WaitKind,
         },
         *,
     };
@@ -1081,6 +1084,10 @@ mod tests {
             LinuxCallResult::Ret(ret) => ret,
             other => panic!("expected Ret, got {other:?}"),
         }
+    }
+
+    fn ptrace_seccomp_stop_status() -> u32 {
+        (PTRACE_EVENT_SECCOMP << 16) | (5 << 8) | 0x7f
     }
 
     fn expect_exit(result: LinuxCallResult) -> i32 {
@@ -1403,6 +1410,29 @@ mod tests {
         assert_eq!(runtime.seccomp_trace_events.len(), 1);
 
         runtime.set_current_task(tracer_task);
+        let (status_ptr, _) = runtime.linux.write_arg_bytes(&[0u8; 4]).expect("wait status");
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_wait_seccomp_trace",
+                SyscallContext::new(SYS_WAIT4, [tracee_pid as u64, status_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("wait4 seccomp trace stop");
+        assert_eq!(expect_ret(waited), tracee_pid as i64);
+        let status = runtime.linux.read_bytes(status_ptr, 4).expect("wait status");
+        assert_eq!(
+            u32::from_le_bytes(status.try_into().expect("status bytes")),
+            ptrace_seccomp_stop_status()
+        );
+        assert_eq!(runtime.seccomp_trace_events[0].state, SeccompTraceState::WaitReported);
+
+        let repeat = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_wait_seccomp_trace_repeat",
+                SyscallContext::new(SYS_WAIT4, [tracee_pid as u64, 0, 1, 0, 0, 0]),
+            )
+            .expect("repeat wait4 seccomp trace stop");
+        assert_eq!(expect_ret(repeat), 0);
+
         let (msg_ptr, _) = runtime.linux.write_arg_bytes(&[0u8; 8]).expect("event msg buffer");
         let getmsg = runtime
             .dispatch_linux_syscall_raw(
