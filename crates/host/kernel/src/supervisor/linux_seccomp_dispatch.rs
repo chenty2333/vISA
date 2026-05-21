@@ -24,7 +24,8 @@ use super::{
     runtime::PrototypeRuntime,
     types::{
         CAP_SETPCAP, CAP_SYS_ADMIN, FdEntry, FdResource, LINUX_KNOWN_CAPS, SeccompNotification,
-        SeccompNotificationState, WaitToken,
+        SeccompNotificationCompletion, SeccompNotificationResponse, SeccompNotificationState,
+        SeccompUserNotifOutcome, WaitToken,
     },
     wait::WaitRegistration,
 };
@@ -617,10 +618,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         syscall: u64,
         instruction_pointer: u64,
         args: [u64; 6],
-    ) -> Result<i64, i32> {
+    ) -> Result<SeccompUserNotifOutcome, i32> {
         let token = self.queue_seccomp_user_notification(syscall, instruction_pointer, args)?;
         match self.block_on_wait("ring3_seccomp_user_notif", token).map_err(|_| ERR_EINVAL)? {
-            LinuxCallResult::Ret(ret) => Ok(ret),
+            LinuxCallResult::Ret(ret) => Ok(SeccompUserNotifOutcome::Return(ret)),
+            LinuxCallResult::SeccompContinue { .. } => Ok(SeccompUserNotifOutcome::Continue),
             _ => Err(ERR_EINVAL),
         }
     }
@@ -630,7 +632,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         for notification in self.seccomp_notifications.iter_mut().filter(|entry| {
             entry.listener_id == listener_id && entry.state != SeccompNotificationState::Responded
         }) {
-            notification.response = Some(-(errno as i64));
+            notification.response = Some(SeccompNotificationResponse::Return(-(errno as i64)));
             notification.state = SeccompNotificationState::Responded;
             wait_token_ids.push(notification.wait_token_id);
         }
@@ -712,9 +714,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & !SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
             return Err(ERR_EINVAL);
         }
-        if flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
-            return Err(ERR_EOPNOTSUPP);
-        }
         let Some(notification) = self.seccomp_notifications.iter_mut().find(|entry| {
             entry.listener_id == listener_id
                 && entry.id == id
@@ -722,12 +721,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         }) else {
             return Err(ERR_ENOENT);
         };
-        let response = if error == 0 {
-            val
+        let response = if flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE != 0 {
+            SeccompNotificationResponse::Continue
+        } else if error == 0 {
+            SeccompNotificationResponse::Return(val)
         } else if error < 0 {
-            error as i64
+            SeccompNotificationResponse::Return(error as i64)
         } else {
-            -(error as i64)
+            SeccompNotificationResponse::Return(-(error as i64))
         };
         notification.response = Some(response);
         notification.state = SeccompNotificationState::Responded;
@@ -784,14 +785,18 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn take_seccomp_notification_response(
         &mut self,
         notification_id: u64,
-    ) -> Result<i64, i32> {
+    ) -> Result<SeccompNotificationCompletion, i32> {
         let index = self
             .seccomp_notifications
             .iter()
             .position(|entry| entry.id == notification_id && entry.response.is_some())
             .ok_or(ERR_EAGAIN)?;
         let notification = self.seccomp_notifications.remove(index);
-        Ok(notification.response.expect("checked response"))
+        Ok(SeccompNotificationCompletion {
+            response: notification.response.expect("checked response"),
+            syscall: notification.syscall as u64,
+            args: notification.args,
+        })
     }
 }
 
@@ -1107,6 +1112,71 @@ mod tests {
     }
 
     #[test]
+    fn generic_seccomp_user_notif_continue_resumes_original_syscall() {
+        let mut runtime = test_runtime();
+        runtime.set_no_new_privs(runtime.current_tid(), true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_USER_NOTIF);
+        let install = runtime
+            .install_generic_seccomp_mode(
+                SECCOMP_MODE_FILTER,
+                fprog as u64,
+                SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            )
+            .expect("seccomp user-notif install");
+        let listener_fd = expect_ret(install) as u32;
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_seccomp_user_notif_continue",
+                SyscallContext::new(SYS_GETPID, [1, 2, 3, 4, 5, 6]),
+            )
+            .expect("seccomp user-notif dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp notification, got {other:?}"),
+        };
+
+        let (notif_ptr, _) =
+            runtime.linux.write_arg_bytes(&[0u8; 80]).expect("notification buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_RECV, notif_ptr)
+                .expect("recv notification"),
+            0
+        );
+        let notif = runtime.linux.read_bytes(notif_ptr, 80).expect("read notification");
+        let id = read_u64_le(&notif, 0).expect("notification id");
+        let mut response = [0u8; 24];
+        response[0..8].copy_from_slice(&id.to_le_bytes());
+        response[20..24].copy_from_slice(&SECCOMP_USER_NOTIF_FLAG_CONTINUE.to_le_bytes());
+        let (response_ptr, _) = runtime.linux.write_arg_bytes(&response).expect("response buffer");
+        assert_eq!(
+            runtime
+                .seccomp_listener_ioctl(listener_fd, SECCOMP_IOCTL_NOTIF_SEND, response_ptr)
+                .expect("send continue response"),
+            0
+        );
+
+        let resumed = runtime
+            .block_on_wait("test_seccomp_user_notif_continue_resume", token)
+            .expect("resume");
+        let (syscall, args) = match resumed {
+            LinuxCallResult::SeccompContinue { syscall, args } => (syscall, args),
+            other => panic!("expected seccomp continue, got {other:?}"),
+        };
+        assert_eq!(syscall, SYS_GETPID);
+        assert_eq!(args, [1, 2, 3, 4, 5, 6]);
+
+        let continued = runtime
+            .dispatch_linux_syscall_after_seccomp_continue(
+                "test_seccomp_user_notif_continue_execute",
+                SyscallContext::new(syscall, args),
+            )
+            .expect("continued syscall");
+        assert_eq!(expect_ret(continued), runtime.current_pid() as i64);
+        assert!(runtime.seccomp_notifications.is_empty());
+    }
+
+    #[test]
     fn generic_seccomp_user_notif_without_listener_fails_closed() {
         let mut runtime = test_runtime();
         runtime.set_no_new_privs(runtime.current_tid(), true);
@@ -1227,7 +1297,7 @@ mod tests {
             .block_on_seccomp_user_notification(SYS_GETPID, 0x44, [1, 2, 3, 4, 5, 6])
             .expect("ring3 seccomp wait");
 
-        assert_eq!(ret, -(ERR_EINTR as i64));
+        assert_eq!(ret, SeccompUserNotifOutcome::Return(-(ERR_EINTR as i64)));
         assert!(runtime.seccomp_notifications.is_empty());
     }
 

@@ -115,6 +115,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     return Ok(LinuxCallResult::Pending(token));
                 }
                 LinuxCallResult::Pending(_) => return Ok(LinuxCallResult::Ret(total as i64)),
+                LinuxCallResult::SeccompContinue { .. } => {
+                    return Err("readv chunk returned seccomp continue");
+                }
                 LinuxCallResult::Exit(code) => return Ok(LinuxCallResult::Exit(code)),
             }
         }
@@ -206,6 +209,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                     return Ok(LinuxCallResult::Pending(token));
                 }
                 LinuxCallResult::Pending(_) => return Ok(LinuxCallResult::Ret(total as i64)),
+                LinuxCallResult::SeccompContinue { .. } => {
+                    return Err("writev chunk returned seccomp continue");
+                }
                 LinuxCallResult::Bytes(_) => return Err("writev chunk returned bytes"),
                 LinuxCallResult::Exit(code) => return Ok(LinuxCallResult::Exit(code)),
             }

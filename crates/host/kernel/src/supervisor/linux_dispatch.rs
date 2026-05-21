@@ -54,6 +54,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 crate::kwarn!("read unexpectedly returned Pending({:?})", token);
                 Err("read returned an unexpected pending result")
             }
+            LinuxCallResult::SeccompContinue { .. } => {
+                Err("read returned an unexpected seccomp continue result")
+            }
             LinuxCallResult::Exit(code) => {
                 crate::kwarn!("read unexpectedly returned Exit({})", code);
                 Err("read returned an unexpected exit result")
@@ -126,10 +129,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         label: &str,
         ctx: SyscallContext,
     ) -> Result<LinuxCallResult, &'static str> {
-        let result = self.dispatch_linux_syscall_raw(label, ctx)?;
-        match result {
-            LinuxCallResult::Pending(token) => self.block_on_wait(label, token),
-            ready => Ok(ready),
+        let mut result = self.dispatch_linux_syscall_raw(label, ctx)?;
+        loop {
+            result = match result {
+                LinuxCallResult::Pending(token) => self.block_on_wait(label, token)?,
+                LinuxCallResult::SeccompContinue { syscall, args } => self
+                    .dispatch_linux_syscall_after_seccomp_continue(
+                        label,
+                        SyscallContext::new(syscall, args),
+                    )?,
+                ready => return Ok(ready),
+            };
         }
     }
     pub(crate) fn dispatch_linux_syscall_raw(
@@ -147,6 +157,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Some(result) = self.apply_generic_seccomp_decision(ctx.nr, 0, ctx.args, decision) {
             return Ok(result);
         }
+        let step = self.linux.dispatch(ctx)?;
+        self.execute_linux_step(label, step)
+    }
+    pub(crate) fn dispatch_linux_syscall_after_seccomp_continue(
+        &mut self,
+        label: &str,
+        ctx: SyscallContext,
+    ) -> Result<LinuxCallResult, &'static str> {
         let step = self.linux.dispatch(ctx)?;
         self.execute_linux_step(label, step)
     }
@@ -198,6 +216,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 crate::kwarn!("{} unexpectedly returned Pending({:?})", context, token);
                 Err("linux call returned an unexpected pending result")
             }
+            LinuxCallResult::SeccompContinue { .. } => {
+                Err("linux call returned an unexpected seccomp continue result")
+            }
             LinuxCallResult::Exit(code) => {
                 crate::kwarn!("{} unexpectedly returned Exit({})", context, code);
                 Err("linux call returned an unexpected exit result")
@@ -218,6 +239,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             LinuxCallResult::Pending(token) => {
                 crate::kwarn!("{} unexpectedly returned Pending({:?})", context, token);
                 Err("linux call returned an unexpected pending result")
+            }
+            LinuxCallResult::SeccompContinue { .. } => {
+                Err("linux call returned an unexpected seccomp continue result")
             }
             LinuxCallResult::Exit(code) => {
                 crate::kwarn!("{} unexpectedly returned Exit({})", context, code);

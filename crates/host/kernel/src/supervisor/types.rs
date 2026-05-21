@@ -330,8 +330,27 @@ pub(crate) struct SeccompNotification {
     pub(crate) instruction_pointer: u64,
     pub(crate) args: [u64; 6],
     pub(crate) wait_token_id: u64,
-    pub(crate) response: Option<i64>,
+    pub(crate) response: Option<SeccompNotificationResponse>,
     pub(crate) state: SeccompNotificationState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompNotificationResponse {
+    Return(i64),
+    Continue,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SeccompNotificationCompletion {
+    pub(crate) response: SeccompNotificationResponse,
+    pub(crate) syscall: u64,
+    pub(crate) args: [u64; 6],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeccompUserNotifOutcome {
+    Return(i64),
+    Continue,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

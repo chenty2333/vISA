@@ -25,6 +25,7 @@ pub(crate) enum LinuxCallResult {
     Ret(i64),
     Bytes(Vec<u8>),
     Pending(WaitToken),
+    SeccompContinue { syscall: u64, args: [u64; 6] },
     Exit(i32),
 }
 

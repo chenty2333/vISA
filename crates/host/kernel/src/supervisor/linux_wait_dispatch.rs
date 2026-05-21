@@ -570,10 +570,22 @@ impl<'engine> PrototypeRuntime<'engine> {
                             addr_len_ptr,
                             write_addr,
                         ),
-                        WaitSource::SeccompUserNotif { notification_id } => self
-                            .take_seccomp_notification_response(notification_id)
-                            .map(LinuxCallResult::Ret)
-                            .map_err(|_| "seccomp user notification missing response"),
+                        WaitSource::SeccompUserNotif { notification_id } => {
+                            let completion = self
+                                .take_seccomp_notification_response(notification_id)
+                                .map_err(|_| "seccomp user notification missing response")?;
+                            Ok(match completion.response {
+                                super::types::SeccompNotificationResponse::Return(ret) => {
+                                    LinuxCallResult::Ret(ret)
+                                }
+                                super::types::SeccompNotificationResponse::Continue => {
+                                    LinuxCallResult::SeccompContinue {
+                                        syscall: completion.syscall,
+                                        args: completion.args,
+                                    }
+                                }
+                            })
+                        }
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Flock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),
