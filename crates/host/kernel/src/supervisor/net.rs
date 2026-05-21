@@ -47,6 +47,7 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) socket_id: u32,
     pub(crate) stack_socket_id: u32,
     pub(crate) mode: NetStackSocketMode,
+    pub(crate) read_ready: bool,
     pub(crate) listen_backlog: u32,
     pub(crate) local_ipv4: [u8; 4],
     pub(crate) local_port: u16,
@@ -70,6 +71,7 @@ impl NetStackSocketBinding {
             socket_id,
             stack_socket_id,
             mode: NetStackSocketMode::Idle,
+            read_ready: false,
             listen_backlog: 0,
             local_ipv4: [0; 4],
             local_port: 0,
@@ -493,6 +495,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         };
         out.truncate(len);
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         Ok(Some(LinuxCallResult::Bytes(out)))
     }
 
@@ -619,6 +622,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 socket_id: accepted_socket_id,
                 stack_socket_id: pending.stack_socket_id,
                 mode: NetStackSocketMode::TcpEstablished,
+                read_ready: false,
                 listen_backlog: 0,
                 local_ipv4: pending.local_ipv4,
                 local_port: pending.local_port,
@@ -656,10 +660,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
         self.net_stack_sockets[index].remote_ipv4 = [0; 4];
         self.net_stack_sockets[index].remote_port = 0;
+        self.net_stack_sockets[index].read_ready = false;
         self.net_stack_sockets.push(NetStackSocketBinding {
             socket_id: accepted_socket_id,
             stack_socket_id: old_stack_socket_id,
             mode: NetStackSocketMode::TcpEstablished,
+            read_ready: accepted_snapshot.can_recv || tcp_read_half_closed(&accepted_snapshot),
             listen_backlog: 0,
             local_ipv4: accepted_snapshot.local_ipv4,
             local_port: accepted_snapshot.local_port,
@@ -1036,9 +1042,11 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return;
             }
             self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListenEstablished;
+            self.net_stack_sockets[index].read_ready = false;
             self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
             self.notify_ready_key(ready_key, "smoltcp listener ready");
         }
+        self.refresh_net_stack_readiness(index, &snapshot, ready_key);
     }
 
     fn queue_established_listener_socket(
@@ -1082,9 +1090,28 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
         self.net_stack_sockets[index].remote_ipv4 = [0; 4];
         self.net_stack_sockets[index].remote_port = 0;
+        self.net_stack_sockets[index].read_ready = false;
         self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
         self.notify_ready_key(ready_key, "smoltcp listener ready");
         true
+    }
+
+    fn refresh_net_stack_readiness(
+        &mut self,
+        index: usize,
+        snapshot: &TcpSocketSnapshot,
+        ready_key: u64,
+    ) {
+        if self.net_stack_sockets[index].mode != NetStackSocketMode::TcpEstablished {
+            self.net_stack_sockets[index].read_ready = false;
+            return;
+        }
+        let read_ready = snapshot.can_recv || tcp_read_half_closed(snapshot);
+        let was_read_ready = self.net_stack_sockets[index].read_ready;
+        self.net_stack_sockets[index].read_ready = read_ready;
+        if read_ready && !was_read_ready {
+            self.notify_ready_key(ready_key, "smoltcp socket readable");
+        }
     }
 }
 
@@ -1132,8 +1159,9 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CONNECT,
-        SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
+        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_LISTEN,
+        SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1200,6 +1228,12 @@ mod tests {
     fn write_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, bytes: &[u8]) -> i64 {
         let (ptr, len) = runtime.write_linux_arg_bytes(bytes).expect("write buffer");
         dispatch_ret(runtime, "test_write", SYS_WRITE, [fd as u64, ptr as u64, len as u64, 0, 0, 0])
+    }
+
+    fn assert_epoll_event(bytes: &[u8], events: u32, data: u64) {
+        assert_eq!(bytes.len(), 12);
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()) & events, events);
+        assert_eq!(u64::from_le_bytes(bytes[4..12].try_into().unwrap()), data);
     }
 
     fn arp_request() -> [u8; ARP_FRAME_LEN] {
@@ -2047,6 +2081,124 @@ mod tests {
         assert!(event_log_contains(&runtime, "connected"));
         assert!(event_log_contains(&runtime, "PacketReceived"));
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_tcp_payload_wakes_blocked_epoll_wait() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18087u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_007u16;
+        let syn_ack = drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            remote_port,
+            0x6162_6364,
+        );
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xfeed_beefu64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl",
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    accepted_fd as u64,
+                    EPOLLIN as u64,
+                    epoll_data,
+                    0,
+                ],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending epoll_wait, got {other:?}"),
+        };
+
+        let payload = b"epoll packet wake";
+        let data = tcp_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        let event_bytes =
+            expect_bytes(runtime.block_on_wait("test_epoll_resume", token).expect("epoll wait"));
+        assert_epoll_event(&event_bytes, EPOLLIN, epoll_data);
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_after_epoll",
+            SYS_READ,
+            [accepted_fd as u64, 0, payload.len() as u64, 0, 0, 0],
+        );
+        assert_eq!(read, payload);
+        assert!(event_log_contains(&runtime, "PacketReceived"));
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_close_accepted",
+                SYS_CLOSE,
+                [accepted_fd as u64, 0, 0, 0, 0, 0],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_close_listener",
+                SYS_CLOSE,
+                [listener_fd as u64, 0, 0, 0, 0, 0],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
+            0
+        );
     }
 
     #[test]
