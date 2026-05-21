@@ -799,6 +799,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.guest_memory.record_cow_break(page_addr);
     }
 
+    pub(crate) fn record_guest_memory_demand_mapping(&mut self, page_addr: u64) {
+        self.guest_memory.record_demand_mapping(page_addr);
+    }
+
     pub(crate) fn bootstrap_task(&self) -> TaskId {
         self.scheduler.bootstrap_task()
     }

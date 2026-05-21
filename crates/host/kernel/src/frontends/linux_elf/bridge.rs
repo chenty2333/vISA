@@ -8626,7 +8626,12 @@ pub(crate) fn try_handle_user_page_fault(
         }
         return cow_break_active_user_page(page, prot).is_ok();
     }
-    protect_active_user_page_range(page, 4096, prot).is_ok()
+    if protect_active_user_page_range(page, 4096, prot).is_ok() {
+        active_context().supervisor.record_guest_memory_demand_mapping(page);
+        true
+    } else {
+        false
+    }
 }
 
 fn prot_user_region_permissions(prot: u64) -> (bool, bool, bool) {

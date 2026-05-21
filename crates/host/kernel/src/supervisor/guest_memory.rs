@@ -111,6 +111,33 @@ impl GuestMemoryProjection {
         self.regions[index].page = new_page;
     }
 
+    pub(crate) fn record_demand_mapping(&mut self, page_addr: u64) {
+        if page_addr & (PAGE_SIZE - 1) != 0 {
+            return;
+        }
+        let Some(page_end) = page_addr.checked_add(PAGE_SIZE) else {
+            return;
+        };
+        if !self
+            .regions
+            .iter()
+            .any(|record| record.spec.start <= page_addr && record.spec.end >= page_end)
+        {
+            return;
+        }
+
+        self.split_record_for_page(page_addr, page_end);
+        let Some(record) = self
+            .regions
+            .iter()
+            .find(|record| record.spec.start == page_addr && record.spec.end == page_end)
+        else {
+            crate::kwarn!("guest memory projection failed to isolate demand-mapped page");
+            return;
+        };
+        self.memory.record_page_fault(record.page, "demand-map");
+    }
+
     pub(crate) fn aspace(&self) -> GuestAddressSpaceRef {
         self.aspace
     }
@@ -358,6 +385,43 @@ mod tests {
         assert_eq!(pages[2].generation(), 1);
         assert_eq!(projection.memory.fault_history()[0].page, pages[1]);
         assert_eq!(projection.memory.fault_history()[0].reason, "cow-break");
+
+        let rebuilt = projection
+            .memory
+            .rebuild_substrate_mappings(projection.aspace())
+            .expect("rebuild substrate mappings");
+        assert_eq!(rebuilt.len(), 3);
+        assert_eq!(rebuilt[1].page, pages[1]);
+    }
+
+    #[test]
+    fn demand_mapping_splits_projection_page_and_records_fault() {
+        let owner = ContractObjectRef::new(ContractObjectKind::Store, 10, 1);
+        let mut memory = GuestMemoryManager::new();
+        let aspace = memory.create_address_space(owner);
+        let mut projection = GuestMemoryProjection::new(memory, aspace);
+
+        projection.record_region(0x4000, 0x3000, true, true, false);
+        assert_eq!(projection.page_refs().len(), 1);
+
+        projection.record_demand_mapping(0x5000);
+
+        let specs = projection.region_specs();
+        assert_eq!(specs.len(), 3);
+        assert_eq!(specs[0].start, 0x4000);
+        assert_eq!(specs[0].end, 0x5000);
+        assert_eq!(specs[1].start, 0x5000);
+        assert_eq!(specs[1].end, 0x6000);
+        assert_eq!(specs[2].start, 0x6000);
+        assert_eq!(specs[2].end, 0x7000);
+
+        let pages = projection.page_refs();
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages[0].generation(), 1);
+        assert_eq!(pages[1].generation(), 1);
+        assert_eq!(pages[2].generation(), 1);
+        assert_eq!(projection.memory.fault_history()[0].page, pages[1]);
+        assert_eq!(projection.memory.fault_history()[0].reason, "demand-map");
 
         let rebuilt = projection
             .memory
