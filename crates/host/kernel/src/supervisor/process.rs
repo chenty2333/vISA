@@ -64,6 +64,21 @@ const CLD_EXITED: i32 = 1;
 const SA_NOCLDWAIT: u64 = 0x2;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
 const LINUX_RUSAGE_SIZE: usize = 144;
+const PTRACE_REG_R10: usize = 7;
+const PTRACE_REG_R9: usize = 8;
+const PTRACE_REG_R8: usize = 9;
+const PTRACE_REG_RAX: usize = 10;
+const PTRACE_REG_RDX: usize = 12;
+const PTRACE_REG_RSI: usize = 13;
+const PTRACE_REG_RDI: usize = 14;
+const PTRACE_REG_ORIG_RAX: usize = 15;
+const PTRACE_REG_RIP: usize = 16;
+const PTRACE_REG_CS: usize = 17;
+const PTRACE_REG_EFLAGS: usize = 18;
+const PTRACE_REG_SS: usize = 20;
+const LINUX_USER_CS: u64 = 0x33;
+const LINUX_USER_SS: u64 = 0x2b;
+const LINUX_USER_RFLAGS: u64 = 0x202;
 
 // Flags that require namespace support (currently unsupported)
 const CLONE_NS_MASK: u64 = CLONE_NEWNS
@@ -1142,6 +1157,17 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(msg) => self.write_linux_bytes(data, &msg.to_le_bytes()).map(|()| 0),
                 Err(errno) => Err(errno),
             },
+            vmos_abi::PTRACE_GETREGS => match self.ptrace_getregs(pid_arg) {
+                Ok(regs) => self.write_linux_bytes(data, &regs).map(|()| 0),
+                Err(errno) => Err(errno),
+            },
+            vmos_abi::PTRACE_SETREGS => match self
+                .read_linux_bytes(data, vmos_abi::PTRACE_USER_REGS_BYTES as u32)
+                .and_then(|regs| self.ptrace_setregs(pid_arg, &regs))
+            {
+                Ok(()) => Ok(0),
+                Err(errno) => Err(errno),
+            },
             vmos_abi::PTRACE_CONT => self.ptrace_continue(pid_arg, data),
             vmos_abi::PTRACE_DETACH => self.ptrace_detach(pid_arg, data),
             _ => Err(vmos_abi::ERR_EINVAL),
@@ -1159,6 +1185,60 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(vmos_abi::ERR_ESRCH);
         };
         attachment.last_event_msg.ok_or(vmos_abi::ERR_EINVAL)
+    }
+
+    pub(crate) fn ptrace_getregs(
+        &self,
+        pid_arg: u64,
+    ) -> Result<[u8; vmos_abi::PTRACE_USER_REGS_BYTES], i32> {
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let event = self.ptrace_reported_seccomp_trace(caller_pid, tracee_tid, tracee_pid)?;
+        Ok(encode_ptrace_user_regs(
+            event.syscall as u64,
+            event.args,
+            event.instruction_pointer,
+            event.return_override,
+        ))
+    }
+
+    pub(crate) fn ptrace_setregs(&mut self, pid_arg: u64, bytes: &[u8]) -> Result<(), i32> {
+        if bytes.len() != vmos_abi::PTRACE_USER_REGS_BYTES {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let caller_pid = self.current_pid();
+        let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
+        if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
+            return Err(vmos_abi::ERR_ESRCH);
+        }
+        let index = self.ptrace_reported_seccomp_trace_index(caller_pid, tracee_tid, tracee_pid)?;
+        let orig_rax = read_ptrace_reg(bytes, PTRACE_REG_ORIG_RAX)?;
+        if orig_rax == u64::MAX {
+            let rax = read_ptrace_reg(bytes, PTRACE_REG_RAX)? as i64;
+            self.seccomp_trace_events[index].return_override = Some(rax);
+            return Ok(());
+        }
+        if orig_rax > u32::MAX as u64 {
+            return Err(vmos_abi::ERR_EINVAL);
+        }
+        let args = [
+            read_ptrace_reg(bytes, PTRACE_REG_RDI)?,
+            read_ptrace_reg(bytes, PTRACE_REG_RSI)?,
+            read_ptrace_reg(bytes, PTRACE_REG_RDX)?,
+            read_ptrace_reg(bytes, PTRACE_REG_R10)?,
+            read_ptrace_reg(bytes, PTRACE_REG_R8)?,
+            read_ptrace_reg(bytes, PTRACE_REG_R9)?,
+        ];
+        let rip = read_ptrace_reg(bytes, PTRACE_REG_RIP)?;
+        let event = &mut self.seccomp_trace_events[index];
+        event.syscall = orig_rax as u32;
+        event.args = args;
+        event.instruction_pointer = rip;
+        event.return_override = None;
+        Ok(())
     }
 
     pub(crate) fn ptrace_continue(&mut self, pid_arg: u64, signal: u64) -> Result<i64, i32> {
@@ -1182,7 +1262,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             })
             .map(|event| event.id);
         if let Some(trace_id) = trace_id {
-            self.seccomp_trace_continue(trace_id)?;
+            if let Some(ret) = self
+                .seccomp_trace_events
+                .iter()
+                .find(|event| event.id == trace_id)
+                .and_then(|event| event.return_override)
+            {
+                self.seccomp_trace_return(trace_id, ret)?;
+            } else {
+                self.seccomp_trace_continue(trace_id)?;
+            }
         }
         Ok(0)
     }
@@ -1335,6 +1424,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             Err(vmos_abi::ERR_EPERM)
         }
+    }
+
+    fn ptrace_reported_seccomp_trace(
+        &self,
+        tracer_pid: Pid,
+        tracee_tid: Tid,
+        tracee_pid: Pid,
+    ) -> Result<&super::types::SeccompTraceEvent, i32> {
+        let index = self.ptrace_reported_seccomp_trace_index(tracer_pid, tracee_tid, tracee_pid)?;
+        Ok(&self.seccomp_trace_events[index])
+    }
+
+    fn ptrace_reported_seccomp_trace_index(
+        &self,
+        tracer_pid: Pid,
+        tracee_tid: Tid,
+        tracee_pid: Pid,
+    ) -> Result<usize, i32> {
+        self.seccomp_trace_events
+            .iter()
+            .position(|event| {
+                event.state == SeccompTraceState::WaitReported
+                    && (event.tid == tracee_tid || event.pid == tracee_pid)
+                    && self.ptrace_attachments.iter().any(|attachment| {
+                        attachment.tracer_pid == tracer_pid
+                            && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+                            && (attachment.tracee_tid == event.tid
+                                || attachment.tracee_pid == event.pid)
+                    })
+            })
+            .ok_or(vmos_abi::ERR_EINVAL)
     }
 
     fn ptrace_attachment(
@@ -1999,6 +2119,43 @@ fn wait_exit_status(exit_code: i32) -> u32 {
 
 fn wait_ptrace_event_status(signal: u32, event: u32) -> u32 {
     (event << 16) | (signal << 8) | 0x7f
+}
+
+fn encode_ptrace_user_regs(
+    syscall: u64,
+    args: [u64; 6],
+    instruction_pointer: u64,
+    return_override: Option<i64>,
+) -> [u8; vmos_abi::PTRACE_USER_REGS_BYTES] {
+    let mut regs = [0u8; vmos_abi::PTRACE_USER_REGS_BYTES];
+    write_ptrace_reg(&mut regs, PTRACE_REG_R10, args[3]);
+    write_ptrace_reg(&mut regs, PTRACE_REG_R9, args[5]);
+    write_ptrace_reg(&mut regs, PTRACE_REG_R8, args[4]);
+    write_ptrace_reg(&mut regs, PTRACE_REG_RAX, return_override.unwrap_or(0) as u64);
+    write_ptrace_reg(&mut regs, PTRACE_REG_RDX, args[2]);
+    write_ptrace_reg(&mut regs, PTRACE_REG_RSI, args[1]);
+    write_ptrace_reg(&mut regs, PTRACE_REG_RDI, args[0]);
+    write_ptrace_reg(
+        &mut regs,
+        PTRACE_REG_ORIG_RAX,
+        if return_override.is_some() { u64::MAX } else { syscall },
+    );
+    write_ptrace_reg(&mut regs, PTRACE_REG_RIP, instruction_pointer);
+    write_ptrace_reg(&mut regs, PTRACE_REG_CS, LINUX_USER_CS);
+    write_ptrace_reg(&mut regs, PTRACE_REG_EFLAGS, LINUX_USER_RFLAGS);
+    write_ptrace_reg(&mut regs, PTRACE_REG_SS, LINUX_USER_SS);
+    regs
+}
+
+fn write_ptrace_reg(regs: &mut [u8; vmos_abi::PTRACE_USER_REGS_BYTES], index: usize, value: u64) {
+    let offset = index * 8;
+    regs[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn read_ptrace_reg(bytes: &[u8], index: usize) -> Result<u64, i32> {
+    let offset = index.checked_mul(8).ok_or(vmos_abi::ERR_EINVAL)?;
+    let word = bytes.get(offset..offset + 8).ok_or(vmos_abi::ERR_EINVAL)?;
+    Ok(u64::from_le_bytes(word.try_into().map_err(|_| vmos_abi::ERR_EINVAL)?))
 }
 
 fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {

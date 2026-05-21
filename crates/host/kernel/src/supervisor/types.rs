@@ -363,6 +363,7 @@ pub(crate) struct SeccompTraceEvent {
     pub(crate) syscall: u32,
     pub(crate) instruction_pointer: u64,
     pub(crate) args: [u64; 6],
+    pub(crate) return_override: Option<i64>,
     pub(crate) data: u16,
     pub(crate) wait_token_id: u64,
     pub(crate) response: Option<SeccompTraceResponse>,

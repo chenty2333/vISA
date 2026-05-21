@@ -683,6 +683,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             syscall: syscall.min(u32::MAX as u64) as u32,
             instruction_pointer,
             args,
+            return_override: None,
             data,
             wait_token_id: token.id,
             response: None,
@@ -1061,8 +1062,9 @@ mod tests {
     };
     use vmos_abi::{
         ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, PTRACE_CONT,
-        PTRACE_EVENT_SECCOMP, PTRACE_GETEVENTMSG, PTRACE_O_TRACESECCOMP, PTRACE_SEIZE,
-        PTRACE_SETOPTIONS, SYS_GETPID, SYS_IOCTL, SYS_PRCTL, SYS_PTRACE, SYS_WAIT4, SyscallContext,
+        PTRACE_EVENT_SECCOMP, PTRACE_GETEVENTMSG, PTRACE_GETREGS, PTRACE_O_TRACESECCOMP,
+        PTRACE_SEIZE, PTRACE_SETOPTIONS, PTRACE_SETREGS, PTRACE_USER_REGS_BYTES, SYS_GETPID,
+        SYS_GETPPID, SYS_IOCTL, SYS_PRCTL, SYS_PTRACE, SYS_WAIT4, SyscallContext,
     };
 
     use super::{
@@ -1088,6 +1090,25 @@ mod tests {
 
     fn ptrace_seccomp_stop_status() -> u32 {
         (PTRACE_EVENT_SECCOMP << 16) | (5 << 8) | 0x7f
+    }
+
+    const TEST_REG_R10: usize = 7;
+    const TEST_REG_R9: usize = 8;
+    const TEST_REG_R8: usize = 9;
+    const TEST_REG_RAX: usize = 10;
+    const TEST_REG_RDX: usize = 12;
+    const TEST_REG_RSI: usize = 13;
+    const TEST_REG_RDI: usize = 14;
+    const TEST_REG_ORIG_RAX: usize = 15;
+
+    fn read_test_reg(bytes: &[u8], index: usize) -> u64 {
+        let offset = index * 8;
+        u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("register bytes"))
+    }
+
+    fn write_test_reg(bytes: &mut [u8], index: usize, value: u64) {
+        let offset = index * 8;
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
 
     fn expect_exit(result: LinuxCallResult) -> i32 {
@@ -1447,6 +1468,29 @@ mod tests {
         let msg = runtime.linux.read_bytes(msg_ptr, 8).expect("event msg");
         assert_eq!(u64::from_le_bytes(msg.try_into().expect("msg bytes")), 91);
 
+        let (regs_ptr, _) = runtime
+            .linux
+            .write_arg_bytes(&alloc::vec![0u8; PTRACE_USER_REGS_BYTES])
+            .expect("regs buffer");
+        let getregs = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_getregs",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_GETREGS, tracee_tid as u64, 0, regs_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace getregs");
+        assert_eq!(expect_ret(getregs), 0);
+        let regs = runtime.linux.read_bytes(regs_ptr, PTRACE_USER_REGS_BYTES as u32).expect("regs");
+        assert_eq!(read_test_reg(&regs, TEST_REG_ORIG_RAX), SYS_GETPID);
+        assert_eq!(read_test_reg(&regs, TEST_REG_RDI), 11);
+        assert_eq!(read_test_reg(&regs, TEST_REG_RSI), 12);
+        assert_eq!(read_test_reg(&regs, TEST_REG_RDX), 13);
+        assert_eq!(read_test_reg(&regs, TEST_REG_R10), 14);
+        assert_eq!(read_test_reg(&regs, TEST_REG_R8), 15);
+        assert_eq!(read_test_reg(&regs, TEST_REG_R9), 16);
+
         let cont = runtime
             .dispatch_linux_syscall_raw(
                 "test_ptrace_cont",
@@ -1471,6 +1515,172 @@ mod tests {
             )
             .expect("continued syscall");
         assert_eq!(expect_ret(continued), tracee_pid as i64);
+        assert!(runtime.seccomp_trace_events.is_empty());
+    }
+
+    #[test]
+    fn generic_ptrace_setregs_rewrites_seccomp_trace_syscall() {
+        let mut runtime = test_runtime();
+        let tracer_task = runtime.current_task_id();
+        let tracer_pid = runtime.current_pid();
+        let tracee_task = runtime.allocate_task();
+        let tracee_pid = runtime.allocate_process(tracer_pid, tracer_pid, tracer_pid);
+        let tracee_tid = runtime.allocate_thread(tracee_task, tracee_pid);
+
+        let seize = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_seize_rewrite",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_SEIZE, tracee_tid as u64, 0, PTRACE_O_TRACESECCOMP, 0, 0],
+                ),
+            )
+            .expect("ptrace seize");
+        assert_eq!(expect_ret(seize), 0);
+
+        runtime.set_current_task(tracee_task);
+        runtime.set_no_new_privs(tracee_tid, true);
+        let fprog = write_return_filter(&mut runtime, SECCOMP_RET_TRACE | 17);
+        let install = runtime
+            .install_generic_seccomp_mode(SECCOMP_MODE_FILTER, fprog as u64, 0)
+            .expect("seccomp trace install");
+        assert_eq!(expect_ret(install), 0);
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_rewrite_seccomp_trace",
+                SyscallContext::new(SYS_GETPID, [21, 22, 23, 24, 25, 26]),
+            )
+            .expect("seccomp trace dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp trace, got {other:?}"),
+        };
+
+        runtime.set_current_task(tracer_task);
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_rewrite_wait",
+                SyscallContext::new(SYS_WAIT4, [tracee_pid as u64, 0, 0, 0, 0, 0]),
+            )
+            .expect("wait4 seccomp trace stop");
+        assert_eq!(expect_ret(waited), tracee_pid as i64);
+
+        let (regs_ptr, _) = runtime
+            .linux
+            .write_arg_bytes(&alloc::vec![0u8; PTRACE_USER_REGS_BYTES])
+            .expect("regs buffer");
+        let getregs = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_rewrite_getregs",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_GETREGS, tracee_tid as u64, 0, regs_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace getregs");
+        assert_eq!(expect_ret(getregs), 0);
+        let mut regs =
+            runtime.linux.read_bytes(regs_ptr, PTRACE_USER_REGS_BYTES as u32).expect("regs");
+        write_test_reg(&mut regs, TEST_REG_ORIG_RAX, SYS_GETPPID);
+        write_test_reg(&mut regs, TEST_REG_RDI, 101);
+        write_test_reg(&mut regs, TEST_REG_RSI, 102);
+        write_test_reg(&mut regs, TEST_REG_RDX, 103);
+        write_test_reg(&mut regs, TEST_REG_R10, 104);
+        write_test_reg(&mut regs, TEST_REG_R8, 105);
+        write_test_reg(&mut regs, TEST_REG_R9, 106);
+        runtime.linux.write_bytes(regs_ptr, &regs).expect("write regs");
+
+        let setregs = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_rewrite_setregs",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_SETREGS, tracee_tid as u64, 0, regs_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace setregs");
+        assert_eq!(expect_ret(setregs), 0);
+
+        let cont = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_rewrite_cont",
+                SyscallContext::new(SYS_PTRACE, [PTRACE_CONT, tracee_tid as u64, 0, 0, 0, 0]),
+            )
+            .expect("ptrace cont");
+        assert_eq!(expect_ret(cont), 0);
+        let resumed = runtime.block_on_wait("test_ptrace_rewrite_resume", token).expect("resume");
+        let (syscall, args) = match resumed {
+            LinuxCallResult::SeccompContinue { syscall, args } => (syscall, args),
+            other => panic!("expected seccomp trace continue, got {other:?}"),
+        };
+        assert_eq!(syscall, SYS_GETPPID);
+        assert_eq!(args, [101, 102, 103, 104, 105, 106]);
+
+        runtime.set_current_task(tracee_task);
+        let continued = runtime
+            .dispatch_linux_syscall_after_seccomp_continue(
+                "test_ptrace_rewrite_execute",
+                SyscallContext::new(syscall, args),
+            )
+            .expect("continued syscall");
+        assert_eq!(expect_ret(continued), tracer_pid as i64);
+        assert!(runtime.seccomp_trace_events.is_empty());
+
+        runtime.set_current_task(tracee_task);
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_skip_seccomp_trace",
+                SyscallContext::new(SYS_GETPID, [0; 6]),
+            )
+            .expect("second seccomp trace dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending seccomp trace, got {other:?}"),
+        };
+        runtime.set_current_task(tracer_task);
+        let waited = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_skip_wait",
+                SyscallContext::new(SYS_WAIT4, [tracee_pid as u64, 0, 0, 0, 0, 0]),
+            )
+            .expect("wait4 seccomp trace stop");
+        assert_eq!(expect_ret(waited), tracee_pid as i64);
+
+        let getregs = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_skip_getregs",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_GETREGS, tracee_tid as u64, 0, regs_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace getregs");
+        assert_eq!(expect_ret(getregs), 0);
+        let mut regs =
+            runtime.linux.read_bytes(regs_ptr, PTRACE_USER_REGS_BYTES as u32).expect("regs");
+        write_test_reg(&mut regs, TEST_REG_ORIG_RAX, u64::MAX);
+        write_test_reg(&mut regs, TEST_REG_RAX, 4321);
+        runtime.linux.write_bytes(regs_ptr, &regs).expect("write regs");
+        let setregs = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_skip_setregs",
+                SyscallContext::new(
+                    SYS_PTRACE,
+                    [PTRACE_SETREGS, tracee_tid as u64, 0, regs_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("ptrace setregs");
+        assert_eq!(expect_ret(setregs), 0);
+        let cont = runtime
+            .dispatch_linux_syscall_raw(
+                "test_ptrace_skip_cont",
+                SyscallContext::new(SYS_PTRACE, [PTRACE_CONT, tracee_tid as u64, 0, 0, 0, 0]),
+            )
+            .expect("ptrace cont");
+        assert_eq!(expect_ret(cont), 0);
+        let resumed = runtime.block_on_wait("test_ptrace_skip_resume", token).expect("resume");
+        assert_eq!(expect_ret(resumed), 4321);
         assert!(runtime.seccomp_trace_events.is_empty());
     }
 

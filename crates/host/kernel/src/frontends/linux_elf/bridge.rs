@@ -2449,6 +2449,16 @@ fn sys_ptrace(frame: &SyscallFrame) -> Result<i64, i32> {
         write_user_u64(frame.r10, msg)?;
         return Ok(0);
     }
+    if frame.rdi == vmos_abi::PTRACE_GETREGS {
+        let regs = active_context().supervisor.ptrace_getregs(frame.rsi)?;
+        write_user_bytes(frame.r10, &regs)?;
+        return Ok(0);
+    }
+    if frame.rdi == vmos_abi::PTRACE_SETREGS {
+        let regs = read_user_bytes(frame.r10, vmos_abi::PTRACE_USER_REGS_BYTES)?;
+        active_context().supervisor.ptrace_setregs(frame.rsi, &regs)?;
+        return Ok(0);
+    }
     if frame.rdi == vmos_abi::PTRACE_CONT || frame.rdi == vmos_abi::PTRACE_DETACH {
         let result = if frame.rdi == vmos_abi::PTRACE_CONT {
             active_context().supervisor.ptrace_continue(frame.rsi, frame.r10)
