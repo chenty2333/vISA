@@ -3,7 +3,7 @@ use vmos_abi::{ERR_EINVAL, ERR_EPERM, ERR_ESRCH};
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{Pid, Rlimit},
+    types::{CAP_SYS_RESOURCE, Pid, Rlimit},
 };
 
 const RLIMIT_COUNT: usize = 16;
@@ -86,7 +86,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(limit) => limit,
                 Err(errno) => return Ok(errno_ret(errno)),
             };
-            if new_limit.max > old_limit.max {
+            if new_limit.max > old_limit.max
+                && self.current_access_state().cap_effective & CAP_SYS_RESOURCE == 0
+            {
                 return Ok(errno_ret(ERR_EPERM));
             }
             Some(new_limit)
@@ -136,4 +138,76 @@ fn decode_rlimit(bytes: &[u8]) -> Result<Rlimit, i32> {
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use vmos_abi::{ERR_EPERM, SYS_PRLIMIT64, SyscallContext};
+
+    use super::{
+        super::{engine::RuntimeOnlyExecutor, types::RLIMIT_NOFILE},
+        *,
+    };
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_prlimit64_max_raise_requires_resource_capability() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let process = runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == pid)
+            .expect("current process");
+        process.access.cap_permitted = 0;
+        process.access.cap_effective = 0;
+
+        let raised = encode_rlimit(Rlimit { cur: 2048, max: 2048 });
+        let (limit_ptr, _) = runtime.linux.write_arg_bytes(&raised).expect("rlimit input");
+        let denied = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_raise_denied",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [0, RLIMIT_NOFILE as u64, limit_ptr as u64, 0, 0, 0],
+                ),
+            )
+            .expect("prlimit dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+        assert_eq!(runtime.get_rlimit(pid, RLIMIT_NOFILE).max, 1024);
+
+        let process = runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == pid)
+            .expect("current process");
+        process.access.cap_permitted = CAP_SYS_RESOURCE;
+        process.access.cap_effective = CAP_SYS_RESOURCE;
+        let raised = encode_rlimit(Rlimit { cur: 2048, max: 2048 });
+        let (limit_ptr, _) = runtime.linux.write_arg_bytes(&raised).expect("rlimit input");
+        let allowed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_raise_allowed",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [0, RLIMIT_NOFILE as u64, limit_ptr as u64, 0, 0, 0],
+                ),
+            )
+            .expect("prlimit dispatch");
+        assert_eq!(expect_ret(allowed), 0);
+        assert_eq!(runtime.get_rlimit(pid, RLIMIT_NOFILE), Rlimit { cur: 2048, max: 2048 });
+    }
 }

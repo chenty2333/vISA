@@ -2,8 +2,8 @@ use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_ECANCELED, ERR_EINVAL,
-    ERR_EMFILE, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
+    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_ECANCELED, ERR_EFBIG,
+    ERR_EINVAL, ERR_EMFILE, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -17,7 +17,8 @@ use super::{
     types::{
         AccessIds, CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER, CAP_SYS_ADMIN,
         EventFdState, FdEntry, FdResource, FdTableSnapshot, InjectedFault, LookupInfo, PipeState,
-        RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId, TimerFdState, VfsTimestamps,
+        RLIMIT_FSIZE, RLIMIT_NOFILE, ServiceCallError, SocketPairState, TaskId, TimerFdState,
+        VfsTimestamps,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -54,6 +55,7 @@ const POLLWRNORM: u16 = 0x100;
 const POLLRDHUP: u16 = 0x2000;
 const POLL_READ_EVENTS: u16 = POLLIN | POLLRDNORM;
 const POLL_WRITE_EVENTS: u16 = POLLOUT | POLLWRNORM;
+const SIGXFSZ: u8 = 25;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn lookup_path(&mut self, path: &[u8]) -> Result<LookupInfo, ServiceCallError> {
@@ -254,6 +256,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         } else {
             cursor
         };
+        let write_len = self.allowed_file_write_len(offset, bytes.len())?;
+        let bytes = &bytes[..write_len];
         let written = self.vfs.write_file_by_id(vfs_node_id, &path, offset, bytes)?;
         if update_cursor {
             let next_cursor =
@@ -296,6 +300,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         }
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        let write_len =
+            self.allowed_file_write_len(offset, bytes.len()).map_err(errno_from_service_error)?;
+        let bytes = &bytes[..write_len];
         self.vfs
             .write_file_by_id(vfs_node_id, &path, offset, bytes)
             .map_err(errno_from_service_error)
@@ -318,6 +325,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         }
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        self.enforce_file_size_limit(len).map_err(errno_from_service_error)?;
         self.vfs.truncate_file_by_id(vfs_node_id, &path, len).map_err(errno_from_service_error)?;
         if cursor > len {
             self.set_fd_cursor(fd, len).map_err(errno_from_service_error)?;
@@ -339,6 +347,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         }
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        if mode & 0x01 == 0 {
+            let end = offset.checked_add(len).ok_or(ERR_EINVAL)?;
+            self.enforce_file_size_limit(end).map_err(errno_from_service_error)?;
+        }
         self.vfs
             .fallocate_file_by_id(vfs_node_id, &path, mode, offset, len)
             .map_err(errno_from_service_error)
@@ -2538,7 +2550,45 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
         self.check_path_access(path, MAY_WRITE, access)?;
+        self.enforce_file_size_limit(len).map_err(errno_from_service_error)?;
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
+    }
+
+    fn allowed_file_write_len(
+        &mut self,
+        offset: usize,
+        requested: usize,
+    ) -> Result<usize, ServiceCallError> {
+        if requested == 0 {
+            return Ok(0);
+        }
+        let Some(limit) = self.current_file_size_limit() else {
+            return Ok(requested);
+        };
+        if offset >= limit {
+            self.queue_file_size_signal();
+            return Err(ServiceCallError::Errno(ERR_EFBIG));
+        }
+        Ok(requested.min(limit - offset))
+    }
+
+    fn enforce_file_size_limit(&mut self, requested_size: usize) -> Result<(), ServiceCallError> {
+        if self.current_file_size_limit().is_some_and(|limit| requested_size > limit) {
+            self.queue_file_size_signal();
+            return Err(ServiceCallError::Errno(ERR_EFBIG));
+        }
+        Ok(())
+    }
+
+    fn current_file_size_limit(&self) -> Option<usize> {
+        let limit = self.get_rlimit(self.current_pid(), RLIMIT_FSIZE).cur;
+        if limit == u64::MAX { None } else { usize::try_from(limit).ok() }
+    }
+
+    fn queue_file_size_signal(&mut self) {
+        let pid = self.current_pid();
+        let tid = self.current_tid();
+        self.queue_signal_to_thread(tid, SIGXFSZ, 0, pid, 0);
     }
 
     pub(crate) fn update_timestamps_path(

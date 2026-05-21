@@ -227,6 +227,7 @@ pub const ERR_ENOTDIR: i32 = 20;
 pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_EMFILE: i32 = 24;
+pub const ERR_EFBIG: i32 = 27;
 pub const ERR_ERANGE: i32 = 34;
 pub const ERR_EDEADLK: i32 = 35;
 pub const ERR_ENOSYS: i32 = 38;

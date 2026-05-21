@@ -513,14 +513,15 @@ mod tests {
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, SOCK_STREAM, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV, SyscallContext,
+        AF_INET, ERR_EFBIG, SOCK_STREAM, SYS_OPENAT, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV,
+        SyscallContext,
     };
 
     use super::{
         super::{
             engine::RuntimeOnlyExecutor,
             runtime::PrototypeRuntime,
-            types::{FdEntry, FdResource},
+            types::{FdEntry, FdResource, RLIMIT_FSIZE, Rlimit},
         },
         *,
     };
@@ -565,6 +566,17 @@ mod tests {
         expect_bytes(result)
     }
 
+    fn open_created_file(runtime: &mut PrototypeRuntime<'_>, path: &[u8]) -> u32 {
+        let (ptr, len) = runtime.write_linux_arg_bytes(path).expect("open path");
+        let result = runtime
+            .dispatch_linux_syscall(
+                "test_openat_create",
+                SyscallContext::new(SYS_OPENAT, [0, ptr as u64, len as u64, 0o102, 0o600, 0]),
+            )
+            .expect("openat dispatch");
+        u32::try_from(expect_ret(result)).expect("created fd")
+    }
+
     fn push_iovec(raw: &mut Vec<u8>, base: u32, len: u64) {
         raw.extend_from_slice(&(base as u64).to_le_bytes());
         raw.extend_from_slice(&len.to_le_bytes());
@@ -605,6 +617,30 @@ mod tests {
         let eventfd = runtime.create_eventfd(0, 0).expect("eventfd");
         assert_eq!(write_fd(&mut runtime, eventfd, &7u64.to_le_bytes()), 8);
         assert_eq!(read_fd(&mut runtime, eventfd, 8), 7u64.to_le_bytes());
+    }
+
+    #[test]
+    fn rlimit_fsize_caps_regular_file_growth() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_FSIZE, Rlimit { cur: 5, max: 5 }));
+        let fd = open_created_file(&mut runtime, b"/tmp/rlimit-fsize");
+
+        assert_eq!(write_fd(&mut runtime, fd, b"abcdef"), 5);
+        runtime.seek_fd(fd, 0, 0).expect("rewind file");
+        assert_eq!(read_fd(&mut runtime, fd, 8), b"abcde");
+
+        assert_eq!(write_fd(&mut runtime, fd, b"z"), -(ERR_EFBIG as i64));
+        let current_tid = runtime.current_tid();
+        assert!(
+            runtime
+                .query_thread(current_tid)
+                .expect("current thread")
+                .pending_signals
+                .iter()
+                .any(|signal| signal.signo == 25)
+        );
+        assert_eq!(runtime.truncate_fd(fd, 6), Err(ERR_EFBIG));
     }
 
     #[test]

@@ -9,9 +9,10 @@ use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{
-        CAP_SETGID, CAP_SETUID, CAP_SYS_PTRACE, LINUX_KNOWN_CAPS, Pid, ProcessAccessState,
-        ProcessRuntimeState, ProcessRuntimeStateKind, RobustListRegistration, RseqRegistration,
-        SignalAltStack, TaskId, ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
+        CAP_SETGID, CAP_SETUID, CAP_SYS_ADMIN, CAP_SYS_PTRACE, CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS,
+        Pid, ProcessAccessState, ProcessRuntimeState, ProcessRuntimeStateKind, RLIMIT_NPROC,
+        RobustListRegistration, RseqRegistration, SignalAltStack, TaskId, ThreadRuntimeState,
+        ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -196,6 +197,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             capability_sets.permitted,
             capability_sets.effective,
         );
+        self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -341,6 +343,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             capability_sets.permitted,
             capability_sets.effective,
         );
+        self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -402,6 +405,27 @@ impl<'engine> PrototypeRuntime<'engine> {
         });
 
         Ok((child_task_id, child_pid, child_tid))
+    }
+
+    fn enforce_nproc_limit(
+        &self,
+        parent: &ProcessRuntimeState,
+        child_access: &ProcessAccessState,
+    ) -> Result<(), i32> {
+        let limit = parent.rlimits[RLIMIT_NPROC].cur;
+        if limit == u64::MAX || child_access.cap_effective & (CAP_SYS_RESOURCE | CAP_SYS_ADMIN) != 0
+        {
+            return Ok(());
+        }
+        let live_for_uid = self
+            .processes
+            .iter()
+            .filter(|process| {
+                process.state != ProcessRuntimeStateKind::Dead
+                    && process.access.real_uid == child_access.real_uid
+            })
+            .count() as u64;
+        if live_for_uid >= limit { Err(vmos_abi::ERR_EAGAIN) } else { Ok(()) }
     }
 
     pub(crate) fn create_independent_vm_clone_child(
@@ -485,6 +509,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             capability_sets.permitted,
             capability_sets.effective,
         );
+        self.enforce_nproc_limit(&parent, &runtime_access)?;
         let child_task_id = self.allocate_task();
         if !self.semantic.create_process_family_root_with_credential(
             child_pid,
@@ -1875,7 +1900,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::supervisor::{engine::RuntimeOnlyExecutor, types::SigAction};
+    use crate::supervisor::{
+        engine::RuntimeOnlyExecutor,
+        types::{Rlimit, SigAction},
+    };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
         let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
@@ -1908,6 +1936,17 @@ mod tests {
         let task = runtime.allocate_task();
         runtime.allocate_thread(task, child);
         child
+    }
+
+    fn linux_cap_sets(permitted: u64, effective: u64) -> LinuxCapSets {
+        LinuxCapSets {
+            bounding: permitted,
+            inheritable: 0,
+            permitted,
+            effective,
+            ambient: 0,
+            securebits: 0,
+        }
     }
 
     fn create_running_sigchld_child(runtime: &mut PrototypeRuntime<'static>) -> Pid {
@@ -2392,6 +2431,98 @@ mod tests {
             )
             .expect("capset inheritable denied dispatch");
         assert_eq!(expect_ret(denied), -(ERR_EPERM as i64));
+    }
+
+    #[test]
+    fn clone_child_honors_rlimit_nproc_for_unprivileged_uid() {
+        let mut runtime = test_runtime();
+        let parent = runtime.current_pid();
+        let parent_tid = runtime.current_tid();
+        let Some(process) = runtime.processes.iter_mut().find(|process| process.pid == parent)
+        else {
+            panic!("current process missing");
+        };
+        process.access = ProcessAccessState::from_credentials(
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            Vec::new(),
+            0,
+            0,
+        );
+        process.rlimits[RLIMIT_NPROC] = Rlimit { cur: 1, max: 1 };
+
+        let denied = runtime.create_independent_vm_clone_child(
+            SIGCHLD as u64,
+            parent,
+            parent_tid,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            Vec::new(),
+            linux_cap_sets(0, 0),
+            None,
+        );
+
+        assert_eq!(denied, Err(vmos_abi::ERR_EAGAIN));
+        assert_eq!(
+            runtime.processes.iter().filter(|process| process.access.real_uid == 1000).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn clone_child_rlimit_nproc_allows_resource_capability() {
+        let mut runtime = test_runtime();
+        let parent = runtime.current_pid();
+        let parent_tid = runtime.current_tid();
+        let Some(process) = runtime.processes.iter_mut().find(|process| process.pid == parent)
+        else {
+            panic!("current process missing");
+        };
+        process.access = ProcessAccessState::from_credentials(
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            Vec::new(),
+            CAP_SYS_RESOURCE,
+            CAP_SYS_RESOURCE,
+        );
+        process.rlimits[RLIMIT_NPROC] = Rlimit { cur: 1, max: 1 };
+
+        let created = runtime.create_independent_vm_clone_child(
+            SIGCHLD as u64,
+            parent,
+            parent_tid,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            Vec::new(),
+            linux_cap_sets(CAP_SYS_RESOURCE, CAP_SYS_RESOURCE),
+            None,
+        );
+
+        assert!(created.is_ok());
     }
 
     #[test]

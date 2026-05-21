@@ -115,6 +115,8 @@ impl Default for Rlimit {
     }
 }
 
+pub(crate) const RLIMIT_FSIZE: usize = 1;
+pub(crate) const RLIMIT_NPROC: usize = 6;
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_AS: usize = 9;
 
