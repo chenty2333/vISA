@@ -35,18 +35,29 @@ pub(crate) struct UserRegion {
 #[derive(Clone)]
 pub(crate) enum UserPageBacking {
     ZeroFill,
-    FilePrivate(Vec<u8>),
-    FileShared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8> },
+    FilePrivate { bytes: Vec<u8>, valid: bool },
+    FileShared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8>, valid: bool },
     Preserve,
 }
 
 impl UserPageBacking {
     pub(crate) fn is_discardable(&self) -> bool {
-        matches!(self, Self::ZeroFill | Self::FilePrivate(_))
+        matches!(self, Self::ZeroFill | Self::FilePrivate { .. })
     }
 
     pub(crate) fn is_file_shared(&self) -> bool {
         matches!(self, Self::FileShared { .. })
+    }
+
+    pub(crate) fn is_file_backed(&self) -> bool {
+        matches!(self, Self::FilePrivate { .. } | Self::FileShared { .. })
+    }
+
+    pub(crate) fn is_invalid_file_page(&self) -> bool {
+        matches!(
+            self,
+            Self::FilePrivate { valid: false, .. } | Self::FileShared { valid: false, .. }
+        )
     }
 }
 

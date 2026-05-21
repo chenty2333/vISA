@@ -181,9 +181,6 @@ impl<'engine> PrototypeRuntime<'engine> {
             .vfs
             .read_file_range_by_id(Some(vfs_node_id), &path, offset, count_u32)
             .map_err(errno_from_service_error)?;
-        if bytes.len() != count {
-            return Err(ERR_EOPNOTSUPP);
-        }
         Ok((vfs_node_id, path, bytes))
     }
 
@@ -3293,5 +3290,22 @@ mod tests {
         runtime
             .fcntl_setlk_fd(write_only, 100, F_UNLCK, 0, 0, 10)
             .expect("unlock does not require read mode");
+    }
+
+    #[test]
+    fn shared_mmap_file_read_allows_short_eof_backing() {
+        let mut runtime = test_runtime();
+        let path = b"/tmp/short-shared-mmap";
+        let fd = open_vfs_file(&mut runtime, path, O_RDWR);
+        let node_id = runtime.vfs.node_id_for_path(path);
+        runtime.vfs.write_file_by_id(node_id, path, 0, b"abc").expect("seed file");
+
+        let (mapped_node_id, mapped_path, bytes) = runtime
+            .read_shared_mmap_vfs_fd_range(fd, 0, 8192, true)
+            .expect("shared mmap may extend beyond EOF");
+
+        assert_eq!(Some(mapped_node_id), node_id);
+        assert_eq!(mapped_path, path);
+        assert_eq!(bytes, b"abc");
     }
 }

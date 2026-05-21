@@ -59,9 +59,9 @@ use super::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, copy_user_page_bytes, cow_break_user_page,
         demo_program_host_path, discard_user_page_range, discard_zero_user_page_range,
-        fill_user_page_frame, load_demo_program, populate_user_page_range,
-        prefault_user_page_range, prepare_user_program, protect_user_page_range,
-        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
+        fill_user_page_frame, load_demo_program, prefault_user_page_range, prepare_user_program,
+        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
+        user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -150,6 +150,8 @@ const CONSOLE_WRITE_PREVIEW_LIMIT: u64 = 4096;
 const X86_64_USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const ROBUST_LIST_HEAD_SIZE: u64 = 24;
 const ROBUST_LIST_LIMIT: usize = 2048;
+const SIGBUS: u8 = 7;
+const SIGSEGV: u8 = 11;
 const SIGSYS: u8 = 31;
 const SI_CODE_SYS_SECCOMP: i32 = 1;
 const SA_SIGINFO: u64 = 0x4;
@@ -5407,12 +5409,63 @@ enum MmapFileBacking {
     Shared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8> },
 }
 
-impl MmapFileBacking {
-    fn bytes(&self) -> &[u8] {
-        match self {
-            Self::Private(bytes) | Self::Shared { bytes, .. } => bytes,
-        }
+fn file_backed_page_bytes(bytes: &[u8], copied: usize) -> (Vec<u8>, bool) {
+    if copied >= bytes.len() {
+        return (Vec::new(), false);
     }
+    let copy_len = core::cmp::min(4096, bytes.len() - copied);
+    (bytes[copied..copied + copy_len].to_vec(), true)
+}
+
+fn mmap_file_page_mappings(
+    start: u64,
+    len: u64,
+    file_backing: MmapFileBacking,
+) -> Result<Vec<UserPageMapping>, i32> {
+    let end = start.checked_add(len).ok_or(ERR_EFAULT)?;
+    let capacity = usize::try_from(len / 4096).map_err(|_| ERR_ENOMEM)?;
+    let mut mappings = Vec::with_capacity(capacity);
+    let mut page = start;
+    while page < end {
+        let copied = usize::try_from(page - start).map_err(|_| ERR_EFAULT)?;
+        let backing = match &file_backing {
+            MmapFileBacking::Private(bytes) => {
+                let (bytes, valid) = file_backed_page_bytes(bytes, copied);
+                UserPageBacking::FilePrivate { bytes, valid }
+            }
+            MmapFileBacking::Shared { vfs_node_id, path, offset, bytes } => {
+                let (bytes, valid) = file_backed_page_bytes(bytes, copied);
+                UserPageBacking::FileShared {
+                    vfs_node_id: *vfs_node_id,
+                    path: path.clone(),
+                    offset: offset.saturating_add(copied),
+                    bytes,
+                    valid,
+                }
+            }
+        };
+        mappings.push(UserPageMapping {
+            va: page,
+            frame_start: 0,
+            present: false,
+            owned: false,
+            cow: false,
+            backing,
+        });
+        page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
+    }
+    Ok(mappings)
+}
+
+fn install_active_file_backed_page_range(
+    start: u64,
+    len: u64,
+    file_backing: MmapFileBacking,
+) -> Result<bool, i32> {
+    let shared = matches!(file_backing, MmapFileBacking::Shared { .. });
+    let mappings = mmap_file_page_mappings(start, len, file_backing)?;
+    active_context().page_mappings.extend(mappings);
+    Ok(shared)
 }
 
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -5492,32 +5545,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         .record_guest_memory_region(addr, len, readable, writable, executable);
     record_future_user_lock_range(addr, len);
     if let Some(file_backing) = file_backing {
-        let map_prot = if frame.rdx == 0 { PROT_READ } else { frame.rdx };
-        if map_prot != 0 {
-            protect_active_user_page_range(addr, len, map_prot)?;
-        }
-        let bytes = file_backing.bytes();
-        populate_active_user_page_range(addr, bytes)?;
-        let retain_shared_refs = match file_backing {
-            MmapFileBacking::Private(bytes) => {
-                mark_active_user_page_range_file_private(addr, len, &bytes);
-                false
-            }
-            MmapFileBacking::Shared { vfs_node_id, path, offset, bytes } => {
-                mark_active_user_page_range_file_shared(
-                    addr,
-                    len,
-                    &bytes,
-                    vfs_node_id,
-                    &path,
-                    offset,
-                );
-                true
-            }
-        };
-        if map_prot != frame.rdx {
-            protect_active_user_page_range(addr, len, frame.rdx)?;
-        }
+        let retain_shared_refs = install_active_file_backed_page_range(addr, len, file_backing)?;
         if retain_shared_refs {
             retain_active_file_shared_page_refs(addr, len);
         }
@@ -7039,18 +7067,19 @@ mod tests {
 
     use super::{
         CloneRequest, FCNTL_F_SETLKW, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11,
-        LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, PSELECT6_MAX_FDS, SA_RESTART,
-        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserReturnContext,
-        VectoredIoOffset, decode_linux_ucontext_return, demand_mapping_candidate_page,
-        encode_linux_ucontext, futex_pi_handoff_word, futex_pi_lock_timeout_clock,
-        futex_pi_non_timeout_flags_valid, futex_pi_owner_word, futex_pi_restore_wait_word,
-        futex_pi_unlock_empty_word, futex_pi_wait_word, parse_clone3_request_bytes,
-        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
-        preadv2_offset_from_split, pselect_read_revents_ready, pselect_write_revents_ready,
-        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
-        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
-        select_timeval_ms, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking, PSELECT6_MAX_FDS,
+        SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping,
+        UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
+        demand_mapping_candidate_page, encode_linux_ucontext, futex_pi_handoff_word,
+        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
+        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
+        mmap_file_page_mappings, parse_clone3_request_bytes, positioned_io_offset,
+        preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
+        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
+        read_linux_greg, restartable_interrupted_syscall, sanitize_restored_rflags,
+        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms,
+        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
+        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7234,6 +7263,71 @@ mod tests {
         assert!(!demand_mapping_candidate_page(&mappings, 0x2000));
         assert!(!demand_mapping_candidate_page(&mappings, 0x3000));
         assert!(demand_mapping_candidate_page(&mappings, 0x4000));
+    }
+
+    #[test]
+    fn file_private_mmap_page_mappings_keep_eof_pages_unmaterialized() {
+        let mappings = mmap_file_page_mappings(
+            0x10_000,
+            8192,
+            MmapFileBacking::Private(vec![0xaa, 0xbb, 0xcc]),
+        )
+        .expect("private file mmap pages");
+
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(mappings[0].va, 0x10_000);
+        assert!(!mappings[0].present);
+        assert_eq!(mappings[0].frame_start, 0);
+        let UserPageBacking::FilePrivate { bytes, valid } = &mappings[0].backing else {
+            panic!("first page should be private file-backed");
+        };
+        assert!(*valid);
+        assert_eq!(bytes, &[0xaa, 0xbb, 0xcc]);
+
+        let UserPageBacking::FilePrivate { bytes, valid } = &mappings[1].backing else {
+            panic!("second page should be private file-backed");
+        };
+        assert!(!*valid);
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn file_shared_mmap_page_mappings_preserve_page_offsets_and_eof_state() {
+        let mut bytes = vec![0x5a; 4096];
+        bytes.push(0x77);
+        let mappings = mmap_file_page_mappings(
+            0x20_000,
+            12_288,
+            MmapFileBacking::Shared {
+                vfs_node_id: 42,
+                path: b"/tmp/mapped".to_vec(),
+                offset: 0x3000,
+                bytes,
+            },
+        )
+        .expect("shared file mmap pages");
+
+        assert_eq!(mappings.len(), 3);
+        let UserPageBacking::FileShared { offset, bytes, valid, .. } = &mappings[0].backing else {
+            panic!("first page should be shared file-backed");
+        };
+        assert_eq!(*offset, 0x3000);
+        assert!(*valid);
+        assert_eq!(bytes.len(), 4096);
+
+        let UserPageBacking::FileShared { offset, bytes, valid, .. } = &mappings[1].backing else {
+            panic!("second page should be shared file-backed");
+        };
+        assert_eq!(*offset, 0x4000);
+        assert!(*valid);
+        assert_eq!(bytes, &[0x77]);
+
+        let UserPageBacking::FileShared { offset, bytes, valid, .. } = &mappings[2].backing else {
+            panic!("third page should be shared file-backed");
+        };
+        assert_eq!(*offset, 0x5000);
+        assert!(!*valid);
+        assert!(bytes.is_empty());
     }
 
     #[test]
@@ -8357,8 +8451,10 @@ fn validate_active_user_page_range_dontunmap_backing(start: u64, len: u64) -> Re
         .iter()
         .filter(|mapping| mapping.va >= start && mapping.va < end)
     {
-        if !matches!(&mapping.backing, UserPageBacking::ZeroFill | UserPageBacking::FilePrivate(_))
-        {
+        if !matches!(
+            &mapping.backing,
+            UserPageBacking::ZeroFill | UserPageBacking::FilePrivate { .. }
+        ) {
             return Err(ERR_EINVAL);
         }
     }
@@ -8429,58 +8525,6 @@ fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i3
         }
     }
     Ok(())
-}
-
-fn populate_active_user_page_range(start: u64, bytes: &[u8]) -> Result<(), i32> {
-    let context = active_context();
-    populate_user_page_range(context.physical_memory_offset(), &context.page_mappings, start, bytes)
-        .map_err(|_| ERR_EFAULT)
-}
-
-fn mark_active_user_page_range_file_private(start: u64, len: u64, bytes: &[u8]) {
-    let Some(end) = start.checked_add(len) else {
-        return;
-    };
-    for mapping in &mut active_context().page_mappings {
-        if mapping.va >= start && mapping.va < end {
-            let copied = (mapping.va - start) as usize;
-            let mut page_bytes = vec![0u8; 4096];
-            if copied < bytes.len() {
-                let copy_len = core::cmp::min(4096, bytes.len() - copied);
-                page_bytes[..copy_len].copy_from_slice(&bytes[copied..copied + copy_len]);
-            }
-            mapping.backing = UserPageBacking::FilePrivate(page_bytes);
-        }
-    }
-}
-
-fn mark_active_user_page_range_file_shared(
-    start: u64,
-    len: u64,
-    bytes: &[u8],
-    vfs_node_id: u64,
-    path: &[u8],
-    file_offset: usize,
-) {
-    let Some(end) = start.checked_add(len) else {
-        return;
-    };
-    for mapping in &mut active_context().page_mappings {
-        if mapping.va >= start && mapping.va < end {
-            let copied = (mapping.va - start) as usize;
-            let mut page_bytes = vec![0u8; 4096];
-            if copied < bytes.len() {
-                let copy_len = core::cmp::min(4096, bytes.len() - copied);
-                page_bytes[..copy_len].copy_from_slice(&bytes[copied..copied + copy_len]);
-            }
-            mapping.backing = UserPageBacking::FileShared {
-                vfs_node_id,
-                path: path.to_vec(),
-                offset: file_offset.saturating_add(copied),
-                bytes: page_bytes,
-            };
-        }
-    }
 }
 
 fn active_file_shared_page_mappings_in_range(start: u64, len: u64) -> Vec<UserPageMapping> {
@@ -8610,9 +8654,12 @@ fn remove_active_file_shared_page_range(start: u64, len: u64) -> Result<(), i32>
 }
 
 fn file_shared_page_bytes(mapping: &UserPageMapping) -> Result<Option<Vec<u8>>, i32> {
-    let UserPageBacking::FileShared { bytes, .. } = &mapping.backing else {
+    let UserPageBacking::FileShared { bytes, valid, .. } = &mapping.backing else {
         return Ok(None);
     };
+    if !valid {
+        return Ok(None);
+    }
     let mut page_bytes = bytes.clone();
     if page_bytes.len() < 4096 {
         page_bytes.resize(4096, 0);
@@ -8713,14 +8760,12 @@ fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
     let raw_end = ptr.checked_add(len).ok_or(ERR_EFAULT)?;
     let start = ptr & !4095;
     let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
-    let demand_pages = demand_mapping_candidate_pages(start, end - start)?;
     let mut page = start;
     while page < end {
         let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
-        protect_active_user_page_range(page, 4096, prot)?;
+        prefault_active_user_page(page, prot, false)?;
         page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
-    record_guest_memory_demand_mappings_for_materialized_pages(&demand_pages);
     Ok(())
 }
 
@@ -8781,32 +8826,35 @@ fn user_page_region_prot(page: u64) -> Option<u64> {
     Some(prot)
 }
 
+fn user_fault_region(fault_va: u64, write: bool, instruction_fetch: bool) -> Option<UserRegion> {
+    let context = try_active_context()?;
+    let region = *context.regions.iter().rev().find(|region| {
+        fault_va >= region.start
+            && fault_va < region.end
+            && (region.readable || region.writable || region.executable)
+    })?;
+    if instruction_fetch && !region.executable {
+        return None;
+    }
+    if write && !region.writable {
+        return None;
+    }
+    if !write && !instruction_fetch && !region.readable {
+        return None;
+    }
+    Some(region)
+}
+
 pub(crate) fn try_handle_user_page_fault(
     fault_va: u64,
     write: bool,
     instruction_fetch: bool,
     protection: bool,
 ) -> bool {
-    let Some(context) = try_active_context() else {
-        return false;
-    };
     let page = fault_va & !4095;
-    let Some(region) = context.regions.iter().rev().find(|region| {
-        fault_va >= region.start
-            && fault_va < region.end
-            && (region.readable || region.writable || region.executable)
-    }) else {
+    let Some(region) = user_fault_region(fault_va, write, instruction_fetch) else {
         return false;
     };
-    if instruction_fetch && !region.executable {
-        return false;
-    }
-    if write && !region.writable {
-        return false;
-    }
-    if !write && !instruction_fetch && !region.readable {
-        return false;
-    }
     let mut prot = 0;
     if region.readable || region.writable {
         prot |= PROT_READ;
@@ -8823,14 +8871,24 @@ pub(crate) fn try_handle_user_page_fault(
         }
         return cow_break_active_user_page(page, prot).is_ok();
     }
-    let Ok(demand_pages) = demand_mapping_candidate_pages(page, 4096) else {
-        return false;
-    };
-    if protect_active_user_page_range(page, 4096, prot).is_ok() {
-        record_guest_memory_demand_mappings_for_materialized_pages(&demand_pages);
-        true
+    prefault_active_user_page(page, prot, write).is_ok()
+}
+
+pub(crate) fn user_page_fault_signal(fault_va: u64, write: bool, instruction_fetch: bool) -> u8 {
+    if user_fault_region(fault_va, write, instruction_fetch).is_none() {
+        return SIGSEGV;
+    }
+    let page = fault_va & !4095;
+    if try_active_context().is_some_and(|context| {
+        context
+            .page_mappings
+            .iter()
+            .find(|mapping| mapping.va == page)
+            .is_some_and(|mapping| mapping.backing.is_invalid_file_page())
+    }) {
+        SIGBUS
     } else {
-        false
+        SIGSEGV
     }
 }
 

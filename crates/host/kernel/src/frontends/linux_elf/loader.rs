@@ -347,6 +347,9 @@ pub(crate) fn protect_user_page_range(
             }
             let mapping_flags = user_page_flags_for_mapping(prot, mapping);
             if !mapping.present {
+                if mapping.backing.is_file_backed() {
+                    continue;
+                }
                 remap_user_page(&mut authority, page_addr, mapping, mapping_flags)?;
                 continue;
             }
@@ -411,36 +414,6 @@ pub(crate) fn prefault_user_page_range(
         } else {
             map_new_user_page(&mut authority, page_mappings, page_addr, flags)?;
         }
-    }
-    Ok(())
-}
-
-pub(crate) fn populate_user_page_range(
-    physical_memory_offset: u64,
-    page_mappings: &[UserPageMapping],
-    start: u64,
-    bytes: &[u8],
-) -> Result<(), &'static str> {
-    let end = start.checked_add(bytes.len() as u64).ok_or("user page range overflowed")?;
-    let phys_offset = VirtAddr::new(physical_memory_offset);
-    let mut cursor = start;
-    while cursor < end {
-        let page_addr = cursor & !(PAGE_SIZE as u64 - 1);
-        let page_offset = (cursor - page_addr) as usize;
-        let remaining_in_page = PAGE_SIZE - page_offset;
-        let copied = (cursor - start) as usize;
-        let copy_len = core::cmp::min(remaining_in_page, bytes.len() - copied);
-        let mapping = page_mappings
-            .iter()
-            .find(|mapping| mapping.va == page_addr)
-            .ok_or("user page is not mapped")?;
-        if !mapping.present {
-            return Err("user page is not mapped");
-        }
-        let frame = PhysFrame::containing_address(PhysAddr::new(mapping.frame_start));
-        frame_bytes(frame, phys_offset)[page_offset..page_offset + copy_len]
-            .copy_from_slice(&bytes[copied..copied + copy_len]);
-        cursor = cursor.checked_add(copy_len as u64).ok_or("user page range overflowed")?;
     }
     Ok(())
 }
@@ -734,7 +707,7 @@ fn discard_user_page_range_with_policy(
                     mapping.frame_start,
                 )));
             }
-            if matches!(&mapping.backing, UserPageBacking::FilePrivate(_)) {
+            if matches!(&mapping.backing, UserPageBacking::FilePrivate { .. }) {
                 mapping.frame_start = 0;
                 mapping.present = false;
                 mapping.owned = false;
@@ -879,12 +852,20 @@ fn materialize_user_page_frame(
     let dest = frame_bytes(frame, authority.phys_offset);
     match &mapping.backing {
         UserPageBacking::ZeroFill => dest.fill(0),
-        UserPageBacking::FilePrivate(bytes) => {
+        UserPageBacking::FilePrivate { bytes, valid } => {
+            if !valid {
+                authority.frame_allocator.deallocate_frame(frame);
+                return Err("file-backed user page is beyond EOF");
+            }
             dest.fill(0);
             let copy_len = core::cmp::min(bytes.len(), PAGE_SIZE);
             dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
         }
-        UserPageBacking::FileShared { bytes, .. } => {
+        UserPageBacking::FileShared { bytes, valid, .. } => {
+            if !valid {
+                authority.frame_allocator.deallocate_frame(frame);
+                return Err("file-backed user page is beyond EOF");
+            }
             dest.fill(0);
             let copy_len = core::cmp::min(bytes.len(), PAGE_SIZE);
             dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
@@ -1615,6 +1596,7 @@ mod tests {
                 path: b"/tmp/shared".to_vec(),
                 offset: 0,
                 bytes: vec![1, 2, 3],
+                valid: true,
             },
         }];
 

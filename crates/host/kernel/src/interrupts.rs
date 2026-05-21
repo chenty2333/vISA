@@ -104,12 +104,10 @@ extern "x86-interrupt" fn page_fault_handler(
         stack_frame.instruction_pointer,
         stack_frame,
     );
-    // SIGSEGV: invalid memory access → exit current process
-    crate::kinfo!("page fault: exiting with SIGSEGV");
-    crate::frontends::linux_elf::handle_user_fault(11); // SIGSEGV
-    loop {
-        x86_64::instructions::hlt();
-    }
+    let signal =
+        crate::frontends::linux_elf::user_page_fault_signal(accessed, write, instruction_fetch);
+    crate::kinfo!("page fault: exiting with signal {signal}");
+    crate::frontends::linux_elf::handle_user_fault(signal);
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(
