@@ -240,7 +240,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     sigactions: [SigAction::default(); 64],
                     rlimits: default_process_rlimits(),
                     cpu_time_ns: 0,
-                    rlimit_cpu_soft_notified: false,
+                    rlimit_cpu_next_signal_ns: 0,
                 });
                 procs
             },
@@ -326,7 +326,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             sigactions: [SigAction::default(); 64],
             rlimits: default_process_rlimits(),
             cpu_time_ns: 0,
-            rlimit_cpu_soft_notified: false,
+            rlimit_cpu_next_signal_ns: 0,
         });
         pid
     }
@@ -606,11 +606,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         if let Some(proc) = self.processes.iter_mut().find(|p| p.pid == pid) {
             if resource < 16 {
                 proc.rlimits[resource] = rlim;
-                if resource == RLIMIT_CPU
-                    && (rlim.cur == u64::MAX
-                        || proc.cpu_time_ns <= rlim.cur.saturating_mul(1_000_000_000))
-                {
-                    proc.rlimit_cpu_soft_notified = false;
+                if resource == RLIMIT_CPU {
+                    proc.rlimit_cpu_next_signal_ns = 0;
                 }
                 return true;
             }

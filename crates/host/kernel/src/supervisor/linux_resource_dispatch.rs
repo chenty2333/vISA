@@ -42,9 +42,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                 hard_kill = true;
             } else {
                 let soft_limit_ns = rlimit_cpu_seconds_to_ns(process.rlimits[RLIMIT_CPU].cur);
-                if process.cpu_time_ns > soft_limit_ns && !process.rlimit_cpu_soft_notified {
-                    process.rlimit_cpu_soft_notified = true;
-                    queue_soft_signal = true;
+                if soft_limit_ns == u64::MAX {
+                    process.rlimit_cpu_next_signal_ns = u64::MAX;
+                } else {
+                    let mut next_signal_ns = process.rlimit_cpu_next_signal_ns;
+                    if next_signal_ns == 0 || next_signal_ns < soft_limit_ns {
+                        next_signal_ns = soft_limit_ns;
+                    }
+                    if process.cpu_time_ns > next_signal_ns {
+                        queue_soft_signal = true;
+                        next_signal_ns =
+                            next_rlimit_cpu_signal_threshold(next_signal_ns, process.cpu_time_ns);
+                    }
+                    process.rlimit_cpu_next_signal_ns = next_signal_ns;
                 }
             }
         }
@@ -185,6 +195,18 @@ fn rlimit_cpu_seconds_to_ns(seconds: u64) -> u64 {
     if seconds == u64::MAX { u64::MAX } else { seconds.saturating_mul(NS_PER_SECOND) }
 }
 
+fn next_rlimit_cpu_signal_threshold(mut threshold_ns: u64, cpu_time_ns: u64) -> u64 {
+    loop {
+        let Some(next) = threshold_ns.checked_add(NS_PER_SECOND) else {
+            return u64::MAX;
+        };
+        if next >= cpu_time_ns {
+            return next;
+        }
+        threshold_ns = next;
+    }
+}
+
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
 }
@@ -226,11 +248,11 @@ mod tests {
     }
 
     #[test]
-    fn rlimit_cpu_soft_limit_queues_sigxcpu_once() {
+    fn rlimit_cpu_soft_limit_queues_sigxcpu_each_additional_second() {
         let mut runtime = test_runtime();
         let pid = runtime.current_pid();
         let tid = runtime.current_tid();
-        assert!(runtime.set_rlimit(pid, RLIMIT_CPU, Rlimit { cur: 1, max: 2 }));
+        assert!(runtime.set_rlimit(pid, RLIMIT_CPU, Rlimit { cur: 1, max: 4 }));
 
         assert_eq!(runtime.charge_current_cpu_time_ns(NS_PER_SECOND), None);
         assert!(
@@ -249,10 +271,21 @@ mod tests {
         assert_eq!(thread.pending_signals.len(), 1);
         assert_eq!(thread.pending_signals[0].signo, SIGXCPU);
 
-        assert_eq!(runtime.charge_current_cpu_time_ns(1), None);
+        assert_eq!(runtime.charge_current_cpu_time_ns(NS_PER_SECOND - 1), None);
         let thread =
             runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
         assert_eq!(thread.pending_signals.len(), 1);
+
+        assert_eq!(runtime.charge_current_cpu_time_ns(1), None);
+        let thread =
+            runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
+        assert_eq!(thread.pending_signals.len(), 2);
+        assert_eq!(thread.pending_signals[1].signo, SIGXCPU);
+
+        assert_eq!(runtime.charge_current_cpu_time_ns(1), None);
+        let thread =
+            runtime.threads.iter().find(|thread| thread.tid == tid).expect("current thread");
+        assert_eq!(thread.pending_signals.len(), 2);
     }
 
     #[test]

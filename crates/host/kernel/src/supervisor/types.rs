@@ -26,7 +26,7 @@ pub(crate) struct ProcessRuntimeState {
     pub(crate) sigactions: [SigAction; 64],
     pub(crate) rlimits: [Rlimit; 16],
     pub(crate) cpu_time_ns: u64,
-    pub(crate) rlimit_cpu_soft_notified: bool,
+    pub(crate) rlimit_cpu_next_signal_ns: u64,
 }
 
 #[derive(Clone, Debug)]
