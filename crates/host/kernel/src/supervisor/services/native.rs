@@ -1174,7 +1174,7 @@ impl VfsService {
             }
         }
         self.remove_owner_locks(&key, owner, s, l);
-        self.locks.push(FileLock { key, owner_pid: owner, write, start: s, len: l });
+        self.insert_owner_lock(key, owner, write, s, l);
         Ok(())
     }
 
@@ -1324,6 +1324,46 @@ impl VfsService {
         self.locks = next;
     }
 
+    fn insert_owner_lock(
+        &mut self,
+        key: FileLockKey,
+        owner: u32,
+        write: bool,
+        start: i64,
+        len: i64,
+    ) {
+        let mut merged_start = start;
+        let mut merged_end = lock_end(start, len);
+        let mut remaining = core::mem::take(&mut self.locks);
+        let mut merged_any = true;
+        while merged_any {
+            merged_any = false;
+            let mut next = Vec::new();
+            for lock in remaining {
+                if lock.key == key
+                    && lock.owner_pid == owner
+                    && lock.write == write
+                    && ranges_touch_or_overlap(merged_start, merged_end, lock.start, lock.len)
+                {
+                    merged_start = core::cmp::min(merged_start, lock.start);
+                    merged_end = core::cmp::max(merged_end, lock_end(lock.start, lock.len));
+                    merged_any = true;
+                } else {
+                    next.push(lock);
+                }
+            }
+            remaining = next;
+        }
+        remaining.push(FileLock {
+            key,
+            owner_pid: owner,
+            write,
+            start: merged_start,
+            len: lock_len_from_end(merged_start, merged_end),
+        });
+        self.locks = remaining;
+    }
+
     fn file_lock_key(&self, node_id: Option<u64>, path: &[u8]) -> FileLockKey {
         // Callers normally pass the fd's stable dynamic VFS node id. Re-resolve
         // by path when they do not, so dynamic files cannot split into a Node
@@ -1346,8 +1386,22 @@ fn ranges_overlap(left_start: i64, left_len: i64, right_start: i64, right_len: i
     left_start < right_end && left_end > right_start
 }
 
+fn ranges_touch_or_overlap(
+    left_start: i64,
+    left_end: i64,
+    right_start: i64,
+    right_len: i64,
+) -> bool {
+    let right_end = lock_end(right_start, right_len);
+    left_start <= right_end && left_end >= right_start
+}
+
 fn lock_end(start: i64, len: i64) -> i64 {
     if len == 0 { i64::MAX } else { start.saturating_add(len) }
+}
+
+fn lock_len_from_end(start: i64, end: i64) -> i64 {
+    if end == i64::MAX { 0 } else { end.saturating_sub(start) }
 }
 
 #[cfg(test)]
@@ -1392,6 +1446,30 @@ mod tests {
         assert_eq!(
             vfs.fcntl_getlk(Some(node_id), b"/tmp/split-lock", 200, false, 30, 70),
             Some((true, 100, 30, 70))
+        );
+    }
+
+    #[test]
+    fn fcntl_same_owner_same_type_locks_coalesce_conflict_range() {
+        let mut vfs = test_vfs();
+        vfs.create_file(b"/tmp/merge-lock", 0o600, 0, 0).expect("create dynamic file");
+        let node_id = vfs.node_id_for_path(b"/tmp/merge-lock").expect("dynamic node id");
+
+        vfs.fcntl_setlk(Some(node_id), b"/tmp/merge-lock", 100, true, 0, 10)
+            .expect("install first owner lock");
+        vfs.fcntl_setlk(Some(node_id), b"/tmp/merge-lock", 100, true, 10, 10)
+            .expect("install adjacent owner lock");
+
+        assert_eq!(
+            vfs.fcntl_getlk(Some(node_id), b"/tmp/merge-lock", 200, false, 0, 20),
+            Some((true, 100, 0, 20))
+        );
+
+        vfs.fcntl_setlk(Some(node_id), b"/tmp/merge-lock", 100, true, 5, 20)
+            .expect("install overlapping owner lock");
+        assert_eq!(
+            vfs.fcntl_getlk(Some(node_id), b"/tmp/merge-lock", 200, false, 0, 25),
+            Some((true, 100, 0, 25))
         );
     }
 }
