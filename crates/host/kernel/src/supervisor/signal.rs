@@ -4,8 +4,8 @@ use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::{
-        PendingSignal, Pid, ProcessRuntimeStateKind, SigAction, SignalAltStack, TaskId,
-        ThreadRuntimeStateKind, Tid, UserSignalDelivery,
+        PendingSignal, Pid, ProcessRuntimeStateKind, RLIMIT_SIGPENDING, SigAction, SignalAltStack,
+        TaskId, ThreadRuntimeStateKind, Tid, UserSignalDelivery,
     },
     wait::WaitRegistration,
 };
@@ -344,8 +344,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signal == 0 {
             return Ok(());
         }
-        self.queue_signal_to_thread(tid, signal, 0, sender_pid, 0);
-        Ok(())
+        self.queue_user_signal_to_threads(sender_pid, &[tid], signal)
     }
 
     pub(crate) fn queue_signal_by_kill_selector(
@@ -371,10 +370,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         if signal == 0 {
             return Ok(());
         }
-        for pid in pids {
-            self.queue_signal_to_process(pid, signal, 0, sender_pid, 0);
-        }
-        Ok(())
+        let tids = self
+            .threads
+            .iter()
+            .filter(|thread| {
+                pids.contains(&thread.pid) && thread.state != ThreadRuntimeStateKind::Dead
+            })
+            .map(|thread| thread.tid)
+            .collect::<Vec<_>>();
+        self.queue_user_signal_to_threads(sender_pid, &tids, signal)
     }
 
     fn kill_target_pids(&self, target: KillTarget) -> Result<Vec<Pid>, i32> {
@@ -411,6 +415,47 @@ impl<'engine> PrototypeRuntime<'engine> {
             KillTarget::Broadcast => return Err(vmos_abi::ERR_ENOSYS),
         };
         if pids.is_empty() { Err(vmos_abi::ERR_ESRCH) } else { Ok(pids) }
+    }
+
+    fn queue_user_signal_to_threads(
+        &mut self,
+        sender_pid: Pid,
+        tids: &[Tid],
+        signal: u8,
+    ) -> Result<(), i32> {
+        let additions = u64::try_from(tids.len()).unwrap_or(u64::MAX);
+        let sender_uid = self.check_user_signal_pending_limit(sender_pid, additions)?;
+        for tid in tids {
+            self.queue_signal_to_thread(*tid, signal, 0, sender_pid, sender_uid);
+        }
+        Ok(())
+    }
+
+    fn check_user_signal_pending_limit(&self, sender_pid: Pid, additions: u64) -> Result<u32, i32> {
+        let Some(sender) = self.processes.iter().find(|process| {
+            process.pid == sender_pid && process.state != ProcessRuntimeStateKind::Dead
+        }) else {
+            return Err(vmos_abi::ERR_ESRCH);
+        };
+        let sender_uid = sender.access.real_uid;
+        let limit = sender.rlimits[RLIMIT_SIGPENDING].cur;
+        if limit != u64::MAX {
+            let queued = self.pending_signal_count_for_uid(sender_uid);
+            if queued.saturating_add(additions) > limit {
+                return Err(vmos_abi::ERR_EAGAIN);
+            }
+        }
+        Ok(sender_uid)
+    }
+
+    fn pending_signal_count_for_uid(&self, real_uid: u32) -> u64 {
+        self.threads
+            .iter()
+            .flat_map(|thread| thread.pending_signals.iter())
+            .filter(|signal| signal.si_uid == real_uid)
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX)
     }
 
     /// Check and deliver pending signals for the current thread.
@@ -753,12 +798,12 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
-        SYS_RT_SIGPROCMASK, SYS_TGKILL, SyscallContext,
+        ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION,
+        SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_TGKILL, SyscallContext,
     };
 
     use super::*;
-    use crate::supervisor::engine::RuntimeOnlyExecutor;
+    use crate::supervisor::{engine::RuntimeOnlyExecutor, types::Rlimit};
 
     fn test_runtime() -> PrototypeRuntime<'static> {
         let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
@@ -1054,5 +1099,41 @@ mod tests {
             )
             .expect("invalid signal tgkill dispatch");
         assert_eq!(expect_ret(invalid), -(ERR_EINVAL as i64));
+    }
+
+    #[test]
+    fn generic_signal_queue_honors_rlimit_sigpending_for_sender_uid() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        let process = runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == pid)
+            .expect("current process");
+        process.access.real_uid = 1000;
+        assert!(runtime.set_rlimit(pid, RLIMIT_SIGPENDING, Rlimit { cur: 1, max: 1 }));
+
+        let first = runtime
+            .dispatch_linux_syscall_raw(
+                "test_tgkill_rlimit_sigpending_first",
+                SyscallContext::new(SYS_TGKILL, [pid as u64, tid as u64, 12, 0, 0, 0]),
+            )
+            .expect("first tgkill dispatch");
+        assert_eq!(expect_ret(first), 0);
+        let pending = &runtime.query_thread(tid).unwrap().pending_signals;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].si_uid, 1000);
+
+        let second = runtime
+            .dispatch_linux_syscall_raw(
+                "test_tgkill_rlimit_sigpending_denied",
+                SyscallContext::new(SYS_TGKILL, [pid as u64, tid as u64, 13, 0, 0, 0]),
+            )
+            .expect("second tgkill dispatch");
+        assert_eq!(expect_ret(second), -(ERR_EAGAIN as i64));
+        let pending = &runtime.query_thread(tid).unwrap().pending_signals;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].signo, 12);
     }
 }

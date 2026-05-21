@@ -120,6 +120,7 @@ pub(crate) const RLIMIT_NPROC: usize = 6;
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_MEMLOCK: usize = 8;
 pub(crate) const RLIMIT_AS: usize = 9;
+pub(crate) const RLIMIT_SIGPENDING: usize = 11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct GenericMmapRegion {
