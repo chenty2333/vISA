@@ -504,6 +504,7 @@ pub struct InMemoryVirtioNetBackend {
     mac: Option<[u8; 6]>,
     rx_queue: InMemoryVirtioFrameQueue,
     tx_queue: InMemoryVirtioFrameQueue,
+    last_tx_frame: Option<Vec<u8>>,
 }
 
 impl InMemoryVirtioNetBackend {
@@ -514,6 +515,7 @@ impl InMemoryVirtioNetBackend {
             mac: None,
             rx_queue: InMemoryVirtioFrameQueue::new(config.rx_queue_index, config.queue_size),
             tx_queue: InMemoryVirtioFrameQueue::new(config.tx_queue_index, config.queue_size),
+            last_tx_frame: None,
         }
     }
 
@@ -547,6 +549,10 @@ impl InMemoryVirtioNetBackend {
         self.tx_queue.pop_frame().map(|frame| frame.data)
     }
 
+    pub fn last_tx_frame(&self) -> Option<&[u8]> {
+        self.last_tx_frame.as_deref()
+    }
+
     pub fn pending_rx_frames(&self) -> usize {
         self.rx_queue.len()
     }
@@ -578,6 +584,7 @@ impl PacketDeviceBackend for InMemoryVirtioNetBackend {
         self.initialized = true;
         self.rx_queue.reset();
         self.tx_queue.reset();
+        self.last_tx_frame = None;
         Ok(())
     }
 
@@ -585,6 +592,7 @@ impl PacketDeviceBackend for InMemoryVirtioNetBackend {
         self.ensure_initialized()?;
         validate_frame_len(frame.len())?;
         self.tx_queue.push_frame(frame, "virtio net tx queue is full")?;
+        self.last_tx_frame = Some(frame.to_vec());
         Ok(())
     }
 
@@ -741,7 +749,9 @@ mod tests {
         backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
         backend.submit_tx(&tx).unwrap();
         assert_eq!(backend.pending_tx_frames(), 1);
+        assert_eq!(backend.last_tx_frame().unwrap(), &tx);
         assert_eq!(backend.take_tx_frame().unwrap().as_slice(), &tx);
+        assert_eq!(backend.last_tx_frame().unwrap(), &tx);
         assert_eq!(backend.pending_tx_frames(), 0);
 
         backend.inject_rx_frame(&rx).unwrap();
@@ -798,6 +808,7 @@ mod tests {
         backend.init([2, 0x56, 0x4d, 0x4f, 0x53, 1]).unwrap();
         backend.submit_tx(&frame).unwrap();
         backend.inject_rx_frame(&frame).unwrap();
+        assert_eq!(backend.last_tx_frame().unwrap(), &frame);
         assert_eq!(backend.pending_tx_frames(), 1);
         assert_eq!(backend.pending_rx_frames(), 1);
 
@@ -806,6 +817,7 @@ mod tests {
         assert_eq!(evidence.mac, Some([2, 0x56, 0x4d, 0x4f, 0x53, 2]));
         assert_eq!(evidence.tx_queue_len, 0);
         assert_eq!(evidence.rx_queue_len, 0);
+        assert_eq!(backend.last_tx_frame(), None);
     }
 
     #[test]
