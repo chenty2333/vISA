@@ -1132,8 +1132,8 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_LISTEN, SYS_READ,
-        SYS_SOCKET, SYS_WRITE, SyscallContext,
+        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CONNECT,
+        SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1270,6 +1270,52 @@ mod tests {
         frame
     }
 
+    fn tcp_syn_ack_for_syn(syn: &[u8], server_mac: [u8; 6], server_seq: u32) -> Vec<u8> {
+        let syn_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ihl = ((syn[syn_ip_start] & 0x0f) as usize) * 4;
+        let syn_tcp_start = syn_ip_start + syn_ihl;
+        let client_mac: [u8; 6] = syn[6..12].try_into().expect("client mac");
+        let client_ip: [u8; 4] = syn[26..30].try_into().expect("client ip");
+        let server_ip: [u8; 4] = syn[30..34].try_into().expect("server ip");
+        let client_port = u16::from_be_bytes([syn[syn_tcp_start], syn[syn_tcp_start + 1]]);
+        let server_port = u16::from_be_bytes([syn[syn_tcp_start + 2], syn[syn_tcp_start + 3]]);
+        let client_seq = u32::from_be_bytes([
+            syn[syn_tcp_start + 4],
+            syn[syn_tcp_start + 5],
+            syn[syn_tcp_start + 6],
+            syn[syn_tcp_start + 7],
+        ]);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&client_mac);
+        frame[6..12].copy_from_slice(&server_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&server_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&client_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&server_seq.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&client_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x12;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&server_ip, &client_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
     fn tcp_ack_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
         let syn_ack_ip_start = ETHERNET_HEADER_LEN;
         let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
@@ -1383,6 +1429,64 @@ mod tests {
         frame
     }
 
+    fn tcp_server_data_for_syn_ack(syn_ack: &[u8], payload: &[u8]) -> Vec<u8> {
+        let syn_ack_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
+        let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
+        let client_mac: [u8; 6] = syn_ack[0..6].try_into().expect("client mac");
+        let server_mac: [u8; 6] = syn_ack[6..12].try_into().expect("server mac");
+        let server_ip: [u8; 4] = syn_ack[26..30].try_into().expect("server ip");
+        let client_ip: [u8; 4] = syn_ack[30..34].try_into().expect("client ip");
+        let server_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start], syn_ack[syn_ack_tcp_start + 1]]);
+        let client_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start + 2], syn_ack[syn_ack_tcp_start + 3]]);
+        let server_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 4],
+            syn_ack[syn_ack_tcp_start + 5],
+            syn_ack[syn_ack_tcp_start + 6],
+            syn_ack[syn_ack_tcp_start + 7],
+        ]);
+        let client_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 8],
+            syn_ack[syn_ack_tcp_start + 9],
+            syn_ack[syn_ack_tcp_start + 10],
+            syn_ack[syn_ack_tcp_start + 11],
+        ]);
+
+        let ip_payload_len = 20usize + payload.len();
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + ip_payload_len];
+        frame[0..6].copy_from_slice(&client_mac);
+        frame[6..12].copy_from_slice(&server_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4]
+            .copy_from_slice(&((20 + ip_payload_len) as u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&server_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&client_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8]
+            .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x18;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        frame[tcp_start + 20..tcp_start + 20 + payload.len()].copy_from_slice(payload);
+        let tcp_checksum = tcp_ipv4_checksum(&server_ip, &client_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
     fn tcp_ipv4_checksum(src_ip: &[u8; 4], dst_ip: &[u8; 4], tcp_segment: &[u8]) -> u16 {
         let mut checksum_input = Vec::with_capacity(12 + tcp_segment.len());
         checksum_input.extend_from_slice(src_ip);
@@ -1463,6 +1567,37 @@ mod tests {
         let ack = tcp_ack_for_syn_ack(&syn_ack);
         runtime.net_driver.deliver_rx_frame(0, &ack).expect("deliver final ack");
         runtime.poll_network_driver_events();
+        syn_ack
+    }
+
+    fn drive_reference_backend_tcp_connect(
+        runtime: &mut PrototypeRuntime<'_>,
+        token: super::super::types::WaitToken,
+        remote_port: u16,
+        server_seq: u32,
+    ) -> Vec<u8> {
+        let arp_reply = arp_reply(
+            REMOTE_MAC,
+            REMOTE_IPV4,
+            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+            VMOS_IPV4,
+        );
+        runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
+        runtime.pump_network_runtime();
+
+        let syn = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("connect emitted tcp syn")
+            .to_vec();
+        assert_eq!(syn[47] & 0x02, 0x02);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), remote_port);
+
+        let syn_ack = tcp_syn_ack_for_syn(&syn, REMOTE_MAC, server_seq);
+        runtime.reference_packet_backend.inject_rx_frame(&syn_ack).expect("inject syn ack");
+        let connected =
+            expect_ret(runtime.block_on_wait("test_connect_resume", token).expect("connect wait"));
+        assert_eq!(connected, 0);
         syn_ack
     }
 
@@ -1851,6 +1986,66 @@ mod tests {
             .expect("accepted socket write emitted tcp frame");
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
+        assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_connect_socket_reads_and_writes_tcp_payload() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+        let remote_port = 18086u16;
+        let remote_ipv4 = u32::from_be_bytes(REMOTE_IPV4);
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_connect",
+                SyscallContext::new(
+                    SYS_CONNECT,
+                    [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
+                ),
+            )
+            .expect("connect dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending connect, got {other:?}"),
+        };
+
+        let first_tx =
+            runtime.reference_packet_backend.last_tx_frame().expect("connect emitted arp request");
+        assert!(is_remote_arp_request(first_tx));
+
+        let syn_ack =
+            drive_reference_backend_tcp_connect(&mut runtime, token, remote_port, 0x5152_5354);
+        let payload = b"server payload over connect";
+        let data = tcp_server_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        runtime.pump_network_runtime();
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_connected_payload",
+            SYS_READ,
+            [fd as u64, 0, payload.len() as u64, 0, 0, 0],
+        );
+        assert_eq!(read, payload);
+
+        let reply = b"client reply over connect";
+        assert_eq!(write_fd(&mut runtime, fd, reply), reply.len() as i64);
+        let last_tx = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("connected socket write emitted tcp frame");
+        assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
+        assert_eq!(last_tx[47] & 0x18, 0x18);
+        assert!(event_log_contains(&runtime, "connected"));
+        assert!(event_log_contains(&runtime, "PacketReceived"));
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
     }
 
