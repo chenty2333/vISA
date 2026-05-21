@@ -349,7 +349,7 @@ fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), 
         semantic.record_packet_received(interface, None, 0, len);
     }
     println!(
-        "host TAP runtime probe tap={} pump_steps={} completed_steps={} pump_sleep_ms={} require_established={} require_rx={} final_state={} final_can_send={} tx_frames={} tx_bytes={} rx_frames={} rx_bytes={} pump_backend_rx={} pump_driver_rx={} pump_stack_tx={} pump_driver_tx={}",
+        "host TAP runtime probe tap={} pump_steps={} completed_steps={} pump_sleep_ms={} require_established={} require_rx={} final_state={} final_can_send={} tx_frames={} tx_bytes={} rx_frames={} rx_bytes={} pump_iterations={} pump_quiescent_rounds={} pump_saturated_rounds={} pump_backend_rx={} pump_driver_rx={} pump_stack_tx={} pump_driver_tx={}",
         report.tap_name,
         report.pump_steps,
         report.completed_steps,
@@ -362,6 +362,9 @@ fn maybe_run_host_tap_runtime_probe(semantic: &mut SemanticGraph) -> Result<(), 
         report.tx_bytes,
         report.rx_frames,
         report.rx_bytes,
+        report.totals.pump_iterations,
+        report.totals.quiescent_rounds,
+        report.totals.saturated_rounds,
         report.totals.backend_rx_frames_delivered_to_driver,
         report.totals.driver_rx_frames_delivered_to_stack,
         report.totals.stack_tx_frames_submitted_to_driver,

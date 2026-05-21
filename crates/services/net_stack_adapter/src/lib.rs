@@ -34,6 +34,7 @@ pub const BACKEND_RX_BATCH: usize = 8;
 pub const DRIVER_BACKEND_RX_BATCH: usize = RAW_RX_QUEUE_DEPTH;
 pub const DRIVER_RX_EVENT_SEQUENCE_LEN: usize = 5;
 pub const STACK_DRIVER_EVENT_LIMIT: usize = DRIVER_BACKEND_RX_BATCH * DRIVER_RX_EVENT_SEQUENCE_LEN;
+pub const STACK_DRIVER_BACKEND_PUMP_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmoltcpAdapterConfig {
@@ -102,6 +103,46 @@ pub struct StackDriverBackendPumpEvidence {
     pub stack_poll: SmoltcpPollEvidence,
     pub stack_tx_frames_submitted_to_driver: usize,
     pub driver_tx_frames_submitted_to_backend: usize,
+}
+
+impl StackDriverBackendPumpEvidence {
+    pub fn made_progress(&self) -> bool {
+        self.backend_rx_frames_delivered_to_driver != 0
+            || self.driver_rx_frames_delivered_to_stack != 0
+            || self.stack_poll.poll_result != "none"
+            || self.stack_poll.rx_frames_before != self.stack_poll.rx_frames_after
+            || self.stack_poll.tx_frames_before != self.stack_poll.tx_frames_after
+            || self.stack_tx_frames_submitted_to_driver != 0
+            || self.driver_tx_frames_submitted_to_backend != 0
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StackDriverBackendPumpTotals {
+    pub steps: usize,
+    pub quiesced: bool,
+    pub backend_rx_frames_delivered_to_driver: usize,
+    pub driver_rx_frames_delivered_to_stack: usize,
+    pub stack_tx_frames_submitted_to_driver: usize,
+    pub driver_tx_frames_submitted_to_backend: usize,
+}
+
+impl StackDriverBackendPumpTotals {
+    fn add(&mut self, pump: &StackDriverBackendPumpEvidence) {
+        self.steps = self.steps.saturating_add(1);
+        self.backend_rx_frames_delivered_to_driver = self
+            .backend_rx_frames_delivered_to_driver
+            .saturating_add(pump.backend_rx_frames_delivered_to_driver);
+        self.driver_rx_frames_delivered_to_stack = self
+            .driver_rx_frames_delivered_to_stack
+            .saturating_add(pump.driver_rx_frames_delivered_to_stack);
+        self.stack_tx_frames_submitted_to_driver = self
+            .stack_tx_frames_submitted_to_driver
+            .saturating_add(pump.stack_tx_frames_submitted_to_driver);
+        self.driver_tx_frames_submitted_to_backend = self
+            .driver_tx_frames_submitted_to_backend
+            .saturating_add(pump.driver_tx_frames_submitted_to_backend);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -447,7 +488,9 @@ pub fn pump_stack_driver_backend<B: PacketDeviceBackend>(
 
     let outbound_driver_pump = pump_driver_backend(driver, backend, now_ticks)?;
     Ok(StackDriverBackendPumpEvidence {
-        backend_rx_frames_delivered_to_driver: inbound_driver_pump.rx_frames_delivered,
+        backend_rx_frames_delivered_to_driver: inbound_driver_pump
+            .rx_frames_delivered
+            .saturating_add(outbound_driver_pump.rx_frames_delivered),
         driver_rx_frames_delivered_to_stack,
         stack_poll,
         stack_tx_frames_submitted_to_driver,
@@ -455,6 +498,35 @@ pub fn pump_stack_driver_backend<B: PacketDeviceBackend>(
             .tx_frames_submitted
             .saturating_add(outbound_driver_pump.tx_frames_submitted),
     })
+}
+
+pub fn pump_stack_driver_backend_until_quiescent<B: PacketDeviceBackend>(
+    stack: &mut SmoltcpPacketStack,
+    driver: &mut DriverVirtioNetState,
+    backend: &mut B,
+    now_ms: i64,
+    now_ticks: u64,
+    max_steps: usize,
+) -> SubstrateResult<StackDriverBackendPumpTotals> {
+    if max_steps == 0 || max_steps > STACK_DRIVER_BACKEND_PUMP_LIMIT {
+        return Err(SubstrateError::ContractViolation {
+            detail: "stack driver backend pump limit is outside supported bounds",
+        });
+    }
+
+    let mut totals = StackDriverBackendPumpTotals::default();
+    for step in 0..max_steps {
+        let step_ms = now_ms.saturating_add(step as i64);
+        let step_ticks = now_ticks.saturating_add(step as u64);
+        let pump = pump_stack_driver_backend(stack, driver, backend, step_ms, step_ticks)?;
+        let made_progress = pump.made_progress();
+        totals.add(&pump);
+        if !made_progress {
+            totals.quiesced = true;
+            break;
+        }
+    }
+    Ok(totals)
 }
 
 fn pump_driver_rx_to_stack(
@@ -862,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn stack_driver_backend_pump_preserves_backpressured_driver_rx_queue() {
+    fn stack_driver_backend_pump_drains_rearmed_driver_rx_queue() {
         let mut stack =
             SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
@@ -881,14 +953,124 @@ mod tests {
             .expect("pump full rx queue");
 
         assert_eq!(evidence.backend_rx_frames_delivered_to_driver, RAW_RX_QUEUE_DEPTH);
-        assert_eq!(evidence.driver_rx_frames_delivered_to_stack, 1);
-        assert_eq!(evidence.stack_poll.rx_frames_before, 1);
+        assert_eq!(evidence.driver_rx_frames_delivered_to_stack, RAW_RX_QUEUE_DEPTH);
+        assert_eq!(evidence.stack_poll.rx_frames_before, RAW_RX_QUEUE_DEPTH);
         assert_eq!(evidence.stack_poll.rx_frames_after, 0);
-        assert_eq!(evidence.stack_tx_frames_submitted_to_driver, 1);
-        assert_eq!(evidence.driver_tx_frames_submitted_to_backend, 1);
-        assert_eq!(backend.tx.len(), 1);
-        assert_eq!(driver.pending_rx_frames(), (RAW_RX_QUEUE_DEPTH - 1) as u32);
+        assert_eq!(evidence.stack_tx_frames_submitted_to_driver, RAW_RX_QUEUE_DEPTH);
+        assert_eq!(evidence.driver_tx_frames_submitted_to_backend, RAW_RX_QUEUE_DEPTH);
+        assert_eq!(backend.tx.len(), RAW_RX_QUEUE_DEPTH);
+        assert_eq!(driver.pending_rx_frames(), 0);
         assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
+    fn stack_driver_backend_pump_until_quiescent_drains_multiple_backend_batches() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let mut driver = DriverVirtioNetState::new();
+        let mut backend = InMemoryPacketBackend::new();
+        let frame_count = DRIVER_BACKEND_RX_BATCH * 2;
+        for index in 0..frame_count {
+            let remote_mac = [0x02, 0, 0, 0, 0, index as u8 + 2];
+            let remote_ip = [10, 0, 2, index as u8 + 2];
+            backend.rx.push(
+                arp_request(remote_mac, remote_ip, VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR)
+                    .to_vec(),
+            );
+        }
+
+        stack.init_backend(&mut backend).expect("init backend");
+        let totals = pump_stack_driver_backend_until_quiescent(
+            &mut stack,
+            &mut driver,
+            &mut backend,
+            1,
+            1,
+            STACK_DRIVER_BACKEND_PUMP_LIMIT,
+        )
+        .expect("pump until quiescent");
+
+        assert!(totals.quiesced);
+        assert!(totals.steps > 1);
+        assert_eq!(totals.backend_rx_frames_delivered_to_driver, frame_count);
+        assert_eq!(totals.driver_rx_frames_delivered_to_stack, frame_count);
+        assert_eq!(totals.stack_tx_frames_submitted_to_driver, frame_count);
+        assert_eq!(totals.driver_tx_frames_submitted_to_backend, frame_count);
+        assert_eq!(backend.rx.len(), 0);
+        assert_eq!(backend.tx.len(), frame_count);
+        assert_eq!(driver.pending_rx_frames(), 0);
+        assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
+    fn stack_driver_backend_pump_until_quiescent_reports_saturation() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let mut driver = DriverVirtioNetState::new();
+        let mut backend = InMemoryPacketBackend::new();
+        let frame_count = DRIVER_BACKEND_RX_BATCH * 2;
+        for index in 0..frame_count {
+            let remote_mac = [0x02, 0, 0, 0, 0, index as u8 + 2];
+            let remote_ip = [10, 0, 2, index as u8 + 2];
+            backend.rx.push(
+                arp_request(remote_mac, remote_ip, VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR)
+                    .to_vec(),
+            );
+        }
+
+        stack.init_backend(&mut backend).expect("init backend");
+        let totals = pump_stack_driver_backend_until_quiescent(
+            &mut stack,
+            &mut driver,
+            &mut backend,
+            1,
+            1,
+            1,
+        )
+        .expect("single bounded pump step");
+
+        assert!(!totals.quiesced);
+        assert_eq!(totals.steps, 1);
+        assert_eq!(totals.backend_rx_frames_delivered_to_driver, frame_count);
+        assert_eq!(totals.driver_rx_frames_delivered_to_stack, DRIVER_BACKEND_RX_BATCH);
+        assert_eq!(backend.rx.len(), 0);
+        assert_eq!(driver.pending_rx_frames(), DRIVER_BACKEND_RX_BATCH as u32);
+        assert_eq!(driver.pending_tx_frames(), 0);
+    }
+
+    #[test]
+    fn stack_driver_backend_pump_until_quiescent_rejects_invalid_limit() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+        let mut driver = DriverVirtioNetState::new();
+        let mut backend = InMemoryPacketBackend::new();
+
+        assert_eq!(
+            pump_stack_driver_backend_until_quiescent(
+                &mut stack,
+                &mut driver,
+                &mut backend,
+                1,
+                1,
+                0,
+            ),
+            Err(SubstrateError::ContractViolation {
+                detail: "stack driver backend pump limit is outside supported bounds",
+            })
+        );
+        assert_eq!(
+            pump_stack_driver_backend_until_quiescent(
+                &mut stack,
+                &mut driver,
+                &mut backend,
+                1,
+                1,
+                STACK_DRIVER_BACKEND_PUMP_LIMIT + 1,
+            ),
+            Err(SubstrateError::ContractViolation {
+                detail: "stack driver backend pump limit is outside supported bounds",
+            })
+        );
     }
 
     #[test]

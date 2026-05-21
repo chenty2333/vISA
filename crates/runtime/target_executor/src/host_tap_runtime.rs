@@ -1,8 +1,8 @@
 use std::{env, error::Error, thread, time::Duration};
 
 use net_stack_adapter::{
-    SmoltcpAdapterConfig, SmoltcpPacketStack, StackDriverBackendPumpEvidence,
-    pump_stack_driver_backend,
+    STACK_DRIVER_BACKEND_PUMP_LIMIT, SmoltcpAdapterConfig, SmoltcpPacketStack,
+    StackDriverBackendPumpTotals, pump_stack_driver_backend_until_quiescent,
 };
 use service_core::driver::DriverVirtioNetState;
 use substrate_api::{PacketDeviceBackend, PacketFrameSlot, SubstrateError, SubstrateResult};
@@ -129,9 +129,15 @@ pub(crate) fn run_host_tap_runtime_probe(
     for step in 0..config.pump_steps {
         completed_steps = step.saturating_add(1);
         let tick = u64::from(step).saturating_add(1);
-        let pump =
-            pump_stack_driver_backend(&mut stack, &mut driver, &mut backend, tick as i64, tick)
-                .map_err(|error| format!("host TAP stack/driver/backend pump failed: {error:?}"))?;
+        let pump = pump_stack_driver_backend_until_quiescent(
+            &mut stack,
+            &mut driver,
+            &mut backend,
+            tick as i64,
+            tick,
+            STACK_DRIVER_BACKEND_PUMP_LIMIT,
+        )
+        .map_err(|error| format!("host TAP stack/driver/backend pump failed: {error:?}"))?;
         totals.add(&pump);
         let snapshot = stack
             .tcp_snapshot(socket_id)
@@ -242,6 +248,9 @@ impl PacketDeviceBackend for CountingHostTapBackend {
 
 #[derive(Default)]
 pub(crate) struct HostTapPumpTotals {
+    pub(crate) pump_iterations: usize,
+    pub(crate) quiescent_rounds: usize,
+    pub(crate) saturated_rounds: usize,
     pub(crate) backend_rx_frames_delivered_to_driver: usize,
     pub(crate) driver_rx_frames_delivered_to_stack: usize,
     pub(crate) stack_tx_frames_submitted_to_driver: usize,
@@ -249,7 +258,13 @@ pub(crate) struct HostTapPumpTotals {
 }
 
 impl HostTapPumpTotals {
-    fn add(&mut self, pump: &StackDriverBackendPumpEvidence) {
+    fn add(&mut self, pump: &StackDriverBackendPumpTotals) {
+        self.pump_iterations = self.pump_iterations.saturating_add(pump.steps);
+        if pump.quiesced {
+            self.quiescent_rounds = self.quiescent_rounds.saturating_add(1);
+        } else {
+            self.saturated_rounds = self.saturated_rounds.saturating_add(1);
+        }
         self.backend_rx_frames_delivered_to_driver = self
             .backend_rx_frames_delivered_to_driver
             .saturating_add(pump.backend_rx_frames_delivered_to_driver);
