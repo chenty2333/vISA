@@ -1098,11 +1098,12 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, SOCK_STREAM, SYS_ACCEPT, SYS_BIND, SYS_LISTEN, SYS_SOCKET, SyscallContext,
+        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_BIND, SYS_LISTEN, SYS_SOCKET,
+        SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
-    use crate::supervisor::engine::RuntimeOnlyExecutor;
+    use crate::supervisor::{engine::RuntimeOnlyExecutor, types::SigAction};
 
     const REMOTE_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
     const REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
@@ -1502,6 +1503,89 @@ mod tests {
         drive_reference_backend_tcp_handshake(&mut runtime, local_port, remote_port, 0x0506_0708);
         let accepted_fd =
             expect_ret(runtime.block_on_wait("test_accept_resume", token).expect("resume accept"));
+
+        assert!(accepted_fd >= 0);
+        let written = runtime.linux.read_bytes(addr_ptr, 20).expect("accept writeback");
+        assert_sockaddr_in(&written[..16], REMOTE_IPV4, remote_port);
+        assert_eq!(u32::from_le_bytes(written[16..20].try_into().unwrap()), 16);
+    }
+
+    #[test]
+    fn generic_blocking_accept_signal_interrupt_leaves_listener_retryable() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18082u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let (addr_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("accept buffer");
+        let len_ptr = addr_ptr + 16;
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_accept",
+                SyscallContext::new(
+                    SYS_ACCEPT,
+                    [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )
+            .expect("accept dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending accept, got {other:?}"),
+        };
+
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        assert!(runtime.set_sigaction(
+            pid,
+            10,
+            SigAction { handler: 0x4000, flags: 0, restorer: 0x5000, mask: 0 }
+        ));
+        runtime.queue_signal_to_thread(tid, 10, 0, pid, 0);
+        let interrupted =
+            expect_ret(runtime.block_on_wait("test_accept_signal", token).expect("interrupt"));
+        assert_eq!(interrupted, -(ERR_EINTR as i64));
+        assert_eq!(
+            runtime.linux.read_bytes(addr_ptr, 20).expect("accept buffer"),
+            accept_sockaddr_buffer()
+        );
+        let delivered = runtime.take_pending_user_handler_signal(tid).expect("signal delivery");
+        assert_eq!(delivered.signal.signo, 10);
+
+        let remote_port = 40_002u16;
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, remote_port, 0x090a_0b0c);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_retry",
+            SYS_ACCEPT,
+            [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+        );
 
         assert!(accepted_fd >= 0);
         let written = runtime.linux.read_bytes(addr_ptr, 20).expect("accept writeback");
