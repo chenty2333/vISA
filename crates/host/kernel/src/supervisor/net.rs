@@ -1098,7 +1098,7 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_BIND, SYS_LISTEN, SYS_SOCKET,
+        AF_INET, ERR_EINTR, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_LISTEN, SYS_SOCKET,
         SyscallContext,
     };
 
@@ -1110,6 +1110,10 @@ mod tests {
     const VMOS_IPV4: [u8; 4] = [10, 0, 2, 15];
     const ARP_FRAME_LEN: usize = 42;
     const ETHERNET_HEADER_LEN: usize = 14;
+    const SOCK_CLOEXEC: u64 = 0o2000000;
+    const SOCK_NONBLOCK: u64 = 0o0004000;
+    const FD_CLOEXEC: u32 = 1;
+    const O_NONBLOCK: u32 = 0o4000;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -1530,6 +1534,75 @@ mod tests {
         let second_written = runtime.linux.read_bytes(addr_ptr, 20).expect("second writeback");
         assert_sockaddr_in(&second_written[..16], REMOTE_IPV4, second_remote_port);
         assert_eq!(u32::from_le_bytes(second_written[16..20].try_into().unwrap()), 16);
+    }
+
+    #[test]
+    fn packet_backed_accept4_applies_fd_flags_and_peer_writeback() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18084u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_005u16;
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, remote_port, 0x3132_3334);
+
+        let (addr_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("accept buffer");
+        let len_ptr = addr_ptr + 16;
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept4",
+            SYS_ACCEPT4,
+            [
+                listener_fd as u64,
+                addr_ptr as u64,
+                len_ptr as u64,
+                SOCK_CLOEXEC | SOCK_NONBLOCK,
+                0,
+                0,
+            ],
+        );
+        assert!(accepted_fd >= 0);
+        let accepted_fd = accepted_fd as u32;
+
+        assert_eq!(
+            runtime.fd_flags(accepted_fd).expect("accepted fd flags") & FD_CLOEXEC,
+            FD_CLOEXEC
+        );
+        assert_eq!(
+            runtime.file_status_flags(accepted_fd).expect("accepted status flags") & O_NONBLOCK,
+            O_NONBLOCK
+        );
+
+        let written = runtime.linux.read_bytes(addr_ptr, 20).expect("accept4 writeback");
+        assert_sockaddr_in(&written[..16], REMOTE_IPV4, remote_port);
+        assert_eq!(u32::from_le_bytes(written[16..20].try_into().unwrap()), 16);
     }
 
     #[test]
