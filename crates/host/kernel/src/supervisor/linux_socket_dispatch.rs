@@ -290,7 +290,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
-    pub(super) fn plan_accept(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
+    pub(super) fn plan_accept(
+        &mut self,
+        plan: LinuxPlan,
+        label: &str,
+    ) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("linux_syscall", "linux.socket", "accept").is_err()
             || self.require_capability("net_core", "net.socket", "create").is_err()
         {
@@ -301,7 +305,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
             return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
         }
-        let result = self.try_accept_fd(fd, flags)?;
+        let (addr_ptr, addr_len_ptr, write_addr) =
+            match self.generic_accept_sockaddr_writeback(label, plan.args[1], plan.args[2]) {
+                Ok(writeback) => writeback,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        let result = self.try_accept_fd_with_sockaddr_writeback(
+            fd,
+            flags,
+            addr_ptr,
+            addr_len_ptr,
+            write_addr,
+        )?;
         if !matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EAGAIN as i64)) {
             return Ok(result);
         }
@@ -314,7 +329,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::SocketAccept { fd, flags },
+            WaitRegistration::SocketAccept { fd, flags, addr_ptr, addr_len_ptr, write_addr },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -322,11 +337,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(LinuxCallResult::Pending(token))
     }
 
-    pub(super) fn try_accept_fd(
+    pub(super) fn try_accept_fd_with_sockaddr_writeback(
         &mut self,
         fd: u32,
         flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
     ) -> Result<LinuxCallResult, &'static str> {
+        let result = self.try_accept_fd_raw(fd, flags)?;
+        self.finish_accept_sockaddr_writeback(result, addr_ptr, addr_len_ptr, write_addr)
+    }
+
+    fn try_accept_fd_raw(&mut self, fd: u32, flags: u32) -> Result<LinuxCallResult, &'static str> {
         if !self.can_allocate_fds(1) {
             return Ok(LinuxCallResult::Ret(-(ERR_EMFILE as i64)));
         }
@@ -431,6 +454,68 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.record_socket_state_changed(handle.id, "connected");
         }
         Ok(LinuxCallResult::Ret(accepted_fd as i64))
+    }
+
+    fn generic_accept_sockaddr_writeback(
+        &mut self,
+        label: &str,
+        addr_raw: u64,
+        addr_len_raw: u64,
+    ) -> Result<(u32, u32, bool), i32> {
+        if label.starts_with("ring3_") || (addr_raw == 0 && addr_len_raw == 0) {
+            return Ok((0, 0, false));
+        }
+        if addr_raw == 0 || addr_len_raw == 0 {
+            return Err(ERR_EINVAL);
+        }
+        let addr_ptr = u32::try_from(addr_raw).map_err(|_| ERR_EFAULT)?;
+        let addr_len_ptr = u32::try_from(addr_len_raw).map_err(|_| ERR_EFAULT)?;
+        let len_bytes = self.linux.read_bytes(addr_len_ptr, 4).map_err(|_| ERR_EFAULT)?;
+        let addr_len = u32::from_le_bytes(len_bytes.as_slice().try_into().map_err(|_| ERR_EFAULT)?);
+        if !(16..=128).contains(&addr_len) {
+            return Err(ERR_EINVAL);
+        }
+        self.linux.read_bytes(addr_ptr, addr_len).map_err(|_| ERR_EFAULT)?;
+        Ok((addr_ptr, addr_len_ptr, true))
+    }
+
+    fn finish_accept_sockaddr_writeback(
+        &mut self,
+        result: LinuxCallResult,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if !write_addr {
+            return Ok(result);
+        }
+        let accepted_fd = match result {
+            LinuxCallResult::Ret(fd) if fd >= 0 => {
+                u32::try_from(fd).map_err(|_| "accept fd overflowed during writeback")?
+            }
+            other => return Ok(other),
+        };
+        match self.write_generic_accept_sockaddr(accepted_fd, addr_ptr, addr_len_ptr) {
+            Ok(()) => Ok(LinuxCallResult::Ret(accepted_fd as i64)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    fn write_generic_accept_sockaddr(
+        &mut self,
+        accepted_fd: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+    ) -> Result<(), i32> {
+        let endpoint = self
+            .socket_ipv4_endpoint(accepted_fd, true)?
+            .unwrap_or(super::net::Ipv4SocketEndpoint { addr: [0; 4], port: 0 });
+        let mut sockaddr = [0u8; 16];
+        sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
+        sockaddr[2..4].copy_from_slice(&endpoint.port.to_be_bytes());
+        sockaddr[4..8].copy_from_slice(&endpoint.addr);
+        self.linux.write_bytes(addr_ptr, &sockaddr).map_err(|_| ERR_EFAULT)?;
+        self.linux.write_bytes(addr_len_ptr, &16u32.to_le_bytes()).map_err(|_| ERR_EFAULT)
     }
 
     fn finish_net_stack_accept_fd(

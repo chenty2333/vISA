@@ -557,7 +557,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                             self.collect_epoll_ready(epoll_id, max_events)
                         }
                         WaitSource::SocketConnect { .. } => Ok(LinuxCallResult::Ret(0)),
-                        WaitSource::SocketAccept { fd, flags } => self.try_accept_fd(fd, flags),
+                        WaitSource::SocketAccept {
+                            fd,
+                            flags,
+                            addr_ptr,
+                            addr_len_ptr,
+                            write_addr,
+                        } => self.try_accept_fd_with_sockaddr_writeback(
+                            fd,
+                            flags,
+                            addr_ptr,
+                            addr_len_ptr,
+                            write_addr,
+                        ),
                         WaitSource::FileLock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Flock { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::ChildExit { .. } => Ok(LinuxCallResult::Ret(0)),

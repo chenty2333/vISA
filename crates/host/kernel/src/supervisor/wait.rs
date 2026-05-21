@@ -29,6 +29,9 @@ pub(crate) enum WaitRegistration {
     SocketAccept {
         fd: u32,
         flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
     },
     FileLock {
         fd: u32,
@@ -89,7 +92,7 @@ pub(crate) enum WaitSource {
     Futex,
     Epoll { epoll_id: u32, max_events: u32 },
     SocketConnect { fd: u32 },
-    SocketAccept { fd: u32, flags: u32 },
+    SocketAccept { fd: u32, flags: u32, addr_ptr: u32, addr_len_ptr: u32, write_addr: bool },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
     Flock { fd: u32, owner: u64, exclusive: bool },
     ChildExit { caller_pid: u32, selector: i64 },
@@ -148,9 +151,12 @@ impl WaitRegistry {
             WaitRegistration::SocketConnect { fd } => {
                 (WaitKind::SocketConnect, WaitSource::SocketConnect { fd }, 0, None)
             }
-            WaitRegistration::SocketAccept { fd, flags } => {
-                (WaitKind::SocketAccept, WaitSource::SocketAccept { fd, flags }, 0, None)
-            }
+            WaitRegistration::SocketAccept { fd, flags, addr_ptr, addr_len_ptr, write_addr } => (
+                WaitKind::SocketAccept,
+                WaitSource::SocketAccept { fd, flags, addr_ptr, addr_len_ptr, write_addr },
+                0,
+                None,
+            ),
             WaitRegistration::FileLock { fd, owner, lock_type, whence, start, len } => (
                 WaitKind::FileLock,
                 WaitSource::FileLock { fd, owner, lock_type, whence, start, len },
@@ -389,7 +395,13 @@ mod tests {
         let mut registry = WaitRegistry::new();
         let token = registry.register(
             7,
-            WaitRegistration::SocketAccept { fd: 4, flags: 0o2000000 },
+            WaitRegistration::SocketAccept {
+                fd: 4,
+                flags: 0o2000000,
+                addr_ptr: 0x2100,
+                addr_len_ptr: 0x2200,
+                write_addr: true,
+            },
             0,
             100,
         );
@@ -397,7 +409,13 @@ mod tests {
         assert_eq!(token.kind, WaitKind::SocketAccept);
         assert_eq!(
             registry.pending_source(token),
-            Some(WaitSource::SocketAccept { fd: 4, flags: 0o2000000 })
+            Some(WaitSource::SocketAccept {
+                fd: 4,
+                flags: 0o2000000,
+                addr_ptr: 0x2100,
+                addr_len_ptr: 0x2200,
+                write_addr: true,
+            })
         );
 
         registry.apply_event(Event::WaitReady(token.id));
@@ -406,7 +424,13 @@ mod tests {
             Some(WaitResolution {
                 outcome: WaitOutcome::Ready,
                 resume_cookie: 0,
-                source: WaitSource::SocketAccept { fd: 4, flags: 0o2000000 },
+                source: WaitSource::SocketAccept {
+                    fd: 4,
+                    flags: 0o2000000,
+                    addr_ptr: 0x2100,
+                    addr_len_ptr: 0x2200,
+                    write_addr: true,
+                },
             })
         );
     }
