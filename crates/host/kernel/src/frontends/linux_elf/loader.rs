@@ -17,13 +17,13 @@ use xmas_elf::{ElfFile, header::Type as ElfType, program::Type as ProgramType};
 use super::context::{
     LoadedUserImage, UserFrameAllocator, UserPageBacking, UserPageMapping, UserRegion,
 };
-use crate::supervisor::linux_user_resource_bytes_for_path;
+use crate::supervisor::{linux_user_resource_bytes_for_path, types::DEFAULT_RLIMIT_STACK_BYTES};
 
 const LIVE_PAGE_TABLE_AUTHORITY: &str = "LiveUserPageTableAuthority";
 const PAGE_SIZE: usize = 4096;
 const USER_STACK_PAGES: usize = 2048;
 const USER_STACK_TOP: u64 = 0x0000_0000_7000_0000;
-const USER_STACK_BASE: u64 = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE) as u64;
+const USER_STACK_BYTES: u64 = (USER_STACK_PAGES * PAGE_SIZE) as u64;
 const USER_PIE_BASE: u64 = 0x0000_0000_4000_0000;
 const USER_INTERP_BASE: u64 = 0x0000_0000_5000_0000;
 pub(crate) const USER_MMAP_BASE: u64 = 0x0000_0000_6000_0000;
@@ -995,6 +995,7 @@ pub(crate) fn prepare_user_program(
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
+    stack_limit: u64,
     stack_credentials: ExecStackCredentials,
 ) -> Result<PreparedUserImage, &'static str> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
@@ -1012,6 +1013,7 @@ pub(crate) fn prepare_user_program(
         argv,
         envp,
         execfn,
+        stack_limit,
         stack_credentials,
         &mut regions,
         &mut page_mappings,
@@ -1037,6 +1039,7 @@ fn prepare_user_program_inner(
     argv: &[Vec<u8>],
     envp: &[Vec<u8>],
     execfn: &[u8],
+    stack_limit: u64,
     stack_credentials: ExecStackCredentials,
     regions: &mut Vec<UserRegion>,
     page_mappings: &mut Vec<UserPageMapping>,
@@ -1085,6 +1088,8 @@ fn prepare_user_program_inner(
         (main_entry, 0)
     };
 
+    let stack_pages = stack_pages_for_rlimit(stack_limit)?;
+    let stack_base = stack_base_for_pages(stack_pages);
     let initial_stack = build_exec_stack(
         elf,
         main_load_bias,
@@ -1095,9 +1100,9 @@ fn prepare_user_program_inner(
         execfn,
         stack_credentials,
     )?;
-    prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack)?;
+    prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack, stack_pages)?;
     regions.push(UserRegion {
-        start: USER_STACK_BASE,
+        start: stack_base,
         end: USER_STACK_TOP,
         readable: true,
         writable: true,
@@ -1191,6 +1196,7 @@ fn load_user_program(
         &argv,
         &envp,
         b"/bin/vmos-ltp",
+        DEFAULT_RLIMIT_STACK_BYTES,
         ExecStackCredentials::root(),
     )?;
     if let Err(err) = switch_user_page_mappings(
@@ -1262,9 +1268,11 @@ fn prepare_user_stack(
     page_mappings: &mut Vec<UserPageMapping>,
     phys_offset: VirtAddr,
     initial_stack: &InitialStack,
+    stack_pages: usize,
 ) -> Result<(), &'static str> {
-    for index in 0..USER_STACK_PAGES {
-        let addr = USER_STACK_BASE + (index * PAGE_SIZE) as u64;
+    let stack_base = stack_base_for_pages(stack_pages);
+    for index in 0..stack_pages {
+        let addr = stack_base + (index * PAGE_SIZE) as u64;
         let frame =
             frame_allocator.allocate_frame().ok_or("out of usable frames for user stack")?;
         page_mappings.push(UserPageMapping {
@@ -1283,6 +1291,19 @@ fn prepare_user_stack(
     }
 
     Ok(())
+}
+
+fn stack_pages_for_rlimit(limit: u64) -> Result<usize, &'static str> {
+    let bounded = limit.min(USER_STACK_BYTES);
+    let pages = bounded / PAGE_SIZE as u64;
+    if pages == 0 {
+        return Err("initial stack exceeded rlimit");
+    }
+    usize::try_from(pages).map_err(|_| "initial stack exceeded rlimit")
+}
+
+fn stack_base_for_pages(pages: usize) -> u64 {
+    USER_STACK_TOP - (pages * PAGE_SIZE) as u64
 }
 
 fn release_prepared_page_mappings(
@@ -1536,4 +1557,29 @@ fn user_page_iter(start: u64, len: u64) -> Result<impl Iterator<Item = u64>, &'s
         return Err("user page range is not page aligned");
     }
     Ok((start..end).step_by(PAGE_SIZE))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_pages_for_rlimit_bounds_fixed_stack_region() {
+        assert_eq!(stack_pages_for_rlimit(u64::MAX), Ok(USER_STACK_PAGES));
+        assert_eq!(
+            stack_pages_for_rlimit(USER_STACK_BYTES + PAGE_SIZE as u64),
+            Ok(USER_STACK_PAGES)
+        );
+        assert_eq!(stack_pages_for_rlimit(PAGE_SIZE as u64 * 2), Ok(2));
+        assert_eq!(stack_base_for_pages(2), USER_STACK_TOP - PAGE_SIZE as u64 * 2);
+    }
+
+    #[test]
+    fn stack_pages_for_rlimit_rejects_subpage_stack() {
+        assert_eq!(stack_pages_for_rlimit(0), Err("initial stack exceeded rlimit"));
+        assert_eq!(
+            stack_pages_for_rlimit(PAGE_SIZE as u64 - 1),
+            Err("initial stack exceeded rlimit")
+        );
+    }
 }

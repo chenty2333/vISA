@@ -31,10 +31,10 @@ use super::{
     },
     store_manager::StoreManager,
     types::{
-        BpfMapState, EventFdState, FdEntry, GenericLockedMmapRange, GenericMmapRegion,
-        InjectedFault, Pid, PipeState, ProcessAccessState, ProcessRuntimeState,
-        ProcessRuntimeStateKind, RLIMIT_NOFILE, Rlimit, RuntimeClockAdjustmentState, SeccompMode,
-        ServiceCallError, SigAction, SocketPairState, TaskId, ThreadRuntimeState,
+        BpfMapState, DEFAULT_RLIMIT_STACK_BYTES, EventFdState, FdEntry, GenericLockedMmapRange,
+        GenericMmapRegion, InjectedFault, Pid, PipeState, ProcessAccessState, ProcessRuntimeState,
+        ProcessRuntimeStateKind, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit, RuntimeClockAdjustmentState,
+        SeccompMode, ServiceCallError, SigAction, SocketPairState, TaskId, ThreadRuntimeState,
         ThreadRuntimeStateKind, Tid, TimerFdState,
     },
     wait::WaitRegistry,
@@ -46,6 +46,8 @@ static mut ACTIVE_RUNTIME: *mut PrototypeRuntime<'static> = null_mut();
 fn default_process_rlimits() -> [Rlimit; 16] {
     let mut limits = [Rlimit::default(); 16];
     limits[RLIMIT_NOFILE] = Rlimit { cur: 1024, max: 1024 };
+    limits[RLIMIT_STACK] =
+        Rlimit { cur: DEFAULT_RLIMIT_STACK_BYTES, max: DEFAULT_RLIMIT_STACK_BYTES };
     limits
 }
 

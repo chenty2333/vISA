@@ -147,7 +147,10 @@ mod tests {
     use vmos_abi::{ERR_EPERM, SYS_PRLIMIT64, SyscallContext};
 
     use super::{
-        super::{engine::RuntimeOnlyExecutor, types::RLIMIT_NOFILE},
+        super::{
+            engine::RuntimeOnlyExecutor,
+            types::{DEFAULT_RLIMIT_STACK_BYTES, RLIMIT_NOFILE, RLIMIT_STACK},
+        },
         *,
     };
 
@@ -161,6 +164,16 @@ mod tests {
             LinuxCallResult::Ret(ret) => ret,
             other => panic!("expected Ret, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn default_runtime_stack_rlimit_matches_linux_elf_stack_ceiling() {
+        let runtime = test_runtime();
+        let pid = runtime.current_pid();
+        assert_eq!(
+            runtime.get_rlimit(pid, RLIMIT_STACK),
+            Rlimit { cur: DEFAULT_RLIMIT_STACK_BYTES, max: DEFAULT_RLIMIT_STACK_BYTES }
+        );
     }
 
     #[test]

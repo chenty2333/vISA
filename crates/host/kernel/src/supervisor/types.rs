@@ -116,11 +116,14 @@ impl Default for Rlimit {
 }
 
 pub(crate) const RLIMIT_FSIZE: usize = 1;
+pub(crate) const RLIMIT_STACK: usize = 3;
 pub(crate) const RLIMIT_NPROC: usize = 6;
 pub(crate) const RLIMIT_NOFILE: usize = 7;
 pub(crate) const RLIMIT_MEMLOCK: usize = 8;
 pub(crate) const RLIMIT_AS: usize = 9;
 pub(crate) const RLIMIT_SIGPENDING: usize = 11;
+
+pub(crate) const DEFAULT_RLIMIT_STACK_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct GenericMmapRegion {

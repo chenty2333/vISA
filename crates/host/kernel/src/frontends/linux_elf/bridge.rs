@@ -69,7 +69,7 @@ use crate::{
         types::{
             AccessIds, CAP_IPC_LOCK, CAP_SETGID, CAP_SETPCAP, CAP_SYS_ADMIN, CAP_SYS_CHROOT,
             CAP_SYS_RESOURCE, LINUX_KNOWN_CAPS, LINUX_SUPPORTED_SECUREBITS, PendingSignal,
-            RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, Rlimit, RobustListRegistration,
+            RLIMIT_AS, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_STACK, Rlimit, RobustListRegistration,
             RseqRegistration, SIGALTSTACK_SS_AUTODISARM, SIGALTSTACK_SS_DISABLE,
             SIGALTSTACK_SS_ONSTACK, ServiceCallError, SigAction, SignalAltStack,
             UserSignalDelivery,
@@ -1255,6 +1255,7 @@ fn execve_replace_image(
     let envp = sanitize_secure_exec_envp(envp, stack_credentials.secure);
     let image = {
         let context = active_context();
+        let stack_limit = context.supervisor.get_rlimit(context.pid, RLIMIT_STACK).cur;
         prepare_user_program(
             context.physical_memory_offset(),
             &mut context.frame_allocator,
@@ -1263,6 +1264,7 @@ fn execve_replace_image(
             &argv,
             &envp,
             resolved,
+            stack_limit,
             stack_credentials,
         )
         .map_err(exec_load_errno)?
@@ -1497,6 +1499,7 @@ fn exec_load_errno(err: &'static str) -> i32 {
         "initial stack underflowed"
         | "initial stack overflowed"
         | "initial stack exceeded one page"
+        | "initial stack exceeded rlimit"
         | "initial stack string contains nul" => ERR_E2BIG,
         _ => ERR_EFAULT,
     }
