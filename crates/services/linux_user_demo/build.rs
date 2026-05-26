@@ -6,7 +6,8 @@ fn main() {
     let linker_script = manifest_dir.join("linker.ld");
 
     println!("cargo:rerun-if-changed={}", linker_script.display());
-    for binary in ["linux_user_demo", "mmap_sigbus", "private_mremap_unlink"] {
+    for binary in ["linux_user_demo", "mmap_sigbus", "private_mremap_unlink", "cow_fork_user_write"]
+    {
         println!("cargo:rustc-link-arg-bin={binary}=-T{}", linker_script.display());
         println!("cargo:rustc-link-arg-bin={binary}=-static");
         println!("cargo:rustc-link-arg-bin={binary}=-no-pie");

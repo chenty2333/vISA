@@ -8492,7 +8492,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
         .require_capability("linux_elf_frontend", "dmw.window", "acquire")
         .map_err(|_| ERR_EPERM)?;
     validate_user_range(ptr, len, writable)?;
-    ensure_active_user_pages_present(ptr, len)?;
+    ensure_active_user_pages_present(ptr, len, writable)?;
     let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
         .map_err(map_dmw_fault)?;
     let generation = lease.generation();
@@ -9582,7 +9582,7 @@ fn cow_break_active_user_page(page: u64, prot: u64) -> Result<(), i32> {
     Ok(())
 }
 
-fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
+fn ensure_active_user_pages_present(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
     if len == 0 {
         return Ok(());
     }
@@ -9592,7 +9592,7 @@ fn ensure_active_user_pages_present(ptr: u64, len: u64) -> Result<(), i32> {
     let mut page = start;
     while page < end {
         let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
-        prefault_active_user_page(page, prot, false)?;
+        prefault_active_user_page(page, prot, write)?;
         page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
     Ok(())

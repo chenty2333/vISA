@@ -23,5 +23,11 @@ path = "src/bin/private_mremap_unlink.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "cow_fork_user_write"
+path = "src/bin/cow_fork_user_write.rs"
+test = false
+bench = false
+
 [dependencies]
 vmos_abi.workspace = true
