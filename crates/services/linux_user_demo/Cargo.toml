@@ -17,5 +17,11 @@ path = "src/bin/mmap_sigbus.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "private_mremap_unlink"
+path = "src/bin/private_mremap_unlink.rs"
+test = false
+bench = false
+
 [dependencies]
 vmos_abi.workspace = true
