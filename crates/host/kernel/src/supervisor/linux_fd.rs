@@ -151,6 +151,32 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(errno_from_service_error)
     }
 
+    pub(crate) fn read_private_mmap_vfs_fd_range(
+        &mut self,
+        fd: u32,
+        offset: usize,
+        count: usize,
+    ) -> Result<(Option<(u64, Vec<u8>)>, Vec<u8>), i32> {
+        let count = u32::try_from(count).map_err(|_| ERR_EINVAL)?;
+        self.require_fd_readable(fd).map_err(errno_from_service_error)?;
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(ERR_EINVAL);
+        }
+        if node == NodeKind::Directory {
+            return Err(vmos_abi::ERR_EISDIR);
+        }
+        if node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        let bytes = self
+            .vfs
+            .read_file_range_by_id(vfs_node_id, &path, offset, count)
+            .map_err(errno_from_service_error)?;
+        Ok((vfs_node_id.map(|id| (id, path)), bytes))
+    }
+
     pub(crate) fn read_shared_mmap_vfs_fd_range(
         &mut self,
         fd: u32,

@@ -52,8 +52,8 @@ use x86_64::{
 use super::{
     context::{
         ActiveUserContext, ClockAdjustmentState, CredentialState, ExecFileCapabilities,
-        UserAddressSpaceState, UserPageBacking, UserPageMapping, UserRegion, active_context,
-        install_active_context, try_active_context,
+        FilePrivateSource, UserAddressSpaceState, UserPageBacking, UserPageMapping, UserRegion,
+        active_context, install_active_context, try_active_context,
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
@@ -5417,7 +5417,7 @@ fn sys_fcntl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 enum MmapFileBacking {
-    Private(Vec<u8>),
+    Private { source: Option<FilePrivateSource>, bytes: Vec<u8> },
     Shared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8> },
 }
 
@@ -5441,9 +5441,17 @@ fn mmap_file_page_mappings(
     while page < end {
         let copied = usize::try_from(page - start).map_err(|_| ERR_EFAULT)?;
         let backing = match &file_backing {
-            MmapFileBacking::Private(bytes) => {
+            MmapFileBacking::Private { source, bytes } => {
                 let (bytes, valid) = file_backed_page_bytes(bytes, copied);
-                UserPageBacking::FilePrivate { bytes, valid }
+                let source = source
+                    .as_ref()
+                    .map(|source| {
+                        let mut source = source.clone();
+                        source.offset = source.offset.checked_add(copied).ok_or(ERR_EINVAL)?;
+                        Ok::<FilePrivateSource, i32>(source)
+                    })
+                    .transpose()?;
+                UserPageBacking::FilePrivate { source, bytes, valid }
             }
             MmapFileBacking::Shared { vfs_node_id, path, offset, bytes } => {
                 let (bytes, valid) = file_backed_page_bytes(bytes, copied);
@@ -5565,6 +5573,83 @@ fn shared_mremap_tail_page_mappings(
     shared_mremap_tail_page_mappings_from_bytes(source, tail_start, tail_len, bytes)
 }
 
+fn private_mremap_tail_source(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+) -> Result<Option<FilePrivateSource>, i32> {
+    if old_len == 0 {
+        return Ok(None);
+    }
+    let Some(first) = mappings.iter().find(|mapping| mapping.va == old_addr) else {
+        return Ok(None);
+    };
+    let UserPageBacking::FilePrivate { source: Some(first_source), .. } = &first.backing else {
+        return Ok(None);
+    };
+    let base_source = first_source.clone();
+    let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    let mut page = old_addr;
+    while page < old_end {
+        let Some(mapping) = mappings.iter().find(|mapping| mapping.va == page) else {
+            return Err(ERR_ENOSYS);
+        };
+        let expected_offset = base_source
+            .offset
+            .checked_add(usize::try_from(page - old_addr).map_err(|_| ERR_EINVAL)?)
+            .ok_or(ERR_EINVAL)?;
+        let UserPageBacking::FilePrivate { source: Some(source), .. } = &mapping.backing else {
+            return Err(ERR_ENOSYS);
+        };
+        if source.vfs_node_id != base_source.vfs_node_id
+            || source.path != base_source.path
+            || source.offset != expected_offset
+        {
+            return Err(ERR_ENOSYS);
+        }
+        page = page.checked_add(4096).ok_or(ERR_EINVAL)?;
+    }
+    let mut tail_source = base_source;
+    tail_source.offset = tail_source
+        .offset
+        .checked_add(usize::try_from(old_len).map_err(|_| ERR_EINVAL)?)
+        .ok_or(ERR_EINVAL)?;
+    Ok(Some(tail_source))
+}
+
+fn private_mremap_tail_page_mappings_from_bytes(
+    source: FilePrivateSource,
+    tail_start: u64,
+    tail_len: u64,
+    bytes: Vec<u8>,
+) -> Result<Vec<UserPageMapping>, i32> {
+    mmap_file_page_mappings(
+        tail_start,
+        tail_len,
+        MmapFileBacking::Private { source: Some(source), bytes },
+    )
+}
+
+fn private_mremap_tail_page_mappings(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+    tail_start: u64,
+    tail_len: u64,
+) -> Result<Vec<UserPageMapping>, i32> {
+    let Some(source) = private_mremap_tail_source(mappings, old_addr, old_len)? else {
+        return Ok(Vec::new());
+    };
+    let count = usize::try_from(tail_len).map_err(|_| ERR_ENOMEM)?;
+    let bytes = active_context().supervisor.read_shared_mmap_vfs_range(
+        source.vfs_node_id,
+        &source.path,
+        source.offset,
+        count,
+    )?;
+    private_mremap_tail_page_mappings_from_bytes(source, tail_start, tail_len, bytes)
+}
+
 fn mremap_source_range_contains_file_backed_mapping(
     mappings: &[UserPageMapping],
     old_addr: u64,
@@ -5585,6 +5670,11 @@ fn mremap_growth_tail_page_mappings(
 ) -> Result<Vec<UserPageMapping>, i32> {
     if shared_mremap_tail_source(mappings, old_addr, old_len)?.is_some() {
         return shared_mremap_tail_page_mappings(mappings, old_addr, old_len, tail_start, tail_len);
+    }
+    if private_mremap_tail_source(mappings, old_addr, old_len)?.is_some() {
+        return private_mremap_tail_page_mappings(
+            mappings, old_addr, old_len, tail_start, tail_len,
+        );
     }
     if mremap_source_range_contains_file_backed_mapping(mappings, old_addr, old_len)? {
         return Err(ERR_ENOSYS);
@@ -5628,9 +5718,11 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         let offset = usize::try_from(frame.r9).map_err(|_| ERR_EINVAL)?;
         let count = usize::try_from(len).map_err(|_| ERR_ENOMEM)?;
         if private {
-            Some(MmapFileBacking::Private(
-                active_context().supervisor.read_vfs_fd_range(fd, offset, count)?,
-            ))
+            let (source, bytes) =
+                active_context().supervisor.read_private_mmap_vfs_fd_range(fd, offset, count)?;
+            let source =
+                source.map(|(vfs_node_id, path)| FilePrivateSource { vfs_node_id, path, offset });
+            Some(MmapFileBacking::Private { source, bytes })
         } else {
             let (vfs_node_id, path, bytes) = active_context()
                 .supervisor
@@ -7235,10 +7327,10 @@ mod tests {
     };
 
     use super::{
-        CloneRequest, FCNTL_F_SETLKW, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11,
-        LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking, PSELECT6_MAX_FDS,
-        SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping,
-        UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
+        CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock, LINUX_GREG_EFL,
+        LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking,
+        PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking,
+        UserPageMapping, UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
         demand_mapping_candidate_page, encode_linux_ucontext, file_shared_page_valid_bytes_for_len,
         file_shared_page_valid_for_len, file_shared_page_writeback_bytes_for_len,
         file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
@@ -7246,12 +7338,14 @@ mod tests {
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
         futex_pi_wait_word, mmap_file_page_mappings, mremap_growth_tail_page_mappings,
         parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
-        preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
-        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
-        restartable_interrupted_syscall, sanitize_restored_rflags, select_remaining_timeout_ms,
-        select_timeval_bytes, select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes,
-        shared_mremap_tail_source, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        preadv2_flags_nowait, preadv2_offset_from_split,
+        private_mremap_tail_page_mappings_from_bytes, private_mremap_tail_source,
+        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
+        read_linux_greg, restartable_interrupted_syscall, sanitize_restored_rflags,
+        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms,
+        shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
+        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
+        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7442,7 +7536,7 @@ mod tests {
         let mappings = mmap_file_page_mappings(
             0x10_000,
             8192,
-            MmapFileBacking::Private(vec![0xaa, 0xbb, 0xcc]),
+            MmapFileBacking::Private { source: None, bytes: vec![0xaa, 0xbb, 0xcc] },
         )
         .expect("private file mmap pages");
 
@@ -7450,17 +7544,56 @@ mod tests {
         assert_eq!(mappings[0].va, 0x10_000);
         assert!(!mappings[0].present);
         assert_eq!(mappings[0].frame_start, 0);
-        let UserPageBacking::FilePrivate { bytes, valid } = &mappings[0].backing else {
+        let UserPageBacking::FilePrivate { bytes, valid, source } = &mappings[0].backing else {
             panic!("first page should be private file-backed");
         };
         assert!(*valid);
+        assert!(source.is_none());
         assert_eq!(bytes, &[0xaa, 0xbb, 0xcc]);
 
-        let UserPageBacking::FilePrivate { bytes, valid } = &mappings[1].backing else {
+        let UserPageBacking::FilePrivate { bytes, valid, source } = &mappings[1].backing else {
             panic!("second page should be private file-backed");
         };
         assert!(!*valid);
+        assert!(source.is_none());
         assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn file_private_mmap_page_mappings_preserve_dynamic_source_offsets() {
+        let mappings = mmap_file_page_mappings(
+            0x18_000,
+            8192,
+            MmapFileBacking::Private {
+                source: Some(FilePrivateSource {
+                    vfs_node_id: 17,
+                    path: b"/tmp/private-source".to_vec(),
+                    offset: 0x3000,
+                }),
+                bytes: vec![0x33; 4097],
+            },
+        )
+        .expect("private source mappings");
+
+        let UserPageBacking::FilePrivate { source: Some(source), bytes, valid } =
+            &mappings[0].backing
+        else {
+            panic!("first page should have a private file source");
+        };
+        assert_eq!(source.vfs_node_id, 17);
+        assert_eq!(source.path.as_slice(), b"/tmp/private-source");
+        assert_eq!(source.offset, 0x3000);
+        assert!(*valid);
+        assert_eq!(bytes.len(), 4096);
+
+        let UserPageBacking::FilePrivate { source: Some(source), bytes, valid } =
+            &mappings[1].backing
+        else {
+            panic!("second page should have a private file source");
+        };
+        assert_eq!(source.offset, 0x4000);
+        assert!(*valid);
+        assert_eq!(bytes, &[0x33]);
     }
 
     #[test]
@@ -7667,15 +7800,63 @@ mod tests {
 
     #[test]
     fn file_private_mremap_growth_rejects_anonymous_tail_fallback() {
-        let source_mappings =
-            mmap_file_page_mappings(0x70_000, 4096, MmapFileBacking::Private(vec![0x5a; 4096]))
-                .expect("source private mapping");
+        let source_mappings = mmap_file_page_mappings(
+            0x70_000,
+            4096,
+            MmapFileBacking::Private { source: None, bytes: vec![0x5a; 4096] },
+        )
+        .expect("source private mapping");
 
         assert_eq!(
             mremap_growth_tail_page_mappings(&source_mappings, 0x70_000, 4096, 0x71_000, 4096)
                 .err(),
             Some(vmos_abi::ERR_ENOSYS)
         );
+    }
+
+    #[test]
+    fn file_private_mremap_growth_tail_uses_dynamic_source_snapshot() {
+        let source_mappings = mmap_file_page_mappings(
+            0x90_000,
+            4096,
+            MmapFileBacking::Private {
+                source: Some(FilePrivateSource {
+                    vfs_node_id: 21,
+                    path: b"/tmp/private-mremap".to_vec(),
+                    offset: 0x8000,
+                }),
+                bytes: vec![0x44; 4096],
+            },
+        )
+        .expect("private source mapping");
+        let source = private_mremap_tail_source(&source_mappings, 0x90_000, 4096)
+            .expect("tail source")
+            .expect("private tail source");
+        assert_eq!(source.vfs_node_id, 21);
+        assert_eq!(source.path.as_slice(), b"/tmp/private-mremap");
+        assert_eq!(source.offset, 0x9000);
+
+        let tail_mappings =
+            private_mremap_tail_page_mappings_from_bytes(source, 0x91_000, 8192, vec![0x55; 4097])
+                .expect("private tail mappings");
+
+        let UserPageBacking::FilePrivate { source: Some(source), bytes, valid } =
+            &tail_mappings[0].backing
+        else {
+            panic!("first tail page should have a private file source");
+        };
+        assert_eq!(source.offset, 0x9000);
+        assert!(*valid);
+        assert_eq!(bytes.len(), 4096);
+
+        let UserPageBacking::FilePrivate { source: Some(source), bytes, valid } =
+            &tail_mappings[1].backing
+        else {
+            panic!("second tail page should have a private file source");
+        };
+        assert_eq!(source.offset, 0xa000);
+        assert!(*valid);
+        assert_eq!(bytes, &[0x55]);
     }
 
     #[test]

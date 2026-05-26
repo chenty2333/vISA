@@ -33,9 +33,16 @@ pub(crate) struct UserRegion {
 }
 
 #[derive(Clone)]
+pub(crate) struct FilePrivateSource {
+    pub(crate) vfs_node_id: u64,
+    pub(crate) path: Vec<u8>,
+    pub(crate) offset: usize,
+}
+
+#[derive(Clone)]
 pub(crate) enum UserPageBacking {
     ZeroFill,
-    FilePrivate { bytes: Vec<u8>, valid: bool },
+    FilePrivate { source: Option<FilePrivateSource>, bytes: Vec<u8>, valid: bool },
     FileShared { vfs_node_id: u64, path: Vec<u8>, offset: usize, bytes: Vec<u8>, valid: bool },
     Preserve,
 }

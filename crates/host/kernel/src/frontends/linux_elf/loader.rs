@@ -890,7 +890,7 @@ fn materialize_user_page_frame(
     let dest = frame_bytes(frame, authority.phys_offset);
     match &mapping.backing {
         UserPageBacking::ZeroFill => dest.fill(0),
-        UserPageBacking::FilePrivate { bytes, valid } => {
+        UserPageBacking::FilePrivate { bytes, valid, .. } => {
             if !valid {
                 authority.frame_allocator.deallocate_frame(frame);
                 return Err("file-backed user page is beyond EOF");
