@@ -257,10 +257,6 @@ pub(crate) struct AccessIds<'a> {
 }
 
 impl<'a> AccessIds<'a> {
-    pub(crate) const fn new(uid: u32, gid: u32, supplementary_groups: &'a [u32]) -> Self {
-        Self { uid, gid, supplementary_groups, cap_effective: 0 }
-    }
-
     pub(crate) const fn with_caps(
         uid: u32,
         gid: u32,

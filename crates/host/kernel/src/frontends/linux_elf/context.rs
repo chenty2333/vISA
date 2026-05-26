@@ -1263,7 +1263,7 @@ impl ActiveUserContext {
     }
 
     pub(crate) fn open_owner_ids(&self) -> u64 {
-        ((self.euid as u64) << 32) | self.egid as u64
+        ((self.fsuid as u64) << 32) | self.fsgid as u64
     }
 
     pub(crate) fn umask(&self) -> u32 {

@@ -8,7 +8,7 @@ use vmos_abi::{
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{AccessIds, FdEntry, FdResource, ServiceCallError},
+    types::{FdEntry, FdResource, ServiceCallError},
 };
 
 const O_DIRECTORY: u64 = 0o200000;
@@ -111,9 +111,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         let path = self.linux.read_bytes(ptr, len)?;
         let status_flags = linux_status_flags_from_open_flags(plan.args[3]);
         let access_mask = linux_open_access_mask(plan.args[3]);
-        let uid = (plan.args[5] >> 32) as u32;
-        let gid = plan.args[5] as u32;
-        let access = AccessIds::new(uid, gid, &[]);
+        let access_state = self.current_access_state();
+        let access = access_state.ids();
 
         match self.lookup_path(&path) {
             Ok(info) => {
@@ -159,7 +158,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 if !self.can_allocate_fds(1) {
                     return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
                 }
-                match self.vfs.create_file(&path, mode, uid, gid) {
+                match self.vfs.create_file(&path, mode, access.uid, access.gid) {
                     Ok(()) => {
                         let vfs_node_id = self.vfs.node_id_for_path(&path);
                         let fd = match self.alloc_fd(FdEntry {
@@ -404,7 +403,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(path) => path,
             Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
         };
-        let access = AccessIds::new(0, 0, &[]);
+        let access_state = self.current_access_state();
+        let access = access_state.ids();
 
         match self.rename_path(&old_path, &new_path, flags, access) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
@@ -435,7 +435,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(path) => path,
             Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
         };
-        let access = AccessIds::new(0, 0, &[]);
+        let access_state = self.current_access_state();
+        let access = access_state.ids();
 
         match self.link_path(&old_path, &new_path, access) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
@@ -509,19 +510,21 @@ fn normalize_plan_path(path: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{boxed::Box, vec::Vec};
+    use alloc::{boxed::Box, vec, vec::Vec};
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, ERR_EFBIG, SOCK_STREAM, SYS_OPENAT, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV,
-        SyscallContext,
+        AF_INET, ERR_EFBIG, SOCK_STREAM, SYS_LINKAT, SYS_OPENAT, SYS_READ, SYS_READV,
+        SYS_RENAMEAT2, SYS_WRITE, SYS_WRITEV, SyscallContext,
     };
 
     use super::{
         super::{
             engine::RuntimeOnlyExecutor,
             runtime::PrototypeRuntime,
-            types::{FdEntry, FdResource, RLIMIT_FSIZE, Rlimit},
+            types::{
+                CAP_DAC_OVERRIDE, FdEntry, FdResource, ProcessAccessState, RLIMIT_FSIZE, Rlimit,
+            },
         },
         *,
     };
@@ -543,6 +546,11 @@ mod tests {
             LinuxCallResult::Bytes(bytes) => bytes,
             other => panic!("expected bytes return, got {other:?}"),
         }
+    }
+
+    fn set_current_access(runtime: &mut PrototypeRuntime<'_>, access: ProcessAccessState) {
+        let pid = runtime.current_pid();
+        runtime.processes.iter_mut().find(|process| process.pid == pid).unwrap().access = access;
     }
 
     fn write_fd(runtime: &mut PrototypeRuntime<'_>, fd: u32, bytes: &[u8]) -> i64 {
@@ -600,6 +608,171 @@ mod tests {
             })
             .expect("legacy socket fd");
         (fd, socket_id)
+    }
+
+    #[test]
+    fn generic_openat_uses_runtime_fs_credentials_for_dac() {
+        let mut runtime = test_runtime();
+        runtime.vfs.mkdir(b"/tmp/fsuid-open", 0o700, 2000, 100).expect("private dir");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                2000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+
+        let (ptr, len) =
+            runtime.write_linux_arg_bytes(b"/tmp/fsuid-open/created").expect("open path");
+        let create = runtime
+            .dispatch_linux_syscall(
+                "test_openat_fsuid_create",
+                SyscallContext::new(SYS_OPENAT, [0, ptr as u64, len as u64, 0o102, 0o600, 0]),
+            )
+            .expect("openat fsuid dispatch");
+        assert!(expect_ret(create) >= 3);
+        assert_eq!(runtime.vfs.owner_for_path(b"/tmp/fsuid-open/created"), (2000, 100));
+    }
+
+    #[test]
+    fn generic_openat_honors_supplementary_groups_and_caps() {
+        let mut runtime = test_runtime();
+        runtime.vfs.create_file(b"/tmp/supp-readable", 0o640, 2000, 555).expect("group file");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                vec![555],
+                0,
+                0,
+            ),
+        );
+        let (ptr, len) = runtime.write_linux_arg_bytes(b"/tmp/supp-readable").expect("supp path");
+        let read = runtime
+            .dispatch_linux_syscall(
+                "test_openat_supp_group",
+                SyscallContext::new(SYS_OPENAT, [0, ptr as u64, len as u64, 0, 0, 0]),
+            )
+            .expect("supplementary group openat dispatch");
+        assert!(expect_ret(read) >= 3);
+
+        runtime.vfs.create_file(b"/tmp/cap-readable", 0o000, 2000, 555).expect("cap file");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                CAP_DAC_OVERRIDE,
+                CAP_DAC_OVERRIDE,
+            ),
+        );
+        let (ptr, len) = runtime.write_linux_arg_bytes(b"/tmp/cap-readable").expect("cap path");
+        let read = runtime
+            .dispatch_linux_syscall(
+                "test_openat_cap_override",
+                SyscallContext::new(SYS_OPENAT, [0, ptr as u64, len as u64, 0, 0, 0]),
+            )
+            .expect("cap override openat dispatch");
+        assert!(expect_ret(read) >= 3);
+    }
+
+    #[test]
+    fn generic_rename_and_link_use_runtime_fs_credentials() {
+        let mut runtime = test_runtime();
+        runtime.vfs.mkdir(b"/tmp/fsuid-links", 0o700, 3000, 300).expect("private dir");
+        runtime.vfs.create_file(b"/tmp/fsuid-links/source", 0o600, 3000, 300).expect("source");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                3000,
+                100,
+                100,
+                100,
+                300,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+
+        let old_path = b"/tmp/fsuid-links/source";
+        let new_path = b"/tmp/fsuid-links/renamed";
+        let mut rename_paths = Vec::new();
+        rename_paths.extend_from_slice(old_path);
+        rename_paths.extend_from_slice(new_path);
+        let (paths_ptr, _) = runtime.write_linux_arg_bytes(&rename_paths).expect("rename paths");
+        let old_ptr = paths_ptr;
+        let new_ptr = paths_ptr + old_path.len() as u32;
+        let rename = runtime
+            .dispatch_linux_syscall(
+                "test_renameat2_fsuid",
+                SyscallContext::new(
+                    SYS_RENAMEAT2,
+                    [
+                        AT_FDCWD as u64,
+                        old_ptr as u64,
+                        old_path.len() as u64,
+                        AT_FDCWD as u64,
+                        new_ptr as u64,
+                        new_path.len() as u64,
+                    ],
+                ),
+            )
+            .expect("renameat2 fsuid dispatch");
+        assert_eq!(expect_ret(rename), 0);
+
+        let old_path = b"/tmp/fsuid-links/renamed";
+        let new_path = b"/tmp/fsuid-links/hardlink";
+        let mut link_paths = Vec::new();
+        link_paths.extend_from_slice(old_path);
+        link_paths.extend_from_slice(new_path);
+        let (paths_ptr, _) = runtime.write_linux_arg_bytes(&link_paths).expect("link paths");
+        let old_ptr = paths_ptr;
+        let new_ptr = paths_ptr + old_path.len() as u32;
+        let link = runtime
+            .dispatch_linux_syscall(
+                "test_linkat_fsuid",
+                SyscallContext::new(
+                    SYS_LINKAT,
+                    [
+                        AT_FDCWD as u64,
+                        old_ptr as u64,
+                        old_path.len() as u64,
+                        AT_FDCWD as u64,
+                        new_ptr as u64,
+                        new_path.len() as u64,
+                    ],
+                ),
+            )
+            .expect("linkat fsuid dispatch");
+        assert_eq!(expect_ret(link), 0);
+        assert!(runtime.lookup_path(b"/tmp/fsuid-links/hardlink").is_ok());
     }
 
     #[test]
