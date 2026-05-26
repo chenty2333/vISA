@@ -5455,10 +5455,11 @@ fn mmap_file_page_mappings(
             }
             MmapFileBacking::Shared { vfs_node_id, path, offset, bytes } => {
                 let (bytes, valid) = file_backed_page_bytes(bytes, copied);
+                let offset = offset.checked_add(copied).ok_or(ERR_EINVAL)?;
                 UserPageBacking::FileShared {
                     vfs_node_id: *vfs_node_id,
                     path: path.clone(),
-                    offset: offset.saturating_add(copied),
+                    offset,
                     bytes,
                     valid,
                 }
@@ -5682,16 +5683,6 @@ fn mremap_growth_tail_page_mappings(
     Ok(Vec::new())
 }
 
-fn install_active_file_backed_page_range(
-    start: u64,
-    len: u64,
-    file_backing: MmapFileBacking,
-) -> Result<Vec<UserPageMapping>, i32> {
-    let mappings = mmap_file_page_mappings(start, len, file_backing)?;
-    active_context().page_mappings.extend(mappings.iter().cloned());
-    Ok(mappings)
-}
-
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
     let len = align_page(frame.rsi).ok_or(ERR_EINVAL)?;
     if len == 0 {
@@ -5749,7 +5740,11 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(vmos_abi::ERR_EEXIST);
     }
     check_future_user_lock_range(addr, len)?;
-    if fixed || file_backing.is_some() {
+    let replaces_existing = fixed || file_backing.is_some();
+    let file_mappings = file_backing
+        .map(|file_backing| mmap_file_page_mappings(addr, len, file_backing))
+        .transpose()?;
+    if replaces_existing {
         for (start, end) in existing_ranges {
             unmap_active_user_page_range(start, end - start)?;
             active_context().unmap_user_region(start, end - start);
@@ -5770,8 +5765,8 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         .supervisor
         .record_guest_memory_region(addr, len, readable, writable, executable);
     record_future_user_lock_range(addr, len);
-    if let Some(file_backing) = file_backing {
-        let mappings = install_active_file_backed_page_range(addr, len, file_backing)?;
+    if let Some(mappings) = file_mappings {
+        active_context().page_mappings.extend(mappings.iter().cloned());
         retain_file_backed_page_refs(&mappings);
     }
     Ok(addr as i64)
@@ -7597,6 +7592,26 @@ mod tests {
     }
 
     #[test]
+    fn file_private_mmap_page_mappings_reject_source_offset_overflow() {
+        assert_eq!(
+            mmap_file_page_mappings(
+                0x1a_000,
+                8192,
+                MmapFileBacking::Private {
+                    source: Some(FilePrivateSource {
+                        vfs_node_id: 19,
+                        path: b"/tmp/private-overflow".to_vec(),
+                        offset: usize::MAX - 2048,
+                    }),
+                    bytes: Vec::new(),
+                },
+            )
+            .err(),
+            Some(vmos_abi::ERR_EINVAL)
+        );
+    }
+
+    #[test]
     fn file_backed_mmap_ref_node_id_covers_private_sources_and_shared_pages() {
         let private = UserPageMapping {
             va: 0x19_000,
@@ -7633,6 +7648,24 @@ mod tests {
             ..private
         };
         assert_eq!(file_backed_mmap_ref_node_id(&shared), Some(42));
+    }
+
+    #[test]
+    fn file_shared_mmap_page_mappings_reject_source_offset_overflow() {
+        assert_eq!(
+            mmap_file_page_mappings(
+                0x1b_000,
+                8192,
+                MmapFileBacking::Shared {
+                    vfs_node_id: 20,
+                    path: b"/tmp/shared-overflow".to_vec(),
+                    offset: usize::MAX - 2048,
+                    bytes: Vec::new(),
+                },
+            )
+            .err(),
+            Some(vmos_abi::ERR_EINVAL)
+        );
     }
 
     #[test]
