@@ -11,5 +11,11 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "mmap_sigbus"
+path = "src/bin/mmap_sigbus.rs"
+test = false
+bench = false
+
 [dependencies]
 vmos_abi.workspace = true

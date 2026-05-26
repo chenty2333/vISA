@@ -70,6 +70,10 @@ fn interpret_status(
     config: &RunConfig,
 ) -> Result<(), Box<dyn Error>> {
     let serial = read_log(serial_log);
+    if serial_has_expected_user_status(&serial, config) {
+        print_success_logs(&serial, &read_log(debug_log), config);
+        return Ok(());
+    }
     match status.code() {
         Some(QEMU_SUCCESS_EXIT_STATUS) => {
             print_success_logs(&serial, &read_log(debug_log), config);
@@ -124,6 +128,13 @@ fn wait_for_demo(
         }
 
         let serial = read_log(serial_log);
+        if serial_has_expected_user_status(&serial, config) {
+            let _ = child.kill();
+            let _ = child.wait();
+            print_success_logs(&serial, &read_log(debug_log), config);
+            return Ok(());
+        }
+
         if serial.contains(DEMO_SUCCESS_MARKER) {
             let _ = child.kill();
             let _ = child.wait();
@@ -150,6 +161,12 @@ fn wait_for_demo(
 
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn serial_has_expected_user_status(serial: &str, config: &RunConfig) -> bool {
+    config.expected_user_status.is_some_and(|status| {
+        serial.contains(&format!("vmos: user ELF exited with status {status}"))
+    })
 }
 
 fn read_log(path: &PathBuf) -> String {
@@ -234,6 +251,7 @@ fn print_section(name: &str, content: &str) {
 struct RunConfig {
     verbose: bool,
     qemu_timeout: Duration,
+    expected_user_status: Option<i32>,
     extra_args: Vec<String>,
 }
 
@@ -249,8 +267,28 @@ impl RunConfig {
             }
         }
 
-        Ok(Self { verbose, qemu_timeout: configured_qemu_timeout()?, extra_args })
+        Ok(Self {
+            verbose,
+            qemu_timeout: configured_qemu_timeout()?,
+            expected_user_status: configured_expected_user_status()?,
+            extra_args,
+        })
     }
+}
+
+fn configured_expected_user_status() -> Result<Option<i32>, Box<dyn Error>> {
+    for key in ["VMOS_EXPECT_USER_STATUS", "VMOS_EXPECT_USER_EXIT_STATUS"] {
+        if let Ok(raw) = env::var(key) {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            let status =
+                trimmed.parse::<i32>().map_err(|_| format!("invalid {key} value: {raw}"))?;
+            return Ok(Some(status));
+        }
+    }
+    Ok(None)
 }
 
 fn configured_qemu_timeout() -> Result<Duration, Box<dyn Error>> {
@@ -284,4 +322,42 @@ fn parse_timeout_duration(raw: &str) -> Option<Duration> {
     }
 
     value.parse::<u64>().ok().map(Duration::from_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_expected_status(status: Option<i32>) -> RunConfig {
+        RunConfig {
+            verbose: false,
+            qemu_timeout: Duration::from_secs(1),
+            expected_user_status: status,
+            extra_args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn expected_user_status_matches_linux_elf_exit_marker() {
+        let config = config_with_expected_status(Some(135));
+
+        assert!(serial_has_expected_user_status(
+            "vmos: user ELF exited with status 135\n",
+            &config
+        ));
+        assert!(!serial_has_expected_user_status(
+            "vmos: user ELF exited with status 139\n",
+            &config
+        ));
+    }
+
+    #[test]
+    fn expected_user_status_is_disabled_by_default() {
+        let config = config_with_expected_status(None);
+
+        assert!(!serial_has_expected_user_status(
+            "vmos: user ELF exited with status 135\n",
+            &config
+        ));
+    }
 }
