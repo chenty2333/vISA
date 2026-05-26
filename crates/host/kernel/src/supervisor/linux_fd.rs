@@ -184,6 +184,22 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok((vfs_node_id, path, bytes))
     }
 
+    pub(crate) fn shared_mmap_vfs_fd_target(&mut self, fd: u32) -> Result<(u64, Vec<u8>), i32> {
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        let Some(vfs_node_id) = vfs_node_id else {
+            return Err(ERR_EOPNOTSUPP);
+        };
+        Ok((vfs_node_id, path))
+    }
+
+    pub(crate) fn shared_mmap_vfs_node_len(&self, vfs_node_id: u64, path: &[u8]) -> usize {
+        self.vfs.len_for_node(Some(vfs_node_id), path) as usize
+    }
+
     pub(crate) fn write_shared_mmap_vfs_page(
         &mut self,
         vfs_node_id: u64,
@@ -2617,6 +2633,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.truncate_file(path, len).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn vfs_node_id_for_path(&self, path: &[u8]) -> Option<u64> {
+        self.vfs.node_id_for_path(path)
+    }
+
     fn allowed_file_write_len(
         &mut self,
         offset: usize,
@@ -3307,5 +3327,23 @@ mod tests {
         assert_eq!(Some(mapped_node_id), node_id);
         assert_eq!(mapped_path, path);
         assert_eq!(bytes, b"abc");
+    }
+
+    #[test]
+    fn shared_mmap_fd_target_tracks_dynamic_inode_len() {
+        let mut runtime = test_runtime();
+        let path = b"/tmp/shared-mmap-target";
+        let fd = open_vfs_file(&mut runtime, path, O_RDWR);
+        let node_id = runtime.vfs.node_id_for_path(path).expect("dynamic node id");
+        runtime.vfs.write_file_by_id(Some(node_id), path, 0, &[0x5a; 8192]).expect("seed file");
+
+        let (mapped_node_id, mapped_path) =
+            runtime.shared_mmap_vfs_fd_target(fd).expect("shared mmap target");
+        assert_eq!(mapped_node_id, node_id);
+        assert_eq!(mapped_path, path);
+        assert_eq!(runtime.shared_mmap_vfs_node_len(mapped_node_id, &mapped_path), 8192);
+
+        runtime.truncate_fd(fd, 4096).expect("truncate file");
+        assert_eq!(runtime.shared_mmap_vfs_node_len(mapped_node_id, &mapped_path), 4096);
     }
 }

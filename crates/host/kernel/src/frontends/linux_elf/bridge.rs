@@ -59,9 +59,9 @@ use super::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, copy_user_page_bytes, cow_break_user_page,
         demo_program_host_path, discard_user_page_range, discard_zero_user_page_range,
-        fill_user_page_frame, load_demo_program, prefault_user_page_range, prepare_user_program,
-        protect_user_page_range, switch_user_page_mappings, unmap_user_page_range,
-        user_elf_interpreter_path,
+        fill_user_page_frame, invalidate_user_page_mapping, load_demo_program,
+        prefault_user_page_range, prepare_user_program, protect_user_page_range,
+        switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
     },
 };
 use crate::{
@@ -2157,15 +2157,27 @@ fn sys_truncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let target = active_context().supervisor.vfs_node_id_for_path(&resolved);
     let access = effective_access_snapshot();
     active_context().supervisor.truncate_path(&resolved, len, access.ids())?;
+    if let Some(vfs_node_id) = target {
+        let effective_len =
+            active_context().supervisor.shared_mmap_vfs_node_len(vfs_node_id, &resolved);
+        invalidate_active_file_shared_pages_after_truncate(vfs_node_id, effective_len)?;
+    }
     Ok(0)
 }
 
 fn sys_ftruncate(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let len = usize::try_from(frame.rsi).map_err(|_| ERR_EINVAL)?;
+    let target = active_context().supervisor.shared_mmap_vfs_fd_target(fd).ok();
     active_context().supervisor.truncate_fd(fd, len)?;
+    if let Some((vfs_node_id, path)) = target {
+        let effective_len =
+            active_context().supervisor.shared_mmap_vfs_node_len(vfs_node_id, &path);
+        invalidate_active_file_shared_pages_after_truncate(vfs_node_id, effective_len)?;
+    }
     Ok(0)
 }
 
@@ -7070,7 +7082,8 @@ mod tests {
         LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking, PSELECT6_MAX_FDS,
         SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping,
         UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
-        demand_mapping_candidate_page, encode_linux_ucontext, futex_pi_handoff_word,
+        demand_mapping_candidate_page, encode_linux_ucontext, file_shared_page_valid_for_len,
+        file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
         futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
         futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
         mmap_file_page_mappings, parse_clone3_request_bytes, positioned_io_offset,
@@ -7328,6 +7341,59 @@ mod tests {
         assert_eq!(*offset, 0x5000);
         assert!(!*valid);
         assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn file_shared_truncate_invalidates_whole_pages_by_inode() {
+        let mappings = vec![
+            UserPageMapping {
+                va: 0x20_000,
+                frame_start: 0,
+                present: false,
+                owned: false,
+                cow: false,
+                backing: UserPageBacking::FileShared {
+                    vfs_node_id: 7,
+                    path: b"/tmp/a".to_vec(),
+                    offset: 0,
+                    bytes: vec![0xaa],
+                    valid: true,
+                },
+            },
+            UserPageMapping {
+                va: 0x21_000,
+                frame_start: 0x81_000,
+                present: true,
+                owned: true,
+                cow: false,
+                backing: UserPageBacking::FileShared {
+                    vfs_node_id: 7,
+                    path: b"/tmp/a".to_vec(),
+                    offset: 4096,
+                    bytes: vec![0xbb],
+                    valid: true,
+                },
+            },
+            UserPageMapping {
+                va: 0x22_000,
+                frame_start: 0x82_000,
+                present: true,
+                owned: true,
+                cow: false,
+                backing: UserPageBacking::FileShared {
+                    vfs_node_id: 8,
+                    path: b"/tmp/a".to_vec(),
+                    offset: 4096,
+                    bytes: vec![0xcc],
+                    valid: true,
+                },
+            },
+        ];
+
+        assert!(file_shared_page_valid_for_len(4095, 4096));
+        assert!(!file_shared_page_valid_for_len(4096, 4096));
+        assert_eq!(file_shared_pages_invalid_after_truncate(&mappings, 7, 4096), vec![0x21_000]);
+        assert_eq!(file_shared_pages_invalid_after_truncate(&mappings, 8, 4096), vec![0x22_000]);
     }
 
     #[test]
@@ -8349,6 +8415,70 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     )
     .map_err(|_| ERR_EFAULT)?;
     release_file_shared_page_refs(&file_shared);
+    Ok(())
+}
+
+fn invalidate_active_user_page_mapping(page: u64) -> Result<(), i32> {
+    let context = active_context();
+    invalidate_user_page_mapping(
+        context.physical_memory_offset(),
+        &mut context.page_mappings,
+        &mut context.frame_allocator,
+        page,
+    )
+    .map_err(|_| ERR_EFAULT)
+}
+
+fn file_shared_page_valid_for_len(offset: usize, file_len: usize) -> bool {
+    offset < file_len
+}
+
+fn file_shared_pages_invalid_after_truncate(
+    mappings: &[UserPageMapping],
+    vfs_node_id: u64,
+    file_len: usize,
+) -> Vec<u64> {
+    mappings
+        .iter()
+        .filter_map(|mapping| {
+            let UserPageBacking::FileShared { vfs_node_id: mapped_node_id, offset, valid, .. } =
+                &mapping.backing
+            else {
+                return None;
+            };
+            if *mapped_node_id == vfs_node_id
+                && !file_shared_page_valid_for_len(*offset, file_len)
+                && (*valid || mapping.present || mapping.frame_start != 0)
+            {
+                Some(mapping.va)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn invalidate_active_file_shared_pages_after_truncate(
+    vfs_node_id: u64,
+    file_len: usize,
+) -> Result<(), i32> {
+    let pages = {
+        let context = active_context();
+        file_shared_pages_invalid_after_truncate(&context.page_mappings, vfs_node_id, file_len)
+    };
+
+    for page in pages {
+        {
+            let context = active_context();
+            if let Some(mapping) =
+                context.page_mappings.iter_mut().find(|mapping| mapping.va == page)
+                && let UserPageBacking::FileShared { valid, .. } = &mut mapping.backing
+            {
+                *valid = false;
+            }
+        }
+        invalidate_active_user_page_mapping(page)?;
+    }
     Ok(())
 }
 

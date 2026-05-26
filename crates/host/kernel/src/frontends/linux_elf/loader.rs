@@ -371,6 +371,41 @@ pub(crate) fn protect_user_page_range(
     Ok(())
 }
 
+pub(crate) fn invalidate_user_page_mapping(
+    physical_memory_offset: u64,
+    page_mappings: &mut [UserPageMapping],
+    frame_allocator: &mut UserFrameAllocator,
+    page_addr: u64,
+) -> Result<(), &'static str> {
+    let Some(index) = page_mappings.iter().position(|mapping| mapping.va == page_addr) else {
+        return Ok(());
+    };
+
+    if page_mappings[index].present {
+        let phys_offset = VirtAddr::new(physical_memory_offset);
+        let level_4 = unsafe { active_level_4_table(phys_offset) };
+        let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
+        let mut authority =
+            LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
+        match authority.unmap_page(page_addr) {
+            Ok(()) => {}
+            Err(err) if is_page_not_mapped(&err) => {}
+            Err(err) => return Err(map_page_table_error(err)),
+        }
+    }
+
+    let mapping = &mut page_mappings[index];
+    if mapping.owned && mapping.frame_start != 0 {
+        frame_allocator
+            .deallocate_frame(PhysFrame::containing_address(PhysAddr::new(mapping.frame_start)));
+    }
+    mapping.frame_start = 0;
+    mapping.present = false;
+    mapping.owned = false;
+    mapping.cow = false;
+    Ok(())
+}
+
 pub(crate) fn prefault_user_page_range(
     physical_memory_offset: u64,
     page_mappings: &mut Vec<UserPageMapping>,
@@ -843,6 +878,9 @@ fn materialize_user_page_frame(
     authority: &mut LiveUserPageTableAuthority<'_, '_>,
     mapping: &mut UserPageMapping,
 ) -> Result<bool, &'static str> {
+    if mapping.backing.is_invalid_file_page() {
+        return Err("file-backed user page is beyond EOF");
+    }
     if mapping.frame_start != 0 {
         return Ok(false);
     }
