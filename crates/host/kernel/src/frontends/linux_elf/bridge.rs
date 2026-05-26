@@ -8925,18 +8925,6 @@ fn validate_lower_user_address_range(ptr: u64, len: u64) -> Result<(), i32> {
 
 fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(), i32> {
     let context = active_context();
-    let cow_pages = if prot & PROT_WRITE != 0 {
-        let end = start.checked_add(len).ok_or(ERR_EFAULT)?;
-        context
-            .page_mappings
-            .iter()
-            .filter(|mapping| mapping.cow && mapping.va >= start && mapping.va < end)
-            .map(|mapping| mapping.va)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-
     protect_user_page_range(
         context.physical_memory_offset(),
         &mut context.page_mappings,
@@ -8946,12 +8934,6 @@ fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(),
         prot,
     )
     .map_err(|_| ERR_EFAULT)?;
-
-    for page in cow_pages {
-        if context.page_mappings.iter().any(|mapping| mapping.va == page && !mapping.cow) {
-            context.supervisor.record_guest_memory_cow_break(page);
-        }
-    }
     Ok(())
 }
 

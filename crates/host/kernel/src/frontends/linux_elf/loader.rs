@@ -151,10 +151,6 @@ fn prot_is_none(prot: u64) -> bool {
     prot & 0x7 == 0
 }
 
-fn prot_allows_write(prot: u64) -> bool {
-    prot & 0x2 != 0
-}
-
 struct LiveUserPageTableAuthority<'a, 'mapper> {
     mapper: &'a mut OffsetPageTable<'mapper>,
     frame_allocator: &'a mut UserFrameAllocator,
@@ -341,10 +337,6 @@ pub(crate) fn protect_user_page_range(
         }
 
         if let Some(mapping) = user_page_mapping_mut(page_mappings, page_addr) {
-            if mapping.cow && prot_allows_write(prot) {
-                break_user_cow_page_with_authority(&mut authority, page_addr, mapping, flags)?;
-                continue;
-            }
             let mapping_flags = user_page_flags_for_mapping(prot, mapping);
             if !mapping.present {
                 if mapping.backing.is_file_backed() {
@@ -1664,5 +1656,24 @@ mod tests {
         assert_eq!(cloned[0].frame_start, 0x24_000);
         assert!(!cloned[0].owned);
         assert!(!cloned[0].cow);
+    }
+
+    #[test]
+    fn writable_protection_keeps_cow_mapping_read_only_until_write() {
+        let cow_mapping = UserPageMapping {
+            va: 0x9000,
+            frame_start: 0x28_000,
+            present: true,
+            owned: false,
+            cow: true,
+            backing: UserPageBacking::ZeroFill,
+        };
+        let writable_mapping = UserPageMapping { cow: false, owned: true, ..cow_mapping.clone() };
+
+        let cow_flags = user_page_flags_for_mapping(0x1 | 0x2, &cow_mapping);
+        let writable_flags = user_page_flags_for_mapping(0x1 | 0x2, &writable_mapping);
+
+        assert!(!cow_flags.contains(PageTableFlags::WRITABLE));
+        assert!(writable_flags.contains(PageTableFlags::WRITABLE));
     }
 }
