@@ -977,8 +977,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.read_link_path(path)
     }
 
-    pub(crate) fn read_link_path_bytes(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
-        self.read_link_path(path).map_err(errno_from_service_error)
+    pub(crate) fn read_link_path_bytes_checked(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<Vec<u8>, i32> {
+        self.read_link_path_checked(path, access).map_err(errno_from_service_error)
     }
 
     pub(super) fn build_dirent_records(
@@ -2833,6 +2837,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(encode_stat_abi(mode, len, uid, gid, nlink, timestamps))
     }
 
+    pub(crate) fn stat_path_abi_checked(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<Vec<u8>, i32> {
+        self.check_path_access(path, 0, access)?;
+        self.stat_path_abi(path)
+    }
+
     pub(crate) fn path_metadata(
         &mut self,
         path: &[u8],
@@ -2842,6 +2855,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         let len = self.len_for_service_node(info.route, path);
         let (uid, gid) = self.owner_for_service_node(info.route, path);
         Ok((info.node, mode, len, uid, gid))
+    }
+
+    pub(crate) fn path_metadata_checked(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<(NodeKind, u32, u64, u32, u32), i32> {
+        self.check_path_access(path, 0, access)?;
+        self.path_metadata(path)
     }
 
     pub(crate) fn path_xattr_value(

@@ -1118,11 +1118,15 @@ fn sys_fstat(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_stat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    let resolved = resolve_final_symlink_for_stat(resolved, frame.rax != SYS_LSTAT)?;
-    let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
-        crate::kwarn!("ring3_stat failed path={} errno={}", display_path(&resolved), errno);
-        errno
-    })?;
+    let access = effective_access_snapshot();
+    let resolved = resolve_final_symlink_for_stat(resolved, frame.rax != SYS_LSTAT, access.ids())?;
+    let encoded = active_context()
+        .supervisor
+        .stat_path_abi_checked(&resolved, access.ids())
+        .map_err(|errno| {
+            crate::kwarn!("ring3_stat failed path={} errno={}", display_path(&resolved), errno);
+            errno
+        })?;
     write_user_bytes(frame.rsi, &encoded)?;
     Ok(0)
 }
@@ -1131,16 +1135,20 @@ fn sys_newfstatat(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rsi, PATH_MAX)?;
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
     let follow_symlink = frame.r10 & AT_SYMLINK_NOFOLLOW == 0;
-    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink)?;
-    let encoded = active_context().supervisor.stat_path_abi(&resolved).map_err(|errno| {
-        crate::kwarn!(
-            "ring3_newfstatat failed dirfd={} path={} errno={}",
-            linux_fd_arg(frame.rdi),
-            display_path(&resolved),
+    let access = effective_access_snapshot();
+    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink, access.ids())?;
+    let encoded = active_context()
+        .supervisor
+        .stat_path_abi_checked(&resolved, access.ids())
+        .map_err(|errno| {
+            crate::kwarn!(
+                "ring3_newfstatat failed dirfd={} path={} errno={}",
+                linux_fd_arg(frame.rdi),
+                display_path(&resolved),
+                errno
+            );
             errno
-        );
-        errno
-    })?;
+        })?;
     write_user_bytes(frame.rdx, &encoded)?;
     Ok(0)
 }
@@ -1242,8 +1250,9 @@ fn execve_checked_path(
     if has_non_dir_prefix(resolved) {
         return Err(ERR_ENOTDIR);
     }
+    let access = effective_access_snapshot();
     let (kind, mode, len, owner_uid, owner_gid) =
-        active_context().supervisor.path_metadata(resolved)?;
+        active_context().supervisor.path_metadata_checked(resolved, access.ids())?;
     if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
     }
@@ -1256,7 +1265,6 @@ fn execve_checked_path(
     if len == 0 {
         return Err(ERR_ENOEXEC);
     }
-    let access = effective_access_snapshot();
     let bytes = active_context().supervisor.read_vfs_file_path(resolved, access.ids())?;
     let interpreter_path = user_elf_interpreter_path(&bytes).map_err(exec_load_errno)?;
     let interpreter_bytes = if let Some(path) = interpreter_path {
@@ -1639,12 +1647,12 @@ fn link_resolved_paths(
     if new_path.is_empty() {
         return Err(ERR_ENOENT);
     }
+    let access = effective_access_snapshot();
     let mut old_resolved = resolve_path(old_dirfd, old_path)?;
     if flags & AT_SYMLINK_FOLLOW != 0 {
-        old_resolved = resolve_final_symlink_for_stat(old_resolved, true)?;
+        old_resolved = resolve_final_symlink_for_stat(old_resolved, true, access.ids())?;
     }
     let new_resolved = resolve_path(new_dirfd, new_path)?;
-    let access = effective_access_snapshot();
     active_context().supervisor.link_path(&old_resolved, &new_resolved, access.ids())?;
     Ok(0)
 }
@@ -2141,7 +2149,8 @@ fn sys_fchmodat(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_statfs(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
     let resolved = resolve_path(AT_FDCWD, &path)?;
-    active_context().supervisor.stat_path_abi(&resolved)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.stat_path_abi_checked(&resolved, access.ids())?;
     write_user_bytes(frame.rsi, &statfs_abi())?;
     Ok(0)
 }
@@ -2864,7 +2873,7 @@ fn sys_utimensat(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let resolved = resolve_path(linux_fd_arg(frame.rdi), &path)?;
     let follow_symlink = flags & AT_SYMLINK_NOFOLLOW == 0;
-    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink)?;
+    let resolved = resolve_final_symlink_for_stat(resolved, follow_symlink, access.ids())?;
     active_context().supervisor.update_timestamps_path(
         &resolved,
         atime_ns,
@@ -2933,7 +2942,8 @@ fn sys_mount(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_umount2(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rdi, PATH_MAX)?;
     let target = resolve_path(AT_FDCWD, &target)?;
-    active_context().supervisor.stat_path_abi(&target)?;
+    let access = effective_access_snapshot();
+    active_context().supervisor.stat_path_abi_checked(&target, access.ids())?;
     Ok(0)
 }
 
@@ -9807,14 +9817,18 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     restrict_path_to_chroot(normalize_user_path(&resolved))
 }
 
-fn resolve_final_symlink_for_stat(path: Vec<u8>, follow: bool) -> Result<Vec<u8>, i32> {
+fn resolve_final_symlink_for_stat(
+    path: Vec<u8>,
+    follow: bool,
+    access: AccessIds<'_>,
+) -> Result<Vec<u8>, i32> {
     if !follow {
         return Ok(path);
     }
     if active_context().supervisor.path_kind(&path)? != vmos_abi::NodeKind::Symlink {
         return Ok(path);
     }
-    let target = active_context().supervisor.read_link_path_bytes(&path)?;
+    let target = active_context().supervisor.read_link_path_bytes_checked(&path, access)?;
     if target.starts_with(b"/") {
         return Ok(resolve_absolute_path(&target));
     }

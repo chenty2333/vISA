@@ -835,6 +835,58 @@ mod tests {
     }
 
     #[test]
+    fn checked_path_stat_requires_runtime_traversal_access() {
+        let mut runtime = test_runtime();
+        runtime.vfs.mkdir(b"/tmp/private-stat", 0o700, 5000, 500).expect("private dir");
+        runtime.vfs.symlink(b"/tmp/private-stat/readme", b"/sandbox/hello.txt").expect("symlink");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+        let access = runtime.current_access_state();
+        assert_eq!(
+            runtime.stat_path_abi_checked(b"/tmp/private-stat/readme", access.ids()),
+            Err(ERR_EACCES)
+        );
+        assert_eq!(
+            runtime.path_metadata_checked(b"/tmp/private-stat/readme", access.ids()),
+            Err(ERR_EACCES)
+        );
+
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                5000,
+                100,
+                100,
+                100,
+                500,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+        let access = runtime.current_access_state();
+        assert!(runtime.stat_path_abi_checked(b"/tmp/private-stat/readme", access.ids()).is_ok());
+        assert!(runtime.path_metadata_checked(b"/tmp/private-stat/readme", access.ids()).is_ok());
+    }
+
+    #[test]
     fn generic_read_write_support_pipe_socketpair_and_eventfd() {
         let mut runtime = test_runtime();
 
