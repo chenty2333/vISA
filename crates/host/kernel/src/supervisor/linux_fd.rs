@@ -211,6 +211,19 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(errno_from_service_error)
     }
 
+    pub(crate) fn read_shared_mmap_vfs_range(
+        &mut self,
+        vfs_node_id: u64,
+        path: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> Result<Vec<u8>, i32> {
+        let count = u32::try_from(count).map_err(|_| ERR_EINVAL)?;
+        self.vfs
+            .read_file_range_by_id(Some(vfs_node_id), path, offset, count)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn write_shared_mmap_vfs_page(
         &mut self,
         vfs_node_id: u64,

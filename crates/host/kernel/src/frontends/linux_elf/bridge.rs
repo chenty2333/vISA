@@ -5469,6 +5469,102 @@ fn mmap_file_page_mappings(
     Ok(mappings)
 }
 
+#[derive(Clone)]
+struct SharedMremapTailSource {
+    vfs_node_id: u64,
+    path: Vec<u8>,
+    offset: usize,
+}
+
+fn shared_mremap_tail_source(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+) -> Result<Option<SharedMremapTailSource>, i32> {
+    if old_len == 0 {
+        return Ok(None);
+    }
+    let Some(first) = mappings.iter().find(|mapping| mapping.va == old_addr) else {
+        return Ok(None);
+    };
+    let UserPageBacking::FileShared { vfs_node_id, path, offset, .. } = &first.backing else {
+        return Ok(None);
+    };
+    let base_offset = *offset;
+    let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    let mut page = old_addr;
+    while page < old_end {
+        let Some(mapping) = mappings.iter().find(|mapping| mapping.va == page) else {
+            return Err(ERR_ENOSYS);
+        };
+        let expected_offset = base_offset
+            .checked_add(usize::try_from(page - old_addr).map_err(|_| ERR_EINVAL)?)
+            .ok_or(ERR_EINVAL)?;
+        let UserPageBacking::FileShared {
+            vfs_node_id: mapped_node_id,
+            path: mapped_path,
+            offset: mapped_offset,
+            ..
+        } = &mapping.backing
+        else {
+            return Err(ERR_ENOSYS);
+        };
+        if *mapped_node_id != *vfs_node_id
+            || mapped_path != path
+            || *mapped_offset != expected_offset
+        {
+            return Err(ERR_ENOSYS);
+        }
+        page = page.checked_add(4096).ok_or(ERR_EINVAL)?;
+    }
+    let tail_offset = base_offset
+        .checked_add(usize::try_from(old_len).map_err(|_| ERR_EINVAL)?)
+        .ok_or(ERR_EINVAL)?;
+    Ok(Some(SharedMremapTailSource {
+        vfs_node_id: *vfs_node_id,
+        path: path.clone(),
+        offset: tail_offset,
+    }))
+}
+
+fn shared_mremap_tail_page_mappings_from_bytes(
+    source: SharedMremapTailSource,
+    tail_start: u64,
+    tail_len: u64,
+    bytes: Vec<u8>,
+) -> Result<Vec<UserPageMapping>, i32> {
+    mmap_file_page_mappings(
+        tail_start,
+        tail_len,
+        MmapFileBacking::Shared {
+            vfs_node_id: source.vfs_node_id,
+            path: source.path,
+            offset: source.offset,
+            bytes,
+        },
+    )
+}
+
+fn shared_mremap_tail_page_mappings(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+    tail_start: u64,
+    tail_len: u64,
+) -> Result<Vec<UserPageMapping>, i32> {
+    let Some(source) = shared_mremap_tail_source(mappings, old_addr, old_len)? else {
+        return Ok(Vec::new());
+    };
+    let count = usize::try_from(tail_len).map_err(|_| ERR_ENOMEM)?;
+    let bytes = active_context().supervisor.read_shared_mmap_vfs_range(
+        source.vfs_node_id,
+        &source.path,
+        source.offset,
+        count,
+    )?;
+    shared_mremap_tail_page_mappings_from_bytes(source, tail_start, tail_len, bytes)
+}
+
 fn install_active_file_backed_page_range(
     start: u64,
     len: u64,
@@ -5682,6 +5778,9 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         return Err(ERR_ENOMEM);
     }
     check_future_user_lock_range(old_end, grow_len)?;
+    let current_mappings = active_context().page_mappings.clone();
+    let tail_mappings =
+        shared_mremap_tail_page_mappings(&current_mappings, old_addr, old_len, old_end, grow_len)?;
 
     active_context().record_user_region_with_fork_advice(
         old_end,
@@ -5696,6 +5795,10 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
         .supervisor
         .record_guest_memory_region(old_end, grow_len, readable, writable, executable);
     record_future_user_lock_range(old_end, grow_len);
+    if !tail_mappings.is_empty() {
+        active_context().page_mappings.extend(tail_mappings.iter().cloned());
+        retain_file_shared_page_refs(&tail_mappings);
+    }
     Ok(old_addr as i64)
 }
 
@@ -5857,6 +5960,19 @@ fn move_active_user_mapping_range(
     if !replace_target && !target_unmap_ranges.is_empty() {
         return Err(ERR_ENOMEM);
     }
+    let target_unmap_len = subranges_total_len(&target_unmap_ranges);
+    let source_unmap_len = if preserve_source_region { 0 } else { old_len };
+    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+    if as_limit != u64::MAX
+        && active_context()
+            .mapped_user_bytes()
+            .saturating_sub(source_unmap_len)
+            .saturating_sub(target_unmap_len)
+            .saturating_add(new_len)
+            > as_limit
+    {
+        return Err(ERR_ENOMEM);
+    }
     let region_attrs = single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
     let moved_locked_ranges =
         active_context().locked_user_subranges(old_addr, old_len.min(new_len));
@@ -5882,6 +5998,17 @@ fn move_active_user_mapping_range(
 
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
+    let tail_mappings = if new_len > old_len {
+        shared_mremap_tail_page_mappings(
+            &current_mappings,
+            old_addr,
+            old_len,
+            new_addr.checked_add(old_len).ok_or(ERR_EINVAL)?,
+            new_len - old_len,
+        )?
+    } else {
+        Vec::new()
+    };
     let mut next_regions = current_regions.clone();
     if !preserve_source_region {
         replace_user_region_range_for_mremap(&mut next_regions, old_addr, old_end, None);
@@ -5896,7 +6023,8 @@ fn move_active_user_mapping_range(
         Some(region_attrs),
     );
 
-    let mut next_mappings = Vec::with_capacity(current_mappings.len());
+    let mut next_mappings =
+        Vec::with_capacity(current_mappings.len().saturating_add(tail_mappings.len()));
     let mut dropped_mappings = Vec::new();
     for mapping in &current_mappings {
         if mapping.va >= old_addr && mapping.va < old_end {
@@ -5921,6 +6049,7 @@ fn move_active_user_mapping_range(
             next_mappings.push(mapping.clone());
         }
     }
+    next_mappings.extend(tail_mappings.iter().cloned());
     if has_duplicate_user_page_mapping(&next_mappings) {
         return Err(ERR_ENOMEM);
     }
@@ -5944,6 +6073,7 @@ fn move_active_user_mapping_range(
     }
 
     release_file_shared_page_refs(&dropped_mappings);
+    retain_file_shared_page_refs(&tail_mappings);
     let context = active_context();
     for mapping in dropped_mappings {
         if mapping.owned && mapping.frame_start != 0 {
@@ -7092,8 +7222,9 @@ mod tests {
         preadv2_offset_from_split, pselect_read_revents_ready, pselect_write_revents_ready,
         pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
-        select_timeval_ms, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
+        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
+        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7429,6 +7560,81 @@ mod tests {
             file_shared_page_writeback_bytes_for_len(&mapping, 4096, 4096)
                 .expect("writeback bytes"),
             None
+        );
+    }
+
+    #[test]
+    fn shared_mremap_growth_tail_keeps_file_backing_offsets() {
+        let source_mappings = mmap_file_page_mappings(
+            0x40_000,
+            8192,
+            MmapFileBacking::Shared {
+                vfs_node_id: 9,
+                path: b"/tmp/mremap-shared".to_vec(),
+                offset: 0x2000,
+                bytes: vec![0x5a; 8192],
+            },
+        )
+        .expect("source shared mapping");
+        let source = shared_mremap_tail_source(&source_mappings, 0x40_000, 8192)
+            .expect("tail source")
+            .expect("shared source");
+
+        assert_eq!(source.vfs_node_id, 9);
+        assert_eq!(source.path.as_slice(), b"/tmp/mremap-shared");
+        assert_eq!(source.offset, 0x4000);
+
+        let mut tail_bytes = vec![0x11; 4096];
+        tail_bytes.push(0x22);
+        let tail_mappings =
+            shared_mremap_tail_page_mappings_from_bytes(source, 0x50_000, 8192, tail_bytes)
+                .expect("tail mappings");
+
+        assert_eq!(tail_mappings.len(), 2);
+        let UserPageBacking::FileShared { vfs_node_id, path, offset, bytes, valid } =
+            &tail_mappings[0].backing
+        else {
+            panic!("first tail page should stay shared file-backed");
+        };
+        assert_eq!(*vfs_node_id, 9);
+        assert_eq!(path.as_slice(), b"/tmp/mremap-shared");
+        assert_eq!(*offset, 0x4000);
+        assert!(*valid);
+        assert_eq!(bytes.len(), 4096);
+
+        let UserPageBacking::FileShared { offset, bytes, valid, .. } = &tail_mappings[1].backing
+        else {
+            panic!("second tail page should stay shared file-backed");
+        };
+        assert_eq!(*offset, 0x5000);
+        assert!(*valid);
+        assert_eq!(bytes, &[0x22]);
+    }
+
+    #[test]
+    fn shared_mremap_growth_rejects_mixed_file_backing_source() {
+        let mut source_mappings = mmap_file_page_mappings(
+            0x60_000,
+            8192,
+            MmapFileBacking::Shared {
+                vfs_node_id: 9,
+                path: b"/tmp/mremap-shared".to_vec(),
+                offset: 0,
+                bytes: vec![0x5a; 8192],
+            },
+        )
+        .expect("source shared mapping");
+        source_mappings[1].backing = UserPageBacking::FileShared {
+            vfs_node_id: 10,
+            path: b"/tmp/mremap-shared".to_vec(),
+            offset: 4096,
+            bytes: vec![0x5a; 4096],
+            valid: true,
+        };
+
+        assert_eq!(
+            shared_mremap_tail_source(&source_mappings, 0x60_000, 8192).err(),
+            Some(vmos_abi::ERR_ENOSYS)
         );
     }
 
