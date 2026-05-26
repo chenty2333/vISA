@@ -5565,6 +5565,33 @@ fn shared_mremap_tail_page_mappings(
     shared_mremap_tail_page_mappings_from_bytes(source, tail_start, tail_len, bytes)
 }
 
+fn mremap_source_range_contains_file_backed_mapping(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+) -> Result<bool, i32> {
+    let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
+    Ok(mappings.iter().any(|mapping| {
+        mapping.va >= old_addr && mapping.va < old_end && mapping.backing.is_file_backed()
+    }))
+}
+
+fn mremap_growth_tail_page_mappings(
+    mappings: &[UserPageMapping],
+    old_addr: u64,
+    old_len: u64,
+    tail_start: u64,
+    tail_len: u64,
+) -> Result<Vec<UserPageMapping>, i32> {
+    if shared_mremap_tail_source(mappings, old_addr, old_len)?.is_some() {
+        return shared_mremap_tail_page_mappings(mappings, old_addr, old_len, tail_start, tail_len);
+    }
+    if mremap_source_range_contains_file_backed_mapping(mappings, old_addr, old_len)? {
+        return Err(ERR_ENOSYS);
+    }
+    Ok(Vec::new())
+}
+
 fn install_active_file_backed_page_range(
     start: u64,
     len: u64,
@@ -5780,7 +5807,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     check_future_user_lock_range(old_end, grow_len)?;
     let current_mappings = active_context().page_mappings.clone();
     let tail_mappings =
-        shared_mremap_tail_page_mappings(&current_mappings, old_addr, old_len, old_end, grow_len)?;
+        mremap_growth_tail_page_mappings(&current_mappings, old_addr, old_len, old_end, grow_len)?;
 
     active_context().record_user_region_with_fork_advice(
         old_end,
@@ -5999,7 +6026,7 @@ fn move_active_user_mapping_range(
     let current_regions = active_context().regions.clone();
     let current_mappings = active_context().page_mappings.clone();
     let tail_mappings = if new_len > old_len {
-        shared_mremap_tail_page_mappings(
+        mremap_growth_tail_page_mappings(
             &current_mappings,
             old_addr,
             old_len,
@@ -7217,14 +7244,14 @@ mod tests {
         file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
         futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
         futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, mmap_file_page_mappings, parse_clone3_request_bytes,
-        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
-        preadv2_offset_from_split, pselect_read_revents_ready, pselect_write_revents_ready,
-        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
-        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
-        select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
-        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        futex_pi_wait_word, mmap_file_page_mappings, mremap_growth_tail_page_mappings,
+        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
+        preadv2_flags_nowait, preadv2_offset_from_split, pselect_read_revents_ready,
+        pselect_write_revents_ready, pwritev2_flags_append, read_linux_greg,
+        restartable_interrupted_syscall, sanitize_restored_rflags, select_remaining_timeout_ms,
+        select_timeval_bytes, select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes,
+        shared_mremap_tail_source, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7635,6 +7662,37 @@ mod tests {
         assert_eq!(
             shared_mremap_tail_source(&source_mappings, 0x60_000, 8192).err(),
             Some(vmos_abi::ERR_ENOSYS)
+        );
+    }
+
+    #[test]
+    fn file_private_mremap_growth_rejects_anonymous_tail_fallback() {
+        let source_mappings =
+            mmap_file_page_mappings(0x70_000, 4096, MmapFileBacking::Private(vec![0x5a; 4096]))
+                .expect("source private mapping");
+
+        assert_eq!(
+            mremap_growth_tail_page_mappings(&source_mappings, 0x70_000, 4096, 0x71_000, 4096)
+                .err(),
+            Some(vmos_abi::ERR_ENOSYS)
+        );
+    }
+
+    #[test]
+    fn anonymous_mremap_growth_keeps_zero_fill_tail() {
+        let source_mappings = vec![UserPageMapping {
+            va: 0x80_000,
+            frame_start: 0,
+            present: false,
+            owned: false,
+            cow: false,
+            backing: UserPageBacking::ZeroFill,
+        }];
+
+        assert!(
+            mremap_growth_tail_page_mappings(&source_mappings, 0x80_000, 4096, 0x81_000, 4096)
+                .expect("anonymous growth tail")
+                .is_empty()
         );
     }
 
