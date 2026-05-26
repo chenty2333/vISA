@@ -6268,16 +6268,22 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
         let start = align_page(current).ok_or(ERR_EINVAL)?;
         let end = align_page(requested).ok_or(ERR_EINVAL)?;
         if end > start {
+            let grow_len = end - start;
+            let as_limit =
+                active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+            if rlimit_as_denies_mapped_growth(
+                active_context().mapped_user_bytes(),
+                grow_len,
+                as_limit,
+            ) {
+                return Ok(current as i64);
+            }
             check_future_user_lock_range(start, end - start)?;
-            active_context().record_user_region(start, end - start, true, true, false);
-            active_context().supervisor.record_guest_memory_region(
-                start,
-                end - start,
-                true,
-                true,
-                false,
-            );
-            record_future_user_lock_range(start, end - start);
+            active_context().record_user_region(start, grow_len, true, true, false);
+            active_context()
+                .supervisor
+                .record_guest_memory_region(start, grow_len, true, true, false);
+            record_future_user_lock_range(start, grow_len);
         }
     } else if requested < current {
         let start = align_page(requested).ok_or(ERR_EINVAL)?;
@@ -7367,10 +7373,10 @@ mod tests {
         preadv2_offset_from_split, private_mremap_tail_page_mappings_from_bytes,
         private_mremap_tail_source, pselect_read_revents_ready, pselect_write_revents_ready,
         pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
-        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
-        select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
-        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        rlimit_as_denies_mapped_growth, sanitize_restored_rflags, select_remaining_timeout_ms,
+        select_timeval_bytes, select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes,
+        shared_mremap_tail_source, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7398,6 +7404,14 @@ mod tests {
         assert!(chown_path_follows_final_symlink(SYS_FCHOWNAT, 0, false));
         assert!(!chown_path_follows_final_symlink(SYS_FCHOWNAT, AT_SYMLINK_NOFOLLOW, false));
         assert!(!chown_path_follows_final_symlink(SYS_FCHOWNAT, 0, true));
+    }
+
+    #[test]
+    fn brk_rlimit_as_growth_predicate_preserves_linux_return_semantics() {
+        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 4096, u64::MAX));
+        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 0, 0));
+        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 4096, 17 * 4096));
+        assert!(rlimit_as_denies_mapped_growth(16 * 4096, 4096, 16 * 4096));
     }
 
     #[test]
@@ -9751,6 +9765,10 @@ fn prot_user_region_permissions(prot: u64) -> (bool, bool, bool) {
 
 fn align_page(value: u64) -> Option<u64> {
     value.checked_add(4095).map(|value| value & !4095)
+}
+
+fn rlimit_as_denies_mapped_growth(mapped_bytes: u64, grow_len: u64, limit: u64) -> bool {
+    grow_len != 0 && limit != u64::MAX && mapped_bytes.saturating_add(grow_len) > limit
 }
 
 fn page_rounded_lock_range(addr: u64, len: u64) -> Result<Option<(u64, u64)>, i32> {

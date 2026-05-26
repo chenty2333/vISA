@@ -29,5 +29,11 @@ path = "src/bin/cow_fork_user_write.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "brk_rlimit_as"
+path = "src/bin/brk_rlimit_as.rs"
+test = false
+bench = false
+
 [dependencies]
 vmos_abi.workspace = true
