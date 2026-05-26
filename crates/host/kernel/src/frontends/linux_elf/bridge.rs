@@ -59,8 +59,8 @@ use super::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
         clone_user_page_mappings, copy_user_page_bytes, cow_break_user_page,
         demo_program_host_path, discard_user_page_range, discard_zero_user_page_range,
-        fill_user_page_frame, invalidate_user_page_mapping, load_demo_program,
-        prefault_user_page_range, prepare_user_program, protect_user_page_range,
+        fill_user_page_frame, fill_user_page_frame_range, invalidate_user_page_mapping,
+        load_demo_program, prefault_user_page_range, prepare_user_program, protect_user_page_range,
         switch_user_page_mappings, unmap_user_page_range, user_elf_interpreter_path,
     },
 };
@@ -7082,17 +7082,18 @@ mod tests {
         LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking, PSELECT6_MAX_FDS,
         SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping,
         UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
-        demand_mapping_candidate_page, encode_linux_ucontext, file_shared_page_valid_for_len,
-        file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
-        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
-        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        mmap_file_page_mappings, parse_clone3_request_bytes, positioned_io_offset,
-        preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
-        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
-        read_linux_greg, restartable_interrupted_syscall, sanitize_restored_rflags,
-        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms,
-        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
-        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        demand_mapping_candidate_page, encode_linux_ucontext, file_shared_page_valid_bytes_for_len,
+        file_shared_page_valid_for_len, file_shared_page_writeback_bytes_for_len,
+        file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
+        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
+        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
+        futex_pi_wait_word, mmap_file_page_mappings, parse_clone3_request_bytes,
+        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
+        preadv2_offset_from_split, pselect_read_revents_ready, pselect_write_revents_ready,
+        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7356,7 +7357,7 @@ mod tests {
                     vfs_node_id: 7,
                     path: b"/tmp/a".to_vec(),
                     offset: 0,
-                    bytes: vec![0xaa],
+                    bytes: vec![0xaa; 4096],
                     valid: true,
                 },
             },
@@ -7390,10 +7391,45 @@ mod tests {
             },
         ];
 
+        let changes = file_shared_pages_changed_after_truncate(&mappings, 7, 3);
+        assert_eq!(changes.partial_pages, vec![(0x20_000, 3)]);
+        assert_eq!(changes.invalid_pages, vec![0x21_000]);
+
         assert!(file_shared_page_valid_for_len(4095, 4096));
         assert!(!file_shared_page_valid_for_len(4096, 4096));
+        assert_eq!(file_shared_page_valid_bytes_for_len(0, 3), Some(3));
+        assert_eq!(file_shared_page_valid_bytes_for_len(4096, 4096), None);
         assert_eq!(file_shared_pages_invalid_after_truncate(&mappings, 7, 4096), vec![0x21_000]);
         assert_eq!(file_shared_pages_invalid_after_truncate(&mappings, 8, 4096), vec![0x22_000]);
+    }
+
+    #[test]
+    fn file_shared_writeback_preserves_partial_eof_length() {
+        let mapping = UserPageMapping {
+            va: 0x30_000,
+            frame_start: 0,
+            present: false,
+            owned: false,
+            cow: false,
+            backing: UserPageBacking::FileShared {
+                vfs_node_id: 7,
+                path: b"/tmp/a".to_vec(),
+                offset: 4096,
+                bytes: vec![0x11, 0x22, 0x33, 0x44],
+                valid: true,
+            },
+        };
+
+        let bytes = file_shared_page_writeback_bytes_for_len(&mapping, 4096, 4098)
+            .expect("writeback bytes")
+            .expect("valid partial page");
+        assert_eq!(bytes, vec![0x11, 0x22]);
+
+        assert_eq!(
+            file_shared_page_writeback_bytes_for_len(&mapping, 4096, 4096)
+                .expect("writeback bytes"),
+            None
+        );
     }
 
     #[test]
@@ -8429,52 +8465,108 @@ fn invalidate_active_user_page_mapping(page: u64) -> Result<(), i32> {
     .map_err(|_| ERR_EFAULT)
 }
 
+#[cfg(test)]
 fn file_shared_page_valid_for_len(offset: usize, file_len: usize) -> bool {
-    offset < file_len
+    file_shared_page_valid_bytes_for_len(offset, file_len).is_some()
 }
 
+fn file_shared_page_valid_bytes_for_len(offset: usize, file_len: usize) -> Option<usize> {
+    if offset >= file_len {
+        return None;
+    }
+    Some(core::cmp::min(4096, file_len - offset))
+}
+
+#[cfg(test)]
 fn file_shared_pages_invalid_after_truncate(
     mappings: &[UserPageMapping],
     vfs_node_id: u64,
     file_len: usize,
 ) -> Vec<u64> {
-    mappings
-        .iter()
-        .filter_map(|mapping| {
-            let UserPageBacking::FileShared { vfs_node_id: mapped_node_id, offset, valid, .. } =
-                &mapping.backing
-            else {
-                return None;
-            };
-            if *mapped_node_id == vfs_node_id
-                && !file_shared_page_valid_for_len(*offset, file_len)
-                && (*valid || mapping.present || mapping.frame_start != 0)
-            {
-                Some(mapping.va)
-            } else {
-                None
+    file_shared_pages_changed_after_truncate(mappings, vfs_node_id, file_len).invalid_pages
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct FileSharedTruncateChanges {
+    invalid_pages: Vec<u64>,
+    partial_pages: Vec<(u64, usize)>,
+}
+
+fn file_shared_pages_changed_after_truncate(
+    mappings: &[UserPageMapping],
+    vfs_node_id: u64,
+    file_len: usize,
+) -> FileSharedTruncateChanges {
+    let mut changes = FileSharedTruncateChanges::default();
+    mappings.iter().for_each(|mapping| {
+        let UserPageBacking::FileShared {
+            vfs_node_id: mapped_node_id, offset, bytes, valid, ..
+        } = &mapping.backing
+        else {
+            return;
+        };
+        if *mapped_node_id != vfs_node_id {
+            return;
+        }
+        let Some(valid_len) = file_shared_page_valid_bytes_for_len(*offset, file_len) else {
+            if *valid || mapping.present || mapping.frame_start != 0 {
+                changes.invalid_pages.push(mapping.va);
             }
-        })
-        .collect()
+            return;
+        };
+        if *valid && valid_len < 4096 && (bytes.len() > valid_len || mapping.frame_start != 0) {
+            changes.partial_pages.push((mapping.va, valid_len));
+        }
+    });
+    changes
 }
 
 fn invalidate_active_file_shared_pages_after_truncate(
     vfs_node_id: u64,
     file_len: usize,
 ) -> Result<(), i32> {
-    let pages = {
+    let changes = {
         let context = active_context();
-        file_shared_pages_invalid_after_truncate(&context.page_mappings, vfs_node_id, file_len)
+        file_shared_pages_changed_after_truncate(&context.page_mappings, vfs_node_id, file_len)
     };
 
-    for page in pages {
+    for (page, valid_len) in changes.partial_pages {
+        let frame_start = {
+            let context = active_context();
+            let Some(mapping) = context.page_mappings.iter_mut().find(|mapping| mapping.va == page)
+            else {
+                continue;
+            };
+            if let UserPageBacking::FileShared { bytes, valid, .. } = &mut mapping.backing {
+                *valid = true;
+                bytes.truncate(valid_len);
+                mapping.frame_start
+            } else {
+                0
+            }
+        };
+        if frame_start != 0 {
+            let physical_memory_offset = active_context().physical_memory_offset();
+            fill_user_page_frame_range(
+                physical_memory_offset,
+                frame_start,
+                valid_len,
+                4096 - valid_len,
+                0,
+            )
+            .map_err(|_| ERR_EFAULT)?;
+        }
+    }
+
+    for page in changes.invalid_pages {
         {
             let context = active_context();
             if let Some(mapping) =
                 context.page_mappings.iter_mut().find(|mapping| mapping.va == page)
-                && let UserPageBacking::FileShared { valid, .. } = &mut mapping.backing
+                && let UserPageBacking::FileShared { bytes, valid, .. } = &mut mapping.backing
             {
                 *valid = false;
+                bytes.clear();
             }
         }
         invalidate_active_user_page_mapping(page)?;
@@ -8621,6 +8713,7 @@ fn prefault_active_user_page_range(start: u64, len: u64, write: bool) -> Result<
 }
 
 fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i32> {
+    refresh_active_file_shared_page_before_prefault(page)?;
     let demand_pages = demand_mapping_candidate_pages(page, 4096)?;
     let cow_pages = if write {
         active_context()
@@ -8653,6 +8746,49 @@ fn prefault_active_user_page(page: u64, prot: u64, write: bool) -> Result<(), i3
         if context.page_mappings.iter().any(|mapping| mapping.va == page && !mapping.cow) {
             context.supervisor.record_guest_memory_cow_break(page);
         }
+    }
+    Ok(())
+}
+
+fn refresh_active_file_shared_page_before_prefault(page: u64) -> Result<(), i32> {
+    let target = active_context().page_mappings.iter().find(|mapping| mapping.va == page).and_then(
+        |mapping| {
+            if mapping.frame_start != 0 {
+                return None;
+            }
+            let UserPageBacking::FileShared { vfs_node_id, path, offset, .. } = &mapping.backing
+            else {
+                return None;
+            };
+            Some((*vfs_node_id, path.clone(), *offset))
+        },
+    );
+    let Some((vfs_node_id, path, offset)) = target else {
+        return Ok(());
+    };
+
+    let file_len = active_context().supervisor.shared_mmap_vfs_node_len(vfs_node_id, &path);
+    let Some(valid_len) = file_shared_page_valid_bytes_for_len(offset, file_len) else {
+        if let Some(mapping) =
+            active_context().page_mappings.iter_mut().find(|mapping| mapping.va == page)
+            && let UserPageBacking::FileShared { bytes, valid, .. } = &mut mapping.backing
+        {
+            bytes.clear();
+            *valid = false;
+        }
+        return Ok(());
+    };
+
+    let mut bytes =
+        active_context().supervisor.read_shared_mmap_vfs_page(vfs_node_id, &path, offset)?;
+    bytes.truncate(valid_len);
+    if let Some(mapping) =
+        active_context().page_mappings.iter_mut().find(|mapping| mapping.va == page)
+        && let UserPageBacking::FileShared { bytes: backing_bytes, valid, .. } =
+            &mut mapping.backing
+    {
+        *backing_bytes = bytes;
+        *valid = true;
     }
     Ok(())
 }
@@ -8696,7 +8832,7 @@ fn sync_active_file_shared_page_range(start: u64, len: u64) -> Result<(), i32> {
     sync_file_shared_page_mappings(&mappings)?;
     let mut synced_pages = Vec::new();
     for mapping in mappings {
-        if let Some(bytes) = file_shared_page_bytes(&mapping)? {
+        if let Some(bytes) = file_shared_page_writeback_bytes_for_current_len(&mapping)? {
             synced_pages.push((mapping.va, bytes));
         }
     }
@@ -8716,7 +8852,7 @@ fn sync_file_shared_page_mappings(mappings: &[UserPageMapping]) -> Result<(), i3
         let UserPageBacking::FileShared { vfs_node_id, path, offset, .. } = &mapping.backing else {
             continue;
         };
-        let Some(bytes) = file_shared_page_bytes(mapping)? else {
+        let Some(bytes) = file_shared_page_writeback_bytes_for_current_len(mapping)? else {
             continue;
         };
         active_context().supervisor.write_shared_mmap_vfs_page(
@@ -8798,6 +8934,35 @@ fn file_shared_page_bytes(mapping: &UserPageMapping) -> Result<Option<Vec<u8>>, 
         copy_user_page_bytes(active_context().physical_memory_offset(), mapping, &mut page_bytes)
             .map_err(|_| ERR_EFAULT)?;
     }
+    Ok(Some(page_bytes))
+}
+
+fn file_shared_page_writeback_bytes_for_current_len(
+    mapping: &UserPageMapping,
+) -> Result<Option<Vec<u8>>, i32> {
+    let UserPageBacking::FileShared { vfs_node_id, path, offset, valid, .. } = &mapping.backing
+    else {
+        return Ok(None);
+    };
+    if !valid {
+        return Ok(None);
+    }
+    let file_len = active_context().supervisor.shared_mmap_vfs_node_len(*vfs_node_id, path);
+    file_shared_page_writeback_bytes_for_len(mapping, *offset, file_len)
+}
+
+fn file_shared_page_writeback_bytes_for_len(
+    mapping: &UserPageMapping,
+    offset: usize,
+    file_len: usize,
+) -> Result<Option<Vec<u8>>, i32> {
+    let Some(valid_len) = file_shared_page_valid_bytes_for_len(offset, file_len) else {
+        return Ok(None);
+    };
+    let Some(mut page_bytes) = file_shared_page_bytes(mapping)? else {
+        return Ok(None);
+    };
+    page_bytes.truncate(valid_len);
     Ok(Some(page_bytes))
 }
 

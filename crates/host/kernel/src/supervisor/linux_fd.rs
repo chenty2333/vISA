@@ -200,6 +200,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.vfs.len_for_node(Some(vfs_node_id), path) as usize
     }
 
+    pub(crate) fn read_shared_mmap_vfs_page(
+        &mut self,
+        vfs_node_id: u64,
+        path: &[u8],
+        offset: usize,
+    ) -> Result<Vec<u8>, i32> {
+        self.vfs
+            .read_file_range_by_id(Some(vfs_node_id), path, offset, 4096)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn write_shared_mmap_vfs_page(
         &mut self,
         vfs_node_id: u64,
@@ -3345,5 +3356,23 @@ mod tests {
 
         runtime.truncate_fd(fd, 4096).expect("truncate file");
         assert_eq!(runtime.shared_mmap_vfs_node_len(mapped_node_id, &mapped_path), 4096);
+    }
+
+    #[test]
+    fn shared_mmap_page_read_reflects_dynamic_file_growth() {
+        let mut runtime = test_runtime();
+        let path = b"/tmp/shared-mmap-growth";
+        let _fd = open_vfs_file(&mut runtime, path, O_RDWR);
+        let node_id = runtime.vfs.node_id_for_path(path).expect("dynamic node id");
+        runtime.vfs.write_file_by_id(Some(node_id), path, 0, b"abc").expect("seed file");
+        assert_eq!(
+            runtime.read_shared_mmap_vfs_page(node_id, path, 4096).unwrap(),
+            Vec::<u8>::new()
+        );
+
+        runtime.vfs.write_file_by_id(Some(node_id), path, 4096, b"grown").expect("grow file");
+
+        assert_eq!(runtime.shared_mmap_vfs_node_len(node_id, path), 4101);
+        assert_eq!(runtime.read_shared_mmap_vfs_page(node_id, path, 4096).unwrap(), b"grown");
     }
 }

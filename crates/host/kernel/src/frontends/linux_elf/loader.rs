@@ -1560,6 +1560,26 @@ pub(crate) fn fill_user_page_frame(
     Ok(())
 }
 
+pub(crate) fn fill_user_page_frame_range(
+    physical_memory_offset: u64,
+    frame_start: u64,
+    start: usize,
+    len: usize,
+    value: u8,
+) -> Result<(), &'static str> {
+    if frame_start == 0 || len == 0 {
+        return Ok(());
+    }
+    let end = start.checked_add(len).ok_or("user page fill range overflowed")?;
+    if end > PAGE_SIZE {
+        return Err("user page fill range exceeds frame size");
+    }
+    let phys_offset = VirtAddr::new(physical_memory_offset);
+    let frame = PhysFrame::containing_address(PhysAddr::new(frame_start));
+    frame_bytes(frame, phys_offset)[start..end].fill(value);
+    Ok(())
+}
+
 unsafe fn active_level_4_table(phys_offset: VirtAddr) -> &'static mut PageTable {
     let (frame, _) = Cr3::read();
     let virt = phys_offset + frame.start_address().as_u64();
