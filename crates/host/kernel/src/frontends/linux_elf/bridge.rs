@@ -5748,11 +5748,6 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
             Some(MmapFileBacking::Shared { vfs_node_id, path, offset, bytes })
         }
     };
-    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
-    if as_limit != u64::MAX && active_context().mapped_user_bytes().saturating_add(len) > as_limit {
-        return Err(ERR_ENOMEM);
-    }
-
     let addr = if fixed_address || frame.rdi != 0 {
         if frame.rdi & 4095 != 0 {
             return Err(ERR_EINVAL);
@@ -5760,12 +5755,26 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         validate_reserved_user_page_range(frame.rdi, len)?;
         frame.rdi
     } else {
+        let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+        if rlimit_as_denies_replaced_mapping(active_context().mapped_user_bytes(), 0, len, as_limit)
+        {
+            return Err(ERR_ENOMEM);
+        }
         active_context().allocate_mmap(len, 4096).ok_or(ERR_EFAULT)?
     };
 
     let existing_ranges = active_context().mapped_user_subranges(addr, len);
     if fixed_noreplace && !existing_ranges.is_empty() {
         return Err(vmos_abi::ERR_EEXIST);
+    }
+    let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
+    if rlimit_as_denies_replaced_mapping(
+        active_context().mapped_user_bytes(),
+        subranges_total_len(&existing_ranges),
+        len,
+        as_limit,
+    ) {
+        return Err(ERR_ENOMEM);
     }
     check_future_user_lock_range(addr, len)?;
     let replaces_existing = fixed || file_backing.is_some();
@@ -6271,8 +6280,9 @@ fn sys_brk(frame: &SyscallFrame) -> Result<i64, i32> {
             let grow_len = end - start;
             let as_limit =
                 active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
-            if rlimit_as_denies_mapped_growth(
+            if rlimit_as_denies_replaced_mapping(
                 active_context().mapped_user_bytes(),
+                0,
                 grow_len,
                 as_limit,
             ) {
@@ -7373,7 +7383,7 @@ mod tests {
         preadv2_offset_from_split, private_mremap_tail_page_mappings_from_bytes,
         private_mremap_tail_source, pselect_read_revents_ready, pselect_write_revents_ready,
         pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
-        rlimit_as_denies_mapped_growth, sanitize_restored_rflags, select_remaining_timeout_ms,
+        rlimit_as_denies_replaced_mapping, sanitize_restored_rflags, select_remaining_timeout_ms,
         select_timeval_bytes, select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes,
         shared_mremap_tail_source, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
         validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
@@ -7408,10 +7418,18 @@ mod tests {
 
     #[test]
     fn brk_rlimit_as_growth_predicate_preserves_linux_return_semantics() {
-        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 4096, u64::MAX));
-        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 0, 0));
-        assert!(!rlimit_as_denies_mapped_growth(16 * 4096, 4096, 17 * 4096));
-        assert!(rlimit_as_denies_mapped_growth(16 * 4096, 4096, 16 * 4096));
+        assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 0, 4096, u64::MAX));
+        assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 0, 0, 0));
+        assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 0, 4096, 17 * 4096));
+        assert!(rlimit_as_denies_replaced_mapping(16 * 4096, 0, 4096, 16 * 4096));
+    }
+
+    #[test]
+    fn mmap_rlimit_as_accounts_replaced_user_ranges_by_net_growth() {
+        assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 4096, 4096, 16 * 4096));
+        assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 4096, 8192, 17 * 4096));
+        assert!(rlimit_as_denies_replaced_mapping(16 * 4096, 4096, 8192, 16 * 4096));
+        assert!(!rlimit_as_denies_replaced_mapping(u64::MAX, u64::MAX, 4096, u64::MAX));
     }
 
     #[test]
@@ -9767,8 +9785,15 @@ fn align_page(value: u64) -> Option<u64> {
     value.checked_add(4095).map(|value| value & !4095)
 }
 
-fn rlimit_as_denies_mapped_growth(mapped_bytes: u64, grow_len: u64, limit: u64) -> bool {
-    grow_len != 0 && limit != u64::MAX && mapped_bytes.saturating_add(grow_len) > limit
+fn rlimit_as_denies_replaced_mapping(
+    mapped_bytes: u64,
+    replaced_len: u64,
+    new_len: u64,
+    limit: u64,
+) -> bool {
+    new_len != 0
+        && limit != u64::MAX
+        && mapped_bytes.saturating_sub(replaced_len).saturating_add(new_len) > limit
 }
 
 fn page_rounded_lock_range(addr: u64, len: u64) -> Result<Option<(u64, u64)>, i32> {
