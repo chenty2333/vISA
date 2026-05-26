@@ -1281,9 +1281,7 @@ fn prepare_user_stack(
     initial_stack: &InitialStack,
     stack_pages: usize,
 ) -> Result<(), &'static str> {
-    let stack_base = stack_base_for_pages(stack_pages);
-    for index in 0..stack_pages {
-        let addr = stack_base + (index * PAGE_SIZE) as u64;
+    for addr in initial_stack_materialized_pages(initial_stack, stack_pages)? {
         let frame =
             frame_allocator.allocate_frame().ok_or("out of usable frames for user stack")?;
         page_mappings.push(UserPageMapping {
@@ -1296,12 +1294,23 @@ fn prepare_user_stack(
         });
         let dest = frame_bytes(frame, phys_offset);
         dest.fill(0);
-        if addr == initial_stack.page_base {
-            dest.copy_from_slice(&initial_stack.page_bytes);
-        }
+        dest.copy_from_slice(&initial_stack.page_bytes);
     }
 
     Ok(())
+}
+
+fn initial_stack_materialized_pages(
+    initial_stack: &InitialStack,
+    stack_pages: usize,
+) -> Result<Vec<u64>, &'static str> {
+    let stack_base = stack_base_for_pages(stack_pages);
+    let page_end =
+        initial_stack.page_base.checked_add(PAGE_SIZE as u64).ok_or("initial stack overflowed")?;
+    if initial_stack.page_base < stack_base || page_end > USER_STACK_TOP {
+        return Err("initial stack exceeded rlimit");
+    }
+    Ok(vec![initial_stack.page_base])
 }
 
 fn stack_pages_for_rlimit(limit: u64) -> Result<usize, &'static str> {
@@ -1610,6 +1619,35 @@ mod tests {
         assert_eq!(stack_pages_for_rlimit(0), Err("initial stack exceeded rlimit"));
         assert_eq!(
             stack_pages_for_rlimit(PAGE_SIZE as u64 - 1),
+            Err("initial stack exceeded rlimit")
+        );
+    }
+
+    #[test]
+    fn initial_stack_materialization_keeps_lower_stack_pages_demand_paged() {
+        let initial_stack = InitialStack {
+            page_base: USER_STACK_TOP - PAGE_SIZE as u64,
+            page_bytes: vec![0; PAGE_SIZE],
+            stack_pointer: USER_STACK_TOP - 64,
+        };
+
+        let pages = initial_stack_materialized_pages(&initial_stack, 4).expect("stack pages");
+
+        assert_eq!(pages, vec![USER_STACK_TOP - PAGE_SIZE as u64]);
+        assert_eq!(stack_base_for_pages(4), USER_STACK_TOP - PAGE_SIZE as u64 * 4);
+        assert!(pages[0] > stack_base_for_pages(4));
+    }
+
+    #[test]
+    fn initial_stack_materialization_rejects_stack_outside_rlimit_region() {
+        let initial_stack = InitialStack {
+            page_base: USER_STACK_TOP - PAGE_SIZE as u64 * 2,
+            page_bytes: vec![0; PAGE_SIZE],
+            stack_pointer: USER_STACK_TOP - PAGE_SIZE as u64 * 2,
+        };
+
+        assert_eq!(
+            initial_stack_materialized_pages(&initial_stack, 1),
             Err("initial stack exceeded rlimit")
         );
     }
