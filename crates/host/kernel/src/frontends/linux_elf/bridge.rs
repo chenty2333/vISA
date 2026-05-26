@@ -1340,7 +1340,7 @@ fn execve_replace_image(
         crate::kwarn!("execve page-table switch failed: {}", err.message());
         return Err(ERR_EFAULT);
     }
-    release_file_shared_page_refs(&current_mappings);
+    release_file_backed_page_refs(&current_mappings);
 
     {
         let context = active_context();
@@ -4116,7 +4116,7 @@ fn sys_clone_request(frame: &mut SyscallFrame, request: CloneRequest) -> Result<
         child_return.fs_base = fs_base.as_u64();
     }
     switch_active_user_address_space_to_child(&mut child_address_space)?;
-    retain_file_shared_page_refs(&child_address_space.page_mappings);
+    retain_file_backed_page_refs(&child_address_space.page_mappings);
     let parent_task_id = active_context().task_id;
     active_context().supervisor.mark_task_blocked(parent_task_id);
     active_context().suspend_for_clone_child(
@@ -5686,11 +5686,10 @@ fn install_active_file_backed_page_range(
     start: u64,
     len: u64,
     file_backing: MmapFileBacking,
-) -> Result<bool, i32> {
-    let shared = matches!(file_backing, MmapFileBacking::Shared { .. });
+) -> Result<Vec<UserPageMapping>, i32> {
     let mappings = mmap_file_page_mappings(start, len, file_backing)?;
-    active_context().page_mappings.extend(mappings);
-    Ok(shared)
+    active_context().page_mappings.extend(mappings.iter().cloned());
+    Ok(mappings)
 }
 
 fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -5772,10 +5771,8 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
         .record_guest_memory_region(addr, len, readable, writable, executable);
     record_future_user_lock_range(addr, len);
     if let Some(file_backing) = file_backing {
-        let retain_shared_refs = install_active_file_backed_page_range(addr, len, file_backing)?;
-        if retain_shared_refs {
-            retain_active_file_shared_page_refs(addr, len);
-        }
+        let mappings = install_active_file_backed_page_range(addr, len, file_backing)?;
+        retain_file_backed_page_refs(&mappings);
     }
     Ok(addr as i64)
 }
@@ -5916,7 +5913,7 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     record_future_user_lock_range(old_end, grow_len);
     if !tail_mappings.is_empty() {
         active_context().page_mappings.extend(tail_mappings.iter().cloned());
-        retain_file_shared_page_refs(&tail_mappings);
+        retain_file_backed_page_refs(&tail_mappings);
     }
     Ok(old_addr as i64)
 }
@@ -6034,8 +6031,8 @@ fn clone_active_shared_mapping_for_mremap(
         return Err(ERR_EFAULT);
     }
 
-    release_file_shared_page_refs(&dropped_mappings);
-    retain_file_shared_page_refs(&cloned_mappings);
+    release_file_backed_page_refs(&dropped_mappings);
+    retain_file_backed_page_refs(&cloned_mappings);
     let context = active_context();
     for mapping in dropped_mappings {
         if mapping.owned && mapping.frame_start != 0 {
@@ -6145,6 +6142,7 @@ fn move_active_user_mapping_range(
     let mut next_mappings =
         Vec::with_capacity(current_mappings.len().saturating_add(tail_mappings.len()));
     let mut dropped_mappings = Vec::new();
+    let mut duplicated_mappings = Vec::new();
     for mapping in &current_mappings {
         if mapping.va >= old_addr && mapping.va < old_end {
             if mapping.va < moved_end {
@@ -6157,6 +6155,7 @@ fn move_active_user_mapping_range(
                     source.present = false;
                     source.owned = false;
                     source.cow = false;
+                    duplicated_mappings.push(source.clone());
                     next_mappings.push(source);
                 }
             } else {
@@ -6191,8 +6190,9 @@ fn move_active_user_mapping_range(
         return Err(ERR_EFAULT);
     }
 
-    release_file_shared_page_refs(&dropped_mappings);
-    retain_file_shared_page_refs(&tail_mappings);
+    release_file_backed_page_refs(&dropped_mappings);
+    retain_file_backed_page_refs(&duplicated_mappings);
+    retain_file_backed_page_refs(&tail_mappings);
     let context = active_context();
     for mapping in dropped_mappings {
         if mapping.owned && mapping.frame_start != 0 {
@@ -7331,19 +7331,19 @@ mod tests {
         LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking,
         PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking,
         UserPageMapping, UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
-        demand_mapping_candidate_page, encode_linux_ucontext, file_shared_page_valid_bytes_for_len,
-        file_shared_page_valid_for_len, file_shared_page_writeback_bytes_for_len,
-        file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
-        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
-        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, mmap_file_page_mappings, mremap_growth_tail_page_mappings,
-        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
-        preadv2_flags_nowait, preadv2_offset_from_split,
-        private_mremap_tail_page_mappings_from_bytes, private_mremap_tail_source,
-        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
-        read_linux_greg, restartable_interrupted_syscall, sanitize_restored_rflags,
-        select_remaining_timeout_ms, select_timeval_bytes, select_timeval_ms,
-        shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
+        demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
+        file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
+        file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
+        file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
+        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
+        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
+        mmap_file_page_mappings, mremap_growth_tail_page_mappings, parse_clone3_request_bytes,
+        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
+        preadv2_offset_from_split, private_mremap_tail_page_mappings_from_bytes,
+        private_mremap_tail_source, pselect_read_revents_ready, pselect_write_revents_ready,
+        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
         signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
         validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
@@ -7594,6 +7594,45 @@ mod tests {
         assert_eq!(source.offset, 0x4000);
         assert!(*valid);
         assert_eq!(bytes, &[0x33]);
+    }
+
+    #[test]
+    fn file_backed_mmap_ref_node_id_covers_private_sources_and_shared_pages() {
+        let private = UserPageMapping {
+            va: 0x19_000,
+            frame_start: 0,
+            present: false,
+            owned: false,
+            cow: false,
+            backing: UserPageBacking::FilePrivate {
+                source: Some(FilePrivateSource {
+                    vfs_node_id: 18,
+                    path: b"/tmp/private-ref".to_vec(),
+                    offset: 0,
+                }),
+                bytes: Vec::new(),
+                valid: false,
+            },
+        };
+        assert_eq!(file_backed_mmap_ref_node_id(&private), Some(18));
+
+        let private_snapshot = UserPageMapping {
+            backing: UserPageBacking::FilePrivate { source: None, bytes: Vec::new(), valid: false },
+            ..private.clone()
+        };
+        assert_eq!(file_backed_mmap_ref_node_id(&private_snapshot), None);
+
+        let shared = UserPageMapping {
+            backing: UserPageBacking::FileShared {
+                vfs_node_id: 42,
+                path: b"/tmp/shared-ref".to_vec(),
+                offset: 0,
+                bytes: Vec::new(),
+                valid: false,
+            },
+            ..private
+        };
+        assert_eq!(file_backed_mmap_ref_node_id(&shared), Some(42));
     }
 
     #[test]
@@ -8885,6 +8924,7 @@ fn protect_active_user_page_range(start: u64, len: u64, prot: u64) -> Result<(),
 
 fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     let file_shared = active_file_shared_page_mappings_in_range(start, len);
+    let file_backed_refs = active_file_backed_page_ref_mappings_in_range(start, len);
     sync_file_shared_page_mappings(&file_shared)?;
     let context = active_context();
     unmap_user_page_range(
@@ -8895,7 +8935,7 @@ fn unmap_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
         len,
     )
     .map_err(|_| ERR_EFAULT)?;
-    release_file_shared_page_refs(&file_shared);
+    release_file_backed_page_refs(&file_backed_refs);
     Ok(())
 }
 
@@ -9251,23 +9291,39 @@ fn active_file_shared_page_mappings_in_range(start: u64, len: u64) -> Vec<UserPa
         .collect()
 }
 
-fn retain_active_file_shared_page_refs(start: u64, len: u64) {
-    let mappings = active_file_shared_page_mappings_in_range(start, len);
-    retain_file_shared_page_refs(&mappings);
+fn active_file_backed_page_ref_mappings_in_range(start: u64, len: u64) -> Vec<UserPageMapping> {
+    let Some(end) = start.checked_add(len) else {
+        return Vec::new();
+    };
+    active_context()
+        .page_mappings
+        .iter()
+        .filter(|mapping| mapping.va >= start && mapping.va < end)
+        .filter(|mapping| file_backed_mmap_ref_node_id(mapping).is_some())
+        .cloned()
+        .collect()
 }
 
-fn retain_file_shared_page_refs(mappings: &[UserPageMapping]) {
+fn file_backed_mmap_ref_node_id(mapping: &UserPageMapping) -> Option<u64> {
+    match &mapping.backing {
+        UserPageBacking::FileShared { vfs_node_id, .. } => Some(*vfs_node_id),
+        UserPageBacking::FilePrivate { source: Some(source), .. } => Some(source.vfs_node_id),
+        _ => None,
+    }
+}
+
+fn retain_file_backed_page_refs(mappings: &[UserPageMapping]) {
     for mapping in mappings {
-        if let UserPageBacking::FileShared { vfs_node_id, .. } = &mapping.backing {
-            active_context().supervisor.retain_shared_mmap_inode(*vfs_node_id);
+        if let Some(vfs_node_id) = file_backed_mmap_ref_node_id(mapping) {
+            active_context().supervisor.retain_file_backed_mmap_inode(vfs_node_id);
         }
     }
 }
 
-fn release_file_shared_page_refs(mappings: &[UserPageMapping]) {
+fn release_file_backed_page_refs(mappings: &[UserPageMapping]) {
     for mapping in mappings {
-        if let UserPageBacking::FileShared { vfs_node_id, .. } = &mapping.backing {
-            active_context().supervisor.release_shared_mmap_inode(*vfs_node_id);
+        if let Some(vfs_node_id) = file_backed_mmap_ref_node_id(mapping) {
+            active_context().supervisor.release_file_backed_mmap_inode(vfs_node_id);
         }
     }
 }
@@ -9475,7 +9531,7 @@ fn restore_independent_clone_parent_address_space(
         true,
     )
     .map_err(|_| ERR_EFAULT)?;
-    release_file_shared_page_refs(&child_mappings);
+    release_file_backed_page_refs(&child_mappings);
     Ok(())
 }
 

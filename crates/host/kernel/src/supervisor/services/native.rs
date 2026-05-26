@@ -1429,6 +1429,28 @@ mod tests {
     }
 
     #[test]
+    fn retained_dynamic_inode_survives_unlink_until_release() {
+        let mut vfs = test_vfs();
+        let path = b"/tmp/retained-private-source";
+        vfs.create_file(path, 0o600, 0, 0).expect("create dynamic file");
+        let node_id = vfs.node_id_for_path(path).expect("dynamic node id");
+        vfs.write_file_by_id(Some(node_id), path, 0, b"private-source")
+            .expect("write dynamic file");
+
+        vfs.retain_open_inode(Some(node_id));
+        vfs.unlink(path).expect("unlink retained file");
+
+        assert_eq!(vfs.node_id_for_path(path), None);
+        assert_eq!(
+            vfs.read_file_range_by_id(Some(node_id), path, 0, 14).expect("read retained inode"),
+            b"private-source"
+        );
+
+        vfs.release_open_inode(Some(node_id));
+        assert!(vfs.read_file_range_by_id(Some(node_id), path, 0, 14).is_err());
+    }
+
+    #[test]
     fn fcntl_unlock_middle_splits_lock_without_losing_sides() {
         let mut vfs = test_vfs();
         vfs.create_file(b"/tmp/split-lock", 0o600, 0, 0).expect("create dynamic file");

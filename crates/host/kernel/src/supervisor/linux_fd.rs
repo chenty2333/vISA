@@ -286,11 +286,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             .map_err(errno_from_service_error)
     }
 
-    pub(crate) fn retain_shared_mmap_inode(&mut self, vfs_node_id: u64) {
+    pub(crate) fn retain_file_backed_mmap_inode(&mut self, vfs_node_id: u64) {
         self.vfs.retain_open_inode(Some(vfs_node_id));
     }
 
-    pub(crate) fn release_shared_mmap_inode(&mut self, vfs_node_id: u64) {
+    pub(crate) fn release_file_backed_mmap_inode(&mut self, vfs_node_id: u64) {
         self.vfs.release_open_inode(Some(vfs_node_id));
     }
 
