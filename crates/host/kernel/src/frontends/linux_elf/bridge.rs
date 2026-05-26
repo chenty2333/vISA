@@ -6424,9 +6424,6 @@ fn sys_mlock_range(addr: u64, len: u64, flags: u64) -> Result<i64, i32> {
     if flags & !MLOCK_ONFAULT != 0 {
         return Err(ERR_EINVAL);
     }
-    if flags & MLOCK_ONFAULT != 0 {
-        return Err(ERR_ENOSYS);
-    }
     let Some((start, rounded_len)) = page_rounded_lock_range(addr, len)? else {
         return Ok(0);
     };
@@ -6451,11 +6448,8 @@ fn sys_munlock(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_mlockall(frame: &SyscallFrame) -> Result<i64, i32> {
     let flags = frame.rdi;
-    if flags == 0 || flags & !(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0 {
+    if !mlockall_flags_valid(flags) {
         return Err(ERR_EINVAL);
-    }
-    if flags & MCL_ONFAULT != 0 {
-        return Err(ERR_ENOSYS);
     }
     if flags & MCL_CURRENT != 0 {
         let ranges = active_context()
@@ -7369,24 +7363,25 @@ mod tests {
     use super::{
         AT_SYMLINK_NOFOLLOW, CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock,
         LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP,
-        MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame,
-        UserPageBacking, UserPageMapping, UserReturnContext, VectoredIoOffset,
-        chown_path_follows_final_symlink, decode_linux_ucontext_return,
+        MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT, MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART,
+        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserReturnContext,
+        VectoredIoOffset, chown_path_follows_final_symlink, decode_linux_ucontext_return,
         demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
         file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
         file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
         file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
         futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
         futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        mmap_file_page_mappings, mremap_growth_tail_page_mappings, parse_clone3_request_bytes,
-        positioned_io_offset, preadv_offset_from_split, preadv2_flags_nowait,
-        preadv2_offset_from_split, private_mremap_tail_page_mappings_from_bytes,
-        private_mremap_tail_source, pselect_read_revents_ready, pselect_write_revents_ready,
-        pwritev2_flags_append, read_linux_greg, restartable_interrupted_syscall,
-        rlimit_as_denies_replaced_mapping, sanitize_restored_rflags, select_remaining_timeout_ms,
-        select_timeval_bytes, select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes,
-        shared_mremap_tail_source, signal_restart_syscall, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        mlockall_flags_valid, mmap_file_page_mappings, mremap_growth_tail_page_mappings,
+        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
+        preadv2_flags_nowait, preadv2_offset_from_split,
+        private_mremap_tail_page_mappings_from_bytes, private_mremap_tail_source,
+        pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
+        read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
+        sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
+        select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
+        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
+        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7430,6 +7425,16 @@ mod tests {
         assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 4096, 8192, 17 * 4096));
         assert!(rlimit_as_denies_replaced_mapping(16 * 4096, 4096, 8192, 16 * 4096));
         assert!(!rlimit_as_denies_replaced_mapping(u64::MAX, u64::MAX, 4096, u64::MAX));
+    }
+
+    #[test]
+    fn mlockall_onfault_must_accompany_current_or_future() {
+        assert!(!mlockall_flags_valid(0));
+        assert!(!mlockall_flags_valid(MCL_ONFAULT));
+        assert!(mlockall_flags_valid(MCL_CURRENT | MCL_ONFAULT));
+        assert!(mlockall_flags_valid(MCL_FUTURE | MCL_ONFAULT));
+        assert!(mlockall_flags_valid(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT));
+        assert!(!mlockall_flags_valid(MCL_CURRENT | 0x8000));
     }
 
     #[test]
@@ -9794,6 +9799,12 @@ fn rlimit_as_denies_replaced_mapping(
     new_len != 0
         && limit != u64::MAX
         && mapped_bytes.saturating_sub(replaced_len).saturating_add(new_len) > limit
+}
+
+fn mlockall_flags_valid(flags: u64) -> bool {
+    flags != 0
+        && flags & !(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) == 0
+        && (flags & MCL_ONFAULT == 0 || flags & (MCL_CURRENT | MCL_FUTURE) != 0)
 }
 
 fn page_rounded_lock_range(addr: u64, len: u64) -> Result<Option<(u64, u64)>, i32> {

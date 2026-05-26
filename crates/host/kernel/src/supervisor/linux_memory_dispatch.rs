@@ -204,9 +204,6 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags & !MLOCK_ONFAULT != 0 {
             return Err(ERR_EINVAL);
         }
-        if flags & MLOCK_ONFAULT != 0 {
-            return Err(ERR_ENOSYS);
-        }
         let Some((start, end)) = page_rounded_lock_range(addr, len)? else {
             return Ok(());
         };
@@ -231,8 +228,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         if flags == 0 || flags & !(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0 {
             return Err(ERR_EINVAL);
         }
-        if flags & MCL_ONFAULT != 0 {
-            return Err(ERR_ENOSYS);
+        if flags & MCL_ONFAULT != 0 && flags & (MCL_CURRENT | MCL_FUTURE) == 0 {
+            return Err(ERR_EINVAL);
         }
         let pid = self.current_pid();
         if flags & MCL_CURRENT != 0 {
@@ -714,7 +711,8 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_ENOMEM, SYS_MLOCK, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SyscallContext,
+        ERR_EINVAL, ERR_ENOMEM, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK,
+        SYS_MUNLOCKALL, SyscallContext,
     };
 
     use super::{
@@ -799,6 +797,47 @@ mod tests {
     }
 
     #[test]
+    fn generic_mlock_onfault_uses_existing_memlock_accounting() {
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        let process = runtime
+            .processes
+            .iter_mut()
+            .find(|process| process.pid == pid)
+            .expect("current process");
+        process.access.cap_effective = 0;
+        process.access.cap_permitted = 0;
+        assert!(runtime.set_rlimit(pid, RLIMIT_MEMLOCK, Rlimit { cur: 4096, max: 4096 }));
+
+        let mapped = runtime
+            .dispatch_linux_syscall_raw(
+                "test_mmap_for_mlock_onfault",
+                SyscallContext::new(
+                    SYS_MMAP,
+                    [0, 8192, 0x3, MAP_PRIVATE | MAP_ANONYMOUS, u64::MAX, 0],
+                ),
+            )
+            .expect("mmap dispatch");
+        let addr = expect_ret(mapped) as u64;
+
+        let first_lock = runtime
+            .dispatch_linux_syscall_raw(
+                "test_mlock2_onfault_first_page",
+                SyscallContext::new(SYS_MLOCK2, [addr, 4096, MLOCK_ONFAULT, 0, 0, 0]),
+            )
+            .expect("mlock2 dispatch");
+        assert_eq!(expect_ret(first_lock), 0);
+
+        let second_lock = runtime
+            .dispatch_linux_syscall_raw(
+                "test_mlock2_onfault_second_page_denied",
+                SyscallContext::new(SYS_MLOCK2, [addr + 4096, 4096, MLOCK_ONFAULT, 0, 0, 0]),
+            )
+            .expect("second mlock2 dispatch");
+        assert_eq!(expect_ret(second_lock), -(ERR_ENOMEM as i64));
+    }
+
+    #[test]
     fn generic_mlockall_future_bounds_later_mmap_until_munlockall() {
         let mut runtime = test_runtime();
         let pid = runtime.current_pid();
@@ -848,6 +887,27 @@ mod tests {
             )
             .expect("post munlockall mmap dispatch");
         assert!(expect_ret(mapped) > 0);
+    }
+
+    #[test]
+    fn generic_mlockall_onfault_requires_current_or_future() {
+        let mut runtime = test_runtime();
+
+        let onfault_only = runtime
+            .dispatch_linux_syscall_raw(
+                "test_mlockall_onfault_only",
+                SyscallContext::new(SYS_MLOCKALL, [MCL_ONFAULT, 0, 0, 0, 0, 0]),
+            )
+            .expect("mlockall dispatch");
+        assert_eq!(expect_ret(onfault_only), -(ERR_EINVAL as i64));
+
+        let future_onfault = runtime
+            .dispatch_linux_syscall_raw(
+                "test_mlockall_future_onfault",
+                SyscallContext::new(SYS_MLOCKALL, [MCL_FUTURE | MCL_ONFAULT, 0, 0, 0, 0, 0]),
+            )
+            .expect("future onfault mlockall dispatch");
+        assert_eq!(expect_ret(future_onfault), 0);
     }
 }
 
