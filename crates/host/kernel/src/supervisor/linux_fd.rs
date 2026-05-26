@@ -968,6 +968,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn read_link_path_checked(
+        &mut self,
+        path: &[u8],
+        access: AccessIds<'_>,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        self.check_path_access(path, 0, access).map_err(ServiceCallError::Errno)?;
+        self.read_link_path(path)
+    }
+
     pub(crate) fn read_link_path_bytes(&mut self, path: &[u8]) -> Result<Vec<u8>, i32> {
         self.read_link_path(path).map_err(errno_from_service_error)
     }

@@ -275,8 +275,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "readlink ptr overflowed")?;
         let len = u32::try_from(plan.args[2]).map_err(|_| "readlink len overflowed")?;
         let path = self.linux.read_bytes(ptr, len)?;
+        let access_state = self.current_access_state();
+        let access = access_state.ids();
 
-        match self.read_link_path(&path) {
+        match self.read_link_path_checked(&path, access) {
             Ok(bytes) => Ok(LinuxCallResult::Bytes(bytes)),
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
@@ -514,8 +516,8 @@ mod tests {
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, ERR_EFBIG, SOCK_STREAM, SYS_LINKAT, SYS_OPENAT, SYS_READ, SYS_READV,
-        SYS_RENAMEAT2, SYS_WRITE, SYS_WRITEV, SyscallContext,
+        AF_INET, ERR_EACCES, ERR_EFBIG, SOCK_STREAM, SYS_LINKAT, SYS_OPENAT, SYS_READ,
+        SYS_READLINKAT, SYS_READV, SYS_RENAMEAT2, SYS_WRITE, SYS_WRITEV, SyscallContext,
     };
 
     use super::{
@@ -773,6 +775,63 @@ mod tests {
             .expect("linkat fsuid dispatch");
         assert_eq!(expect_ret(link), 0);
         assert!(runtime.lookup_path(b"/tmp/fsuid-links/hardlink").is_ok());
+    }
+
+    #[test]
+    fn generic_readlinkat_requires_runtime_traversal_access() {
+        let mut runtime = test_runtime();
+        runtime.vfs.mkdir(b"/tmp/private-links", 0o700, 4000, 400).expect("private dir");
+        runtime.vfs.symlink(b"/tmp/private-links/readme", b"/sandbox/hello.txt").expect("symlink");
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                1000,
+                100,
+                100,
+                100,
+                100,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+
+        let (ptr, len) =
+            runtime.write_linux_arg_bytes(b"/tmp/private-links/readme").expect("readlink path");
+        let denied = runtime
+            .dispatch_linux_syscall(
+                "test_readlinkat_denied",
+                SyscallContext::new(SYS_READLINKAT, [0, ptr as u64, len as u64, 0, 0, 0]),
+            )
+            .expect("readlinkat denied dispatch");
+        assert_eq!(expect_ret(denied), -(ERR_EACCES as i64));
+
+        set_current_access(
+            &mut runtime,
+            ProcessAccessState::from_credentials(
+                1000,
+                1000,
+                1000,
+                4000,
+                100,
+                100,
+                100,
+                400,
+                Vec::new(),
+                0,
+                0,
+            ),
+        );
+        let allowed = runtime
+            .dispatch_linux_syscall(
+                "test_readlinkat_allowed",
+                SyscallContext::new(SYS_READLINKAT, [0, ptr as u64, len as u64, 0, 0, 0]),
+            )
+            .expect("readlinkat allowed dispatch");
+        assert_eq!(expect_bytes(allowed), b"/sandbox/hello.txt");
     }
 
     #[test]
