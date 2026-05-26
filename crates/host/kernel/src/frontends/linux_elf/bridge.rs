@@ -1765,10 +1765,13 @@ fn sys_chroot(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn sys_chown(frame: &SyscallFrame) -> Result<i64, i32> {
     let path = read_user_c_string(frame.rdi, PATH_MAX)?;
-    let resolved = resolve_path(AT_FDCWD, &path)?;
+    let mut resolved = resolve_path(AT_FDCWD, &path)?;
     let uid = linux_owner_arg(frame.rsi)?;
     let gid = linux_owner_arg(frame.rdx)?;
     let access = effective_access_snapshot();
+    if chown_path_follows_final_symlink(frame.rax, 0, false) {
+        resolved = resolve_final_symlink_for_stat(resolved, true, access.ids())?;
+    }
     active_context().supervisor.chown_path(&resolved, uid, gid, access.ids())?;
     Ok(0)
 }
@@ -1783,7 +1786,7 @@ fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
     if path.is_empty() && frame.r8 & AT_EMPTY_PATH == 0 {
         return Err(ERR_ENOENT);
     }
-    let resolved = if path.is_empty() {
+    let mut resolved = if path.is_empty() {
         let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
         active_context().supervisor.fd_path(fd).map_err(|_| ERR_EBADF)?
     } else {
@@ -1792,8 +1795,23 @@ fn sys_fchownat(frame: &SyscallFrame) -> Result<i64, i32> {
     let uid = linux_owner_arg(frame.rdx)?;
     let gid = linux_owner_arg(frame.r10)?;
     let access = effective_access_snapshot();
+    if chown_path_follows_final_symlink(SYS_FCHOWNAT, frame.r8, path.is_empty()) {
+        resolved = resolve_final_symlink_for_stat(resolved, true, access.ids())?;
+    }
     active_context().supervisor.chown_path(&resolved, uid, gid, access.ids())?;
     Ok(0)
+}
+
+fn chown_path_follows_final_symlink(syscall: u64, flags: u64, empty_path: bool) -> bool {
+    if empty_path {
+        return false;
+    }
+    match syscall {
+        SYS_CHOWN => true,
+        SYS_LCHOWN => false,
+        SYS_FCHOWNAT => flags & AT_SYMLINK_NOFOLLOW == 0,
+        _ => false,
+    }
 }
 
 fn sys_setuid(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -7327,15 +7345,17 @@ mod tests {
     use vmos_abi::{
         ERR_EINTR, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED,
         FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
-        FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CONNECT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX,
-        SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+        FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CHOWN, SYS_CONNECT, SYS_FCHOWNAT, SYS_FCNTL,
+        SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4,
+        SYS_WRITE, SYS_WRITEV,
     };
 
     use super::{
-        CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock, LINUX_GREG_EFL,
-        LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MmapFileBacking,
-        PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame, UserPageBacking,
-        UserPageMapping, UserReturnContext, VectoredIoOffset, decode_linux_ucontext_return,
+        AT_SYMLINK_NOFOLLOW, CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock,
+        LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP,
+        MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame,
+        UserPageBacking, UserPageMapping, UserReturnContext, VectoredIoOffset,
+        chown_path_follows_final_symlink, decode_linux_ucontext_return,
         demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
         file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
         file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
@@ -7369,6 +7389,15 @@ mod tests {
             rcx: 0x4000,
             r11: 0x202,
         }
+    }
+
+    #[test]
+    fn chown_symlink_follow_policy_matches_linux_entry_points() {
+        assert!(chown_path_follows_final_symlink(SYS_CHOWN, 0, false));
+        assert!(!chown_path_follows_final_symlink(SYS_LCHOWN, 0, false));
+        assert!(chown_path_follows_final_symlink(SYS_FCHOWNAT, 0, false));
+        assert!(!chown_path_follows_final_symlink(SYS_FCHOWNAT, AT_SYMLINK_NOFOLLOW, false));
+        assert!(!chown_path_follows_final_symlink(SYS_FCHOWNAT, 0, true));
     }
 
     #[test]
