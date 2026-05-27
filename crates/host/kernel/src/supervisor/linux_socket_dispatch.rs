@@ -1356,9 +1356,9 @@ mod tests {
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
         AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK, ERR_EPIPE,
-        NodeKind, PlanKind, SO_KEEPALIVE, SOCK_STREAM, SOL_SOCKET, SYS_GETPEERNAME,
-        SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO, SYS_SETSOCKOPT,
-        SYS_SHUTDOWN, SYS_SOCKET, ServiceRoute, SyscallContext,
+        NodeKind, PlanKind, SO_KEEPALIVE, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
+        SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO,
+        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, ServiceRoute, SyscallContext,
     };
 
     use super::{
@@ -1724,6 +1724,24 @@ mod tests {
         assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_KEEPALIVE), 1);
         assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_KEEPALIVE, 0), 0);
         assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_KEEPALIVE), 0);
+    }
+
+    #[test]
+    fn generic_socket_buffers_round_trip_through_arg_buffer() {
+        let mut runtime = test_runtime();
+        let fd = ret_errno(runtime.dispatch_linux_syscall(
+            "test_socket_for_buffers",
+            SyscallContext::new(SYS_SOCKET, [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0]),
+        ));
+        assert!(fd >= 0);
+        let fd = fd as u32;
+
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_SNDBUF), 212_992);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_RCVBUF), 212_992);
+        assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_SNDBUF, 4096), 0);
+        assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_RCVBUF, 1), 0);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_SNDBUF), 8192);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_RCVBUF), 2048);
     }
 
     #[test]

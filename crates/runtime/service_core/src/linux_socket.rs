@@ -1,7 +1,7 @@
 use vmos_abi::{
     AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
     ERR_EISCONN, ERR_ENOTCONN, ERR_EOPNOTSUPP, ERR_EPIPE, SO_ACCEPTCONN, SO_ERROR, SO_KEEPALIVE,
-    SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_STREAM, SOL_SOCKET,
+    SO_RCVBUF, SO_REUSEADDR, SO_REUSEPORT, SO_SNDBUF, SO_TYPE, SOCK_STREAM, SOL_SOCKET,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -9,6 +9,8 @@ use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contr
 pub const MAX_SOCKETS: usize = 16;
 const MAX_PENDING_ACCEPTS: usize = MAX_SOCKETS;
 const EPHEMERAL_PORT_START: u16 = 49152;
+const DEFAULT_SOCKET_BUFFER_BYTES: u32 = 212_992;
+const MIN_SOCKET_BUFFER_BYTES: u32 = 2_048;
 
 #[derive(Clone, Copy)]
 struct PendingAccept {
@@ -40,6 +42,8 @@ struct LinuxSocket {
     reuse_addr: bool,
     reuse_port: bool,
     keepalive: bool,
+    send_buffer: u32,
+    recv_buffer: u32,
     recv_shutdown: bool,
     send_shutdown: bool,
     pending_accept_queue: [PendingAccept; MAX_PENDING_ACCEPTS],
@@ -63,6 +67,8 @@ impl LinuxSocket {
         reuse_addr: false,
         reuse_port: false,
         keepalive: false,
+        send_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
+        recv_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
         recv_shutdown: false,
         send_shutdown: false,
         pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
@@ -117,6 +123,8 @@ impl LinuxSocketState {
                     reuse_addr: false,
                     reuse_port: false,
                     keepalive: false,
+                    send_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
+                    recv_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
                     recv_shutdown: false,
                     send_shutdown: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
@@ -158,6 +166,8 @@ impl LinuxSocketState {
                     reuse_addr: false,
                     reuse_port: false,
                     keepalive: false,
+                    send_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
+                    recv_buffer: DEFAULT_SOCKET_BUFFER_BYTES,
                     recv_shutdown: false,
                     send_shutdown: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
@@ -305,6 +315,8 @@ impl LinuxSocketState {
             reuse_addr: self.sockets[index].reuse_addr,
             reuse_port: self.sockets[index].reuse_port,
             keepalive: self.sockets[index].keepalive,
+            send_buffer: self.sockets[index].send_buffer,
+            recv_buffer: self.sockets[index].recv_buffer,
             recv_shutdown: false,
             send_shutdown: false,
             pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
@@ -413,6 +425,8 @@ impl LinuxSocketState {
             SO_REUSEADDR => self.sockets[index].reuse_addr = value != 0,
             SO_REUSEPORT => self.sockets[index].reuse_port = value != 0,
             SO_KEEPALIVE => self.sockets[index].keepalive = value != 0,
+            SO_SNDBUF => self.sockets[index].send_buffer = linux_socket_buffer_value(value),
+            SO_RCVBUF => self.sockets[index].recv_buffer = linux_socket_buffer_value(value),
             _ => return Err(ERR_EOPNOTSUPP),
         }
         Ok(())
@@ -426,6 +440,8 @@ impl LinuxSocketState {
             (SOL_SOCKET, SO_REUSEADDR) => Ok(self.sockets[index].reuse_addr as u32),
             (SOL_SOCKET, SO_REUSEPORT) => Ok(self.sockets[index].reuse_port as u32),
             (SOL_SOCKET, SO_KEEPALIVE) => Ok(self.sockets[index].keepalive as u32),
+            (SOL_SOCKET, SO_SNDBUF) => Ok(self.sockets[index].send_buffer),
+            (SOL_SOCKET, SO_RCVBUF) => Ok(self.sockets[index].recv_buffer),
             (SOL_SOCKET, SO_ACCEPTCONN) => {
                 Ok((self.sockets[index].state == SOCKET_LISTENING) as u32)
             }
@@ -546,6 +562,10 @@ impl LinuxSocketState {
     }
 }
 
+fn linux_socket_buffer_value(user_value: u32) -> u32 {
+    user_value.saturating_mul(2).max(MIN_SOCKET_BUFFER_BYTES)
+}
+
 fn ipv4_matches_bound_pair(bound_ipv4: u32, target_ipv4: u32) -> bool {
     bound_ipv4 == 0 || target_ipv4 == 0 || bound_ipv4 == target_ipv4
 }
@@ -560,8 +580,8 @@ impl Default for LinuxSocketState {
 mod tests {
     use vmos_abi::{
         AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_ENOTCONN,
-        ERR_EOPNOTSUPP, ERR_EPIPE, SO_ACCEPTCONN, SO_ERROR, SO_KEEPALIVE, SO_REUSEADDR,
-        SO_REUSEPORT, SO_TYPE, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
+        ERR_EOPNOTSUPP, ERR_EPIPE, SO_ACCEPTCONN, SO_ERROR, SO_KEEPALIVE, SO_RCVBUF, SO_REUSEADDR,
+        SO_REUSEPORT, SO_SNDBUF, SO_TYPE, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
     };
 
     use super::*;
@@ -841,10 +861,14 @@ mod tests {
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 4, 1), Ok(()));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEPORT, 4, 1), Ok(()));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_KEEPALIVE, 4, 1), Ok(()));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_SNDBUF, 4, 4096), Ok(()));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_RCVBUF, 4, 1), Ok(()));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_TYPE), Ok(SOCK_STREAM));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(1));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(1));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_KEEPALIVE), Ok(1));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_SNDBUF), Ok(8192));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_RCVBUF), Ok(2048));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
 
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 4, 0), Ok(()));
@@ -861,6 +885,7 @@ mod tests {
         assert_eq!(state.setsockopt(1, SOL_SOCKET + 1, SO_REUSEADDR, 4, 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_ERROR, 4, 0), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_ACCEPTCONN, 4, 1), Err(ERR_EOPNOTSUPP));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_SNDBUF, 3, 4096), Err(ERR_EINVAL));
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_REUSEADDR, 3, 1), Err(ERR_EINVAL));
         assert_eq!(state.setsockopt(99, SOL_SOCKET, SO_REUSEADDR, 4, 1), Err(ERR_EBADF));
     }
@@ -937,6 +962,8 @@ mod tests {
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEADDR), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_REUSEPORT), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_KEEPALIVE), Ok(0));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_SNDBUF), Ok(DEFAULT_SOCKET_BUFFER_BYTES));
+        assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_RCVBUF), Ok(DEFAULT_SOCKET_BUFFER_BYTES));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ACCEPTCONN), Ok(0));
         assert_eq!(state.getsockopt(1, SOL_SOCKET, SO_ERROR + 1), Err(ERR_EOPNOTSUPP));
         assert_eq!(state.getsockopt(99, SOL_SOCKET, SO_ERROR), Err(ERR_EBADF));
@@ -965,6 +992,8 @@ mod tests {
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_KEEPALIVE, 4, 1), Ok(()));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_SNDBUF, 4, 4096), Ok(()));
+        assert_eq!(state.setsockopt(1, SOL_SOCKET, SO_RCVBUF, 4, 8192), Ok(()));
         assert_eq!(bind_ipv4(&mut state, 1, LOOPBACK, 8080), Ok(()));
         assert_eq!(state.listen_socket(1, 1), Ok(()));
         assert!(state.register_socket(2, AF_INET, SOCK_STREAM, 0, 43).is_ok());
@@ -972,5 +1001,7 @@ mod tests {
 
         assert_eq!(state.accept_socket(1, 7, 99), Ok(7));
         assert_eq!(state.getsockopt(7, SOL_SOCKET, SO_KEEPALIVE), Ok(1));
+        assert_eq!(state.getsockopt(7, SOL_SOCKET, SO_SNDBUF), Ok(8192));
+        assert_eq!(state.getsockopt(7, SOL_SOCKET, SO_RCVBUF), Ok(16_384));
     }
 }
