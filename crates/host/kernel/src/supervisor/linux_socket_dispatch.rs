@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
-    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_RCVBUF, SOCK_STREAM,
-    SOL_SOCKET,
+    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_RCVBUF, SO_SNDBUF,
+    SOCK_STREAM, SOL_SOCKET,
 };
 
 use super::{
@@ -1076,39 +1076,53 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         match self.linux_socket.setsockopt(socket_id, level, optname, optlen, value) {
             Ok(()) => {
-                if level == SOL_SOCKET && optname == SO_RCVBUF {
+                if level == SOL_SOCKET && matches!(optname, SO_RCVBUF | SO_SNDBUF) {
                     let capacity = match self.linux_socket.getsockopt(socket_id, level, optname) {
                         Ok(capacity) => capacity,
                         Err(ServiceCallError::Errno(errno)) => {
                             return Ok(LinuxCallResult::Ret(-(errno as i64)));
                         }
                         Err(ServiceCallError::Trap(reason)) => {
-                            crate::kwarn!("linux_socket getsockopt after SO_RCVBUF: {}", reason);
-                            return Err("linux_socket_service trapped during SO_RCVBUF sync");
+                            crate::kwarn!("linux_socket getsockopt after buffer opt: {}", reason);
+                            return Err("linux_socket_service trapped during socket buffer sync");
                         }
                         Err(ServiceCallError::Invalid(err)) => return Err(err),
                     };
-                    match self.net_core.set_recv_capacity(socket_id, capacity) {
-                        Ok(()) => {}
-                        Err(ServiceCallError::Errno(errno)) => {
-                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                    if optname == SO_RCVBUF {
+                        match self.net_core.set_recv_capacity(socket_id, capacity) {
+                            Ok(()) => {}
+                            Err(ServiceCallError::Errno(errno)) => {
+                                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                            }
+                            Err(ServiceCallError::Trap(reason)) => {
+                                crate::kwarn!("net_core set_recv_capacity: {}", reason);
+                                return Err("net_core trapped during SO_RCVBUF sync");
+                            }
+                            Err(ServiceCallError::Invalid(err)) => return Err(err),
                         }
-                        Err(ServiceCallError::Trap(reason)) => {
-                            crate::kwarn!("net_core set_recv_capacity: {}", reason);
-                            return Err("net_core trapped during SO_RCVBUF sync");
+                        match self.set_net_stack_recv_capacity(socket_id, capacity) {
+                            Ok(()) => {}
+                            Err(ServiceCallError::Errno(errno)) => {
+                                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                            }
+                            Err(ServiceCallError::Trap(reason)) => {
+                                crate::kwarn!("net_stack set_recv_capacity: {}", reason);
+                                return Err("net_stack trapped during SO_RCVBUF sync");
+                            }
+                            Err(ServiceCallError::Invalid(err)) => return Err(err),
                         }
-                        Err(ServiceCallError::Invalid(err)) => return Err(err),
-                    }
-                    match self.set_net_stack_recv_capacity(socket_id, capacity) {
-                        Ok(()) => {}
-                        Err(ServiceCallError::Errno(errno)) => {
-                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                    } else {
+                        match self.set_net_stack_send_capacity(socket_id, capacity) {
+                            Ok(()) => {}
+                            Err(ServiceCallError::Errno(errno)) => {
+                                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                            }
+                            Err(ServiceCallError::Trap(reason)) => {
+                                crate::kwarn!("net_stack set_send_capacity: {}", reason);
+                                return Err("net_stack trapped during SO_SNDBUF sync");
+                            }
+                            Err(ServiceCallError::Invalid(err)) => return Err(err),
                         }
-                        Err(ServiceCallError::Trap(reason)) => {
-                            crate::kwarn!("net_stack set_recv_capacity: {}", reason);
-                            return Err("net_stack trapped during SO_RCVBUF sync");
-                        }
-                        Err(ServiceCallError::Invalid(err)) => return Err(err),
                     }
                 }
                 Ok(LinuxCallResult::Ret(0))

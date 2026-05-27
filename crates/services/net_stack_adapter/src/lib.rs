@@ -155,6 +155,8 @@ pub struct TcpSocketSnapshot {
     pub may_recv: bool,
     pub recv_capacity: usize,
     pub recv_queue: usize,
+    pub send_capacity: usize,
+    pub send_queue: usize,
     pub local_ipv4: [u8; 4],
     pub local_port: u16,
     pub remote_ipv4: [u8; 4],
@@ -285,18 +287,26 @@ impl SmoltcpPacketStack {
     }
 
     pub fn create_tcp_socket(&mut self) -> Result<u32, &'static str> {
-        self.create_tcp_socket_with_recv_capacity(DEFAULT_TCP_BUFFER_LEN)
+        self.create_tcp_socket_with_buffer_capacity(DEFAULT_TCP_BUFFER_LEN, DEFAULT_TCP_BUFFER_LEN)
     }
 
     pub fn create_tcp_socket_with_recv_capacity(
         &mut self,
         recv_capacity: usize,
     ) -> Result<u32, &'static str> {
+        self.create_tcp_socket_with_buffer_capacity(recv_capacity, DEFAULT_TCP_BUFFER_LEN)
+    }
+
+    pub fn create_tcp_socket_with_buffer_capacity(
+        &mut self,
+        recv_capacity: usize,
+        send_capacity: usize,
+    ) -> Result<u32, &'static str> {
         let socket_id = self.next_tcp_socket_id;
         let next_socket_id =
             self.next_tcp_socket_id.checked_add(1).ok_or("smoltcp tcp socket id exhausted")?;
         let rx_buffer = tcp::SocketBuffer::new(vec![0; bounded_tcp_buffer_len(recv_capacity)]);
-        let tx_buffer = tcp::SocketBuffer::new(vec![0; DEFAULT_TCP_BUFFER_LEN]);
+        let tx_buffer = tcp::SocketBuffer::new(vec![0; bounded_tcp_buffer_len(send_capacity)]);
         let socket = tcp::Socket::new(rx_buffer, tx_buffer);
         let handle = self.sockets.add(socket);
         self.next_tcp_socket_id = next_socket_id;
@@ -397,6 +407,8 @@ impl SmoltcpPacketStack {
             may_recv: socket.may_recv(),
             recv_capacity: socket.recv_capacity(),
             recv_queue: socket.recv_queue(),
+            send_capacity: socket.send_capacity(),
+            send_queue: socket.send_queue(),
             local_ipv4,
             local_port,
             remote_ipv4,
@@ -833,16 +845,22 @@ mod tests {
         let mut stack =
             SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
 
-        let socket = stack.create_tcp_socket_with_recv_capacity(2048).expect("tcp socket");
+        let socket = stack.create_tcp_socket_with_buffer_capacity(2048, 1024).expect("tcp socket");
         let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
         assert_eq!(snapshot.recv_capacity, 2048);
         assert_eq!(snapshot.recv_queue, 0);
+        assert_eq!(snapshot.send_capacity, 1024);
+        assert_eq!(snapshot.send_queue, 0);
 
         let socket = stack
-            .create_tcp_socket_with_recv_capacity(DEFAULT_TCP_BUFFER_LEN * 4)
+            .create_tcp_socket_with_buffer_capacity(
+                DEFAULT_TCP_BUFFER_LEN * 4,
+                DEFAULT_TCP_BUFFER_LEN * 4,
+            )
             .expect("bounded tcp socket");
         let snapshot = stack.tcp_snapshot(socket).expect("bounded tcp snapshot");
         assert_eq!(snapshot.recv_capacity, DEFAULT_TCP_BUFFER_LEN);
+        assert_eq!(snapshot.send_capacity, DEFAULT_TCP_BUFFER_LEN);
     }
 
     #[test]
