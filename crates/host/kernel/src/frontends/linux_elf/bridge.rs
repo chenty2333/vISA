@@ -53,7 +53,8 @@ use super::{
     context::{
         ActiveUserContext, ClockAdjustmentState, CredentialState, ExecFileCapabilities,
         FilePrivateSource, UserAddressSpaceState, UserPageBacking, UserPageMapping, UserRegion,
-        active_context, install_active_context, try_active_context,
+        UserRegionAttrs, UserRegionKind, active_context, install_active_context,
+        try_active_context,
     },
     loader::{
         ExecStackCredentials, USER_BRK_BASE, USER_BRK_END, USER_MMAP_ALLOC_BASE, USER_MMAP_END,
@@ -186,6 +187,8 @@ const RFLAGS_RESTORABLE_USER_MASK: u64 = 0x0024_0cd5;
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
+const STACK_GROW_MARGIN_BYTES: u64 = 64 * 1024;
+const STACK_GUARD_BYTES: u64 = 4096;
 const MAP_SHARED: u64 = 0x01;
 const MAP_PRIVATE: u64 = 0x02;
 const MAP_FIXED: u64 = 0x10;
@@ -5845,8 +5848,12 @@ fn sys_mremap(frame: &SyscallFrame) -> Result<i64, i32> {
     validate_lower_user_address_range(old_addr, old_len)?;
     validate_mapped_user_range(old_addr, old_len)?;
     let old_end = old_addr.checked_add(old_len).ok_or(ERR_EINVAL)?;
-    let (readable, writable, executable, dont_fork, wipe_on_fork) =
-        single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+    let region_attrs = single_user_region_attributes(old_addr, old_len).ok_or(ERR_ENOSYS)?;
+    let readable = region_attrs.readable;
+    let writable = region_attrs.writable;
+    let executable = region_attrs.executable;
+    let dont_fork = region_attrs.dont_fork;
+    let wipe_on_fork = region_attrs.wipe_on_fork;
 
     if dontunmap {
         validate_active_user_page_range_dontunmap_backing(old_addr, old_len)?;
@@ -6085,10 +6092,13 @@ fn clone_active_shared_mapping_for_mremap(
     for (start, end) in cloned_locked_ranges {
         context.record_locked_user_range(start, end - start);
     }
-    let (readable, writable, executable, _, _) = region_attrs;
-    context
-        .supervisor
-        .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
+    context.supervisor.record_guest_memory_region(
+        new_addr,
+        new_len,
+        region_attrs.readable,
+        region_attrs.writable,
+        region_attrs.executable,
+    );
     Ok(new_addr as i64)
 }
 
@@ -6254,10 +6264,13 @@ fn move_active_user_mapping_range(
     for (start, end) in additional_lock_ranges {
         context.record_locked_user_range(start, end - start);
     }
-    let (readable, writable, executable, _, _) = region_attrs;
-    context
-        .supervisor
-        .record_guest_memory_region(new_addr, new_len, readable, writable, executable);
+    context.supervisor.record_guest_memory_region(
+        new_addr,
+        new_len,
+        region_attrs.readable,
+        region_attrs.writable,
+        region_attrs.executable,
+    );
     Ok(())
 }
 
@@ -7364,24 +7377,25 @@ mod tests {
         AT_SYMLINK_NOFOLLOW, CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock,
         LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP,
         MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT, MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART,
-        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserReturnContext,
-        VectoredIoOffset, chown_path_follows_final_symlink, decode_linux_ucontext_return,
-        demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
-        file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
-        file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
-        file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
-        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
-        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
-        mlockall_flags_valid, mmap_file_page_mappings, mremap_growth_tail_page_mappings,
-        parse_clone3_request_bytes, positioned_io_offset, preadv_offset_from_split,
-        preadv2_flags_nowait, preadv2_offset_from_split,
+        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserRegion,
+        UserReturnContext, VectoredIoOffset, chown_path_follows_final_symlink,
+        decode_linux_ucontext_return, demand_mapping_candidate_page, encode_linux_ucontext,
+        file_backed_mmap_ref_node_id, file_shared_page_valid_bytes_for_len,
+        file_shared_page_valid_for_len, file_shared_page_writeback_bytes_for_len,
+        file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
+        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
+        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
+        futex_pi_wait_word, mlockall_flags_valid, mmap_file_page_mappings,
+        mremap_growth_tail_page_mappings, parse_clone3_request_bytes, positioned_io_offset,
+        preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
         private_mremap_tail_page_mappings_from_bytes, private_mremap_tail_source,
         pselect_read_revents_ready, pselect_write_revents_ready, pwritev2_flags_append,
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds,
-        validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        signal_restart_syscall, stack_growth_fault_allowed, validate_iovcnt,
+        validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
+        wait_nfds_within_rlimit, write_linux_greg,
     };
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
@@ -7417,6 +7431,18 @@ mod tests {
         assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 0, 0, 0));
         assert!(!rlimit_as_denies_replaced_mapping(16 * 4096, 0, 4096, 17 * 4096));
         assert!(rlimit_as_denies_replaced_mapping(16 * 4096, 0, 4096, 16 * 4096));
+    }
+
+    #[test]
+    fn stack_growth_fault_requires_near_user_stack_pointer_and_guard_floor() {
+        let end = 0x7000_0000;
+        let start = end - 64 * 4096;
+        let mapped_start = end - 4096;
+        let region = UserRegion::grow_down_stack(start, end, mapped_start, true, true, false);
+
+        assert!(stack_growth_fault_allowed(&region, mapped_start - 4096, end - 64));
+        assert!(!stack_growth_fault_allowed(&region, start + 4096, end - 64));
+        assert!(!stack_growth_fault_allowed(&region, start, end - 64));
     }
 
     #[test]
@@ -8830,27 +8856,21 @@ fn validate_mapped_user_range(ptr: u64, len: u64) -> Result<(), i32> {
     validate_user_range_access(ptr, len, UserRangeAccess::Mapped)
 }
 
-fn single_user_region_attributes(ptr: u64, len: u64) -> Option<(bool, bool, bool, bool, bool)> {
+fn single_user_region_attributes(ptr: u64, len: u64) -> Option<UserRegionAttrs> {
     let end = ptr.checked_add(len)?;
     let region = active_context()
         .regions
         .iter()
         .rev()
         .find(|region| ptr >= region.start && end <= region.end)?;
-    Some((
-        region.readable,
-        region.writable,
-        region.executable,
-        region.dont_fork,
-        region.wipe_on_fork,
-    ))
+    Some(region.attrs())
 }
 
 fn replace_user_region_range_for_mremap(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement: Option<(bool, bool, bool, bool, bool)>,
+    replacement: Option<UserRegionAttrs>,
 ) {
     if start >= end {
         return;
@@ -8862,38 +8882,14 @@ fn replace_user_region_range_for_mremap(
             continue;
         }
         if region.start < start {
-            updated.push(UserRegion {
-                start: region.start,
-                end: start,
-                readable: region.readable,
-                writable: region.writable,
-                executable: region.executable,
-                dont_fork: region.dont_fork,
-                wipe_on_fork: region.wipe_on_fork,
-            });
+            updated.push(region.with_range(region.start, start));
         }
         if region.end > end {
-            updated.push(UserRegion {
-                start: end,
-                end: region.end,
-                readable: region.readable,
-                writable: region.writable,
-                executable: region.executable,
-                dont_fork: region.dont_fork,
-                wipe_on_fork: region.wipe_on_fork,
-            });
+            updated.push(region.with_range(end, region.end));
         }
     }
-    if let Some((readable, writable, executable, dont_fork, wipe_on_fork)) = replacement {
-        updated.push(UserRegion {
-            start,
-            end,
-            readable,
-            writable,
-            executable,
-            dont_fork,
-            wipe_on_fork,
-        });
+    if let Some(attrs) = replacement {
+        updated.push(UserRegion::from_attrs(start, end, attrs));
     }
     updated.sort_by_key(|region| (region.start, region.end));
     for region in updated {
@@ -8906,6 +8902,7 @@ fn replace_user_region_range_for_mremap(
             && last.executable == region.executable
             && last.dont_fork == region.dont_fork
             && last.wipe_on_fork == region.wipe_on_fork
+            && last.kind == region.kind
             && last.end >= region.start
         {
             last.end = last.end.max(region.end);
@@ -9713,7 +9710,12 @@ fn user_page_region_prot(page: u64) -> Option<u64> {
     Some(prot)
 }
 
-fn user_fault_region(fault_va: u64, write: bool, instruction_fetch: bool) -> Option<UserRegion> {
+fn user_fault_region(
+    fault_va: u64,
+    user_sp: u64,
+    write: bool,
+    instruction_fetch: bool,
+) -> Option<UserRegion> {
     let context = try_active_context()?;
     let region = *context.regions.iter().rev().find(|region| {
         fault_va >= region.start
@@ -9729,17 +9731,54 @@ fn user_fault_region(fault_va: u64, write: bool, instruction_fetch: bool) -> Opt
     if !write && !instruction_fetch && !region.readable {
         return None;
     }
+    let page = fault_va & !4095;
+    if !user_region_page_is_committed(&region, page)
+        && !stack_growth_fault_allowed(&region, fault_va, user_sp)
+    {
+        return None;
+    }
     Some(region)
+}
+
+fn user_region_page_is_committed(region: &UserRegion, page: u64) -> bool {
+    page >= region.committed_start() && page < region.end
+}
+
+fn stack_growth_fault_allowed(region: &UserRegion, fault_va: u64, user_sp: u64) -> bool {
+    let UserRegionKind::GrowDownStack { mapped_start } = region.kind else {
+        return false;
+    };
+    let page = fault_va & !4095;
+    if page >= mapped_start {
+        return true;
+    }
+    let guard_floor = stack_guard_floor(region);
+    if page < guard_floor {
+        return false;
+    }
+    if user_sp < region.start || user_sp > region.end {
+        return false;
+    }
+    page.saturating_add(4096) >= user_sp.saturating_sub(STACK_GROW_MARGIN_BYTES)
+}
+
+fn stack_guard_floor(region: &UserRegion) -> u64 {
+    if region.end.saturating_sub(region.start) <= STACK_GUARD_BYTES {
+        region.start
+    } else {
+        region.start.saturating_add(STACK_GUARD_BYTES)
+    }
 }
 
 pub(crate) fn try_handle_user_page_fault(
     fault_va: u64,
+    user_sp: u64,
     write: bool,
     instruction_fetch: bool,
     protection: bool,
 ) -> bool {
     let page = fault_va & !4095;
-    let Some(region) = user_fault_region(fault_va, write, instruction_fetch) else {
+    let Some(region) = user_fault_region(fault_va, user_sp, write, instruction_fetch) else {
         return false;
     };
     let mut prot = 0;
@@ -9758,11 +9797,23 @@ pub(crate) fn try_handle_user_page_fault(
         }
         return cow_break_active_user_page(page, prot).is_ok();
     }
-    prefault_active_user_page(page, prot, write).is_ok()
+    if prefault_active_user_page(page, prot, write).is_ok() {
+        if matches!(region.kind, UserRegionKind::GrowDownStack { .. }) {
+            active_context().grow_user_stack_to(page);
+        }
+        true
+    } else {
+        false
+    }
 }
 
-pub(crate) fn user_page_fault_signal(fault_va: u64, write: bool, instruction_fetch: bool) -> u8 {
-    if user_fault_region(fault_va, write, instruction_fetch).is_none() {
+pub(crate) fn user_page_fault_signal(
+    fault_va: u64,
+    user_sp: u64,
+    write: bool,
+    instruction_fetch: bool,
+) -> u8 {
+    if user_fault_region(fault_va, user_sp, write, instruction_fetch).is_none() {
         return SIGSEGV;
     }
     let page = fault_va & !4095;

@@ -30,6 +30,112 @@ pub(crate) struct UserRegion {
     pub(crate) executable: bool,
     pub(crate) dont_fork: bool,
     pub(crate) wipe_on_fork: bool,
+    pub(crate) kind: UserRegionKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UserRegionKind {
+    Regular,
+    GrowDownStack { mapped_start: u64 },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct UserRegionAttrs {
+    pub(crate) readable: bool,
+    pub(crate) writable: bool,
+    pub(crate) executable: bool,
+    pub(crate) dont_fork: bool,
+    pub(crate) wipe_on_fork: bool,
+    pub(crate) kind: UserRegionKind,
+}
+
+impl UserRegion {
+    pub(crate) fn attrs(&self) -> UserRegionAttrs {
+        UserRegionAttrs {
+            readable: self.readable,
+            writable: self.writable,
+            executable: self.executable,
+            dont_fork: self.dont_fork,
+            wipe_on_fork: self.wipe_on_fork,
+            kind: self.kind,
+        }
+    }
+
+    pub(crate) fn from_attrs(start: u64, end: u64, attrs: UserRegionAttrs) -> Self {
+        Self {
+            start,
+            end,
+            readable: attrs.readable,
+            writable: attrs.writable,
+            executable: attrs.executable,
+            dont_fork: attrs.dont_fork,
+            wipe_on_fork: attrs.wipe_on_fork,
+            kind: attrs.kind.for_subrange(start, end),
+        }
+    }
+
+    pub(crate) fn regular(
+        start: u64,
+        end: u64,
+        readable: bool,
+        writable: bool,
+        executable: bool,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            readable,
+            writable,
+            executable,
+            dont_fork: false,
+            wipe_on_fork: false,
+            kind: UserRegionKind::Regular,
+        }
+    }
+
+    pub(crate) fn grow_down_stack(
+        start: u64,
+        end: u64,
+        mapped_start: u64,
+        readable: bool,
+        writable: bool,
+        executable: bool,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            readable,
+            writable,
+            executable,
+            dont_fork: false,
+            wipe_on_fork: false,
+            kind: UserRegionKind::GrowDownStack { mapped_start },
+        }
+    }
+
+    pub(crate) fn with_range(self, start: u64, end: u64) -> Self {
+        Self { start, end, kind: self.kind.for_subrange(start, end), ..self }
+    }
+
+    pub(crate) fn committed_start(&self) -> u64 {
+        match self.kind {
+            UserRegionKind::Regular => self.start,
+            UserRegionKind::GrowDownStack { mapped_start } => {
+                mapped_start.clamp(self.start, self.end)
+            }
+        }
+    }
+}
+
+impl UserRegionKind {
+    fn for_subrange(self, start: u64, end: u64) -> Self {
+        match self {
+            Self::Regular => Self::Regular,
+            Self::GrowDownStack { mapped_start } => {
+                Self::GrowDownStack { mapped_start: mapped_start.clamp(start, end) }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -303,6 +409,15 @@ mod tests {
 
         assert_eq!(alloc_addr(&mut parent), 0x4000);
     }
+
+    #[test]
+    fn grow_down_stack_region_tracks_committed_start() {
+        let region = UserRegion::grow_down_stack(0x6000, 0x9000, 0x8000, true, true, false);
+
+        assert_eq!(region.committed_start(), 0x8000);
+        assert_eq!(region.with_range(0x6000, 0x7000).committed_start(), 0x7000);
+        assert_eq!(region.with_range(0x7000, 0x9000).committed_start(), 0x8000);
+    }
 }
 
 pub(crate) struct ActiveUserContext {
@@ -569,7 +684,14 @@ impl ActiveUserContext {
                 &mut self.regions,
                 start,
                 end,
-                Some((readable, writable, executable, false, false)),
+                Some(UserRegionAttrs {
+                    readable,
+                    writable,
+                    executable,
+                    dont_fork: false,
+                    wipe_on_fork: false,
+                    kind: UserRegionKind::Regular,
+                }),
             );
         }
     }
@@ -589,7 +711,14 @@ impl ActiveUserContext {
                 &mut self.regions,
                 start,
                 end,
-                Some((readable, writable, executable, dont_fork, wipe_on_fork)),
+                Some(UserRegionAttrs {
+                    readable,
+                    writable,
+                    executable,
+                    dont_fork,
+                    wipe_on_fork,
+                    kind: UserRegionKind::Regular,
+                }),
             );
         }
     }
@@ -632,6 +761,22 @@ impl ActiveUserContext {
         if let Some(end) = start.checked_add(len) {
             replace_user_region_range(&mut self.regions, start, end, None);
             remove_range(&mut self.locked_user_ranges, start, end);
+        }
+    }
+
+    pub(crate) fn grow_user_stack_to(&mut self, page: u64) {
+        let Some(region) = self.regions.iter_mut().rev().find(|region| {
+            page >= region.start
+                && page < region.end
+                && matches!(region.kind, UserRegionKind::GrowDownStack { .. })
+        }) else {
+            return;
+        };
+        let UserRegionKind::GrowDownStack { mapped_start } = &mut region.kind else {
+            return;
+        };
+        if page < *mapped_start {
+            *mapped_start = page;
         }
     }
 
@@ -1715,7 +1860,7 @@ fn replace_user_region_range(
     regions: &mut Vec<UserRegion>,
     start: u64,
     end: u64,
-    replacement: Option<(bool, bool, bool, bool, bool)>,
+    replacement: Option<UserRegionAttrs>,
 ) {
     if start >= end {
         return;
@@ -1728,39 +1873,15 @@ fn replace_user_region_range(
             continue;
         }
         if region.start < start {
-            updated.push(UserRegion {
-                start: region.start,
-                end: start,
-                readable: region.readable,
-                writable: region.writable,
-                executable: region.executable,
-                dont_fork: region.dont_fork,
-                wipe_on_fork: region.wipe_on_fork,
-            });
+            updated.push(region.with_range(region.start, start));
         }
         if region.end > end {
-            updated.push(UserRegion {
-                start: end,
-                end: region.end,
-                readable: region.readable,
-                writable: region.writable,
-                executable: region.executable,
-                dont_fork: region.dont_fork,
-                wipe_on_fork: region.wipe_on_fork,
-            });
+            updated.push(region.with_range(end, region.end));
         }
     }
 
-    if let Some((readable, writable, executable, dont_fork, wipe_on_fork)) = replacement {
-        updated.push(UserRegion {
-            start,
-            end,
-            readable,
-            writable,
-            executable,
-            dont_fork,
-            wipe_on_fork,
-        });
+    if let Some(attrs) = replacement {
+        updated.push(UserRegion::from_attrs(start, end, attrs));
     }
 
     updated.sort_by_key(|region| (region.start, region.end));
@@ -1786,20 +1907,20 @@ fn rewrite_existing_user_region_range<F>(
             continue;
         }
         if region.start < start {
-            updated.push(UserRegion { end: start, ..region });
+            updated.push(region.with_range(region.start, start));
         }
 
         let middle_start = region.start.max(start);
         let middle_end = region.end.min(end);
         if middle_start < middle_end {
-            let middle = UserRegion { start: middle_start, end: middle_end, ..region };
+            let middle = region.with_range(middle_start, middle_end);
             if let Some(rewritten) = rewrite(middle) {
                 updated.push(rewritten);
             }
         }
 
         if region.end > end {
-            updated.push(UserRegion { start: end, ..region });
+            updated.push(region.with_range(end, region.end));
         }
     }
 
@@ -1818,6 +1939,7 @@ fn merge_user_regions(regions: &mut Vec<UserRegion>, updated: Vec<UserRegion>) {
             && last.executable == region.executable
             && last.dont_fork == region.dont_fork
             && last.wipe_on_fork == region.wipe_on_fork
+            && last.kind == region.kind
             && last.end >= region.start
         {
             last.end = last.end.max(region.end);

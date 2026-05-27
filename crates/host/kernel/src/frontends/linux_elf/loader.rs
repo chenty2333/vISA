@@ -1112,15 +1112,14 @@ fn prepare_user_program_inner(
         stack_credentials,
     )?;
     prepare_user_stack(frame_allocator, page_mappings, phys_offset, &initial_stack, stack_pages)?;
-    regions.push(UserRegion {
-        start: stack_base,
-        end: USER_STACK_TOP,
-        readable: true,
-        writable: true,
-        executable: false,
-        dont_fork: false,
-        wipe_on_fork: false,
-    });
+    regions.push(UserRegion::grow_down_stack(
+        stack_base,
+        USER_STACK_TOP,
+        initial_stack.page_base,
+        true,
+        true,
+        false,
+    ));
 
     Ok((entry, initial_stack.stack_pointer))
 }
@@ -1162,15 +1161,13 @@ fn prepare_user_load_segments(
             segment_bytes,
         )?;
 
-        regions.push(UserRegion {
-            start: virt_start & !(PAGE_SIZE as u64 - 1),
-            end: align_up(virt_end as usize, PAGE_SIZE) as u64,
-            readable: ph.flags().is_read(),
-            writable: ph.flags().is_write(),
-            executable: ph.flags().is_execute(),
-            dont_fork: false,
-            wipe_on_fork: false,
-        });
+        regions.push(UserRegion::regular(
+            virt_start & !(PAGE_SIZE as u64 - 1),
+            align_up(virt_end as usize, PAGE_SIZE) as u64,
+            ph.flags().is_read(),
+            ph.flags().is_write(),
+            ph.flags().is_execute(),
+        ));
     }
     Ok(())
 }

@@ -86,9 +86,11 @@ extern "x86-interrupt" fn page_fault_handler(
     let protection = error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION);
     let write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
     let instruction_fetch = error_code.contains(PageFaultErrorCode::INSTRUCTION_FETCH);
+    let user_sp = stack_frame.stack_pointer.as_u64();
     if user_mode
         && crate::frontends::linux_elf::try_handle_user_page_fault(
             accessed,
+            user_sp,
             write,
             instruction_fetch,
             protection,
@@ -104,8 +106,12 @@ extern "x86-interrupt" fn page_fault_handler(
         stack_frame.instruction_pointer,
         stack_frame,
     );
-    let signal =
-        crate::frontends::linux_elf::user_page_fault_signal(accessed, write, instruction_fetch);
+    let signal = crate::frontends::linux_elf::user_page_fault_signal(
+        accessed,
+        user_sp,
+        write,
+        instruction_fetch,
+    );
     crate::kinfo!("page fault: exiting with signal {signal}");
     crate::frontends::linux_elf::handle_user_fault(signal);
 }
