@@ -446,8 +446,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         original_word: u32,
         wait_word: u32,
     ) {
-        let Ok(waiters) = self.futex.pi_waiter_count(key) else {
-            crate::kwarn!("generic futex pi restore skipped after pi-waiter-count failure");
+        let Ok(waiters) = self.futex.waiter_count(key) else {
+            crate::kwarn!("generic futex pi restore skipped after waiter-count failure");
             return;
         };
         if waiters != 0 {
@@ -905,8 +905,8 @@ mod tests {
 
     use vmos_abi::{
         ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_LOCK_PI,
-        FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, SYS_FUTEX, SYS_PAUSE,
-        SyscallContext,
+        FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAITERS,
+        SYS_FUTEX, SYS_PAUSE, SyscallContext,
     };
 
     use super::*;
@@ -1030,5 +1030,56 @@ mod tests {
             .expect("malformed timeout dispatch");
         assert_eq!(expect_ret(malformed), -(ERR_EINVAL as i64));
         assert_eq!(read_word(&mut runtime, ptr), 99);
+    }
+
+    #[test]
+    fn generic_futex_pi_restore_preserves_waiters_word_for_plain_waiter() {
+        let mut runtime = test_runtime();
+        let original_word = 99u32;
+        let wait_word = original_word | FUTEX_WAITERS;
+        let (ptr, _) = runtime.write_linux_arg_bytes(&wait_word.to_le_bytes()).expect("futex word");
+        let token = runtime.waits.register(
+            runtime.current_task_id(),
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_with_priority(ptr as u64, token.id, runtime.current_task_priority())
+            .expect("plain waiter registration");
+
+        runtime.restore_generic_futex_wait_word_if_unwaited(ptr as u64, original_word, wait_word);
+        assert_eq!(read_word(&mut runtime, ptr), wait_word);
+
+        runtime.futex.cancel_wait(token.id).expect("plain waiter cancel");
+        runtime.restore_generic_futex_wait_word_if_unwaited(ptr as u64, original_word, wait_word);
+        assert_eq!(read_word(&mut runtime, ptr), original_word);
+    }
+
+    #[test]
+    fn generic_futex_pi_boost_refresh_ignores_plain_waiters() {
+        let mut runtime = test_runtime();
+        let owner_task = runtime.current_task_id();
+        let waiter_task = runtime.allocate_task();
+        runtime.boost_task_priority(waiter_task, 99);
+        runtime.register_futex_pi_boost(owner_task, 11, runtime.task_priority(waiter_task));
+        assert_eq!(runtime.task_priority(owner_task), 99);
+
+        let token = runtime.waits.register(
+            waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_with_priority(11, token.id, runtime.task_priority(waiter_task))
+            .expect("plain waiter registration");
+
+        runtime.refresh_futex_pi_boost(owner_task, 11);
+        assert_eq!(runtime.task_priority(owner_task), 0);
     }
 }
