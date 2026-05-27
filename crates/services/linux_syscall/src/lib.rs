@@ -366,6 +366,9 @@ fn dispatch_futex(
     if command == FUTEX_CMP_REQUEUE_PI {
         return plan_futex_cmp_requeue_pi(key, val, timeout_ptr, timeout_len, current_word);
     }
+    if command == FUTEX_CMP_REQUEUE {
+        return plan_futex_cmp_requeue(key, val, timeout_ptr, timeout_len, current_word);
+    }
     let timeout_ms = match command {
         FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
             if timeout_ptr == 0 || timeout_len == 0 {
@@ -377,11 +380,11 @@ fn dispatch_futex(
                 }
             }
         }
-        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_ptr,
+        FUTEX_REQUEUE => timeout_ptr,
         _ => u64::MAX,
     };
     let aux_word = match command {
-        FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_len,
+        FUTEX_REQUEUE => timeout_len,
         _ => current_word,
     };
     plan_futex(key, op, val, timeout_ms, aux_word)
@@ -395,7 +398,7 @@ fn plan_futex(key: u64, op: u64, val: u64, timeout_ms: u64, current_word: u64) -
         FUTEX_WAIT_REQUEUE_PI => plan_futex_wait_requeue_pi(key, val, timeout_ms, current_word),
         FUTEX_WAKE_BITSET => plan_futex_wake_bitset(key, val, current_word),
         FUTEX_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, false),
-        FUTEX_CMP_REQUEUE => plan_futex_requeue(key, val, timeout_ms, current_word, true),
+        FUTEX_CMP_REQUEUE => PackedStep::error(-ERR_EINVAL),
         FUTEX_CMP_REQUEUE_PI => PackedStep::error(-ERR_EINVAL),
         FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
             plan_futex_lock_pi(key, op as u32, 0, 0)
@@ -478,6 +481,36 @@ fn plan_futex_requeue(
     let kind = if compare_checked { PlanKind::FutexCmpRequeue } else { PlanKind::FutexRequeue };
     reset_plan(kind, [src_key, requeue_count, dst_key, wake_count, 0, 0]);
     PackedStep::plan(kind)
+}
+
+fn plan_futex_cmp_requeue(
+    src_key: u64,
+    wake_count: u64,
+    requeue_count: u64,
+    dst_key: u64,
+    compare_word: u64,
+) -> PackedStep {
+    if src_key == dst_key {
+        return PackedStep::error(-ERR_EINVAL);
+    }
+    let src_ptr = match u32::try_from(src_key) {
+        Ok(ptr) => ptr,
+        Err(_) => return PackedStep::error(-ERR_EFAULT),
+    };
+    let current_word = match arg_u32(src_ptr) {
+        Ok(word) => word as u64,
+        Err(errno) => return PackedStep::error(errno),
+    };
+    if current_word != compare_word {
+        return PackedStep::error(-ERR_EAGAIN);
+    }
+    let wake_count = wake_count.min(u32::MAX as u64);
+    let requeue_count = requeue_count.min(u32::MAX as u64);
+    reset_plan(
+        PlanKind::FutexCmpRequeue,
+        [src_key, requeue_count, dst_key, wake_count, compare_word, 0],
+    );
+    PackedStep::plan(PlanKind::FutexCmpRequeue)
 }
 
 fn plan_futex_cmp_requeue_pi(
@@ -1676,6 +1709,66 @@ mod tests {
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), u64::MAX);
         assert_ne!(plan_arg(2), 0);
+    }
+
+    #[test]
+    fn futex_cmp_requeue_checks_source_word_before_planning() {
+        let _guard = test_guard();
+        let src_word = 0x44u32;
+        let (src, dst) = unsafe {
+            let base = core::ptr::addr_of_mut!(ARG_BUFFER) as *mut u8;
+            let base_addr = base as usize;
+            let aligned = (base_addr + 3) & !3usize;
+            core::ptr::copy_nonoverlapping(src_word.to_le_bytes().as_ptr(), aligned as *mut u8, 4);
+            core::ptr::copy_nonoverlapping(
+                0u32.to_le_bytes().as_ptr(),
+                (aligned + 4) as *mut u8,
+                4,
+            );
+            (aligned as u32, (aligned + 4) as u32)
+        };
+
+        let raw = dispatch(
+            SYS_FUTEX,
+            src as u64,
+            FUTEX_CMP_REQUEUE as u64,
+            1,
+            2,
+            dst as u64,
+            src_word as u64,
+        );
+        let step = PackedStep::decode(raw);
+        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexCmpRequeue));
+        assert_eq!(plan_arg(0), src as u64);
+        assert_eq!(plan_arg(1), 2);
+        assert_eq!(plan_arg(2), dst as u64);
+        assert_eq!(plan_arg(3), 1);
+        assert_eq!(plan_arg(4), src_word as u64);
+
+        let mismatch = PackedStep::decode(dispatch(
+            SYS_FUTEX,
+            src as u64,
+            FUTEX_CMP_REQUEUE as u64,
+            1,
+            2,
+            dst as u64,
+            (src_word + 1) as u64,
+        ));
+        assert_eq!(mismatch.tag, vmos_abi::StepTag::Error);
+        assert_eq!(mismatch.value, -ERR_EAGAIN);
+
+        let same_address = PackedStep::decode(dispatch(
+            SYS_FUTEX,
+            src as u64,
+            FUTEX_CMP_REQUEUE as u64,
+            1,
+            2,
+            src as u64,
+            src_word as u64,
+        ));
+        assert_eq!(same_address.tag, vmos_abi::StepTag::Error);
+        assert_eq!(same_address.value, -ERR_EINVAL);
     }
 
     #[test]

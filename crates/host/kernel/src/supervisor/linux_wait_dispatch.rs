@@ -4,7 +4,7 @@ use semantic_core::FailureEffect;
 use vmos_abi::{
     ERR_EAGAIN, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_EPERM, ERR_ETIMEDOUT,
     FUTEX_OWNER_DIED, FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME,
-    FUTEX_TID_MASK, FUTEX_WAITERS,
+    FUTEX_TID_MASK, FUTEX_WAITERS, PlanKind,
 };
 
 use super::{
@@ -197,6 +197,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             u32::try_from(plan.args[1]).map_err(|_| "futex requeue count overflowed")?;
         let dst_key = plan.args[2];
         let wake_count = u32::try_from(plan.args[3]).map_err(|_| "futex wake count overflowed")?;
+        if src_key == dst_key {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        if plan.kind == PlanKind::FutexCmpRequeue {
+            let src_word = match self.read_generic_futex_word(src_key) {
+                Ok(word) => word as u64,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+            if src_word != plan.args[4] {
+                return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
+            }
+        }
         match self.futex.requeue(src_key, requeue_count, dst_key, wake_count) {
             Ok((total, wait_ids)) => {
                 for wait_id in &wait_ids {
@@ -1002,9 +1014,9 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_CMP_REQUEUE_PI,
-        FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
-        FUTEX_WAITERS, SYS_FUTEX, SYS_PAUSE, SyscallContext,
+        ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_CMP_REQUEUE,
+        FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI,
+        FUTEX_UNLOCK_PI, FUTEX_WAITERS, SYS_FUTEX, SYS_PAUSE, SyscallContext,
     };
 
     use super::*;
@@ -1128,6 +1140,109 @@ mod tests {
             .expect("malformed timeout dispatch");
         assert_eq!(expect_ret(malformed), -(ERR_EINVAL as i64));
         assert_eq!(read_word(&mut runtime, ptr), 99);
+    }
+
+    #[test]
+    fn generic_futex_cmp_requeue_rechecks_source_word_before_requeue() {
+        let mut runtime = test_runtime();
+        let src_word = 7u32;
+        let mut words = [0u8; 8];
+        words[0..4].copy_from_slice(&src_word.to_le_bytes());
+        words[4..8].copy_from_slice(&0u32.to_le_bytes());
+        let (base, _) = runtime.write_linux_arg_bytes(&words).expect("futex words");
+        let src = base as u64;
+        let dst = (base + 4) as u64;
+        let token = runtime.waits.register(
+            runtime.current_task_id(),
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_with_priority(src, token.id, runtime.current_task_priority())
+            .expect("plain waiter registration");
+
+        let mismatch = runtime
+            .plan_futex_requeue(LinuxPlan {
+                kind: PlanKind::FutexCmpRequeue,
+                args: [src, 1, dst, 0, (src_word + 1) as u64, 0],
+            })
+            .expect("cmp requeue plan dispatch");
+        assert_eq!(expect_ret(mismatch), -(ERR_EAGAIN as i64));
+        assert_eq!(runtime.futex.waiter_count(src).expect("src waiter count"), 1);
+        assert_eq!(runtime.futex.waiter_count(dst).expect("dst waiter count"), 0);
+        assert!(runtime.waits.take_resolution(token).is_none());
+    }
+
+    #[test]
+    fn generic_futex_cmp_requeue_wakes_and_requeues_after_matching_compare() {
+        let mut runtime = test_runtime();
+        let src_word = 9u32;
+        let mut words = [0u8; 8];
+        words[0..4].copy_from_slice(&src_word.to_le_bytes());
+        words[4..8].copy_from_slice(&0u32.to_le_bytes());
+        let (base, _) = runtime.write_linux_arg_bytes(&words).expect("futex words");
+        let src = base as u64;
+        let dst = (base + 4) as u64;
+        let wake_task = runtime.allocate_task();
+        let requeue_task = runtime.allocate_task();
+        runtime.boost_task_priority(wake_task, 9);
+        runtime.boost_task_priority(requeue_task, 1);
+
+        let wake_token = runtime.waits.register(
+            wake_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(wake_token);
+        runtime
+            .futex
+            .register_wait_with_priority(src, wake_token.id, runtime.task_priority(wake_task))
+            .expect("wake waiter registration");
+        let requeue_token = runtime.waits.register(
+            requeue_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(requeue_token);
+        runtime
+            .futex
+            .register_wait_with_priority(src, requeue_token.id, runtime.task_priority(requeue_task))
+            .expect("requeue waiter registration");
+
+        let mismatch = runtime
+            .dispatch_linux_syscall(
+                "test_futex_cmp_requeue_mismatch",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [src, FUTEX_CMP_REQUEUE as u64, 1, 1, dst, (src_word + 1) as u64],
+                ),
+            )
+            .expect("cmp requeue mismatch dispatch");
+        assert_eq!(expect_ret(mismatch), -(ERR_EAGAIN as i64));
+        assert_eq!(runtime.futex.waiter_count(src).expect("src waiter count"), 2);
+        assert_eq!(runtime.futex.waiter_count(dst).expect("dst waiter count"), 0);
+
+        let matched = runtime
+            .dispatch_linux_syscall(
+                "test_futex_cmp_requeue_match",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [src, FUTEX_CMP_REQUEUE as u64, 1, 1, dst, src_word as u64],
+                ),
+            )
+            .expect("cmp requeue match dispatch");
+        assert_eq!(expect_ret(matched), 2);
+        assert_eq!(runtime.futex.waiter_count(src).expect("src waiter count"), 0);
+        assert_eq!(runtime.futex.waiter_count(dst).expect("dst waiter count"), 1);
+        let resolution = runtime.waits.take_resolution(wake_token).expect("wake resolution");
+        assert_eq!(resolution.source, WaitSource::Futex { pi: false });
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
+        assert!(runtime.waits.take_resolution(requeue_token).is_none());
     }
 
     #[test]

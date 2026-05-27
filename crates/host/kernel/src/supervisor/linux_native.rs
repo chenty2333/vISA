@@ -345,6 +345,9 @@ impl LinuxFrontend {
                 current_word,
             );
         }
+        if command == FUTEX_CMP_REQUEUE {
+            return self.plan_futex_cmp_requeue(key, val, timeout_ptr, timeout_len, current_word);
+        }
         let timeout_ms = match command {
             FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
                 if timeout_ptr == 0 || timeout_len == 0 {
@@ -356,11 +359,11 @@ impl LinuxFrontend {
                     }
                 }
             }
-            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_ptr,
+            FUTEX_REQUEUE => timeout_ptr,
             _ => u64::MAX,
         };
         let aux_word = match command {
-            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_len,
+            FUTEX_REQUEUE => timeout_len,
             _ => current_word,
         };
         self.plan_futex(key, op, val, timeout_ms, aux_word)
@@ -392,7 +395,7 @@ impl LinuxFrontend {
             }
             FUTEX_WAKE_BITSET => self.plan_futex_wake_bitset(key, val, current_word),
             FUTEX_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, false),
-            FUTEX_CMP_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, true),
+            FUTEX_CMP_REQUEUE => PackedStep::error(-ERR_EINVAL),
             FUTEX_CMP_REQUEUE_PI => PackedStep::error(-ERR_EINVAL),
             FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
                 self.plan_futex_lock_pi(key, op as u32, 0, 0)
@@ -502,6 +505,37 @@ impl LinuxFrontend {
             ],
         );
         PackedStep::plan(kind)
+    }
+
+    fn plan_futex_cmp_requeue(
+        &mut self,
+        src_key: u64,
+        wake_count: u64,
+        requeue_count: u64,
+        dst_key: u64,
+        compare_word: u64,
+    ) -> PackedStep {
+        if src_key == dst_key {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        let src_ptr = match u32::try_from(src_key) {
+            Ok(ptr) => ptr,
+            Err(_) => return PackedStep::error(-ERR_EFAULT),
+        };
+        let current_word = match self.arg_u32(src_ptr) {
+            Ok(word) => word as u64,
+            Err(errno) => return PackedStep::error(errno),
+        };
+        if current_word != compare_word {
+            return PackedStep::error(-ERR_EAGAIN);
+        }
+        let wake_count = wake_count.min(u32::MAX as u64);
+        let requeue_count = requeue_count.min(u32::MAX as u64);
+        self.reset_plan(
+            PlanKind::FutexCmpRequeue,
+            [src_key, requeue_count, dst_key, wake_count, compare_word, 0],
+        );
+        PackedStep::plan(PlanKind::FutexCmpRequeue)
     }
 
     fn plan_futex_cmp_requeue_pi(
