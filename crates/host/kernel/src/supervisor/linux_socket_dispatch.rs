@@ -928,7 +928,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.require_capability("linux_syscall", "linux.socket", "fcntl").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
-        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl fd overflowed")?;
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
         match self.validate_fd_handle(fd) {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
@@ -940,14 +943,24 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
-        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl cmd overflowed")?;
+        let cmd = match u32::try_from(plan.args[1]) {
+            Ok(cmd) => cmd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+        };
         let arg = plan.args[2];
         let ret = match cmd {
             F_DUPFD => {
-                self.dup_fd_from(fd, u32::try_from(arg).map_err(|_| "fcntl arg overflowed")?)
+                let min_fd = match u32::try_from(arg) {
+                    Ok(min_fd) => min_fd,
+                    Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+                };
+                self.dup_fd_from(fd, min_fd)
             }
             F_DUPFD_CLOEXEC => {
-                let min_fd = u32::try_from(arg).map_err(|_| "fcntl arg overflowed")?;
+                let min_fd = match u32::try_from(arg) {
+                    Ok(min_fd) => min_fd,
+                    Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+                };
                 self.dup_fd_from(fd, min_fd).and_then(|new_fd| {
                     self.set_fd_flags(new_fd, FD_CLOEXEC)?;
                     Ok(new_fd)
@@ -1094,7 +1107,51 @@ fn linux_listen_backlog_arg(raw: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::linux_listen_backlog_arg;
+    use alloc::boxed::Box;
+
+    use vmos_abi::{ERR_EBADF, ERR_EINVAL, NodeKind, PlanKind, ServiceRoute};
+
+    use super::{LinuxCallResult, LinuxPlan, linux_listen_backlog_arg};
+    use crate::supervisor::{
+        engine::RuntimeOnlyExecutor,
+        runtime::PrototypeRuntime,
+        types::{FdEntry, FdResource},
+    };
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn open_vfs_file(runtime: &mut PrototypeRuntime<'_>, path: &[u8]) -> u32 {
+        runtime.vfs.create_file(path, 0o600, 0, 0).expect("create dynamic file");
+        let vfs_node_id = runtime.vfs.node_id_for_path(path);
+        runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::ServiceNode {
+                    route: ServiceRoute::Vfs,
+                    node: NodeKind::File,
+                    path: path.to_vec(),
+                    vfs_node_id,
+                },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .expect("install vfs fd")
+    }
+
+    fn fcntl_plan(fd: u64, cmd: u64, arg: u64) -> LinuxPlan {
+        LinuxPlan { kind: PlanKind::Fcntl, args: [fd, cmd, arg, 0, 0, 0] }
+    }
+
+    fn ret_errno(result: Result<LinuxCallResult, &'static str>) -> i64 {
+        match result.expect("fcntl plan should return a Linux result") {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("unexpected fcntl result: {other:?}"),
+        }
+    }
 
     #[test]
     fn listen_backlog_arg_uses_linux_i32_shape_before_internal_clamp() {
@@ -1104,6 +1161,31 @@ mod tests {
         assert_eq!(linux_listen_backlog_arg(u64::MAX), u32::MAX);
         assert_eq!(linux_listen_backlog_arg(u32::MAX as u64), u32::MAX);
         assert_eq!(linux_listen_backlog_arg(1u64 << 32), 0);
+    }
+
+    #[test]
+    fn generic_fcntl_bad_fd_shape_returns_ebadf() {
+        let mut runtime = test_runtime();
+
+        assert_eq!(ret_errno(runtime.plan_fcntl(fcntl_plan(u64::MAX, 1, 0))), -(ERR_EBADF as i64));
+    }
+
+    #[test]
+    fn generic_fcntl_dupfd_bad_min_shape_returns_einval() {
+        const F_DUPFD: u64 = 0;
+        const F_DUPFD_CLOEXEC: u64 = 1030;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/generic-fcntl-dupfd-shape") as u64;
+
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl(fcntl_plan(fd, F_DUPFD, u64::MAX))),
+            -(ERR_EINVAL as i64)
+        );
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl(fcntl_plan(fd, F_DUPFD_CLOEXEC, u64::MAX))),
+            -(ERR_EINVAL as i64)
+        );
     }
 }
 

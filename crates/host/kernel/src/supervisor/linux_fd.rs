@@ -1205,15 +1205,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         new_fd: u32,
         allow_same_fd: bool,
     ) -> Result<u32, i32> {
-        if new_fd >= self.fd_allocation_limit() {
-            return Err(ERR_EBADF);
-        }
         if old_fd == new_fd {
             if allow_same_fd {
                 self.dup_source_entry(old_fd)?;
                 return Ok(new_fd);
             }
             return Err(ERR_EINVAL);
+        }
+
+        if new_fd >= self.fd_allocation_limit() {
+            return Err(ERR_EBADF);
         }
 
         let entry = self.dup_source_entry(old_fd)?;
@@ -3393,7 +3394,7 @@ mod tests {
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         runtime::PrototypeRuntime,
-        types::{FdEntry, FdResource},
+        types::{FdEntry, FdResource, RLIMIT_NOFILE, Rlimit},
     };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -3453,6 +3454,36 @@ mod tests {
         runtime
             .fcntl_setlk_fd(write_only, 100, F_UNLCK, 0, 0, 10)
             .expect("unlock does not require read mode");
+    }
+
+    #[test]
+    fn dup_same_fd_survives_lowered_rlimit_nofile() {
+        let mut runtime = test_runtime();
+        let source = open_vfs_file(&mut runtime, b"/tmp/dup-same-source", O_RDWR);
+        let high_fd = runtime.dup_fd_to(source, 10, false).expect("install high fd");
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_NOFILE, Rlimit { cur: 4, max: 1024 }));
+
+        assert_eq!(runtime.fd_flags(high_fd), Ok(0));
+        assert_eq!(runtime.dup_fd_to(high_fd, high_fd, true), Ok(high_fd));
+        assert_eq!(runtime.dup_fd_to(high_fd, high_fd, false), Err(ERR_EINVAL));
+        assert_eq!(runtime.dup_fd_to(source, high_fd, true), Err(ERR_EBADF));
+        assert_eq!(runtime.fd_flags(high_fd), Ok(0));
+    }
+
+    #[test]
+    fn dup_and_fcntl_dupfd_honor_rlimit_nofile_edges() {
+        let mut runtime = test_runtime();
+        let source = open_vfs_file(&mut runtime, b"/tmp/dup-nofile-source", O_RDWR);
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_NOFILE, Rlimit { cur: 5, max: 1024 }));
+
+        assert_eq!(runtime.dup_fd(source), Ok(4));
+        assert_eq!(runtime.dup_fd(source), Err(ERR_EMFILE));
+        assert_eq!(runtime.dup_fd_from(source, 0), Err(ERR_EMFILE));
+        assert_eq!(runtime.dup_fd_from(source, 4), Err(ERR_EMFILE));
+        assert_eq!(runtime.dup_fd_from(source, 5), Err(ERR_EINVAL));
+        assert_eq!(runtime.dup_fd_to(source, 5, true), Err(ERR_EBADF));
     }
 
     #[test]
