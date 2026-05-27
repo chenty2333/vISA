@@ -135,6 +135,11 @@ pub extern "C" fn recv_socket(socket_id: u32, len: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn shutdown_socket(socket_id: u32, how: u32) -> i32 {
+    result_unit(unsafe { state().shutdown_socket(socket_id, how) })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn setsockopt(
     socket_id: u32,
     level: u32,

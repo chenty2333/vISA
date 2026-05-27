@@ -54,6 +54,7 @@ pub const SYS_SENDTO: u64 = 44;
 pub const SYS_SENDMSG: u64 = 46;
 pub const SYS_RECVFROM: u64 = 45;
 pub const SYS_RECVMSG: u64 = 47;
+pub const SYS_SHUTDOWN: u64 = 48;
 pub const SYS_BIND: u64 = 49;
 pub const SYS_LISTEN: u64 = 50;
 pub const SYS_GETSOCKNAME: u64 = 51;
@@ -251,6 +252,7 @@ pub const ERR_EISDIR: i32 = 21;
 pub const ERR_EINVAL: i32 = 22;
 pub const ERR_EMFILE: i32 = 24;
 pub const ERR_EFBIG: i32 = 27;
+pub const ERR_EPIPE: i32 = 32;
 pub const ERR_ERANGE: i32 = 34;
 pub const ERR_EDEADLK: i32 = 35;
 pub const ERR_ENOSYS: i32 = 38;
@@ -432,6 +434,7 @@ pub enum PlanKind {
     Ptrace = 109,
     RecvMsg = 110,
     SendMsg = 111,
+    Shutdown = 112,
 }
 
 impl PlanKind {
@@ -548,6 +551,7 @@ impl PlanKind {
             109 => Some(Self::Ptrace),
             110 => Some(Self::RecvMsg),
             111 => Some(Self::SendMsg),
+            112 => Some(Self::Shutdown),
             _ => None,
         }
     }

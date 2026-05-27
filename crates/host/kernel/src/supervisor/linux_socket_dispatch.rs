@@ -1,6 +1,8 @@
+use alloc::vec::Vec;
+
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
-    ERR_EMFILE, ERR_ENOSYS, ERR_EPERM, PlanKind, SOCK_STREAM,
+    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SOCK_STREAM,
 };
 
 use super::{
@@ -17,6 +19,8 @@ const FD_CLOEXEC: u32 = 1;
 const O_NONBLOCK: u32 = 0o4000;
 const MSG_PEEK: u32 = 0x02;
 const MSG_DONTWAIT: u32 = 0x40;
+const MSG_NOSIGNAL: u32 = 0x4000;
+const SIGPIPE: u8 = 13;
 const FDSET_WORDS: usize = 16;
 const FDSET_BITS: u32 = (FDSET_WORDS as u32) * 64;
 
@@ -291,6 +295,59 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    pub(super) fn plan_shutdown(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("linux_syscall", "linux.socket", "shutdown").is_err()
+            || self.require_capability("net_core", "net.socket", "shutdown").is_err()
+        {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "shutdown fd overflowed")?;
+        let how = u32::try_from(plan.args[1]).map_err(|_| "shutdown how overflowed")?;
+        let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("shutdown socket snapshot: {}", reason);
+                return Err("socket snapshot trapped during shutdown");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        if let Some(result) = self.shutdown_net_stack_socket(socket_id, ready_key, handle, how)? {
+            if matches!(result, LinuxCallResult::Ret(0)) {
+                match self.linux_socket.shutdown_socket(socket_id, how) {
+                    Ok(()) | Err(ServiceCallError::Errno(ERR_ENOTCONN)) => {}
+                    Err(ServiceCallError::Errno(errno)) => {
+                        return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                    }
+                    Err(ServiceCallError::Trap(reason)) => {
+                        crate::kwarn!("linux_socket shutdown: {}", reason);
+                        return Err("linux_socket_service trapped during shutdown");
+                    }
+                    Err(ServiceCallError::Invalid(err)) => return Err(err),
+                }
+            }
+            return Ok(result);
+        }
+        match self.linux_socket.shutdown_socket(socket_id, how) {
+            Ok(()) => {
+                self.semantic.record_socket_state_changed(handle.id, "shutdown");
+                Ok(LinuxCallResult::Ret(0))
+            }
+            Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket shutdown: {}", reason);
+                Err("linux_socket_service trapped during shutdown")
+            }
+            Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
     pub(super) fn plan_accept(
         &mut self,
         plan: LinuxPlan,
@@ -614,6 +671,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let len = u32::try_from(bytes.len()).map_err(|_| "sendto len overflowed")?;
         let result = self.try_sendto_fd(fd, len, bytes)?;
+        if matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EPIPE as i64))
+            && flags & MSG_NOSIGNAL == 0
+        {
+            self.queue_sigpipe_for_current_thread();
+        }
         if !call_would_block(&result) {
             return Ok(result);
         }
@@ -630,9 +692,21 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(result);
         };
         match self.block_on_fdset_wait([0; FDSET_WORDS], write_bits, [0; FDSET_WORDS], nfds, None) {
-            Ok(()) => self.try_sendto_fd(fd, len, &bytes),
+            Ok(()) => {
+                let result = self.try_sendto_fd(fd, len, bytes)?;
+                if matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EPIPE as i64))
+                    && flags & MSG_NOSIGNAL == 0
+                {
+                    self.queue_sigpipe_for_current_thread();
+                }
+                Ok(result)
+            }
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
+    }
+
+    fn queue_sigpipe_for_current_thread(&mut self) {
+        self.queue_signal_to_thread(self.current_tid(), SIGPIPE, 0, self.current_pid(), 0);
     }
 
     pub(super) fn require_socket_send_capability(&mut self) -> Result<(), LinuxCallResult> {
@@ -796,6 +870,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.net_stack_recv_socket(socket_id, ready_key, handle, count, peek)?
         {
             return Ok(result);
+        }
+        match self.linux_socket.recv_socket(socket_id, count) {
+            Ok(0) => return Ok(LinuxCallResult::Bytes(Vec::new())),
+            Ok(_) => {}
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("linux_socket recv precheck: {}", reason);
+                return Err("linux_socket_service trapped during recv precheck");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
         let net_core_result = if peek {
             self.net_core.peek_socket(socket_id, count)
@@ -1191,11 +1277,14 @@ mod tests {
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, NodeKind, PlanKind, SOCK_STREAM, SYS_RECVFROM,
-        SYS_RECVMSG, ServiceRoute, SyscallContext,
+        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_EPIPE, NodeKind, PlanKind,
+        SOCK_STREAM, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO, SYS_SHUTDOWN, ServiceRoute,
+        SyscallContext,
     };
 
-    use super::{LinuxCallResult, LinuxPlan, MSG_PEEK, linux_listen_backlog_arg};
+    use super::{
+        LinuxCallResult, LinuxPlan, MSG_NOSIGNAL, MSG_PEEK, SIGPIPE, linux_listen_backlog_arg,
+    };
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         runtime::PrototypeRuntime,
@@ -1243,6 +1332,26 @@ mod tests {
                 cursor_group: None,
             })
             .expect("legacy socket fd");
+        (fd, socket_id)
+    }
+
+    fn create_connected_legacy_socket_fd(runtime: &mut PrototypeRuntime<'_>) -> (u32, u32) {
+        let socket_id =
+            runtime.net_core.create_socket(AF_INET, SOCK_STREAM, 0).expect("legacy socket");
+        let ready_key = runtime.net_core.ready_key(socket_id).expect("legacy socket ready key");
+        runtime
+            .linux_socket
+            .register_connected_socket(socket_id, AF_INET, SOCK_STREAM, 0, ready_key)
+            .expect("connected linux socket registration");
+        let fd = runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .expect("connected socket fd");
         (fd, socket_id)
     }
 
@@ -1340,6 +1449,80 @@ mod tests {
             -(ERR_EFAULT as i64)
         );
         assert_eq!(runtime.file_status_flags(accepted_fd), Err(ERR_EBADF));
+    }
+
+    #[test]
+    fn generic_shutdown_requires_connected_socket() {
+        let mut runtime = test_runtime();
+        let (fd, _) = create_legacy_socket_fd(&mut runtime);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_shutdown_unconnected",
+                SyscallContext::new(SYS_SHUTDOWN, [fd as u64, 2, 0, 0, 0, 0]),
+            )),
+            -(ERR_ENOTCONN as i64)
+        );
+    }
+
+    #[test]
+    fn generic_shutdown_read_returns_eof_with_queued_payload() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_connected_legacy_socket_fd(&mut runtime);
+        let payload = b"queued payload before shutdown";
+        deliver_legacy_socket_payload(&mut runtime, socket_id, payload);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_shutdown_rd",
+                SyscallContext::new(SYS_SHUTDOWN, [fd as u64, 0, 0, 0, 0, 0]),
+            )),
+            0
+        );
+        let bytes = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_after_shutdown_rd",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, payload.len() as u64, 0, 0, 0]),
+        ));
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn generic_shutdown_write_returns_epipe_and_queues_sigpipe_unless_suppressed() {
+        let mut runtime = test_runtime();
+        let (fd, _) = create_connected_legacy_socket_fd(&mut runtime);
+        let (ptr, _) = runtime.linux.write_arg_bytes(b"payload").expect("send buffer");
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_shutdown_wr",
+                SyscallContext::new(SYS_SHUTDOWN, [fd as u64, 1, 0, 0, 0, 0]),
+            )),
+            0
+        );
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_sendto_after_shutdown_wr",
+                SyscallContext::new(SYS_SENDTO, [fd as u64, ptr as u64, 7, 0, 0, 0]),
+            )),
+            -(ERR_EPIPE as i64)
+        );
+        let tid = runtime.current_tid();
+        let pending = &runtime.query_thread(tid).expect("current thread").pending_signals;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].signo, SIGPIPE);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_sendto_after_shutdown_wr_nosignal",
+                SyscallContext::new(
+                    SYS_SENDTO,
+                    [fd as u64, ptr as u64, 7, MSG_NOSIGNAL as u64, 0, 0],
+                ),
+            )),
+            -(ERR_EPIPE as i64)
+        );
+        let pending = &runtime.query_thread(tid).expect("current thread").pending_signals;
+        assert_eq!(pending.len(), 1);
     }
 
     #[test]

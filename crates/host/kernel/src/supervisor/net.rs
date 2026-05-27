@@ -9,7 +9,7 @@ use service_core::{
 use substrate_api::{PacketDeviceBackend, PacketFrameSlot};
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN,
-    ERR_EOPNOTSUPP, SOCK_STREAM,
+    ERR_EOPNOTSUPP, ERR_EPIPE, SOCK_STREAM,
 };
 
 use super::{
@@ -26,6 +26,9 @@ const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
 const NETWORK_RUNTIME_PUMP_LIMIT: usize = 16;
 const REFERENCE_PACKET_BACKEND_RX_BATCH: usize = 4;
 const MAX_NET_STACK_PENDING_ACCEPTS: usize = 16;
+const SHUT_RD: u32 = 0;
+const SHUT_WR: u32 = 1;
+const SHUT_RDWR: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Ipv4SocketEndpoint {
@@ -53,6 +56,8 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) local_port: u16,
     pub(crate) remote_ipv4: [u8; 4],
     pub(crate) remote_port: u16,
+    pub(crate) recv_shutdown: bool,
+    pub(crate) send_shutdown: bool,
     pub(crate) pending_accepts: Vec<NetStackPendingAccept>,
 }
 
@@ -77,6 +82,8 @@ impl NetStackSocketBinding {
             local_port: 0,
             remote_ipv4: [0; 4],
             remote_port: 0,
+            recv_shutdown: false,
+            send_shutdown: false,
             pending_accepts: Vec::new(),
         }
     }
@@ -414,6 +421,57 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(Some(LinuxCallResult::Ret(0)))
     }
 
+    pub(super) fn shutdown_net_stack_socket(
+        &mut self,
+        socket_id: u32,
+        ready_key: u64,
+        socket_resource: ResourceHandle,
+        how: u32,
+    ) -> Result<Option<LinuxCallResult>, &'static str> {
+        if how > SHUT_RDWR {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EINVAL as i64))));
+        }
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(None);
+        };
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
+            return Ok(None);
+        }
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
+        };
+        self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if self.net_stack_sockets[index].mode != NetStackSocketMode::TcpEstablished {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
+        }
+
+        let shutdown_read = matches!(how, SHUT_RD | SHUT_RDWR);
+        let shutdown_write = matches!(how, SHUT_WR | SHUT_RDWR);
+        if shutdown_read {
+            self.net_stack_sockets[index].recv_shutdown = true;
+            self.net_stack_sockets[index].read_ready = true;
+            self.notify_ready_key(ready_key, "smoltcp socket read shutdown");
+        }
+        if shutdown_write && !self.net_stack_sockets[index].send_shutdown {
+            let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+            if let Err(err) = self.net_stack.close_tcp_send(stack_socket_id) {
+                crate::kwarn!("smoltcp shutdown send socket {}: {}", socket_id, err);
+                return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
+            }
+            self.net_stack_sockets[index].send_shutdown = true;
+        }
+        let state = match how {
+            SHUT_RD => "shutdown-rd",
+            SHUT_WR => "shutdown-wr",
+            SHUT_RDWR => "shutdown-rdwr",
+            _ => unreachable!(),
+        };
+        self.semantic.record_socket_state_changed(socket_resource.id, state);
+        self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
+        Ok(Some(LinuxCallResult::Ret(0)))
+    }
+
     pub(super) fn net_stack_send_socket(
         &mut self,
         socket_id: u32,
@@ -427,9 +485,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return Ok(None);
         }
+        if self.net_stack_sockets[index].send_shutdown {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EPIPE as i64))));
+        }
 
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
+        };
+        if self.net_stack_sockets[index].send_shutdown {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_EPIPE as i64))));
+        }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let snapshot = match self.net_stack.tcp_snapshot(stack_socket_id) {
             Ok(snapshot) => snapshot,
@@ -468,9 +535,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return Ok(None);
         }
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
+        }
 
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
+        };
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
+        }
         if count == 0 && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
             return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
         }
@@ -517,9 +593,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return None;
         }
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Some(true);
+        }
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Some(true);
+        }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         self.net_stack
             .tcp_snapshot(stack_socket_id)
@@ -537,9 +619,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return None;
         }
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Some(true);
+        }
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if self.net_stack_sockets[index].recv_shutdown {
+            return Some(true);
+        }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         self.net_stack
             .tcp_snapshot(stack_socket_id)
@@ -557,9 +645,15 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].mode == NetStackSocketMode::Idle {
             return None;
         }
+        if self.net_stack_sockets[index].send_shutdown {
+            return Some(false);
+        }
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if self.net_stack_sockets[index].send_shutdown {
+            return Some(false);
+        }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_send)
     }
@@ -636,6 +730,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 local_port: pending.local_port,
                 remote_ipv4: pending.remote_ipv4,
                 remote_port: pending.remote_port,
+                recv_shutdown: false,
+                send_shutdown: false,
                 pending_accepts: Vec::new(),
             });
             return Ok(Some(LinuxCallResult::Ret(0)));
@@ -679,6 +775,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             local_port: accepted_snapshot.local_port,
             remote_ipv4: accepted_snapshot.remote_ipv4,
             remote_port: accepted_snapshot.remote_port,
+            recv_shutdown: false,
+            send_shutdown: false,
             pending_accepts: Vec::new(),
         });
         Ok(Some(LinuxCallResult::Ret(0)))
@@ -1153,7 +1251,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.net_stack_sockets[index].read_ready = false;
             return;
         }
-        let read_ready = snapshot.can_recv || tcp_read_half_closed(snapshot);
+        let read_ready = self.net_stack_sockets[index].recv_shutdown
+            || snapshot.can_recv
+            || tcp_read_half_closed(snapshot);
         let was_read_ready = self.net_stack_sockets[index].read_ready;
         self.net_stack_sockets[index].read_ready = read_ready;
         if read_ready && !was_read_ready {
@@ -1206,10 +1306,11 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN,
-        SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
-        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_RECVFROM,
-        SYS_RECVMSG, SYS_SENDMSG, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
+        SO_ACCEPTCONN, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT,
+        SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ,
+        SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE,
+        SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1227,6 +1328,7 @@ mod tests {
     const O_NONBLOCK: u32 = 0o4000;
     const SOL_SOCKET: u64 = 1;
     const SO_ERROR: u64 = 4;
+    const SIGPIPE: u8 = 13;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -1296,6 +1398,46 @@ mod tests {
         let bytes = runtime.linux.read_bytes(opt_ptr, 8).expect("getsockopt output");
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
         u32::from_le_bytes(bytes[0..4].try_into().unwrap())
+    }
+
+    fn packet_backed_listener(runtime: &mut PrototypeRuntime<'_>, local_port: u16) -> i64 {
+        let listener_fd = dispatch_ret(
+            runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64,],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(runtime, "test_listen", SYS_LISTEN, [listener_fd as u64, 1, 0, 0, 0, 0]),
+            0
+        );
+        listener_fd
+    }
+
+    fn packet_backed_accept(
+        runtime: &mut PrototypeRuntime<'_>,
+        local_port: u16,
+        remote_port: u16,
+        remote_seq: u32,
+    ) -> (i64, Vec<u8>) {
+        let listener_fd = packet_backed_listener(runtime, local_port);
+        let syn_ack =
+            drive_reference_backend_tcp_handshake(runtime, local_port, remote_port, remote_seq);
+        let accepted_fd =
+            dispatch_ret(runtime, "test_accept", SYS_ACCEPT, [listener_fd as u64, 0, 0, 0, 0, 0]);
+        assert!(accepted_fd >= 0);
+        (accepted_fd, syn_ack)
     }
 
     fn assert_epoll_event(bytes: &[u8], events: u32, data: u64) {
@@ -2312,6 +2454,57 @@ mod tests {
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_shutdown_read_returns_eof_with_queued_tcp_payload() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18101, 40_021, 0x2122_2324);
+        let payload = b"queued packet payload before shutdown";
+        let data = tcp_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        runtime.pump_network_runtime();
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_shutdown_rd",
+                SYS_SHUTDOWN,
+                [accepted_fd as u64, 0, 0, 0, 0, 0],
+            ),
+            0
+        );
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_after_shutdown_rd",
+            SYS_READ,
+            [accepted_fd as u64, 0, payload.len() as u64, 0, 0, 0],
+        );
+        assert!(read.is_empty());
+    }
+
+    #[test]
+    fn packet_backed_shutdown_write_emits_fin_and_epipe_sigpipe() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+        let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18102, 40_022, 0x2223_2425);
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_shutdown_wr",
+                SYS_SHUTDOWN,
+                [accepted_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+        let fin = runtime.reference_packet_backend.last_tx_frame().expect("shutdown emitted fin");
+        assert_eq!(fin[47] & 0x11, 0x11);
+
+        assert_eq!(write_fd(&mut runtime, accepted_fd, b"after shutdown"), -(ERR_EPIPE as i64));
+        let thread = runtime.query_thread(runtime.current_tid()).expect("current thread");
+        assert!(thread.pending_signals.iter().any(|signal| signal.signo == SIGPIPE));
     }
 
     #[test]

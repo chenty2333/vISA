@@ -40,10 +40,10 @@ use vmos_abi::{
     SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
     SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT,
     SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT,
-    SYS_SETSID, SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS,
-    SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK,
-    SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
+    SYS_SETSID, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR,
+    SYS_STAT, SYS_STATFS, SYS_TGKILL, SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME, SYS_TRUNCATE, SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT,
+    SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext,
 };
 use x86_64::{
     PhysAddr, VirtAddr, registers::model_specific::FsBase, structures::paging::PhysFrame,
@@ -498,6 +498,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_SENDMSG => sys_sendmsg(frame),
         SYS_RECVFROM => sys_recvfrom(frame),
         SYS_RECVMSG => sys_recvmsg(frame),
+        SYS_SHUTDOWN => sys_shutdown(frame),
         SYS_SETSOCKOPT => sys_setsockopt(frame),
         SYS_GETSOCKOPT => sys_getsockopt(frame),
         SYS_FLOCK => sys_flock(frame),
@@ -5361,6 +5362,13 @@ fn sys_recvmsg(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_shutdown(frame: &SyscallFrame) -> Result<i64, i32> {
+    dispatch_ret(
+        "ring3_shutdown",
+        SyscallContext::new(SYS_SHUTDOWN, [frame.rdi, frame.rsi, 0, 0, 0, 0]),
+    )
 }
 
 fn write_recvmsg_outputs(

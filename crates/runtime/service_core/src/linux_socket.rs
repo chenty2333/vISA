@@ -1,7 +1,7 @@
 use vmos_abi::{
     AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_EIO,
-    ERR_EISCONN, ERR_EOPNOTSUPP, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE,
-    SOCK_STREAM, SOL_SOCKET,
+    ERR_EISCONN, ERR_ENOTCONN, ERR_EOPNOTSUPP, ERR_EPIPE, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR,
+    SO_REUSEPORT, SO_TYPE, SOCK_STREAM, SOL_SOCKET,
 };
 
 use crate::net_contract::{canonical_socket_protocol, validate_linux_socket_contract};
@@ -39,6 +39,8 @@ struct LinuxSocket {
     remote_port: u16,
     reuse_addr: bool,
     reuse_port: bool,
+    recv_shutdown: bool,
+    send_shutdown: bool,
     pending_accept_queue: [PendingAccept; MAX_PENDING_ACCEPTS],
     active: bool,
 }
@@ -59,6 +61,8 @@ impl LinuxSocket {
         remote_port: 0,
         reuse_addr: false,
         reuse_port: false,
+        recv_shutdown: false,
+        send_shutdown: false,
         pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
         active: false,
     };
@@ -68,6 +72,9 @@ const SOCKET_OPEN: u32 = 1;
 const SOCKET_BOUND: u32 = 2;
 const SOCKET_CONNECTED: u32 = 3;
 const SOCKET_LISTENING: u32 = 4;
+const SHUT_RD: u32 = 0;
+const SHUT_WR: u32 = 1;
+const SHUT_RDWR: u32 = 2;
 
 pub struct LinuxSocketState {
     sockets: [LinuxSocket; MAX_SOCKETS],
@@ -107,6 +114,8 @@ impl LinuxSocketState {
                     remote_port: 0,
                     reuse_addr: false,
                     reuse_port: false,
+                    recv_shutdown: false,
+                    send_shutdown: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
@@ -145,6 +154,8 @@ impl LinuxSocketState {
                     remote_port: 0,
                     reuse_addr: false,
                     reuse_port: false,
+                    recv_shutdown: false,
+                    send_shutdown: false,
                     pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
                     active: true,
                 };
@@ -289,6 +300,8 @@ impl LinuxSocketState {
             remote_port: pending.remote_port,
             reuse_addr: self.sockets[index].reuse_addr,
             reuse_port: self.sockets[index].reuse_port,
+            recv_shutdown: false,
+            send_shutdown: false,
             pending_accept_queue: [PendingAccept::EMPTY; MAX_PENDING_ACCEPTS],
             active: true,
         };
@@ -341,13 +354,39 @@ impl LinuxSocketState {
     }
 
     pub fn send_socket(&self, socket_id: u32, len: u32) -> Result<u32, i32> {
-        self.socket_index(socket_id)?;
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].send_shutdown {
+            return Err(ERR_EPIPE);
+        }
         Ok(len)
     }
 
     pub fn recv_socket(&self, socket_id: u32, len: u32) -> Result<u32, i32> {
-        self.socket_index(socket_id)?;
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].recv_shutdown {
+            return Ok(0);
+        }
         Ok(len)
+    }
+
+    pub fn shutdown_socket(&mut self, socket_id: u32, how: u32) -> Result<(), i32> {
+        if how > SHUT_RDWR {
+            return Err(ERR_EINVAL);
+        }
+        let index = self.socket_index(socket_id)?;
+        if self.sockets[index].state != SOCKET_CONNECTED {
+            return Err(ERR_ENOTCONN);
+        }
+        match how {
+            SHUT_RD => self.sockets[index].recv_shutdown = true,
+            SHUT_WR => self.sockets[index].send_shutdown = true,
+            SHUT_RDWR => {
+                self.sockets[index].recv_shutdown = true;
+                self.sockets[index].send_shutdown = true;
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
     }
 
     pub fn setsockopt(
@@ -513,9 +552,9 @@ impl Default for LinuxSocketState {
 #[cfg(test)]
 mod tests {
     use vmos_abi::{
-        AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL,
-        ERR_EOPNOTSUPP, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE, SOCK_DGRAM,
-        SOCK_STREAM, SOL_SOCKET,
+        AF_INET, ERR_EADDRINUSE, ERR_EAGAIN, ERR_EBADF, ERR_ECONNREFUSED, ERR_EINVAL, ERR_ENOTCONN,
+        ERR_EOPNOTSUPP, ERR_EPIPE, SO_ACCEPTCONN, SO_ERROR, SO_REUSEADDR, SO_REUSEPORT, SO_TYPE,
+        SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
     };
 
     use super::*;
@@ -759,6 +798,32 @@ mod tests {
 
         assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
         assert_eq!(state.fcntl(1, 3, 0), Err(ERR_EOPNOTSUPP));
+    }
+
+    #[test]
+    fn shutdown_requires_connected_socket_and_valid_how() {
+        let mut state = LinuxSocketState::new();
+
+        assert!(state.register_socket(1, AF_INET, SOCK_STREAM, 0, 42).is_ok());
+        assert_eq!(state.shutdown_socket(1, SHUT_RDWR + 1), Err(ERR_EINVAL));
+        assert_eq!(state.shutdown_socket(1, SHUT_RDWR), Err(ERR_ENOTCONN));
+        assert_eq!(state.shutdown_socket(99, SHUT_RD), Err(ERR_EBADF));
+    }
+
+    #[test]
+    fn shutdown_gates_connected_socket_halves() {
+        let mut state = LinuxSocketState::new();
+
+        assert_eq!(state.register_connected_socket(7, AF_INET, SOCK_STREAM, 0, 99), Ok(()));
+        assert_eq!(state.send_socket(7, 12), Ok(12));
+        assert_eq!(state.recv_socket(7, 12), Ok(12));
+
+        assert_eq!(state.shutdown_socket(7, SHUT_WR), Ok(()));
+        assert_eq!(state.send_socket(7, 12), Err(ERR_EPIPE));
+        assert_eq!(state.recv_socket(7, 12), Ok(12));
+
+        assert_eq!(state.shutdown_socket(7, SHUT_RD), Ok(()));
+        assert_eq!(state.recv_socket(7, 12), Ok(0));
     }
 
     #[test]

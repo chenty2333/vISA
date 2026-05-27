@@ -21,6 +21,7 @@ pub(crate) struct LinuxSocketService {
     ipv4_endpoint: WasmFn<(u32, u32), u64>,
     send_socket: WasmFn<(u32, u32), i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
+    shutdown_socket: WasmFn<(u32, u32), i32>,
     setsockopt: WasmFn<(u32, u32, u32, u32, u32), i32>,
     getsockopt: WasmFn<(u32, u32, u32), i32>,
     fcntl: WasmFn<(u32, u32, u64), i32>,
@@ -58,6 +59,8 @@ impl LinuxSocketService {
             io.bind("ipv4_endpoint", "missing linux_socket ipv4_endpoint export")?;
         let send_socket = io.bind("send_socket", "missing linux_socket send_socket export")?;
         let recv_socket = io.bind("recv_socket", "missing linux_socket recv_socket export")?;
+        let shutdown_socket =
+            io.bind("shutdown_socket", "missing linux_socket shutdown_socket export")?;
         let setsockopt = io.bind("setsockopt", "missing linux_socket setsockopt export")?;
         let getsockopt = io.bind("getsockopt", "missing linux_socket getsockopt export")?;
         let fcntl = io.bind("fcntl", "missing linux_socket fcntl export")?;
@@ -81,6 +84,7 @@ impl LinuxSocketService {
             ipv4_endpoint,
             send_socket,
             recv_socket,
+            shutdown_socket,
             setsockopt,
             getsockopt,
             fcntl,
@@ -261,6 +265,18 @@ impl LinuxSocketService {
         expect_len(
             self.io
                 .call(&self.recv_socket, (socket_id, len), "linux_socket_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
+    pub(crate) fn shutdown_socket(
+        &mut self,
+        socket_id: u32,
+        how: u32,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(&self.shutdown_socket, (socket_id, how), "linux_socket_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }

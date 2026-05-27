@@ -20,7 +20,7 @@ use vmos_abi::{
     SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
     SYS_SECCOMP, SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID,
     SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
-    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
+    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
     SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
@@ -90,6 +90,7 @@ impl LinuxFrontend {
             SYS_SENDMSG => self.plan_sendmsg(a0, a1, a2),
             SYS_RECVFROM => self.plan_recvfrom(a0, a1, a2, a3, a4, a5),
             SYS_RECVMSG => self.plan_recvmsg(a0, a1, a2),
+            SYS_SHUTDOWN => self.plan_shutdown(a0, a1),
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
             SYS_GETSOCKOPT => self.plan_getsockopt(a0, a1, a2, a3, a4),
             SYS_IOCTL => self.plan_ioctl(a0, a1, a2),
@@ -676,6 +677,11 @@ impl LinuxFrontend {
     fn plan_recvmsg(&mut self, fd: u64, msg_ptr: u64, flags: u64) -> PackedStep {
         self.reset_plan(PlanKind::RecvMsg, [fd, msg_ptr, flags, 0, 0, 0]);
         PackedStep::plan(PlanKind::RecvMsg)
+    }
+
+    fn plan_shutdown(&mut self, fd: u64, how: u64) -> PackedStep {
+        self.reset_plan(PlanKind::Shutdown, [fd, how, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::Shutdown)
     }
 
     fn plan_setsockopt(

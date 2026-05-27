@@ -208,6 +208,14 @@ impl LinuxSocketService {
         map_errno(self.state.recv_socket(socket_id, len))
     }
 
+    pub(crate) fn shutdown_socket(
+        &mut self,
+        socket_id: u32,
+        how: u32,
+    ) -> Result<(), ServiceCallError> {
+        map_errno(self.state.shutdown_socket(socket_id, how))
+    }
+
     pub(crate) fn setsockopt(
         &mut self,
         socket_id: u32,

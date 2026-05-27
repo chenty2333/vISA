@@ -329,6 +329,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::SendMsg => self.plan_sendmsg(plan),
             PlanKind::RecvFrom => self.plan_recvfrom(plan, label),
             PlanKind::RecvMsg => self.plan_recvmsg(plan),
+            PlanKind::Shutdown => self.plan_shutdown(plan),
             PlanKind::SetSockOpt => self.plan_setsockopt(plan),
             PlanKind::GetSockOpt => self.plan_getsockopt(plan),
             PlanKind::Fcntl => self.plan_fcntl(plan),

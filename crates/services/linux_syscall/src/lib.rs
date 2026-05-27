@@ -27,7 +27,7 @@ use vmos_abi::{
     SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
     SYS_SECCOMP, SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID,
     SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
-    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
+    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
     SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
 };
@@ -103,6 +103,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_SENDMSG => plan_sendmsg(a0, a1, a2),
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
         SYS_RECVMSG => plan_recvmsg(a0, a1, a2),
+        SYS_SHUTDOWN => plan_shutdown(a0, a1),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
         SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
         SYS_IOCTL => plan_ioctl(a0, a1, a2),
@@ -633,6 +634,11 @@ fn plan_recvfrom(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u
 fn plan_recvmsg(fd: u64, msg_ptr: u64, flags: u64) -> PackedStep {
     reset_plan(PlanKind::RecvMsg, [fd, msg_ptr, flags, 0, 0, 0]);
     PackedStep::plan(PlanKind::RecvMsg)
+}
+
+fn plan_shutdown(fd: u64, how: u64) -> PackedStep {
+    reset_plan(PlanKind::Shutdown, [fd, how, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::Shutdown)
 }
 
 fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
@@ -1468,6 +1474,17 @@ mod tests {
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x3000);
         assert_eq!(plan_arg(2), 0x40);
+    }
+
+    #[test]
+    fn shutdown_plan_preserves_fd_and_how() {
+        let _guard = test_guard();
+
+        let shutdown = PackedStep::decode(dispatch(SYS_SHUTDOWN, 8, 2, 0, 0, 0, 0));
+        assert_eq!(shutdown.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(shutdown.aux), Some(PlanKind::Shutdown));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 2);
     }
 
     #[test]

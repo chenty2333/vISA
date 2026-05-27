@@ -302,6 +302,12 @@ impl SmoltcpPacketStack {
         Ok(())
     }
 
+    pub fn close_tcp_send(&mut self, socket_id: u32) -> Result<(), &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        self.sockets.get_mut::<tcp::Socket>(handle).close();
+        Ok(())
+    }
+
     pub fn listen_tcp(&mut self, socket_id: u32, local_port: u16) -> Result<(), &'static str> {
         let handle = self.tcp_socket_handle(socket_id)?;
         self.sockets
