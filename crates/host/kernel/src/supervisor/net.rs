@@ -1917,6 +1917,73 @@ mod tests {
         frame
     }
 
+    fn tcp_ack_for_outbound_payload(outbound: &[u8]) -> Vec<u8> {
+        let outbound_ip_start = ETHERNET_HEADER_LEN;
+        let outbound_ihl = ((outbound[outbound_ip_start] & 0x0f) as usize) * 4;
+        let outbound_tcp_start = outbound_ip_start + outbound_ihl;
+        let outbound_tcp_header_len = ((outbound[outbound_tcp_start + 12] >> 4) as usize) * 4;
+        let outbound_ip_total_len =
+            u16::from_be_bytes([outbound[outbound_ip_start + 2], outbound[outbound_ip_start + 3]])
+                as usize;
+        let outbound_tcp_payload_len =
+            outbound_ip_total_len.saturating_sub(outbound_ihl + outbound_tcp_header_len);
+        let dst_mac: [u8; 6] = outbound[6..12].try_into().expect("local mac");
+        let src_mac: [u8; 6] = outbound[0..6].try_into().expect("remote mac");
+        let dst_ip: [u8; 4] = outbound[26..30].try_into().expect("local ip");
+        let src_ip: [u8; 4] = outbound[30..34].try_into().expect("remote ip");
+        let dst_port =
+            u16::from_be_bytes([outbound[outbound_tcp_start], outbound[outbound_tcp_start + 1]]);
+        let src_port = u16::from_be_bytes([
+            outbound[outbound_tcp_start + 2],
+            outbound[outbound_tcp_start + 3],
+        ]);
+        let outbound_seq = u32::from_be_bytes([
+            outbound[outbound_tcp_start + 4],
+            outbound[outbound_tcp_start + 5],
+            outbound[outbound_tcp_start + 6],
+            outbound[outbound_tcp_start + 7],
+        ]);
+        let outbound_ack = u32::from_be_bytes([
+            outbound[outbound_tcp_start + 8],
+            outbound[outbound_tcp_start + 9],
+            outbound[outbound_tcp_start + 10],
+            outbound[outbound_tcp_start + 11],
+        ]);
+        let outbound_flags = outbound[outbound_tcp_start + 13];
+        let ack_advance = outbound_tcp_payload_len as u32
+            + u32::from(outbound_flags & 0x02 != 0)
+            + u32::from(outbound_flags & 0x01 != 0);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&dst_mac);
+        frame[6..12].copy_from_slice(&src_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&src_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&dst_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&src_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&dst_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&outbound_ack.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&outbound_seq.wrapping_add(ack_advance).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x10;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&src_ip, &dst_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
     fn tcp_data_for_syn_ack(syn_ack: &[u8], payload: &[u8]) -> Vec<u8> {
         tcp_data_for_syn_ack_with_seq_offset(syn_ack, 0, payload)
     }
@@ -2978,6 +3045,12 @@ mod tests {
         let payload = [b't'; 4096];
         assert_eq!(poll_fd(&mut runtime, accepted_fd, EPOLLOUT as u16), (1, EPOLLOUT as u16));
         assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
+        let outbound = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("write emitted tcp payload")
+            .to_vec();
+        let ack = tcp_ack_for_outbound_payload(&outbound);
         assert_eq!(
             net_stack_buffer_state(&mut runtime, accepted_fd),
             (4096, 4096, 0, 2048, 4096, 2048)
@@ -3010,6 +3083,29 @@ mod tests {
             ),
             0
         );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_sndbuf_ack",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait sndbuf ack dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending sndbuf epoll_wait, got {other:?}"),
+        };
+
+        runtime.reference_packet_backend.inject_rx_frame(&ack).expect("inject tcp ack");
+        runtime.pump_network_runtime();
+        let event_bytes = expect_bytes(
+            runtime.block_on_wait("test_epoll_sndbuf_ack_resume", token).expect("epoll ack wait"),
+        );
+        assert_epoll_event_exact(&event_bytes, EPOLLOUT, 0x5e);
+        let (_, _, _, logical_send, physical_send, send_queue) =
+            net_stack_buffer_state(&mut runtime, accepted_fd);
+        assert_eq!(logical_send, 2048);
+        assert_eq!(physical_send, 4096);
+        assert!(send_queue < 2048);
+        assert_eq!(poll_fd(&mut runtime, accepted_fd, EPOLLOUT as u16), (1, EPOLLOUT as u16));
     }
 
     #[test]
