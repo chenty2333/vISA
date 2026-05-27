@@ -470,6 +470,9 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if count == 0 && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
+            return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
+        }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let snapshot = match self.net_stack.tcp_snapshot(stack_socket_id) {
             Ok(snapshot) => snapshot,
@@ -2285,6 +2288,57 @@ mod tests {
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_zero_length_read_returns_empty_without_readiness() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18095u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, 40_016, 0x8182_8384);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_zero_length_read",
+            SYS_READ,
+            [accepted_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(read.is_empty());
     }
 
     #[test]
