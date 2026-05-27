@@ -12,8 +12,8 @@ use vmos_abi::{
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
-    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_REUSEADDR, SO_REUSEPORT,
-    SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CAPGET, SYS_CAPSET,
+    FUTEX_WAKE, FUTEX_WAKE_BITSET, PackedStep, PlanKind, RestartClass, SO_KEEPALIVE, SO_REUSEADDR,
+    SO_REUSEPORT, SOL_SOCKET, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_BPF, SYS_CAPGET, SYS_CAPSET,
     SYS_CLOCK_ADJTIME, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CLOSE_RANGE,
     SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
     SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
@@ -672,7 +672,7 @@ fn setsockopt_u32_value(level: u64, optname: u64, optval: u64, optlen: u64) -> R
     let (Ok(level), Ok(optname)) = (u32::try_from(level), u32::try_from(optname)) else {
         return Ok(0);
     };
-    if level != SOL_SOCKET || !matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+    if level != SOL_SOCKET || !matches!(optname, SO_REUSEADDR | SO_REUSEPORT | SO_KEEPALIVE) {
         return Ok(0);
     }
     if optlen < 4 {
@@ -1568,6 +1568,20 @@ mod tests {
         assert_eq!(plan_arg(2), vmos_abi::SO_REUSEADDR as u64);
         assert_eq!(plan_arg(3), ptr as u64);
         assert_eq!(plan_arg(4), 4);
+        assert_eq!(plan_arg(5), 1);
+
+        let keepalive = PackedStep::decode(dispatch(
+            SYS_SETSOCKOPT,
+            8,
+            vmos_abi::SOL_SOCKET as u64,
+            vmos_abi::SO_KEEPALIVE as u64,
+            ptr as u64,
+            4,
+            0,
+        ));
+        assert_eq!(keepalive.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(keepalive.aux), Some(PlanKind::SetSockOpt));
+        assert_eq!(plan_arg(2), vmos_abi::SO_KEEPALIVE as u64);
         assert_eq!(plan_arg(5), 1);
     }
 

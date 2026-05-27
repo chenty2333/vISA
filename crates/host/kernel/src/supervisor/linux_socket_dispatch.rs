@@ -1356,8 +1356,9 @@ mod tests {
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
         AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK, ERR_EPIPE,
-        NodeKind, PlanKind, SOCK_STREAM, SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_RECVFROM,
-        SYS_RECVMSG, SYS_SENDTO, SYS_SHUTDOWN, ServiceRoute, SyscallContext,
+        NodeKind, PlanKind, SO_KEEPALIVE, SOCK_STREAM, SOL_SOCKET, SYS_GETPEERNAME,
+        SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO, SYS_SETSOCKOPT,
+        SYS_SHUTDOWN, SYS_SOCKET, ServiceRoute, SyscallContext,
     };
 
     use super::{
@@ -1538,6 +1539,48 @@ mod tests {
         assert_eq!(runtime.linux.read_bytes(len_ptr, 4).expect("socklen"), 16u32.to_le_bytes());
     }
 
+    fn generic_setsockopt_u32(
+        runtime: &mut PrototypeRuntime<'_>,
+        fd: u32,
+        optname: u32,
+        value: u32,
+    ) -> i64 {
+        let (opt_ptr, _) =
+            runtime.linux.write_arg_bytes(&value.to_le_bytes()).expect("setsockopt buffer");
+        ret_errno(runtime.dispatch_linux_syscall(
+            "test_setsockopt_u32",
+            SyscallContext::new(
+                SYS_SETSOCKOPT,
+                [fd as u64, SOL_SOCKET as u64, optname as u64, opt_ptr as u64, 4, 0],
+            ),
+        ))
+    }
+
+    fn generic_getsockopt_u32(runtime: &mut PrototypeRuntime<'_>, fd: u32, optname: u32) -> u32 {
+        let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
+        runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getsockopt_u32",
+                SyscallContext::new(
+                    SYS_GETSOCKOPT,
+                    [
+                        fd as u64,
+                        SOL_SOCKET as u64,
+                        optname as u64,
+                        opt_ptr as u64,
+                        (opt_ptr + 4) as u64,
+                        0,
+                    ],
+                ),
+            )),
+            0
+        );
+        let bytes = runtime.linux.read_bytes(opt_ptr, 8).expect("getsockopt output");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
+        u32::from_le_bytes(bytes[..4].try_into().unwrap())
+    }
+
     #[test]
     fn listen_backlog_arg_uses_linux_i32_shape_before_internal_clamp() {
         assert_eq!(linux_listen_backlog_arg(0), 0);
@@ -1664,6 +1707,23 @@ mod tests {
         );
         let pending = &runtime.query_thread(tid).expect("current thread").pending_signals;
         assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn generic_keepalive_setsockopt_round_trips_through_arg_buffer() {
+        let mut runtime = test_runtime();
+        let fd = ret_errno(runtime.dispatch_linux_syscall(
+            "test_socket_for_keepalive",
+            SyscallContext::new(SYS_SOCKET, [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0]),
+        ));
+        assert!(fd >= 0);
+        let fd = fd as u32;
+
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_KEEPALIVE), 0);
+        assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_KEEPALIVE, 1), 0);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_KEEPALIVE), 1);
+        assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_KEEPALIVE, 0), 0);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_KEEPALIVE), 0);
     }
 
     #[test]
