@@ -2794,6 +2794,14 @@ mod tests {
         );
         assert_epoll_event_exact(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
 
+        let event_bytes = dispatch_bytes(
+            &mut runtime,
+            "test_epoll_wait_connect_lt",
+            SYS_EPOLL_WAIT,
+            [epfd as u64, 1, 0, 0, 0, 0],
+        );
+        assert_epoll_event_exact(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
+
         let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
         runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");
         assert_eq!(

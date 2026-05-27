@@ -1413,6 +1413,42 @@ mod tests {
         VfsService::new(&engine).expect("native VFS test service")
     }
 
+    fn test_epoll() -> EpollService {
+        let engine = SupervisorEngine::default();
+        EpollService::new(&engine).expect("native epoll test service")
+    }
+
+    #[test]
+    fn epoll_level_triggered_readiness_survives_collection() {
+        let mut epoll = test_epoll();
+        let epoll_id = epoll.create(0).expect("create epoll");
+        epoll.ctl(epoll_id, EPOLL_CTL_ADD, 42, 0x5, 7).expect("add watcher");
+        assert!(epoll.notify_ready(42).expect("notify ready").is_empty());
+
+        assert_eq!(
+            epoll.collect_ready(epoll_id, 1).expect("first ready").len(),
+            EPOLL_READY_RECORD_SIZE
+        );
+        assert_eq!(
+            epoll.collect_ready(epoll_id, 1).expect("second ready").len(),
+            EPOLL_READY_RECORD_SIZE
+        );
+    }
+
+    #[test]
+    fn epoll_edge_triggered_readiness_is_consumed() {
+        let mut epoll = test_epoll();
+        let epoll_id = epoll.create(0).expect("create epoll");
+        epoll.ctl(epoll_id, EPOLL_CTL_ADD, 42, EPOLLET | 0x5, 7).expect("add watcher");
+        assert!(epoll.notify_ready(42).expect("notify ready").is_empty());
+
+        assert_eq!(
+            epoll.collect_ready(epoll_id, 1).expect("first ready").len(),
+            EPOLL_READY_RECORD_SIZE
+        );
+        assert!(epoll.collect_ready(epoll_id, 1).expect("second ready").is_empty());
+    }
+
     #[test]
     fn file_lock_key_reresolves_dynamic_path_to_node_identity() {
         let mut vfs = test_vfs();
@@ -1776,6 +1812,7 @@ struct EpollWatcher {
     data: u64,
     ready: bool,
     disabled: bool,
+    edge_triggered: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1788,6 +1825,8 @@ const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
 const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
 const EPOLLONESHOT: u32 = 0x4000_0000;
+const EPOLLET: u32 = 0x8000_0000;
+const EPOLL_READY_RECORD_SIZE: usize = 20;
 
 pub(crate) struct EpollService {
     next_id: u32,
@@ -1847,6 +1886,7 @@ impl EpollService {
                     data,
                     ready: false,
                     disabled: false,
+                    edge_triggered: events & EPOLLET != 0,
                 });
                 Ok(())
             }
@@ -1859,6 +1899,7 @@ impl EpollService {
                     watcher.events = events;
                     watcher.data = data;
                     watcher.disabled = false;
+                    watcher.edge_triggered = events & EPOLLET != 0;
                     Ok(())
                 } else {
                     errno(ERR_ENOENT)
@@ -1881,9 +1922,9 @@ impl EpollService {
         max_events: u32,
     ) -> Result<Vec<u8>, ServiceCallError> {
         self.require_instance(epoll_id)?;
-        let mut out = Vec::new();
-        let mut count = 0usize;
         let limit = max_events.max(1) as usize;
+        let mut out = Vec::with_capacity(limit * EPOLL_READY_RECORD_SIZE);
+        let mut count = 0usize;
         for watcher in &mut self.watchers {
             if watcher.epoll_id != epoll_id || watcher.disabled || !watcher.ready || count == limit
             {
@@ -1895,7 +1936,9 @@ impl EpollService {
             if watcher.events & EPOLLONESHOT != 0 {
                 watcher.disabled = true;
             }
-            watcher.ready = false;
+            if watcher.edge_triggered {
+                watcher.ready = false;
+            }
             count += 1;
         }
         Ok(out)
