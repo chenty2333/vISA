@@ -72,6 +72,17 @@ impl NetCoreService {
         Ok(out)
     }
 
+    pub(crate) fn peek_socket(
+        &mut self,
+        socket_id: u32,
+        count: u32,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        let mut out = alloc::vec![0; count as usize];
+        let len = map_errno(self.state.peek_socket(socket_id, count, &mut out))?;
+        out.truncate(len as usize);
+        Ok(out)
+    }
+
     pub(crate) fn deliver_packet_frame(
         &mut self,
         frame: &[u8],

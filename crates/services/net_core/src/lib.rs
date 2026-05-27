@@ -116,6 +116,16 @@ pub extern "C" fn recv_socket(socket_id: u32, count: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn peek_socket(socket_id: u32, count: u32) -> i32 {
+    let count = count as usize;
+    if count > RESPONSE_CAPACITY {
+        return -ERR_EIO;
+    }
+    let out = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(RESPONSE) as *mut u8, count) };
+    result_i32(unsafe { state().peek_socket(socket_id, count as u32, out) })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn deliver_packet_frame(len: u32) -> i64 {
     let len = (len as usize).min(REQUEST_CAPACITY).min(PACKET_FRAME_CAPACITY);
     let bytes = unsafe { core::slice::from_raw_parts(addr_of_mut!(REQUEST) as *const u8, len) };

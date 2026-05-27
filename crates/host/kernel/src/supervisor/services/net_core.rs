@@ -21,6 +21,7 @@ pub(crate) struct NetCoreService {
     send_socket: WasmFn<(u32, u32), i32>,
     take_tx_frame: WasmFn<u32, i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
+    peek_socket: WasmFn<(u32, u32), i32>,
     deliver_packet_frame: WasmFn<u32, i64>,
     socket_count: WasmFn<(), u32>,
     queued_rx_bytes: WasmFn<(), u32>,
@@ -37,6 +38,7 @@ impl NetCoreService {
         let send_socket = io.bind("send_socket", "missing net_core send_socket export")?;
         let take_tx_frame = io.bind("take_tx_frame", "missing net_core take_tx_frame export")?;
         let recv_socket = io.bind("recv_socket", "missing net_core recv_socket export")?;
+        let peek_socket = io.bind("peek_socket", "missing net_core peek_socket export")?;
         let deliver_packet_frame =
             io.bind("deliver_packet_frame", "missing net_core deliver_packet_frame export")?;
         let socket_count = io.bind("socket_count", "missing net_core socket_count export")?;
@@ -60,6 +62,7 @@ impl NetCoreService {
             send_socket,
             take_tx_frame,
             recv_socket,
+            peek_socket,
             deliver_packet_frame,
             socket_count,
             queued_rx_bytes,
@@ -132,6 +135,19 @@ impl NetCoreService {
         let len = expect_len(
             self.io
                 .call(&self.recv_socket, (socket_id, count), "net_core trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )?;
+        self.io.read_response(len).map_err(ServiceCallError::Invalid)
+    }
+
+    pub(crate) fn peek_socket(
+        &mut self,
+        socket_id: u32,
+        count: u32,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        let len = expect_len(
+            self.io
+                .call(&self.peek_socket, (socket_id, count), "net_core trapped")
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.io.read_response(len).map_err(ServiceCallError::Invalid)

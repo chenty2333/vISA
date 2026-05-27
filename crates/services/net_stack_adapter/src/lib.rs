@@ -350,6 +350,14 @@ impl SmoltcpPacketStack {
             .map_err(|_| "smoltcp tcp recv failed")
     }
 
+    pub fn peek_tcp(&mut self, socket_id: u32, out: &mut [u8]) -> Result<usize, &'static str> {
+        let handle = self.tcp_socket_handle(socket_id)?;
+        self.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .peek_slice(out)
+            .map_err(|_| "smoltcp tcp peek failed")
+    }
+
     pub fn tcp_snapshot(&self, socket_id: u32) -> Result<TcpSocketSnapshot, &'static str> {
         let handle = self.tcp_socket_handle(socket_id)?;
         let socket = self.sockets.get::<tcp::Socket>(handle);

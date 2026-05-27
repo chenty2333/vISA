@@ -152,7 +152,24 @@ impl NetCoreState {
         }
         let len = rx_len.min(count as usize).min(out.len());
         out[..len].copy_from_slice(&self.rx_queues[index][..len]);
-        self.sockets[index].rx_len = 0;
+        let remaining = rx_len - len;
+        if remaining == 0 {
+            self.sockets[index].rx_len = 0;
+        } else {
+            self.rx_queues[index].copy_within(len..rx_len, 0);
+            self.sockets[index].rx_len = remaining;
+        }
+        Ok(len as u32)
+    }
+
+    pub fn peek_socket(&mut self, socket_id: u32, count: u32, out: &mut [u8]) -> Result<u32, i32> {
+        let index = self.socket_index(socket_id)?;
+        let rx_len = self.sockets[index].rx_len;
+        if rx_len == 0 {
+            return Err(ERR_EAGAIN);
+        }
+        let len = rx_len.min(count as usize).min(out.len());
+        out[..len].copy_from_slice(&self.rx_queues[index][..len]);
         Ok(len as u32)
     }
 
@@ -234,6 +251,53 @@ mod tests {
         let mut out = [0u8; 64];
         let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
         assert_eq!(&out[..len as usize], payload);
+    }
+
+    #[test]
+    fn peek_socket_preserves_queued_payload_for_later_recv() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+        state.send_socket(socket, b"GET / HTTP/1.0\r\n\r\n").unwrap();
+
+        let payload = b"HTTP/1.0 200 OK\r\n\r\n";
+        let meta = PacketFrameMeta::demo_http_response(1, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, payload, &mut frame).unwrap();
+        let ready_key = state.deliver_packet_frame(&frame[..frame_len]).unwrap();
+        assert_eq!(ready_key, Some(READY_KEY_BASE | socket as u64));
+
+        let mut peek = [0u8; 8];
+        let peek_len = state.peek_socket(socket, peek.len() as u32, &mut peek).unwrap();
+        assert_eq!(&peek[..peek_len as usize], &payload[..peek.len()]);
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, EPOLLIN);
+
+        let mut out = [0u8; 64];
+        let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
+        assert_eq!(&out[..len as usize], payload);
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
+    }
+
+    #[test]
+    fn recv_socket_partial_read_preserves_unread_tail() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+        state.send_socket(socket, b"GET / HTTP/1.0\r\n\r\n").unwrap();
+
+        let payload = b"HTTP/1.0 200 OK\r\n\r\n";
+        let meta = PacketFrameMeta::demo_http_response(1, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, payload, &mut frame).unwrap();
+        state.deliver_packet_frame(&frame[..frame_len]).unwrap();
+
+        let mut first = [0u8; 8];
+        let first_len = state.recv_socket(socket, first.len() as u32, &mut first).unwrap();
+        assert_eq!(&first[..first_len as usize], &payload[..first.len()]);
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, EPOLLIN);
+
+        let mut second = [0u8; 64];
+        let second_len = state.recv_socket(socket, second.len() as u32, &mut second).unwrap();
+        assert_eq!(&second[..second_len as usize], &payload[first.len()..]);
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
     }
 
     #[test]

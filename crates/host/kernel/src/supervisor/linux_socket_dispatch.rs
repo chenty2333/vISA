@@ -15,6 +15,7 @@ const SOCK_CLOEXEC: u32 = 0o2000000;
 const SOCK_NONBLOCK: u32 = 0o0004000;
 const FD_CLOEXEC: u32 = 1;
 const O_NONBLOCK: u32 = 0o4000;
+const MSG_PEEK: u32 = 0x02;
 const MSG_DONTWAIT: u32 = 0x40;
 const FDSET_WORDS: usize = 16;
 const FDSET_BITS: u32 = (FDSET_WORDS as u32) * 64;
@@ -741,7 +742,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         count: u32,
         flags: u32,
     ) -> Result<LinuxCallResult, &'static str> {
-        let result = self.try_recvfrom_fd(fd, count)?;
+        let result = self.try_recvfrom_fd(fd, count, flags)?;
         if !call_would_block(&result) {
             return Ok(result);
         }
@@ -758,7 +759,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(result);
         };
         match self.block_on_fdset_wait(read_bits, [0; FDSET_WORDS], [0; FDSET_WORDS], nfds, None) {
-            Ok(()) => self.try_recvfrom_fd(fd, count),
+            Ok(()) => self.try_recvfrom_fd(fd, count, flags),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
         }
     }
@@ -773,7 +774,12 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn try_recvfrom_fd(&mut self, fd: u32, count: u32) -> Result<LinuxCallResult, &'static str> {
+    fn try_recvfrom_fd(
+        &mut self,
+        fd: u32,
+        count: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
             Ok(snapshot) => snapshot,
             Err(ServiceCallError::Errno(errno)) => {
@@ -785,33 +791,43 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
-        if let Some(result) = self.net_stack_recv_socket(socket_id, ready_key, handle, count)? {
+        let peek = flags & MSG_PEEK != 0;
+        if let Some(result) =
+            self.net_stack_recv_socket(socket_id, ready_key, handle, count, peek)?
+        {
             return Ok(result);
         }
-        match self.net_core.recv_socket(socket_id, count) {
+        let net_core_result = if peek {
+            self.net_core.peek_socket(socket_id, count)
+        } else {
+            self.net_core.recv_socket(socket_id, count)
+        };
+        match net_core_result {
             Ok(bytes) => {
-                match self.linux_socket.recv_socket(socket_id, bytes.len() as u32) {
-                    Ok(_) => {}
-                    Err(ServiceCallError::Errno(errno)) => {
-                        crate::kwarn!(
-                            "linux_socket recv bookkeeping socket {} failed errno={}",
-                            socket_id,
-                            errno
-                        );
-                    }
-                    Err(ServiceCallError::Trap(reason)) => {
-                        crate::kwarn!(
-                            "linux_socket recv bookkeeping socket {}: {}",
-                            socket_id,
-                            reason
-                        );
-                    }
-                    Err(ServiceCallError::Invalid(err)) => {
-                        crate::kwarn!(
-                            "linux_socket recv bookkeeping socket {}: {}",
-                            socket_id,
-                            err
-                        );
+                if !peek {
+                    match self.linux_socket.recv_socket(socket_id, bytes.len() as u32) {
+                        Ok(_) => {}
+                        Err(ServiceCallError::Errno(errno)) => {
+                            crate::kwarn!(
+                                "linux_socket recv bookkeeping socket {} failed errno={}",
+                                socket_id,
+                                errno
+                            );
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!(
+                                "linux_socket recv bookkeeping socket {}: {}",
+                                socket_id,
+                                reason
+                            );
+                        }
+                        Err(ServiceCallError::Invalid(err)) => {
+                            crate::kwarn!(
+                                "linux_socket recv bookkeeping socket {}: {}",
+                                socket_id,
+                                err
+                            );
+                        }
                     }
                 }
                 Ok(LinuxCallResult::Bytes(bytes))
@@ -1179,7 +1195,7 @@ mod tests {
         SYS_RECVMSG, ServiceRoute, SyscallContext,
     };
 
-    use super::{LinuxCallResult, LinuxPlan, linux_listen_backlog_arg};
+    use super::{LinuxCallResult, LinuxPlan, MSG_PEEK, linux_listen_backlog_arg};
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         runtime::PrototypeRuntime,
@@ -1358,6 +1374,32 @@ mod tests {
             SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, payload.len() as u64, 0, 0, 0]),
         ));
         assert_eq!(bytes, payload);
+    }
+
+    #[test]
+    fn generic_recvfrom_msg_peek_preserves_payload_for_later_recv() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+        let payload = b"queued peek payload";
+        deliver_legacy_socket_payload(&mut runtime, socket_id, payload);
+
+        let peek = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_peek",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, 6, MSG_PEEK as u64, 0, 0]),
+        ));
+        assert_eq!(peek, &payload[..6]);
+
+        let first = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_after_peek_first",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, 6, 0, 0, 0]),
+        ));
+        assert_eq!(first, &payload[..6]);
+
+        let rest = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_after_peek_rest",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, payload.len() as u64, 0, 0, 0]),
+        ));
+        assert_eq!(rest, &payload[6..]);
     }
 
     #[test]

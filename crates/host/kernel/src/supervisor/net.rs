@@ -460,6 +460,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         ready_key: u64,
         socket_resource: ResourceHandle,
         count: u32,
+        peek: bool,
     ) -> Result<Option<LinuxCallResult>, &'static str> {
         let Some(index) = self.net_stack_socket_index(socket_id) else {
             return Ok(None);
@@ -490,7 +491,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let mut out = alloc::vec![0; count as usize];
-        let len = match self.net_stack.recv_tcp(stack_socket_id, &mut out) {
+        let len = match if peek {
+            self.net_stack.peek_tcp(stack_socket_id, &mut out)
+        } else {
+            self.net_stack.recv_tcp(stack_socket_id, &mut out)
+        } {
             Ok(len) => len,
             Err(err) => {
                 crate::kwarn!("smoltcp recv socket {}: {}", socket_id, err);
@@ -1203,8 +1208,8 @@ mod tests {
     use vmos_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN,
         SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
-        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_RECVMSG,
-        SYS_SENDMSG, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_RECVFROM,
+        SYS_RECVMSG, SYS_SENDMSG, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1213,6 +1218,7 @@ mod tests {
     const REMOTE_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
     const REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
     const VMOS_IPV4: [u8; 4] = [10, 0, 2, 15];
+    const MSG_PEEK: u32 = 0x02;
     const ARP_FRAME_LEN: usize = 42;
     const ETHERNET_HEADER_LEN: usize = 14;
     const SOCK_CLOEXEC: u64 = 0o2000000;
@@ -2306,6 +2312,85 @@ mod tests {
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_recvfrom_msg_peek_preserves_tcp_payload() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18091u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_010u16;
+        let syn_ack = drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            remote_port,
+            0x7172_7374,
+        );
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        let payload = b"peek keeps packet tcp payload";
+        let data = tcp_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        runtime.pump_network_runtime();
+
+        let peek = dispatch_bytes(
+            &mut runtime,
+            "test_recvfrom_peek",
+            SYS_RECVFROM,
+            [accepted_fd as u64, 0, 9, MSG_PEEK as u64, 0, 0],
+        );
+        assert_eq!(peek, &payload[..9]);
+
+        let first = dispatch_bytes(
+            &mut runtime,
+            "test_recvfrom_after_peek_first",
+            SYS_RECVFROM,
+            [accepted_fd as u64, 0, 9, 0, 0, 0],
+        );
+        assert_eq!(first, &payload[..9]);
+
+        let rest = dispatch_bytes(
+            &mut runtime,
+            "test_recvfrom_after_peek_rest",
+            SYS_RECVFROM,
+            [accepted_fd as u64, 0, payload.len() as u64, 0, 0, 0],
+        );
+        assert_eq!(rest, &payload[9..]);
+        assert!(event_log_contains(&runtime, "PacketReceived"));
     }
 
     #[test]
