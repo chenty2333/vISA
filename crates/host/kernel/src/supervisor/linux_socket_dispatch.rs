@@ -1915,6 +1915,20 @@ mod tests {
     }
 
     #[test]
+    fn generic_recvfrom_reads_multiple_delivered_frames_in_order() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+        deliver_legacy_socket_payload(&mut runtime, socket_id, b"first ");
+        deliver_legacy_socket_payload(&mut runtime, socket_id, b"second");
+
+        let bytes = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_two_deliveries",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, 12, 0, 0, 0]),
+        ));
+        assert_eq!(bytes, b"first second");
+    }
+
+    #[test]
     fn generic_recvmsg_prevalidates_name_before_consuming_payload_and_writes_peer() {
         let mut runtime = test_runtime();
         let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);

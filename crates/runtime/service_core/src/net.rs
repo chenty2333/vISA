@@ -182,9 +182,13 @@ impl NetCoreState {
         let Some(index) = self.socket_index_for_packet(meta.dst_port, meta.src_port) else {
             return Ok(None);
         };
-        let len = payload.len().min(QUEUE_CAPACITY);
-        self.rx_queues[index][..len].copy_from_slice(&payload[..len]);
-        self.sockets[index].rx_len = len;
+        let rx_len = self.sockets[index].rx_len;
+        let next_rx_len = rx_len.checked_add(payload.len()).ok_or(ERR_EAGAIN)?;
+        if next_rx_len > QUEUE_CAPACITY {
+            return Err(ERR_EAGAIN);
+        }
+        self.rx_queues[index][rx_len..next_rx_len].copy_from_slice(payload);
+        self.sockets[index].rx_len = next_rx_len;
         self.sockets[index].remote_port = meta.src_port;
         self.sockets[index].state = 3;
         Ok(Some(self.sockets[index].ready_key))
@@ -297,6 +301,62 @@ mod tests {
         let mut second = [0u8; 64];
         let second_len = state.recv_socket(socket, second.len() as u32, &mut second).unwrap();
         assert_eq!(&second[..second_len as usize], &payload[first.len()..]);
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
+    }
+
+    #[test]
+    fn delivered_frames_append_without_overwriting_queued_payload() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+        state.send_socket(socket, b"GET /first HTTP/1.0\r\n\r\n").unwrap();
+
+        let first = b"first ";
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let first_meta = PacketFrameMeta::demo_http_response(1, first.len());
+        let first_frame_len = encode_frame(first_meta, first, &mut frame).unwrap();
+        assert_eq!(
+            state.deliver_packet_frame(&frame[..first_frame_len]).unwrap(),
+            Some(READY_KEY_BASE | socket as u64)
+        );
+
+        let second = b"second";
+        let second_meta = PacketFrameMeta::demo_http_response(2, second.len());
+        let second_frame_len = encode_frame(second_meta, second, &mut frame).unwrap();
+        assert_eq!(
+            state.deliver_packet_frame(&frame[..second_frame_len]).unwrap(),
+            Some(READY_KEY_BASE | socket as u64)
+        );
+
+        let mut out = [0u8; 16];
+        let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
+        assert_eq!(&out[..len as usize], b"first second");
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
+    }
+
+    #[test]
+    fn delivered_frame_overflow_preserves_existing_receive_queue() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+        state.send_socket(socket, b"GET /overflow HTTP/1.0\r\n\r\n").unwrap();
+
+        let first = [b'a'; QUEUE_CAPACITY - 4];
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let first_meta = PacketFrameMeta::demo_http_response(1, first.len());
+        let first_frame_len = encode_frame(first_meta, &first, &mut frame).unwrap();
+        assert_eq!(
+            state.deliver_packet_frame(&frame[..first_frame_len]).unwrap(),
+            Some(READY_KEY_BASE | socket as u64)
+        );
+
+        let overflow = b"excess";
+        let overflow_meta = PacketFrameMeta::demo_http_response(2, overflow.len());
+        let overflow_frame_len = encode_frame(overflow_meta, overflow, &mut frame).unwrap();
+        assert_eq!(state.deliver_packet_frame(&frame[..overflow_frame_len]), Err(ERR_EAGAIN));
+
+        let mut out = [0u8; QUEUE_CAPACITY];
+        let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
+        assert_eq!(len as usize, first.len());
+        assert!(out[..first.len()].iter().all(|byte| *byte == b'a'));
         assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
     }
 
