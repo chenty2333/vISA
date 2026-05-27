@@ -214,6 +214,104 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
+    pub(super) fn plan_futex_cmp_requeue_pi(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("futex_service", "futex.waitset", "requeue").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let src_key = plan.args[0];
+        let requeue_count =
+            u32::try_from(plan.args[1]).map_err(|_| "futex requeue count overflowed")?;
+        let dst_key = plan.args[2];
+        let wake_count = u32::try_from(plan.args[3]).map_err(|_| "futex wake count overflowed")?;
+        let compare_word =
+            u32::try_from(plan.args[4]).map_err(|_| "futex compare word overflowed")?;
+        if src_key == dst_key || wake_count != 1 {
+            return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)));
+        }
+        let total_to_move = match requeue_count.checked_add(1) {
+            Some(total) => total,
+            None => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+        };
+        let src_word = match self.read_generic_futex_word(src_key) {
+            Ok(word) => word,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if src_word != compare_word {
+            return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
+        }
+        let dst_word = match self.read_generic_futex_word(dst_key) {
+            Ok(word) => word,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+
+        let moved = match self.requeue_futex_pi_waiters(src_key, dst_key, total_to_move) {
+            Ok(moved) => moved,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("futex_cmp_requeue_pi: {}", reason);
+                return Err("futex_service trapped during futex pi requeue");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        if moved == 0 {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+
+        let owner = dst_word & FUTEX_TID_MASK;
+        if owner == 0 {
+            let handoff = match self.prepare_futex_pi_handoff(dst_key) {
+                Ok(Some(handoff)) => handoff,
+                Ok(None) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+                Err(ServiceCallError::Errno(errno)) => {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("futex_cmp_requeue_pi prepare handoff: {}", reason);
+                    return Err("futex_service trapped during futex pi requeue handoff");
+                }
+                Err(ServiceCallError::Invalid(err)) => return Err(err),
+            };
+            let next_word = futex_pi_handoff_word(
+                dst_word,
+                handoff.next_owner_tid & FUTEX_TID_MASK,
+                handoff.has_more_waiters,
+            );
+            let result = self.write_generic_futex_word_ret(dst_key, next_word)?;
+            if !matches!(result, LinuxCallResult::Ret(0)) {
+                return Ok(result);
+            }
+            match self.complete_futex_pi_ownerless_handoff(dst_key, handoff) {
+                Ok(()) => {}
+                Err(ServiceCallError::Errno(errno)) => {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
+                Err(ServiceCallError::Trap(reason)) => {
+                    crate::kwarn!("futex_cmp_requeue_pi complete handoff: {}", reason);
+                    return Err("futex_service trapped during futex pi requeue handoff");
+                }
+                Err(ServiceCallError::Invalid(err)) => return Err(err),
+            }
+        } else {
+            let wait_word = futex_pi_wait_word(dst_word);
+            if wait_word != dst_word {
+                let result = self.write_generic_futex_word_ret(dst_key, wait_word)?;
+                if !matches!(result, LinuxCallResult::Ret(0)) {
+                    return Ok(result);
+                }
+            }
+            if let Some(owner_task) = self.task_id_for_tid(owner) {
+                self.refresh_futex_pi_boost(owner_task, dst_key);
+            }
+        }
+
+        Ok(LinuxCallResult::Ret(moved as i64))
+    }
+
     pub(super) fn plan_futex_lock_pi(
         &mut self,
         plan: LinuxPlan,
@@ -904,9 +1002,9 @@ mod tests {
     use alloc::boxed::Box;
 
     use vmos_abi::{
-        ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_LOCK_PI,
-        FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAITERS,
-        SYS_FUTEX, SYS_PAUSE, SyscallContext,
+        ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_CMP_REQUEUE_PI,
+        FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
+        FUTEX_WAITERS, SYS_FUTEX, SYS_PAUSE, SyscallContext,
     };
 
     use super::*;
@@ -1030,6 +1128,102 @@ mod tests {
             .expect("malformed timeout dispatch");
         assert_eq!(expect_ret(malformed), -(ERR_EINVAL as i64));
         assert_eq!(read_word(&mut runtime, ptr), 99);
+    }
+
+    #[test]
+    fn generic_futex_cmp_requeue_pi_hands_ownerless_destination_to_waiter() {
+        let mut runtime = test_runtime();
+        let src_word = 7u32;
+        let mut words = [0u8; 8];
+        words[0..4].copy_from_slice(&src_word.to_le_bytes());
+        words[4..8].copy_from_slice(&0u32.to_le_bytes());
+        let (base, _) = runtime.write_linux_arg_bytes(&words).expect("futex words");
+        let src = base as u64;
+        let dst = (base + 4) as u64;
+        let waiter_pid = runtime.allocate_process(
+            runtime.current_pid(),
+            runtime.current_pid(),
+            runtime.current_pid(),
+        );
+        let waiter_task = runtime.allocate_task();
+        let waiter_tid = runtime.allocate_thread(waiter_task, waiter_pid);
+        runtime.boost_task_priority(waiter_task, 9);
+        let token = runtime.waits.register(
+            waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: true },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_requeue_pi(src, token.id, runtime.task_priority(waiter_task))
+            .expect("requeue pi waiter registration");
+
+        let requeue = runtime
+            .dispatch_linux_syscall(
+                "test_futex_cmp_requeue_pi_ownerless",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [src, FUTEX_CMP_REQUEUE_PI as u64, 1, 0, dst, src_word as u64],
+                ),
+            )
+            .expect("cmp requeue pi dispatch");
+        assert_eq!(expect_ret(requeue), 1);
+        assert_eq!(read_word(&mut runtime, base + 4), waiter_tid & FUTEX_TID_MASK);
+
+        let resolution = runtime.waits.take_resolution(token).expect("pi futex resolution");
+        assert_eq!(resolution.source, WaitSource::Futex { pi: true });
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
+        assert_eq!(runtime.futex.waiter_count(dst).expect("dst waiter count"), 0);
+    }
+
+    #[test]
+    fn generic_futex_cmp_requeue_pi_sets_waiters_and_boosts_owned_destination() {
+        let mut runtime = test_runtime();
+        let src_word = 11u32;
+        let owner_task = runtime.current_task_id();
+        let owner_tid = runtime.current_tid();
+        let mut words = [0u8; 8];
+        words[0..4].copy_from_slice(&src_word.to_le_bytes());
+        words[4..8].copy_from_slice(&(owner_tid & FUTEX_TID_MASK).to_le_bytes());
+        let (base, _) = runtime.write_linux_arg_bytes(&words).expect("futex words");
+        let src = base as u64;
+        let dst = (base + 4) as u64;
+        let waiter_pid = runtime.allocate_process(
+            runtime.current_pid(),
+            runtime.current_pid(),
+            runtime.current_pid(),
+        );
+        let waiter_task = runtime.allocate_task();
+        runtime.allocate_thread(waiter_task, waiter_pid);
+        runtime.boost_task_priority(waiter_task, 17);
+        let token = runtime.waits.register(
+            waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: true },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_requeue_pi(src, token.id, runtime.task_priority(waiter_task))
+            .expect("requeue pi waiter registration");
+
+        let requeue = runtime
+            .dispatch_linux_syscall(
+                "test_futex_cmp_requeue_pi_owned",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [src, FUTEX_CMP_REQUEUE_PI as u64, 1, 0, dst, src_word as u64],
+                ),
+            )
+            .expect("cmp requeue pi dispatch");
+        assert_eq!(expect_ret(requeue), 1);
+        assert_eq!(read_word(&mut runtime, base + 4), FUTEX_WAITERS | (owner_tid & FUTEX_TID_MASK));
+        assert_eq!(runtime.task_priority(owner_task), 17);
+        assert!(runtime.waits.take_resolution(token).is_none());
+        assert_eq!(runtime.futex.pi_waiter_count(dst).expect("dst pi waiter count"), 1);
     }
 
     #[test]

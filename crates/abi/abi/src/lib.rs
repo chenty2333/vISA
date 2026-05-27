@@ -444,6 +444,7 @@ pub enum PlanKind {
     GetSockName = 113,
     GetPeerName = 114,
     SetTidAddress = 115,
+    FutexCmpRequeuePi = 116,
 }
 
 impl PlanKind {
@@ -564,6 +565,7 @@ impl PlanKind {
             113 => Some(Self::GetSockName),
             114 => Some(Self::GetPeerName),
             115 => Some(Self::SetTidAddress),
+            116 => Some(Self::FutexCmpRequeuePi),
             _ => None,
         }
     }

@@ -336,6 +336,15 @@ impl LinuxFrontend {
         if command == FUTEX_UNLOCK_PI {
             return self.plan_futex_unlock_pi(key, op as u32);
         }
+        if command == FUTEX_CMP_REQUEUE_PI {
+            return self.plan_futex_cmp_requeue_pi(
+                key,
+                val,
+                timeout_ptr,
+                timeout_len,
+                current_word,
+            );
+        }
         let timeout_ms = match command {
             FUTEX_WAIT | FUTEX_WAIT_BITSET | FUTEX_WAIT_REQUEUE_PI => {
                 if timeout_ptr == 0 || timeout_len == 0 {
@@ -347,11 +356,11 @@ impl LinuxFrontend {
                     }
                 }
             }
-            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_ptr,
+            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_ptr,
             _ => u64::MAX,
         };
         let aux_word = match command {
-            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE | FUTEX_CMP_REQUEUE_PI => timeout_len,
+            FUTEX_REQUEUE | FUTEX_CMP_REQUEUE => timeout_len,
             _ => current_word,
         };
         self.plan_futex(key, op, val, timeout_ms, aux_word)
@@ -384,6 +393,7 @@ impl LinuxFrontend {
             FUTEX_WAKE_BITSET => self.plan_futex_wake_bitset(key, val, current_word),
             FUTEX_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, false),
             FUTEX_CMP_REQUEUE => self.plan_futex_requeue(key, val, timeout_ms, current_word, true),
+            FUTEX_CMP_REQUEUE_PI => PackedStep::error(-ERR_EINVAL),
             FUTEX_LOCK_PI | FUTEX_LOCK_PI2 | FUTEX_TRYLOCK_PI => {
                 self.plan_futex_lock_pi(key, op as u32, 0, 0)
             }
@@ -492,6 +502,43 @@ impl LinuxFrontend {
             ],
         );
         PackedStep::plan(kind)
+    }
+
+    fn plan_futex_cmp_requeue_pi(
+        &mut self,
+        src_key: u64,
+        wake_count: u64,
+        requeue_count: u64,
+        dst_key: u64,
+        compare_word: u64,
+    ) -> PackedStep {
+        if src_key == dst_key || wake_count != 1 {
+            return PackedStep::error(-ERR_EINVAL);
+        }
+        let requeue_count = match u32::try_from(requeue_count) {
+            Ok(count) if count != u32::MAX => count,
+            _ => return PackedStep::error(-ERR_EINVAL),
+        };
+        let compare_word = match u32::try_from(compare_word) {
+            Ok(word) => word,
+            Err(_) => return PackedStep::error(-ERR_EINVAL),
+        };
+        let src_ptr = match u32::try_from(src_key) {
+            Ok(ptr) => ptr,
+            Err(_) => return PackedStep::error(-ERR_EFAULT),
+        };
+        let current_word = match self.arg_u32(src_ptr) {
+            Ok(word) => word,
+            Err(errno) => return PackedStep::error(errno),
+        };
+        if current_word != compare_word {
+            return PackedStep::error(-ERR_EAGAIN);
+        }
+        self.reset_plan(
+            PlanKind::FutexCmpRequeuePi,
+            [src_key, requeue_count as u64, dst_key, wake_count, compare_word as u64, 0],
+        );
+        PackedStep::plan(PlanKind::FutexCmpRequeuePi)
     }
 
     fn plan_futex_lock_pi(

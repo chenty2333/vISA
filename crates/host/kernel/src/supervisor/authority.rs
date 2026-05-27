@@ -412,12 +412,14 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "futex.waitset",
             operation: "wake",
         },
-        PlanKind::FutexRequeue | PlanKind::FutexCmpRequeue => HostcallBinding {
-            class: HostcallClass::ImmediatePrivilegedOp,
-            subject: "futex_service",
-            object: "futex.waitset",
-            operation: "requeue",
-        },
+        PlanKind::FutexRequeue | PlanKind::FutexCmpRequeue | PlanKind::FutexCmpRequeuePi => {
+            HostcallBinding {
+                class: HostcallClass::ImmediatePrivilegedOp,
+                subject: "futex_service",
+                object: "futex.waitset",
+                operation: "requeue",
+            }
+        }
         PlanKind::FutexLockPi => HostcallBinding {
             class: HostcallClass::AsyncOp,
             subject: "futex_service",

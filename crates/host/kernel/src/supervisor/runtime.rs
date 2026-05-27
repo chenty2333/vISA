@@ -469,18 +469,19 @@ impl<'engine> PrototypeRuntime<'engine> {
                 0
             }
         };
-        let remove_owner = if let Some(owner_boosts) = self.futex_pi_boosts.get_mut(&owner_task) {
-            if priority == 0 {
+        if priority == 0 {
+            let remove_owner = if let Some(owner_boosts) = self.futex_pi_boosts.get_mut(&owner_task)
+            {
                 owner_boosts.remove(&futex_key);
+                owner_boosts.is_empty()
             } else {
-                owner_boosts.insert(futex_key, priority);
+                false
+            };
+            if remove_owner {
+                self.futex_pi_boosts.remove(&owner_task);
             }
-            owner_boosts.is_empty()
         } else {
-            false
-        };
-        if remove_owner {
-            self.futex_pi_boosts.remove(&owner_task);
+            self.futex_pi_boosts.entry(owner_task).or_default().insert(futex_key, priority);
         }
         self.apply_futex_pi_boost(owner_task)
     }

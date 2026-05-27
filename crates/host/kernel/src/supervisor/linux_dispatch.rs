@@ -313,6 +313,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::FutexWaitRequeuePi => self.plan_futex_wait_requeue_pi(plan),
             PlanKind::FutexWakeBitset => self.plan_futex_wake_bitset(plan),
             PlanKind::FutexRequeue | PlanKind::FutexCmpRequeue => self.plan_futex_requeue(plan),
+            PlanKind::FutexCmpRequeuePi => self.plan_futex_cmp_requeue_pi(plan),
             PlanKind::FutexLockPi => self.plan_futex_lock_pi(plan),
             PlanKind::FutexUnlockPi => self.plan_futex_unlock_pi(plan),
             PlanKind::EpollCreate1 => self.plan_epoll_create1(plan),
