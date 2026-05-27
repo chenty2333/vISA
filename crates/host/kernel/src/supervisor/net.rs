@@ -26,6 +26,7 @@ const NET_STACK_DRIVER_EVENT_LIMIT: usize = 8;
 const NETWORK_RUNTIME_PUMP_LIMIT: usize = 16;
 const REFERENCE_PACKET_BACKEND_RX_BATCH: usize = 4;
 const MAX_NET_STACK_PENDING_ACCEPTS: usize = 16;
+const ETHERNET_HEADER_LEN: usize = 14;
 const SHUT_RD: u32 = 0;
 const SHUT_WR: u32 = 1;
 const SHUT_RDWR: u32 = 2;
@@ -1034,6 +1035,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn deliver_network_driver_rx_frame(&mut self, frame: &[u8], reported_len: usize) {
         if self.driver_rx_frame_targets_net_stack(frame) {
+            if self.net_stack_rx_exceeds_recv_capacity(frame) {
+                self.semantic.record_packet_received(self.net.interface.id, None, 0, reported_len);
+                return;
+            }
             self.semantic.record_packet_received(self.net.interface.id, None, 0, frame.len());
             if let Err(err) = self.net_stack.enqueue_rx_frame(frame) {
                 crate::kwarn!("smoltcp enqueue driver rx frame: {}", err);
@@ -1073,6 +1078,54 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.has_active_net_stack_socket()
             && is_raw_ipv4_or_arp_ethernet_frame(frame)
             && !is_modeled_packet_frame(frame)
+    }
+
+    fn net_stack_rx_exceeds_recv_capacity(&self, frame: &[u8]) -> bool {
+        let Some(packet) = tcp_ipv4_payload_descriptor(frame) else {
+            return false;
+        };
+        if packet.payload_len == 0 {
+            return false;
+        }
+
+        self.net_stack_sockets.iter().any(|binding| {
+            if binding.mode == NetStackSocketMode::Idle {
+                return false;
+            }
+            self.stack_socket_rx_exceeds_recv_capacity(
+                binding.stack_socket_id,
+                binding.recv_capacity,
+                &packet,
+            ) || binding.pending_accepts.iter().any(|pending| {
+                self.stack_socket_rx_exceeds_recv_capacity(
+                    pending.stack_socket_id,
+                    pending.recv_capacity,
+                    &packet,
+                )
+            })
+        })
+    }
+
+    fn stack_socket_rx_exceeds_recv_capacity(
+        &self,
+        stack_socket_id: u32,
+        recv_capacity: usize,
+        packet: &TcpPayloadDescriptor,
+    ) -> bool {
+        let Ok(snapshot) = self.net_stack.tcp_snapshot(stack_socket_id) else {
+            return false;
+        };
+        if snapshot.local_port != packet.dst_port || snapshot.remote_port != packet.src_port {
+            return false;
+        }
+        if snapshot.local_ipv4 != [0; 4] && snapshot.local_ipv4 != packet.dst_ipv4 {
+            return false;
+        }
+        if snapshot.remote_ipv4 != [0; 4] && snapshot.remote_ipv4 != packet.src_ipv4 {
+            return false;
+        }
+        let capacity = recv_capacity.min(snapshot.recv_capacity);
+        snapshot.recv_queue.saturating_add(packet.payload_len) > capacity
     }
 
     fn has_active_net_stack_socket(&self) -> bool {
@@ -1326,6 +1379,60 @@ fn is_modeled_packet_frame(frame: &[u8]) -> bool {
     matches!(decode_frame(frame), Ok((meta, _)) if meta.protocol == PROTO_DEMO_TCP)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TcpPayloadDescriptor {
+    src_ipv4: [u8; 4],
+    dst_ipv4: [u8; 4],
+    src_port: u16,
+    dst_port: u16,
+    payload_len: usize,
+}
+
+fn tcp_ipv4_payload_descriptor(frame: &[u8]) -> Option<TcpPayloadDescriptor> {
+    const IPV4_MIN_HEADER_LEN: usize = 20;
+    const TCP_MIN_HEADER_LEN: usize = 20;
+    if frame.len() < ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN {
+        return None;
+    }
+    if u16::from_be_bytes([frame[12], frame[13]]) != 0x0800 {
+        return None;
+    }
+    let ip_start = ETHERNET_HEADER_LEN;
+    if frame[ip_start] >> 4 != 4 {
+        return None;
+    }
+    let ip_header_len = ((frame[ip_start] & 0x0f) as usize) * 4;
+    if ip_header_len < IPV4_MIN_HEADER_LEN {
+        return None;
+    }
+    let total_len = u16::from_be_bytes([frame[ip_start + 2], frame[ip_start + 3]]) as usize;
+    if total_len < ip_header_len + TCP_MIN_HEADER_LEN {
+        return None;
+    }
+    if frame.len() < ip_start + total_len {
+        return None;
+    }
+    if frame[ip_start + 9] != 6 {
+        return None;
+    }
+    let tcp_start = ip_start + ip_header_len;
+    let tcp_len = total_len - ip_header_len;
+    if frame.len() < tcp_start + TCP_MIN_HEADER_LEN {
+        return None;
+    }
+    let tcp_header_len = ((frame[tcp_start + 12] >> 4) as usize) * 4;
+    if tcp_header_len < TCP_MIN_HEADER_LEN || tcp_header_len > tcp_len {
+        return None;
+    }
+    Some(TcpPayloadDescriptor {
+        src_ipv4: frame[ip_start + 12..ip_start + 16].try_into().ok()?,
+        dst_ipv4: frame[ip_start + 16..ip_start + 20].try_into().ok()?,
+        src_port: u16::from_be_bytes([frame[tcp_start], frame[tcp_start + 1]]),
+        dst_port: u16::from_be_bytes([frame[tcp_start + 2], frame[tcp_start + 3]]),
+        payload_len: tcp_len - tcp_header_len,
+    })
+}
+
 fn normalize_net_stack_backlog(backlog: u32) -> u32 {
     backlog.max(1).min(MAX_NET_STACK_PENDING_ACCEPTS as u32)
 }
@@ -1465,12 +1572,16 @@ mod tests {
         )
     }
 
-    fn net_stack_recv_snapshot(runtime: &mut PrototypeRuntime<'_>, fd: i64) -> (usize, usize) {
+    fn net_stack_recv_state(runtime: &mut PrototypeRuntime<'_>, fd: i64) -> (usize, usize, usize) {
         let (socket_id, _, _) = runtime.socket_fd_snapshot(fd as u32).expect("socket fd snapshot");
         let index = runtime.net_stack_socket_index(socket_id).expect("net stack socket");
         let stack_socket_id = runtime.net_stack_sockets[index].stack_socket_id;
         let snapshot = runtime.net_stack.tcp_snapshot(stack_socket_id).expect("tcp snapshot");
-        (snapshot.recv_capacity, snapshot.recv_queue)
+        (
+            runtime.net_stack_sockets[index].recv_capacity,
+            snapshot.recv_capacity,
+            snapshot.recv_queue,
+        )
     }
 
     fn packet_backed_listener(runtime: &mut PrototypeRuntime<'_>, local_port: u16) -> i64 {
@@ -2552,7 +2663,7 @@ mod tests {
         assert!(listener_fd >= 0);
         assert_eq!(setsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64, 1), 0);
         assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64), 2048);
-        assert_eq!(net_stack_recv_snapshot(&mut runtime, listener_fd).0, 2048);
+        assert_eq!(net_stack_recv_state(&mut runtime, listener_fd), (2048, 2048, 0));
 
         let local_port = 18086u16;
         let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
@@ -2584,7 +2695,7 @@ mod tests {
             [listener_fd as u64, 0, 0, 0, 0, 0],
         );
         assert!(accepted_fd >= 0);
-        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd).0, 2048);
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 2048, 0));
 
         let chunk = [b'a'; 512];
         for offset in [0, 512, 1024, 1536] {
@@ -2592,7 +2703,7 @@ mod tests {
             runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
             runtime.pump_network_runtime();
         }
-        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 2048));
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 2048, 2048));
 
         let overflow = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, 2048, b"b");
         runtime
@@ -2600,7 +2711,7 @@ mod tests {
             .inject_rx_frame(&overflow)
             .expect("inject overflow tcp payload");
         runtime.pump_network_runtime();
-        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 2048));
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 2048, 2048));
 
         let read = dispatch_bytes(
             &mut runtime,
@@ -2610,7 +2721,45 @@ mod tests {
         );
         assert_eq!(read.len(), 2048);
         assert!(read.iter().all(|byte| *byte == b'a'));
-        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 0));
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 2048, 0));
+    }
+
+    #[test]
+    fn packet_backed_active_so_rcvbuf_caps_future_tcp_ingress() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18087, 40_087, 0x3536_3738);
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (4096, 4096, 0));
+        assert_eq!(setsockopt_u32(&mut runtime, accepted_fd, SO_RCVBUF as u64, 1), 0);
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_RCVBUF as u64), 2048);
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 4096, 0));
+
+        let chunk = [b'c'; 512];
+        for offset in [0, 512, 1024, 1536] {
+            let data = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, offset, &chunk);
+            runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+            runtime.pump_network_runtime();
+        }
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 4096, 2048));
+
+        let overflow = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, 2048, b"d");
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&overflow)
+            .expect("inject overflow tcp payload");
+        runtime.pump_network_runtime();
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 4096, 2048));
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_active_rcvbuf_capacity",
+            SYS_READ,
+            [accepted_fd as u64, 0, 4096, 0, 0, 0],
+        );
+        assert_eq!(read.len(), 2048);
+        assert!(read.iter().all(|byte| *byte == b'c'));
+        assert_eq!(net_stack_recv_state(&mut runtime, accepted_fd), (2048, 4096, 0));
     }
 
     #[test]
