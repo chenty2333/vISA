@@ -2518,6 +2518,32 @@ mod tests {
         syn_ack
     }
 
+    fn drive_reference_backend_nonblocking_connect_rst(
+        runtime: &mut PrototypeRuntime<'_>,
+        remote_port: u16,
+        server_seq: u32,
+    ) {
+        let arp_reply = arp_reply(
+            REMOTE_MAC,
+            REMOTE_IPV4,
+            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+            VMOS_IPV4,
+        );
+        runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
+        runtime.pump_network_runtime();
+
+        let syn = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("nonblocking connect emitted tcp syn")
+            .to_vec();
+        assert_eq!(syn[47] & 0x02, 0x02);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), remote_port);
+
+        let rst = tcp_rst_for_syn(&syn, REMOTE_MAC, server_seq);
+        runtime.reference_packet_backend.inject_rx_frame(&rst).expect("inject connect rst");
+    }
+
     fn event_log_contains(runtime: &PrototypeRuntime<'_>, needle: &str) -> bool {
         runtime
             .semantic
@@ -3451,6 +3477,38 @@ mod tests {
     }
 
     #[test]
+    fn packet_backed_blocking_send_wait_resumes_econnreset_after_rst() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18107, 40_107, 0x898a_8b8c);
+        let _ack = fill_packet_sndbuf_and_ack(&mut runtime, accepted_fd);
+
+        let blocked_payload = b"blocked send after rst";
+        let (ptr, len) = runtime.write_linux_arg_bytes(blocked_payload).expect("send buffer");
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_blocking_send_wait_rst",
+                SyscallContext::new(
+                    SYS_SENDTO,
+                    [accepted_fd as u64, ptr as u64, len as u64, 0, 0, 0],
+                ),
+            )
+            .expect("blocking send rst dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending blocking send, got {other:?}"),
+        };
+
+        let rst = tcp_rst_for_syn_ack(&syn_ack);
+        runtime.reference_packet_backend.inject_rx_frame(&rst).expect("inject tcp rst");
+        let resumed =
+            runtime.block_on_wait("test_blocking_send_rst_resume", token).expect("resume send rst");
+        assert_eq!(expect_ret(resumed), -(ERR_ECONNRESET as i64));
+        assert!(event_log_contains(&runtime, "error-reset"));
+    }
+
+    #[test]
     fn packet_backed_sendmsg_wait_resumes_after_tcp_ack() {
         let _guard = test_guard();
         let mut runtime = test_runtime();
@@ -3546,6 +3604,81 @@ mod tests {
             runtime.block_on_wait("test_writev_wait_resume", token).expect("resume writev");
         assert_eq!(expect_ret(resumed), payload.len() as i64);
         assert_resumed_send_queue(&mut runtime, accepted_fd, payload.len());
+    }
+
+    #[test]
+    fn packet_backed_sendmsg_and_writev_after_rst_return_econnreset() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (sendmsg_fd, sendmsg_syn_ack) =
+            packet_backed_accept(&mut runtime, 18108, 40_108, 0x8d8e_8f90);
+        let sendmsg_rst = tcp_rst_for_syn_ack(&sendmsg_syn_ack);
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&sendmsg_rst)
+            .expect("inject sendmsg tcp rst");
+
+        const MSGHDR_SIZE: usize = 56;
+        const IOVEC_SIZE: usize = 16;
+        let sendmsg_payload = b"sendmsg after rst";
+        let sendmsg_buffer_len = MSGHDR_SIZE + IOVEC_SIZE + sendmsg_payload.len();
+        let (msg_ptr, _) = runtime
+            .linux
+            .write_arg_bytes(&alloc::vec![0u8; sendmsg_buffer_len])
+            .expect("sendmsg buffer");
+        let iov_ptr = msg_ptr + MSGHDR_SIZE as u32;
+        let data_ptr = iov_ptr + IOVEC_SIZE as u32;
+
+        let mut sendmsg_raw = alloc::vec![0u8; sendmsg_buffer_len];
+        write_u64_at(&mut sendmsg_raw, 16, iov_ptr as u64);
+        write_u64_at(&mut sendmsg_raw, 24, 1);
+        write_u64_at(&mut sendmsg_raw, MSGHDR_SIZE, data_ptr as u64);
+        write_u64_at(&mut sendmsg_raw, MSGHDR_SIZE + 8, sendmsg_payload.len() as u64);
+        sendmsg_raw[MSGHDR_SIZE + IOVEC_SIZE..].copy_from_slice(sendmsg_payload);
+        runtime.linux.write_bytes(msg_ptr, &sendmsg_raw).expect("sendmsg msghdr");
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_sendmsg_after_rst",
+                SYS_SENDMSG,
+                [sendmsg_fd as u64, msg_ptr as u64, 0, 0, 0, 0],
+            ),
+            -(ERR_ECONNRESET as i64)
+        );
+
+        let (writev_fd, writev_syn_ack) =
+            packet_backed_accept(&mut runtime, 18109, 40_109, 0x9192_9394);
+        let writev_rst = tcp_rst_for_syn_ack(&writev_syn_ack);
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&writev_rst)
+            .expect("inject writev tcp rst");
+
+        let writev_payload = b"writev after rst";
+        let writev_buffer_len = IOVEC_SIZE + writev_payload.len();
+        let (writev_ptr, _) = runtime
+            .linux
+            .write_arg_bytes(&alloc::vec![0u8; writev_buffer_len])
+            .expect("writev buffer");
+        let writev_data_ptr = writev_ptr + IOVEC_SIZE as u32;
+        let mut writev_raw = alloc::vec![0u8; writev_buffer_len];
+        write_u64_at(&mut writev_raw, 0, writev_data_ptr as u64);
+        write_u64_at(&mut writev_raw, 8, writev_payload.len() as u64);
+        writev_raw[IOVEC_SIZE..].copy_from_slice(writev_payload);
+        runtime.linux.write_bytes(writev_ptr, &writev_raw).expect("writev iovec");
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_writev_after_rst",
+                SYS_WRITEV,
+                [writev_fd as u64, writev_ptr as u64, 1, 0, 0, 0],
+            ),
+            -(ERR_ECONNRESET as i64)
+        );
+        assert!(event_log_contains(&runtime, "error-reset"));
     }
 
     #[test]
@@ -4806,6 +4939,69 @@ mod tests {
             dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
             0
         );
+    }
+
+    #[test]
+    fn packet_nonblocking_connect_rst_wakes_epollerr_and_reports_so_error() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64 | SOCK_NONBLOCK, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+        let remote_port = 18110u16;
+        let remote_ipv4 = u32::from_be_bytes(REMOTE_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_connect_nonblocking_rst",
+                SYS_CONNECT,
+                [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
+            ),
+            -(vmos_abi::ERR_EINPROGRESS as i64)
+        );
+        assert!(is_remote_arp_request(
+            runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
+        ));
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xace0_0003u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl_rst_connect",
+                SYS_EPOLL_CTL,
+                [epfd as u64, EPOLL_CTL_ADD as u64, fd as u64, EPOLLOUT as u64, epoll_data, 0,],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_connect_rst",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait connect rst dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending connect rst epoll_wait, got {other:?}"),
+        };
+
+        drive_reference_backend_nonblocking_connect_rst(&mut runtime, remote_port, 0x9596_9798);
+        let event_bytes = expect_bytes(
+            runtime
+                .block_on_wait("test_epoll_connect_rst_resume", token)
+                .expect("connect rst epoll wait"),
+        );
+        assert_epoll_event_exact(&event_bytes, EPOLLOUT | EPOLLERR | EPOLLHUP, epoll_data);
+        assert_eq!(getsockopt_u32(&mut runtime, fd, SO_ERROR), ERR_ECONNREFUSED as u32);
+        assert_eq!(getsockopt_u32(&mut runtime, fd, SO_ERROR), 0);
+        assert!(event_log_contains(&runtime, "error-reset"));
     }
 
     #[test]
