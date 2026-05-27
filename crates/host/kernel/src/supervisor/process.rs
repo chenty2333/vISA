@@ -13,8 +13,8 @@ use super::{
         LINUX_SUPPORTED_SECUREBITS, Pid, ProcessAccessState, ProcessRuntimeState,
         ProcessRuntimeStateKind, PtraceAttachment, RLIMIT_NPROC, RobustListRegistration,
         RseqRegistration, SECBIT_KEEP_CAPS, SECBIT_NO_CAP_AMBIENT_RAISE, SECBIT_NO_SETUID_FIXUP,
-        SECBIT_NOROOT, SeccompTraceState, SignalAltStack, TaskId, ThreadRuntimeState,
-        ThreadRuntimeStateKind, Tid,
+        SECBIT_NOROOT, SeccompTraceState, ServiceCallError, SignalAltStack, TaskId,
+        ThreadRuntimeState, ThreadRuntimeStateKind, Tid,
     },
     wait::{WaitRegistration, WaitSource},
 };
@@ -947,12 +947,15 @@ impl<'engine> PrototypeRuntime<'engine> {
                 }
             }
         }
-        let mut exited_tasks = Vec::new();
+        let mut exited_threads = Vec::new();
         for thread in self.threads.iter_mut().filter(|thread| thread.pid == pid) {
             thread.state = ThreadRuntimeStateKind::Dead;
-            exited_tasks.push(thread.task_id);
+            exited_threads.push((thread.tid, thread.task_id));
         }
-        for task in exited_tasks {
+        for (tid, _) in &exited_threads {
+            self.clear_child_tid_for_exited_thread(*tid);
+        }
+        for (_, task) in exited_threads {
             self.scheduler.mark_task_exited(task);
             self.semantic.set_task_state(task, TaskState::Exited);
             self.release_all_futex_pi_boosts_for_task(task);
@@ -969,6 +972,37 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.transition_process_state_by_pid(pid, state);
         }
         self.notify_wait4_waiters();
+    }
+
+    fn clear_child_tid_for_exited_thread(&mut self, tid: Tid) {
+        let Some(clear_child_tid) = self.take_thread_clear_child_tid(tid) else {
+            return;
+        };
+        if clear_child_tid == 0 {
+            return;
+        }
+        let Ok(ptr) = u32::try_from(clear_child_tid) else {
+            crate::kwarn!("clear_child_tid pointer overflow for tid {}", tid);
+            return;
+        };
+        if self.linux.write_bytes(ptr, &0u32.to_le_bytes()).is_err() {
+            crate::kwarn!("clear_child_tid write failed for tid {}", tid);
+            return;
+        }
+        match self.futex.wake(clear_child_tid, 1) {
+            Ok(wait_ids) => {
+                for wait_id in wait_ids {
+                    self.scheduler.push_event(Event::WaitReady(wait_id));
+                }
+                self.drain_event_queue();
+            }
+            Err(ServiceCallError::Errno(errno)) => {
+                crate::kwarn!("clear_child_tid futex wake returned errno {}", errno);
+            }
+            Err(ServiceCallError::Trap(reason)) | Err(ServiceCallError::Invalid(reason)) => {
+                crate::kwarn!("clear_child_tid futex wake failed: {}", reason);
+            }
+        }
     }
 
     pub(crate) fn query_wait4(
@@ -2581,17 +2615,19 @@ mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{
-        ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, SYS_CAPGET, SYS_CAPSET, SYS_EXIT,
-        SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
-        SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SETFSGID,
-        SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID,
-        SYS_SETRESUID, SYS_SETREUID, SYS_SETSID, SYS_SETUID, SYS_WAIT4, SyscallContext,
+        ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FUTEX_WAIT, SYS_CAPGET, SYS_CAPSET,
+        SYS_EXIT, SYS_FUTEX, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
+        SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID,
+        SYS_SET_TID_ADDRESS, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
+        SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETSID, SYS_SETUID,
+        SYS_WAIT4, SyscallContext,
     };
 
     use super::*;
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         types::{Rlimit, SigAction},
+        wait::{WaitOutcome, WaitSource},
     };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -2647,6 +2683,49 @@ mod tests {
             .expect("child process")
             .exit_signal = Some(SIGCHLD);
         child
+    }
+
+    #[test]
+    fn generic_exit_clears_child_tid_and_wakes_futex_waiter() {
+        let mut runtime = test_runtime();
+        let tid = runtime.current_tid();
+        let (ptr, _) =
+            runtime.write_linux_arg_bytes(&(tid as u32).to_le_bytes()).expect("tid word");
+
+        let set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_set_tid_address",
+                SyscallContext::new(SYS_SET_TID_ADDRESS, [ptr as u64, 0, 0, 0, 0, 0]),
+            )
+            .expect("set_tid_address dispatch");
+        assert_eq!(expect_ret(set), tid as i64);
+
+        let wait = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clear_child_tid_wait",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [ptr as u64, FUTEX_WAIT as u64, tid as u64, 0, 0, tid as u64],
+                ),
+            )
+            .expect("futex wait dispatch");
+        let token = match wait {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending futex wait, got {other:?}"),
+        };
+
+        let exit = runtime
+            .dispatch_linux_syscall_raw("test_exit", SyscallContext::new(SYS_EXIT, [0; 6]))
+            .expect("exit dispatch");
+        assert_eq!(expect_exit(exit), 0);
+
+        let word = runtime.linux.read_bytes(ptr, 4).expect("cleared tid word");
+        assert_eq!(u32::from_le_bytes(word.try_into().expect("word len")), 0);
+        assert_eq!(runtime.query_thread(tid).expect("current thread").clear_child_tid, None);
+
+        let resolution = runtime.waits.take_resolution(token).expect("futex wait resolution");
+        assert_eq!(resolution.source, WaitSource::Futex);
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
     }
 
     #[test]
