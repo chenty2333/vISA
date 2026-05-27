@@ -1058,7 +1058,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> bool {
         let backlog = self.net_stack_sockets[index].listen_backlog.max(1) as usize;
         if self.net_stack_sockets[index].pending_accepts.len() >= backlog {
-            return false;
+            return self.drop_backlog_overflow_listener_socket(index, socket_resource);
         }
 
         let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
@@ -1093,6 +1093,45 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].read_ready = false;
         self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
         self.notify_ready_key(ready_key, "smoltcp listener ready");
+        true
+    }
+
+    fn drop_backlog_overflow_listener_socket(
+        &mut self,
+        index: usize,
+        socket_resource: ResourceHandle,
+    ) -> bool {
+        let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        let local_port = self.net_stack_sockets[index].local_port;
+        let Ok(new_listener_stack_socket_id) = self.net_stack.create_tcp_socket() else {
+            crate::kwarn!("smoltcp listener socket exhausted while dropping accept overflow");
+            return false;
+        };
+        if let Err(err) = self.net_stack.listen_tcp(new_listener_stack_socket_id, local_port) {
+            if let Err(close_err) = self.net_stack.close_tcp_socket(new_listener_stack_socket_id) {
+                crate::kwarn!(
+                    "smoltcp cleanup socket {} after overflow relisten failure: {}",
+                    new_listener_stack_socket_id,
+                    close_err
+                );
+            }
+            crate::kwarn!("smoltcp relisten socket after accept overflow: {}", err);
+            return false;
+        }
+        if let Err(err) = self.net_stack.close_tcp_socket(old_stack_socket_id) {
+            crate::kwarn!(
+                "smoltcp close overflow listener socket {}: {}",
+                old_stack_socket_id,
+                err
+            );
+        }
+
+        self.net_stack_sockets[index].stack_socket_id = new_listener_stack_socket_id;
+        self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
+        self.net_stack_sockets[index].remote_ipv4 = [0; 4];
+        self.net_stack_sockets[index].remote_port = 0;
+        self.net_stack_sockets[index].read_ready = false;
+        self.semantic.record_socket_state_changed(socket_resource.id, "accept-backlog-full");
         true
     }
 
@@ -1159,9 +1198,9 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EINTR, SO_ACCEPTCONN, SOCK_STREAM, SYS_ACCEPT,
-        SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
-        SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN, SOCK_STREAM,
+        SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
+        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE,
         SyscallContext,
     };
 
@@ -1924,6 +1963,81 @@ mod tests {
         let second_written = runtime.linux.read_bytes(addr_ptr, 20).expect("second writeback");
         assert_sockaddr_in(&second_written[..16], REMOTE_IPV4, second_remote_port);
         assert_eq!(u32::from_le_bytes(second_written[16..20].try_into().unwrap()), 16);
+    }
+
+    #[test]
+    fn packet_backed_accept_backlog_drops_overflow_connection() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64 | SOCK_NONBLOCK, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18093u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let queued_remote_port = 40_013u16;
+        let overflow_remote_port = 40_014u16;
+        drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            queued_remote_port,
+            0x4142_4344,
+        );
+        drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            overflow_remote_port,
+            0x5152_5354,
+        );
+
+        let (addr_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("accept buffer");
+        let len_ptr = addr_ptr + 16;
+
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_queued",
+            SYS_ACCEPT,
+            [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        let written = runtime.linux.read_bytes(addr_ptr, 20).expect("queued writeback");
+        assert_sockaddr_in(&written[..16], REMOTE_IPV4, queued_remote_port);
+        assert_eq!(u32::from_le_bytes(written[16..20].try_into().unwrap()), 16);
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_accept_after_overflow",
+                SYS_ACCEPT,
+                [listener_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+            ),
+            -(ERR_EAGAIN as i64)
+        );
+        assert!(event_log_contains(&runtime, "accept-backlog-full"));
     }
 
     #[test]
