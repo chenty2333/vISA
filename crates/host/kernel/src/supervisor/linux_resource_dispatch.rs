@@ -3,7 +3,9 @@ use vmos_abi::{ERR_EINVAL, ERR_EPERM, ERR_ESRCH};
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
-    types::{CAP_SYS_RESOURCE, Pid, ProcessRuntimeStateKind, RLIMIT_CPU, Rlimit},
+    types::{
+        CAP_SYS_RESOURCE, Pid, ProcessAccessState, ProcessRuntimeStateKind, RLIMIT_CPU, Rlimit,
+    },
 };
 
 const RLIMIT_COUNT: usize = 16;
@@ -104,8 +106,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         new_ptr_raw: u64,
         old_ptr_raw: u64,
     ) -> Result<LinuxCallResult, &'static str> {
-        if self.query_process(pid).is_none() {
+        let current_pid = self.current_pid();
+        let Some(target_access) = self.query_process(pid).map(|process| process.access.clone())
+        else {
             return Ok(errno_ret(ERR_ESRCH));
+        };
+        let caller_access = self.current_access_state();
+        if pid != current_pid && !rlimit_process_access_allowed(&caller_access, &target_access) {
+            return Ok(errno_ret(ERR_EPERM));
         }
 
         let resource = match usize::try_from(resource_raw) {
@@ -172,6 +180,16 @@ fn decode_pid(raw_pid: u64, current_pid: Pid) -> Result<Pid, i32> {
     if raw_pid == 0 { Ok(current_pid) } else { u32::try_from(raw_pid).map_err(|_| ERR_EINVAL) }
 }
 
+fn rlimit_process_access_allowed(caller: &ProcessAccessState, target: &ProcessAccessState) -> bool {
+    caller.cap_effective & CAP_SYS_RESOURCE != 0
+        || (caller.real_uid == target.real_uid
+            && caller.real_uid == target.uid
+            && caller.real_uid == target.saved_uid
+            && caller.real_gid == target.real_gid
+            && caller.real_gid == target.gid
+            && caller.real_gid == target.saved_gid)
+}
+
 fn encode_rlimit(limit: Rlimit) -> [u8; RLIMIT64_SIZE] {
     let mut out = [0u8; RLIMIT64_SIZE];
     out[..8].copy_from_slice(&limit.cur.to_le_bytes());
@@ -213,14 +231,14 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
+    use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{ERR_EPERM, SYS_GETPID, SYS_PRLIMIT64, SyscallContext};
 
     use super::{
         super::{
             engine::RuntimeOnlyExecutor,
-            types::{DEFAULT_RLIMIT_STACK_BYTES, RLIMIT_NOFILE, RLIMIT_STACK},
+            types::{DEFAULT_RLIMIT_STACK_BYTES, ProcessAccessState, RLIMIT_NOFILE, RLIMIT_STACK},
         },
         *,
     };
@@ -235,6 +253,38 @@ mod tests {
             LinuxCallResult::Ret(ret) => ret,
             other => panic!("expected Ret, got {other:?}"),
         }
+    }
+
+    fn create_target_process(runtime: &mut PrototypeRuntime<'static>) -> Pid {
+        let caller = runtime.current_pid();
+        let target = runtime.allocate_process(caller, caller, caller);
+        let task = runtime.allocate_task();
+        runtime.allocate_thread(task, target);
+        target
+    }
+
+    fn set_process_credentials(
+        runtime: &mut PrototypeRuntime<'static>,
+        pid: Pid,
+        uid: u32,
+        gid: u32,
+        caps: u64,
+    ) {
+        let process =
+            runtime.processes.iter_mut().find(|process| process.pid == pid).expect("process");
+        process.access = ProcessAccessState::from_credentials(
+            uid,
+            uid,
+            uid,
+            uid,
+            gid,
+            gid,
+            gid,
+            gid,
+            Vec::new(),
+            caps,
+            caps,
+        );
     }
 
     #[test]
@@ -363,5 +413,101 @@ mod tests {
             .expect("prlimit dispatch");
         assert_eq!(expect_ret(allowed), 0);
         assert_eq!(runtime.get_rlimit(pid, RLIMIT_NOFILE), Rlimit { cur: 2048, max: 2048 });
+    }
+
+    #[test]
+    fn generic_prlimit64_other_process_denies_unrelated_credentials() {
+        let mut runtime = test_runtime();
+        let caller = runtime.current_pid();
+        set_process_credentials(&mut runtime, caller, 1000, 100, 0);
+        let target = create_target_process(&mut runtime);
+        set_process_credentials(&mut runtime, target, 2000, 200, 0);
+        assert!(runtime.set_rlimit(target, RLIMIT_NOFILE, Rlimit { cur: 64, max: 64 }));
+
+        let sentinel = [0xaa; RLIMIT64_SIZE];
+        let (old_ptr, _) = runtime.linux.write_arg_bytes(&sentinel).expect("old limit buffer");
+        let denied_get = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_other_get_denied",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [target as u64, RLIMIT_NOFILE as u64, 0, old_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("prlimit get dispatch");
+        assert_eq!(expect_ret(denied_get), -(ERR_EPERM as i64));
+        assert_eq!(
+            runtime.linux.read_bytes(old_ptr, RLIMIT64_SIZE as u32).expect("old limit bytes"),
+            sentinel
+        );
+
+        let lowered = encode_rlimit(Rlimit { cur: 32, max: 32 });
+        let (limit_ptr, _) = runtime.linux.write_arg_bytes(&lowered).expect("new limit buffer");
+        let denied_set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_other_set_denied",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [target as u64, RLIMIT_NOFILE as u64, limit_ptr as u64, 0, 0, 0],
+                ),
+            )
+            .expect("prlimit set dispatch");
+        assert_eq!(expect_ret(denied_set), -(ERR_EPERM as i64));
+        assert_eq!(runtime.get_rlimit(target, RLIMIT_NOFILE), Rlimit { cur: 64, max: 64 });
+    }
+
+    #[test]
+    fn generic_prlimit64_other_process_allows_matching_credentials() {
+        let mut runtime = test_runtime();
+        let caller = runtime.current_pid();
+        set_process_credentials(&mut runtime, caller, 1000, 100, 0);
+        let target = create_target_process(&mut runtime);
+        set_process_credentials(&mut runtime, target, 1000, 100, 0);
+        assert!(runtime.set_rlimit(target, RLIMIT_NOFILE, Rlimit { cur: 64, max: 64 }));
+
+        let lowered = encode_rlimit(Rlimit { cur: 32, max: 32 });
+        let mut buffers = [0; RLIMIT64_SIZE * 2];
+        buffers[RLIMIT64_SIZE..].copy_from_slice(&lowered);
+        let (old_ptr, _) = runtime.linux.write_arg_bytes(&buffers).expect("limit buffers");
+        let limit_ptr = old_ptr + RLIMIT64_SIZE as u32;
+        let allowed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_other_matching_credentials",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [target as u64, RLIMIT_NOFILE as u64, limit_ptr as u64, old_ptr as u64, 0, 0],
+                ),
+            )
+            .expect("prlimit dispatch");
+
+        assert_eq!(expect_ret(allowed), 0);
+        let old_bytes =
+            runtime.linux.read_bytes(old_ptr, RLIMIT64_SIZE as u32).expect("old limit bytes");
+        assert_eq!(decode_rlimit(&old_bytes), Ok(Rlimit { cur: 64, max: 64 }));
+        assert_eq!(runtime.get_rlimit(target, RLIMIT_NOFILE), Rlimit { cur: 32, max: 32 });
+    }
+
+    #[test]
+    fn generic_prlimit64_other_process_allows_resource_capability() {
+        let mut runtime = test_runtime();
+        let caller = runtime.current_pid();
+        set_process_credentials(&mut runtime, caller, 1000, 100, CAP_SYS_RESOURCE);
+        let target = create_target_process(&mut runtime);
+        set_process_credentials(&mut runtime, target, 2000, 200, 0);
+
+        let raised = encode_rlimit(Rlimit { cur: 2048, max: 2048 });
+        let (limit_ptr, _) = runtime.linux.write_arg_bytes(&raised).expect("new limit buffer");
+        let allowed = runtime
+            .dispatch_linux_syscall_raw(
+                "test_prlimit_other_resource_capability",
+                SyscallContext::new(
+                    SYS_PRLIMIT64,
+                    [target as u64, RLIMIT_NOFILE as u64, limit_ptr as u64, 0, 0, 0],
+                ),
+            )
+            .expect("prlimit dispatch");
+
+        assert_eq!(expect_ret(allowed), 0);
+        assert_eq!(runtime.get_rlimit(target, RLIMIT_NOFILE), Rlimit { cur: 2048, max: 2048 });
     }
 }
