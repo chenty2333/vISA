@@ -43,6 +43,14 @@ impl NetCoreService {
         map_errno(self.state.poll_socket(socket_id))
     }
 
+    pub(crate) fn set_recv_capacity(
+        &mut self,
+        socket_id: u32,
+        capacity: u32,
+    ) -> Result<(), ServiceCallError> {
+        map_errno(self.state.set_recv_capacity(socket_id, capacity))
+    }
+
     pub(crate) fn send_socket(
         &mut self,
         socket_id: u32,

@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
-    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SOCK_STREAM,
+    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_RCVBUF, SOCK_STREAM,
+    SOL_SOCKET,
 };
 
 use super::{
@@ -1074,7 +1075,33 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         };
         match self.linux_socket.setsockopt(socket_id, level, optname, optlen, value) {
-            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Ok(()) => {
+                if level == SOL_SOCKET && optname == SO_RCVBUF {
+                    let capacity = match self.linux_socket.getsockopt(socket_id, level, optname) {
+                        Ok(capacity) => capacity,
+                        Err(ServiceCallError::Errno(errno)) => {
+                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("linux_socket getsockopt after SO_RCVBUF: {}", reason);
+                            return Err("linux_socket_service trapped during SO_RCVBUF sync");
+                        }
+                        Err(ServiceCallError::Invalid(err)) => return Err(err),
+                    };
+                    match self.net_core.set_recv_capacity(socket_id, capacity) {
+                        Ok(()) => {}
+                        Err(ServiceCallError::Errno(errno)) => {
+                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("net_core set_recv_capacity: {}", reason);
+                            return Err("net_core trapped during SO_RCVBUF sync");
+                        }
+                        Err(ServiceCallError::Invalid(err)) => return Err(err),
+                    }
+                }
+                Ok(LinuxCallResult::Ret(0))
+            }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("linux_socket setsockopt: {}", reason);
@@ -1353,10 +1380,12 @@ fn linux_listen_backlog_arg(raw: u64) -> u32 {
 mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
 
-    use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
+    use service_core::packet::{
+        PACKET_FRAME_CAPACITY, PACKET_PAYLOAD_CAPACITY, PacketFrameMeta, encode_frame,
+    };
     use vmos_abi::{
-        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK, ERR_EPIPE,
-        NodeKind, PlanKind, SO_KEEPALIVE, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
+        AF_INET, ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK,
+        ERR_EPIPE, NodeKind, PlanKind, SO_KEEPALIVE, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
         SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO,
         SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, ServiceRoute, SyscallContext,
     };
@@ -1367,7 +1396,7 @@ mod tests {
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         runtime::PrototypeRuntime,
-        types::{FdEntry, FdResource},
+        types::{FdEntry, FdResource, ServiceCallError},
     };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -1742,6 +1771,35 @@ mod tests {
         assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_RCVBUF, 1), 0);
         assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_SNDBUF), 8192);
         assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_RCVBUF), 2048);
+    }
+
+    #[test]
+    fn generic_so_rcvbuf_limits_modeled_receive_queue() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+        let payload = [b'r'; PACKET_PAYLOAD_CAPACITY];
+
+        assert_eq!(generic_setsockopt_u32(&mut runtime, fd, SO_RCVBUF, 1), 0);
+        assert_eq!(generic_getsockopt_u32(&mut runtime, fd, SO_RCVBUF), 2048);
+
+        for _ in 0..4 {
+            deliver_legacy_socket_payload(&mut runtime, socket_id, &payload);
+        }
+
+        let meta = PacketFrameMeta::demo_http_response(5, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, &payload, &mut frame).expect("encode overflow frame");
+        assert!(matches!(
+            runtime.net_core.deliver_packet_frame(&frame[..frame_len]),
+            Err(ServiceCallError::Errno(ERR_EAGAIN))
+        ));
+
+        let bytes = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_rcvbuf_capacity",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, 2048, 0, 0, 0]),
+        ));
+        assert_eq!(bytes.len(), 2048);
+        assert!(bytes.iter().all(|byte| *byte == b'r'));
     }
 
     #[test]

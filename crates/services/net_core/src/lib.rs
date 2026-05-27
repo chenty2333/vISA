@@ -85,6 +85,11 @@ pub extern "C" fn poll_socket(socket_id: u32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn set_recv_capacity(socket_id: u32, capacity: u32) -> i32 {
+    result_unit(unsafe { state().set_recv_capacity(socket_id, capacity) })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn send_socket(socket_id: u32, len: u32) -> i32 {
     let len = len as usize;
     if len > REQUEST_CAPACITY || len > QUEUE_CAPACITY {

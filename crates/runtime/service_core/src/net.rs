@@ -10,6 +10,7 @@ use crate::{
 
 pub const MAX_SOCKETS: usize = 16;
 pub const QUEUE_CAPACITY: usize = 512;
+pub const RX_QUEUE_CAPACITY: usize = 4096;
 pub const READY_KEY_BASE: u64 = 0x6e65_7473_6f63_0000;
 
 #[derive(Clone, Copy)]
@@ -24,6 +25,7 @@ struct Socket {
     remote_port: u16,
     state: u32,
     rx_len: usize,
+    rx_capacity: usize,
     tx_len: usize,
     active: bool,
 }
@@ -39,6 +41,7 @@ impl Socket {
         remote_port: 0,
         state: 0,
         rx_len: 0,
+        rx_capacity: RX_QUEUE_CAPACITY,
         tx_len: 0,
         active: false,
     };
@@ -46,7 +49,7 @@ impl Socket {
 
 pub struct NetCoreState {
     sockets: [Socket; MAX_SOCKETS],
-    rx_queues: [[u8; QUEUE_CAPACITY]; MAX_SOCKETS],
+    rx_queues: [[u8; RX_QUEUE_CAPACITY]; MAX_SOCKETS],
     tx_queues: [[u8; QUEUE_CAPACITY]; MAX_SOCKETS],
     next_socket_id: u32,
     next_sequence: u64,
@@ -56,7 +59,7 @@ impl NetCoreState {
     pub const fn new() -> Self {
         Self {
             sockets: [Socket::EMPTY; MAX_SOCKETS],
-            rx_queues: [[0; QUEUE_CAPACITY]; MAX_SOCKETS],
+            rx_queues: [[0; RX_QUEUE_CAPACITY]; MAX_SOCKETS],
             tx_queues: [[0; QUEUE_CAPACITY]; MAX_SOCKETS],
             next_socket_id: 1,
             next_sequence: 1,
@@ -82,6 +85,7 @@ impl NetCoreState {
                     remote_port: 0,
                     state: 1,
                     rx_len: 0,
+                    rx_capacity: RX_QUEUE_CAPACITY,
                     tx_len: 0,
                     active: true,
                 };
@@ -94,7 +98,7 @@ impl NetCoreState {
     pub fn close_socket(&mut self, socket_id: u32) -> Result<(), i32> {
         let index = self.socket_index(socket_id)?;
         self.sockets[index] = Socket::EMPTY;
-        self.rx_queues[index] = [0; QUEUE_CAPACITY];
+        self.rx_queues[index] = [0; RX_QUEUE_CAPACITY];
         self.tx_queues[index] = [0; QUEUE_CAPACITY];
         Ok(())
     }
@@ -110,6 +114,12 @@ impl NetCoreState {
             events |= EPOLLIN;
         }
         Ok(events)
+    }
+
+    pub fn set_recv_capacity(&mut self, socket_id: u32, capacity: u32) -> Result<(), i32> {
+        let index = self.socket_index(socket_id)?;
+        self.sockets[index].rx_capacity = (capacity as usize).clamp(1, RX_QUEUE_CAPACITY);
+        Ok(())
     }
 
     pub fn send_socket(&mut self, socket_id: u32, bytes: &[u8]) -> Result<u32, i32> {
@@ -184,7 +194,7 @@ impl NetCoreState {
         };
         let rx_len = self.sockets[index].rx_len;
         let next_rx_len = rx_len.checked_add(payload.len()).ok_or(ERR_EAGAIN)?;
-        if next_rx_len > QUEUE_CAPACITY {
+        if next_rx_len > self.sockets[index].rx_capacity {
             return Err(ERR_EAGAIN);
         }
         self.rx_queues[index][rx_len..next_rx_len].copy_from_slice(payload);
@@ -229,7 +239,9 @@ impl Default for NetCoreState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
+    use crate::packet::{
+        PACKET_FRAME_CAPACITY, PACKET_PAYLOAD_CAPACITY, PacketFrameMeta, encode_frame,
+    };
 
     #[test]
     fn packet_frame_routes_to_matching_socket_endpoint() {
@@ -338,6 +350,7 @@ mod tests {
         let mut state = NetCoreState::new();
         let socket = state.create_socket(2, 1, 0).unwrap();
         state.send_socket(socket, b"GET /overflow HTTP/1.0\r\n\r\n").unwrap();
+        state.set_recv_capacity(socket, (QUEUE_CAPACITY - 4) as u32).unwrap();
 
         let first = [b'a'; QUEUE_CAPACITY - 4];
         let mut frame = [0u8; PACKET_FRAME_CAPACITY];
@@ -357,6 +370,35 @@ mod tests {
         let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
         assert_eq!(len as usize, first.len());
         assert!(out[..first.len()].iter().all(|byte| *byte == b'a'));
+        assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
+    }
+
+    #[test]
+    fn recv_capacity_limits_delivered_frame_queue_without_data_loss() {
+        let mut state = NetCoreState::new();
+        let socket = state.create_socket(2, 1, 0).unwrap();
+        state.send_socket(socket, b"GET /capacity HTTP/1.0\r\n\r\n").unwrap();
+        state.set_recv_capacity(socket, 2048).unwrap();
+
+        let payload = [b'q'; PACKET_PAYLOAD_CAPACITY];
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        for sequence in 1..=4 {
+            let meta = PacketFrameMeta::demo_http_response(sequence, payload.len());
+            let frame_len = encode_frame(meta, &payload, &mut frame).unwrap();
+            assert_eq!(
+                state.deliver_packet_frame(&frame[..frame_len]).unwrap(),
+                Some(READY_KEY_BASE | socket as u64)
+            );
+        }
+
+        let meta = PacketFrameMeta::demo_http_response(5, payload.len());
+        let frame_len = encode_frame(meta, &payload, &mut frame).unwrap();
+        assert_eq!(state.deliver_packet_frame(&frame[..frame_len]), Err(ERR_EAGAIN));
+
+        let mut out = [0u8; 2048];
+        let len = state.recv_socket(socket, out.len() as u32, &mut out).unwrap();
+        assert_eq!(len as usize, out.len());
+        assert!(out.iter().all(|byte| *byte == b'q'));
         assert_eq!(state.poll_socket(socket).unwrap() & EPOLLIN, 0);
     }
 

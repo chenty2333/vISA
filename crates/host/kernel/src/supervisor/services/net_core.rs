@@ -18,6 +18,7 @@ pub(crate) struct NetCoreService {
     close_socket: WasmFn<u32, i32>,
     ready_key: WasmFn<u32, u64>,
     poll_socket: WasmFn<u32, u32>,
+    set_recv_capacity: WasmFn<(u32, u32), i32>,
     send_socket: WasmFn<(u32, u32), i32>,
     take_tx_frame: WasmFn<u32, i32>,
     recv_socket: WasmFn<(u32, u32), i32>,
@@ -35,6 +36,8 @@ impl NetCoreService {
         let close_socket = io.bind("close_socket", "missing net_core close_socket export")?;
         let ready_key = io.bind("ready_key", "missing net_core ready_key export")?;
         let poll_socket = io.bind("poll_socket", "missing net_core poll_socket export")?;
+        let set_recv_capacity =
+            io.bind("set_recv_capacity", "missing net_core set_recv_capacity export")?;
         let send_socket = io.bind("send_socket", "missing net_core send_socket export")?;
         let take_tx_frame = io.bind("take_tx_frame", "missing net_core take_tx_frame export")?;
         let recv_socket = io.bind("recv_socket", "missing net_core recv_socket export")?;
@@ -59,6 +62,7 @@ impl NetCoreService {
             close_socket,
             ready_key,
             poll_socket,
+            set_recv_capacity,
             send_socket,
             take_tx_frame,
             recv_socket,
@@ -112,6 +116,18 @@ impl NetCoreService {
             .call(&self.poll_socket, socket_id, "net_core trapped")
             .map_err(ServiceCallError::Trap)?;
         Ok(events)
+    }
+
+    pub(crate) fn set_recv_capacity(
+        &mut self,
+        socket_id: u32,
+        capacity: u32,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(&self.set_recv_capacity, (socket_id, capacity), "net_core trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
     }
 
     pub(crate) fn send_socket(
