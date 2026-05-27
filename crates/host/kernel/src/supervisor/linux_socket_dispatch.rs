@@ -774,8 +774,60 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ptr = u32::try_from(plan.args[1]).map_err(|_| "sendto ptr overflowed")?;
         let len = u32::try_from(plan.args[2]).map_err(|_| "sendto len overflowed")?;
         let flags = plan.args[3] as u32;
+        self.send_socket_arg_bytes_from_fd_authorized(fd, ptr, len, flags)
+    }
+
+    fn send_socket_arg_bytes_from_fd_authorized(
+        &mut self,
+        fd: u32,
+        ptr: u32,
+        len: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
         let bytes = self.linux.read_bytes(ptr, len)?;
-        self.send_socket_bytes_from_fd_authorized(fd, &bytes, flags)
+        let result = self.try_sendto_fd(fd, len, &bytes)?;
+        if matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EPIPE as i64))
+            && flags & MSG_NOSIGNAL == 0
+        {
+            self.queue_sigpipe_for_current_thread();
+        }
+        if !call_would_block(&result) {
+            return Ok(result);
+        }
+
+        let status_flags = match self.file_status_flags(fd) {
+            Ok(flags) => flags,
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        if status_flags & O_NONBLOCK != 0 || flags & MSG_DONTWAIT != 0 {
+            return Ok(result);
+        }
+
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::SocketSend { fd, ptr, len, flags },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        Ok(LinuxCallResult::Pending(token))
+    }
+
+    pub(super) fn retry_socket_send_wait(
+        &mut self,
+        fd: u32,
+        ptr: u32,
+        len: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let bytes = self.linux.read_bytes(ptr, len)?;
+        let result = self.try_sendto_fd(fd, len, &bytes)?;
+        if matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EPIPE as i64))
+            && flags & MSG_NOSIGNAL == 0
+        {
+            self.queue_sigpipe_for_current_thread();
+        }
+        Ok(result)
     }
 
     pub(super) fn send_socket_bytes_from_fd_authorized(

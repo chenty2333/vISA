@@ -2698,6 +2698,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_socket_connected(socket_id, ready_key, handle).unwrap_or(false)
     }
 
+    pub(super) fn socket_send_fd_is_ready(&mut self, fd: u32) -> bool {
+        self.fd_poll_revents(fd, POLLOUT)
+            .is_ok_and(|events| events & (POLLOUT | POLLHUP | POLLERR) != 0)
+    }
+
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
         match self.epoll.notify_ready(ready_key) {
             Ok(wait_ids) => {

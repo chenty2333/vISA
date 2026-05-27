@@ -3216,6 +3216,54 @@ mod tests {
     }
 
     #[test]
+    fn packet_backed_blocking_send_wait_resumes_after_tcp_ack() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18093, 40_093, 0x595a_5b5c);
+        assert_eq!(setsockopt_u32(&mut runtime, accepted_fd, SO_SNDBUF as u64, 1), 0);
+
+        let payload = [b'w'; 4096];
+        assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
+        let outbound = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("write emitted tcp payload")
+            .to_vec();
+        let ack = tcp_ack_for_outbound_payload(&outbound);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (4096, 4096, 0, 2048, 4096, 2048)
+        );
+
+        let blocked_payload = b"after ack";
+        let (ptr, len) = runtime.write_linux_arg_bytes(blocked_payload).expect("send buffer");
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_blocking_send_wait",
+                SyscallContext::new(
+                    SYS_SENDTO,
+                    [accepted_fd as u64, ptr as u64, len as u64, 0, 0, 0],
+                ),
+            )
+            .expect("blocking send dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending blocking send, got {other:?}"),
+        };
+
+        runtime.reference_packet_backend.inject_rx_frame(&ack).expect("inject tcp ack");
+        let resumed =
+            runtime.block_on_wait("test_blocking_send_resume", token).expect("resume send");
+        assert_eq!(expect_ret(resumed), blocked_payload.len() as i64);
+        let (_, physical_recv, recv_queue, logical_send, physical_send, send_queue) =
+            net_stack_buffer_state(&mut runtime, accepted_fd);
+        assert_eq!((physical_recv, recv_queue, logical_send, physical_send), (4096, 0, 2048, 4096));
+        assert!(send_queue < 2048);
+        assert!(send_queue >= blocked_payload.len());
+    }
+
+    #[test]
     fn packet_backed_shutdown_read_returns_eof_with_queued_tcp_payload() {
         let _guard = test_guard();
         let mut runtime = test_runtime();

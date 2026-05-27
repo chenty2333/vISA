@@ -503,6 +503,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(WaitSource::SocketSend { fd, .. }) = self.waits.pending_source(token)
+                && self.socket_send_fd_is_ready(fd)
+            {
+                self.scheduler.push_event(Event::WaitReady(token.id));
+                self.drain_event_queue();
+            }
             if let Some(WaitSource::FileLock { fd, owner, lock_type, whence, start, len }) =
                 self.waits.pending_source(token)
                 && self.file_lock_wait_is_ready(fd, owner, lock_type, whence, start, len)
@@ -570,6 +576,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                             addr_len_ptr,
                             write_addr,
                         ),
+                        WaitSource::SocketSend { fd, ptr, len, flags } => {
+                            self.retry_socket_send_wait(fd, ptr, len, flags)
+                        }
                         WaitSource::SeccompUserNotif { notification_id } => {
                             let completion = self
                                 .take_seccomp_notification_response(notification_id)
@@ -670,6 +679,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 resolution.source,
                                 WaitSource::SocketConnect { .. }
                                     | WaitSource::SocketAccept { .. }
+                                    | WaitSource::SocketSend { .. }
                                     | WaitSource::SeccompUserNotif { .. }
                                     | WaitSource::SeccompTrace { .. }
                                     | WaitSource::FileLock { .. }

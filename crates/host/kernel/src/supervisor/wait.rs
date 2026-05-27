@@ -33,6 +33,12 @@ pub(crate) enum WaitRegistration {
         addr_len_ptr: u32,
         write_addr: bool,
     },
+    SocketSend {
+        fd: u32,
+        ptr: u32,
+        len: u32,
+        flags: u32,
+    },
     SeccompUserNotif {
         notification_id: u64,
     },
@@ -99,6 +105,7 @@ pub(crate) enum WaitSource {
     Epoll { epoll_id: u32, max_events: u32 },
     SocketConnect { fd: u32 },
     SocketAccept { fd: u32, flags: u32, addr_ptr: u32, addr_len_ptr: u32, write_addr: bool },
+    SocketSend { fd: u32, ptr: u32, len: u32, flags: u32 },
     SeccompUserNotif { notification_id: u64 },
     SeccompTrace { trace_id: u64 },
     FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
@@ -165,6 +172,9 @@ impl WaitRegistry {
                 0,
                 None,
             ),
+            WaitRegistration::SocketSend { fd, ptr, len, flags } => {
+                (WaitKind::FdWritable, WaitSource::SocketSend { fd, ptr, len, flags }, 0, None)
+            }
             WaitRegistration::SeccompUserNotif { notification_id } => (
                 WaitKind::SeccompUserNotif,
                 WaitSource::SeccompUserNotif { notification_id },
@@ -250,6 +260,7 @@ impl WaitRegistry {
                 WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
                 WaitSource::SocketConnect { .. } => {}
                 WaitSource::SocketAccept { .. } => {}
+                WaitSource::SocketSend { .. } => {}
                 WaitSource::SeccompUserNotif { .. } => {}
                 WaitSource::SeccompTrace { .. } => {}
                 WaitSource::FileLock { .. } => {}
