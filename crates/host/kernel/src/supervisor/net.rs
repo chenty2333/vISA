@@ -1203,8 +1203,8 @@ mod tests {
     use vmos_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN,
         SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
-        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE,
-        SyscallContext,
+        SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_RECVMSG,
+        SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1696,6 +1696,14 @@ mod tests {
         assert_eq!(u16::from_le_bytes(bytes[0..2].try_into().unwrap()), AF_INET as u16);
         assert_eq!(u16::from_be_bytes(bytes[2..4].try_into().unwrap()), port);
         assert_eq!(&bytes[4..8], &addr);
+    }
+
+    fn write_u32_at(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
 
     fn drive_reference_backend_tcp_handshake(
@@ -2298,6 +2306,129 @@ mod tests {
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_recvmsg_reads_tcp_payload_and_peer_name() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18086u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_007u16;
+        let syn_ack = drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            remote_port,
+            0x5152_5354,
+        );
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        let payload = b"packet recvmsg split payload";
+        let data = tcp_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        runtime.pump_network_runtime();
+
+        const MSGHDR_SIZE: usize = 56;
+        const IOVEC_SIZE: usize = 16;
+        const IOVCNT: usize = 2;
+        const NAME_SIZE: usize = 16;
+        const CONTROL_SIZE: usize = 8;
+        let first_len = 7usize;
+        let second_len = payload.len() - first_len;
+        let buffer_len =
+            MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + NAME_SIZE + CONTROL_SIZE + payload.len();
+        let (msg_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; buffer_len]).expect("recvmsg buffer");
+        let iov_ptr = msg_ptr + MSGHDR_SIZE as u32;
+        let name_ptr = iov_ptr + (IOVCNT * IOVEC_SIZE) as u32;
+        let control_ptr = name_ptr + NAME_SIZE as u32;
+        let data1_ptr = control_ptr + CONTROL_SIZE as u32;
+        let data2_ptr = data1_ptr + first_len as u32;
+
+        let mut raw = alloc::vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 0, name_ptr as u64);
+        write_u32_at(&mut raw, 8, NAME_SIZE as u32);
+        write_u64_at(&mut raw, 16, iov_ptr as u64);
+        write_u64_at(&mut raw, 24, IOVCNT as u64);
+        write_u64_at(&mut raw, 32, control_ptr as u64);
+        write_u64_at(&mut raw, 40, CONTROL_SIZE as u64);
+        write_u32_at(&mut raw, 48, 0x5555);
+        write_u64_at(&mut raw, MSGHDR_SIZE, data1_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + 8, first_len as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE, data2_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE + 8, second_len as u64);
+        runtime.linux.write_arg_bytes(&raw).expect("recvmsg msghdr");
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_recvmsg_payload",
+                SYS_RECVMSG,
+                [accepted_fd as u64, msg_ptr as u64, 0, 0, 0, 0],
+            ),
+            payload.len() as i64
+        );
+
+        let mut received = runtime.linux.read_bytes(data1_ptr, first_len as u32).unwrap();
+        received
+            .extend_from_slice(&runtime.linux.read_bytes(data2_ptr, second_len as u32).unwrap());
+        assert_eq!(received, payload);
+        let name = runtime.linux.read_bytes(name_ptr, NAME_SIZE as u32).expect("recvmsg name");
+        assert_sockaddr_in(&name, REMOTE_IPV4, remote_port);
+        assert_eq!(
+            u32::from_le_bytes(
+                runtime.linux.read_bytes(msg_ptr + 8, 4).unwrap().try_into().unwrap()
+            ),
+            NAME_SIZE as u32
+        );
+        assert_eq!(
+            u64::from_le_bytes(
+                runtime.linux.read_bytes(msg_ptr + 40, 8).unwrap().try_into().unwrap()
+            ),
+            0
+        );
+        assert_eq!(
+            u32::from_le_bytes(
+                runtime.linux.read_bytes(msg_ptr + 48, 4).unwrap().try_into().unwrap()
+            ),
+            0
+        );
+        assert_eq!(runtime.reference_packet_backend.pending_rx_frames(), 0);
+        assert_eq!(runtime.net_driver.pending_rx_frames().expect("driver rx"), 0);
+        assert!(event_log_contains(&runtime, "PacketReceived"));
     }
 
     #[test]
