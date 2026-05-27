@@ -485,7 +485,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EBADF);
         }
         self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
-        if mode & 0x01 == 0 {
+        if fallocate_extends_size(mode)? {
             let end = offset.checked_add(len).ok_or(ERR_EINVAL)?;
             self.enforce_file_size_limit(end).map_err(errno_from_service_error)?;
         }
@@ -3412,6 +3412,29 @@ fn total_chunk_len(chunks: &[&[u8]]) -> Result<usize, ServiceCallError> {
     })
 }
 
+fn fallocate_extends_size(mode: u32) -> Result<bool, i32> {
+    const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+    const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
+    const FALLOC_FL_COLLAPSE_RANGE: u32 = 0x08;
+    const FALLOC_FL_ZERO_RANGE: u32 = 0x10;
+    const FALLOC_FL_INSERT_RANGE: u32 = 0x20;
+    const FALLOC_FL_UNSHARE_RANGE: u32 = 0x40;
+    const SUPPORTED: u32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE;
+    const UNSUPPORTED: u32 =
+        FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_INSERT_RANGE | FALLOC_FL_UNSHARE_RANGE;
+
+    if mode & !SUPPORTED != 0 || mode & UNSUPPORTED != 0 {
+        return Err(vmos_abi::ERR_EOPNOTSUPP);
+    }
+    let keep_size = mode & FALLOC_FL_KEEP_SIZE != 0;
+    let punch_hole = mode & FALLOC_FL_PUNCH_HOLE != 0;
+    let zero_range = mode & FALLOC_FL_ZERO_RANGE != 0;
+    if punch_hole && (!keep_size || zero_range) {
+        return Err(vmos_abi::ERR_EOPNOTSUPP);
+    }
+    Ok(!keep_size)
+}
+
 fn mode_grants_access(
     mode: u32,
     owner_uid: u32,
@@ -3627,6 +3650,60 @@ mod tests {
                 .filter(|signal| signal.signo == SIGXFSZ)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn fallocate_unsupported_mode_wins_over_rlimit_fsize() {
+        const FALLOC_FL_COLLAPSE_RANGE: u32 = 0x08;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/fallocate-fsize-order", O_RDWR);
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_FSIZE, Rlimit { cur: 5, max: 5 }));
+
+        assert_eq!(
+            runtime.fallocate_fd(fd, FALLOC_FL_COLLAPSE_RANGE, 0, 10),
+            Err(vmos_abi::ERR_EOPNOTSUPP)
+        );
+        assert_eq!(
+            runtime
+                .query_thread(runtime.current_tid())
+                .expect("current thread")
+                .pending_signals
+                .iter()
+                .filter(|signal| signal.signo == SIGXFSZ)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn fallocate_rlimit_fsize_applies_only_to_extending_modes() {
+        const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+        const FALLOC_FL_ZERO_RANGE: u32 = 0x10;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/fallocate-fsize-extend", O_RDWR);
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_FSIZE, Rlimit { cur: 5, max: 5 }));
+
+        assert_eq!(runtime.fallocate_fd(fd, 0, 0, 10), Err(ERR_EFBIG));
+        assert_eq!(runtime.fallocate_fd(fd, FALLOC_FL_ZERO_RANGE, 0, 10), Err(ERR_EFBIG));
+        assert_eq!(
+            runtime.fallocate_fd(fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_ZERO_RANGE, 0, 10),
+            Ok(())
+        );
+        assert_eq!(runtime.seek_fd(fd, 0, 2), Ok(0));
+        assert_eq!(
+            runtime
+                .query_thread(runtime.current_tid())
+                .expect("current thread")
+                .pending_signals
+                .iter()
+                .filter(|signal| signal.signo == SIGXFSZ)
+                .count(),
+            2
         );
     }
 
