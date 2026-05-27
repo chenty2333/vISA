@@ -509,6 +509,20 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.scheduler.push_event(Event::WaitReady(token.id));
                 self.drain_event_queue();
             }
+            if let Some(source) = self.waits.pending_source(token) {
+                let fd = match source {
+                    WaitSource::SocketRecv { fd, .. }
+                    | WaitSource::SocketReadv { fd, .. }
+                    | WaitSource::SocketRecvMsg { fd, .. } => Some(fd),
+                    _ => None,
+                };
+                if let Some(fd) = fd
+                    && self.socket_recv_fd_is_ready(fd)
+                {
+                    self.scheduler.push_event(Event::WaitReady(token.id));
+                    self.drain_event_queue();
+                }
+            }
             if let Some(WaitSource::FileLock { fd, owner, lock_type, whence, start, len }) =
                 self.waits.pending_source(token)
                 && self.file_lock_wait_is_ready(fd, owner, lock_type, whence, start, len)
@@ -578,6 +592,27 @@ impl<'engine> PrototypeRuntime<'engine> {
                         ),
                         WaitSource::SocketSend { fd, ptr, len, flags } => {
                             self.retry_socket_send_wait(fd, ptr, len, flags)
+                        }
+                        WaitSource::SocketRecv {
+                            fd,
+                            count,
+                            flags,
+                            addr_ptr,
+                            addr_len_ptr,
+                            write_addr,
+                        } => self.retry_socket_recv_wait(
+                            fd,
+                            count,
+                            flags,
+                            addr_ptr,
+                            addr_len_ptr,
+                            write_addr,
+                        ),
+                        WaitSource::SocketReadv { fd, iov_ptr, iovcnt } => {
+                            self.retry_socket_readv_wait(fd, iov_ptr, iovcnt)
+                        }
+                        WaitSource::SocketRecvMsg { fd, msg_ptr, flags } => {
+                            self.retry_socket_recvmsg_wait(fd, msg_ptr, flags)
                         }
                         WaitSource::SeccompUserNotif { notification_id } => {
                             let completion = self
@@ -680,6 +715,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                                 WaitSource::SocketConnect { .. }
                                     | WaitSource::SocketAccept { .. }
                                     | WaitSource::SocketSend { .. }
+                                    | WaitSource::SocketRecv { .. }
+                                    | WaitSource::SocketReadv { .. }
+                                    | WaitSource::SocketRecvMsg { .. }
                                     | WaitSource::SeccompUserNotif { .. }
                                     | WaitSource::SeccompTrace { .. }
                                     | WaitSource::FileLock { .. }

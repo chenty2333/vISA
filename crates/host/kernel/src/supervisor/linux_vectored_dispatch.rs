@@ -6,7 +6,9 @@ use super::{
     linux::{LinuxCallResult, LinuxPlan},
     runtime::PrototypeRuntime,
     types::FdResource,
+    wait::WaitRegistration,
 };
+use crate::interrupts;
 
 const IOV_MAX: usize = 1024;
 const LINUX_IOVEC_SIZE: usize = 16;
@@ -63,28 +65,13 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(LinuxCallResult::Ret(bytes.len() as i64));
         }
         if is_socket {
-            let total_len = match total_iovec_len(&iovecs) {
-                Ok(total_len) => total_len,
-                Err(errno) => return Ok(errno_ret(errno)),
-            };
-            if total_len == 0 {
-                return Ok(LinuxCallResult::Ret(0));
-            }
-            let total_len = match u32::try_from(total_len) {
-                Ok(total_len) => total_len,
-                Err(_) => return Ok(errno_ret(ERR_EINVAL)),
-            };
-            let received = self.recv_socket_bytes_from_fd_authorized(fd, total_len, 0)?;
-            return match received {
-                LinuxCallResult::Bytes(bytes) => {
-                    if let Err(errno) = self.write_iovec_bytes(&iovecs, &bytes) {
-                        Ok(errno_ret(errno))
-                    } else {
-                        Ok(LinuxCallResult::Ret(bytes.len() as i64))
-                    }
-                }
-                other => Ok(other),
-            };
+            return self.socket_readv_from_fd_authorized(
+                fd,
+                plan.args[1],
+                plan.args[2],
+                &iovecs,
+                true,
+            );
         }
 
         let mut total = 0usize;
@@ -176,15 +163,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(total_len) => total_len,
             Err(_) => return Ok(errno_ret(ERR_EINVAL)),
         };
-        match self.recv_socket_bytes_from_fd_authorized(fd, total_len, flags)? {
-            LinuxCallResult::Bytes(bytes) => {
-                self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, bytes)
-            }
-            LinuxCallResult::Ret(0) => {
-                self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, Vec::new())
-            }
-            other => Ok(other),
-        }
+        self.socket_recvmsg_from_fd_authorized(fd, msg_ptr, flags, msg, &iovecs, total_len, true)
     }
 
     pub(super) fn plan_sendmsg(
@@ -427,6 +406,146 @@ impl<'engine> PrototypeRuntime<'engine> {
             offset += len;
         }
         if offset == bytes.len() { Ok(()) } else { Err(ERR_EINVAL) }
+    }
+
+    fn socket_readv_from_fd_authorized(
+        &mut self,
+        fd: u32,
+        iov_ptr: u64,
+        iovcnt: u64,
+        iovecs: &[LinuxIovec],
+        register_wait: bool,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let total_len = match total_iovec_len(iovecs) {
+            Ok(total_len) => total_len,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if total_len == 0 {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+        let total_len = match u32::try_from(total_len) {
+            Ok(total_len) => total_len,
+            Err(_) => return Ok(errno_ret(ERR_EINVAL)),
+        };
+        let result = self.try_recvfrom_fd(fd, total_len, 0)?;
+        match result {
+            LinuxCallResult::Bytes(bytes) => {
+                if let Err(errno) = self.write_iovec_bytes(iovecs, &bytes) {
+                    Ok(errno_ret(errno))
+                } else {
+                    Ok(LinuxCallResult::Ret(bytes.len() as i64))
+                }
+            }
+            other => {
+                if register_wait {
+                    match self.socket_recv_wait_allowed(fd, 0, &other) {
+                        Ok(true) => {
+                            let token = self.waits.register(
+                                self.scheduler.current_task(),
+                                WaitRegistration::SocketReadv { fd, iov_ptr, iovcnt },
+                                interrupts::tick_count(),
+                                interrupts::TIMER_HZ,
+                            );
+                            self.record_wait_token(token);
+                            return Ok(LinuxCallResult::Pending(token));
+                        }
+                        Ok(false) => {}
+                        Err(error_result) => return Ok(error_result),
+                    }
+                }
+                Ok(other)
+            }
+        }
+    }
+
+    pub(super) fn retry_socket_readv_wait(
+        &mut self,
+        fd: u32,
+        iov_ptr: u64,
+        iovcnt: u64,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let iovecs = match self.read_iovecs(iov_ptr, iovcnt) {
+            Ok(iovecs) => iovecs,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.prevalidate_iovec_writes(&iovecs) {
+            return Ok(errno_ret(errno));
+        }
+        self.socket_readv_from_fd_authorized(fd, iov_ptr, iovcnt, &iovecs, false)
+    }
+
+    fn socket_recvmsg_from_fd_authorized(
+        &mut self,
+        fd: u32,
+        msg_ptr: u32,
+        flags: u32,
+        msg: LinuxMsgHdr,
+        iovecs: &[LinuxIovec],
+        total_len: u32,
+        register_wait: bool,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let result = self.try_recvfrom_fd(fd, total_len, flags)?;
+        match result {
+            LinuxCallResult::Bytes(bytes) => {
+                self.finish_recvmsg_writeback(fd, msg_ptr, msg, iovecs, bytes)
+            }
+            LinuxCallResult::Ret(0) => {
+                self.finish_recvmsg_writeback(fd, msg_ptr, msg, iovecs, Vec::new())
+            }
+            other => {
+                if register_wait {
+                    match self.socket_recv_wait_allowed(fd, flags, &other) {
+                        Ok(true) => {
+                            let token = self.waits.register(
+                                self.scheduler.current_task(),
+                                WaitRegistration::SocketRecvMsg { fd, msg_ptr, flags },
+                                interrupts::tick_count(),
+                                interrupts::TIMER_HZ,
+                            );
+                            self.record_wait_token(token);
+                            return Ok(LinuxCallResult::Pending(token));
+                        }
+                        Ok(false) => {}
+                        Err(error_result) => return Ok(error_result),
+                    }
+                }
+                Ok(other)
+            }
+        }
+    }
+
+    pub(super) fn retry_socket_recvmsg_wait(
+        &mut self,
+        fd: u32,
+        msg_ptr: u32,
+        flags: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let msg = match self.read_msghdr(msg_ptr) {
+            Ok(msg) => msg,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        let iovecs = match self.read_iovecs(msg.iov_ptr, msg.iovlen) {
+            Ok(iovecs) => iovecs,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.prevalidate_recvmsg_writes(msg_ptr, msg, &iovecs) {
+            return Ok(errno_ret(errno));
+        }
+        let total_len = match total_iovec_len(&iovecs) {
+            Ok(total_len) => total_len,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.require_socket_fd(fd) {
+            return Ok(errno_ret(errno));
+        }
+        if total_len == 0 {
+            return self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, Vec::new());
+        }
+        let total_len = match u32::try_from(total_len) {
+            Ok(total_len) => total_len,
+            Err(_) => return Ok(errno_ret(ERR_EINVAL)),
+        };
+        self.socket_recvmsg_from_fd_authorized(fd, msg_ptr, flags, msg, &iovecs, total_len, false)
     }
 
     fn finish_recvmsg_writeback(

@@ -39,6 +39,24 @@ pub(crate) enum WaitRegistration {
         len: u32,
         flags: u32,
     },
+    SocketRecv {
+        fd: u32,
+        count: u32,
+        flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    },
+    SocketReadv {
+        fd: u32,
+        iov_ptr: u64,
+        iovcnt: u64,
+    },
+    SocketRecvMsg {
+        fd: u32,
+        msg_ptr: u32,
+        flags: u32,
+    },
     SeccompUserNotif {
         notification_id: u64,
     },
@@ -102,18 +120,77 @@ enum WaitState {
 pub(crate) enum WaitSource {
     Timer,
     Futex,
-    Epoll { epoll_id: u32, max_events: u32 },
-    SocketConnect { fd: u32 },
-    SocketAccept { fd: u32, flags: u32, addr_ptr: u32, addr_len_ptr: u32, write_addr: bool },
-    SocketSend { fd: u32, ptr: u32, len: u32, flags: u32 },
-    SeccompUserNotif { notification_id: u64 },
-    SeccompTrace { trace_id: u64 },
-    FileLock { fd: u32, owner: u32, lock_type: i16, whence: i16, start: i64, len: i64 },
-    Flock { fd: u32, owner: u64, exclusive: bool },
-    ChildExit { caller_pid: u32, selector: i64 },
-    FdSet { read_bits: [u64; 16], write_bits: [u64; 16], error_bits: [u64; 16], nfds: u16 },
+    Epoll {
+        epoll_id: u32,
+        max_events: u32,
+    },
+    SocketConnect {
+        fd: u32,
+    },
+    SocketAccept {
+        fd: u32,
+        flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    },
+    SocketSend {
+        fd: u32,
+        ptr: u32,
+        len: u32,
+        flags: u32,
+    },
+    SocketRecv {
+        fd: u32,
+        count: u32,
+        flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    },
+    SocketReadv {
+        fd: u32,
+        iov_ptr: u64,
+        iovcnt: u64,
+    },
+    SocketRecvMsg {
+        fd: u32,
+        msg_ptr: u32,
+        flags: u32,
+    },
+    SeccompUserNotif {
+        notification_id: u64,
+    },
+    SeccompTrace {
+        trace_id: u64,
+    },
+    FileLock {
+        fd: u32,
+        owner: u32,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    },
+    Flock {
+        fd: u32,
+        owner: u64,
+        exclusive: bool,
+    },
+    ChildExit {
+        caller_pid: u32,
+        selector: i64,
+    },
+    FdSet {
+        read_bits: [u64; 16],
+        write_bits: [u64; 16],
+        error_bits: [u64; 16],
+        nfds: u16,
+    },
     Signal,
-    SignalSet { wait_set: u64 },
+    SignalSet {
+        wait_set: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -174,6 +251,25 @@ impl WaitRegistry {
             ),
             WaitRegistration::SocketSend { fd, ptr, len, flags } => {
                 (WaitKind::FdWritable, WaitSource::SocketSend { fd, ptr, len, flags }, 0, None)
+            }
+            WaitRegistration::SocketRecv {
+                fd,
+                count,
+                flags,
+                addr_ptr,
+                addr_len_ptr,
+                write_addr,
+            } => (
+                WaitKind::FdReadable,
+                WaitSource::SocketRecv { fd, count, flags, addr_ptr, addr_len_ptr, write_addr },
+                0,
+                None,
+            ),
+            WaitRegistration::SocketReadv { fd, iov_ptr, iovcnt } => {
+                (WaitKind::FdReadable, WaitSource::SocketReadv { fd, iov_ptr, iovcnt }, 0, None)
+            }
+            WaitRegistration::SocketRecvMsg { fd, msg_ptr, flags } => {
+                (WaitKind::FdReadable, WaitSource::SocketRecvMsg { fd, msg_ptr, flags }, 0, None)
             }
             WaitRegistration::SeccompUserNotif { notification_id } => (
                 WaitKind::SeccompUserNotif,
@@ -261,6 +357,9 @@ impl WaitRegistry {
                 WaitSource::SocketConnect { .. } => {}
                 WaitSource::SocketAccept { .. } => {}
                 WaitSource::SocketSend { .. } => {}
+                WaitSource::SocketRecv { .. } => {}
+                WaitSource::SocketReadv { .. } => {}
+                WaitSource::SocketRecvMsg { .. } => {}
                 WaitSource::SeccompUserNotif { .. } => {}
                 WaitSource::SeccompTrace { .. } => {}
                 WaitSource::FileLock { .. } => {}
@@ -481,6 +580,59 @@ mod tests {
                 resume_cookie: 0,
                 source: WaitSource::SocketConnect { fd: 4 },
             })
+        );
+    }
+
+    #[test]
+    fn socket_recv_registrations_use_readable_wait_kind() {
+        let mut registry = WaitRegistry::new();
+        let recv = registry.register(
+            7,
+            WaitRegistration::SocketRecv {
+                fd: 4,
+                count: 32,
+                flags: 0x40,
+                addr_ptr: 0x2100,
+                addr_len_ptr: 0x2200,
+                write_addr: true,
+            },
+            0,
+            100,
+        );
+        let readv = registry.register(
+            7,
+            WaitRegistration::SocketReadv { fd: 5, iov_ptr: 0x3100, iovcnt: 2 },
+            0,
+            100,
+        );
+        let recvmsg = registry.register(
+            7,
+            WaitRegistration::SocketRecvMsg { fd: 6, msg_ptr: 0x4100, flags: 0 },
+            0,
+            100,
+        );
+
+        assert_eq!(recv.kind, WaitKind::FdReadable);
+        assert_eq!(readv.kind, WaitKind::FdReadable);
+        assert_eq!(recvmsg.kind, WaitKind::FdReadable);
+        assert_eq!(
+            registry.pending_source(recv),
+            Some(WaitSource::SocketRecv {
+                fd: 4,
+                count: 32,
+                flags: 0x40,
+                addr_ptr: 0x2100,
+                addr_len_ptr: 0x2200,
+                write_addr: true,
+            })
+        );
+        assert_eq!(
+            registry.pending_source(readv),
+            Some(WaitSource::SocketReadv { fd: 5, iov_ptr: 0x3100, iovcnt: 2 })
+        );
+        assert_eq!(
+            registry.pending_source(recvmsg),
+            Some(WaitSource::SocketRecvMsg { fd: 6, msg_ptr: 0x4100, flags: 0 })
         );
     }
 

@@ -22,25 +22,9 @@ const MSG_PEEK: u32 = 0x02;
 const MSG_DONTWAIT: u32 = 0x40;
 const MSG_NOSIGNAL: u32 = 0x4000;
 const SIGPIPE: u8 = 13;
-const FDSET_WORDS: usize = 16;
-const FDSET_BITS: u32 = (FDSET_WORDS as u32) * 64;
 
 fn call_would_block(result: &LinuxCallResult) -> bool {
     matches!(result, LinuxCallResult::Ret(ret) if *ret == -(ERR_EAGAIN as i64))
-}
-
-fn fdset_single_bit(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
-    if fd >= FDSET_BITS {
-        return None;
-    }
-    let mut bits = [0u64; FDSET_WORDS];
-    bits[(fd / 64) as usize] = 1u64 << (fd % 64);
-    let nfds = u16::try_from(fd.checked_add(1)?).ok()?;
-    Some((bits, nfds))
-}
-
-fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
-    fdset_single_bit(fd)
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -963,36 +947,66 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(writeback) => writeback,
                 Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
             };
-        let result = self.recv_socket_bytes_from_fd_authorized(fd, count, flags)?;
-        self.finish_recvfrom_sockaddr_writeback(result, fd, addr_ptr, addr_len_ptr, write_addr)
+        self.recvfrom_socket_bytes_from_fd_authorized(
+            fd,
+            count,
+            flags,
+            addr_ptr,
+            addr_len_ptr,
+            write_addr,
+        )
     }
 
-    pub(super) fn recv_socket_bytes_from_fd_authorized(
+    fn recvfrom_socket_bytes_from_fd_authorized(
         &mut self,
         fd: u32,
         count: u32,
         flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
     ) -> Result<LinuxCallResult, &'static str> {
         let result = self.try_recvfrom_fd(fd, count, flags)?;
-        if !call_would_block(&result) {
-            return Ok(result);
+        match self.socket_recv_wait_allowed(fd, flags, &result) {
+            Ok(false) => self.finish_recvfrom_sockaddr_writeback(
+                result,
+                fd,
+                addr_ptr,
+                addr_len_ptr,
+                write_addr,
+            ),
+            Ok(true) => {
+                let token = self.waits.register(
+                    self.scheduler.current_task(),
+                    WaitRegistration::SocketRecv {
+                        fd,
+                        count,
+                        flags,
+                        addr_ptr,
+                        addr_len_ptr,
+                        write_addr,
+                    },
+                    interrupts::tick_count(),
+                    interrupts::TIMER_HZ,
+                );
+                self.record_wait_token(token);
+                Ok(LinuxCallResult::Pending(token))
+            }
+            Err(error_result) => Ok(error_result),
         }
+    }
 
-        let status_flags = match self.file_status_flags(fd) {
-            Ok(flags) => flags,
-            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
-        };
-        if status_flags & O_NONBLOCK != 0 || flags & MSG_DONTWAIT != 0 {
-            return Ok(result);
-        }
-
-        let Some((read_bits, nfds)) = fdset_read_bits(fd) else {
-            return Ok(result);
-        };
-        match self.block_on_fdset_wait(read_bits, [0; FDSET_WORDS], [0; FDSET_WORDS], nfds, None) {
-            Ok(()) => self.try_recvfrom_fd(fd, count, flags),
-            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
-        }
+    pub(super) fn retry_socket_recv_wait(
+        &mut self,
+        fd: u32,
+        count: u32,
+        flags: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let result = self.try_recvfrom_fd(fd, count, flags)?;
+        self.finish_recvfrom_sockaddr_writeback(result, fd, addr_ptr, addr_len_ptr, write_addr)
     }
 
     pub(super) fn require_socket_recv_capability(&mut self) -> Result<(), LinuxCallResult> {
@@ -1005,7 +1019,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn try_recvfrom_fd(
+    pub(super) fn socket_recv_wait_allowed(
+        &self,
+        fd: u32,
+        flags: u32,
+        result: &LinuxCallResult,
+    ) -> Result<bool, LinuxCallResult> {
+        if !call_would_block(result) {
+            return Ok(false);
+        }
+        let status_flags = match self.file_status_flags(fd) {
+            Ok(flags) => flags,
+            Err(errno) => return Err(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        Ok(status_flags & O_NONBLOCK == 0 && flags & MSG_DONTWAIT == 0)
+    }
+
+    pub(super) fn try_recvfrom_fd(
         &mut self,
         fd: u32,
         count: u32,

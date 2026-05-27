@@ -2703,6 +2703,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             .is_ok_and(|events| events & (POLLOUT | POLLHUP | POLLERR) != 0)
     }
 
+    pub(super) fn socket_recv_fd_is_ready(&mut self, fd: u32) -> bool {
+        self.fd_poll_revents(fd, POLLIN)
+            .is_ok_and(|events| events & (POLLIN | POLLHUP | POLLERR) != 0)
+    }
+
     pub(super) fn notify_ready_key(&mut self, ready_key: u64, context: &str) {
         match self.epoll.notify_ready(ready_key) {
             Ok(wait_ids) => {
