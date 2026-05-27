@@ -870,8 +870,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             local_port: accepted_snapshot.local_port,
             remote_ipv4: accepted_snapshot.remote_ipv4,
             remote_port: accepted_snapshot.remote_port,
-            recv_capacity: accepted_snapshot.recv_capacity,
-            send_capacity: accepted_snapshot.send_capacity,
+            recv_capacity,
+            send_capacity,
             recv_shutdown: false,
             send_shutdown: false,
             pending_accepts: Vec::new(),
@@ -1344,8 +1344,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             local_port: snapshot.local_port,
             remote_ipv4: snapshot.remote_ipv4,
             remote_port: snapshot.remote_port,
-            recv_capacity: snapshot.recv_capacity,
-            send_capacity: snapshot.send_capacity,
+            recv_capacity,
+            send_capacity,
         });
         self.net_stack_sockets[index].stack_socket_id = new_listener_stack_socket_id;
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
@@ -2968,6 +2968,74 @@ mod tests {
     }
 
     #[test]
+    fn packet_backed_listening_so_rcvbuf_caps_future_accept_ingress() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = packet_backed_listener(&mut runtime, 18091);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, listener_fd),
+            (4096, 4096, 0, 4096, 4096, 0)
+        );
+        assert_eq!(setsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64, 1), 0);
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, listener_fd),
+            (2048, 4096, 0, 4096, 4096, 0)
+        );
+
+        let syn_ack =
+            drive_reference_backend_tcp_handshake(&mut runtime, 18091, 40_091, 0x5152_5354);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_listening_rcvbuf",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_RCVBUF as u64), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (2048, 4096, 0, 4096, 4096, 0)
+        );
+
+        let chunk = [b'l'; 512];
+        for offset in [0, 512, 1024, 1536] {
+            let data = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, offset, &chunk);
+            runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+            runtime.pump_network_runtime();
+        }
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (2048, 4096, 2048, 4096, 4096, 0)
+        );
+
+        let overflow = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, 2048, b"m");
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&overflow)
+            .expect("inject overflow tcp payload");
+        runtime.pump_network_runtime();
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (2048, 4096, 2048, 4096, 4096, 0)
+        );
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_listening_rcvbuf_capacity",
+            SYS_READ,
+            [accepted_fd as u64, 0, 4096, 0, 0, 0],
+        );
+        assert_eq!(read.len(), 2048);
+        assert!(read.iter().all(|byte| *byte == b'l'));
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (2048, 4096, 0, 4096, 4096, 0)
+        );
+    }
+
+    #[test]
     fn packet_backed_so_sndbuf_limits_smoltcp_send_queue() {
         let _guard = test_guard();
         let mut runtime = test_runtime();
@@ -3023,6 +3091,45 @@ mod tests {
 
         let payload = [b's'; 4096];
         assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
+    }
+
+    #[test]
+    fn packet_backed_listening_so_sndbuf_caps_future_accept_write() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = packet_backed_listener(&mut runtime, 18092);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, listener_fd),
+            (4096, 4096, 0, 4096, 4096, 0)
+        );
+        assert_eq!(setsockopt_u32(&mut runtime, listener_fd, SO_SNDBUF as u64, 1), 0);
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_SNDBUF as u64), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, listener_fd),
+            (4096, 4096, 0, 2048, 4096, 0)
+        );
+
+        drive_reference_backend_tcp_handshake(&mut runtime, 18092, 40_092, 0x5556_5758);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept_listening_sndbuf",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_SNDBUF as u64), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (4096, 4096, 0, 2048, 4096, 0)
+        );
+
+        let payload = [b'u'; 4096];
+        assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (4096, 4096, 0, 2048, 4096, 2048)
+        );
     }
 
     #[test]

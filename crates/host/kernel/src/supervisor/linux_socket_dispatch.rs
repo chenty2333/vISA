@@ -462,6 +462,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             accepted_ready_key,
         )? {
             return self.finish_net_stack_accept_fd(
+                listen_socket_id,
                 accepted_socket_id,
                 accepted_ready_key,
                 flags,
@@ -660,6 +661,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn finish_net_stack_accept_fd(
         &mut self,
+        listen_socket_id: u32,
         accepted_socket_id: u32,
         accepted_ready_key: u64,
         flags: u32,
@@ -704,6 +706,21 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return Err(err);
             }
         }
+        if let Err(err) =
+            self.inherit_net_stack_accept_socket_buffers(listen_socket_id, accepted_socket_id)
+        {
+            self.close_net_stack_socket(accepted_socket_id);
+            self.cleanup_linux_socket(accepted_socket_id, "smoltcp accept option rollback");
+            self.cleanup_net_core_socket(accepted_socket_id, "smoltcp accept option rollback");
+            return match err {
+                ServiceCallError::Errno(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+                ServiceCallError::Trap(reason) => {
+                    crate::kwarn!("linux_socket inherit accepted buffers: {}", reason);
+                    Err("linux_socket_service trapped during smoltcp accept option inheritance")
+                }
+                ServiceCallError::Invalid(err) => Err(err),
+            };
+        }
         let fd_flags = if flags & SOCK_CLOEXEC != 0 { FD_CLOEXEC } else { 0 };
         let status_flags = if flags & SOCK_NONBLOCK != 0 { O_NONBLOCK } else { 0 };
         let accepted_fd = match self.alloc_fd(FdEntry {
@@ -730,6 +747,25 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         Ok(LinuxCallResult::Ret(accepted_fd as i64))
     }
+
+    fn inherit_net_stack_accept_socket_buffers(
+        &mut self,
+        listen_socket_id: u32,
+        accepted_socket_id: u32,
+    ) -> Result<(), ServiceCallError> {
+        for optname in [SO_RCVBUF, SO_SNDBUF] {
+            let reported = self.linux_socket.getsockopt(listen_socket_id, SOL_SOCKET, optname)?;
+            self.linux_socket.setsockopt(
+                accepted_socket_id,
+                SOL_SOCKET,
+                optname,
+                4,
+                reported / 2,
+            )?;
+        }
+        Ok(())
+    }
+
     pub(super) fn plan_sendto(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if let Err(result) = self.require_socket_send_capability() {
             return Ok(result);
