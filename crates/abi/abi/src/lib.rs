@@ -52,6 +52,7 @@ pub const SYS_ACCEPT: u64 = 43;
 pub const SYS_ACCEPT4: u64 = 288;
 pub const SYS_SENDTO: u64 = 44;
 pub const SYS_RECVFROM: u64 = 45;
+pub const SYS_RECVMSG: u64 = 47;
 pub const SYS_BIND: u64 = 49;
 pub const SYS_LISTEN: u64 = 50;
 pub const SYS_GETSOCKNAME: u64 = 51;
@@ -428,6 +429,7 @@ pub enum PlanKind {
     SetFsGid = 107,
     Ioctl = 108,
     Ptrace = 109,
+    RecvMsg = 110,
 }
 
 impl PlanKind {
@@ -542,6 +544,7 @@ impl PlanKind {
             107 => Some(Self::SetFsGid),
             108 => Some(Self::Ioctl),
             109 => Some(Self::Ptrace),
+            110 => Some(Self::RecvMsg),
             _ => None,
         }
     }

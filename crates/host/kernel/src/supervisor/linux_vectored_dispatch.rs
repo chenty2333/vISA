@@ -10,11 +10,25 @@ use super::{
 
 const IOV_MAX: usize = 1024;
 const LINUX_IOVEC_SIZE: usize = 16;
+const LINUX_MSGHDR_SIZE: u32 = 56;
+const MSGHDR_NAMELEN_OFFSET: u32 = 8;
+const MSGHDR_CONTROLLEN_OFFSET: u32 = 40;
+const MSGHDR_FLAGS_OFFSET: u32 = 48;
 
 #[derive(Clone, Copy)]
 struct LinuxIovec {
     base: u32,
     len: u32,
+}
+
+#[derive(Clone, Copy)]
+struct LinuxMsgHdr {
+    name: u64,
+    namelen: u32,
+    iov_ptr: u64,
+    iovlen: u64,
+    control: u64,
+    controllen: u64,
 }
 
 impl<'engine> PrototypeRuntime<'engine> {
@@ -122,6 +136,55 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         Ok(LinuxCallResult::Ret(total as i64))
+    }
+
+    pub(super) fn plan_recvmsg(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if let Err(result) = self.require_socket_recv_capability() {
+            return Ok(result);
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "recvmsg fd overflowed")?;
+        let msg_ptr = match u32::try_from(plan.args[1]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(errno_ret(ERR_EFAULT)),
+        };
+        let flags = plan.args[2] as u32;
+        let msg = match self.read_msghdr(msg_ptr) {
+            Ok(msg) => msg,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        let iovecs = match self.read_iovecs(msg.iov_ptr, msg.iovlen) {
+            Ok(iovecs) => iovecs,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.prevalidate_recvmsg_writes(msg_ptr, msg, &iovecs) {
+            return Ok(errno_ret(errno));
+        }
+        let total_len = match total_iovec_len(&iovecs) {
+            Ok(total_len) => total_len,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.require_socket_fd(fd) {
+            return Ok(errno_ret(errno));
+        }
+        if total_len == 0 {
+            return self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, Vec::new());
+        }
+        let total_len = match u32::try_from(total_len) {
+            Ok(total_len) => total_len,
+            Err(_) => return Ok(errno_ret(ERR_EINVAL)),
+        };
+        match self.recv_socket_bytes_from_fd_authorized(fd, total_len, flags)? {
+            LinuxCallResult::Bytes(bytes) => {
+                self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, bytes)
+            }
+            LinuxCallResult::Ret(0) => {
+                self.finish_recvmsg_writeback(fd, msg_ptr, msg, &iovecs, Vec::new())
+            }
+            other => Ok(other),
+        }
     }
 
     pub(super) fn plan_writev(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -263,6 +326,50 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(())
     }
 
+    fn read_msghdr(&mut self, msg_ptr: u32) -> Result<LinuxMsgHdr, i32> {
+        let bytes = self.linux.read_bytes(msg_ptr, LINUX_MSGHDR_SIZE).map_err(|_| ERR_EFAULT)?;
+        Ok(LinuxMsgHdr {
+            name: read_u64_le(&bytes, 0)?,
+            namelen: read_u32_le(&bytes, MSGHDR_NAMELEN_OFFSET as usize)?,
+            iov_ptr: read_u64_le(&bytes, 16)?,
+            iovlen: read_u64_le(&bytes, 24)?,
+            control: read_u64_le(&bytes, 32)?,
+            controllen: read_u64_le(&bytes, MSGHDR_CONTROLLEN_OFFSET as usize)?,
+        })
+    }
+
+    fn prevalidate_recvmsg_writes(
+        &mut self,
+        msg_ptr: u32,
+        msg: LinuxMsgHdr,
+        iovecs: &[LinuxIovec],
+    ) -> Result<(), i32> {
+        self.prevalidate_iovec_writes(iovecs)?;
+        self.prevalidate_linux_writeback(msg_field_ptr(msg_ptr, MSGHDR_CONTROLLEN_OFFSET)?, 8)?;
+        self.prevalidate_linux_writeback(msg_field_ptr(msg_ptr, MSGHDR_FLAGS_OFFSET)?, 4)?;
+        if msg.name != 0 {
+            if msg.namelen < 16 {
+                return Err(ERR_EINVAL);
+            }
+            let name_ptr = u32::try_from(msg.name).map_err(|_| ERR_EFAULT)?;
+            self.prevalidate_linux_writeback(name_ptr, 16)?;
+            self.prevalidate_linux_writeback(msg_field_ptr(msg_ptr, MSGHDR_NAMELEN_OFFSET)?, 4)?;
+        }
+        if msg.controllen != 0 {
+            let control_ptr = u32::try_from(msg.control).map_err(|_| ERR_EFAULT)?;
+            if control_ptr == 0 {
+                return Err(ERR_EFAULT);
+            }
+            let controllen = u32::try_from(msg.controllen).map_err(|_| ERR_EINVAL)?;
+            self.prevalidate_linux_writeback(control_ptr, controllen)?;
+        }
+        Ok(())
+    }
+
+    fn prevalidate_linux_writeback(&mut self, ptr: u32, len: u32) -> Result<(), i32> {
+        if len != 0 && self.linux.read_bytes(ptr, len).is_err() { Err(ERR_EFAULT) } else { Ok(()) }
+    }
+
     fn fd_is_socket(&self, fd: u32) -> bool {
         self.fd_entry(fd).is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
     }
@@ -283,6 +390,55 @@ impl<'engine> PrototypeRuntime<'engine> {
             offset += len;
         }
         if offset == bytes.len() { Ok(()) } else { Err(ERR_EINVAL) }
+    }
+
+    fn finish_recvmsg_writeback(
+        &mut self,
+        fd: u32,
+        msg_ptr: u32,
+        msg: LinuxMsgHdr,
+        iovecs: &[LinuxIovec],
+        bytes: Vec<u8>,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if let Err(errno) = self.write_iovec_bytes(iovecs, &bytes) {
+            return Ok(errno_ret(errno));
+        }
+        if msg.name != 0 {
+            let name_ptr = match u32::try_from(msg.name) {
+                Ok(ptr) => ptr,
+                Err(_) => return Ok(errno_ret(ERR_EFAULT)),
+            };
+            let namelen_ptr = match msg_field_ptr(msg_ptr, MSGHDR_NAMELEN_OFFSET) {
+                Ok(ptr) => ptr,
+                Err(errno) => return Ok(errno_ret(errno)),
+            };
+            if let Err(errno) = self.write_generic_socket_peer_sockaddr(fd, name_ptr, namelen_ptr) {
+                return Ok(errno_ret(errno));
+            }
+        }
+        if self
+            .linux
+            .write_bytes(
+                msg_field_ptr(msg_ptr, MSGHDR_CONTROLLEN_OFFSET)
+                    .map_err(|_| "recvmsg controllen pointer overflowed after prevalidation")?,
+                &0u64.to_le_bytes(),
+            )
+            .is_err()
+        {
+            return Ok(errno_ret(ERR_EFAULT));
+        }
+        if self
+            .linux
+            .write_bytes(
+                msg_field_ptr(msg_ptr, MSGHDR_FLAGS_OFFSET)
+                    .map_err(|_| "recvmsg flags pointer overflowed after prevalidation")?,
+                &0u32.to_le_bytes(),
+            )
+            .is_err()
+        {
+            return Ok(errno_ret(ERR_EFAULT));
+        }
+        Ok(LinuxCallResult::Ret(bytes.len() as i64))
     }
 
     fn read_iovec_prefix(&mut self, iovecs: &[LinuxIovec], len: usize) -> Result<Vec<u8>, i32> {
@@ -318,6 +474,18 @@ impl<'engine> PrototypeRuntime<'engine> {
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, i32> {
+    Ok(u32::from_le_bytes(bytes[offset..offset + 4].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64, i32> {
+    Ok(u64::from_le_bytes(bytes[offset..offset + 8].try_into().map_err(|_| ERR_EINVAL)?))
+}
+
+fn msg_field_ptr(msg_ptr: u32, offset: u32) -> Result<u32, i32> {
+    msg_ptr.checked_add(offset).ok_or(ERR_EFAULT)
 }
 
 fn total_iovec_len(iovecs: &[LinuxIovec]) -> Result<usize, i32> {

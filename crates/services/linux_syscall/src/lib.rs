@@ -23,11 +23,11 @@ use vmos_abi::{
     SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
     SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT,
-    SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
-    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS,
-    SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT,
-    SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME,
+    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
+    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID,
+    SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
+    SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
     SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
     SYS_WRITEV, is_stdio_fd,
 };
@@ -101,6 +101,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_SOCKETPAIR => plan_socketpair(a0, a1, a2, a3),
         SYS_SENDTO => plan_sendto(a0, a1, a2, a3, a4, a5),
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
+        SYS_RECVMSG => plan_recvmsg(a0, a1, a2),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
         SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
         SYS_IOCTL => plan_ioctl(a0, a1, a2),
@@ -621,6 +622,11 @@ fn plan_sendto(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u64
 fn plan_recvfrom(fd: u64, ptr: u64, len: u64, flags: u64, addr: u64, addr_len: u64) -> PackedStep {
     reset_plan(PlanKind::RecvFrom, [fd, ptr, len, flags, addr, addr_len]);
     PackedStep::plan(PlanKind::RecvFrom)
+}
+
+fn plan_recvmsg(fd: u64, msg_ptr: u64, flags: u64) -> PackedStep {
+    reset_plan(PlanKind::RecvMsg, [fd, msg_ptr, flags, 0, 0, 0]);
+    PackedStep::plan(PlanKind::RecvMsg)
 }
 
 fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
@@ -1432,6 +1438,18 @@ mod tests {
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x4000);
         assert_eq!(plan_arg(2), 5);
+    }
+
+    #[test]
+    fn recvmsg_plan_preserves_msghdr_pointer_and_flags() {
+        let _guard = test_guard();
+
+        let recvmsg = PackedStep::decode(dispatch(SYS_RECVMSG, 8, 0x3000, 0x40, 0, 0, 0));
+        assert_eq!(recvmsg.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(recvmsg.aux), Some(PlanKind::RecvMsg));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0x3000);
+        assert_eq!(plan_arg(2), 0x40);
     }
 
     #[test]

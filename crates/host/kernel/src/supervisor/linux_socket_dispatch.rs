@@ -504,7 +504,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn write_generic_socket_peer_sockaddr(
+    pub(super) fn write_generic_socket_peer_sockaddr(
         &mut self,
         fd: u32,
         addr_ptr: u32,
@@ -1171,12 +1171,12 @@ fn linux_listen_backlog_arg(raw: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
+    use alloc::{boxed::Box, vec, vec::Vec};
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
         AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, NodeKind, PlanKind, SOCK_STREAM, SYS_RECVFROM,
-        ServiceRoute, SyscallContext,
+        SYS_RECVMSG, ServiceRoute, SyscallContext,
     };
 
     use super::{LinuxCallResult, LinuxPlan, linux_listen_backlog_arg};
@@ -1262,6 +1262,14 @@ mod tests {
             LinuxCallResult::Bytes(bytes) => bytes,
             other => panic!("unexpected Linux result: {other:?}"),
         }
+    }
+
+    fn write_u32_at(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
 
     #[test]
@@ -1350,6 +1358,63 @@ mod tests {
             SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, payload.len() as u64, 0, 0, 0]),
         ));
         assert_eq!(bytes, payload);
+    }
+
+    #[test]
+    fn generic_recvmsg_prevalidates_name_before_consuming_payload_and_writes_peer() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+        let payload = b"queued recvmsg payload";
+        deliver_legacy_socket_payload(&mut runtime, socket_id, payload);
+
+        const MSGHDR_SIZE: usize = 56;
+        const IOVEC_SIZE: usize = 16;
+        let buffer_len = MSGHDR_SIZE + IOVEC_SIZE + 16 + payload.len();
+        let (base, _) =
+            runtime.linux.write_arg_bytes(&vec![0u8; buffer_len]).expect("recvmsg buffer");
+        let msg_ptr = base;
+        let iov_ptr = base + MSGHDR_SIZE as u32;
+        let name_ptr = iov_ptr + IOVEC_SIZE as u32;
+        let data_ptr = name_ptr + 16;
+        let invalid_name_ptr = base + buffer_len as u32 + 64;
+
+        let mut raw = vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 0, invalid_name_ptr as u64);
+        write_u32_at(&mut raw, 8, 16);
+        write_u64_at(&mut raw, 16, iov_ptr as u64);
+        write_u64_at(&mut raw, 24, 1);
+        write_u64_at(&mut raw, 40, 0);
+        write_u32_at(&mut raw, 48, 0x66);
+        write_u64_at(&mut raw, MSGHDR_SIZE, data_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + 8, payload.len() as u64);
+        runtime.linux.write_arg_bytes(&raw).expect("bad recvmsg msghdr");
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_recvmsg_bad_name",
+                SyscallContext::new(SYS_RECVMSG, [fd as u64, msg_ptr as u64, 0, 0, 0, 0]),
+            )),
+            -(ERR_EFAULT as i64)
+        );
+
+        write_u64_at(&mut raw, 0, name_ptr as u64);
+        runtime.linux.write_arg_bytes(&raw).expect("valid recvmsg msghdr");
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_recvmsg_retry",
+                SyscallContext::new(SYS_RECVMSG, [fd as u64, msg_ptr as u64, 0, 0, 0, 0]),
+            )),
+            payload.len() as i64
+        );
+        assert_eq!(runtime.linux.read_bytes(data_ptr, payload.len() as u32).unwrap(), payload);
+        let name = runtime.linux.read_bytes(name_ptr, 16).expect("recvmsg name");
+        assert_eq!(u16::from_le_bytes(name[..2].try_into().unwrap()), AF_INET as u16);
+        assert_eq!(runtime.linux.read_bytes(msg_ptr + 8, 4).expect("namelen"), 16u32.to_le_bytes());
+        assert_eq!(
+            runtime.linux.read_bytes(msg_ptr + 40, 8).expect("controllen"),
+            0u64.to_le_bytes()
+        );
+        assert_eq!(runtime.linux.read_bytes(msg_ptr + 48, 4).expect("flags"), 0u32.to_le_bytes());
     }
 }
 

@@ -496,6 +496,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "linux.socket",
             operation: "recv",
         },
+        PlanKind::RecvMsg => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "linux_syscall",
+            object: "linux.socket",
+            operation: "recvmsg",
+        },
         PlanKind::SetSockOpt => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

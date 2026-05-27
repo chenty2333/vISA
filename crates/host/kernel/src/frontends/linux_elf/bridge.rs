@@ -36,10 +36,10 @@ use vmos_abi::{
     SYS_MUNMAP, SYS_NANOSLEEP, SYS_NEWFSTATAT, SYS_OPEN, SYS_OPENAT, SYS_PAUSE, SYS_PIPE,
     SYS_PIPE2, SYS_POLL, SYS_PPOLL, SYS_PRCTL, SYS_PREADV, SYS_PREADV2, SYS_PRLIMIT64,
     SYS_PSELECT6, SYS_PTRACE, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READLINK, SYS_READLINKAT,
-    SYS_READV, SYS_RECVFROM, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR, SYS_RSEQ,
-    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN, SYS_RT_SIGSUSPEND,
-    SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT, SYS_SENDTO,
-    SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RMDIR,
+    SYS_RSEQ, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGRETURN,
+    SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_SCHED_GETAFFINITY, SYS_SECCOMP, SYS_SELECT,
+    SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETRLIMIT, SYS_SETSID,
     SYS_SETSOCKOPT, SYS_SIGALTSTACK, SYS_SOCKET, SYS_SOCKETPAIR, SYS_STAT, SYS_STATFS, SYS_TGKILL,
     SYS_TIME, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TRUNCATE,
     SYS_UMASK, SYS_UNAME, SYS_UNLINK, SYS_UNLINKAT, SYS_UTIMENSAT, SYS_VFORK, SYS_WAIT4, SYS_WRITE,
@@ -142,6 +142,10 @@ const PSELECT6_MAX_FDS: usize = 1024;
 const PSELECT6_FDSET_WORDS: usize = PSELECT6_MAX_FDS / 64;
 const LINUX_IOVEC_SIZE: u64 = 16;
 const LINUX_IOV_MAX: usize = 1024;
+const LINUX_MSGHDR_SIZE: u64 = 56;
+const MSGHDR_NAMELEN_OFFSET: u64 = 8;
+const MSGHDR_CONTROLLEN_OFFSET: u64 = 40;
+const MSGHDR_FLAGS_OFFSET: u64 = 48;
 const RWF_NOWAIT: u64 = 0x0000_0008;
 const RWF_APPEND: u64 = 0x0000_0010;
 const O_NONBLOCK: u32 = 0o4000;
@@ -492,6 +496,7 @@ fn dispatch_syscall(frame: &mut SyscallFrame) -> Result<i64, i32> {
         SYS_GETPEERNAME => sys_getpeername(frame),
         SYS_SENDTO => sys_sendto(frame),
         SYS_RECVFROM => sys_recvfrom(frame),
+        SYS_RECVMSG => sys_recvmsg(frame),
         SYS_SETSOCKOPT => sys_setsockopt(frame),
         SYS_GETSOCKOPT => sys_getsockopt(frame),
         SYS_FLOCK => sys_flock(frame),
@@ -832,6 +837,9 @@ fn pwritev2_flags_append(flags: u64) -> Result<bool, i32> {
 }
 
 fn read_user_iovecs(ptr: u64, iovcnt: usize) -> Result<Vec<(u64, u64)>, i32> {
+    if iovcnt == 0 {
+        return Ok(Vec::new());
+    }
     let len = (iovcnt as u64).checked_mul(LINUX_IOVEC_SIZE).ok_or(ERR_EINVAL)?;
     let lease = user_lease(ptr, len, false)?;
     let bytes = lease.bytes().map_err(map_dmw_fault)?;
@@ -850,6 +858,76 @@ fn read_user_iovecs(ptr: u64, iovcnt: usize) -> Result<Vec<(u64, u64)>, i32> {
         out.push((base, len));
     }
     Ok(out)
+}
+
+#[derive(Clone, Copy)]
+struct UserMsghdr {
+    name: u64,
+    namelen: u32,
+    iov: u64,
+    iovlen: usize,
+    control: u64,
+    controllen: u64,
+}
+
+fn read_user_msghdr(ptr: u64) -> Result<UserMsghdr, i32> {
+    let lease = user_lease(ptr, LINUX_MSGHDR_SIZE, false)?;
+    let bytes = lease.bytes().map_err(map_dmw_fault)?;
+    let iovlen = usize::try_from(read_u64_from(bytes, 24)?).map_err(|_| ERR_EINVAL)?;
+    if iovlen > LINUX_IOV_MAX {
+        return Err(ERR_EINVAL);
+    }
+    Ok(UserMsghdr {
+        name: read_u64_from(bytes, 0)?,
+        namelen: read_u32_from(bytes, MSGHDR_NAMELEN_OFFSET as usize)?,
+        iov: read_u64_from(bytes, 16)?,
+        iovlen,
+        control: read_u64_from(bytes, 32)?,
+        controllen: read_u64_from(bytes, MSGHDR_CONTROLLEN_OFFSET as usize)?,
+    })
+}
+
+fn validate_recvmsg_writebacks(
+    msg_ptr: u64,
+    msg: UserMsghdr,
+    iovecs: &[(u64, u64)],
+) -> Result<(), i32> {
+    for (base, len) in iovecs {
+        validate_user_writeback(*base, *len)?;
+    }
+    validate_user_writeback(msg_ptr.checked_add(MSGHDR_CONTROLLEN_OFFSET).ok_or(ERR_EFAULT)?, 8)?;
+    validate_user_writeback(msg_ptr.checked_add(MSGHDR_FLAGS_OFFSET).ok_or(ERR_EFAULT)?, 4)?;
+    if msg.name != 0 {
+        if msg.namelen < 16 {
+            return Err(ERR_EINVAL);
+        }
+        validate_user_writeback(msg.name, 16)?;
+        validate_user_writeback(msg_ptr.checked_add(MSGHDR_NAMELEN_OFFSET).ok_or(ERR_EFAULT)?, 4)?;
+    }
+    if msg.controllen != 0 {
+        if msg.control == 0 {
+            return Err(ERR_EFAULT);
+        }
+        validate_user_writeback(msg.control, msg.controllen)?;
+    }
+    Ok(())
+}
+
+fn write_user_iovec_bytes(iovecs: &[(u64, u64)], bytes: &[u8]) -> Result<(), i32> {
+    let mut offset = 0usize;
+    for (base, len) in iovecs {
+        if offset == bytes.len() {
+            break;
+        }
+        let len = usize::try_from(*len).map_err(|_| ERR_EINVAL)?;
+        let take = len.min(bytes.len() - offset);
+        if take == 0 {
+            continue;
+        }
+        write_user_bytes(*base, &bytes[offset..offset + take])?;
+        offset += take;
+    }
+    if offset == bytes.len() { Ok(()) } else { Err(ERR_EINVAL) }
 }
 
 fn read_fd_chunk(fd: u32, count: usize, allow_blocking: bool) -> Result<Vec<u8>, i32> {
@@ -3644,7 +3722,7 @@ fn linux_error_return(frame: &SyscallFrame) -> Option<i32> {
 fn restartable_interrupted_syscall(frame: &SyscallFrame, syscall_nr: u64) -> bool {
     match syscall_nr {
         SYS_READ | SYS_READV | SYS_WRITE | SYS_WRITEV | SYS_WAIT4 | SYS_ACCEPT | SYS_ACCEPT4
-        | SYS_CONNECT | SYS_SENDTO | SYS_RECVFROM | SYS_FLOCK => true,
+        | SYS_CONNECT | SYS_SENDTO | SYS_RECVFROM | SYS_RECVMSG | SYS_FLOCK => true,
         SYS_FCNTL => frame.rsi == FCNTL_F_SETLKW,
         SYS_FUTEX => {
             let op = (frame.rsi as u32) & FUTEX_CMD_MASK;
@@ -5201,6 +5279,80 @@ fn sys_recvfrom(frame: &SyscallFrame) -> Result<i64, i32> {
         LinuxCallResult::Ret(ret) => Err((-ret) as i32),
         _ => Err(ERR_EINVAL),
     }
+}
+
+fn sys_recvmsg(frame: &SyscallFrame) -> Result<i64, i32> {
+    let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
+    let msg = read_user_msghdr(frame.rsi)?;
+    let iovecs = read_user_iovecs(msg.iov, msg.iovlen)?;
+    validate_recvmsg_writebacks(frame.rsi, msg, &iovecs)?;
+    let total_len = iovecs
+        .iter()
+        .try_fold(0u64, |total, (_, len)| total.checked_add(*len).ok_or(ERR_EINVAL))?;
+    let count = u32::try_from(total_len).map_err(|_| ERR_EINVAL)?;
+    active_context().supervisor.require_socket_fd(fd)?;
+    if count == 0 {
+        write_recvmsg_outputs(fd, frame.rsi, msg, &iovecs, &[])?;
+        return Ok(0);
+    }
+    let supervisor = &mut active_context().supervisor;
+    match supervisor
+        .dispatch_linux_syscall(
+            "ring3_recvmsg",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, count as u64, frame.rdx, 0, 0]),
+        )
+        .map_err(|_| ERR_EINVAL)?
+    {
+        LinuxCallResult::Bytes(bytes) => {
+            write_recvmsg_outputs(fd, frame.rsi, msg, &iovecs, &bytes)?;
+            Ok(bytes.len() as i64)
+        }
+        LinuxCallResult::Ret(0) => {
+            write_recvmsg_outputs(fd, frame.rsi, msg, &iovecs, &[])?;
+            Ok(0)
+        }
+        LinuxCallResult::Ret(ret) if ret >= 0 => Ok(ret),
+        LinuxCallResult::Ret(ret) => Err((-ret) as i32),
+        _ => Err(ERR_EINVAL),
+    }
+}
+
+fn write_recvmsg_outputs(
+    fd: u32,
+    msg_ptr: u64,
+    msg: UserMsghdr,
+    iovecs: &[(u64, u64)],
+    bytes: &[u8],
+) -> Result<(), i32> {
+    write_user_iovec_bytes(iovecs, bytes)?;
+    if msg.name != 0 {
+        let endpoint = active_context()
+            .supervisor
+            .socket_ipv4_endpoint(fd, true)
+            .ok()
+            .flatten()
+            .map(|endpoint| (endpoint.addr, endpoint.port));
+        write_recvmsg_sockaddr(msg_ptr, msg, endpoint)?;
+    }
+    write_user_u64(msg_ptr.checked_add(MSGHDR_CONTROLLEN_OFFSET).ok_or(ERR_EFAULT)?, 0)?;
+    write_user_u32(msg_ptr.checked_add(MSGHDR_FLAGS_OFFSET).ok_or(ERR_EFAULT)?, 0)
+}
+
+fn write_recvmsg_sockaddr(
+    msg_ptr: u64,
+    msg: UserMsghdr,
+    endpoint: Option<([u8; 4], u16)>,
+) -> Result<(), i32> {
+    if msg.namelen < 16 {
+        return Err(ERR_EINVAL);
+    }
+    let (addr, port) = endpoint.unwrap_or(([0; 4], 0));
+    let mut sockaddr = [0u8; 16];
+    sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
+    sockaddr[2..4].copy_from_slice(&port.to_be_bytes());
+    sockaddr[4..8].copy_from_slice(&addr);
+    write_user_bytes(msg.name, &sockaddr)?;
+    write_user_u32(msg_ptr.checked_add(MSGHDR_NAMELEN_OFFSET).ok_or(ERR_EFAULT)?, 16)
 }
 
 fn write_recvfrom_sockaddr_if_requested(
@@ -7432,7 +7584,8 @@ mod tests {
         FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
         FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4,
         SYS_CHOWN, SYS_CONNECT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN,
-        SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+        SYS_READ, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO, SYS_WAIT4, SYS_WRITE,
+        SYS_WRITEV,
     };
 
     use super::{
@@ -7456,8 +7609,8 @@ mod tests {
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, stack_growth_fault_allowed, sys_pipe, sys_recvfrom, sys_rlimit,
-        sys_socket, sys_socketpair, user_kernel_copy_region_for_page, validate_iovcnt,
+        signal_restart_syscall, stack_growth_fault_allowed, sys_pipe, sys_recvfrom, sys_recvmsg,
+        sys_rlimit, sys_socket, sys_socketpair, user_kernel_copy_region_for_page, validate_iovcnt,
         validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
         wait_nfds_within_rlimit, write_linux_greg,
     };
@@ -7649,6 +7802,27 @@ mod tests {
     }
 
     #[test]
+    fn ring3_recvmsg_prevalidates_msghdr_before_socket_recv() {
+        const MSG_DONTWAIT: u64 = 0x40;
+
+        let _guard = active_context_test_guard();
+        let runtime = fresh_test_runtime();
+        let context = Box::leak(Box::new(install_test_active_context(runtime)));
+        install_active_context(context);
+
+        let mut socket_frame = syscall_frame_with_ret(0);
+        socket_frame.rdi = AF_INET as u64;
+        socket_frame.rsi = SOCK_STREAM as u64;
+        let fd = sys_socket(&socket_frame).expect("socket fd");
+
+        let mut recv_frame = syscall_frame_with_ret(0);
+        recv_frame.rdi = fd as u64;
+        recv_frame.rsi = 0;
+        recv_frame.rdx = MSG_DONTWAIT;
+        assert_eq!(sys_recvmsg(&recv_frame), Err(ERR_EFAULT));
+    }
+
+    #[test]
     fn chown_symlink_follow_policy_matches_linux_entry_points() {
         assert!(chown_path_follows_final_symlink(SYS_CHOWN, 0, false));
         assert!(!chown_path_follows_final_symlink(SYS_LCHOWN, 0, false));
@@ -7729,6 +7903,7 @@ mod tests {
             SYS_CONNECT,
             SYS_SENDTO,
             SYS_RECVFROM,
+            SYS_RECVMSG,
             SYS_FLOCK,
         ] {
             assert!(restartable_interrupted_syscall(&frame, syscall));
