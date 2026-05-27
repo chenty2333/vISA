@@ -495,7 +495,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             other => return Ok(other),
         };
-        match self.write_generic_accept_sockaddr(accepted_fd, addr_ptr, addr_len_ptr) {
+        match self.write_generic_socket_peer_sockaddr(accepted_fd, addr_ptr, addr_len_ptr) {
             Ok(()) => Ok(LinuxCallResult::Ret(accepted_fd as i64)),
             Err(errno) => {
                 self.close_accept_writeback_fd(accepted_fd);
@@ -504,14 +504,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
     }
 
-    fn write_generic_accept_sockaddr(
+    fn write_generic_socket_peer_sockaddr(
         &mut self,
-        accepted_fd: u32,
+        fd: u32,
         addr_ptr: u32,
         addr_len_ptr: u32,
     ) -> Result<(), i32> {
         let endpoint = self
-            .socket_ipv4_endpoint(accepted_fd, true)?
+            .socket_ipv4_endpoint(fd, true)?
             .unwrap_or(super::net::Ipv4SocketEndpoint { addr: [0; 4], port: 0 });
         let mut sockaddr = [0u8; 16];
         sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
@@ -718,6 +718,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_recvfrom(
         &mut self,
         plan: LinuxPlan,
+        label: &str,
     ) -> Result<LinuxCallResult, &'static str> {
         if let Err(result) = self.require_socket_recv_capability() {
             return Ok(result);
@@ -725,7 +726,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let fd = u32::try_from(plan.args[0]).map_err(|_| "recvfrom fd overflowed")?;
         let count = u32::try_from(plan.args[2]).map_err(|_| "recvfrom count overflowed")?;
         let flags = plan.args[3] as u32;
-        self.recv_socket_bytes_from_fd_authorized(fd, count, flags)
+        let (addr_ptr, addr_len_ptr, write_addr) =
+            match self.generic_recvfrom_sockaddr_writeback(label, plan.args[4], plan.args[5]) {
+                Ok(writeback) => writeback,
+                Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+            };
+        let result = self.recv_socket_bytes_from_fd_authorized(fd, count, flags)?;
+        self.finish_recvfrom_sockaddr_writeback(result, fd, addr_ptr, addr_len_ptr, write_addr)
     }
 
     pub(super) fn recv_socket_bytes_from_fd_authorized(
@@ -817,6 +824,52 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => Err(err),
         }
     }
+
+    fn generic_recvfrom_sockaddr_writeback(
+        &mut self,
+        label: &str,
+        addr_raw: u64,
+        addr_len_raw: u64,
+    ) -> Result<(u32, u32, bool), i32> {
+        if label.starts_with("ring3_") || addr_raw == 0 {
+            return Ok((0, 0, false));
+        }
+        if addr_len_raw == 0 {
+            return Err(ERR_EFAULT);
+        }
+        let addr_ptr = u32::try_from(addr_raw).map_err(|_| ERR_EFAULT)?;
+        let addr_len_ptr = u32::try_from(addr_len_raw).map_err(|_| ERR_EFAULT)?;
+        let len_bytes = self.linux.read_bytes(addr_len_ptr, 4).map_err(|_| ERR_EFAULT)?;
+        let addr_len = u32::from_le_bytes(len_bytes.as_slice().try_into().map_err(|_| ERR_EFAULT)?);
+        if addr_len < 16 {
+            return Err(ERR_EINVAL);
+        }
+        self.linux.read_bytes(addr_ptr, 16).map_err(|_| ERR_EFAULT)?;
+        Ok((addr_ptr, addr_len_ptr, true))
+    }
+
+    fn finish_recvfrom_sockaddr_writeback(
+        &mut self,
+        result: LinuxCallResult,
+        fd: u32,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        write_addr: bool,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if !write_addr {
+            return Ok(result);
+        }
+        match result {
+            LinuxCallResult::Bytes(bytes) => {
+                match self.write_generic_socket_peer_sockaddr(fd, addr_ptr, addr_len_ptr) {
+                    Ok(()) => Ok(LinuxCallResult::Bytes(bytes)),
+                    Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+                }
+            }
+            other => Ok(other),
+        }
+    }
+
     pub(super) fn plan_setsockopt(
         &mut self,
         plan: LinuxPlan,
@@ -1120,8 +1173,10 @@ fn linux_listen_backlog_arg(raw: u64) -> u32 {
 mod tests {
     use alloc::boxed::Box;
 
+    use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, NodeKind, PlanKind, SOCK_STREAM, ServiceRoute,
+        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, NodeKind, PlanKind, SOCK_STREAM, SYS_RECVFROM,
+        ServiceRoute, SyscallContext,
     };
 
     use super::{LinuxCallResult, LinuxPlan, linux_listen_backlog_arg};
@@ -1155,6 +1210,38 @@ mod tests {
             .expect("install vfs fd")
     }
 
+    fn create_legacy_socket_fd(runtime: &mut PrototypeRuntime<'_>) -> (u32, u32) {
+        let socket_id =
+            runtime.net_core.create_socket(AF_INET, SOCK_STREAM, 0).expect("legacy socket");
+        let ready_key = runtime.net_core.ready_key(socket_id).expect("legacy socket ready key");
+        runtime
+            .linux_socket
+            .register_socket(socket_id, AF_INET, SOCK_STREAM, 0, ready_key)
+            .expect("legacy linux socket registration");
+        let fd = runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::Socket { socket_id: socket_id as u64, ready_key },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .expect("legacy socket fd");
+        (fd, socket_id)
+    }
+
+    fn deliver_legacy_socket_payload(
+        runtime: &mut PrototypeRuntime<'_>,
+        socket_id: u32,
+        payload: &[u8],
+    ) {
+        runtime.net_core.send_socket(socket_id, b"prime").expect("prime socket endpoints");
+        let meta = PacketFrameMeta::demo_http_response(1, payload.len());
+        let mut frame = [0u8; PACKET_FRAME_CAPACITY];
+        let frame_len = encode_frame(meta, payload, &mut frame).expect("encode rx frame");
+        runtime.net_core.deliver_packet_frame(&frame[..frame_len]).expect("deliver socket rx");
+    }
+
     fn fcntl_plan(fd: u64, cmd: u64, arg: u64) -> LinuxPlan {
         LinuxPlan { kind: PlanKind::Fcntl, args: [fd, cmd, arg, 0, 0, 0] }
     }
@@ -1166,6 +1253,13 @@ mod tests {
     fn ret_errno(result: Result<LinuxCallResult, &'static str>) -> i64 {
         match result.expect("plan should return a Linux result") {
             LinuxCallResult::Ret(ret) => ret,
+            other => panic!("unexpected Linux result: {other:?}"),
+        }
+    }
+
+    fn expect_bytes(result: Result<LinuxCallResult, &'static str>) -> Vec<u8> {
+        match result.expect("plan should return a Linux result") {
+            LinuxCallResult::Bytes(bytes) => bytes,
             other => panic!("unexpected Linux result: {other:?}"),
         }
     }
@@ -1222,6 +1316,40 @@ mod tests {
             -(ERR_EFAULT as i64)
         );
         assert_eq!(runtime.file_status_flags(accepted_fd), Err(ERR_EBADF));
+    }
+
+    #[test]
+    fn generic_recvfrom_prevalidates_sockaddr_before_consuming_payload() {
+        let mut runtime = test_runtime();
+        let (fd, socket_id) = create_legacy_socket_fd(&mut runtime);
+        let payload = b"queued payload";
+        deliver_legacy_socket_payload(&mut runtime, socket_id, payload);
+
+        let (len_ptr, _) = runtime.linux.write_arg_bytes(&16u32.to_le_bytes()).expect("addrlen");
+        let invalid_addr_ptr = len_ptr + 64;
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_recvfrom_bad_sockaddr",
+                SyscallContext::new(
+                    SYS_RECVFROM,
+                    [
+                        fd as u64,
+                        0,
+                        payload.len() as u64,
+                        0,
+                        invalid_addr_ptr as u64,
+                        len_ptr as u64
+                    ],
+                ),
+            )),
+            -(ERR_EFAULT as i64)
+        );
+
+        let bytes = expect_bytes(runtime.dispatch_linux_syscall(
+            "test_recvfrom_retry",
+            SyscallContext::new(SYS_RECVFROM, [fd as u64, 0, payload.len() as u64, 0, 0, 0]),
+        ));
+        assert_eq!(bytes, payload);
     }
 }
 

@@ -203,10 +203,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             .fd_entry(fd)
             .is_some_and(|entry| matches!(entry.resource, FdResource::Socket { .. }))
         {
-            return self.plan_recvfrom(LinuxPlan {
-                kind: PlanKind::RecvFrom,
-                args: [fd as u64, 0, count as u64, 0, 0, 0],
-            });
+            return self.plan_recvfrom(
+                LinuxPlan { kind: PlanKind::RecvFrom, args: [fd as u64, 0, count as u64, 0, 0, 0] },
+                "generic_read_socket",
+            );
         }
         if self
             .fd_entry(fd)

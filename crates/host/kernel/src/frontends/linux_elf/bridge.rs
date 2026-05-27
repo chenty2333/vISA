@@ -5173,6 +5173,8 @@ fn sys_sendto(frame: &SyscallFrame) -> Result<i64, i32> {
 fn sys_recvfrom(frame: &SyscallFrame) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let count = usize::try_from(frame.rdx).map_err(|_| ERR_EINVAL)?;
+    validate_user_writeback(frame.rsi, count as u64)?;
+    validate_recvfrom_sockaddr_writeback(frame.r8, frame.r9)?;
     let supervisor = &mut active_context().supervisor;
     match supervisor
         .dispatch_linux_syscall(
@@ -5214,6 +5216,21 @@ fn write_recvfrom_sockaddr_if_requested(
     }
     let (addr, port) = endpoint.unwrap_or(([0; 4], 0));
     write_sockaddr_in_endpoint(addr_ptr, len_ptr, addr, port).map(|_| ())
+}
+
+fn validate_recvfrom_sockaddr_writeback(addr_ptr: u64, len_ptr: u64) -> Result<(), i32> {
+    if addr_ptr == 0 {
+        return Ok(());
+    }
+    if len_ptr == 0 {
+        return Err(ERR_EFAULT);
+    }
+    let addr_len = read_user_u32(len_ptr)?;
+    if addr_len < 16 {
+        return Err(ERR_EINVAL);
+    }
+    validate_user_writeback(addr_ptr, 16)?;
+    validate_user_writeback(len_ptr, 4)
 }
 
 fn sys_setsockopt(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -7411,7 +7428,7 @@ mod tests {
 
     use semantic_core::{CredentialTransitionKind, LinuxCapSets};
     use vmos_abi::{
-        AF_UNIX, ERR_EFAULT, ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI,
+        AF_INET, AF_UNIX, ERR_EFAULT, ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI,
         FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
         FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4,
         SYS_CHOWN, SYS_CONNECT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN,
@@ -7439,9 +7456,10 @@ mod tests {
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, stack_growth_fault_allowed, sys_pipe, sys_rlimit, sys_socketpair,
-        user_kernel_copy_region_for_page, validate_iovcnt, validate_preadv2_flags,
-        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
+        signal_restart_syscall, stack_growth_fault_allowed, sys_pipe, sys_recvfrom, sys_rlimit,
+        sys_socket, sys_socketpair, user_kernel_copy_region_for_page, validate_iovcnt,
+        validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
+        wait_nfds_within_rlimit, write_linux_greg,
     };
     use crate::supervisor::{
         PrototypeRuntime, isolated_test_runtime, runtime, types::RLIMIT_NOFILE,
@@ -7606,6 +7624,28 @@ mod tests {
         assert_eq!(sys_socketpair(&socketpair_frame), Err(ERR_EFAULT));
         assert!(!active_context().supervisor.is_socketpair_fd(3));
         assert!(!active_context().supervisor.is_socketpair_fd(4));
+    }
+
+    #[test]
+    fn ring3_recvfrom_prevalidates_user_writeback_before_socket_recv() {
+        const MSG_DONTWAIT: u64 = 0x40;
+
+        let _guard = active_context_test_guard();
+        let runtime = fresh_test_runtime();
+        let context = Box::leak(Box::new(install_test_active_context(runtime)));
+        install_active_context(context);
+
+        let mut socket_frame = syscall_frame_with_ret(0);
+        socket_frame.rdi = AF_INET as u64;
+        socket_frame.rsi = SOCK_STREAM as u64;
+        let fd = sys_socket(&socket_frame).expect("socket fd");
+
+        let mut recv_frame = syscall_frame_with_ret(0);
+        recv_frame.rdi = fd as u64;
+        recv_frame.rsi = 0;
+        recv_frame.rdx = 8;
+        recv_frame.r10 = MSG_DONTWAIT;
+        assert_eq!(sys_recvfrom(&recv_frame), Err(ERR_EFAULT));
     }
 
     #[test]
@@ -9016,10 +9056,17 @@ fn write_user_bytes(ptr: u64, bytes: &[u8]) -> Result<(), i32> {
     Ok(())
 }
 
-fn validate_fd_pair_writeback(ptr: u64) -> Result<(), i32> {
-    let mut dest = user_lease(ptr, 8, true)?;
+fn validate_user_writeback(ptr: u64, len: u64) -> Result<(), i32> {
+    if len == 0 {
+        return Ok(());
+    }
+    let mut dest = user_lease(ptr, len, true)?;
     let _ = dest.bytes_mut().map_err(map_dmw_fault)?;
     Ok(())
+}
+
+fn validate_fd_pair_writeback(ptr: u64) -> Result<(), i32> {
+    validate_user_writeback(ptr, 8)
 }
 
 fn log_ignored_runtime_cleanup(context: &'static str, result: Result<(), i32>) {
