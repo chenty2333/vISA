@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use semantic_core::{
     CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets, ProcessState, TaskState,
 };
+use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
 
 use super::{
     events::Event,
@@ -64,6 +65,8 @@ const CLD_EXITED: i32 = 1;
 const SA_NOCLDWAIT: u64 = 0x2;
 const SUPPORTED_WAIT_OPTIONS: u64 = WNOHANG | WUNTRACED | WCONTINUED;
 const LINUX_RUSAGE_SIZE: usize = 144;
+const ROBUST_LIST_HEAD_SIZE: u64 = 24;
+const ROBUST_LIST_LIMIT: usize = 2048;
 const PTRACE_REG_R10: usize = 7;
 const PTRACE_REG_R9: usize = 8;
 const PTRACE_REG_R8: usize = 9;
@@ -953,6 +956,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             exited_threads.push((thread.tid, thread.task_id));
         }
         for (tid, _) in &exited_threads {
+            self.handle_robust_list_for_exited_thread(*tid);
             self.clear_child_tid_for_exited_thread(*tid);
         }
         for (_, task) in exited_threads {
@@ -974,6 +978,99 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.notify_wait4_waiters();
     }
 
+    fn handle_robust_list_for_exited_thread(&mut self, tid: Tid) {
+        let Some(registration) = self.take_thread_robust_list(tid) else {
+            return;
+        };
+        if registration.head == 0 {
+            return;
+        }
+        if registration.len != ROBUST_LIST_HEAD_SIZE {
+            crate::kwarn!("robust_list ignored unexpected len {}", registration.len);
+            return;
+        }
+        let futex_offset = match self
+            .robust_head_field(registration.head, 8)
+            .and_then(|ptr| self.read_linux_i64(ptr))
+        {
+            Ok(offset) => offset,
+            Err(reason) => {
+                crate::kwarn!("robust_list futex_offset read failed: {}", reason);
+                return;
+            }
+        };
+        let pending = match self
+            .robust_head_field(registration.head, 16)
+            .and_then(|ptr| self.read_linux_u64(ptr))
+        {
+            Ok(ptr) => ptr,
+            Err(reason) => {
+                crate::kwarn!("robust_list pending read failed: {}", reason);
+                return;
+            }
+        };
+        let mut entry = match self.read_linux_u64(registration.head) {
+            Ok(ptr) => ptr,
+            Err(reason) => {
+                crate::kwarn!("robust_list head read failed: {}", reason);
+                return;
+            }
+        };
+
+        let mut visited = 0usize;
+        while entry != 0 && entry != registration.head && visited < ROBUST_LIST_LIMIT {
+            let next = match self.read_linux_u64(entry) {
+                Ok(ptr) => ptr,
+                Err(reason) => {
+                    crate::kwarn!("robust_list entry read failed: {}", reason);
+                    break;
+                }
+            };
+            self.process_robust_list_entry(entry, futex_offset, tid);
+            entry = next;
+            visited += 1;
+        }
+        if visited == ROBUST_LIST_LIMIT {
+            crate::kwarn!("robust_list traversal hit entry limit");
+        }
+        if pending != 0 && pending != registration.head {
+            self.process_robust_list_entry(pending, futex_offset, tid);
+        }
+    }
+
+    fn robust_head_field(&self, head: u64, offset: u64) -> Result<u64, &'static str> {
+        head.checked_add(offset).ok_or("robust list field pointer overflowed")
+    }
+
+    fn process_robust_list_entry(&mut self, entry: u64, futex_offset: i64, tid: Tid) {
+        let Some(futex_addr) = robust_futex_addr(entry, futex_offset) else {
+            crate::kwarn!("robust_list futex address overflow");
+            return;
+        };
+        self.mark_robust_futex_dead(futex_addr, tid);
+    }
+
+    fn mark_robust_futex_dead(&mut self, futex_addr: u64, tid: Tid) {
+        let word = match self.read_linux_u32(futex_addr) {
+            Ok(word) => word,
+            Err(reason) => {
+                crate::kwarn!("robust_list futex read failed: {}", reason);
+                return;
+            }
+        };
+        if (word & FUTEX_TID_MASK) != (tid & FUTEX_TID_MASK) {
+            return;
+        }
+        let new_word = (word & !FUTEX_TID_MASK) | FUTEX_OWNER_DIED;
+        if let Err(reason) = self.write_linux_u32(futex_addr, new_word) {
+            crate::kwarn!("robust_list futex write failed: {}", reason);
+            return;
+        }
+        if word & FUTEX_WAITERS != 0 {
+            self.wake_futex_key(futex_addr, "robust_list");
+        }
+    }
+
     fn clear_child_tid_for_exited_thread(&mut self, tid: Tid) {
         let Some(clear_child_tid) = self.take_thread_clear_child_tid(tid) else {
             return;
@@ -989,7 +1086,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             crate::kwarn!("clear_child_tid write failed for tid {}", tid);
             return;
         }
-        match self.futex.wake(clear_child_tid, 1) {
+        self.wake_futex_key(clear_child_tid, "clear_child_tid");
+    }
+
+    fn wake_futex_key(&mut self, key: u64, context: &'static str) {
+        match self.futex.wake(key, 1) {
             Ok(wait_ids) => {
                 for wait_id in wait_ids {
                     self.scheduler.push_event(Event::WaitReady(wait_id));
@@ -997,12 +1098,30 @@ impl<'engine> PrototypeRuntime<'engine> {
                 self.drain_event_queue();
             }
             Err(ServiceCallError::Errno(errno)) => {
-                crate::kwarn!("clear_child_tid futex wake returned errno {}", errno);
+                crate::kwarn!("{} futex wake returned errno {}", context, errno);
             }
             Err(ServiceCallError::Trap(reason)) | Err(ServiceCallError::Invalid(reason)) => {
-                crate::kwarn!("clear_child_tid futex wake failed: {}", reason);
+                crate::kwarn!("{} futex wake failed: {}", context, reason);
             }
         }
+    }
+
+    fn read_linux_u64(&mut self, ptr: u64) -> Result<u64, &'static str> {
+        let ptr = u32::try_from(ptr).map_err(|_| "pointer overflowed")?;
+        let bytes = self.linux.read_bytes(ptr, 8)?;
+        Ok(u64::from_le_bytes(bytes[..8].try_into().expect("u64 read length")))
+    }
+
+    fn read_linux_i64(&mut self, ptr: u64) -> Result<i64, &'static str> {
+        let ptr = u32::try_from(ptr).map_err(|_| "pointer overflowed")?;
+        let bytes = self.linux.read_bytes(ptr, 8)?;
+        Ok(i64::from_le_bytes(bytes[..8].try_into().expect("i64 read length")))
+    }
+
+    fn read_linux_u32(&mut self, ptr: u64) -> Result<u32, &'static str> {
+        let ptr = u32::try_from(ptr).map_err(|_| "pointer overflowed")?;
+        let bytes = self.linux.read_bytes(ptr, 4)?;
+        Ok(u32::from_le_bytes(bytes[..4].try_into().expect("u32 read length")))
     }
 
     pub(crate) fn query_wait4(
@@ -2610,14 +2729,23 @@ fn robust_list_ptrace_may_access(
         || (target.dumpable && ptrace_credentials_match(&caller.access, &target.access))
 }
 
+fn robust_futex_addr(entry: u64, futex_offset: i64) -> Option<u64> {
+    if futex_offset >= 0 {
+        entry.checked_add(futex_offset as u64)
+    } else {
+        entry.checked_sub(futex_offset.wrapping_neg() as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
     use vmos_abi::{
-        ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FUTEX_WAIT, SYS_CAPGET, SYS_CAPSET,
-        SYS_EXIT, SYS_FUTEX, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
-        SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID,
+        ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FUTEX_OWNER_DIED, FUTEX_TID_MASK,
+        FUTEX_WAIT, FUTEX_WAITERS, SYS_CAPGET, SYS_CAPSET, SYS_EXIT, SYS_FUTEX, SYS_GETEGID,
+        SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
+        SYS_GETRESGID, SYS_GETRESUID, SYS_GETSID, SYS_GETTID, SYS_GETUID, SYS_SET_ROBUST_LIST,
         SYS_SET_TID_ADDRESS, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
         SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETSID, SYS_SETUID,
         SYS_WAIT4, SyscallContext,
@@ -2722,6 +2850,64 @@ mod tests {
         let word = runtime.linux.read_bytes(ptr, 4).expect("cleared tid word");
         assert_eq!(u32::from_le_bytes(word.try_into().expect("word len")), 0);
         assert_eq!(runtime.query_thread(tid).expect("current thread").clear_child_tid, None);
+
+        let resolution = runtime.waits.take_resolution(token).expect("futex wait resolution");
+        assert_eq!(resolution.source, WaitSource::Futex);
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
+    }
+
+    #[test]
+    fn generic_exit_marks_robust_futex_owner_died_and_wakes_waiter() {
+        let mut runtime = test_runtime();
+        let tid = runtime.current_tid();
+        let mut raw = Vec::from([0u8; 40]);
+        let (base, _) = runtime.write_linux_arg_bytes(&raw).expect("robust buffer base");
+        let head = base as u64;
+        let entry = head + ROBUST_LIST_HEAD_SIZE;
+        let futex_addr = entry + 8;
+        let owned_word = FUTEX_WAITERS | (tid & FUTEX_TID_MASK);
+
+        raw[0..8].copy_from_slice(&entry.to_le_bytes());
+        raw[8..16].copy_from_slice(&8i64.to_le_bytes());
+        raw[16..24].copy_from_slice(&0u64.to_le_bytes());
+        raw[24..32].copy_from_slice(&head.to_le_bytes());
+        raw[32..36].copy_from_slice(&owned_word.to_le_bytes());
+        let (written_base, _) = runtime.write_linux_arg_bytes(&raw).expect("robust buffer");
+        assert_eq!(written_base, base);
+
+        let set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_set_robust_list",
+                SyscallContext::new(SYS_SET_ROBUST_LIST, [head, ROBUST_LIST_HEAD_SIZE, 0, 0, 0, 0]),
+            )
+            .expect("set_robust_list dispatch");
+        assert_eq!(expect_ret(set), 0);
+
+        let wait = runtime
+            .dispatch_linux_syscall_raw(
+                "test_robust_futex_wait",
+                SyscallContext::new(
+                    SYS_FUTEX,
+                    [futex_addr, FUTEX_WAIT as u64, owned_word as u64, 0, 0, owned_word as u64],
+                ),
+            )
+            .expect("futex wait dispatch");
+        let token = match wait {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending futex wait, got {other:?}"),
+        };
+
+        let exit = runtime
+            .dispatch_linux_syscall_raw("test_exit", SyscallContext::new(SYS_EXIT, [0; 6]))
+            .expect("exit dispatch");
+        assert_eq!(expect_exit(exit), 0);
+
+        let word = runtime.linux.read_bytes(futex_addr as u32, 4).expect("robust futex word");
+        assert_eq!(
+            u32::from_le_bytes(word.try_into().expect("word len")),
+            FUTEX_OWNER_DIED | FUTEX_WAITERS
+        );
+        assert!(runtime.query_thread(tid).expect("current thread").robust_list.is_none());
 
         let resolution = runtime.waits.take_resolution(token).expect("futex wait resolution");
         assert_eq!(resolution.source, WaitSource::Futex);
