@@ -61,6 +61,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         Ok(LinuxCallResult::Ret(0))
     }
+
+    pub(super) fn plan_set_tid_address(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let clear_child_tid = if plan.args[0] == 0 { None } else { Some(plan.args[0]) };
+        let tid = self.current_tid();
+        match self.set_thread_clear_child_tid(tid, clear_child_tid) {
+            Ok(()) => Ok(LinuxCallResult::Ret(tid as i64)),
+            Err(errno) => Ok(errno_ret(errno)),
+        }
+    }
 }
 
 fn checked_user_ptr(value: u64) -> Result<u32, i32> {
@@ -82,4 +94,53 @@ fn decode_target_tid(raw_tid: u64, current_tid: Tid) -> Result<Tid, i32> {
 
 fn errno_ret(errno: i32) -> LinuxCallResult {
     LinuxCallResult::Ret(-(errno as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use vmos_abi::{SYS_SET_TID_ADDRESS, SyscallContext};
+
+    use super::*;
+    use crate::supervisor::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime};
+
+    fn test_runtime() -> PrototypeRuntime<'static> {
+        let engine = Box::leak(Box::new(RuntimeOnlyExecutor::default()));
+        PrototypeRuntime::new(engine).expect("test runtime")
+    }
+
+    fn expect_ret(result: LinuxCallResult) -> i64 {
+        match result {
+            LinuxCallResult::Ret(ret) => ret,
+            other => panic!("expected Ret, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_set_tid_address_updates_clear_child_tid_and_returns_tid() {
+        let mut runtime = test_runtime();
+        let tid = runtime.current_tid();
+
+        let set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_set_tid_address",
+                SyscallContext::new(SYS_SET_TID_ADDRESS, [0x7000, 0, 0, 0, 0, 0]),
+            )
+            .expect("set_tid_address dispatch");
+        assert_eq!(expect_ret(set), tid as i64);
+        assert_eq!(
+            runtime.query_thread(tid).expect("current thread").clear_child_tid,
+            Some(0x7000)
+        );
+
+        let clear = runtime
+            .dispatch_linux_syscall_raw(
+                "test_clear_tid_address",
+                SyscallContext::new(SYS_SET_TID_ADDRESS, [0, 0, 0, 0, 0, 0]),
+            )
+            .expect("clear set_tid_address dispatch");
+        assert_eq!(expect_ret(clear), tid as i64);
+        assert_eq!(runtime.query_thread(tid).expect("current thread").clear_child_tid, None);
+    }
 }

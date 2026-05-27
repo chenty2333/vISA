@@ -633,6 +633,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "thread.cleanup",
             operation: "get-robust-list",
         },
+        PlanKind::SetTidAddress => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "thread.cleanup",
+            operation: "set-clear-child-tid",
+        },
         PlanKind::Ptrace => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
@@ -748,5 +754,15 @@ mod tests {
         assert_eq!(binding.subject, "linux_syscall");
         assert_eq!(binding.object, "vfs.file-lock");
         assert_eq!(binding.operation, "flock");
+    }
+
+    #[test]
+    fn set_tid_address_binding_records_thread_cleanup_effect() {
+        let binding = hostcall_binding(PlanKind::SetTidAddress);
+
+        assert_eq!(binding.class, HostcallClass::ImmediatePrivilegedOp);
+        assert_eq!(binding.subject, "linux_syscall");
+        assert_eq!(binding.object, "thread.cleanup");
+        assert_eq!(binding.operation, "set-clear-child-tid");
     }
 }

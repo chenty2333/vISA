@@ -369,6 +369,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::TimerfdGettime => self.plan_timerfd_gettime(plan),
             PlanKind::SetRobustList => self.plan_set_robust_list(plan),
             PlanKind::GetRobustList => self.plan_get_robust_list(plan),
+            PlanKind::SetTidAddress => self.plan_set_tid_address(plan),
             PlanKind::Kill => self.plan_kill(plan),
             PlanKind::Tgkill => self.plan_tgkill(plan),
             PlanKind::RtSigaction => self.plan_rt_sigaction(plan),

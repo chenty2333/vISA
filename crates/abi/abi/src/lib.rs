@@ -443,6 +443,7 @@ pub enum PlanKind {
     Shutdown = 112,
     GetSockName = 113,
     GetPeerName = 114,
+    SetTidAddress = 115,
 }
 
 impl PlanKind {
@@ -562,6 +563,7 @@ impl PlanKind {
             112 => Some(Self::Shutdown),
             113 => Some(Self::GetSockName),
             114 => Some(Self::GetPeerName),
+            115 => Some(Self::SetTidAddress),
             _ => None,
         }
     }

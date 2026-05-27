@@ -19,9 +19,9 @@ use vmos_abi::{
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PTRACE,
     SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME, SYS_RENAMEAT,
     SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
-    SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID,
-    SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
-    SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
+    SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETFSGID, SYS_SETFSUID,
+    SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
+    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
     SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
@@ -187,6 +187,7 @@ impl LinuxFrontend {
             SYS_BPF => self.plan_bpf(a0, a1, a2),
             SYS_SET_ROBUST_LIST => self.plan_set_robust_list(a0, a1),
             SYS_GET_ROBUST_LIST => self.plan_get_robust_list(a0, a1, a2),
+            SYS_SET_TID_ADDRESS => self.plan_set_tid_address(a0),
             SYS_EXIT | SYS_EXIT_GROUP => self.plan_exit(a0),
             _ => PackedStep::error(-ERR_ENOSYS),
         };
@@ -891,6 +892,11 @@ impl LinuxFrontend {
     fn plan_set_robust_list(&mut self, head: u64, len: u64) -> PackedStep {
         self.reset_plan(PlanKind::SetRobustList, [head, len, 0, 0, 0, 0]);
         PackedStep::plan(PlanKind::SetRobustList)
+    }
+
+    fn plan_set_tid_address(&mut self, ptr: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SetTidAddress, [ptr, 0, 0, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SetTidAddress)
     }
 
     fn plan_get_robust_list(&mut self, pid: u64, head_ptr: u64, len_ptr: u64) -> PackedStep {

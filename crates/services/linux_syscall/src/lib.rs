@@ -26,9 +26,9 @@ use vmos_abi::{
     SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PTRACE,
     SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME, SYS_RENAMEAT,
     SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP,
-    SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID,
-    SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
-    SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
+    SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SET_TID_ADDRESS, SYS_SETFSGID, SYS_SETFSUID,
+    SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
+    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
     SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
     SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
 };
@@ -200,6 +200,7 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_BPF => plan_bpf(a0, a1, a2),
         SYS_SET_ROBUST_LIST => plan_set_robust_list(a0, a1),
         SYS_GET_ROBUST_LIST => plan_get_robust_list(a0, a1, a2),
+        SYS_SET_TID_ADDRESS => plan_set_tid_address(a0),
         SYS_EXIT | SYS_EXIT_GROUP => plan_exit(a0),
         _ => PackedStep::error(-ERR_ENOSYS),
     };
@@ -825,6 +826,11 @@ fn plan_ptrace(request: u64, pid: u64, addr: u64, data: u64) -> PackedStep {
 fn plan_set_robust_list(head: u64, len: u64) -> PackedStep {
     reset_plan(PlanKind::SetRobustList, [head, len, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::SetRobustList)
+}
+
+fn plan_set_tid_address(ptr: u64) -> PackedStep {
+    reset_plan(PlanKind::SetTidAddress, [ptr, 0, 0, 0, 0, 0]);
+    PackedStep::plan(PlanKind::SetTidAddress)
 }
 
 fn plan_get_robust_list(pid: u64, head_ptr: u64, len_ptr: u64) -> PackedStep {
@@ -2418,6 +2424,21 @@ mod tests {
         assert_eq!(plan_arg(0), 12);
         assert_eq!(plan_arg(1), 0x7100);
         assert_eq!(plan_arg(2), 0x7200);
+    }
+
+    #[test]
+    fn set_tid_address_plan_preserves_clear_child_tid_pointer() {
+        let _guard = test_guard();
+        let set = PackedStep::decode(dispatch(SYS_SET_TID_ADDRESS, 0x7300, 0, 0, 0, 0, 0));
+
+        assert_eq!(set.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(set.aux), Some(PlanKind::SetTidAddress));
+        assert_eq!(plan_arg(0), 0x7300);
+
+        let clear = PackedStep::decode(dispatch(SYS_SET_TID_ADDRESS, 0, 0, 0, 0, 0, 0));
+        assert_eq!(clear.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(clear.aux), Some(PlanKind::SetTidAddress));
+        assert_eq!(plan_arg(0), 0);
     }
 
     #[test]
