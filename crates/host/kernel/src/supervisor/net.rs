@@ -52,6 +52,7 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) stack_socket_id: u32,
     pub(crate) mode: NetStackSocketMode,
     pub(crate) read_ready: bool,
+    pub(crate) write_ready: bool,
     pub(crate) listen_backlog: u32,
     pub(crate) local_ipv4: [u8; 4],
     pub(crate) local_port: u16,
@@ -82,6 +83,7 @@ impl NetStackSocketBinding {
             stack_socket_id,
             mode: NetStackSocketMode::Idle,
             read_ready: false,
+            write_ready: false,
             listen_backlog: 0,
             local_ipv4: [0; 4],
             local_port: 0,
@@ -533,6 +535,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return Ok(Some(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))));
             }
             self.net_stack_sockets[index].send_shutdown = true;
+            self.net_stack_sockets[index].write_ready = false;
         }
         let state = match how {
             SHUT_RD => "shutdown-rd",
@@ -584,8 +587,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
         }
 
-        let capacity = send_capacity.min(snapshot.send_capacity);
-        let send_window = capacity.saturating_sub(snapshot.send_queue);
+        let send_window = net_stack_send_window(send_capacity, &snapshot);
         if send_window == 0 {
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EAGAIN as i64))));
         }
@@ -735,7 +737,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Some(false);
         }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
-        self.net_stack.tcp_snapshot(stack_socket_id).ok().map(|snapshot| snapshot.can_send)
+        let send_capacity = self.net_stack_sockets[index].send_capacity;
+        self.net_stack
+            .tcp_snapshot(stack_socket_id)
+            .ok()
+            .map(|snapshot| net_stack_can_send(send_capacity, &snapshot))
     }
 
     pub(super) fn net_stack_socket_connected(
@@ -805,6 +811,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 stack_socket_id: pending.stack_socket_id,
                 mode: NetStackSocketMode::TcpEstablished,
                 read_ready: false,
+                write_ready: false,
                 listen_backlog: 0,
                 local_ipv4: pending.local_ipv4,
                 local_port: pending.local_port,
@@ -851,11 +858,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].remote_ipv4 = [0; 4];
         self.net_stack_sockets[index].remote_port = 0;
         self.net_stack_sockets[index].read_ready = false;
+        self.net_stack_sockets[index].write_ready = false;
         self.net_stack_sockets.push(NetStackSocketBinding {
             socket_id: accepted_socket_id,
             stack_socket_id: old_stack_socket_id,
             mode: NetStackSocketMode::TcpEstablished,
             read_ready: accepted_snapshot.can_recv || tcp_read_half_closed(&accepted_snapshot),
+            write_ready: net_stack_can_send(send_capacity, &accepted_snapshot),
             listen_backlog: 0,
             local_ipv4: accepted_snapshot.local_ipv4,
             local_port: accepted_snapshot.local_port,
@@ -1343,6 +1352,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].remote_ipv4 = [0; 4];
         self.net_stack_sockets[index].remote_port = 0;
         self.net_stack_sockets[index].read_ready = false;
+        self.net_stack_sockets[index].write_ready = false;
         self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
         self.notify_ready_key(ready_key, "smoltcp listener ready");
         true
@@ -1387,6 +1397,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].remote_ipv4 = [0; 4];
         self.net_stack_sockets[index].remote_port = 0;
         self.net_stack_sockets[index].read_ready = false;
+        self.net_stack_sockets[index].write_ready = false;
         self.semantic.record_socket_state_changed(socket_resource.id, "accept-backlog-full");
         true
     }
@@ -1399,15 +1410,23 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) {
         if self.net_stack_sockets[index].mode != NetStackSocketMode::TcpEstablished {
             self.net_stack_sockets[index].read_ready = false;
+            self.net_stack_sockets[index].write_ready = false;
             return;
         }
         let read_ready = self.net_stack_sockets[index].recv_shutdown
             || snapshot.can_recv
             || tcp_read_half_closed(snapshot);
+        let write_ready = !self.net_stack_sockets[index].send_shutdown
+            && net_stack_can_send(self.net_stack_sockets[index].send_capacity, snapshot);
         let was_read_ready = self.net_stack_sockets[index].read_ready;
+        let was_write_ready = self.net_stack_sockets[index].write_ready;
         self.net_stack_sockets[index].read_ready = read_ready;
+        self.net_stack_sockets[index].write_ready = write_ready;
         if read_ready && !was_read_ready {
             self.notify_ready_key(ready_key, "smoltcp socket readable");
+        }
+        if write_ready && !was_write_ready {
+            self.notify_ready_key(ready_key, "smoltcp socket writable");
         }
     }
 }
@@ -1418,6 +1437,15 @@ fn is_smoltcp_tcp_socket(domain: u32, ty: u32, protocol: u32) -> bool {
 
 fn tcp_read_half_closed(snapshot: &TcpSocketSnapshot) -> bool {
     snapshot.state == "close-wait"
+}
+
+fn net_stack_can_send(send_capacity: usize, snapshot: &TcpSocketSnapshot) -> bool {
+    snapshot.can_send && net_stack_send_window(send_capacity, snapshot) > 0
+}
+
+fn net_stack_send_window(send_capacity: usize, snapshot: &TcpSocketSnapshot) -> usize {
+    let capacity = send_capacity.min(snapshot.send_capacity);
+    capacity.saturating_sub(snapshot.send_queue)
 }
 
 fn is_raw_ipv4_or_arp_ethernet_frame(frame: &[u8]) -> bool {
@@ -1514,11 +1542,11 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
         SO_ACCEPTCONN, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
         SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT,
-        SYS_LISTEN, SYS_READ, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SETSOCKOPT, SYS_SHUTDOWN,
-        SYS_SOCKET, SYS_WRITE, SyscallContext,
+        SYS_LISTEN, SYS_POLL, SYS_READ, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SENDTO,
+        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1589,6 +1617,28 @@ mod tests {
     fn write_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, bytes: &[u8]) -> i64 {
         let (ptr, len) = runtime.write_linux_arg_bytes(bytes).expect("write buffer");
         dispatch_ret(runtime, "test_write", SYS_WRITE, [fd as u64, ptr as u64, len as u64, 0, 0, 0])
+    }
+
+    fn sendto_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, bytes: &[u8], flags: u32) -> i64 {
+        let (ptr, len) = runtime.write_linux_arg_bytes(bytes).expect("send buffer");
+        dispatch_ret(
+            runtime,
+            "test_sendto",
+            SYS_SENDTO,
+            [fd as u64, ptr as u64, len as u64, flags as u64, 0, 0],
+        )
+    }
+
+    fn poll_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, events: u16) -> (i64, u16) {
+        let mut pollfd = Vec::new();
+        pollfd.extend_from_slice(&(fd as i32).to_le_bytes());
+        pollfd.extend_from_slice(&events.to_le_bytes());
+        pollfd.extend_from_slice(&0u16.to_le_bytes());
+        let (ptr, _) = runtime.linux.write_arg_bytes(&pollfd).expect("pollfd buffer");
+        let ready = dispatch_ret(runtime, "test_poll", SYS_POLL, [ptr as u64, 1, 0, 0, 0, 0]);
+        let bytes = runtime.linux.read_bytes(ptr, 8).expect("pollfd output");
+        let revents = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
+        (ready, revents)
     }
 
     fn getsockopt_u32(runtime: &mut PrototypeRuntime<'_>, fd: i64, optname: u64) -> u32 {
@@ -2926,7 +2976,40 @@ mod tests {
         );
 
         let payload = [b't'; 4096];
+        assert_eq!(poll_fd(&mut runtime, accepted_fd, EPOLLOUT as u16), (1, EPOLLOUT as u16));
         assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
+        assert_eq!(
+            net_stack_buffer_state(&mut runtime, accepted_fd),
+            (4096, 4096, 0, 2048, 4096, 2048)
+        );
+        const MSG_DONTWAIT: u32 = 0x40;
+        assert_eq!(
+            sendto_fd(&mut runtime, accepted_fd, b"full", MSG_DONTWAIT),
+            -(ERR_EAGAIN as i64)
+        );
+        assert_eq!(poll_fd(&mut runtime, accepted_fd, EPOLLOUT as u16), (0, 0));
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl_sndbuf",
+                SYS_EPOLL_CTL,
+                [epfd as u64, EPOLL_CTL_ADD as u64, accepted_fd as u64, EPOLLOUT as u64, 0x5e, 0],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_wait_sndbuf_full",
+                SYS_EPOLL_WAIT,
+                [epfd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
     }
 
     #[test]
