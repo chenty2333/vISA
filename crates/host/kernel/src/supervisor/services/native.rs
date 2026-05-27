@@ -2189,6 +2189,10 @@ impl FutexService {
         self.wake_bitset(key, max_count, u32::MAX)
     }
 
+    pub(crate) fn wake_waiter(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
+        self.remove_waiter(wait_id)
+    }
+
     pub(crate) fn peek_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {
         Ok(self.best_waiter_index(key, u32::MAX).map(|index| self.waiters[index].wait_id))
     }
@@ -2288,6 +2292,10 @@ impl FutexService {
     }
 
     pub(crate) fn cancel_wait(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
+        self.remove_waiter(wait_id)
+    }
+
+    fn remove_waiter(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
         let old_len = self.waiters.len();
         self.waiters.retain(|waiter| waiter.wait_id != wait_id);
         if self.waiters.len() == old_len { errno(ERR_EINVAL) } else { Ok(()) }

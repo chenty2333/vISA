@@ -436,6 +436,7 @@ pub const SUPERVISOR_WASM_MODULES: &[WasmModuleSpec] = &[
             "waiter_count",
             "pi_waiter_count",
             "wake",
+            "wake_waiter",
             "wake_bitset",
             "requeue",
             "requeue_pi",

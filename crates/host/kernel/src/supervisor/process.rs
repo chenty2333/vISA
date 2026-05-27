@@ -3018,6 +3018,96 @@ mod tests {
     }
 
     #[test]
+    fn generic_robust_pi_handoff_preserves_waiters_for_plain_waiter() {
+        let mut runtime = test_runtime();
+        let owner_tid = runtime.current_tid();
+        let pi_waiter_pid = runtime.allocate_process(
+            runtime.current_pid(),
+            runtime.current_pid(),
+            runtime.current_pid(),
+        );
+        let pi_waiter_task = runtime.allocate_task();
+        let pi_waiter_tid = runtime.allocate_thread(pi_waiter_task, pi_waiter_pid);
+        runtime.boost_task_priority(pi_waiter_task, 4);
+        let plain_waiter_pid = runtime.allocate_process(
+            runtime.current_pid(),
+            runtime.current_pid(),
+            runtime.current_pid(),
+        );
+        let plain_waiter_task = runtime.allocate_task();
+        runtime.allocate_thread(plain_waiter_task, plain_waiter_pid);
+        runtime.boost_task_priority(plain_waiter_task, 99);
+
+        let mut raw = Vec::from([0u8; 40]);
+        let (base, _) = runtime.write_linux_arg_bytes(&raw).expect("robust buffer base");
+        let head = base as u64;
+        let entry = head + ROBUST_LIST_HEAD_SIZE;
+        let futex_addr = entry + 8;
+        let owned_word = FUTEX_WAITERS | (owner_tid & FUTEX_TID_MASK);
+
+        raw[0..8].copy_from_slice(&entry.to_le_bytes());
+        raw[8..16].copy_from_slice(&8i64.to_le_bytes());
+        raw[16..24].copy_from_slice(&0u64.to_le_bytes());
+        raw[24..32].copy_from_slice(&head.to_le_bytes());
+        raw[32..36].copy_from_slice(&owned_word.to_le_bytes());
+        runtime.write_linux_arg_bytes(&raw).expect("robust buffer");
+
+        let set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_set_robust_list",
+                SyscallContext::new(SYS_SET_ROBUST_LIST, [head, ROBUST_LIST_HEAD_SIZE, 0, 0, 0, 0]),
+            )
+            .expect("set_robust_list dispatch");
+        assert_eq!(expect_ret(set), 0);
+
+        let plain_token = runtime.waits.register(
+            plain_waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: false },
+            0,
+            100,
+        );
+        runtime.record_wait_token(plain_token);
+        runtime
+            .futex
+            .register_wait_with_priority(
+                futex_addr,
+                plain_token.id,
+                runtime.task_priority(plain_waiter_task),
+            )
+            .expect("plain waiter registration");
+
+        let pi_token = runtime.waits.register(
+            pi_waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: true },
+            0,
+            100,
+        );
+        runtime.record_wait_token(pi_token);
+        runtime
+            .futex
+            .register_wait_pi(futex_addr, pi_token.id, runtime.task_priority(pi_waiter_task))
+            .expect("pi waiter registration");
+
+        let exit = runtime
+            .dispatch_linux_syscall_raw("test_exit", SyscallContext::new(SYS_EXIT, [0; 6]))
+            .expect("exit dispatch");
+        assert_eq!(expect_exit(exit), 0);
+
+        let word = runtime.linux.read_bytes(futex_addr as u32, 4).expect("robust futex word");
+        assert_eq!(
+            u32::from_le_bytes(word.try_into().expect("word len")),
+            FUTEX_OWNER_DIED | FUTEX_WAITERS | (pi_waiter_tid & FUTEX_TID_MASK)
+        );
+
+        let resolution = runtime.waits.take_resolution(pi_token).expect("pi futex resolution");
+        assert_eq!(resolution.source, WaitSource::Futex { pi: true });
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
+        assert!(runtime.waits.take_resolution(plain_token).is_none());
+        assert_eq!(runtime.futex.waiter_count(futex_addr).expect("waiter count"), 1);
+        assert_eq!(runtime.futex.pi_waiter_count(futex_addr).expect("pi waiter count"), 0);
+    }
+
+    #[test]
     fn generic_wait4_reaps_zombie_and_writes_status() {
         let mut runtime = test_runtime();
         let child = create_zombie_child(&mut runtime, 7);

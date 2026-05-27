@@ -18,6 +18,7 @@ pub(crate) struct FutexService {
     waiter_count_export: WasmFn<u64, i32>,
     pi_waiter_count_export: WasmFn<u64, i32>,
     wake_export: WasmFn<(u64, u32), i32>,
+    wake_waiter_export: WasmFn<u64, i32>,
     wake_bitset_export: WasmFn<(u64, u32, u32), i32>,
     requeue_export: WasmFn<(u64, u32, u64, u32), i32>,
     requeue_pi_export: WasmFn<(u64, u32, u64), i32>,
@@ -53,6 +54,7 @@ impl FutexService {
         let pi_waiter_count_export =
             io.bind("pi_waiter_count", "missing futex pi_waiter_count export")?;
         let wake_export = io.bind("wake", "missing futex wake export")?;
+        let wake_waiter_export = io.bind("wake_waiter", "missing futex wake_waiter export")?;
         let wake_bitset_export = io.bind("wake_bitset", "missing futex wake_bitset export")?;
         let requeue_export = io.bind("requeue", "missing futex requeue export")?;
         let requeue_pi_export = io.bind("requeue_pi", "missing futex requeue_pi export")?;
@@ -74,6 +76,7 @@ impl FutexService {
             waiter_count_export,
             pi_waiter_count_export,
             wake_export,
+            wake_waiter_export,
             wake_bitset_export,
             requeue_export,
             requeue_pi_export,
@@ -173,6 +176,14 @@ impl FutexService {
                 .map_err(ServiceCallError::Trap)?,
         )?;
         self.read_wake_response(len)
+    }
+
+    pub(crate) fn wake_waiter(&mut self, wait_id: u64) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(&self.wake_waiter_export, wait_id, "futex_service trapped")
+                .map_err(ServiceCallError::Trap)?,
+        )
     }
 
     pub(crate) fn peek_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {

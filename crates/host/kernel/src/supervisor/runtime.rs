@@ -458,11 +458,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn refresh_futex_pi_boost(&mut self, owner_task: TaskId, futex_key: u64) -> bool {
-        let priority = match self.futex.max_priority(futex_key) {
+        let priority = match self.futex.max_pi_priority_excluding(futex_key, 0) {
             Ok(priority) => priority,
             Err(err) => {
                 crate::kwarn!(
-                    "futex pi max_priority query failed for key {}: {:?}",
+                    "futex pi max_pi_priority query failed for key {}: {:?}",
                     futex_key,
                     err
                 );
@@ -494,11 +494,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.release_futex_pi_boost(old_owner_task, futex_key);
         }
         let new_owner_task = self.scheduler.current_task();
-        let remaining_priority = match self.futex.max_priority(futex_key) {
+        let remaining_priority = match self.futex.max_pi_priority_excluding(futex_key, 0) {
             Ok(priority) => priority,
             Err(err) => {
                 crate::kwarn!(
-                    "futex pi remaining priority query failed for key {}: {:?}",
+                    "futex pi remaining pi priority query failed for key {}: {:?}",
                     futex_key,
                     err
                 );
@@ -533,7 +533,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some(next_owner_tid) = self.tid_for_task_id(next_owner_task) else {
             return Err(ServiceCallError::Invalid("futex pi waiter has no runtime thread"));
         };
-        let waiter_count = self.futex.pi_waiter_count(futex_key)?;
+        let waiter_count = self.futex.waiter_count(futex_key)?;
         let remaining_waiter_priority = self.futex.max_pi_priority_excluding(futex_key, wait_id)?;
         Ok(Some(FutexPiHandoff {
             wait_id,
@@ -559,10 +559,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         old_owner_task: TaskId,
         handoff: FutexPiHandoff,
     ) -> Result<(), ServiceCallError> {
-        let wait_ids = self.futex.wake(futex_key, 1)?;
-        if wait_ids.as_slice() != [handoff.wait_id] {
-            return Err(ServiceCallError::Invalid("futex pi handoff woke a different waiter"));
-        }
+        self.futex.wake_waiter(handoff.wait_id)?;
         self.scheduler.push_event(Event::WaitReady(handoff.wait_id));
         self.release_futex_pi_boost(old_owner_task, futex_key);
         if handoff.remaining_waiter_priority > 0 {
@@ -583,10 +580,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         futex_key: u64,
         handoff: FutexPiHandoff,
     ) -> Result<(), ServiceCallError> {
-        let wait_ids = self.futex.wake(futex_key, 1)?;
-        if wait_ids.as_slice() != [handoff.wait_id] {
-            return Err(ServiceCallError::Invalid("futex pi handoff woke a different waiter"));
-        }
+        self.futex.wake_waiter(handoff.wait_id)?;
         self.scheduler.push_event(Event::WaitReady(handoff.wait_id));
         if handoff.remaining_waiter_priority > 0 {
             self.register_futex_pi_boost(

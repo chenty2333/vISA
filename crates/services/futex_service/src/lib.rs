@@ -122,6 +122,11 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn wake_waiter(wait_id: u64) -> i32 {
+    remove_waiter(wait_id)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn peek_waiter(key: u64) -> i32 {
     peek_waiter_common(key, false)
 }
@@ -381,6 +386,10 @@ fn select_requeue_pi_waiter_index(waiters: *mut Waiter, key: u64) -> Option<usiz
 
 #[unsafe(no_mangle)]
 pub extern "C" fn cancel_wait(wait_id: u64) -> i32 {
+    remove_waiter(wait_id)
+}
+
+fn remove_waiter(wait_id: u64) -> i32 {
     unsafe {
         let base = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         for index in 0..MAX_WAITERS {
@@ -403,13 +412,19 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard};
+
     use super::*;
 
-    fn reset() {
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn reset() -> MutexGuard<'static, ()> {
+        let guard = TEST_LOCK.lock().expect("futex service test lock");
         unsafe {
             WAITERS = [Waiter::EMPTY; MAX_WAITERS];
             RESPONSE = [0; RESPONSE_CAPACITY];
         }
+        guard
     }
 
     fn response_wait_id(index: usize) -> u64 {
@@ -432,7 +447,7 @@ mod tests {
 
     #[test]
     fn wake_zero_count_wakes_no_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait(11, 7), 0);
         assert_eq!(wake(11, 0), 0);
         unsafe {
@@ -444,7 +459,7 @@ mod tests {
 
     #[test]
     fn requeue_zero_count_moves_no_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait(11, 7), 0);
         assert_eq!(requeue(11, 0, 22, 0), 8);
         assert_eq!(requeue_total(), 0);
@@ -458,7 +473,7 @@ mod tests {
 
     #[test]
     fn wake_bitset_only_wakes_overlapping_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_bitset(11, 7, 0b0100), 0);
         assert_eq!(register_wait_bitset(11, 8, 0b0010), 0);
         assert_eq!(wake_bitset(11, 10, 0b0100), 8);
@@ -473,7 +488,7 @@ mod tests {
 
     #[test]
     fn wake_prefers_higher_priority_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_with_priority(11, 7, 1), 0);
         assert_eq!(register_wait_with_priority(11, 8, 9), 0);
         assert_eq!(register_wait_with_priority(11, 9, 4), 0);
@@ -502,7 +517,7 @@ mod tests {
 
     #[test]
     fn requeue_wakes_then_moves_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait(11, 7), 0);
         assert_eq!(register_wait(11, 8), 0);
         assert_eq!(register_wait(11, 9), 0);
@@ -521,7 +536,7 @@ mod tests {
 
     #[test]
     fn requeue_pi_waiters_are_not_woken_by_plain_wake() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_requeue_pi(11, 7, 5), 0);
         assert_eq!(wake(11, 1), 0);
         assert_eq!(waiter_count(11), 0);
@@ -534,7 +549,7 @@ mod tests {
 
     #[test]
     fn pi_waiter_queries_ignore_plain_waiters() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_with_priority(11, 7, 99), 0);
         assert_eq!(register_wait_pi(11, 8, 4), 0);
         assert_eq!(register_wait_pi(11, 9, 7), 0);
@@ -553,7 +568,7 @@ mod tests {
 
     #[test]
     fn requeue_pi_waiters_remain_pi_after_requeue() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_requeue_pi(11, 7, 5), 0);
         assert_eq!(register_wait_with_priority(22, 8, 99), 0);
         assert_eq!(pi_waiter_count(11), 0);
@@ -572,8 +587,22 @@ mod tests {
     }
 
     #[test]
+    fn wake_waiter_removes_exact_waiter_without_priority_selection() {
+        let _guard = reset();
+        assert_eq!(register_wait_with_priority(11, 7, 99), 0);
+        assert_eq!(register_wait_pi(11, 8, 4), 0);
+
+        assert_eq!(wake_waiter(8), 0);
+        assert_eq!(waiter_count(11), 1);
+        assert_eq!(pi_waiter_count(11), 0);
+
+        assert_eq!(wake(11, 1), 8);
+        assert_eq!(response_wait_id(0), 7);
+    }
+
+    #[test]
     fn requeue_pi_moves_highest_priority_waiters_first() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_requeue_pi(11, 7, 1), 0);
         assert_eq!(register_wait_requeue_pi(11, 8, 9), 0);
         assert_eq!(register_wait_requeue_pi(11, 9, 4), 0);
@@ -591,7 +620,7 @@ mod tests {
 
     #[test]
     fn max_priority_reports_highest_waiter_priority() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_with_priority(11, 7, 3), 0);
         assert_eq!(register_wait_with_priority(11, 8, 11), 0);
         assert_eq!(max_priority(11), 11);
@@ -602,7 +631,7 @@ mod tests {
 
     #[test]
     fn peek_waiter_reports_highest_priority_without_removing() {
-        reset();
+        let _guard = reset();
         assert_eq!(register_wait_with_priority(11, 7, 3), 0);
         assert_eq!(register_wait_with_priority(11, 8, 11), 0);
         assert_eq!(register_wait_with_priority(11, 9, 5), 0);
@@ -618,7 +647,7 @@ mod tests {
 
     #[test]
     fn peek_waiter_reports_empty_key_as_zero_len() {
-        reset();
+        let _guard = reset();
         assert_eq!(peek_waiter(99), 0);
         assert_eq!(waiter_count(99), 0);
     }
