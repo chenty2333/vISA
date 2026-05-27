@@ -1198,8 +1198,8 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN, SOCK_STREAM,
-        SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
+        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN,
+        SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
         SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_SOCKET, SYS_WRITE,
         SyscallContext,
     };
@@ -1517,6 +1517,61 @@ mod tests {
         frame[tcp_start + 13] = 0x18;
         frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
         frame[tcp_start + 20..tcp_start + 20 + payload.len()].copy_from_slice(payload);
+        let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
+    fn tcp_fin_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
+        let syn_ack_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
+        let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
+        let server_mac: [u8; 6] = syn_ack[6..12].try_into().expect("server mac");
+        let client_mac: [u8; 6] = syn_ack[0..6].try_into().expect("client mac");
+        let server_ip: [u8; 4] = syn_ack[26..30].try_into().expect("server ip");
+        let client_ip: [u8; 4] = syn_ack[30..34].try_into().expect("client ip");
+        let server_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start], syn_ack[syn_ack_tcp_start + 1]]);
+        let client_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start + 2], syn_ack[syn_ack_tcp_start + 3]]);
+        let server_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 4],
+            syn_ack[syn_ack_tcp_start + 5],
+            syn_ack[syn_ack_tcp_start + 6],
+            syn_ack[syn_ack_tcp_start + 7],
+        ]);
+        let client_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 8],
+            syn_ack[syn_ack_tcp_start + 9],
+            syn_ack[syn_ack_tcp_start + 10],
+            syn_ack[syn_ack_tcp_start + 11],
+        ]);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&server_mac);
+        frame[6..12].copy_from_slice(&client_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&client_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&server_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x11;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
         let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
         frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
         frame
@@ -2408,6 +2463,102 @@ mod tests {
             dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
             0
         );
+    }
+
+    #[test]
+    fn packet_tcp_fin_wakes_epollrdhup_and_reads_eof() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18094u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_015u16;
+        let syn_ack = drive_reference_backend_tcp_handshake(
+            &mut runtime,
+            local_port,
+            remote_port,
+            0x7172_7374,
+        );
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xfeed_f1a5u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl",
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    accepted_fd as u64,
+                    EPOLLRDHUP as u64,
+                    epoll_data,
+                    0,
+                ],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_rdhup",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait rdhup dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending rdhup epoll_wait, got {other:?}"),
+        };
+
+        let fin = tcp_fin_for_syn_ack(&syn_ack);
+        runtime.reference_packet_backend.inject_rx_frame(&fin).expect("inject tcp fin");
+        let event_bytes = expect_bytes(
+            runtime.block_on_wait("test_epoll_rdhup_resume", token).expect("rdhup wait"),
+        );
+        assert_epoll_event(&event_bytes, EPOLLRDHUP, epoll_data);
+
+        let eof = dispatch_bytes(
+            &mut runtime,
+            "test_read_after_fin",
+            SYS_READ,
+            [accepted_fd as u64, 0, 16, 0, 0, 0],
+        );
+        assert!(eof.is_empty());
+        assert!(event_log_contains(&runtime, "PacketReceived"));
     }
 
     #[test]
