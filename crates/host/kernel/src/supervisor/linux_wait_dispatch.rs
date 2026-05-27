@@ -576,7 +576,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                             let _ = self.linux.resume_wait(resolution.resume_cookie)?;
                             self.collect_epoll_ready(epoll_id, max_events)
                         }
-                        WaitSource::SocketConnect { .. } => Ok(LinuxCallResult::Ret(0)),
+                        WaitSource::SocketConnect { fd } => self.retry_socket_connect_wait(fd),
                         WaitSource::SocketAccept {
                             fd,
                             flags,

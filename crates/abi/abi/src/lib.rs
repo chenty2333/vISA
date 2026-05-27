@@ -219,6 +219,8 @@ pub const EPOLL_CTL_DEL: u32 = 2;
 pub const EPOLL_CTL_MOD: u32 = 3;
 pub const EPOLLIN: u32 = 0x001;
 pub const EPOLLOUT: u32 = 0x004;
+pub const EPOLLERR: u32 = 0x008;
+pub const EPOLLHUP: u32 = 0x010;
 pub const EPOLLRDHUP: u32 = 0x2000;
 
 pub const AF_INET: u32 = 2;
@@ -268,6 +270,7 @@ pub const ERR_EPROTONOSUPPORT: i32 = 93;
 pub const ERR_EOPNOTSUPP: i32 = 95;
 pub const ERR_EAFNOSUPPORT: i32 = 97;
 pub const ERR_EADDRINUSE: i32 = 98;
+pub const ERR_ECONNRESET: i32 = 104;
 pub const ERR_EISCONN: i32 = 106;
 pub const ERR_ENOTCONN: i32 = 107;
 pub const ERR_ETIMEDOUT: i32 = 110;

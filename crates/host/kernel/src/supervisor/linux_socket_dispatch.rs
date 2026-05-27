@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 
 use vmos_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
-    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_RCVBUF, SO_SNDBUF,
-    SOCK_STREAM, SOL_SOCKET,
+    ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_ERROR, SO_RCVBUF,
+    SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
 };
 
 use super::{
@@ -274,6 +274,33 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Err("linux_socket_service trapped during socket state change")
             }
             Err(ServiceCallError::Invalid(err)) => Err(err),
+        }
+    }
+
+    pub(super) fn retry_socket_connect_wait(
+        &mut self,
+        fd: u32,
+    ) -> Result<LinuxCallResult, &'static str> {
+        let (socket_id, ready_key, handle) = match self.socket_fd_snapshot(fd) {
+            Ok(snapshot) => snapshot,
+            Err(ServiceCallError::Errno(errno)) => {
+                return Ok(LinuxCallResult::Ret(-(errno as i64)));
+            }
+            Err(ServiceCallError::Trap(reason)) => {
+                crate::kwarn!("socket connect retry snapshot: {}", reason);
+                return Err("socket snapshot trapped during connect retry");
+            }
+            Err(ServiceCallError::Invalid(err)) => return Err(err),
+        };
+        let connected =
+            self.net_stack_socket_connected(socket_id, ready_key, handle).unwrap_or(false);
+        if let Some(errno) = self.take_net_stack_socket_error(socket_id) {
+            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+        }
+        if connected {
+            Ok(LinuxCallResult::Ret(0))
+        } else {
+            Ok(LinuxCallResult::Ret(-(ERR_EALREADY as i64)))
         }
     }
 
@@ -1269,7 +1296,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         let optlen_ptr =
             u32::try_from(plan.args[4]).map_err(|_| "getsockopt optlen pointer overflowed")?;
         match self.linux_socket.getsockopt(socket_id, level, optname) {
-            Ok(value) => self.write_getsockopt_u32(optval_ptr, optlen_ptr, value),
+            Ok(value) => {
+                let value = if level == SOL_SOCKET && optname == SO_ERROR {
+                    self.take_net_stack_socket_error(socket_id).unwrap_or(value as i32) as u32
+                } else {
+                    value
+                };
+                self.write_getsockopt_u32(optval_ptr, optlen_ptr, value)
+            }
             Err(ServiceCallError::Errno(errno)) => Ok(LinuxCallResult::Ret(-(errno as i64))),
             Err(ServiceCallError::Trap(reason)) => {
                 crate::kwarn!("linux_socket getsockopt: {}", reason);

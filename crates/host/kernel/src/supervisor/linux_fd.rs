@@ -2,9 +2,9 @@ use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
 use vmos_abi::{
-    EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF, ERR_ECANCELED, ERR_EFBIG,
-    ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_ENOTSOCK, ERR_EOPNOTSUPP, ERR_EPERM, NodeKind,
-    ServiceRoute,
+    EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF,
+    ERR_ECANCELED, ERR_EFBIG, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_ENOTSOCK, ERR_EOPNOTSUPP,
+    ERR_EPERM, NodeKind, ServiceRoute,
 };
 
 use super::{
@@ -2012,7 +2012,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (socket_id, ready_key, handle) =
             self.socket_fd_snapshot(fd).map_err(errno_from_service_error)?;
         let mut revents = 0u16;
-        if self.socket_ready_key_is_readable(ready_key) {
+        let readable = self.socket_ready_key_is_readable(ready_key);
+        if self.net_stack_socket_error(socket_id).is_some() {
+            revents |= POLLERR | POLLHUP;
+        }
+        if readable {
             revents |= requested_read_revents(events);
         }
         if events & POLLRDHUP != 0
@@ -2598,6 +2602,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some((socket_id, handle)) = self.socket_for_ready_key(ready_key) else {
             return false;
         };
+        let socket_error = self.net_stack_socket_error(socket_id).is_some();
         let readable = events & EPOLLIN != 0 && self.socket_ready_key_is_readable(ready_key);
         let writable = events & EPOLLOUT != 0 && {
             if let Some(writable) = self.net_stack_socket_writable(socket_id, ready_key, handle) {
@@ -2613,7 +2618,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             && self
                 .net_stack_socket_read_half_closed(socket_id, ready_key, handle)
                 .unwrap_or(false);
-        readable || writable || read_half_closed
+        socket_error || readable || writable || read_half_closed
     }
 
     pub(super) fn ready_key_current_epoll_events(
@@ -2623,6 +2628,11 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Option<u32> {
         let mut events = 0;
         if self.socket_for_ready_key(ready_key).is_some() {
+            if let Some((socket_id, _)) = self.socket_for_ready_key(ready_key)
+                && self.net_stack_socket_error(socket_id).is_some()
+            {
+                events |= EPOLLERR | EPOLLHUP;
+            }
             if self.socket_ready_key_matches_events(ready_key, EPOLLIN) {
                 events |= EPOLLIN;
             }
@@ -2632,7 +2642,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             if self.socket_ready_key_matches_events(ready_key, EPOLLRDHUP) {
                 events |= EPOLLRDHUP;
             }
-            return Some(events & requested_events);
+            let forced_events = events & (EPOLLERR | EPOLLHUP);
+            return Some((events & requested_events) | forced_events);
         }
 
         match ready_key & READY_TAG_MASK {

@@ -8,8 +8,8 @@ use service_core::{
 };
 use substrate_api::{PacketDeviceBackend, PacketFrameSlot};
 use vmos_abi::{
-    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EINPROGRESS, ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN,
-    ERR_EOPNOTSUPP, ERR_EPIPE, SOCK_STREAM,
+    AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_ECONNREFUSED, ERR_ECONNRESET, ERR_EINPROGRESS,
+    ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN, ERR_EOPNOTSUPP, ERR_EPIPE, SOCK_STREAM,
 };
 
 use super::{
@@ -62,6 +62,8 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) send_capacity: usize,
     pub(crate) recv_shutdown: bool,
     pub(crate) send_shutdown: bool,
+    pub(crate) pending_error: Option<i32>,
+    pub(crate) error_reported: bool,
     pub(crate) pending_accepts: Vec<NetStackPendingAccept>,
 }
 
@@ -93,6 +95,8 @@ impl NetStackSocketBinding {
             send_capacity: DEFAULT_TCP_BUFFER_LEN,
             recv_shutdown: false,
             send_shutdown: false,
+            pending_error: None,
+            error_reported: false,
             pending_accepts: Vec::new(),
         }
     }
@@ -564,6 +568,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].send_shutdown {
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EPIPE as i64))));
         }
+        if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+            return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
+        }
 
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
@@ -572,6 +579,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         if self.net_stack_sockets[index].send_shutdown {
             return Ok(Some(LinuxCallResult::Ret(-(ERR_EPIPE as i64))));
+        }
+        if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+            return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
         }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let send_capacity = self.net_stack_sockets[index].send_capacity;
@@ -620,6 +630,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].recv_shutdown {
             return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
         }
+        if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+            return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
+        }
 
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
@@ -628,6 +641,9 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         if self.net_stack_sockets[index].recv_shutdown {
             return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
+        }
+        if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+            return Ok(Some(LinuxCallResult::Ret(-(errno as i64))));
         }
         if count == 0 && self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
             return Ok(Some(LinuxCallResult::Bytes(Vec::new())));
@@ -678,10 +694,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].recv_shutdown {
             return Some(true);
         }
+        if self.net_stack_sockets[index].pending_error.is_some() {
+            return Some(true);
+        }
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
         if self.net_stack_sockets[index].recv_shutdown {
+            return Some(true);
+        }
+        if self.net_stack_sockets[index].pending_error.is_some() {
             return Some(true);
         }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
@@ -730,10 +752,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.net_stack_sockets[index].send_shutdown {
             return Some(false);
         }
+        if self.net_stack_sockets[index].pending_error.is_some() {
+            return Some(false);
+        }
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
         if self.net_stack_sockets[index].send_shutdown {
+            return Some(false);
+        }
+        if self.net_stack_sockets[index].pending_error.is_some() {
             return Some(false);
         }
         let stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
@@ -757,7 +785,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let index = self.net_stack_socket_index(socket_id)?;
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
-        Some(self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished)
+        Some(
+            self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished
+                || self.net_stack_sockets[index].pending_error.is_some(),
+        )
+    }
+
+    pub(super) fn net_stack_socket_error(&self, socket_id: u32) -> Option<i32> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.net_stack_sockets[index].pending_error
+    }
+
+    pub(super) fn take_net_stack_socket_error(&mut self, socket_id: u32) -> Option<i32> {
+        let index = self.net_stack_socket_index(socket_id)?;
+        self.take_net_stack_socket_error_by_index(index)
     }
 
     pub(super) fn net_stack_socket_accept_ready(
@@ -821,6 +862,8 @@ impl<'engine> PrototypeRuntime<'engine> {
                 send_capacity: pending.send_capacity,
                 recv_shutdown: false,
                 send_shutdown: false,
+                pending_error: None,
+                error_reported: false,
                 pending_accepts: Vec::new(),
             });
             return Ok(Some(LinuxCallResult::Ret(0)));
@@ -874,6 +917,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             send_capacity,
             recv_shutdown: false,
             send_shutdown: false,
+            pending_error: None,
+            error_reported: false,
             pending_accepts: Vec::new(),
         });
         Ok(Some(LinuxCallResult::Ret(0)))
@@ -1301,7 +1346,36 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.semantic.record_socket_state_changed(socket_resource.id, "accept-ready");
             self.notify_ready_key(ready_key, "smoltcp listener ready");
         }
+        if snapshot.state == "closed"
+            && self.net_stack_sockets[index].pending_error.is_none()
+            && !self.net_stack_sockets[index].error_reported
+        {
+            let pending_error = match self.net_stack_sockets[index].mode {
+                NetStackSocketMode::TcpConnectInProgress => Some(ERR_ECONNREFUSED),
+                NetStackSocketMode::TcpEstablished
+                    if !self.net_stack_sockets[index].recv_shutdown
+                        && !self.net_stack_sockets[index].send_shutdown =>
+                {
+                    Some(ERR_ECONNRESET)
+                }
+                _ => None,
+            };
+            if let Some(errno) = pending_error {
+                self.net_stack_sockets[index].pending_error = Some(errno);
+                self.net_stack_sockets[index].read_ready = true;
+                self.net_stack_sockets[index].write_ready = false;
+                self.semantic.record_socket_state_changed(socket_resource.id, "error-reset");
+                self.notify_ready_key(ready_key, "smoltcp socket reset");
+            }
+        }
         self.refresh_net_stack_readiness(index, &snapshot, ready_key);
+    }
+
+    fn take_net_stack_socket_error_by_index(&mut self, index: usize) -> Option<i32> {
+        let error = self.net_stack_sockets[index].pending_error.take()?;
+        self.net_stack_sockets[index].error_reported = true;
+        self.net_stack_sockets[index].read_ready = false;
+        Some(error)
     }
 
     fn queue_established_listener_socket(
@@ -1414,9 +1488,11 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         }
         let read_ready = self.net_stack_sockets[index].recv_shutdown
+            || self.net_stack_sockets[index].pending_error.is_some()
             || snapshot.can_recv
             || tcp_read_half_closed(snapshot);
         let write_ready = !self.net_stack_sockets[index].send_shutdown
+            && self.net_stack_sockets[index].pending_error.is_none()
             && net_stack_can_send(self.net_stack_sockets[index].send_capacity, snapshot);
         let was_read_ready = self.net_stack_sockets[index].read_ready;
         let was_write_ready = self.net_stack_sockets[index].write_ready;
@@ -1542,12 +1618,12 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use vmos_abi::{
-        AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
-        SO_ACCEPTCONN, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
-        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FCNTL,
-        SYS_GETSOCKOPT, SYS_LISTEN, SYS_POLL, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_RECVMSG,
-        SYS_SENDMSG, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SYS_WRITEV,
-        SyscallContext,
+        AF_INET, EPOLL_CTL_ADD, EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EAGAIN,
+        ERR_ECONNREFUSED, ERR_ECONNRESET, ERR_EINTR, ERR_EPIPE, SO_ACCEPTCONN, SO_RCVBUF,
+        SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT,
+        SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FCNTL, SYS_GETSOCKOPT, SYS_LISTEN,
+        SYS_POLL, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SENDTO,
+        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SYS_WRITEV, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1568,6 +1644,9 @@ mod tests {
     const SIGPIPE: u8 = 13;
     const F_SETFL: u64 = 4;
     const MSG_DONTWAIT: u32 = 0x40;
+    const POLLIN: u16 = 0x001;
+    const POLLERR: u16 = 0x008;
+    const POLLHUP: u16 = 0x010;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -1887,6 +1966,52 @@ mod tests {
         frame
     }
 
+    fn tcp_rst_for_syn(syn: &[u8], server_mac: [u8; 6], server_seq: u32) -> Vec<u8> {
+        let syn_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ihl = ((syn[syn_ip_start] & 0x0f) as usize) * 4;
+        let syn_tcp_start = syn_ip_start + syn_ihl;
+        let client_mac: [u8; 6] = syn[6..12].try_into().expect("client mac");
+        let client_ip: [u8; 4] = syn[26..30].try_into().expect("client ip");
+        let server_ip: [u8; 4] = syn[30..34].try_into().expect("server ip");
+        let client_port = u16::from_be_bytes([syn[syn_tcp_start], syn[syn_tcp_start + 1]]);
+        let server_port = u16::from_be_bytes([syn[syn_tcp_start + 2], syn[syn_tcp_start + 3]]);
+        let client_seq = u32::from_be_bytes([
+            syn[syn_tcp_start + 4],
+            syn[syn_tcp_start + 5],
+            syn[syn_tcp_start + 6],
+            syn[syn_tcp_start + 7],
+        ]);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&client_mac);
+        frame[6..12].copy_from_slice(&server_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&server_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&client_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&server_seq.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&client_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x14;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&server_ip, &client_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
     fn tcp_ack_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
         let syn_ack_ip_start = ETHERNET_HEADER_LEN;
         let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
@@ -2125,6 +2250,61 @@ mod tests {
             .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
         frame[tcp_start + 12] = 5 << 4;
         frame[tcp_start + 13] = 0x11;
+        frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
+        let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
+        frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+        frame
+    }
+
+    fn tcp_rst_for_syn_ack(syn_ack: &[u8]) -> Vec<u8> {
+        let syn_ack_ip_start = ETHERNET_HEADER_LEN;
+        let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
+        let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
+        let server_mac: [u8; 6] = syn_ack[6..12].try_into().expect("server mac");
+        let client_mac: [u8; 6] = syn_ack[0..6].try_into().expect("client mac");
+        let server_ip: [u8; 4] = syn_ack[26..30].try_into().expect("server ip");
+        let client_ip: [u8; 4] = syn_ack[30..34].try_into().expect("client ip");
+        let server_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start], syn_ack[syn_ack_tcp_start + 1]]);
+        let client_port =
+            u16::from_be_bytes([syn_ack[syn_ack_tcp_start + 2], syn_ack[syn_ack_tcp_start + 3]]);
+        let server_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 4],
+            syn_ack[syn_ack_tcp_start + 5],
+            syn_ack[syn_ack_tcp_start + 6],
+            syn_ack[syn_ack_tcp_start + 7],
+        ]);
+        let client_seq = u32::from_be_bytes([
+            syn_ack[syn_ack_tcp_start + 8],
+            syn_ack[syn_ack_tcp_start + 9],
+            syn_ack[syn_ack_tcp_start + 10],
+            syn_ack[syn_ack_tcp_start + 11],
+        ]);
+
+        let mut frame = alloc::vec![0u8; ETHERNET_HEADER_LEN + 20 + 20];
+        frame[0..6].copy_from_slice(&server_mac);
+        frame[6..12].copy_from_slice(&client_mac);
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+
+        let ip_start = ETHERNET_HEADER_LEN;
+        frame[ip_start] = 0x45;
+        frame[ip_start + 2..ip_start + 4].copy_from_slice(&(40u16).to_be_bytes());
+        frame[ip_start + 6..ip_start + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+        frame[ip_start + 8] = 64;
+        frame[ip_start + 9] = 6;
+        frame[ip_start + 12..ip_start + 16].copy_from_slice(&client_ip);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&server_ip);
+        let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
+        frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+
+        let tcp_start = ip_start + 20;
+        frame[tcp_start..tcp_start + 2].copy_from_slice(&client_port.to_be_bytes());
+        frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&server_port.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 8..tcp_start + 12]
+            .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
+        frame[tcp_start + 12] = 5 << 4;
+        frame[tcp_start + 13] = 0x14;
         frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
         let tcp_checksum = tcp_ipv4_checksum(&client_ip, &server_ip, &frame[tcp_start..]);
         frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
@@ -4355,6 +4535,78 @@ mod tests {
     }
 
     #[test]
+    fn packet_tcp_rst_wakes_epollerr_and_read_returns_econnreset() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18104, 40_104, 0x7d7e_7f80);
+        let epfd =
+            dispatch_ret(&mut runtime, "test_epoll_create1", SYS_EPOLL_CREATE1, [0, 0, 0, 0, 0, 0]);
+        assert!(epfd >= 0);
+        let epoll_data = 0xfeed_e771u64;
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_epoll_ctl_rst",
+                SYS_EPOLL_CTL,
+                [
+                    epfd as u64,
+                    EPOLL_CTL_ADD as u64,
+                    accepted_fd as u64,
+                    EPOLLIN as u64,
+                    epoll_data,
+                    0,
+                ],
+            ),
+            0
+        );
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_epoll_wait_rst",
+                SyscallContext::new(SYS_EPOLL_WAIT, [epfd as u64, 1, u64::MAX, 0, 0, 0]),
+            )
+            .expect("epoll_wait rst dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending rst epoll_wait, got {other:?}"),
+        };
+
+        let rst = tcp_rst_for_syn_ack(&syn_ack);
+        runtime.reference_packet_backend.inject_rx_frame(&rst).expect("inject tcp rst");
+        let event_bytes =
+            expect_bytes(runtime.block_on_wait("test_epoll_rst_resume", token).expect("rst wait"));
+        assert_epoll_event(&event_bytes, EPOLLERR | EPOLLHUP, epoll_data);
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_read_after_rst",
+                SYS_READ,
+                [accepted_fd as u64, 0, 16, 0, 0, 0],
+            ),
+            -(ERR_ECONNRESET as i64)
+        );
+        assert!(event_log_contains(&runtime, "error-reset"));
+    }
+
+    #[test]
+    fn packet_tcp_rst_poll_reports_error_and_so_error_consumes() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18105, 40_105, 0x8182_8384);
+        let rst = tcp_rst_for_syn_ack(&syn_ack);
+        runtime.reference_packet_backend.inject_rx_frame(&rst).expect("inject tcp rst");
+
+        let (ready, revents) = poll_fd(&mut runtime, accepted_fd, POLLIN);
+        assert_eq!(ready, 1);
+        assert_eq!(revents & (POLLERR | POLLHUP), POLLERR | POLLHUP);
+
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_ERROR), ERR_ECONNRESET as u32);
+        assert_eq!(getsockopt_u32(&mut runtime, accepted_fd, SO_ERROR), 0);
+    }
+
+    #[test]
     fn packet_tcp_handshake_wakes_listener_epoll_before_accept() {
         let _guard = test_guard();
         let mut runtime = test_runtime();
@@ -4554,6 +4806,63 @@ mod tests {
             dispatch_ret(&mut runtime, "test_close_epoll", SYS_CLOSE, [epfd as u64, 0, 0, 0, 0, 0]),
             0
         );
+    }
+
+    #[test]
+    fn packet_blocking_connect_rst_resumes_econnrefused() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+        let remote_port = 18106u16;
+        let remote_ipv4 = u32::from_be_bytes(REMOTE_IPV4);
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_connect_rst",
+                SyscallContext::new(
+                    SYS_CONNECT,
+                    [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
+                ),
+            )
+            .expect("connect rst dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending connect, got {other:?}"),
+        };
+        assert!(is_remote_arp_request(
+            runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
+        ));
+
+        let arp_reply = arp_reply(
+            REMOTE_MAC,
+            REMOTE_IPV4,
+            service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
+            VMOS_IPV4,
+        );
+        runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
+        runtime.pump_network_runtime();
+
+        let syn = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("connect emitted tcp syn")
+            .to_vec();
+        assert_eq!(syn[47] & 0x02, 0x02);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), remote_port);
+
+        let rst = tcp_rst_for_syn(&syn, REMOTE_MAC, 0x8586_8788);
+        runtime.reference_packet_backend.inject_rx_frame(&rst).expect("inject connect rst");
+        let refused = expect_ret(
+            runtime.block_on_wait("test_connect_rst_resume", token).expect("connect rst wait"),
+        );
+        assert_eq!(refused, -(ERR_ECONNREFUSED as i64));
+        assert!(event_log_contains(&runtime, "error-reset"));
     }
 
     #[test]
