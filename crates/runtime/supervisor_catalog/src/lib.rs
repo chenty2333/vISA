@@ -237,7 +237,7 @@ const LINUX_CAPABILITIES: &[CapabilitySpec] = &[
     },
     CapabilitySpec {
         name: "vfs.file-lock",
-        rights: &["fcntl-setlk", "fcntl-getlk"],
+        rights: &["fcntl-setlk", "fcntl-getlk", "flock"],
         lifetime: "task",
     },
 ];

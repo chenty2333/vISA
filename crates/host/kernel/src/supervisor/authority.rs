@@ -556,6 +556,12 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "vfs.file-lock",
             operation: "fcntl-getlk",
         },
+        PlanKind::Flock => HostcallBinding {
+            class: HostcallClass::AsyncOp,
+            subject: "linux_syscall",
+            object: "vfs.file-lock",
+            operation: "flock",
+        },
         PlanKind::Pipe => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",
@@ -732,5 +738,15 @@ mod tests {
         assert_eq!(binding.subject, "linux_syscall");
         assert_eq!(binding.object, "process.lifecycle");
         assert_eq!(binding.operation, "exit");
+    }
+
+    #[test]
+    fn flock_hostcall_binding_records_file_lock_effect() {
+        let binding = hostcall_binding(PlanKind::Flock);
+
+        assert_eq!(binding.class, HostcallClass::AsyncOp);
+        assert_eq!(binding.subject, "linux_syscall");
+        assert_eq!(binding.object, "vfs.file-lock");
+        assert_eq!(binding.operation, "flock");
     }
 }

@@ -1427,7 +1427,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.require_capability("linux_syscall", "vfs.file-lock", "fcntl-setlk").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
-        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl setlk fd overflowed")?;
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
         match self.validate_fd_handle(fd) {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
@@ -1440,7 +1443,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
 
-        let cmd = u32::try_from(plan.args[1]).map_err(|_| "fcntl setlk cmd overflowed")?;
+        let cmd = match u32::try_from(plan.args[1]) {
+            Ok(cmd) => cmd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+        };
         let lock_type = plan.args[2] as i16;
         let whence = plan.args[3] as i16;
         let start = plan.args[4] as i64;
@@ -1469,7 +1475,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.require_capability("linux_syscall", "vfs.file-lock", "fcntl-getlk").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
-        let fd = u32::try_from(plan.args[0]).map_err(|_| "fcntl getlk fd overflowed")?;
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
         match self.validate_fd_handle(fd) {
             Ok(()) => {}
             Err(ServiceCallError::Errno(errno)) => {
@@ -1482,8 +1491,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(ServiceCallError::Invalid(err)) => return Err(err),
         }
 
-        let out_ptr =
-            u32::try_from(plan.args[1]).map_err(|_| "fcntl getlk output pointer overflowed")?;
+        let out_ptr = match u32::try_from(plan.args[1]) {
+            Ok(out_ptr) => out_ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
         let lock_type = plan.args[2] as i16;
         let whence = plan.args[3] as i16;
         let start = plan.args[4] as i64;
@@ -1509,8 +1520,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.require_capability("linux_syscall", "vfs.file-lock", "flock").is_err() {
             return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
         }
-        let fd = u32::try_from(plan.args[0]).map_err(|_| "flock fd overflowed")?;
-        let operation = u32::try_from(plan.args[1]).map_err(|_| "flock operation overflowed")?;
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
+        let operation = match u32::try_from(plan.args[1]) {
+            Ok(operation) => operation,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64))),
+        };
         match self.flock_fd(fd, operation) {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
@@ -1688,6 +1705,52 @@ mod tests {
         LinuxPlan { kind: PlanKind::Fcntl, args: [fd, cmd, arg, 0, 0, 0] }
     }
 
+    fn fcntl_setlk_plan(
+        fd: u64,
+        cmd: u64,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> LinuxPlan {
+        LinuxPlan {
+            kind: PlanKind::FcntlSetlk,
+            args: [
+                fd,
+                cmd,
+                lock_type as i64 as u64,
+                whence as i64 as u64,
+                start as u64,
+                len as u64,
+            ],
+        }
+    }
+
+    fn fcntl_getlk_plan(
+        fd: u64,
+        out_ptr: u64,
+        lock_type: i16,
+        whence: i16,
+        start: i64,
+        len: i64,
+    ) -> LinuxPlan {
+        LinuxPlan {
+            kind: PlanKind::FcntlGetlk,
+            args: [
+                fd,
+                out_ptr,
+                lock_type as i64 as u64,
+                whence as i64 as u64,
+                start as u64,
+                len as u64,
+            ],
+        }
+    }
+
+    fn flock_plan(fd: u64, operation: u64) -> LinuxPlan {
+        LinuxPlan { kind: PlanKind::Flock, args: [fd, operation, 0, 0, 0, 0] }
+    }
+
     fn socket_plan() -> LinuxPlan {
         LinuxPlan { kind: PlanKind::Socket, args: [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0] }
     }
@@ -1810,6 +1873,77 @@ mod tests {
             ret_errno(runtime.plan_fcntl(fcntl_plan(fd, F_DUPFD_CLOEXEC, u64::MAX))),
             -(ERR_EINVAL as i64)
         );
+    }
+
+    #[test]
+    fn generic_fcntl_lock_bad_shapes_return_linux_errno() {
+        const F_SETLK: u64 = 6;
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const SEEK_SET: i16 = 0;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/generic-fcntl-lock-bad-shapes") as u64;
+        let (out_ptr, _) = runtime.linux.write_arg_bytes(&[0u8; 32]).expect("flock output");
+
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_setlk(fcntl_setlk_plan(
+                u64::MAX,
+                F_SETLK,
+                F_WRLCK,
+                SEEK_SET,
+                0,
+                1,
+            ))),
+            -(ERR_EBADF as i64)
+        );
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_setlk(fcntl_setlk_plan(
+                fd,
+                u64::MAX,
+                F_WRLCK,
+                SEEK_SET,
+                0,
+                1,
+            ))),
+            -(ERR_EINVAL as i64)
+        );
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_getlk(fcntl_getlk_plan(
+                u64::MAX,
+                out_ptr as u64,
+                F_RDLCK,
+                SEEK_SET,
+                0,
+                1,
+            ))),
+            -(ERR_EBADF as i64)
+        );
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_getlk(fcntl_getlk_plan(
+                fd,
+                u64::MAX,
+                F_RDLCK,
+                SEEK_SET,
+                0,
+                1,
+            ))),
+            -(ERR_EFAULT as i64)
+        );
+    }
+
+    #[test]
+    fn generic_flock_bad_shapes_return_linux_errno() {
+        const LOCK_SH: u64 = 1;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/generic-flock-bad-shapes") as u64;
+
+        assert_eq!(
+            ret_errno(runtime.plan_flock(flock_plan(u64::MAX, LOCK_SH))),
+            -(ERR_EBADF as i64)
+        );
+        assert_eq!(ret_errno(runtime.plan_flock(flock_plan(fd, u64::MAX))), -(ERR_EINVAL as i64));
     }
 
     #[test]
