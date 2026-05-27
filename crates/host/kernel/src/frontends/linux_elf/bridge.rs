@@ -7393,8 +7393,8 @@ mod tests {
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, stack_growth_fault_allowed, validate_iovcnt,
-        validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
+        signal_restart_syscall, stack_growth_fault_allowed, user_kernel_copy_region_for_page,
+        validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
         wait_nfds_within_rlimit, write_linux_greg,
     };
 
@@ -7443,6 +7443,26 @@ mod tests {
         assert!(stack_growth_fault_allowed(&region, mapped_start - 4096, end - 64));
         assert!(!stack_growth_fault_allowed(&region, start + 4096, end - 64));
         assert!(!stack_growth_fault_allowed(&region, start, end - 64));
+    }
+
+    #[test]
+    fn kernel_copy_stack_prefault_uses_saved_user_rsp_guard() {
+        let end = 0x7000_0000;
+        let start = end - 64 * 4096;
+        let mapped_start = end - 4096;
+        let regions = [UserRegion::grow_down_stack(start, end, mapped_start, true, true, false)];
+
+        assert!(
+            user_kernel_copy_region_for_page(&regions, mapped_start - 4096, Some(end - 64), true)
+                .is_some()
+        );
+        assert!(
+            user_kernel_copy_region_for_page(&regions, start + 4096, Some(end - 64), true)
+                .is_none()
+        );
+        assert!(
+            user_kernel_copy_region_for_page(&regions, mapped_start - 4096, None, true).is_none()
+        );
     }
 
     #[test]
@@ -8594,7 +8614,7 @@ fn user_lease(ptr: u64, len: u64, writable: bool) -> Result<UserDmwLease, i32> {
         .require_capability("linux_elf_frontend", "dmw.window", "acquire")
         .map_err(|_| ERR_EPERM)?;
     validate_user_range(ptr, len, writable)?;
-    ensure_active_user_pages_present(ptr, len, writable)?;
+    ensure_active_user_pages_present(ptr, len, writable, Some(ring3::saved_user_rsp()))?;
     let lease = crate::substrate::dmw::acquire(active_context().activation_id, ptr, len, writable)
         .map_err(map_dmw_fault)?;
     let generation = lease.generation();
@@ -9637,7 +9657,12 @@ fn cow_break_active_user_page(page: u64, prot: u64) -> Result<(), i32> {
     Ok(())
 }
 
-fn ensure_active_user_pages_present(ptr: u64, len: u64, write: bool) -> Result<(), i32> {
+fn ensure_active_user_pages_present(
+    ptr: u64,
+    len: u64,
+    write: bool,
+    user_sp: Option<u64>,
+) -> Result<(), i32> {
     if len == 0 {
         return Ok(());
     }
@@ -9646,8 +9671,14 @@ fn ensure_active_user_pages_present(ptr: u64, len: u64, write: bool) -> Result<(
     let end = align_page(raw_end).ok_or(ERR_EFAULT)?;
     let mut page = start;
     while page < end {
-        let prot = user_page_region_prot(page).ok_or(ERR_EFAULT)?;
+        let region =
+            user_kernel_copy_region_for_page(&active_context().regions, page, user_sp, write)
+                .ok_or(ERR_EFAULT)?;
+        let prot = user_region_prot(&region);
         prefault_active_user_page(page, prot, write)?;
+        if matches!(region.kind, UserRegionKind::GrowDownStack { .. }) {
+            active_context().grow_user_stack_to(page);
+        }
         page = page.checked_add(4096).ok_or(ERR_EFAULT)?;
     }
     Ok(())
@@ -9697,6 +9728,10 @@ fn user_page_region_prot(page: u64) -> Option<u64> {
             && page < region.end
             && (region.readable || region.writable || region.executable)
     })?;
+    Some(user_region_prot(region))
+}
+
+fn user_region_prot(region: &UserRegion) -> u64 {
     let mut prot = 0;
     if region.readable || region.writable {
         prot |= PROT_READ;
@@ -9707,7 +9742,32 @@ fn user_page_region_prot(page: u64) -> Option<u64> {
     if region.executable {
         prot |= PROT_EXEC;
     }
-    Some(prot)
+    prot
+}
+
+fn user_kernel_copy_region_for_page(
+    regions: &[UserRegion],
+    page: u64,
+    user_sp: Option<u64>,
+    write: bool,
+) -> Option<UserRegion> {
+    let region = *regions.iter().rev().find(|region| {
+        page >= region.start
+            && page < region.end
+            && (region.readable || region.writable || region.executable)
+    })?;
+    if write && !region.writable {
+        return None;
+    }
+    if !write && !region.readable {
+        return None;
+    }
+    if !user_region_page_is_committed(&region, page)
+        && !user_sp.is_some_and(|user_sp| stack_growth_fault_allowed(&region, page, user_sp))
+    {
+        return None;
+    }
+    Some(region)
 }
 
 fn user_fault_region(

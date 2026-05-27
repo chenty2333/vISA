@@ -179,6 +179,10 @@ pub(crate) fn capture_user_return(frame: &SyscallFrame) -> UserReturnContext {
     }
 }
 
+pub(crate) fn saved_user_rsp() -> u64 {
+    unsafe { SAVED_USER_RSP }
+}
+
 pub(crate) fn install_user_return(frame: &mut SyscallFrame, context: UserReturnContext) {
     *frame = context.frame;
     FsBase::write(VirtAddr::new(context.fs_base));
