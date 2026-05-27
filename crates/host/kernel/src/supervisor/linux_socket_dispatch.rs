@@ -497,7 +497,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         match self.write_generic_accept_sockaddr(accepted_fd, addr_ptr, addr_len_ptr) {
             Ok(()) => Ok(LinuxCallResult::Ret(accepted_fd as i64)),
-            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+            Err(errno) => {
+                self.close_accept_writeback_fd(accepted_fd);
+                Ok(LinuxCallResult::Ret(-(errno as i64)))
+            }
         }
     }
 
@@ -1098,6 +1101,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             log_cleanup_error(context, err);
         }
     }
+
+    fn close_accept_writeback_fd(&mut self, accepted_fd: u32) {
+        if let Err(errno) = self.close_fd_number(accepted_fd)
+            && errno != ERR_EBADF
+        {
+            crate::kwarn!("accept writeback fd cleanup returned errno {}", errno);
+        }
+    }
 }
 
 fn linux_listen_backlog_arg(raw: u64) -> u32 {
@@ -1109,7 +1120,9 @@ fn linux_listen_backlog_arg(raw: u64) -> u32 {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{ERR_EBADF, ERR_EINVAL, NodeKind, PlanKind, ServiceRoute};
+    use vmos_abi::{
+        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, NodeKind, PlanKind, SOCK_STREAM, ServiceRoute,
+    };
 
     use super::{LinuxCallResult, LinuxPlan, linux_listen_backlog_arg};
     use crate::supervisor::{
@@ -1146,10 +1159,14 @@ mod tests {
         LinuxPlan { kind: PlanKind::Fcntl, args: [fd, cmd, arg, 0, 0, 0] }
     }
 
+    fn socket_plan() -> LinuxPlan {
+        LinuxPlan { kind: PlanKind::Socket, args: [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0] }
+    }
+
     fn ret_errno(result: Result<LinuxCallResult, &'static str>) -> i64 {
-        match result.expect("fcntl plan should return a Linux result") {
+        match result.expect("plan should return a Linux result") {
             LinuxCallResult::Ret(ret) => ret,
-            other => panic!("unexpected fcntl result: {other:?}"),
+            other => panic!("unexpected Linux result: {other:?}"),
         }
     }
 
@@ -1186,6 +1203,25 @@ mod tests {
             ret_errno(runtime.plan_fcntl(fcntl_plan(fd, F_DUPFD_CLOEXEC, u64::MAX))),
             -(ERR_EINVAL as i64)
         );
+    }
+
+    #[test]
+    fn generic_accept_writeback_failure_closes_accepted_fd() {
+        let mut runtime = test_runtime();
+        let accepted_fd = ret_errno(runtime.plan_socket(socket_plan()));
+        assert!(accepted_fd >= 0);
+        let accepted_fd = accepted_fd as u32;
+
+        assert_eq!(
+            ret_errno(runtime.finish_accept_sockaddr_writeback(
+                LinuxCallResult::Ret(accepted_fd as i64),
+                0,
+                0,
+                true,
+            )),
+            -(ERR_EFAULT as i64)
+        );
+        assert_eq!(runtime.file_status_flags(accepted_fd), Err(ERR_EBADF));
     }
 }
 

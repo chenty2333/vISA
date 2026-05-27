@@ -5056,7 +5056,15 @@ fn sys_accept_with_flags(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
         });
         let (addr, port) =
             endpoint.map(|endpoint| (endpoint.addr, endpoint.port)).unwrap_or(([0; 4], 0));
-        write_optional_sockaddr_in_endpoint(frame.rsi, frame.rdx, addr, port)?;
+        if let Err(errno) = write_optional_sockaddr_in_endpoint(frame.rsi, frame.rdx, addr, port) {
+            if let Ok(accepted_fd) = u32::try_from(fd) {
+                log_ignored_runtime_cleanup(
+                    "accept writeback fd rollback",
+                    active_context().supervisor.close_fd_number(accepted_fd),
+                );
+            }
+            return Err(errno);
+        }
     }
     Ok(fd)
 }
@@ -5100,7 +5108,14 @@ fn validate_optional_sockaddr(addr_ptr: u64, len_ptr: u64, writable: bool) -> Re
     if addr_len == 0 || addr_len > 128 {
         return Err(ERR_EINVAL);
     }
-    let _ = user_lease(addr_ptr, addr_len as u64, writable)?;
+    if writable {
+        let mut addr = user_lease(addr_ptr, addr_len as u64, true)?;
+        let _ = addr.bytes_mut().map_err(map_dmw_fault)?;
+        let mut len = user_lease(len_ptr, 4, true)?;
+        let _ = len.bytes_mut().map_err(map_dmw_fault)?;
+    } else {
+        let _ = user_lease(addr_ptr, addr_len as u64, false)?;
+    }
     Ok(())
 }
 
