@@ -4477,11 +4477,22 @@ fn sys_pipe(frame: &SyscallFrame, flags: u64) -> Result<i64, i32> {
         return Err(ERR_EINVAL);
     }
     let flags = u32::try_from(flags).map_err(|_| ERR_EINVAL)?;
+    validate_fd_pair_writeback(frame.rdi)?;
     let (read_fd, write_fd) = active_context().supervisor.create_pipe_pair_with_flags(flags)?;
     let mut encoded = [0u8; 8];
     encoded[..4].copy_from_slice(&(read_fd as i32).to_le_bytes());
     encoded[4..].copy_from_slice(&(write_fd as i32).to_le_bytes());
-    write_user_bytes(frame.rdi, &encoded)?;
+    if let Err(errno) = write_user_bytes(frame.rdi, &encoded) {
+        log_ignored_runtime_cleanup(
+            "pipe writeback read fd rollback",
+            active_context().supervisor.close_fd_number(read_fd),
+        );
+        log_ignored_runtime_cleanup(
+            "pipe writeback write fd rollback",
+            active_context().supervisor.close_fd_number(write_fd),
+        );
+        return Err(errno);
+    }
     Ok(0)
 }
 
@@ -4890,11 +4901,22 @@ fn sys_socketpair(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 
     let flags = u32::try_from(ty & (SOCK_CLOEXEC | SOCK_NONBLOCK)).map_err(|_| ERR_EINVAL)?;
+    validate_fd_pair_writeback(frame.r10)?;
     let (fd_a, fd_b) = active_context().supervisor.create_socketpair_with_flags(flags)?;
     let mut encoded = [0u8; 8];
     encoded[..4].copy_from_slice(&(fd_a as i32).to_le_bytes());
     encoded[4..].copy_from_slice(&(fd_b as i32).to_le_bytes());
-    write_user_bytes(frame.r10, &encoded)?;
+    if let Err(errno) = write_user_bytes(frame.r10, &encoded) {
+        log_ignored_runtime_cleanup(
+            "socketpair writeback fd_a rollback",
+            active_context().supervisor.close_fd_number(fd_a),
+        );
+        log_ignored_runtime_cleanup(
+            "socketpair writeback fd_b rollback",
+            active_context().supervisor.close_fd_number(fd_b),
+        );
+        return Err(errno);
+    }
     Ok(0)
 }
 
@@ -7370,14 +7392,15 @@ fn linux_call_result(result: LinuxCallResult) -> Result<i64, i32> {
 #[cfg(test)]
 mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
+    use std::sync::{Mutex, MutexGuard};
 
     use semantic_core::{CredentialTransitionKind, LinuxCapSets};
     use vmos_abi::{
-        ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
-        FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT,
-        FUTEX_WAIT_BITSET, FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CHOWN, SYS_CONNECT,
-        SYS_FCHOWNAT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN, SYS_READ, SYS_READV,
-        SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
+        AF_UNIX, ERR_EFAULT, ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI,
+        FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
+        FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4,
+        SYS_CHOWN, SYS_CONNECT, SYS_FCHOWNAT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN,
+        SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     };
 
     use super::{
@@ -7386,7 +7409,7 @@ mod tests {
         LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT,
         MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame,
         UserPageBacking, UserPageMapping, UserRegion, UserReturnContext, VectoredIoOffset,
-        chown_path_follows_final_symlink, decode_linux_ucontext_return,
+        active_context, chown_path_follows_final_symlink, decode_linux_ucontext_return,
         demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
         file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
         file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
@@ -7401,11 +7424,19 @@ mod tests {
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, stack_growth_fault_allowed, sys_rlimit,
+        signal_restart_syscall, stack_growth_fault_allowed, sys_pipe, sys_rlimit, sys_socketpair,
         user_kernel_copy_region_for_page, validate_iovcnt, validate_preadv2_flags,
         validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
-    use crate::supervisor::{PrototypeRuntime, runtime, types::RLIMIT_NOFILE};
+    use crate::supervisor::{
+        PrototypeRuntime, isolated_test_runtime, runtime, types::RLIMIT_NOFILE,
+    };
+
+    static ACTIVE_CONTEXT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn active_context_test_guard() -> MutexGuard<'static, ()> {
+        ACTIVE_CONTEXT_TEST_LOCK.lock().expect("active context test lock poisoned")
+    }
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
@@ -7427,6 +7458,10 @@ mod tests {
 
     fn test_runtime() -> &'static mut PrototypeRuntime<'static> {
         runtime().expect("test runtime")
+    }
+
+    fn fresh_test_runtime() -> &'static mut PrototypeRuntime<'static> {
+        Box::leak(Box::new(isolated_test_runtime()))
     }
 
     fn linux_cap_sets(caps: u64) -> LinuxCapSets {
@@ -7524,6 +7559,7 @@ mod tests {
 
     #[test]
     fn linux_elf_prlimit64_uses_runtime_cross_process_access_gate() {
+        let _guard = active_context_test_guard();
         let runtime = test_runtime();
         set_current_process_credentials(runtime, 1000, 100, 0);
         let denied_target = create_target_process(runtime, 2000, 200, 0);
@@ -7533,6 +7569,28 @@ mod tests {
 
         assert_eq!(sys_rlimit(denied_target, RLIMIT_NOFILE as u64, 0, 0), Err(ERR_EPERM));
         assert_eq!(sys_rlimit(allowed_target, RLIMIT_NOFILE as u64, 0, 0), Ok(0));
+    }
+
+    #[test]
+    fn ring3_fd_pair_writeback_failure_does_not_leak_fds() {
+        let _guard = active_context_test_guard();
+        let runtime = fresh_test_runtime();
+        let context = Box::leak(Box::new(install_test_active_context(runtime)));
+        install_active_context(context);
+
+        let pipe_frame = syscall_frame_with_ret(0);
+        assert_eq!(sys_pipe(&pipe_frame, 0), Err(ERR_EFAULT));
+        assert!(!active_context().supervisor.is_pipe_fd(3));
+        assert!(!active_context().supervisor.is_pipe_fd(4));
+
+        let mut socketpair_frame = syscall_frame_with_ret(0);
+        socketpair_frame.rdi = AF_UNIX as u64;
+        socketpair_frame.rsi = SOCK_STREAM as u64;
+        socketpair_frame.rdx = 0;
+        socketpair_frame.r10 = 0;
+        assert_eq!(sys_socketpair(&socketpair_frame), Err(ERR_EFAULT));
+        assert!(!active_context().supervisor.is_socketpair_fd(3));
+        assert!(!active_context().supervisor.is_socketpair_fd(4));
     }
 
     #[test]
@@ -8941,6 +8999,18 @@ fn write_user_bytes(ptr: u64, bytes: &[u8]) -> Result<(), i32> {
     let mut dest = user_lease(ptr, bytes.len() as u64, true)?;
     dest.bytes_mut().map_err(map_dmw_fault)?.copy_from_slice(bytes);
     Ok(())
+}
+
+fn validate_fd_pair_writeback(ptr: u64) -> Result<(), i32> {
+    let mut dest = user_lease(ptr, 8, true)?;
+    let _ = dest.bytes_mut().map_err(map_dmw_fault)?;
+    Ok(())
+}
+
+fn log_ignored_runtime_cleanup(context: &'static str, result: Result<(), i32>) {
+    if let Err(errno) = result {
+        crate::kwarn!("{} failed with errno {}", context, errno);
+    }
 }
 
 fn user_bytes_untracked(ptr: u64, len: u64) -> Result<&'static [u8], i32> {

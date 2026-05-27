@@ -46,6 +46,12 @@ pub(crate) use runtime::{PrototypeRuntime, runtime};
 pub(crate) use services::linux_user_resource_bytes_for_path;
 pub(crate) use types::TaskId;
 
+#[cfg(test)]
+pub(crate) fn isolated_test_runtime() -> PrototypeRuntime<'static> {
+    let engine = Box::leak(Box::new(engine::RuntimeOnlyExecutor::default()));
+    PrototypeRuntime::new(engine).expect("test runtime")
+}
+
 pub(crate) fn run() -> Result<(), &'static str> {
     runtime()?.run_prototype_demos()
 }
