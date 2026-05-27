@@ -571,12 +571,90 @@ impl<'engine> PrototypeRuntime<'engine> {
         let endpoint = self
             .socket_ipv4_endpoint(fd, true)?
             .unwrap_or(super::net::Ipv4SocketEndpoint { addr: [0; 4], port: 0 });
+        self.write_generic_sockaddr_in(addr_ptr, addr_len_ptr, endpoint)
+    }
+
+    fn write_generic_sockaddr_in(
+        &mut self,
+        addr_ptr: u32,
+        addr_len_ptr: u32,
+        endpoint: super::net::Ipv4SocketEndpoint,
+    ) -> Result<(), i32> {
+        if addr_ptr == 0 || addr_len_ptr == 0 {
+            return Err(ERR_EFAULT);
+        }
+        let len_bytes = self.linux.read_bytes(addr_len_ptr, 4).map_err(|_| ERR_EFAULT)?;
+        let addr_len = u32::from_le_bytes(len_bytes.as_slice().try_into().map_err(|_| ERR_EFAULT)?);
+        if addr_len < 16 {
+            return Err(ERR_EINVAL);
+        }
         let mut sockaddr = [0u8; 16];
         sockaddr[..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
         sockaddr[2..4].copy_from_slice(&endpoint.port.to_be_bytes());
         sockaddr[4..8].copy_from_slice(&endpoint.addr);
         self.linux.write_bytes(addr_ptr, &sockaddr).map_err(|_| ERR_EFAULT)?;
         self.linux.write_bytes(addr_len_ptr, &16u32.to_le_bytes()).map_err(|_| ERR_EFAULT)
+    }
+
+    pub(super) fn plan_getsockname(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("linux_syscall", "linux.socket", "getsockname").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
+        let endpoint = match self.socket_ipv4_endpoint(fd, false) {
+            Ok(endpoint) => {
+                endpoint.unwrap_or(super::net::Ipv4SocketEndpoint { addr: [0; 4], port: 0 })
+            }
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let addr_ptr = match u32::try_from(plan.args[1]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
+        let addr_len_ptr = match u32::try_from(plan.args[2]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
+        match self.write_generic_sockaddr_in(addr_ptr, addr_len_ptr, endpoint) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
+    }
+
+    pub(super) fn plan_getpeername(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if self.require_capability("linux_syscall", "linux.socket", "getpeername").is_err() {
+            return Ok(LinuxCallResult::Ret(-(ERR_EPERM as i64)));
+        }
+        let fd = match u32::try_from(plan.args[0]) {
+            Ok(fd) => fd,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EBADF as i64))),
+        };
+        let endpoint = match self.socket_ipv4_endpoint(fd, true) {
+            Ok(Some(endpoint)) => endpoint,
+            Ok(None) => return Ok(LinuxCallResult::Ret(-(ERR_ENOTCONN as i64))),
+            Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
+        };
+        let addr_ptr = match u32::try_from(plan.args[1]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
+        let addr_len_ptr = match u32::try_from(plan.args[2]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64))),
+        };
+        match self.write_generic_sockaddr_in(addr_ptr, addr_len_ptr, endpoint) {
+            Ok(()) => Ok(LinuxCallResult::Ret(0)),
+            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
+        }
     }
 
     fn finish_net_stack_accept_fd(
@@ -1277,9 +1355,9 @@ mod tests {
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
     use vmos_abi::{
-        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_EPIPE, NodeKind, PlanKind,
-        SOCK_STREAM, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO, SYS_SHUTDOWN, ServiceRoute,
-        SyscallContext,
+        AF_INET, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK, ERR_EPIPE,
+        NodeKind, PlanKind, SOCK_STREAM, SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_RECVFROM,
+        SYS_RECVMSG, SYS_SENDTO, SYS_SHUTDOWN, ServiceRoute, SyscallContext,
     };
 
     use super::{
@@ -1355,6 +1433,48 @@ mod tests {
         (fd, socket_id)
     }
 
+    fn create_accepted_legacy_socket_fd(runtime: &mut PrototypeRuntime<'_>) -> u32 {
+        let (_, listener_socket_id) = create_legacy_socket_fd(runtime);
+        let (_, client_socket_id) = create_legacy_socket_fd(runtime);
+        let listener_ipv4 = u32::from_be_bytes([127, 0, 0, 1]);
+        let client_ipv4 = u32::from_be_bytes([127, 0, 0, 2]);
+
+        runtime
+            .linux_socket
+            .bind_socket(listener_socket_id, 16, AF_INET, listener_ipv4, 8080)
+            .expect("bind listener");
+        runtime.linux_socket.listen_socket(listener_socket_id, 2).expect("listen socket");
+        runtime
+            .linux_socket
+            .bind_socket(client_socket_id, 16, AF_INET, client_ipv4, 9090)
+            .expect("bind client");
+        runtime
+            .linux_socket
+            .connect_socket(client_socket_id, 16, AF_INET, listener_ipv4, 8080)
+            .expect("connect client");
+
+        let accepted_socket_id =
+            runtime.net_core.create_socket(AF_INET, SOCK_STREAM, 0).expect("accepted socket");
+        let accepted_ready_key =
+            runtime.net_core.ready_key(accepted_socket_id).expect("accepted ready key");
+        runtime
+            .linux_socket
+            .accept_socket(listener_socket_id, accepted_socket_id, accepted_ready_key)
+            .expect("accept socket");
+        runtime
+            .alloc_fd(FdEntry {
+                resource: FdResource::Socket {
+                    socket_id: accepted_socket_id as u64,
+                    ready_key: accepted_ready_key,
+                },
+                cursor: 0,
+                fd_flags: 0,
+                status_flags: 0,
+                cursor_group: None,
+            })
+            .expect("accepted socket fd")
+    }
+
     fn deliver_legacy_socket_payload(
         runtime: &mut PrototypeRuntime<'_>,
         socket_id: u32,
@@ -1395,6 +1515,27 @@ mod tests {
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn sockaddr_writeback_buffer(runtime: &mut PrototypeRuntime<'_>, len: u32) -> (u32, u32) {
+        let mut raw = vec![0u8; 20];
+        write_u32_at(&mut raw, 16, len);
+        let (base, _) = runtime.linux.write_arg_bytes(&raw).expect("sockaddr writeback buffer");
+        (base, base + 16)
+    }
+
+    fn assert_sockaddr_in(
+        runtime: &mut PrototypeRuntime<'_>,
+        addr_ptr: u32,
+        len_ptr: u32,
+        addr: [u8; 4],
+        port: u16,
+    ) {
+        let sockaddr = runtime.linux.read_bytes(addr_ptr, 16).expect("sockaddr");
+        assert_eq!(u16::from_le_bytes(sockaddr[..2].try_into().unwrap()), AF_INET as u16);
+        assert_eq!(u16::from_be_bytes(sockaddr[2..4].try_into().unwrap()), port);
+        assert_eq!(&sockaddr[4..8], &addr);
+        assert_eq!(runtime.linux.read_bytes(len_ptr, 4).expect("socklen"), 16u32.to_le_bytes());
     }
 
     #[test]
@@ -1523,6 +1664,116 @@ mod tests {
         );
         let pending = &runtime.query_thread(tid).expect("current thread").pending_signals;
         assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn generic_getsockname_and_getpeername_write_accepted_legacy_endpoints() {
+        let mut runtime = test_runtime();
+        let fd = create_accepted_legacy_socket_fd(&mut runtime);
+
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 16);
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getsockname_accepted",
+                SyscallContext::new(
+                    SYS_GETSOCKNAME,
+                    [fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            0
+        );
+        assert_sockaddr_in(&mut runtime, addr_ptr, len_ptr, [127, 0, 0, 1], 8080);
+
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 16);
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getpeername_accepted",
+                SyscallContext::new(
+                    SYS_GETPEERNAME,
+                    [fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            0
+        );
+        assert_sockaddr_in(&mut runtime, addr_ptr, len_ptr, [127, 0, 0, 2], 9090);
+    }
+
+    #[test]
+    fn generic_getsockname_unbound_socket_writes_zero_endpoint() {
+        let mut runtime = test_runtime();
+        let (fd, _) = create_legacy_socket_fd(&mut runtime);
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 16);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getsockname_unbound",
+                SyscallContext::new(
+                    SYS_GETSOCKNAME,
+                    [fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            0
+        );
+        assert_sockaddr_in(&mut runtime, addr_ptr, len_ptr, [0, 0, 0, 0], 0);
+    }
+
+    #[test]
+    fn generic_getpeername_requires_connected_peer() {
+        let mut runtime = test_runtime();
+        let (fd, _) = create_legacy_socket_fd(&mut runtime);
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 16);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getpeername_unconnected",
+                SyscallContext::new(
+                    SYS_GETPEERNAME,
+                    [fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            -(ERR_ENOTCONN as i64)
+        );
+    }
+
+    #[test]
+    fn generic_socket_name_writeback_validates_fd_type_and_socklen() {
+        let mut runtime = test_runtime();
+        let vfs_fd = open_vfs_file(&mut runtime, b"/tmp/generic-socket-name-nonsocket");
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 16);
+
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getsockname_bad_fd_shape",
+                SyscallContext::new(
+                    SYS_GETSOCKNAME,
+                    [u64::MAX, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            -(ERR_EBADF as i64)
+        );
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getsockname_nonsocket",
+                SyscallContext::new(
+                    SYS_GETSOCKNAME,
+                    [vfs_fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            -(ERR_ENOTSOCK as i64)
+        );
+
+        let fd = create_accepted_legacy_socket_fd(&mut runtime);
+        let (addr_ptr, len_ptr) = sockaddr_writeback_buffer(&mut runtime, 15);
+        assert_eq!(
+            ret_errno(runtime.dispatch_linux_syscall(
+                "test_getpeername_short_socklen",
+                SyscallContext::new(
+                    SYS_GETPEERNAME,
+                    [fd as u64, addr_ptr as u64, len_ptr as u64, 0, 0, 0],
+                ),
+            )),
+            -(ERR_EINVAL as i64)
+        );
     }
 
     #[test]

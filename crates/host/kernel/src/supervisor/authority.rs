@@ -514,6 +514,18 @@ pub(crate) fn hostcall_binding(kind: PlanKind) -> HostcallBinding {
             object: "linux.socket",
             operation: "shutdown",
         },
+        PlanKind::GetSockName => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "linux.socket",
+            operation: "getsockname",
+        },
+        PlanKind::GetPeerName => HostcallBinding {
+            class: HostcallClass::ImmediatePrivilegedOp,
+            subject: "linux_syscall",
+            object: "linux.socket",
+            operation: "getpeername",
+        },
         PlanKind::SetSockOpt => HostcallBinding {
             class: HostcallClass::ImmediatePrivilegedOp,
             subject: "linux_syscall",

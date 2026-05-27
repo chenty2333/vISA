@@ -435,6 +435,8 @@ pub enum PlanKind {
     RecvMsg = 110,
     SendMsg = 111,
     Shutdown = 112,
+    GetSockName = 113,
+    GetPeerName = 114,
 }
 
 impl PlanKind {
@@ -552,6 +554,8 @@ impl PlanKind {
             110 => Some(Self::RecvMsg),
             111 => Some(Self::SendMsg),
             112 => Some(Self::Shutdown),
+            113 => Some(Self::GetSockName),
+            114 => Some(Self::GetPeerName),
             _ => None,
         }
     }

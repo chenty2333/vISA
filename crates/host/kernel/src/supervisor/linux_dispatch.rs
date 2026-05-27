@@ -330,6 +330,8 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::RecvFrom => self.plan_recvfrom(plan, label),
             PlanKind::RecvMsg => self.plan_recvmsg(plan),
             PlanKind::Shutdown => self.plan_shutdown(plan),
+            PlanKind::GetSockName => self.plan_getsockname(plan),
+            PlanKind::GetPeerName => self.plan_getpeername(plan),
             PlanKind::SetSockOpt => self.plan_setsockopt(plan),
             PlanKind::GetSockOpt => self.plan_getsockopt(plan),
             PlanKind::Fcntl => self.plan_fcntl(plan),

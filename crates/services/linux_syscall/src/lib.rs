@@ -18,18 +18,19 @@ use vmos_abi::{
     SYS_CONNECT, SYS_DUP, SYS_DUP2, SYS_DUP3, SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL,
     SYS_EPOLL_WAIT, SYS_EVENTFD, SYS_EVENTFD2, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FGETXATTR,
     SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FUTEX, SYS_GET_ROBUST_LIST,
-    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID,
-    SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID,
-    SYS_GETSOCKOPT, SYS_GETTID, SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN,
-    SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
-    SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME,
-    SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
-    SYS_SECCOMP, SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID,
-    SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
-    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET,
-    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
-    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, is_stdio_fd,
+    SYS_GETCWD, SYS_GETDENTS64, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS,
+    SYS_GETPEERNAME, SYS_GETPGID, SYS_GETPGRP, SYS_GETPID, SYS_GETPPID, SYS_GETRESGID,
+    SYS_GETRESUID, SYS_GETRLIMIT, SYS_GETSID, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_GETTID,
+    SYS_GETUID, SYS_IOCTL, SYS_KILL, SYS_LINK, SYS_LINKAT, SYS_LISTEN, SYS_MLOCK, SYS_MLOCK2,
+    SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPENAT,
+    SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64, SYS_PTRACE, SYS_READ,
+    SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME, SYS_RENAMEAT, SYS_RENAMEAT2,
+    SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_SECCOMP, SYS_SENDMSG, SYS_SENDTO,
+    SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID,
+    SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID,
+    SYS_SETSOCKOPT, SYS_SETUID, SYS_SHUTDOWN, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
+    SYS_WRITEV, is_stdio_fd,
 };
 
 const ARG_BUFFER_CAPACITY: usize = 256;
@@ -104,6 +105,8 @@ pub extern "C" fn dispatch(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
         SYS_RECVFROM => plan_recvfrom(a0, a1, a2, a3, a4, a5),
         SYS_RECVMSG => plan_recvmsg(a0, a1, a2),
         SYS_SHUTDOWN => plan_shutdown(a0, a1),
+        SYS_GETSOCKNAME => plan_getsockname(a0, a1, a2),
+        SYS_GETPEERNAME => plan_getpeername(a0, a1, a2),
         SYS_SETSOCKOPT => plan_setsockopt(a0, a1, a2, a3, a4),
         SYS_GETSOCKOPT => plan_getsockopt(a0, a1, a2, a3, a4),
         SYS_IOCTL => plan_ioctl(a0, a1, a2),
@@ -639,6 +642,16 @@ fn plan_recvmsg(fd: u64, msg_ptr: u64, flags: u64) -> PackedStep {
 fn plan_shutdown(fd: u64, how: u64) -> PackedStep {
     reset_plan(PlanKind::Shutdown, [fd, how, 0, 0, 0, 0]);
     PackedStep::plan(PlanKind::Shutdown)
+}
+
+fn plan_getsockname(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::GetSockName, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetSockName)
+}
+
+fn plan_getpeername(fd: u64, addr: u64, addr_len: u64) -> PackedStep {
+    reset_plan(PlanKind::GetPeerName, [fd, addr, addr_len, 0, 0, 0]);
+    PackedStep::plan(PlanKind::GetPeerName)
 }
 
 fn plan_setsockopt(fd: u64, level: u64, optname: u64, optval: u64, optlen: u64) -> PackedStep {
@@ -1485,6 +1498,25 @@ mod tests {
         assert_eq!(PlanKind::from_raw(shutdown.aux), Some(PlanKind::Shutdown));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 2);
+    }
+
+    #[test]
+    fn socket_name_plans_preserve_writeback_pointers() {
+        let _guard = test_guard();
+
+        let getsockname = PackedStep::decode(dispatch(SYS_GETSOCKNAME, 8, 0x2100, 0x2200, 0, 0, 0));
+        assert_eq!(getsockname.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getsockname.aux), Some(PlanKind::GetSockName));
+        assert_eq!(plan_arg(0), 8);
+        assert_eq!(plan_arg(1), 0x2100);
+        assert_eq!(plan_arg(2), 0x2200);
+
+        let getpeername = PackedStep::decode(dispatch(SYS_GETPEERNAME, 9, 0x2300, 0x2400, 0, 0, 0));
+        assert_eq!(getpeername.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(PlanKind::from_raw(getpeername.aux), Some(PlanKind::GetPeerName));
+        assert_eq!(plan_arg(0), 9);
+        assert_eq!(plan_arg(1), 0x2300);
+        assert_eq!(plan_arg(2), 0x2400);
     }
 
     #[test]
