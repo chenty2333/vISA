@@ -1500,7 +1500,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Ok(()) => Ok(LinuxCallResult::Ret(0)),
             Err(err) => {
                 crate::kwarn!("fcntl getlk writeback: {}", err);
-                Ok(LinuxCallResult::Ret(-(ERR_EINVAL as i64)))
+                Ok(LinuxCallResult::Ret(-(ERR_EFAULT as i64)))
             }
         }
     }
@@ -1809,6 +1809,44 @@ mod tests {
         assert_eq!(
             ret_errno(runtime.plan_fcntl(fcntl_plan(fd, F_DUPFD_CLOEXEC, u64::MAX))),
             -(ERR_EINVAL as i64)
+        );
+    }
+
+    #[test]
+    fn generic_fcntl_getlk_writes_conflict_and_reports_bad_output_as_efault() {
+        const F_GETLK: u64 = 5;
+        const F_RDLCK: i16 = 0;
+        const F_WRLCK: i16 = 1;
+        const SEEK_SET: i16 = 0;
+
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/generic-fcntl-getlk-writeback");
+
+        runtime
+            .fcntl_setlk_fd(fd, 100, F_RDLCK, SEEK_SET, 16, 8)
+            .expect("seed conflicting read lock");
+        let (out_ptr, _) = runtime.linux.write_arg_bytes(&[0u8; 32]).expect("flock output");
+
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_getlk(LinuxPlan {
+                kind: PlanKind::FcntlGetlk,
+                args: [fd as u64, out_ptr as u64, F_WRLCK as u64, SEEK_SET as u64, 0, 64],
+            })),
+            0
+        );
+        let out = runtime.linux.read_bytes(out_ptr, 32).expect("flock writeback");
+        assert_eq!(i16::from_le_bytes(out[0..2].try_into().unwrap()), F_RDLCK);
+        assert_eq!(i16::from_le_bytes(out[2..4].try_into().unwrap()), SEEK_SET);
+        assert_eq!(i64::from_le_bytes(out[8..16].try_into().unwrap()), 16);
+        assert_eq!(i64::from_le_bytes(out[16..24].try_into().unwrap()), 8);
+        assert_eq!(i32::from_le_bytes(out[24..28].try_into().unwrap()), 100);
+
+        assert_eq!(
+            ret_errno(runtime.plan_fcntl_getlk(LinuxPlan {
+                kind: PlanKind::FcntlGetlk,
+                args: [fd as u64, u32::MAX as u64, F_WRLCK as u64, SEEK_SET as u64, 0, 64],
+            })),
+            -(ERR_EFAULT as i64)
         );
     }
 
