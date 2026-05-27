@@ -1450,6 +1450,21 @@ mod tests {
     }
 
     #[test]
+    fn epoll_exclusive_wakes_one_waiter_per_watcher() {
+        let mut epoll = test_epoll();
+        let epoll_id = epoll.create(0).expect("create epoll");
+        epoll
+            .ctl(epoll_id, EPOLL_CTL_ADD, 42, EPOLLEXCLUSIVE | 0x5, 7)
+            .expect("add exclusive watcher");
+        epoll.arm_wait(epoll_id, 100).expect("first waiter");
+        epoll.arm_wait(epoll_id, 101).expect("second waiter");
+
+        let wait_ids = epoll.notify_ready(42).expect("notify ready");
+        assert_eq!(wait_ids, vec![100]);
+        assert_eq!(epoll.notify_ready(42).expect("notify again"), vec![101]);
+    }
+
+    #[test]
     fn file_lock_key_reresolves_dynamic_path_to_node_identity() {
         let mut vfs = test_vfs();
         vfs.create_file(b"/tmp/lock-key", 0o600, 0, 0).expect("create dynamic file");
@@ -1813,6 +1828,7 @@ struct EpollWatcher {
     ready: bool,
     disabled: bool,
     edge_triggered: bool,
+    exclusive: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1826,6 +1842,7 @@ const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
 const EPOLLONESHOT: u32 = 0x4000_0000;
 const EPOLLET: u32 = 0x8000_0000;
+const EPOLLEXCLUSIVE: u32 = 0x1000_0000;
 const EPOLL_READY_RECORD_SIZE: usize = 20;
 
 pub(crate) struct EpollService {
@@ -1887,6 +1904,7 @@ impl EpollService {
                     ready: false,
                     disabled: false,
                     edge_triggered: events & EPOLLET != 0,
+                    exclusive: events & EPOLLEXCLUSIVE != 0,
                 });
                 Ok(())
             }
@@ -1900,6 +1918,7 @@ impl EpollService {
                     watcher.data = data;
                     watcher.disabled = false;
                     watcher.edge_triggered = events & EPOLLET != 0;
+                    watcher.exclusive = events & EPOLLEXCLUSIVE != 0;
                     Ok(())
                 } else {
                     errno(ERR_ENOENT)
@@ -2038,21 +2057,28 @@ impl EpollService {
             }
         }
 
-        let mut ready_epolls = Vec::new();
-        for watcher in &self.watchers {
-            if watcher.ready_key == ready_key && !watcher.disabled {
-                ready_epolls.push(watcher.epoll_id);
-            }
-        }
-
         let mut wait_ids = Vec::new();
+        let mut exclusive_woken = Vec::new();
+        let watchers = &self.watchers;
         self.waiters.retain(|waiter| {
-            if ready_epolls.contains(&waiter.epoll_id) {
+            for (index, watcher) in watchers.iter().enumerate() {
+                if watcher.epoll_id != waiter.epoll_id
+                    || watcher.ready_key != ready_key
+                    || watcher.disabled
+                    || (!restart && !watcher.ready)
+                {
+                    continue;
+                }
+                if watcher.exclusive {
+                    if exclusive_woken.contains(&index) {
+                        continue;
+                    }
+                    exclusive_woken.push(index);
+                }
                 wait_ids.push(waiter.wait_id);
-                false
-            } else {
-                true
+                return false;
             }
+            true
         });
         Ok(wait_ids)
     }

@@ -555,6 +555,29 @@ mod tests {
             assert_eq!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()), 7);
         }
     }
+
+    #[test]
+    fn exclusive_watcher_wakes_one_waiter_per_notification() {
+        let _guard = test_guard();
+        reset();
+        assert_eq!(create(0), 1);
+        assert_eq!(ctl(1, EPOLL_CTL_ADD, 42, EPOLLEXCLUSIVE | 0x5, 7), 0);
+        assert_eq!(arm_wait(1, 100), 0);
+        assert_eq!(arm_wait(1, 101), 0);
+
+        assert_eq!(notify_ready(42), 8);
+        unsafe {
+            let response = core::ptr::addr_of!(RESPONSE) as *const u8;
+            let bytes = core::slice::from_raw_parts(response, 8);
+            assert_eq!(u64::from_le_bytes(bytes.try_into().unwrap()), 100);
+        }
+        assert_eq!(notify_ready(42), 8);
+        unsafe {
+            let response = core::ptr::addr_of!(RESPONSE) as *const u8;
+            let bytes = core::slice::from_raw_parts(response, 8);
+            assert_eq!(u64::from_le_bytes(bytes.try_into().unwrap()), 101);
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
