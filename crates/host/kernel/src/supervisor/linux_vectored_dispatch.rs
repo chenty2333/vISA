@@ -178,6 +178,14 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
 
+        if self.is_vfs_file_fd(fd) {
+            let chunk_refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+            return match self.write_vfs_fd_chunks(fd, &chunk_refs) {
+                Ok(count) => Ok(LinuxCallResult::Ret(count as i64)),
+                Err(errno) => Ok(errno_ret(errno)),
+            };
+        }
+
         let mut total = 0usize;
         for bytes in chunks {
             if bytes.is_empty() {

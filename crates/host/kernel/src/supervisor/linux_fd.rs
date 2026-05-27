@@ -335,6 +335,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.write_to_fd(fd, bytes).map_err(errno_from_service_error)
     }
 
+    pub(crate) fn write_vfs_fd_chunks(&mut self, fd: u32, chunks: &[&[u8]]) -> Result<usize, i32> {
+        self.write_vfs_fd_current_or_append_chunks(fd, chunks, false, true)
+            .map_err(errno_from_service_error)
+    }
+
     pub(crate) fn write_vfs_fd_append(
         &mut self,
         fd: u32,
@@ -343,6 +348,49 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<usize, i32> {
         self.write_vfs_fd_current_or_append(fd, bytes, true, update_cursor)
             .map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn write_vfs_fd_append_chunks(
+        &mut self,
+        fd: u32,
+        chunks: &[&[u8]],
+        update_cursor: bool,
+    ) -> Result<usize, i32> {
+        self.write_vfs_fd_current_or_append_chunks(fd, chunks, true, update_cursor)
+            .map_err(errno_from_service_error)
+    }
+
+    fn write_vfs_fd_current_or_append_chunks(
+        &mut self,
+        fd: u32,
+        chunks: &[&[u8]],
+        force_append: bool,
+        update_cursor: bool,
+    ) -> Result<usize, ServiceCallError> {
+        self.require_fd_writable(fd)?;
+        let status_flags =
+            self.fd_entry(fd).ok_or(ServiceCallError::Errno(ERR_EBADF))?.status_flags;
+        let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;
+        if route != ServiceRoute::Vfs || node != NodeKind::File {
+            return Err(ServiceCallError::Errno(ERR_EBADF));
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write")
+            .map_err(|_| ServiceCallError::Errno(ERR_EPERM))?;
+        let offset = if force_append || status_flags & O_APPEND != 0 {
+            usize::try_from(self.len_for_service_node_by_id(route, vfs_node_id, &path))
+                .map_err(|_| ServiceCallError::Errno(ERR_EINVAL))?
+        } else {
+            cursor
+        };
+        let requested = total_chunk_len(chunks)?;
+        let write_len = self.allowed_file_write_len(offset, requested)?;
+        let written = self.write_vfs_chunks_by_id(vfs_node_id, &path, offset, chunks, write_len)?;
+        if update_cursor {
+            let next_cursor =
+                offset.checked_add(written).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+            self.set_fd_cursor(fd, next_cursor)?;
+        }
+        Ok(written)
     }
 
     pub(crate) fn write_vfs_fd_range(
@@ -369,6 +417,32 @@ impl<'engine> PrototypeRuntime<'engine> {
         let bytes = &bytes[..write_len];
         self.vfs
             .write_file_by_id(vfs_node_id, &path, offset, bytes)
+            .map_err(errno_from_service_error)
+    }
+
+    pub(crate) fn write_vfs_fd_range_chunks(
+        &mut self,
+        fd: u32,
+        offset: usize,
+        chunks: &[&[u8]],
+    ) -> Result<usize, i32> {
+        self.require_fd_writable(fd).map_err(errno_from_service_error)?;
+        let (route, node, _, path, vfs_node_id) =
+            self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
+        if route != ServiceRoute::Vfs {
+            return Err(ERR_EINVAL);
+        }
+        if node == NodeKind::Directory {
+            return Err(vmos_abi::ERR_EISDIR);
+        }
+        if node != NodeKind::File {
+            return Err(ERR_EBADF);
+        }
+        self.require_capability("vfs_service", "vfs.namespace", "write").map_err(|_| ERR_EPERM)?;
+        let requested = total_chunk_len(chunks).map_err(errno_from_service_error)?;
+        let write_len =
+            self.allowed_file_write_len(offset, requested).map_err(errno_from_service_error)?;
+        self.write_vfs_chunks_by_id(vfs_node_id, &path, offset, chunks, write_len)
             .map_err(errno_from_service_error)
     }
 
@@ -2781,6 +2855,37 @@ impl<'engine> PrototypeRuntime<'engine> {
         Ok(requested.min(limit - offset))
     }
 
+    fn write_vfs_chunks_by_id(
+        &mut self,
+        vfs_node_id: Option<u64>,
+        path: &[u8],
+        offset: usize,
+        chunks: &[&[u8]],
+        write_len: usize,
+    ) -> Result<usize, ServiceCallError> {
+        let mut total = 0usize;
+        let mut remaining = write_len;
+        for chunk in chunks {
+            if remaining == 0 {
+                break;
+            }
+            let len = chunk.len().min(remaining);
+            if len == 0 {
+                continue;
+            }
+            let chunk_offset =
+                offset.checked_add(total).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+            let written =
+                self.vfs.write_file_by_id(vfs_node_id, path, chunk_offset, &chunk[..len])?;
+            total = total.checked_add(written).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
+            remaining = remaining.saturating_sub(written);
+            if written < len {
+                break;
+            }
+        }
+        Ok(total)
+    }
+
     fn enforce_file_size_limit(&mut self, requested_size: usize) -> Result<(), ServiceCallError> {
         if self.current_file_size_limit().is_some_and(|limit| requested_size > limit) {
             self.queue_file_size_signal();
@@ -3301,6 +3406,12 @@ fn classify_xattr_namespace(name: &[u8]) -> Result<XattrNamespace, i32> {
     Err(vmos_abi::ERR_EOPNOTSUPP)
 }
 
+fn total_chunk_len(chunks: &[&[u8]]) -> Result<usize, ServiceCallError> {
+    chunks.iter().try_fold(0usize, |total, chunk| {
+        total.checked_add(chunk.len()).ok_or(ServiceCallError::Errno(ERR_EINVAL))
+    })
+}
+
 fn mode_grants_access(
     mode: u32,
     owner_uid: u32,
@@ -3394,7 +3505,7 @@ mod tests {
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         runtime::PrototypeRuntime,
-        types::{FdEntry, FdResource, RLIMIT_NOFILE, Rlimit},
+        types::{FdEntry, FdResource, RLIMIT_FSIZE, RLIMIT_NOFILE, Rlimit},
     };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -3484,6 +3595,39 @@ mod tests {
         assert_eq!(runtime.dup_fd_from(source, 4), Err(ERR_EMFILE));
         assert_eq!(runtime.dup_fd_from(source, 5), Err(ERR_EINVAL));
         assert_eq!(runtime.dup_fd_to(source, 5, true), Err(ERR_EBADF));
+    }
+
+    #[test]
+    fn range_vectored_write_fsize_partial_success_does_not_queue_signal() {
+        let mut runtime = test_runtime();
+        let fd = open_vfs_file(&mut runtime, b"/tmp/range-writev-fsize", O_RDWR);
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_FSIZE, Rlimit { cur: 5, max: 5 }));
+        let chunks: [&[u8]; 2] = [b"abcde", b"f"];
+
+        assert_eq!(runtime.write_vfs_fd_range_chunks(fd, 0, &chunks), Ok(5));
+        assert_eq!(
+            runtime
+                .query_thread(runtime.current_tid())
+                .expect("current thread")
+                .pending_signals
+                .iter()
+                .filter(|signal| signal.signo == SIGXFSZ)
+                .count(),
+            0
+        );
+
+        assert_eq!(runtime.write_vfs_fd_range(fd, 5, b"z"), Err(ERR_EFBIG));
+        assert_eq!(
+            runtime
+                .query_thread(runtime.current_tid())
+                .expect("current thread")
+                .pending_signals
+                .iter()
+                .filter(|signal| signal.signo == SIGXFSZ)
+                .count(),
+            1
+        );
     }
 
     #[test]

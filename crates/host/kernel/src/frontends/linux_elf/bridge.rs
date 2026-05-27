@@ -590,6 +590,23 @@ fn sys_writev(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 
     let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
+    if active_context().supervisor.is_vfs_file_fd(fd) {
+        let mut chunks = Vec::new();
+        for (base, len) in iovecs {
+            if len == 0 {
+                chunks.push(Vec::new());
+                continue;
+            }
+            let lease = user_lease(base, len, false)?;
+            chunks.push(lease.bytes().map_err(map_dmw_fault)?.to_vec());
+        }
+        let chunk_refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        return active_context()
+            .supervisor
+            .write_vfs_fd_chunks(fd, &chunk_refs)
+            .map(|count| count as i64);
+    }
+
     let mut total = 0usize;
     for (base, len) in iovecs {
         if len == 0 {
@@ -718,7 +735,7 @@ fn sys_pwritev2(frame: &SyscallFrame) -> Result<i64, i32> {
     }
 }
 
-fn sys_pwritev_at(frame: &SyscallFrame, mut offset: usize) -> Result<i64, i32> {
+fn sys_pwritev_at(frame: &SyscallFrame, offset: usize) -> Result<i64, i32> {
     let fd = u32::try_from(frame.rdi).map_err(|_| ERR_EINVAL)?;
     let iovcnt = validate_iovcnt(frame.rdx)?;
     if iovcnt == 0 {
@@ -726,26 +743,20 @@ fn sys_pwritev_at(frame: &SyscallFrame, mut offset: usize) -> Result<i64, i32> {
     }
 
     let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
-    let mut total = 0usize;
+    let mut chunks = Vec::new();
     for (base, len) in iovecs {
         if len == 0 {
+            chunks.push(Vec::new());
             continue;
         }
         let lease = user_lease(base, len, false)?;
-        let bytes = lease.bytes().map_err(map_dmw_fault)?;
-        match active_context().supervisor.write_vfs_fd_range(fd, offset, bytes) {
-            Ok(written) => {
-                total = total.checked_add(written).ok_or(ERR_EINVAL)?;
-                offset = offset.checked_add(written).ok_or(ERR_EINVAL)?;
-                if written < bytes.len() {
-                    return Ok(total as i64);
-                }
-            }
-            Err(_errno) if total > 0 => return Ok(total as i64),
-            Err(errno) => return Err(errno),
-        }
+        chunks.push(lease.bytes().map_err(map_dmw_fault)?.to_vec());
     }
-    Ok(total as i64)
+    let chunk_refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    active_context()
+        .supervisor
+        .write_vfs_fd_range_chunks(fd, offset, &chunk_refs)
+        .map(|count| count as i64)
 }
 
 fn sys_pwritev_append(frame: &SyscallFrame, update_cursor: bool) -> Result<i64, i32> {
@@ -756,25 +767,20 @@ fn sys_pwritev_append(frame: &SyscallFrame, update_cursor: bool) -> Result<i64, 
     }
 
     let iovecs = read_user_iovecs(frame.rsi, iovcnt)?;
-    let mut total = 0usize;
+    let mut chunks = Vec::new();
     for (base, len) in iovecs {
         if len == 0 {
+            chunks.push(Vec::new());
             continue;
         }
         let lease = user_lease(base, len, false)?;
-        let bytes = lease.bytes().map_err(map_dmw_fault)?;
-        match active_context().supervisor.write_vfs_fd_append(fd, bytes, update_cursor) {
-            Ok(written) => {
-                total = total.checked_add(written).ok_or(ERR_EINVAL)?;
-                if written < bytes.len() {
-                    return Ok(total as i64);
-                }
-            }
-            Err(_errno) if total > 0 => return Ok(total as i64),
-            Err(errno) => return Err(errno),
-        }
+        chunks.push(lease.bytes().map_err(map_dmw_fault)?.to_vec());
     }
-    Ok(total as i64)
+    let chunk_refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    active_context()
+        .supervisor
+        .write_vfs_fd_append_chunks(fd, &chunk_refs, update_cursor)
+        .map(|count| count as i64)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

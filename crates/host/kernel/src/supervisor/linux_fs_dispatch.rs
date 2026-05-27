@@ -566,6 +566,42 @@ mod tests {
         expect_ret(result)
     }
 
+    fn writev_fd(runtime: &mut PrototypeRuntime<'_>, fd: u32, chunks: &[&[u8]]) -> i64 {
+        let (base, _) = runtime.write_linux_arg_bytes(&[]).expect("arg base");
+        let iovec_len = chunks.len() * 16;
+        let data_base = base + u32::try_from(iovec_len).expect("iovecs fit");
+        let mut raw = Vec::new();
+        let mut cursor = data_base;
+        for chunk in chunks {
+            push_iovec(&mut raw, cursor, chunk.len() as u64);
+            cursor = cursor.checked_add(chunk.len() as u32).expect("chunk offset");
+        }
+        for chunk in chunks {
+            raw.extend_from_slice(chunk);
+        }
+        let (iov_ptr, _) = runtime.write_linux_arg_bytes(&raw).expect("writev iovecs");
+        let result = runtime
+            .dispatch_linux_syscall(
+                "test_writev",
+                SyscallContext::new(
+                    SYS_WRITEV,
+                    [fd as u64, iov_ptr as u64, chunks.len() as u64, 0, 0, 0],
+                ),
+            )
+            .expect("writev dispatch");
+        expect_ret(result)
+    }
+
+    fn pending_signal_count(runtime: &PrototypeRuntime<'_>, signo: u8) -> usize {
+        runtime
+            .query_thread(runtime.current_tid())
+            .expect("current thread")
+            .pending_signals
+            .iter()
+            .filter(|signal| signal.signo == signo)
+            .count()
+    }
+
     fn read_fd(runtime: &mut PrototypeRuntime<'_>, fd: u32, count: u64) -> Vec<u8> {
         let result = runtime
             .dispatch_linux_syscall(
@@ -925,6 +961,25 @@ mod tests {
                 .any(|signal| signal.signo == 25)
         );
         assert_eq!(runtime.truncate_fd(fd, 6), Err(ERR_EFBIG));
+    }
+
+    #[test]
+    fn rlimit_fsize_writev_partial_success_does_not_queue_sigxfsz() {
+        const SIGXFSZ: u8 = 25;
+
+        let mut runtime = test_runtime();
+        let pid = runtime.current_pid();
+        assert!(runtime.set_rlimit(pid, RLIMIT_FSIZE, Rlimit { cur: 5, max: 5 }));
+        let fd = open_created_file(&mut runtime, b"/tmp/rlimit-fsize-writev");
+
+        assert_eq!(writev_fd(&mut runtime, fd, &[b"abcde", b"f"]), 5);
+        assert_eq!(pending_signal_count(&runtime, SIGXFSZ), 0);
+
+        runtime.seek_fd(fd, 0, 0).expect("rewind file");
+        assert_eq!(read_fd(&mut runtime, fd, 8), b"abcde");
+
+        assert_eq!(write_fd(&mut runtime, fd, b"z"), -(ERR_EFBIG as i64));
+        assert_eq!(pending_signal_count(&runtime, SIGXFSZ), 1);
     }
 
     #[test]
