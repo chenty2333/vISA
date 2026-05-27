@@ -1099,6 +1099,17 @@ impl<'engine> PrototypeRuntime<'engine> {
                         }
                         Err(ServiceCallError::Invalid(err)) => return Err(err),
                     }
+                    match self.set_net_stack_recv_capacity(socket_id, capacity) {
+                        Ok(()) => {}
+                        Err(ServiceCallError::Errno(errno)) => {
+                            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                        }
+                        Err(ServiceCallError::Trap(reason)) => {
+                            crate::kwarn!("net_stack set_recv_capacity: {}", reason);
+                            return Err("net_stack trapped during SO_RCVBUF sync");
+                        }
+                        Err(ServiceCallError::Invalid(err)) => return Err(err),
+                    }
                 }
                 Ok(LinuxCallResult::Ret(0))
             }

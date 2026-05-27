@@ -153,6 +153,8 @@ pub struct TcpSocketSnapshot {
     pub can_recv: bool,
     pub may_send: bool,
     pub may_recv: bool,
+    pub recv_capacity: usize,
+    pub recv_queue: usize,
     pub local_ipv4: [u8; 4],
     pub local_port: u16,
     pub remote_ipv4: [u8; 4],
@@ -283,10 +285,17 @@ impl SmoltcpPacketStack {
     }
 
     pub fn create_tcp_socket(&mut self) -> Result<u32, &'static str> {
+        self.create_tcp_socket_with_recv_capacity(DEFAULT_TCP_BUFFER_LEN)
+    }
+
+    pub fn create_tcp_socket_with_recv_capacity(
+        &mut self,
+        recv_capacity: usize,
+    ) -> Result<u32, &'static str> {
         let socket_id = self.next_tcp_socket_id;
         let next_socket_id =
             self.next_tcp_socket_id.checked_add(1).ok_or("smoltcp tcp socket id exhausted")?;
-        let rx_buffer = tcp::SocketBuffer::new(vec![0; DEFAULT_TCP_BUFFER_LEN]);
+        let rx_buffer = tcp::SocketBuffer::new(vec![0; bounded_tcp_buffer_len(recv_capacity)]);
         let tx_buffer = tcp::SocketBuffer::new(vec![0; DEFAULT_TCP_BUFFER_LEN]);
         let socket = tcp::Socket::new(rx_buffer, tx_buffer);
         let handle = self.sockets.add(socket);
@@ -386,6 +395,8 @@ impl SmoltcpPacketStack {
             can_recv: socket.can_recv(),
             may_send: socket.may_send(),
             may_recv: socket.may_recv(),
+            recv_capacity: socket.recv_capacity(),
+            recv_queue: socket.recv_queue(),
             local_ipv4,
             local_port,
             remote_ipv4,
@@ -775,6 +786,10 @@ fn ipv4_bytes(addr: IpAddress) -> [u8; 4] {
     }
 }
 
+fn bounded_tcp_buffer_len(len: usize) -> usize {
+    len.clamp(1, DEFAULT_TCP_BUFFER_LEN)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,6 +826,23 @@ mod tests {
             build_smoltcp_adapter_evidence(config),
             Err("smoltcp adapter ipv4 prefix is invalid")
         );
+    }
+
+    #[test]
+    fn tcp_socket_recv_capacity_is_bounded_at_creation() {
+        let mut stack =
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+
+        let socket = stack.create_tcp_socket_with_recv_capacity(2048).expect("tcp socket");
+        let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
+        assert_eq!(snapshot.recv_capacity, 2048);
+        assert_eq!(snapshot.recv_queue, 0);
+
+        let socket = stack
+            .create_tcp_socket_with_recv_capacity(DEFAULT_TCP_BUFFER_LEN * 4)
+            .expect("bounded tcp socket");
+        let snapshot = stack.tcp_snapshot(socket).expect("bounded tcp snapshot");
+        assert_eq!(snapshot.recv_capacity, DEFAULT_TCP_BUFFER_LEN);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use net_stack_adapter::{DEFAULT_IPV4_ADDR, TcpSocketSnapshot};
+use net_stack_adapter::{DEFAULT_IPV4_ADDR, DEFAULT_TCP_BUFFER_LEN, TcpSocketSnapshot};
 use semantic_core::{ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId};
 use service_core::{
     net_contract::PROTO_TCP,
@@ -56,6 +56,7 @@ pub(crate) struct NetStackSocketBinding {
     pub(crate) local_port: u16,
     pub(crate) remote_ipv4: [u8; 4],
     pub(crate) remote_port: u16,
+    pub(crate) recv_capacity: usize,
     pub(crate) recv_shutdown: bool,
     pub(crate) send_shutdown: bool,
     pub(crate) pending_accepts: Vec<NetStackPendingAccept>,
@@ -68,6 +69,7 @@ pub(crate) struct NetStackPendingAccept {
     pub(crate) local_port: u16,
     pub(crate) remote_ipv4: [u8; 4],
     pub(crate) remote_port: u16,
+    pub(crate) recv_capacity: usize,
 }
 
 impl NetStackSocketBinding {
@@ -82,6 +84,7 @@ impl NetStackSocketBinding {
             local_port: 0,
             remote_ipv4: [0; 4],
             remote_port: 0,
+            recv_capacity: DEFAULT_TCP_BUFFER_LEN,
             recv_shutdown: false,
             send_shutdown: false,
             pending_accepts: Vec::new(),
@@ -275,6 +278,36 @@ impl<'engine> PrototypeRuntime<'engine> {
         let stack_socket_id =
             self.net_stack.create_tcp_socket().map_err(ServiceCallError::Invalid)?;
         self.net_stack_sockets.push(NetStackSocketBinding::new(socket_id, stack_socket_id));
+        Ok(())
+    }
+
+    pub(super) fn set_net_stack_recv_capacity(
+        &mut self,
+        socket_id: u32,
+        capacity: u32,
+    ) -> Result<(), ServiceCallError> {
+        let Some(index) = self.net_stack_socket_index(socket_id) else {
+            return Ok(());
+        };
+        let capacity = bounded_net_stack_recv_capacity(capacity);
+        self.net_stack_sockets[index].recv_capacity = capacity;
+        if self.net_stack_sockets[index].mode != NetStackSocketMode::Idle {
+            return Ok(());
+        }
+
+        let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
+        let new_stack_socket_id = self
+            .net_stack
+            .create_tcp_socket_with_recv_capacity(capacity)
+            .map_err(ServiceCallError::Invalid)?;
+        self.net_stack_sockets[index].stack_socket_id = new_stack_socket_id;
+        if let Err(err) = self.net_stack.close_tcp_socket(old_stack_socket_id) {
+            crate::kwarn!(
+                "smoltcp close old socket {} after SO_RCVBUF resize: {}",
+                old_stack_socket_id,
+                err
+            );
+        }
         Ok(())
     }
 
@@ -730,6 +763,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 local_port: pending.local_port,
                 remote_ipv4: pending.remote_ipv4,
                 remote_port: pending.remote_port,
+                recv_capacity: pending.recv_capacity,
                 recv_shutdown: false,
                 send_shutdown: false,
                 pending_accepts: Vec::new(),
@@ -742,12 +776,15 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let local_port = self.net_stack_sockets[index].local_port;
+        let recv_capacity = self.net_stack_sockets[index].recv_capacity;
         let accepted_snapshot = self
             .net_stack
             .tcp_snapshot(old_stack_socket_id)
             .map_err(|_| "smoltcp accepted socket snapshot failed")?;
-        let new_listener_stack_socket_id =
-            self.net_stack.create_tcp_socket().map_err(|_| "smoltcp listener socket exhausted")?;
+        let new_listener_stack_socket_id = self
+            .net_stack
+            .create_tcp_socket_with_recv_capacity(recv_capacity)
+            .map_err(|_| "smoltcp listener socket exhausted")?;
         if let Err(err) = self.net_stack.listen_tcp(new_listener_stack_socket_id, local_port) {
             if let Err(close_err) = self.net_stack.close_tcp_socket(new_listener_stack_socket_id) {
                 crate::kwarn!(
@@ -775,6 +812,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             local_port: accepted_snapshot.local_port,
             remote_ipv4: accepted_snapshot.remote_ipv4,
             remote_port: accepted_snapshot.remote_port,
+            recv_capacity: accepted_snapshot.recv_capacity,
             recv_shutdown: false,
             send_shutdown: false,
             pending_accepts: Vec::new(),
@@ -1169,7 +1207,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let local_port = self.net_stack_sockets[index].local_port;
-        let Ok(new_listener_stack_socket_id) = self.net_stack.create_tcp_socket() else {
+        let recv_capacity = self.net_stack_sockets[index].recv_capacity;
+        let Ok(new_listener_stack_socket_id) =
+            self.net_stack.create_tcp_socket_with_recv_capacity(recv_capacity)
+        else {
             crate::kwarn!("smoltcp listener socket exhausted while queueing accept");
             return false;
         };
@@ -1191,6 +1232,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             local_port: snapshot.local_port,
             remote_ipv4: snapshot.remote_ipv4,
             remote_port: snapshot.remote_port,
+            recv_capacity: snapshot.recv_capacity,
         });
         self.net_stack_sockets[index].stack_socket_id = new_listener_stack_socket_id;
         self.net_stack_sockets[index].mode = NetStackSocketMode::TcpListening;
@@ -1209,7 +1251,10 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> bool {
         let old_stack_socket_id = self.net_stack_sockets[index].stack_socket_id;
         let local_port = self.net_stack_sockets[index].local_port;
-        let Ok(new_listener_stack_socket_id) = self.net_stack.create_tcp_socket() else {
+        let recv_capacity = self.net_stack_sockets[index].recv_capacity;
+        let Ok(new_listener_stack_socket_id) =
+            self.net_stack.create_tcp_socket_with_recv_capacity(recv_capacity)
+        else {
             crate::kwarn!("smoltcp listener socket exhausted while dropping accept overflow");
             return false;
         };
@@ -1285,6 +1330,10 @@ fn normalize_net_stack_backlog(backlog: u32) -> u32 {
     backlog.max(1).min(MAX_NET_STACK_PENDING_ACCEPTS as u32)
 }
 
+fn bounded_net_stack_recv_capacity(capacity: u32) -> usize {
+    (capacity as usize).clamp(1, DEFAULT_TCP_BUFFER_LEN)
+}
+
 fn dequeue_net_stack_pending_accept(
     binding: &mut NetStackSocketBinding,
 ) -> Option<NetStackPendingAccept> {
@@ -1307,10 +1356,10 @@ mod tests {
 
     use vmos_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
-        SO_ACCEPTCONN, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT,
-        SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ,
-        SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE,
-        SyscallContext,
+        SO_ACCEPTCONN, SO_RCVBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE,
+        SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN,
+        SYS_READ, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET,
+        SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1398,6 +1447,30 @@ mod tests {
         let bytes = runtime.linux.read_bytes(opt_ptr, 8).expect("getsockopt output");
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
         u32::from_le_bytes(bytes[0..4].try_into().unwrap())
+    }
+
+    fn setsockopt_u32(
+        runtime: &mut PrototypeRuntime<'_>,
+        fd: i64,
+        optname: u64,
+        value: u32,
+    ) -> i64 {
+        let (opt_ptr, _) =
+            runtime.linux.write_arg_bytes(&value.to_le_bytes()).expect("setsockopt buffer");
+        dispatch_ret(
+            runtime,
+            "test_setsockopt_u32",
+            SYS_SETSOCKOPT,
+            [fd as u64, SOL_SOCKET, optname, opt_ptr as u64, 4, 0],
+        )
+    }
+
+    fn net_stack_recv_snapshot(runtime: &mut PrototypeRuntime<'_>, fd: i64) -> (usize, usize) {
+        let (socket_id, _, _) = runtime.socket_fd_snapshot(fd as u32).expect("socket fd snapshot");
+        let index = runtime.net_stack_socket_index(socket_id).expect("net stack socket");
+        let stack_socket_id = runtime.net_stack_sockets[index].stack_socket_id;
+        let snapshot = runtime.net_stack.tcp_snapshot(stack_socket_id).expect("tcp snapshot");
+        (snapshot.recv_capacity, snapshot.recv_queue)
     }
 
     fn packet_backed_listener(runtime: &mut PrototypeRuntime<'_>, local_port: u16) -> i64 {
@@ -1626,6 +1699,14 @@ mod tests {
     }
 
     fn tcp_data_for_syn_ack(syn_ack: &[u8], payload: &[u8]) -> Vec<u8> {
+        tcp_data_for_syn_ack_with_seq_offset(syn_ack, 0, payload)
+    }
+
+    fn tcp_data_for_syn_ack_with_seq_offset(
+        syn_ack: &[u8],
+        seq_offset: u32,
+        payload: &[u8],
+    ) -> Vec<u8> {
         let syn_ack_ip_start = ETHERNET_HEADER_LEN;
         let syn_ack_ihl = ((syn_ack[syn_ack_ip_start] & 0x0f) as usize) * 4;
         let syn_ack_tcp_start = syn_ack_ip_start + syn_ack_ihl;
@@ -1671,7 +1752,8 @@ mod tests {
         let tcp_start = ip_start + 20;
         frame[tcp_start..tcp_start + 2].copy_from_slice(&client_port.to_be_bytes());
         frame[tcp_start + 2..tcp_start + 4].copy_from_slice(&server_port.to_be_bytes());
-        frame[tcp_start + 4..tcp_start + 8].copy_from_slice(&client_seq.to_be_bytes());
+        frame[tcp_start + 4..tcp_start + 8]
+            .copy_from_slice(&client_seq.wrapping_add(seq_offset).to_be_bytes());
         frame[tcp_start + 8..tcp_start + 12]
             .copy_from_slice(&server_seq.wrapping_add(1).to_be_bytes());
         frame[tcp_start + 12] = 5 << 4;
@@ -2454,6 +2536,81 @@ mod tests {
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_so_rcvbuf_limits_smoltcp_receive_queue() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        assert_eq!(setsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64, 1), 0);
+        assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_RCVBUF as u64), 2048);
+        assert_eq!(net_stack_recv_snapshot(&mut runtime, listener_fd).0, 2048);
+
+        let local_port = 18086u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let syn_ack =
+            drive_reference_backend_tcp_handshake(&mut runtime, local_port, 40_086, 0x3132_3334);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd).0, 2048);
+
+        let chunk = [b'a'; 512];
+        for offset in [0, 512, 1024, 1536] {
+            let data = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, offset, &chunk);
+            runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+            runtime.pump_network_runtime();
+        }
+        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 2048));
+
+        let overflow = tcp_data_for_syn_ack_with_seq_offset(&syn_ack, 2048, b"b");
+        runtime
+            .reference_packet_backend
+            .inject_rx_frame(&overflow)
+            .expect("inject overflow tcp payload");
+        runtime.pump_network_runtime();
+        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 2048));
+
+        let read = dispatch_bytes(
+            &mut runtime,
+            "test_read_rcvbuf_capacity",
+            SYS_READ,
+            [accepted_fd as u64, 0, 4096, 0, 0, 0],
+        );
+        assert_eq!(read.len(), 2048);
+        assert!(read.iter().all(|byte| *byte == b'a'));
+        assert_eq!(net_stack_recv_snapshot(&mut runtime, accepted_fd), (2048, 0));
     }
 
     #[test]
