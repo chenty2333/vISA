@@ -43,10 +43,6 @@ fn fdset_read_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
     fdset_single_bit(fd)
 }
 
-fn fdset_write_bits(fd: u32) -> Option<([u64; FDSET_WORDS], u16)> {
-    fdset_single_bit(fd)
-}
-
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_socket(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if self.require_capability("linux_syscall", "linux.socket", "socket").is_err()
@@ -855,21 +851,15 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(result);
         }
 
-        let Some((write_bits, nfds)) = fdset_write_bits(fd) else {
-            return Ok(result);
-        };
-        match self.block_on_fdset_wait([0; FDSET_WORDS], write_bits, [0; FDSET_WORDS], nfds, None) {
-            Ok(()) => {
-                let result = self.try_sendto_fd(fd, len, bytes)?;
-                if matches!(result, LinuxCallResult::Ret(ret) if ret == -(ERR_EPIPE as i64))
-                    && flags & MSG_NOSIGNAL == 0
-                {
-                    self.queue_sigpipe_for_current_thread();
-                }
-                Ok(result)
-            }
-            Err(errno) => Ok(LinuxCallResult::Ret(-(errno as i64))),
-        }
+        let (ptr, copied_len) = self.linux.write_arg_bytes(bytes)?;
+        let token = self.waits.register(
+            self.scheduler.current_task(),
+            WaitRegistration::SocketSend { fd, ptr, len: copied_len, flags },
+            interrupts::tick_count(),
+            interrupts::TIMER_HZ,
+        );
+        self.record_wait_token(token);
+        Ok(LinuxCallResult::Pending(token))
     }
 
     fn queue_sigpipe_for_current_thread(&mut self) {

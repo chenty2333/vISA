@@ -1546,7 +1546,7 @@ mod tests {
         SO_ACCEPTCONN, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
         SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT,
         SYS_LISTEN, SYS_POLL, SYS_READ, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG, SYS_SENDTO,
-        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SyscallContext,
+        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SYS_WRITEV, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -1627,6 +1627,28 @@ mod tests {
             SYS_SENDTO,
             [fd as u64, ptr as u64, len as u64, flags as u64, 0, 0],
         )
+    }
+
+    fn fill_packet_sndbuf_and_ack(runtime: &mut PrototypeRuntime<'_>, fd: i64) -> Vec<u8> {
+        assert_eq!(setsockopt_u32(runtime, fd, SO_SNDBUF as u64, 1), 0);
+        let payload = [b'w'; 4096];
+        assert_eq!(write_fd(runtime, fd, &payload), 2048);
+        let outbound = runtime
+            .reference_packet_backend
+            .last_tx_frame()
+            .expect("write emitted tcp payload")
+            .to_vec();
+        let ack = tcp_ack_for_outbound_payload(&outbound);
+        assert_eq!(net_stack_buffer_state(runtime, fd), (4096, 4096, 0, 2048, 4096, 2048));
+        ack
+    }
+
+    fn assert_resumed_send_queue(runtime: &mut PrototypeRuntime<'_>, fd: i64, min_queued: usize) {
+        let (_, physical_recv, recv_queue, logical_send, physical_send, send_queue) =
+            net_stack_buffer_state(runtime, fd);
+        assert_eq!((physical_recv, recv_queue, logical_send, physical_send), (4096, 0, 2048, 4096));
+        assert!(send_queue < 2048);
+        assert!(send_queue >= min_queued);
     }
 
     fn poll_fd(runtime: &mut PrototypeRuntime<'_>, fd: i64, events: u16) -> (i64, u16) {
@@ -3221,20 +3243,7 @@ mod tests {
         let mut runtime = test_runtime();
 
         let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18093, 40_093, 0x595a_5b5c);
-        assert_eq!(setsockopt_u32(&mut runtime, accepted_fd, SO_SNDBUF as u64, 1), 0);
-
-        let payload = [b'w'; 4096];
-        assert_eq!(write_fd(&mut runtime, accepted_fd, &payload), 2048);
-        let outbound = runtime
-            .reference_packet_backend
-            .last_tx_frame()
-            .expect("write emitted tcp payload")
-            .to_vec();
-        let ack = tcp_ack_for_outbound_payload(&outbound);
-        assert_eq!(
-            net_stack_buffer_state(&mut runtime, accepted_fd),
-            (4096, 4096, 0, 2048, 4096, 2048)
-        );
+        let ack = fill_packet_sndbuf_and_ack(&mut runtime, accepted_fd);
 
         let blocked_payload = b"after ack";
         let (ptr, len) = runtime.write_linux_arg_bytes(blocked_payload).expect("send buffer");
@@ -3256,11 +3265,105 @@ mod tests {
         let resumed =
             runtime.block_on_wait("test_blocking_send_resume", token).expect("resume send");
         assert_eq!(expect_ret(resumed), blocked_payload.len() as i64);
-        let (_, physical_recv, recv_queue, logical_send, physical_send, send_queue) =
-            net_stack_buffer_state(&mut runtime, accepted_fd);
-        assert_eq!((physical_recv, recv_queue, logical_send, physical_send), (4096, 0, 2048, 4096));
-        assert!(send_queue < 2048);
-        assert!(send_queue >= blocked_payload.len());
+        assert_resumed_send_queue(&mut runtime, accepted_fd, blocked_payload.len());
+    }
+
+    #[test]
+    fn packet_backed_sendmsg_wait_resumes_after_tcp_ack() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18094, 40_094, 0x5d5e_5f60);
+        let ack = fill_packet_sndbuf_and_ack(&mut runtime, accepted_fd);
+
+        const MSGHDR_SIZE: usize = 56;
+        const IOVEC_SIZE: usize = 16;
+        const IOVCNT: usize = 2;
+        let payload = b"sendmsg after ack";
+        let first_len = 7usize;
+        let second_len = payload.len() - first_len;
+        let buffer_len = MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + payload.len();
+        let (msg_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; buffer_len]).expect("sendmsg buffer");
+        let iov_ptr = msg_ptr + MSGHDR_SIZE as u32;
+        let data1_ptr = iov_ptr + (IOVCNT * IOVEC_SIZE) as u32;
+        let data2_ptr = data1_ptr + first_len as u32;
+
+        let mut raw = alloc::vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 16, iov_ptr as u64);
+        write_u64_at(&mut raw, 24, IOVCNT as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE, data1_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + 8, first_len as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE, data2_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE + 8, second_len as u64);
+        raw[MSGHDR_SIZE + IOVCNT * IOVEC_SIZE..MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + first_len]
+            .copy_from_slice(&payload[..first_len]);
+        raw[MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + first_len..].copy_from_slice(&payload[first_len..]);
+        runtime.linux.write_bytes(msg_ptr, &raw).expect("sendmsg msghdr");
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_sendmsg_wait",
+                SyscallContext::new(SYS_SENDMSG, [accepted_fd as u64, msg_ptr as u64, 0, 0, 0, 0]),
+            )
+            .expect("sendmsg wait dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending sendmsg, got {other:?}"),
+        };
+
+        runtime.reference_packet_backend.inject_rx_frame(&ack).expect("inject tcp ack");
+        let resumed =
+            runtime.block_on_wait("test_sendmsg_wait_resume", token).expect("resume sendmsg");
+        assert_eq!(expect_ret(resumed), payload.len() as i64);
+        assert_resumed_send_queue(&mut runtime, accepted_fd, payload.len());
+    }
+
+    #[test]
+    fn packet_backed_writev_wait_resumes_after_tcp_ack() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18095, 40_095, 0x6162_6364);
+        let ack = fill_packet_sndbuf_and_ack(&mut runtime, accepted_fd);
+
+        const IOVEC_SIZE: usize = 16;
+        const IOVCNT: usize = 2;
+        let payload = b"writev after ack";
+        let first_len = 6usize;
+        let second_len = payload.len() - first_len;
+        let buffer_len = IOVCNT * IOVEC_SIZE + payload.len();
+        let (iov_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; buffer_len]).expect("writev buffer");
+        let data1_ptr = iov_ptr + (IOVCNT * IOVEC_SIZE) as u32;
+        let data2_ptr = data1_ptr + first_len as u32;
+
+        let mut raw = alloc::vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 0, data1_ptr as u64);
+        write_u64_at(&mut raw, 8, first_len as u64);
+        write_u64_at(&mut raw, IOVEC_SIZE, data2_ptr as u64);
+        write_u64_at(&mut raw, IOVEC_SIZE + 8, second_len as u64);
+        raw[IOVCNT * IOVEC_SIZE..IOVCNT * IOVEC_SIZE + first_len]
+            .copy_from_slice(&payload[..first_len]);
+        raw[IOVCNT * IOVEC_SIZE + first_len..].copy_from_slice(&payload[first_len..]);
+        runtime.linux.write_bytes(iov_ptr, &raw).expect("writev iovecs");
+
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_writev_wait",
+                SyscallContext::new(SYS_WRITEV, [accepted_fd as u64, iov_ptr as u64, 2, 0, 0, 0]),
+            )
+            .expect("writev wait dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending writev, got {other:?}"),
+        };
+
+        runtime.reference_packet_backend.inject_rx_frame(&ack).expect("inject tcp ack");
+        let resumed =
+            runtime.block_on_wait("test_writev_wait_resume", token).expect("resume writev");
+        assert_eq!(expect_ret(resumed), payload.len() as i64);
+        assert_resumed_send_queue(&mut runtime, accepted_fd, payload.len());
     }
 
     #[test]
