@@ -16,6 +16,23 @@ const SIGXCPU: u8 = 24;
 const SIGKILL_STATUS: i32 = 128 + 9;
 
 impl<'engine> PrototypeRuntime<'engine> {
+    pub(crate) fn check_rlimit_process_access(&self, target_pid: Pid) -> Result<(), i32> {
+        let current_pid = self.current_pid();
+        let target_access = self
+            .query_process(target_pid)
+            .map(|process| process.access.clone())
+            .ok_or(ERR_ESRCH)?;
+        if target_pid == current_pid {
+            return Ok(());
+        }
+        let caller_access = self.current_access_state();
+        if rlimit_process_access_allowed(&caller_access, &target_access) {
+            Ok(())
+        } else {
+            Err(ERR_EPERM)
+        }
+    }
+
     pub(crate) fn charge_current_cpu_dispatch_quantum(&mut self) -> Option<i32> {
         self.charge_current_cpu_time_ns(CPU_DISPATCH_QUANTUM_NS)
     }
@@ -106,14 +123,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         new_ptr_raw: u64,
         old_ptr_raw: u64,
     ) -> Result<LinuxCallResult, &'static str> {
-        let current_pid = self.current_pid();
-        let Some(target_access) = self.query_process(pid).map(|process| process.access.clone())
-        else {
-            return Ok(errno_ret(ERR_ESRCH));
-        };
-        let caller_access = self.current_access_state();
-        if pid != current_pid && !rlimit_process_access_allowed(&caller_access, &target_access) {
-            return Ok(errno_ret(ERR_EPERM));
+        if let Err(errno) = self.check_rlimit_process_access(pid) {
+            return Ok(errno_ret(errno));
         }
 
         let resource = match usize::try_from(resource_raw) {

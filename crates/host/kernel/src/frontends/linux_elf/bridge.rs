@@ -2359,9 +2359,7 @@ fn sys_rlimit(
     new_limit_ptr: u64,
     old_limit_ptr: u64,
 ) -> Result<i64, i32> {
-    if active_context().supervisor.query_process(pid).is_none() {
-        return Err(ERR_ESRCH);
-    }
+    active_context().supervisor.check_rlimit_process_access(pid)?;
     let resource = usize::try_from(resource_raw).map_err(|_| ERR_EINVAL)?;
     if resource >= 16 {
         return Err(ERR_EINVAL);
@@ -7365,27 +7363,31 @@ fn linux_call_result(result: LinuxCallResult) -> Result<i64, i32> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{boxed::Box, vec, vec::Vec};
+
+    use semantic_core::{CredentialTransitionKind, LinuxCapSets};
     use vmos_abi::{
-        ERR_EINTR, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_OWNER_DIED,
-        FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET,
-        FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CHOWN, SYS_CONNECT, SYS_FCHOWNAT, SYS_FCNTL,
-        SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4,
-        SYS_WRITE, SYS_WRITEV,
+        ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
+        FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT,
+        FUTEX_WAIT_BITSET, FUTEX_WAITERS, SYS_ACCEPT, SYS_ACCEPT4, SYS_CHOWN, SYS_CONNECT,
+        SYS_FCHOWNAT, SYS_FCNTL, SYS_FLOCK, SYS_FUTEX, SYS_LCHOWN, SYS_READ, SYS_READV,
+        SYS_RECVFROM, SYS_SENDTO, SYS_WAIT4, SYS_WRITE, SYS_WRITEV,
     };
 
     use super::{
-        AT_SYMLINK_NOFOLLOW, CloneRequest, FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock,
-        LINUX_GREG_EFL, LINUX_GREG_R11, LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP,
-        MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT, MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART,
-        SignalAltStack, SyscallFrame, UserPageBacking, UserPageMapping, UserRegion,
-        UserReturnContext, VectoredIoOffset, chown_path_follows_final_symlink,
-        decode_linux_ucontext_return, demand_mapping_candidate_page, encode_linux_ucontext,
-        file_backed_mmap_ref_node_id, file_shared_page_valid_bytes_for_len,
-        file_shared_page_valid_for_len, file_shared_page_writeback_bytes_for_len,
-        file_shared_pages_changed_after_truncate, file_shared_pages_invalid_after_truncate,
-        futex_pi_handoff_word, futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid,
-        futex_pi_owner_word, futex_pi_restore_wait_word, futex_pi_unlock_empty_word,
-        futex_pi_wait_word, mlockall_flags_valid, mmap_file_page_mappings,
+        super::context::UserFrameAllocator, AT_SYMLINK_NOFOLLOW, ActiveUserContext, CloneRequest,
+        FCNTL_F_SETLKW, FilePrivateSource, FutexPiTimeoutClock, LINUX_GREG_EFL, LINUX_GREG_R11,
+        LINUX_GREG_RCX, LINUX_GREG_RIP, LINUX_GREG_RSP, MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT,
+        MmapFileBacking, PSELECT6_MAX_FDS, SA_RESTART, SignalAltStack, SyscallFrame,
+        UserPageBacking, UserPageMapping, UserRegion, UserReturnContext, VectoredIoOffset,
+        chown_path_follows_final_symlink, decode_linux_ucontext_return,
+        demand_mapping_candidate_page, encode_linux_ucontext, file_backed_mmap_ref_node_id,
+        file_shared_page_valid_bytes_for_len, file_shared_page_valid_for_len,
+        file_shared_page_writeback_bytes_for_len, file_shared_pages_changed_after_truncate,
+        file_shared_pages_invalid_after_truncate, futex_pi_handoff_word,
+        futex_pi_lock_timeout_clock, futex_pi_non_timeout_flags_valid, futex_pi_owner_word,
+        futex_pi_restore_wait_word, futex_pi_unlock_empty_word, futex_pi_wait_word,
+        install_active_context, mlockall_flags_valid, mmap_file_page_mappings,
         mremap_growth_tail_page_mappings, parse_clone3_request_bytes, positioned_io_offset,
         preadv_offset_from_split, preadv2_flags_nowait, preadv2_offset_from_split,
         private_mremap_tail_page_mappings_from_bytes, private_mremap_tail_source,
@@ -7393,10 +7395,11 @@ mod tests {
         read_linux_greg, restartable_interrupted_syscall, rlimit_as_denies_replaced_mapping,
         sanitize_restored_rflags, select_remaining_timeout_ms, select_timeval_bytes,
         select_timeval_ms, shared_mremap_tail_page_mappings_from_bytes, shared_mremap_tail_source,
-        signal_restart_syscall, stack_growth_fault_allowed, user_kernel_copy_region_for_page,
-        validate_iovcnt, validate_preadv2_flags, validate_pselect6_nfds, validate_pwritev2_flags,
-        wait_nfds_within_rlimit, write_linux_greg,
+        signal_restart_syscall, stack_growth_fault_allowed, sys_rlimit,
+        user_kernel_copy_region_for_page, validate_iovcnt, validate_preadv2_flags,
+        validate_pselect6_nfds, validate_pwritev2_flags, wait_nfds_within_rlimit, write_linux_greg,
     };
+    use crate::supervisor::{PrototypeRuntime, runtime, types::RLIMIT_NOFILE};
 
     fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
@@ -7414,6 +7417,116 @@ mod tests {
             rcx: 0x4000,
             r11: 0x202,
         }
+    }
+
+    fn test_runtime() -> &'static mut PrototypeRuntime<'static> {
+        runtime().expect("test runtime")
+    }
+
+    fn linux_cap_sets(caps: u64) -> LinuxCapSets {
+        LinuxCapSets {
+            bounding: caps,
+            inheritable: 0,
+            permitted: caps,
+            effective: caps,
+            ambient: 0,
+            securebits: 0,
+        }
+    }
+
+    fn set_current_process_credentials(
+        runtime: &mut PrototypeRuntime<'static>,
+        uid: u32,
+        gid: u32,
+        caps: u64,
+    ) {
+        let pid = runtime.current_pid();
+        assert!(runtime.record_credential_transition(
+            pid,
+            uid,
+            uid,
+            uid,
+            uid,
+            gid,
+            gid,
+            gid,
+            gid,
+            Vec::new(),
+            linux_cap_sets(caps),
+            CredentialTransitionKind::CapSet {
+                bounding: true,
+                inheritable: false,
+                permitted: true,
+                effective: true,
+                ambient: false,
+                securebits: false,
+            },
+        ));
+    }
+
+    fn create_target_process(
+        runtime: &mut PrototypeRuntime<'static>,
+        uid: u32,
+        gid: u32,
+        caps: u64,
+    ) -> u32 {
+        let caller = runtime.current_pid();
+        let caller_tid = runtime.current_tid();
+        let (_, target, _) = runtime
+            .create_independent_vm_clone_child(
+                17,
+                caller,
+                caller_tid,
+                uid,
+                uid,
+                uid,
+                uid,
+                gid,
+                gid,
+                gid,
+                gid,
+                Vec::new(),
+                linux_cap_sets(caps),
+                None,
+            )
+            .expect("target process");
+        target
+    }
+
+    fn install_test_active_context(
+        runtime: &'static mut PrototypeRuntime<'static>,
+    ) -> ActiveUserContext {
+        let task_id = runtime.current_task_id();
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        ActiveUserContext::new(
+            runtime,
+            Vec::new(),
+            Vec::new(),
+            UserFrameAllocator::new(&[]),
+            task_id,
+            pid,
+            tid,
+            0,
+            0,
+            0,
+            0,
+            0,
+            b"/test".to_vec(),
+        )
+    }
+
+    #[test]
+    fn linux_elf_prlimit64_uses_runtime_cross_process_access_gate() {
+        let runtime = test_runtime();
+        set_current_process_credentials(runtime, 1000, 100, 0);
+        let denied_target = create_target_process(runtime, 2000, 200, 0);
+        let allowed_target = create_target_process(runtime, 1000, 100, 0);
+        let context = Box::leak(Box::new(install_test_active_context(runtime)));
+        install_active_context(context);
+
+        assert_eq!(sys_rlimit(denied_target, RLIMIT_NOFILE as u64, 0, 0), Err(ERR_EPERM));
+        assert_eq!(sys_rlimit(allowed_target, RLIMIT_NOFILE as u64, 0, 0), Ok(0));
     }
 
     #[test]
