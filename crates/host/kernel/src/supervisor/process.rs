@@ -1067,6 +1067,38 @@ impl<'engine> PrototypeRuntime<'engine> {
             return;
         }
         if word & FUTEX_WAITERS != 0 {
+            match self.prepare_futex_pi_handoff(futex_addr) {
+                Ok(Some(handoff)) => {
+                    let handoff_word = futex_pi_handoff_word(
+                        new_word,
+                        handoff.next_owner_tid & FUTEX_TID_MASK,
+                        handoff.has_more_waiters,
+                    );
+                    if let Err(reason) = self.write_linux_u32(futex_addr, handoff_word) {
+                        crate::kwarn!("robust_list pi handoff write failed: {}", reason);
+                        return;
+                    }
+                    match self.complete_futex_pi_ownerless_handoff(futex_addr, handoff) {
+                        Ok(()) => return,
+                        Err(ServiceCallError::Errno(errno)) => {
+                            crate::kwarn!("robust_list pi handoff returned errno {}", errno);
+                            return;
+                        }
+                        Err(ServiceCallError::Trap(reason))
+                        | Err(ServiceCallError::Invalid(reason)) => {
+                            crate::kwarn!("robust_list pi handoff failed: {}", reason);
+                            return;
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(ServiceCallError::Errno(errno)) => {
+                    crate::kwarn!("robust_list pi handoff prepare returned errno {}", errno);
+                }
+                Err(ServiceCallError::Trap(reason)) | Err(ServiceCallError::Invalid(reason)) => {
+                    crate::kwarn!("robust_list pi handoff prepare failed: {}", reason);
+                }
+            }
             self.wake_futex_key(futex_addr, "robust_list");
         }
     }
@@ -2737,6 +2769,14 @@ fn robust_futex_addr(entry: u64, futex_offset: i64) -> Option<u64> {
     }
 }
 
+fn futex_pi_handoff_word(word: u32, tid: u32, has_more_waiters: bool) -> u32 {
+    let mut next = (word & FUTEX_OWNER_DIED) | (tid & FUTEX_TID_MASK);
+    if has_more_waiters {
+        next |= FUTEX_WAITERS;
+    }
+    next
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
@@ -2755,7 +2795,7 @@ mod tests {
     use crate::supervisor::{
         engine::RuntimeOnlyExecutor,
         types::{Rlimit, SigAction},
-        wait::{WaitOutcome, WaitSource},
+        wait::{WaitOutcome, WaitRegistration, WaitSource},
     };
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -2852,7 +2892,7 @@ mod tests {
         assert_eq!(runtime.query_thread(tid).expect("current thread").clear_child_tid, None);
 
         let resolution = runtime.waits.take_resolution(token).expect("futex wait resolution");
-        assert_eq!(resolution.source, WaitSource::Futex);
+        assert_eq!(resolution.source, WaitSource::Futex { pi: false });
         assert_eq!(resolution.outcome, WaitOutcome::Ready);
     }
 
@@ -2910,7 +2950,70 @@ mod tests {
         assert!(runtime.query_thread(tid).expect("current thread").robust_list.is_none());
 
         let resolution = runtime.waits.take_resolution(token).expect("futex wait resolution");
-        assert_eq!(resolution.source, WaitSource::Futex);
+        assert_eq!(resolution.source, WaitSource::Futex { pi: false });
+        assert_eq!(resolution.outcome, WaitOutcome::Ready);
+    }
+
+    #[test]
+    fn generic_robust_exit_hands_owner_died_pi_futex_to_pi_waiter() {
+        let mut runtime = test_runtime();
+        let owner_tid = runtime.current_tid();
+        let waiter_pid = runtime.allocate_process(
+            runtime.current_pid(),
+            runtime.current_pid(),
+            runtime.current_pid(),
+        );
+        let waiter_task = runtime.allocate_task();
+        let waiter_tid = runtime.allocate_thread(waiter_task, waiter_pid);
+        runtime.boost_task_priority(waiter_task, 9);
+
+        let mut raw = Vec::from([0u8; 40]);
+        let (base, _) = runtime.write_linux_arg_bytes(&raw).expect("robust buffer base");
+        let head = base as u64;
+        let entry = head + ROBUST_LIST_HEAD_SIZE;
+        let futex_addr = entry + 8;
+        let owned_word = FUTEX_WAITERS | (owner_tid & FUTEX_TID_MASK);
+
+        raw[0..8].copy_from_slice(&entry.to_le_bytes());
+        raw[8..16].copy_from_slice(&8i64.to_le_bytes());
+        raw[16..24].copy_from_slice(&0u64.to_le_bytes());
+        raw[24..32].copy_from_slice(&head.to_le_bytes());
+        raw[32..36].copy_from_slice(&owned_word.to_le_bytes());
+        runtime.write_linux_arg_bytes(&raw).expect("robust buffer");
+
+        let set = runtime
+            .dispatch_linux_syscall_raw(
+                "test_set_robust_list",
+                SyscallContext::new(SYS_SET_ROBUST_LIST, [head, ROBUST_LIST_HEAD_SIZE, 0, 0, 0, 0]),
+            )
+            .expect("set_robust_list dispatch");
+        assert_eq!(expect_ret(set), 0);
+
+        let token = runtime.waits.register(
+            waiter_task,
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 0, pi: true },
+            0,
+            100,
+        );
+        runtime.record_wait_token(token);
+        runtime
+            .futex
+            .register_wait_pi(futex_addr, token.id, runtime.task_priority(waiter_task))
+            .expect("pi waiter registration");
+
+        let exit = runtime
+            .dispatch_linux_syscall_raw("test_exit", SyscallContext::new(SYS_EXIT, [0; 6]))
+            .expect("exit dispatch");
+        assert_eq!(expect_exit(exit), 0);
+
+        let word = runtime.linux.read_bytes(futex_addr as u32, 4).expect("robust futex word");
+        assert_eq!(
+            u32::from_le_bytes(word.try_into().expect("word len")),
+            FUTEX_OWNER_DIED | (waiter_tid & FUTEX_TID_MASK)
+        );
+
+        let resolution = runtime.waits.take_resolution(token).expect("pi futex wait resolution");
+        assert_eq!(resolution.source, WaitSource::Futex { pi: true });
         assert_eq!(resolution.outcome, WaitOutcome::Ready);
     }
 

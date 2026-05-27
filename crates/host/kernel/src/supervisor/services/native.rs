@@ -2098,6 +2098,7 @@ struct FutexWaiter {
     wait_id: u64,
     bitset: u32,
     priority: u32,
+    pi: bool,
     requeue_pi: bool,
 }
 
@@ -2139,7 +2140,31 @@ impl FutexService {
         bitset: u32,
         priority: u32,
     ) -> Result<(), ServiceCallError> {
-        self.waiters.push(FutexWaiter { key, wait_id, bitset, priority, requeue_pi: false });
+        self.waiters.push(FutexWaiter {
+            key,
+            wait_id,
+            bitset,
+            priority,
+            pi: false,
+            requeue_pi: false,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn register_wait_pi(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
+        self.waiters.push(FutexWaiter {
+            key,
+            wait_id,
+            bitset: u32::MAX,
+            priority,
+            pi: true,
+            requeue_pi: false,
+        });
         Ok(())
     }
 
@@ -2154,6 +2179,7 @@ impl FutexService {
             wait_id,
             bitset: u32::MAX,
             priority,
+            pi: true,
             requeue_pi: true,
         });
         Ok(())
@@ -2167,11 +2193,25 @@ impl FutexService {
         Ok(self.best_waiter_index(key, u32::MAX).map(|index| self.waiters[index].wait_id))
     }
 
+    pub(crate) fn peek_pi_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {
+        Ok(self.best_pi_waiter_index(key).map(|index| self.waiters[index].wait_id))
+    }
+
     pub(crate) fn waiter_count(&mut self, key: u64) -> Result<u32, ServiceCallError> {
         let count =
             self.waiters.iter().filter(|waiter| waiter.key == key && !waiter.requeue_pi).count();
         u32::try_from(count)
             .map_err(|_| ServiceCallError::Invalid("native futex waiter count overflowed"))
+    }
+
+    pub(crate) fn pi_waiter_count(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        let count = self
+            .waiters
+            .iter()
+            .filter(|waiter| waiter.key == key && waiter.pi && !waiter.requeue_pi)
+            .count();
+        u32::try_from(count)
+            .map_err(|_| ServiceCallError::Invalid("native futex pi waiter count overflowed"))
     }
 
     pub(crate) fn wake_bitset(
@@ -2279,6 +2319,25 @@ impl FutexService {
             .unwrap_or(0))
     }
 
+    pub(crate) fn max_pi_priority_excluding(
+        &mut self,
+        key: u64,
+        excluded_wait_id: u64,
+    ) -> Result<u32, ServiceCallError> {
+        Ok(self
+            .waiters
+            .iter()
+            .filter(|waiter| {
+                waiter.key == key
+                    && waiter.wait_id != excluded_wait_id
+                    && waiter.pi
+                    && !waiter.requeue_pi
+            })
+            .map(|waiter| waiter.priority)
+            .max()
+            .unwrap_or(0))
+    }
+
     fn best_waiter_index(&self, key: u64, bitset: u32) -> Option<usize> {
         let mut best_index = None;
         let mut best_priority = 0u32;
@@ -2290,6 +2349,21 @@ impl FutexService {
                 continue;
             }
             if bitset != u32::MAX && waiter.bitset & bitset == 0 {
+                continue;
+            }
+            if best_index.is_none() || waiter.priority > best_priority {
+                best_index = Some(index);
+                best_priority = waiter.priority;
+            }
+        }
+        best_index
+    }
+
+    fn best_pi_waiter_index(&self, key: u64) -> Option<usize> {
+        let mut best_index = None;
+        let mut best_priority = 0u32;
+        for (index, waiter) in self.waiters.iter().enumerate() {
+            if waiter.key != key || !waiter.pi || waiter.requeue_pi {
                 continue;
             }
             if best_index.is_none() || waiter.priority > best_priority {

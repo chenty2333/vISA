@@ -16,6 +16,7 @@ pub(crate) enum WaitRegistration {
     Futex {
         timeout_ms: Option<u32>,
         resume_cookie: u32,
+        pi: bool,
     },
     Epoll {
         epoll_id: u32,
@@ -119,7 +120,9 @@ enum WaitState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WaitSource {
     Timer,
-    Futex,
+    Futex {
+        pi: bool,
+    },
     Epoll {
         epoll_id: u32,
         max_events: u32,
@@ -226,9 +229,9 @@ impl WaitRegistry {
                 resume_cookie,
                 Some(now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
             ),
-            WaitRegistration::Futex { timeout_ms, resume_cookie } => (
+            WaitRegistration::Futex { timeout_ms, resume_cookie, pi } => (
                 WaitKind::Futex,
-                WaitSource::Futex,
+                WaitSource::Futex { pi },
                 resume_cookie,
                 timeout_ms
                     .map(|delay_ms| now_ticks.saturating_add(ms_to_ticks(delay_ms, timer_hz))),
@@ -350,7 +353,7 @@ impl WaitRegistry {
 
             match record.source {
                 WaitSource::Timer => events.push(Event::WaitReady(record.token.id)),
-                WaitSource::Futex => {
+                WaitSource::Futex { .. } => {
                     events.push(Event::WaitCancelled(record.token.id, ERR_ETIMEDOUT))
                 }
                 WaitSource::Epoll { .. } => events.push(Event::WaitReady(record.token.id)),
@@ -435,6 +438,14 @@ impl WaitRegistry {
             .map(|record| record.token.owner_task)
     }
 
+    pub(crate) fn is_pi_futex_wait(&self, wait_id: u64) -> bool {
+        self.records.iter().flatten().any(|record| {
+            record.token.id == wait_id
+                && record.state == WaitState::Pending
+                && matches!(record.source, WaitSource::Futex { pi: true })
+        })
+    }
+
     pub(crate) fn pending_sources(&self) -> Vec<(WaitToken, WaitSource)> {
         self.records
             .iter()
@@ -509,7 +520,7 @@ mod tests {
         let mut registry = WaitRegistry::new();
         let token = registry.register(
             7,
-            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 11 },
+            WaitRegistration::Futex { timeout_ms: None, resume_cookie: 11, pi: false },
             0,
             100,
         );

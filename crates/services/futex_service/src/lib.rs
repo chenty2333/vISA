@@ -22,13 +22,21 @@ struct Waiter {
     wait_id: u64,
     bitset: u32,
     priority: u32,
+    pi: bool,
     requeue_pi: bool,
     active: bool,
 }
 
 impl Waiter {
-    const EMPTY: Self =
-        Self { key: 0, wait_id: 0, bitset: 0, priority: 0, requeue_pi: false, active: false };
+    const EMPTY: Self = Self {
+        key: 0,
+        wait_id: 0,
+        bitset: 0,
+        priority: 0,
+        pi: false,
+        requeue_pi: false,
+        active: false,
+    };
 }
 
 #[unsafe(no_mangle)]
@@ -73,12 +81,17 @@ pub extern "C" fn register_wait_bitset_with_priority(
     bitset: u32,
     priority: u32,
 ) -> i32 {
-    register_wait_common(key, wait_id, bitset, priority, false)
+    register_wait_common(key, wait_id, bitset, priority, false, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn register_wait_pi(key: u64, wait_id: u64, priority: u32) -> i32 {
+    register_wait_common(key, wait_id, u32::MAX, priority, true, false)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn register_wait_requeue_pi(key: u64, wait_id: u64, priority: u32) -> i32 {
-    register_wait_common(key, wait_id, u32::MAX, priority, true)
+    register_wait_common(key, wait_id, u32::MAX, priority, true, true)
 }
 
 fn register_wait_common(
@@ -86,6 +99,7 @@ fn register_wait_common(
     wait_id: u64,
     bitset: u32,
     priority: u32,
+    pi: bool,
     requeue_pi: bool,
 ) -> i32 {
     unsafe {
@@ -93,7 +107,7 @@ fn register_wait_common(
         for index in 0..MAX_WAITERS {
             let slot = base.add(index);
             if !(*slot).active {
-                *slot = Waiter { key, wait_id, bitset, priority, requeue_pi, active: true };
+                *slot = Waiter { key, wait_id, bitset, priority, pi, requeue_pi, active: true };
                 return 0;
             }
         }
@@ -109,10 +123,19 @@ pub extern "C" fn wake(key: u64, max_count: u32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn peek_waiter(key: u64) -> i32 {
+    peek_waiter_common(key, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn peek_pi_waiter(key: u64) -> i32 {
+    peek_waiter_common(key, true)
+}
+
+fn peek_waiter_common(key: u64, pi_only: bool) -> i32 {
     unsafe {
         let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         let response = addr_of_mut!(RESPONSE) as *mut u8;
-        let Some(index) = select_waiter_index(waiters, key, u32::MAX) else {
+        let Some(index) = select_waiter_index(waiters, key, u32::MAX, pi_only) else {
             return 0;
         };
         let slot = waiters.add(index);
@@ -123,12 +146,25 @@ pub extern "C" fn peek_waiter(key: u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn waiter_count(key: u64) -> i32 {
+    waiter_count_common(key, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pi_waiter_count(key: u64) -> i32 {
+    waiter_count_common(key, true)
+}
+
+fn waiter_count_common(key: u64, pi_only: bool) -> i32 {
     let mut count = 0i32;
     unsafe {
         let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if (*slot).active && (*slot).key == key && !(*slot).requeue_pi {
+            if (*slot).active
+                && (*slot).key == key
+                && !(*slot).requeue_pi
+                && (!pi_only || (*slot).pi)
+            {
                 count += 1;
             }
         }
@@ -145,7 +181,7 @@ pub extern "C" fn wake_bitset(key: u64, max_count: u32, bitset: u32) -> i32 {
         let waiters = core::ptr::addr_of_mut!(WAITERS) as *mut Waiter;
         let response = addr_of_mut!(RESPONSE) as *mut u8;
         while written < max_count {
-            let Some(index) = select_waiter_index(waiters, key, bitset) else {
+            let Some(index) = select_waiter_index(waiters, key, bitset, false) else {
                 break;
             };
             let slot = waiters.add(index);
@@ -182,7 +218,7 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
 
         // First pass: wake up to wake_count waiters from src_key.
         while woken < wake_count {
-            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX) else {
+            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX, false) else {
                 break;
             };
             let slot = waiters.add(index);
@@ -202,7 +238,7 @@ pub extern "C" fn requeue(src_key: u64, count: u32, dst_key: u64, wake_count: u3
         // Second pass: requeue up to count waiters from src_key to dst_key.
         let mut requeued = 0usize;
         while requeued < count {
-            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX) else {
+            let Some(index) = select_waiter_index(waiters, src_key, u32::MAX, false) else {
                 break;
             };
             let slot = waiters.add(index);
@@ -265,6 +301,15 @@ pub extern "C" fn max_priority(key: u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn max_priority_excluding(key: u64, excluded_wait_id: u64) -> i32 {
+    max_priority_excluding_common(key, excluded_wait_id, false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn max_pi_priority_excluding(key: u64, excluded_wait_id: u64) -> i32 {
+    max_priority_excluding_common(key, excluded_wait_id, true)
+}
+
+fn max_priority_excluding_common(key: u64, excluded_wait_id: u64, pi_only: bool) -> i32 {
     unsafe {
         let waiters = core::ptr::addr_of!(WAITERS) as *const Waiter;
         let mut best = 0u32;
@@ -274,6 +319,7 @@ pub extern "C" fn max_priority_excluding(key: u64, excluded_wait_id: u64) -> i32
                 || (*slot).key != key
                 || (*slot).wait_id == excluded_wait_id
                 || (*slot).requeue_pi
+                || (pi_only && !(*slot).pi)
             {
                 continue;
             }
@@ -285,13 +331,22 @@ pub extern "C" fn max_priority_excluding(key: u64, excluded_wait_id: u64) -> i32
     }
 }
 
-fn select_waiter_index(waiters: *mut Waiter, key: u64, bitset: u32) -> Option<usize> {
+fn select_waiter_index(
+    waiters: *mut Waiter,
+    key: u64,
+    bitset: u32,
+    pi_only: bool,
+) -> Option<usize> {
     let mut best_index = None;
     let mut best_priority = 0u32;
     unsafe {
         for index in 0..MAX_WAITERS {
             let slot = waiters.add(index);
-            if !(*slot).active || (*slot).key != key || (*slot).requeue_pi {
+            if !(*slot).active
+                || (*slot).key != key
+                || (*slot).requeue_pi
+                || (pi_only && !(*slot).pi)
+            {
                 continue;
             }
             if bitset != u32::MAX && (*slot).bitset & bitset == 0 {
@@ -474,6 +529,45 @@ mod tests {
         assert_eq!(requeue_total(), 1);
         assert_eq!(waiter_count(22), 1);
         assert_eq!(wake(22, 1), 8);
+        assert_eq!(response_wait_id(0), 7);
+    }
+
+    #[test]
+    fn pi_waiter_queries_ignore_plain_waiters() {
+        reset();
+        assert_eq!(register_wait_with_priority(11, 7, 99), 0);
+        assert_eq!(register_wait_pi(11, 8, 4), 0);
+        assert_eq!(register_wait_pi(11, 9, 7), 0);
+
+        assert_eq!(waiter_count(11), 3);
+        assert_eq!(pi_waiter_count(11), 2);
+        assert_eq!(max_priority(11), 99);
+        assert_eq!(max_pi_priority_excluding(11, 9), 4);
+        assert_eq!(max_pi_priority_excluding(11, 8), 7);
+
+        assert_eq!(peek_waiter(11), 8);
+        assert_eq!(response_wait_id(0), 7);
+        assert_eq!(peek_pi_waiter(11), 8);
+        assert_eq!(response_wait_id(0), 9);
+    }
+
+    #[test]
+    fn requeue_pi_waiters_remain_pi_after_requeue() {
+        reset();
+        assert_eq!(register_wait_requeue_pi(11, 7, 5), 0);
+        assert_eq!(register_wait_with_priority(22, 8, 99), 0);
+        assert_eq!(pi_waiter_count(11), 0);
+
+        assert_eq!(requeue_pi(11, 1, 22), 8);
+        assert_eq!(requeue_total(), 1);
+        assert_eq!(waiter_count(22), 2);
+        assert_eq!(pi_waiter_count(22), 1);
+        assert_eq!(max_pi_priority_excluding(22, 0), 5);
+        assert_eq!(max_pi_priority_excluding(22, 7), 0);
+
+        assert_eq!(peek_waiter(22), 8);
+        assert_eq!(response_wait_id(0), 8);
+        assert_eq!(peek_pi_waiter(22), 8);
         assert_eq!(response_wait_id(0), 7);
     }
 

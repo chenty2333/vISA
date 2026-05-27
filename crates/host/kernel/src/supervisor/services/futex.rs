@@ -11,9 +11,12 @@ pub(crate) struct FutexService {
     io: BufferedModule,
     register_wait_with_priority_export: WasmFn<(u64, u64, u32), i32>,
     register_wait_bitset_with_priority_export: WasmFn<(u64, u64, u32, u32), i32>,
+    register_wait_pi_export: WasmFn<(u64, u64, u32), i32>,
     register_wait_requeue_pi_export: WasmFn<(u64, u64, u32), i32>,
     peek_waiter_export: WasmFn<u64, i32>,
+    peek_pi_waiter_export: WasmFn<u64, i32>,
     waiter_count_export: WasmFn<u64, i32>,
+    pi_waiter_count_export: WasmFn<u64, i32>,
     wake_export: WasmFn<(u64, u32), i32>,
     wake_bitset_export: WasmFn<(u64, u32, u32), i32>,
     requeue_export: WasmFn<(u64, u32, u64, u32), i32>,
@@ -21,6 +24,7 @@ pub(crate) struct FutexService {
     cancel_wait_export: WasmFn<u64, i32>,
     max_priority_export: WasmFn<u64, i32>,
     max_priority_excluding_export: WasmFn<(u64, u64), i32>,
+    max_pi_priority_excluding_export: WasmFn<(u64, u64), i32>,
 }
 
 impl FutexService {
@@ -38,10 +42,16 @@ impl FutexService {
             "register_wait_bitset_with_priority",
             "missing futex register_wait_bitset_with_priority export",
         )?;
+        let register_wait_pi_export =
+            io.bind("register_wait_pi", "missing futex register_wait_pi export")?;
         let register_wait_requeue_pi_export =
             io.bind("register_wait_requeue_pi", "missing futex register_wait_requeue_pi export")?;
         let peek_waiter_export = io.bind("peek_waiter", "missing futex peek_waiter export")?;
+        let peek_pi_waiter_export =
+            io.bind("peek_pi_waiter", "missing futex peek_pi_waiter export")?;
         let waiter_count_export = io.bind("waiter_count", "missing futex waiter_count export")?;
+        let pi_waiter_count_export =
+            io.bind("pi_waiter_count", "missing futex pi_waiter_count export")?;
         let wake_export = io.bind("wake", "missing futex wake export")?;
         let wake_bitset_export = io.bind("wake_bitset", "missing futex wake_bitset export")?;
         let requeue_export = io.bind("requeue", "missing futex requeue export")?;
@@ -50,14 +60,19 @@ impl FutexService {
         let max_priority_export = io.bind("max_priority", "missing futex max_priority export")?;
         let max_priority_excluding_export =
             io.bind("max_priority_excluding", "missing futex max_priority_excluding export")?;
+        let max_pi_priority_excluding_export =
+            io.bind("max_pi_priority_excluding", "missing futex max_pi_priority_excluding export")?;
 
         Ok(Self {
             io,
             register_wait_with_priority_export,
             register_wait_bitset_with_priority_export,
+            register_wait_pi_export,
             register_wait_requeue_pi_export,
             peek_waiter_export,
+            peek_pi_waiter_export,
             waiter_count_export,
+            pi_waiter_count_export,
             wake_export,
             wake_bitset_export,
             requeue_export,
@@ -65,6 +80,7 @@ impl FutexService {
             cancel_wait_export,
             max_priority_export,
             max_priority_excluding_export,
+            max_pi_priority_excluding_export,
         })
     }
 
@@ -133,6 +149,23 @@ impl FutexService {
         )
     }
 
+    pub(crate) fn register_wait_pi(
+        &mut self,
+        key: u64,
+        wait_id: u64,
+        priority: u32,
+    ) -> Result<(), ServiceCallError> {
+        expect_ok(
+            self.io
+                .call(
+                    &self.register_wait_pi_export,
+                    (key, wait_id, priority),
+                    "futex_service trapped",
+                )
+                .map_err(ServiceCallError::Trap)?,
+        )
+    }
+
     pub(crate) fn wake(&mut self, key: u64, max_count: u32) -> Result<Vec<u64>, ServiceCallError> {
         let len = expect_len(
             self.io
@@ -143,10 +176,20 @@ impl FutexService {
     }
 
     pub(crate) fn peek_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {
+        self.peek_waiter_with_export(key, self.peek_waiter_export)
+    }
+
+    pub(crate) fn peek_pi_waiter(&mut self, key: u64) -> Result<Option<u64>, ServiceCallError> {
+        self.peek_waiter_with_export(key, self.peek_pi_waiter_export)
+    }
+
+    fn peek_waiter_with_export(
+        &mut self,
+        key: u64,
+        export: WasmFn<u64, i32>,
+    ) -> Result<Option<u64>, ServiceCallError> {
         let len = expect_len(
-            self.io
-                .call(&self.peek_waiter_export, key, "futex_service trapped")
-                .map_err(ServiceCallError::Trap)?,
+            self.io.call(&export, key, "futex_service trapped").map_err(ServiceCallError::Trap)?,
         )?;
         match len {
             0 => Ok(None),
@@ -161,10 +204,20 @@ impl FutexService {
     }
 
     pub(crate) fn waiter_count(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        self.count_with_export(key, self.waiter_count_export)
+    }
+
+    pub(crate) fn pi_waiter_count(&mut self, key: u64) -> Result<u32, ServiceCallError> {
+        self.count_with_export(key, self.pi_waiter_count_export)
+    }
+
+    fn count_with_export(
+        &mut self,
+        key: u64,
+        export: WasmFn<u64, i32>,
+    ) -> Result<u32, ServiceCallError> {
         let count = expect_len(
-            self.io
-                .call(&self.waiter_count_export, key, "futex_service trapped")
-                .map_err(ServiceCallError::Trap)?,
+            self.io.call(&export, key, "futex_service trapped").map_err(ServiceCallError::Trap)?,
         )?;
         u32::try_from(count)
             .map_err(|_| ServiceCallError::Invalid("futex_service waiter count overflowed"))
@@ -262,13 +315,34 @@ impl FutexService {
         key: u64,
         excluded_wait_id: u64,
     ) -> Result<u32, ServiceCallError> {
+        self.max_priority_excluding_with_export(
+            key,
+            excluded_wait_id,
+            self.max_priority_excluding_export,
+        )
+    }
+
+    pub(crate) fn max_pi_priority_excluding(
+        &mut self,
+        key: u64,
+        excluded_wait_id: u64,
+    ) -> Result<u32, ServiceCallError> {
+        self.max_priority_excluding_with_export(
+            key,
+            excluded_wait_id,
+            self.max_pi_priority_excluding_export,
+        )
+    }
+
+    fn max_priority_excluding_with_export(
+        &mut self,
+        key: u64,
+        excluded_wait_id: u64,
+        export: WasmFn<(u64, u64), i32>,
+    ) -> Result<u32, ServiceCallError> {
         expect_len(
             self.io
-                .call(
-                    &self.max_priority_excluding_export,
-                    (key, excluded_wait_id),
-                    "futex_service trapped",
-                )
+                .call(&export, (key, excluded_wait_id), "futex_service trapped")
                 .map_err(ServiceCallError::Trap)?,
         )
     }

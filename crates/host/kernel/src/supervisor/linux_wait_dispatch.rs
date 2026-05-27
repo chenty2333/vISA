@@ -100,7 +100,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             u32::try_from(plan.args[2]).map_err(|_| "futex resume cookie overflowed")?;
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Futex { timeout_ms, resume_cookie },
+            WaitRegistration::Futex { timeout_ms, resume_cookie, pi: requeue_pi },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
@@ -265,11 +265,11 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let token = self.waits.register(
             self.scheduler.current_task(),
-            WaitRegistration::Futex { timeout_ms, resume_cookie: 0 },
+            WaitRegistration::Futex { timeout_ms, resume_cookie: 0, pi: true },
             interrupts::tick_count(),
             interrupts::TIMER_HZ,
         );
-        match self.futex.register_wait_with_priority(key, token.id, wait_priority) {
+        match self.futex.register_wait_pi(key, token.id, wait_priority) {
             Ok(()) => self.record_wait_token(token),
             Err(ServiceCallError::Errno(errno)) => {
                 self.restore_generic_futex_wait_word_if_unwaited(key, word, wait_word);
@@ -446,8 +446,8 @@ impl<'engine> PrototypeRuntime<'engine> {
         original_word: u32,
         wait_word: u32,
     ) {
-        let Ok(waiters) = self.futex.waiter_count(key) else {
-            crate::kwarn!("generic futex pi restore skipped after waiter-count failure");
+        let Ok(waiters) = self.futex.pi_waiter_count(key) else {
+            crate::kwarn!("generic futex pi restore skipped after pi-waiter-count failure");
             return;
         };
         if waiters != 0 {
@@ -652,7 +652,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         WaitSource::FdSet { .. } => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::Signal => Ok(LinuxCallResult::Ret(0)),
                         WaitSource::SignalSet { .. } => Ok(LinuxCallResult::Ret(0)),
-                        WaitSource::Futex if resolution.resume_cookie == 0 => {
+                        WaitSource::Futex { .. } if resolution.resume_cookie == 0 => {
                             Ok(LinuxCallResult::Ret(0))
                         }
                         _ => {
@@ -707,8 +707,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                             super::types::WaitKind::FdWritable => {}
                             super::types::WaitKind::Signal => {}
                         }
-                        let manual_futex_wait = matches!(resolution.source, WaitSource::Futex)
-                            && resolution.resume_cookie == 0;
+                        let manual_futex_wait =
+                            matches!(resolution.source, WaitSource::Futex { .. })
+                                && resolution.resume_cookie == 0;
                         if manual_futex_wait
                             || matches!(
                                 resolution.source,
@@ -739,7 +740,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                         self.semantic.record_failure_effect(FailureEffect::RestartSyscall {
                             wait: Some(token.id),
                         });
-                        if matches!(resolution.source, WaitSource::Futex)
+                        if matches!(resolution.source, WaitSource::Futex { .. })
                             && resolution.resume_cookie == 0
                         {
                             return Ok(LinuxCallResult::Ret(-(ERR_EINTR as i64)));

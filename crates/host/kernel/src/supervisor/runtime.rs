@@ -521,17 +521,20 @@ impl<'engine> PrototypeRuntime<'engine> {
         &mut self,
         futex_key: u64,
     ) -> Result<Option<FutexPiHandoff>, ServiceCallError> {
-        let Some(wait_id) = self.futex.peek_waiter(futex_key)? else {
+        let Some(wait_id) = self.futex.peek_pi_waiter(futex_key)? else {
             return Ok(None);
         };
+        if !self.waits.is_pi_futex_wait(wait_id) {
+            return Err(ServiceCallError::Invalid("futex pi waiter metadata mismatch"));
+        }
         let Some(next_owner_task) = self.waits.owner_task_for_wait_id(wait_id) else {
             return Err(ServiceCallError::Invalid("futex pi waiter has no pending wait token"));
         };
         let Some(next_owner_tid) = self.tid_for_task_id(next_owner_task) else {
             return Err(ServiceCallError::Invalid("futex pi waiter has no runtime thread"));
         };
-        let waiter_count = self.futex.waiter_count(futex_key)?;
-        let remaining_waiter_priority = self.futex.max_priority_excluding(futex_key, wait_id)?;
+        let waiter_count = self.futex.pi_waiter_count(futex_key)?;
+        let remaining_waiter_priority = self.futex.max_pi_priority_excluding(futex_key, wait_id)?;
         Ok(Some(FutexPiHandoff {
             wait_id,
             next_owner_task,
