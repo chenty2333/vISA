@@ -1544,9 +1544,9 @@ mod tests {
     use vmos_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, ERR_EPIPE,
         SO_ACCEPTCONN, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND,
-        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT,
-        SYS_LISTEN, SYS_POLL, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDMSG,
-        SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SYS_WRITEV,
+        SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FCNTL,
+        SYS_GETSOCKOPT, SYS_LISTEN, SYS_POLL, SYS_READ, SYS_READV, SYS_RECVFROM, SYS_RECVMSG,
+        SYS_SENDMSG, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_WRITE, SYS_WRITEV,
         SyscallContext,
     };
 
@@ -1566,6 +1566,8 @@ mod tests {
     const SOL_SOCKET: u64 = 1;
     const SO_ERROR: u64 = 4;
     const SIGPIPE: u8 = 13;
+    const F_SETFL: u64 = 4;
+    const MSG_DONTWAIT: u32 = 0x40;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_runtime() -> PrototypeRuntime<'static> {
@@ -3185,7 +3187,6 @@ mod tests {
             net_stack_buffer_state(&mut runtime, accepted_fd),
             (4096, 4096, 0, 2048, 4096, 2048)
         );
-        const MSG_DONTWAIT: u32 = 0x40;
         assert_eq!(
             sendto_fd(&mut runtime, accepted_fd, b"full", MSG_DONTWAIT),
             -(ERR_EAGAIN as i64)
@@ -3529,6 +3530,166 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn packet_backed_recv_wait_signal_interrupt_leaves_socket_retryable() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let remote_port = 40_099;
+        let (accepted_fd, syn_ack) =
+            packet_backed_accept(&mut runtime, 18099, remote_port, 0x7172_7374);
+        let (name_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("recvfrom name");
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_recvfrom_signal_wait",
+                SyscallContext::new(
+                    SYS_RECVFROM,
+                    [accepted_fd as u64, 0, 64, 0, name_ptr as u64, (name_ptr + 16) as u64],
+                ),
+            )
+            .expect("recvfrom signal wait dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending recvfrom, got {other:?}"),
+        };
+
+        let pid = runtime.current_pid();
+        let tid = runtime.current_tid();
+        assert!(runtime.set_sigaction(
+            pid,
+            10,
+            SigAction { handler: 0x4000, flags: 0, restorer: 0x5000, mask: 0 }
+        ));
+        runtime.queue_signal_to_thread(tid, 10, 0, pid, 0);
+        let interrupted = expect_ret(
+            runtime.block_on_wait("test_recvfrom_signal_wait", token).expect("interrupt"),
+        );
+        assert_eq!(interrupted, -(ERR_EINTR as i64));
+        assert_eq!(
+            runtime.linux.read_bytes(name_ptr, 20).expect("recvfrom name buffer"),
+            accept_sockaddr_buffer()
+        );
+        let delivered = runtime.take_pending_user_handler_signal(tid).expect("signal delivery");
+        assert_eq!(delivered.signal.signo, 10);
+
+        let payload = b"retry after signal";
+        let data = tcp_data_for_syn_ack(&syn_ack, payload);
+        runtime.reference_packet_backend.inject_rx_frame(&data).expect("inject tcp payload");
+        let retried = dispatch_bytes(
+            &mut runtime,
+            "test_recvfrom_after_signal",
+            SYS_RECVFROM,
+            [accepted_fd as u64, 0, 64, 0, name_ptr as u64, (name_ptr + 16) as u64],
+        );
+        assert_eq!(retried, payload);
+        let name = runtime.linux.read_bytes(name_ptr, 16).expect("recvfrom name output");
+        assert_sockaddr_in(&name, REMOTE_IPV4, remote_port);
+    }
+
+    #[test]
+    fn packet_backed_recv_nonblocking_forms_return_eagain_without_wait() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, _) = packet_backed_accept(&mut runtime, 18100, 40_100, 0x7576_7778);
+        let (name_ptr, _) =
+            runtime.linux.write_arg_bytes(&accept_sockaddr_buffer()).expect("recvfrom name");
+        let dontwait = runtime
+            .dispatch_linux_syscall_raw(
+                "test_recvfrom_dontwait",
+                SyscallContext::new(
+                    SYS_RECVFROM,
+                    [
+                        accepted_fd as u64,
+                        0,
+                        64,
+                        MSG_DONTWAIT as u64,
+                        name_ptr as u64,
+                        (name_ptr + 16) as u64,
+                    ],
+                ),
+            )
+            .expect("recvfrom dontwait dispatch");
+        assert_eq!(expect_ret(dontwait), -(ERR_EAGAIN as i64));
+        assert_eq!(
+            runtime.linux.read_bytes(name_ptr, 20).expect("recvfrom name buffer"),
+            accept_sockaddr_buffer()
+        );
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_fcntl_nonblock",
+                SYS_FCNTL,
+                [accepted_fd as u64, F_SETFL, O_NONBLOCK as u64, 0, 0, 0],
+            ),
+            0
+        );
+        const IOVEC_SIZE: usize = 16;
+        let buffer_len = IOVEC_SIZE + 8;
+        let (iov_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; buffer_len]).expect("readv buffer");
+        let data_ptr = iov_ptr + IOVEC_SIZE as u32;
+        let mut raw = alloc::vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 0, data_ptr as u64);
+        write_u64_at(&mut raw, 8, 8);
+        runtime.linux.write_bytes(iov_ptr, &raw).expect("readv iovec");
+        let readv = runtime
+            .dispatch_linux_syscall_raw(
+                "test_readv_nonblock",
+                SyscallContext::new(SYS_READV, [accepted_fd as u64, iov_ptr as u64, 1, 0, 0, 0]),
+            )
+            .expect("readv nonblock dispatch");
+        assert_eq!(expect_ret(readv), -(ERR_EAGAIN as i64));
+
+        const MSGHDR_SIZE: usize = 56;
+        let recvmsg_len = MSGHDR_SIZE + IOVEC_SIZE + 8;
+        let (msg_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; recvmsg_len]).expect("recvmsg buffer");
+        let msg_iov_ptr = msg_ptr + MSGHDR_SIZE as u32;
+        let msg_data_ptr = msg_iov_ptr + IOVEC_SIZE as u32;
+        let mut raw = alloc::vec![0u8; recvmsg_len];
+        write_u64_at(&mut raw, 16, msg_iov_ptr as u64);
+        write_u64_at(&mut raw, 24, 1);
+        write_u64_at(&mut raw, MSGHDR_SIZE, msg_data_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + 8, 8);
+        runtime.linux.write_bytes(msg_ptr, &raw).expect("recvmsg msghdr");
+        let recvmsg = runtime
+            .dispatch_linux_syscall_raw(
+                "test_recvmsg_dontwait",
+                SyscallContext::new(
+                    SYS_RECVMSG,
+                    [accepted_fd as u64, msg_ptr as u64, MSG_DONTWAIT as u64, 0, 0, 0],
+                ),
+            )
+            .expect("recvmsg dontwait dispatch");
+        assert_eq!(expect_ret(recvmsg), -(ERR_EAGAIN as i64));
+    }
+
+    #[test]
+    fn packet_backed_read_wait_resumes_eof_after_remote_fin() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let (accepted_fd, syn_ack) = packet_backed_accept(&mut runtime, 18103, 40_103, 0x797a_7b7c);
+        let pending = runtime
+            .dispatch_linux_syscall_raw(
+                "test_read_wait_fin",
+                SyscallContext::new(SYS_READ, [accepted_fd as u64, 0, 32, 0, 0, 0]),
+            )
+            .expect("read wait dispatch");
+        let token = match pending {
+            LinuxCallResult::Pending(token) => token,
+            other => panic!("expected pending read, got {other:?}"),
+        };
+
+        let fin = tcp_fin_for_syn_ack(&syn_ack);
+        runtime.reference_packet_backend.inject_rx_frame(&fin).expect("inject tcp fin");
+        let eof = runtime.block_on_wait("test_read_wait_fin_resume", token).expect("resume eof");
+        assert!(expect_bytes(eof).is_empty());
     }
 
     #[test]
