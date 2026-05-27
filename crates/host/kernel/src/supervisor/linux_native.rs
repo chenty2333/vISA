@@ -18,11 +18,11 @@ use vmos_abi::{
     SYS_NANOSLEEP, SYS_OPENAT, SYS_PAUSE, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL, SYS_PRLIMIT64,
     SYS_PTRACE, SYS_READ, SYS_READLINKAT, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RENAME,
     SYS_RENAMEAT, SYS_RENAMEAT2, SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
-    SYS_SECCOMP, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID, SYS_SETGID,
-    SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID, SYS_SETREUID,
-    SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET, SYS_SOCKETPAIR, SYS_TGKILL,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_UNAME, SYS_WAIT4, SYS_WRITE,
-    SYS_WRITEV, SyscallContext, is_stdio_fd,
+    SYS_SECCOMP, SYS_SENDMSG, SYS_SENDTO, SYS_SET_ROBUST_LIST, SYS_SETFSGID, SYS_SETFSUID,
+    SYS_SETGID, SYS_SETGROUPS, SYS_SETPGID, SYS_SETREGID, SYS_SETRESGID, SYS_SETRESUID,
+    SYS_SETREUID, SYS_SETRLIMIT, SYS_SETSID, SYS_SETSOCKOPT, SYS_SETUID, SYS_SOCKET,
+    SYS_SOCKETPAIR, SYS_TGKILL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_UNAME, SYS_WAIT4, SYS_WRITE, SYS_WRITEV, SyscallContext, is_stdio_fd,
 };
 
 use super::{
@@ -87,6 +87,7 @@ impl LinuxFrontend {
             SYS_ACCEPT4 => self.plan_accept4(a0, a1, a2, a3),
             SYS_SOCKETPAIR => self.plan_socketpair(a0, a1, a2, a3),
             SYS_SENDTO => self.plan_sendto(a0, a1, a2, a3, a4, a5),
+            SYS_SENDMSG => self.plan_sendmsg(a0, a1, a2),
             SYS_RECVFROM => self.plan_recvfrom(a0, a1, a2, a3, a4, a5),
             SYS_RECVMSG => self.plan_recvmsg(a0, a1, a2),
             SYS_SETSOCKOPT => self.plan_setsockopt(a0, a1, a2, a3, a4),
@@ -652,6 +653,11 @@ impl LinuxFrontend {
     ) -> PackedStep {
         self.reset_plan(PlanKind::SendTo, [fd, ptr, len, flags, addr, addr_len]);
         PackedStep::plan(PlanKind::SendTo)
+    }
+
+    fn plan_sendmsg(&mut self, fd: u64, msg_ptr: u64, flags: u64) -> PackedStep {
+        self.reset_plan(PlanKind::SendMsg, [fd, msg_ptr, flags, 0, 0, 0]);
+        PackedStep::plan(PlanKind::SendMsg)
     }
 
     fn plan_recvfrom(

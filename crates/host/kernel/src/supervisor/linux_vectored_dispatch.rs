@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, PlanKind};
+use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EOPNOTSUPP, PlanKind};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -185,6 +185,43 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
             other => Ok(other),
         }
+    }
+
+    pub(super) fn plan_sendmsg(
+        &mut self,
+        plan: LinuxPlan,
+    ) -> Result<LinuxCallResult, &'static str> {
+        if let Err(result) = self.require_socket_send_capability() {
+            return Ok(result);
+        }
+        let fd = u32::try_from(plan.args[0]).map_err(|_| "sendmsg fd overflowed")?;
+        let msg_ptr = match u32::try_from(plan.args[1]) {
+            Ok(ptr) => ptr,
+            Err(_) => return Ok(errno_ret(ERR_EFAULT)),
+        };
+        let flags = plan.args[2] as u32;
+        let msg = match self.read_msghdr(msg_ptr) {
+            Ok(msg) => msg,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if msg.name != 0 || msg.namelen != 0 || msg.controllen != 0 {
+            return Ok(errno_ret(ERR_EOPNOTSUPP));
+        }
+        let iovecs = match self.read_iovecs(msg.iov_ptr, msg.iovlen) {
+            Ok(iovecs) => iovecs,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        let bytes = match self.read_iovec_bytes(&iovecs) {
+            Ok(bytes) => bytes,
+            Err(errno) => return Ok(errno_ret(errno)),
+        };
+        if let Err(errno) = self.require_socket_fd(fd) {
+            return Ok(errno_ret(errno));
+        }
+        if bytes.is_empty() {
+            return Ok(LinuxCallResult::Ret(0));
+        }
+        self.send_socket_bytes_from_fd_authorized(fd, &bytes, flags)
     }
 
     pub(super) fn plan_writev(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {

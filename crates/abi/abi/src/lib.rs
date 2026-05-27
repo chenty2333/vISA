@@ -51,6 +51,7 @@ pub const SYS_CONNECT: u64 = 42;
 pub const SYS_ACCEPT: u64 = 43;
 pub const SYS_ACCEPT4: u64 = 288;
 pub const SYS_SENDTO: u64 = 44;
+pub const SYS_SENDMSG: u64 = 46;
 pub const SYS_RECVFROM: u64 = 45;
 pub const SYS_RECVMSG: u64 = 47;
 pub const SYS_BIND: u64 = 49;
@@ -430,6 +431,7 @@ pub enum PlanKind {
     Ioctl = 108,
     Ptrace = 109,
     RecvMsg = 110,
+    SendMsg = 111,
 }
 
 impl PlanKind {
@@ -545,6 +547,7 @@ impl PlanKind {
             108 => Some(Self::Ioctl),
             109 => Some(Self::Ptrace),
             110 => Some(Self::RecvMsg),
+            111 => Some(Self::SendMsg),
             _ => None,
         }
     }

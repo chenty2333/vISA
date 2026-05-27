@@ -326,6 +326,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             PlanKind::Accept => self.plan_accept(plan, label),
             PlanKind::Connect => self.plan_socket_state(plan, "connect"),
             PlanKind::SendTo => self.plan_sendto(plan),
+            PlanKind::SendMsg => self.plan_sendmsg(plan),
             PlanKind::RecvFrom => self.plan_recvfrom(plan, label),
             PlanKind::RecvMsg => self.plan_recvmsg(plan),
             PlanKind::SetSockOpt => self.plan_setsockopt(plan),

@@ -1204,7 +1204,7 @@ mod tests {
         AF_INET, EPOLL_CTL_ADD, EPOLLIN, EPOLLRDHUP, ERR_EAGAIN, ERR_EINTR, SO_ACCEPTCONN,
         SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT, SYS_EPOLL_CREATE1,
         SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_GETSOCKOPT, SYS_LISTEN, SYS_READ, SYS_RECVMSG,
-        SYS_SOCKET, SYS_WRITE, SyscallContext,
+        SYS_SENDMSG, SYS_SOCKET, SYS_WRITE, SyscallContext,
     };
 
     use super::{LinuxCallResult, PrototypeRuntime};
@@ -2304,6 +2304,90 @@ mod tests {
             .last_tx_frame()
             .expect("accepted socket write emitted tcp frame");
         assert_eq!(&last_tx[last_tx.len() - reply.len()..], reply);
+        assert_eq!(last_tx[47] & 0x18, 0x18);
+        assert!(event_log_contains(&runtime, "PacketTransmitted"));
+    }
+
+    #[test]
+    fn packet_backed_sendmsg_transmits_split_iovecs() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let listener_fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
+        );
+        assert!(listener_fd >= 0);
+        let local_port = 18087u16;
+        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_bind",
+                SYS_BIND,
+                [listener_fd as u64, 0, 16, AF_INET as u64, local_ipv4 as u64, local_port as u64],
+            ),
+            0
+        );
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_listen",
+                SYS_LISTEN,
+                [listener_fd as u64, 1, 0, 0, 0, 0],
+            ),
+            0
+        );
+
+        let remote_port = 40_008u16;
+        drive_reference_backend_tcp_handshake(&mut runtime, local_port, remote_port, 0x6162_6364);
+        let accepted_fd = dispatch_ret(
+            &mut runtime,
+            "test_accept",
+            SYS_ACCEPT,
+            [listener_fd as u64, 0, 0, 0, 0, 0],
+        );
+        assert!(accepted_fd >= 0);
+
+        const MSGHDR_SIZE: usize = 56;
+        const IOVEC_SIZE: usize = 16;
+        const IOVCNT: usize = 2;
+        let payload = b"sendmsg split tcp payload";
+        let first_len = 9usize;
+        let second_len = payload.len() - first_len;
+        let buffer_len = MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + payload.len();
+        let (msg_ptr, _) =
+            runtime.linux.write_arg_bytes(&alloc::vec![0u8; buffer_len]).expect("sendmsg buffer");
+        let iov_ptr = msg_ptr + MSGHDR_SIZE as u32;
+        let data1_ptr = iov_ptr + (IOVCNT * IOVEC_SIZE) as u32;
+        let data2_ptr = data1_ptr + first_len as u32;
+
+        let mut raw = alloc::vec![0u8; buffer_len];
+        write_u64_at(&mut raw, 16, iov_ptr as u64);
+        write_u64_at(&mut raw, 24, IOVCNT as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE, data1_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + 8, first_len as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE, data2_ptr as u64);
+        write_u64_at(&mut raw, MSGHDR_SIZE + IOVEC_SIZE + 8, second_len as u64);
+        raw[MSGHDR_SIZE + IOVCNT * IOVEC_SIZE..MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + first_len]
+            .copy_from_slice(&payload[..first_len]);
+        raw[MSGHDR_SIZE + IOVCNT * IOVEC_SIZE + first_len..].copy_from_slice(&payload[first_len..]);
+        runtime.linux.write_arg_bytes(&raw).expect("sendmsg msghdr");
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_sendmsg_payload",
+                SYS_SENDMSG,
+                [accepted_fd as u64, msg_ptr as u64, 0, 0, 0, 0],
+            ),
+            payload.len() as i64
+        );
+        let last_tx =
+            runtime.reference_packet_backend.last_tx_frame().expect("sendmsg emitted tcp frame");
+        assert_eq!(&last_tx[last_tx.len() - payload.len()..], payload);
         assert_eq!(last_tx[47] & 0x18, 0x18);
         assert!(event_log_contains(&runtime, "PacketTransmitted"));
     }
