@@ -399,6 +399,9 @@ impl<'engine> PrototypeRuntime<'engine> {
             NetStackSocketMode::TcpConnectInProgress => {
                 self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
                 self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+                if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+                    return Ok(LinuxCallResult::Ret(-(errno as i64)));
+                }
                 if self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
                     return Ok(LinuxCallResult::Ret(-(ERR_EISCONN as i64)));
                 }
@@ -423,12 +426,17 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.net_stack_sockets[index].local_port = local_port;
         self.net_stack_sockets[index].remote_ipv4 = remote_ipv4;
         self.net_stack_sockets[index].remote_port = remote_port;
+        self.net_stack_sockets[index].pending_error = None;
+        self.net_stack_sockets[index].error_reported = false;
         self.semantic.record_socket_state_changed(socket_resource.id, "syn-sent");
         self.poll_net_stack_socket(socket_id, ready_key, Some(socket_resource.id));
         let Some(index) = self.net_stack_socket_index(socket_id) else {
             return Ok(LinuxCallResult::Ret(-(ERR_EAGAIN as i64)));
         };
         self.refresh_net_stack_socket_state(index, ready_key, socket_resource);
+        if let Some(errno) = self.take_net_stack_socket_error_by_index(index) {
+            return Ok(LinuxCallResult::Ret(-(errno as i64)));
+        }
         if self.net_stack_sockets[index].mode == NetStackSocketMode::TcpEstablished {
             return Ok(LinuxCallResult::Ret(0));
         }
@@ -1375,6 +1383,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let error = self.net_stack_sockets[index].pending_error.take()?;
         self.net_stack_sockets[index].error_reported = true;
         self.net_stack_sockets[index].read_ready = false;
+        self.net_stack_sockets[index].write_ready = false;
+        if self.net_stack_sockets[index].mode == NetStackSocketMode::TcpConnectInProgress {
+            self.net_stack_sockets[index].mode = NetStackSocketMode::Idle;
+            self.net_stack_sockets[index].local_port = 0;
+            self.net_stack_sockets[index].remote_ipv4 = [0; 4];
+            self.net_stack_sockets[index].remote_port = 0;
+        }
         Some(error)
     }
 
@@ -5001,6 +5016,60 @@ mod tests {
         assert_epoll_event_exact(&event_bytes, EPOLLOUT | EPOLLERR | EPOLLHUP, epoll_data);
         assert_eq!(getsockopt_u32(&mut runtime, fd, SO_ERROR), ERR_ECONNREFUSED as u32);
         assert_eq!(getsockopt_u32(&mut runtime, fd, SO_ERROR), 0);
+        assert!(event_log_contains(&runtime, "error-reset"));
+    }
+
+    #[test]
+    fn packet_nonblocking_connect_rst_retry_returns_error_and_allows_reconnect() {
+        let _guard = test_guard();
+        let mut runtime = test_runtime();
+
+        let fd = dispatch_ret(
+            &mut runtime,
+            "test_socket",
+            SYS_SOCKET,
+            [AF_INET as u64, SOCK_STREAM as u64 | SOCK_NONBLOCK, 0, 0, 0, 0],
+        );
+        assert!(fd >= 0);
+        let remote_ipv4 = u32::from_be_bytes(REMOTE_IPV4);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_connect_initial_rst_retry",
+                SYS_CONNECT,
+                [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, 18111],
+            ),
+            -(vmos_abi::ERR_EINPROGRESS as i64)
+        );
+        assert!(is_remote_arp_request(
+            runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
+        ));
+
+        drive_reference_backend_nonblocking_connect_rst(&mut runtime, 18111, 0x999a_9b9c);
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_connect_retry_reports_rst",
+                SYS_CONNECT,
+                [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, 18111],
+            ),
+            -(ERR_ECONNREFUSED as i64)
+        );
+        assert_eq!(getsockopt_u32(&mut runtime, fd, SO_ERROR), 0);
+
+        assert_eq!(
+            dispatch_ret(
+                &mut runtime,
+                "test_connect_after_consumed_rst",
+                SYS_CONNECT,
+                [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, 18112],
+            ),
+            -(vmos_abi::ERR_EINPROGRESS as i64)
+        );
+        let syn =
+            runtime.reference_packet_backend.last_tx_frame().expect("reconnect emitted tcp syn");
+        assert_eq!(syn[47] & 0x02, 0x02);
+        assert_eq!(u16::from_be_bytes([syn[36], syn[37]]), 18112);
         assert!(event_log_contains(&runtime, "error-reset"));
     }
 
