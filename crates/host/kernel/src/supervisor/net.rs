@@ -1294,8 +1294,18 @@ mod tests {
 
     fn assert_epoll_event(bytes: &[u8], events: u32, data: u64) {
         assert_eq!(bytes.len(), 12);
-        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()) & events, events);
+        assert_eq!(epoll_event_events(bytes) & events, events);
         assert_eq!(u64::from_le_bytes(bytes[4..12].try_into().unwrap()), data);
+    }
+
+    fn assert_epoll_event_exact(bytes: &[u8], events: u32, data: u64) {
+        assert_eq!(bytes.len(), 12);
+        assert_eq!(epoll_event_events(bytes), events);
+        assert_eq!(u64::from_le_bytes(bytes[4..12].try_into().unwrap()), data);
+    }
+
+    fn epoll_event_events(bytes: &[u8]) -> u32 {
+        u32::from_le_bytes(bytes[0..4].try_into().unwrap())
     }
 
     fn arp_request() -> [u8; ARP_FRAME_LEN] {
@@ -2760,7 +2770,7 @@ mod tests {
                     epfd as u64,
                     EPOLL_CTL_ADD as u64,
                     fd as u64,
-                    vmos_abi::EPOLLOUT as u64,
+                    (EPOLLIN | vmos_abi::EPOLLOUT) as u64,
                     epoll_data,
                     0,
                 ],
@@ -2782,7 +2792,7 @@ mod tests {
         let event_bytes = expect_bytes(
             runtime.block_on_wait("test_epoll_connect_resume", token).expect("connect epoll wait"),
         );
-        assert_epoll_event(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
+        assert_epoll_event_exact(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
 
         let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
         runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");

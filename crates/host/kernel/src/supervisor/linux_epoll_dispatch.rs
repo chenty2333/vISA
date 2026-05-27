@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use semantic_core::FailureEffect;
 use vmos_abi::ERR_EPERM;
 
@@ -9,6 +11,8 @@ use super::{
     wait::WaitRegistration,
 };
 use crate::interrupts;
+
+const EPOLL_READY_RECORD_SIZE: usize = 20;
 
 impl<'engine> PrototypeRuntime<'engine> {
     pub(super) fn plan_epoll_create1(
@@ -135,7 +139,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             self.epoll_id_from_fd(epfd).map_err(|_| "epoll_wait targeted an invalid epoll fd")?;
 
         self.pump_async_sources();
-        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+        let ready = match self.collect_current_epoll_ready(epoll_id, max_events) {
             Ok(bytes) => bytes,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -191,7 +195,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             u32::try_from(plan.args[0]).map_err(|_| "epoll_ready epoll id overflowed")?;
         let max_events =
             u32::try_from(plan.args[1]).map_err(|_| "epoll_ready max_events overflowed")?;
-        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+        let ready = match self.collect_current_epoll_ready(epoll_id, max_events) {
             Ok(bytes) => bytes,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -212,7 +216,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         epoll_id: u32,
         max_events: u32,
     ) -> Result<LinuxCallResult, &'static str> {
-        let ready = match self.epoll.collect_ready(epoll_id, max_events) {
+        let ready = match self.collect_current_epoll_ready(epoll_id, max_events) {
             Ok(bytes) => bytes,
             Err(ServiceCallError::Errno(errno)) => {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
@@ -235,5 +239,50 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let bytes = self.linux.encode_epoll_events(records, max_events)?;
         Ok(LinuxCallResult::Bytes(bytes))
+    }
+
+    fn collect_current_epoll_ready(
+        &mut self,
+        epoll_id: u32,
+        max_events: u32,
+    ) -> Result<Vec<u8>, ServiceCallError> {
+        let records = self.epoll.collect_ready(epoll_id, max_events)?;
+        self.filter_epoll_ready_records(&records, max_events).map_err(ServiceCallError::Invalid)
+    }
+
+    fn filter_epoll_ready_records(
+        &mut self,
+        records: &[u8],
+        max_events: u32,
+    ) -> Result<Vec<u8>, &'static str> {
+        if !records.len().is_multiple_of(EPOLL_READY_RECORD_SIZE) {
+            return Err("epoll ready records were malformed");
+        }
+
+        let limit = max_events.max(1) as usize;
+        let mut out = Vec::new();
+        let mut count = 0usize;
+        for record in records.chunks_exact(EPOLL_READY_RECORD_SIZE) {
+            if count == limit {
+                break;
+            }
+            let ready_key = u64::from_le_bytes(
+                record[0..8].try_into().map_err(|_| "epoll ready key was malformed")?,
+            );
+            let requested_events = u32::from_le_bytes(
+                record[8..12].try_into().map_err(|_| "epoll ready events were malformed")?,
+            );
+            let data = &record[12..20];
+            let ready_events = self
+                .ready_key_current_epoll_events(ready_key, requested_events)
+                .unwrap_or(requested_events);
+            if ready_events == 0 {
+                continue;
+            }
+            out.extend_from_slice(&ready_events.to_le_bytes());
+            out.extend_from_slice(data);
+            count += 1;
+        }
+        Ok(out)
     }
 }

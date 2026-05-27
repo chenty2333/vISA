@@ -1889,6 +1889,7 @@ impl EpollService {
             {
                 continue;
             }
+            out.extend_from_slice(&watcher.ready_key.to_le_bytes());
             out.extend_from_slice(&watcher.events.to_le_bytes());
             out.extend_from_slice(&watcher.data.to_le_bytes());
             if watcher.events & EPOLLONESHOT != 0 {

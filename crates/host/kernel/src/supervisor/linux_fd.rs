@@ -2541,6 +2541,68 @@ impl<'engine> PrototypeRuntime<'engine> {
         readable || writable || read_half_closed
     }
 
+    pub(super) fn ready_key_current_epoll_events(
+        &mut self,
+        ready_key: u64,
+        requested_events: u32,
+    ) -> Option<u32> {
+        let mut events = 0;
+        if self.socket_for_ready_key(ready_key).is_some() {
+            if self.socket_ready_key_matches_events(ready_key, EPOLLIN) {
+                events |= EPOLLIN;
+            }
+            if self.socket_ready_key_matches_events(ready_key, EPOLLOUT) {
+                events |= EPOLLOUT;
+            }
+            if self.socket_ready_key_matches_events(ready_key, EPOLLRDHUP) {
+                events |= EPOLLRDHUP;
+            }
+            return Some(events & requested_events);
+        }
+
+        match ready_key & READY_TAG_MASK {
+            PIPE_READY_TAG => {
+                if self.pipe_ready_key_matches_events(ready_key, EPOLLIN) {
+                    events |= EPOLLIN;
+                }
+                if self.pipe_ready_key_matches_events(ready_key, EPOLLOUT) {
+                    events |= EPOLLOUT;
+                }
+                Some(events & requested_events)
+            }
+            SOCKETPAIR_READY_TAG => {
+                if self.socketpair_ready_key_matches_events(ready_key, EPOLLIN) {
+                    events |= EPOLLIN;
+                }
+                if self.socketpair_ready_key_matches_events(ready_key, EPOLLOUT) {
+                    events |= EPOLLOUT;
+                }
+                if self.socketpair_ready_key_matches_events(ready_key, EPOLLRDHUP) {
+                    events |= EPOLLRDHUP;
+                }
+                Some(events & requested_events)
+            }
+            EVENTFD_READY_TAG => {
+                if self.eventfd_ready_key_matches_events(ready_key, EPOLLIN) {
+                    events |= EPOLLIN;
+                }
+                if self.eventfd_ready_key_matches_events(ready_key, EPOLLOUT) {
+                    events |= EPOLLOUT;
+                }
+                Some(events & requested_events)
+            }
+            TIMERFD_READY_TAG => {
+                if self.timerfd_ready_key_matches_events(ready_key, EPOLLIN) {
+                    events |= EPOLLIN;
+                }
+                Some(events & requested_events)
+            }
+            EPOLL_READY_TAG => Some(requested_events & EPOLLIN),
+            _ if self.pulse.is_ready_key(ready_key) => Some(requested_events & EPOLLIN),
+            _ => None,
+        }
+    }
+
     pub(super) fn socket_accept_fd_is_ready(&mut self, fd: u32) -> bool {
         let Ok((socket_id, ready_key, handle)) = self.socket_fd_snapshot(fd) else {
             return false;

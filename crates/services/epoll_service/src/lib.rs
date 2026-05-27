@@ -12,10 +12,11 @@ use vmos_abi::{
     ERR_ENOENT,
 };
 
-const RESPONSE_CAPACITY: usize = 16 * 16;
 const MAX_INSTANCES: usize = 8;
 const MAX_WATCHERS: usize = 32;
 const MAX_WAITERS: usize = 16;
+const EPOLL_READY_RECORD_SIZE: usize = 20;
+const RESPONSE_CAPACITY: usize = MAX_WATCHERS * EPOLL_READY_RECORD_SIZE;
 const EPOLL_READY_TAG: u64 = 0x6000_0000_0000_0000;
 const READY_TAG_MASK: u64 = 0xf000_0000_0000_0000;
 const MAX_EPOLL_NESTING_DEPTH: u32 = 5;
@@ -157,19 +158,24 @@ pub extern "C" fn collect_ready(epoll_id: u32, max_events: u32) -> i32 {
                 break;
             }
 
-            let offset = written * 12;
-            if offset + 12 > RESPONSE_CAPACITY {
+            let offset = written * EPOLL_READY_RECORD_SIZE;
+            if offset + EPOLL_READY_RECORD_SIZE > RESPONSE_CAPACITY {
                 return -ERR_EIO;
             }
 
             core::ptr::copy_nonoverlapping(
-                (*slot).events.to_le_bytes().as_ptr(),
+                (*slot).ready_key.to_le_bytes().as_ptr(),
                 response.add(offset),
+                8,
+            );
+            core::ptr::copy_nonoverlapping(
+                (*slot).events.to_le_bytes().as_ptr(),
+                response.add(offset + 8),
                 4,
             );
             core::ptr::copy_nonoverlapping(
                 (*slot).data.to_le_bytes().as_ptr(),
-                response.add(offset + 4),
+                response.add(offset + 12),
                 8,
             );
             if (*slot).events & EPOLLONESHOT != 0 {
@@ -184,7 +190,7 @@ pub extern "C" fn collect_ready(epoll_id: u32, max_events: u32) -> i32 {
         }
     }
 
-    (written * 12) as i32
+    (written * EPOLL_READY_RECORD_SIZE) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -489,7 +495,15 @@ fn has_instance(epoll_id: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard};
+
     use super::*;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn reset() {
         unsafe {
@@ -502,6 +516,7 @@ mod tests {
 
     #[test]
     fn mod_watcher_updates_trigger_and_exclusive_flags() {
+        let _guard = test_guard();
         reset();
         assert_eq!(create(0), 1);
         assert_eq!(ctl(1, EPOLL_CTL_ADD, 42, EPOLLET | EPOLLEXCLUSIVE | 1, 7), 0);
@@ -521,6 +536,24 @@ mod tests {
             }
         }
         panic!("watcher must remain registered");
+    }
+
+    #[test]
+    fn collect_ready_records_ready_key_events_and_data() {
+        let _guard = test_guard();
+        reset();
+        assert_eq!(create(0), 1);
+        assert_eq!(ctl(1, EPOLL_CTL_ADD, 42, 0x5, 7), 0);
+        assert_eq!(notify_ready(42), 0);
+        assert_eq!(collect_ready(1, 1), EPOLL_READY_RECORD_SIZE as i32);
+
+        unsafe {
+            let response = core::ptr::addr_of!(RESPONSE) as *const u8;
+            let bytes = core::slice::from_raw_parts(response, EPOLL_READY_RECORD_SIZE);
+            assert_eq!(u64::from_le_bytes(bytes[0..8].try_into().unwrap()), 42);
+            assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 0x5);
+            assert_eq!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()), 7);
+        }
     }
 }
 

@@ -8,7 +8,7 @@ use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
 use vmos_abi::{
-    EPOLLIN, ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
+    ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
     FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAIT_REQUEUE_PI,
@@ -1261,7 +1261,7 @@ fn pack_epoll_events(records: &[u8], max_events: usize) -> i32 {
     for index in 0..count {
         let offset = index * 12;
         let event = GuestEpollEvent {
-            events: u32::from_le_bytes(records[offset..offset + 4].try_into().unwrap()) | EPOLLIN,
+            events: u32::from_le_bytes(records[offset..offset + 4].try_into().unwrap()),
             data: u64::from_le_bytes(records[offset + 4..offset + 12].try_into().unwrap()),
         };
         let bytes = unsafe {
@@ -1842,6 +1842,25 @@ mod tests {
         let step = PackedStep::decode(raw);
         assert_eq!(step.tag, vmos_abi::StepTag::Error);
         assert_eq!(step.value, -ERR_EINVAL);
+    }
+
+    #[test]
+    fn epoll_event_encoding_preserves_ready_mask() {
+        let _guard = test_guard();
+        let mut records = [0u8; 12];
+        records[0..4].copy_from_slice(&vmos_abi::EPOLLOUT.to_le_bytes());
+        records[4..12].copy_from_slice(&0xace0_0003u64.to_le_bytes());
+
+        let len = pack_epoll_events(&records, 1);
+        assert_eq!(len, 12);
+        let result = unsafe {
+            core::slice::from_raw_parts(
+                core::ptr::addr_of!(RESULT_BUFFER) as *const u8,
+                len as usize,
+            )
+        };
+        assert_eq!(u32::from_le_bytes(result[0..4].try_into().unwrap()), vmos_abi::EPOLLOUT);
+        assert_eq!(u64::from_le_bytes(result[4..12].try_into().unwrap()), 0xace0_0003);
     }
 
     #[test]
