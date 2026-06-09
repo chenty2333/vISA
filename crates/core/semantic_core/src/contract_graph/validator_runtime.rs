@@ -141,85 +141,49 @@ impl ContractGraphValidator {
                 );
             }
             if let Some(code_id) = trap.code_object {
-                match snapshot.code_objects.iter().find(|code| code.id == code_id) {
-                    Some(code) => {
-                        if let Some(generation) = trap.code_generation {
-                            if code.generation != generation {
-                                violations.push(ContractViolation::new(
-                                    ContractViolationKind::GenerationMismatch,
-                                    "trap->code",
-                                    from,
-                                    Some(code.object_ref()),
-                                    "trap code generation is stale",
-                                ));
-                            }
-                        }
-                        if let Some(artifact) = trap.artifact {
-                            if code.artifact_id != artifact {
-                                violations.push(ContractViolation::new(
-                                    ContractViolationKind::GenerationMismatch,
-                                    "trap->artifact",
-                                    from,
-                                    Some(ContractObjectRef::new(
-                                        ContractObjectKind::Artifact,
-                                        artifact,
-                                        trap.artifact_generation.unwrap_or(0),
-                                    )),
-                                    "trap artifact does not match code artifact",
-                                ));
-                            }
-                        }
-                    }
-                    None => {
-                        let generation = trap.code_generation.unwrap_or(0);
-                        if !snapshot.tombstones.iter().any(|tombstone| {
-                            tombstone.kind == ContractObjectKind::CodeObject
-                                && tombstone.id == code_id
-                                && (generation == 0 || tombstone.generation == generation)
-                        }) {
-                            violations.push(ContractViolation::new(
-                                ContractViolationKind::DanglingEdge,
-                                "trap->code",
-                                from,
-                                Some(ContractObjectRef::new(
-                                    ContractObjectKind::CodeObject,
-                                    code_id,
-                                    generation,
-                                )),
-                                "trap references missing code object",
-                            ));
-                        }
-                    }
-                }
-            }
-            if let Some(artifact_id) = trap.artifact {
-                match snapshot.artifacts.iter().find(|artifact| artifact.artifact_id == artifact_id)
+                let generation = trap.code_generation.unwrap_or(0);
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "trap->code",
+                    ContractObjectKind::CodeObject,
+                    code_id,
+                    generation,
+                    ContractEdgeMode::Historical,
+                );
+                if let Some(generation) = trap.code_generation
+                    && let Some(code) = snapshot
+                        .code_objects
+                        .iter()
+                        .find(|code| code.id == code_id && code.generation == generation)
+                    && let Some(artifact) = trap.artifact
+                    && code.artifact_id != artifact
                 {
-                    Some(artifact) => {
-                        if let Some(generation) = trap.artifact_generation {
-                            if artifact.generation != generation {
-                                violations.push(ContractViolation::new(
-                                    ContractViolationKind::GenerationMismatch,
-                                    "trap->artifact",
-                                    from,
-                                    Some(artifact.object_ref()),
-                                    "trap artifact generation is stale",
-                                ));
-                            }
-                        }
-                    }
-                    None => violations.push(ContractViolation::new(
-                        ContractViolationKind::DanglingEdge,
+                    violations.push(ContractViolation::new(
+                        ContractViolationKind::GenerationMismatch,
                         "trap->artifact",
                         from,
                         Some(ContractObjectRef::new(
                             ContractObjectKind::Artifact,
-                            artifact_id,
+                            artifact,
                             trap.artifact_generation.unwrap_or(0),
                         )),
-                        "trap references missing artifact",
-                    )),
+                        "trap artifact does not match code artifact",
+                    ));
                 }
+            }
+            if let Some(artifact_id) = trap.artifact {
+                Self::check_generation_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "trap->artifact",
+                    ContractObjectKind::Artifact,
+                    artifact_id,
+                    trap.artifact_generation.unwrap_or(0),
+                    ContractEdgeMode::Historical,
+                );
             }
             Self::validate_simd_trap(snapshot, violations, trap);
         }
