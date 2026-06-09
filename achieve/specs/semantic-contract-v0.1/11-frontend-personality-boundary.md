@@ -36,8 +36,8 @@ Rust substrate traits must never be exposed as Wasm ABI.
 ## Rules
 
 ```text
-frontend resources are not VMOS capabilities
-frontend handles are not VMOS ObjectRefs
+frontend resources are not vISA capabilities
+frontend handles are not vISA ObjectRefs
 Implementing a substrate trait is not authorization
 Privileged custom WIT calls pass CapabilityGate
 Blocking calls become WaitToken state
@@ -72,7 +72,7 @@ and unsupported runtime use.
 
 ```text
 Linux syscall breadth is treated as vISA completeness
-WASI resource id is treated as a VMOS capability
+WASI resource id is treated as a vISA capability
 frontend ABI register frame is treated as Activation truth
 personality shortcut records no EventLog or ObjectRef evidence
 substrate trait is exposed directly as Wasm ABI

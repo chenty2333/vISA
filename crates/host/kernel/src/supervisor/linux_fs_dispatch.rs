@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{
+use visa_abi::{
     ERR_EBADF, ERR_EINVAL, ERR_ENOENT, ERR_ENOTDIR, ERR_EPERM, FD_STDOUT, NodeKind, PlanKind,
     ServiceRoute,
 };
@@ -25,7 +25,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         if self.require_capability("linux_syscall", "console.write", "write").is_err() {
             return Err(ERR_EPERM);
         }
-        self.console.write_bytes(bytes, false).map_err(|_| vmos_abi::ERR_EIO)
+        self.console.write_bytes(bytes, false).map_err(|_| visa_abi::ERR_EIO)
     }
 
     pub(super) fn plan_write(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -34,7 +34,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let len = u32::try_from(plan.args[2]).map_err(|_| "write plan len overflowed")?;
         let bytes = self.linux.read_bytes(ptr, len)?;
 
-        if fd == FD_STDOUT || fd == vmos_abi::FD_STDERR {
+        if fd == FD_STDOUT || fd == visa_abi::FD_STDERR {
             if let Err(errno) = self.write_console_bytes(&bytes) {
                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
             }
@@ -120,13 +120,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                     return Ok(LinuxCallResult::Ret(-(ERR_ENOTDIR as i64)));
                 }
                 if info.node == NodeKind::Directory && access_mask & MAY_WRITE != 0 {
-                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EISDIR as i64)));
+                    return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EISDIR as i64)));
                 }
                 if let Err(errno) = self.check_path_access(&path, access_mask, access) {
                     return Ok(LinuxCallResult::Ret(-(errno as i64)));
                 }
                 if !self.can_allocate_fds(1) {
-                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+                    return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EMFILE as i64)));
                 }
                 let vfs_node_id = if info.route == ServiceRoute::Vfs {
                     self.vfs.node_id_for_path(&path)
@@ -156,7 +156,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     return Ok(LinuxCallResult::Ret(-(errno as i64)));
                 }
                 if !self.can_allocate_fds(1) {
-                    return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+                    return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EMFILE as i64)));
                 }
                 match self.vfs.create_file(&path, mode, access.uid, access.gid) {
                     Ok(()) => {
@@ -515,7 +515,7 @@ mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
 
     use service_core::packet::{PACKET_FRAME_CAPACITY, PacketFrameMeta, encode_frame};
-    use vmos_abi::{
+    use visa_abi::{
         AF_INET, ERR_EACCES, ERR_EFBIG, SOCK_STREAM, SYS_LINKAT, SYS_OPENAT, SYS_READ,
         SYS_READLINKAT, SYS_READV, SYS_RENAMEAT2, SYS_WRITE, SYS_WRITEV, SyscallContext,
     };

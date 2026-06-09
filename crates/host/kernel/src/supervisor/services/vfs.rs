@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{NodeKind, ServiceRoute};
+use visa_abi::{NodeKind, ServiceRoute};
 
 use super::super::{
     engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
     types::{LookupInfo, ServiceCallError, VfsTimestamps},
 };
 
-const VFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_VFS_SERVICE_WASM"));
+const VFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_VFS_SERVICE_WASM"));
 
 pub(crate) struct VfsService {
     io: BufferedModule,
@@ -121,6 +121,6 @@ impl VfsService {
         _mtime_ns: Option<u64>,
         _ctime_ns: u64,
     ) -> Result<(), ServiceCallError> {
-        Err(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))
+        Err(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP))
     }
 }

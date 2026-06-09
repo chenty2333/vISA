@@ -1,9 +1,9 @@
 #![no_std]
 
-pub const SUPERVISOR_CONTRACT_VERSION: &str = "vmos-supervisor-contract-v2";
+pub const SUPERVISOR_CONTRACT_VERSION: &str = "visa-supervisor-contract-v2";
 pub const SUPERVISOR_WORLD: &str = "wasm-supervisor-world-v1";
-pub const MACHINE_ABI_VERSION: &str = "vmos-machine-abi-v0";
-pub const SUPERVISOR_ABI_VERSION: &str = "vmos-supervisor-abi-v0";
+pub const MACHINE_ABI_VERSION: &str = "visa-machine-abi-v0";
+pub const SUPERVISOR_ABI_VERSION: &str = "visa-supervisor-abi-v0";
 pub const WASM_FEATURE_PROFILE: &str = "wasm32-core-mvp-single-memory";
 pub const DMW_LAYOUT: &str = "logical-activation-leases-v0";
 pub const LINUX_ABI_PROFILE: &str = "linux-x86_64-demo-socket-v0";
@@ -15,13 +15,13 @@ pub const SUPERVISOR_COMPILER_ENGINE: &str = "wasmtime";
 pub const SUPERVISOR_EXECUTION_MODE: &str = "precompiled-core-module";
 pub const SUPERVISOR_ARTIFACT_FORMAT: &str = "target-artifact-image-v1";
 pub const SUPERVISOR_CODE_PAYLOAD_FORMAT: &str = "cwasm";
-pub const RUNTIME_ONLY_EXECUTOR_ABI: &str = "vmos-runtime-only-executor-v0";
+pub const RUNTIME_ONLY_EXECUTOR_ABI: &str = "visa-runtime-only-executor-v0";
 pub const SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
 pub const COMPONENT_MODEL_VERSION: &str = "wasm-core-module-v0";
 pub const WASI_PROFILE_NONE: &str = "none";
-pub const HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
-pub const CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
-pub const WIT_PACKAGE_VERSION: &str = "semantic:vmos@0.1";
+pub const HOSTCALL_ABI_VERSION: &str = "visa-target-hostcall-frame-v1";
+pub const CAPABILITY_ABI_VERSION: &str = "visa-capability-handle-v1";
+pub const WIT_PACKAGE_VERSION: &str = "semantic:visa@0.1";
 
 pub struct WasmModuleSpec {
     pub package: &'static str,
@@ -103,7 +103,7 @@ pub struct ModuleInterfaceSpec {
 }
 
 const NO_INTERFACES: &[&str] = &[];
-const VMOS_WIT_PACKAGE: &[&str] = &[WIT_PACKAGE_VERSION];
+const VISA_WIT_PACKAGE: &[&str] = &[WIT_PACKAGE_VERSION];
 const SUPERVISOR_WIT: &[&str] = &["semantic:supervisor"];
 const DRIVER_WIT: &[&str] = &["semantic:driverkit", "semantic:machine"];
 const MACHINE_WIT: &[&str] = &["semantic:machine"];
@@ -155,7 +155,7 @@ const fn interface_spec(
         required_wasi_worlds: NO_INTERFACES,
         optional_wasi_worlds: NO_INTERFACES,
         custom_wit_worlds,
-        wit_package_versions: VMOS_WIT_PACKAGE,
+        wit_package_versions: VISA_WIT_PACKAGE,
         component_model_version: COMPONENT_MODEL_VERSION,
         wasi_profile: WASI_PROFILE_NONE,
         hostcall_abi_version: HOSTCALL_ABI_VERSION,

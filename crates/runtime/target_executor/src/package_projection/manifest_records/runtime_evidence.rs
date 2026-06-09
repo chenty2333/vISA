@@ -1,4 +1,4 @@
-use vms_runtime::VisaRuntimeEvidenceSnapshot;
+use visa_runtime::VisaRuntimeEvidenceSnapshot;
 
 use super::{super::super::*, *};
 
@@ -54,12 +54,12 @@ mod tests {
         canonical_zero_field_image_hash,
     };
     use visa_profile::SubstrateProfile;
-    use vms_runtime::{
+    use visa_runtime::{
         VisaArtifactInput, VisaExecutionStep, VisaRuntime, VisaRuntimeConfig,
         VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
         VisaSubstrateUnsupportedEvidence, personality,
     };
-    use vms_wasmtime::WasmVisaExecutor;
+    use visa_wasmtime::WasmVisaExecutor;
 
     use super::*;
 
@@ -128,7 +128,7 @@ mod tests {
             "code-hash",
             TargetMemoryPlan::new(4, 2, 16),
         );
-        image.imports.push("vms.hostcall_1".to_owned());
+        image.imports.push("visa.hostcall_1".to_owned());
         image.exports.push("visa_start".to_owned());
 
         let mut registry = ArtifactRegistry::new();
@@ -179,7 +179,7 @@ mod tests {
 
         assert_eq!(bundle.target_artifacts.len(), 1);
         assert_eq!(bundle.target_artifacts[0].id, 29);
-        assert_eq!(bundle.target_artifacts[0].imports, vec![String::from("vms.hostcall_1")]);
+        assert_eq!(bundle.target_artifacts[0].imports, vec![String::from("visa.hostcall_1")]);
         assert_eq!(bundle.target_artifacts[0].exports, vec![String::from("visa_start")]);
         assert_eq!(bundle.store_records.len(), 1);
         assert_eq!(bundle.store_records[0].id, 7);
@@ -356,7 +356,7 @@ mod tests {
     fn visa_native_console_wasm() -> Vec<u8> {
         wat::parse_str(
             r#"(module
-  (import "vms" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
   (memory (export "memory") 1)
   (data (i32.const 16) "native-vISA")
   (func (export "visa_start") (result i64)

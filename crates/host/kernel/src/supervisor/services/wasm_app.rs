@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use super::super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
 
-const WASM_APP_WASM: &[u8] = include_bytes!(env!("VMOS_WASM_APP_WASM"));
+const WASM_APP_WASM: &[u8] = include_bytes!(env!("VISA_WASM_APP_WASM"));
 
 pub(crate) struct WasmApp {
     module: ModuleInstance,

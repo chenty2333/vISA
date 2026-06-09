@@ -594,7 +594,7 @@ fn preemptive_runtime_views_expose_task_activation_and_scheduler_state() {
         resource_generation: 1,
         backend: "fake-io-backend".to_owned(),
         bus: "semantic-harness".to_owned(),
-        vendor: "vmos".to_owned(),
+        vendor: "visa".to_owned(),
         model: "fake-io-v1".to_owned(),
         generation: 1,
         state: "registered".to_owned(),
@@ -1635,7 +1635,7 @@ fn trace_views_expose_attribution_generations() {
     let hostcall = hostcall_trace_view_v1(&HostcallTraceManifest {
         id: 12,
         generation: 1,
-        abi_version: "vmos-target-hostcall-frame-v1".to_owned(),
+        abi_version: "visa-target-hostcall-frame-v1".to_owned(),
         frame_size: 128,
         activation: 10,
         activation_generation: 6,

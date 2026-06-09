@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{
+use visa_abi::{
     ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
@@ -309,7 +309,7 @@ impl LinuxFrontend {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn decode_step(raw: u64) -> vmos_abi::DecodedStep {
+    pub(crate) fn decode_step(raw: u64) -> visa_abi::DecodedStep {
         PackedStep::decode(raw)
     }
 

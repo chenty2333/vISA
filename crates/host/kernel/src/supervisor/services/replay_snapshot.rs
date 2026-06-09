@@ -3,7 +3,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const REPLAY_SNAPSHOT_WASM: &[u8] = include_bytes!(env!("VMOS_REPLAY_SNAPSHOT_WASM"));
+const REPLAY_SNAPSHOT_WASM: &[u8] = include_bytes!(env!("VISA_REPLAY_SNAPSHOT_WASM"));
 
 pub(crate) struct ReplaySnapshotService {
     io: BufferedModule,

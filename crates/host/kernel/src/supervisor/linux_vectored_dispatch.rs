@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EOPNOTSUPP, PlanKind};
+use visa_abi::{ERR_EFAULT, ERR_EINVAL, ERR_EOPNOTSUPP, PlanKind};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},

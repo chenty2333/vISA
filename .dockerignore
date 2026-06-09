@@ -1,0 +1,16 @@
+.git/
+.github/
+target/
+
+**/target/
+
+.cache/
+.cargo/registry/
+.cargo/git/
+
+*.log
+*.tmp
+*.swp
+*.swo
+
+docs/.DS_Store

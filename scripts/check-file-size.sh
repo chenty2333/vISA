@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# File size gate for the VMOS workspace.
+# File size gate for the vISA workspace.
 # Thresholds tighten as the codebase is restructured.
 WARN_LINES=3500
 FAIL_LINES=5000

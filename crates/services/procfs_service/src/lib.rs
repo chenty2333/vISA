@@ -7,14 +7,14 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
-use vmos_abi::{ERR_EINVAL, ERR_EIO, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind};
+use visa_abi::{ERR_EINVAL, ERR_EIO, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind};
 
 const REQUEST_CAPACITY: usize = 256;
 const RESPONSE_CAPACITY: usize = 4096;
 
 static PROC_DIR: &[u8] = b"self\nmeminfo\n";
 static PROC_SELF_DIR: &[u8] = b"status\ncwd\n";
-static PROC_STATUS: &[u8] = b"Name:\tvmos-demo\nState:\tR (running)\nSupervisor:\tPrototype2\n";
+static PROC_STATUS: &[u8] = b"Name:\tvisa-demo\nState:\tR (running)\nSupervisor:\tPrototype2\n";
 static PROC_MEMINFO: &[u8] = b"MemTotal:\t8192 kB\nMemFree:\t4096 kB\n";
 static PROC_CWD: &[u8] = b"/sandbox";
 

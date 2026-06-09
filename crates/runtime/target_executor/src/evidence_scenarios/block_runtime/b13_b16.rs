@@ -276,8 +276,8 @@ pub(crate) fn record_block_runtime_b14_evidence(
 pub(crate) fn record_block_runtime_b15_evidence(
     semantic: &mut SemanticGraph,
 ) -> Result<(), Box<dyn Error>> {
-    let payload = b"vmos fat adapter read write payload";
-    let evidence = build_fat_read_write_evidence(FatAdapterConfig::default_vmos(), payload)
+    let payload = b"visa fat adapter read write payload";
+    let evidence = build_fat_read_write_evidence(FatAdapterConfig::default_visa(), payload)
         .map_err(|error| format!("block runtime b15 fat adapter evidence failed: {error}"))?;
 
     let adapter = semantic.apply_envelope(CommandEnvelope::new(
@@ -453,8 +453,8 @@ pub(crate) fn record_block_runtime_b15_evidence(
 pub(crate) fn record_block_runtime_b16_evidence(
     semantic: &mut SemanticGraph,
 ) -> Result<(), Box<dyn Error>> {
-    let payload = b"vmos ext4 adapter read only payload";
-    let evidence = build_ext4_read_only_evidence(Ext4AdapterConfig::default_vmos(), payload)
+    let payload = b"visa ext4 adapter read only payload";
+    let evidence = build_ext4_read_only_evidence(Ext4AdapterConfig::default_visa(), payload)
         .map_err(|error| format!("block runtime b16 ext4 adapter evidence failed: {error}"))?;
 
     let adapter = semantic.apply_envelope(CommandEnvelope::new(

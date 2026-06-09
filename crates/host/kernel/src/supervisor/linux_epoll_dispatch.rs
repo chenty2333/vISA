@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use semantic_core::FailureEffect;
-use vmos_abi::ERR_EPERM;
+use visa_abi::ERR_EPERM;
 
 use super::{
     events::Event,
@@ -24,7 +24,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let flags = u32::try_from(plan.args[0]).map_err(|_| "epoll_create1 flags overflowed")?;
         if !self.can_allocate_fds(1) {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EMFILE as i64)));
         }
         match self.epoll.create(flags) {
             Ok(epoll_id) => {

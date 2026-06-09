@@ -1,4 +1,4 @@
-use vmos_abi::{EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
+use visa_abi::{EPOLLIN, EPOLLOUT, ERR_EAGAIN, ERR_EBADF, ERR_EIO, ERR_EOPNOTSUPP};
 
 use crate::{
     net_contract::{canonical_socket_protocol, validate_linux_socket_contract},

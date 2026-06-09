@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use vmos_abi::{
+use visa_abi::{
     EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EISDIR, ERR_ELOOP,
     ERR_ENODATA, ERR_ENOENT, ERR_ENOTDIR, ERR_ENOTEMPTY, ERR_EPERM, ERR_ERANGE, NodeKind,
     PackedStep, ServiceRoute,
@@ -43,7 +43,7 @@ const PROC_DIR: &[u8] = b"self\nmeminfo\ncpuinfo\nsys\ncmdline\nmounts\n";
 const PROC_SELF_DIR: &[u8] = b"status\nstat\ncwd\nexe\n";
 const PROC_SYS_DIR: &[u8] = b"kernel\n";
 const PROC_SYS_KERNEL_DIR: &[u8] = b"pid_max\ntainted\n";
-const PROC_STATUS: &[u8] = b"Name:\tvmos-ltp\n\
+const PROC_STATUS: &[u8] = b"Name:\tvisa-ltp\n\
 State:\tR (running)\n\
 Tgid:\t4\n\
 Pid:\t4\n\
@@ -51,17 +51,17 @@ PPid:\t2\n\
 Uid:\t0\t0\t0\t0\n\
 Gid:\t0\t0\t0\t0\n\
 Supervisor:\tPrototype2\n";
-const PROC_STAT: &[u8] = b"4 (vmos-ltp) R 2 4 4 0 -1 0 0 0 0 0 1 0 0 20 0 1 0 1 0 0\n";
+const PROC_STAT: &[u8] = b"4 (visa-ltp) R 2 4 4 0 -1 0 0 0 0 0 1 0 0 20 0 1 0 1 0 0\n";
 const PROC_CPUINFO: &[u8] = b"processor\t: 0\n\
-vendor_id\t: VMOS\n\
+vendor_id\t: vISA\n\
 cpu family\t: 6\n\
 model\t\t: 1\n\
-model name\t: VMOS Virtual CPU\n\
+model name\t: vISA Virtual CPU\n\
 cpu MHz\t\t: 1000.000\n\
 flags\t\t: fpu tsc cx8 cmov sse sse2 syscall nx lm constant_tsc\n";
 const PROC_PID_MAX: &[u8] = b"4194304\n";
 const PROC_TAINTED: &[u8] = b"0\n";
-const PROC_CMDLINE: &[u8] = b"root=/dev/vmos module.sig_enforce=0\n";
+const PROC_CMDLINE: &[u8] = b"root=/dev/visa module.sig_enforce=0\n";
 const PROC_MOUNTS: &[u8] = b"tmpfs / tmpfs rw,relatime 0 0\n\
 tmpfs /tmp tmpfs rw,relatime 0 0\n";
 const PROC_MEMINFO: &[u8] = b"MemTotal:      1048576 kB\n\
@@ -707,14 +707,14 @@ impl VfsService {
         }
         let end = offset.checked_add(len).ok_or(ServiceCallError::Errno(ERR_EINVAL))?;
         if mode & !SUPPORTED != 0 || mode & UNSUPPORTED != 0 {
-            return errno(vmos_abi::ERR_EOPNOTSUPP);
+            return errno(visa_abi::ERR_EOPNOTSUPP);
         }
 
         let keep_size = mode & FALLOC_FL_KEEP_SIZE != 0;
         let punch_hole = mode & FALLOC_FL_PUNCH_HOLE != 0;
         let zero_range = mode & FALLOC_FL_ZERO_RANGE != 0;
         if punch_hole && (!keep_size || zero_range) {
-            return errno(vmos_abi::ERR_EOPNOTSUPP);
+            return errno(visa_abi::ERR_EOPNOTSUPP);
         }
 
         let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
@@ -821,7 +821,7 @@ impl VfsService {
     ) -> Result<(), ServiceCallError> {
         let Some(node) = self.dynamic_node_for_target_mut(node_id, path) else {
             self.lookup(path, false)?;
-            return errno(vmos_abi::ERR_EOPNOTSUPP);
+            return errno(visa_abi::ERR_EOPNOTSUPP);
         };
         if let Some(atime_ns) = atime_ns {
             node.timestamps.atime_ns = atime_ns;
@@ -854,7 +854,7 @@ impl VfsService {
 
         validate_xattr_name(name)?;
         if value.len() > XATTR_VALUE_MAX {
-            return errno(vmos_abi::ERR_E2BIG);
+            return errno(visa_abi::ERR_E2BIG);
         }
         if flags & !(XATTR_CREATE | XATTR_REPLACE) != 0
             || flags & (XATTR_CREATE | XATTR_REPLACE) == XATTR_CREATE | XATTR_REPLACE
@@ -864,7 +864,7 @@ impl VfsService {
 
         let node = self
             .dynamic_node_for_target_mut(node_id, path)
-            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+            .ok_or(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP))?;
         let existing = node.xattrs.iter().position(|xattr| xattr.name == name);
         if flags & XATTR_CREATE != 0 && existing.is_some() {
             return errno(ERR_EEXIST);
@@ -889,7 +889,7 @@ impl VfsService {
         validate_xattr_name(name)?;
         let node = self
             .dynamic_node_for_target(node_id, path)
-            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+            .ok_or(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP))?;
         let value = node
             .xattrs
             .iter()
@@ -911,7 +911,7 @@ impl VfsService {
     ) -> Result<Vec<u8>, ServiceCallError> {
         let node = self
             .dynamic_node_for_target(node_id, path)
-            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+            .ok_or(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP))?;
         let mut encoded = Vec::new();
         for xattr in &node.xattrs {
             encoded.extend_from_slice(&xattr.name);
@@ -932,7 +932,7 @@ impl VfsService {
         validate_xattr_name(name)?;
         let node = self
             .dynamic_node_for_target_mut(node_id, path)
-            .ok_or(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP))?;
+            .ok_or(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP))?;
         let before = node.xattrs.len();
         node.xattrs.retain(|xattr| xattr.name != name);
         if before == node.xattrs.len() {
@@ -1170,7 +1170,7 @@ impl VfsService {
                 continue;
             }
             if ranges_overlap(s, l, lock.start, lock.len) && (write || lock.write) {
-                return Err(vmos_abi::ERR_EAGAIN);
+                return Err(visa_abi::ERR_EAGAIN);
             }
         }
         self.remove_owner_locks(&key, owner, s, l);
@@ -1221,7 +1221,7 @@ impl VfsService {
                 continue;
             }
             if exclusive || lock.exclusive {
-                return Err(vmos_abi::ERR_EAGAIN);
+                return Err(visa_abi::ERR_EAGAIN);
             }
         }
         self.flock_locks.retain(|lock| lock.key != key || lock.owner != owner);
@@ -1722,7 +1722,7 @@ impl ProcfsService {
         }
         match path {
             b"/proc/self/cwd" => Ok(PROC_CWD.to_vec()),
-            b"/proc/self/exe" => Ok(b"/bin/vmos-ltp".to_vec()),
+            b"/proc/self/exe" => Ok(b"/bin/visa-ltp".to_vec()),
             b"/proc"
             | b"/proc/self"
             | b"/proc/self/status"

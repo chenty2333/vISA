@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EINVAL, ERR_EPERM, ERR_ESRCH};
+use visa_abi::{ERR_EINVAL, ERR_EPERM, ERR_ESRCH};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -244,7 +244,7 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
-    use vmos_abi::{ERR_EPERM, SYS_GETPID, SYS_PRLIMIT64, SyscallContext};
+    use visa_abi::{ERR_EPERM, SYS_GETPID, SYS_PRLIMIT64, SyscallContext};
 
     use super::{
         super::{

@@ -64,6 +64,6 @@ fn test_artifact_profile() -> ArtifactProfile {
         compiler_engine: "wasmtime".to_string(),
         compiler_execution_mode: "precompiled-core-module".to_string(),
         artifact_format: "target-artifact-image-v1".to_string(),
-        runtime_executor_abi: "vmos-runtime-only-executor-v0".to_string(),
+        runtime_executor_abi: "visa-runtime-only-executor-v0".to_string(),
     }
 }

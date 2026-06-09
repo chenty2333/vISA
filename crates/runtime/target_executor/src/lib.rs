@@ -143,7 +143,7 @@ use target_abi::{
 };
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
-const HOST_TAP_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP";
+const HOST_TAP_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP";
 const SEMANTIC_EVIDENCE_CAPABILITY_SOURCES: &[&str] = &[
     "i7-device-capability",
     "n17-dma-generation-capability",
@@ -867,14 +867,14 @@ fn target_artifact_image(
     image.signature_verified = entry.signature_verified;
     image.signer = entry.signer.clone();
     image.exports = entry.expected_exports.clone();
-    if !image.exports.iter().any(|export| export == "vmos_service_entry") {
-        image.exports.push("vmos_service_entry".to_owned());
+    if !image.exports.iter().any(|export| export == "visa_service_entry") {
+        image.exports.push("visa_service_entry".to_owned());
     }
     image.payload_len = entry.cwasm_sha256.len();
-    image.address_map.push(TargetAddressMapEntry::new("vmos_service_entry", 0, 64));
+    image.address_map.push(TargetAddressMapEntry::new("visa_service_entry", 0, 64));
     image.trap_metadata.push(TargetTrapMetadata::new(
         TargetTrapClass::CodeObjectTrap,
-        "vmos_service_entry",
+        "visa_service_entry",
         0,
     ));
     let mut next_hostcall = 1;
@@ -1435,7 +1435,7 @@ mod tests {
                 execution_mode: "precompiled-core-module".to_owned(),
                 artifact_format: "target-artifact-image-v1".to_owned(),
                 target_artifact_format: "target-artifact-image-v1".to_owned(),
-                runtime_executor_abi: "vmos-runtime-only-executor-v0".to_owned(),
+                runtime_executor_abi: "visa-runtime-only-executor-v0".to_owned(),
             },
             modules: Vec::new(),
         }

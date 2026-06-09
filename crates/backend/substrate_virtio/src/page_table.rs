@@ -222,11 +222,11 @@ mod tests {
         let mut backend = InMemoryPageTableBackend::default();
         let src = backend.alloc_frame().unwrap();
         let dst = backend.alloc_frame().unwrap();
-        backend.frame_mut(src).unwrap().bytes_mut()[..4].copy_from_slice(b"VMOS");
+        backend.frame_mut(src).unwrap().bytes_mut()[..4].copy_from_slice(b"vISA");
 
         backend.copy_frame(src, dst, 4).unwrap();
 
-        assert_eq!(&backend.frame(dst).unwrap().bytes()[..4], b"VMOS");
+        assert_eq!(&backend.frame(dst).unwrap().bytes()[..4], b"vISA");
     }
 
     #[test]

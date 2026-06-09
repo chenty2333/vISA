@@ -3,7 +3,7 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-use vmos_abi::{SYS_BRK, SYS_EXIT, SYS_SETRLIMIT, SYS_WRITE};
+use visa_abi::{SYS_BRK, SYS_EXIT, SYS_SETRLIMIT, SYS_WRITE};
 
 const RLIMIT_AS: u64 = 9;
 const PAGE_SIZE: u64 = 4096;

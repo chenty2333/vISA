@@ -280,7 +280,7 @@ fn validate_profile_requirements_payload(
         .map_err(|error| format!("{package} invalid ProfileRequirements JSON: {error}"))?;
     let host_arch = std::env::consts::ARCH;
     let target_arch = std::env::consts::ARCH;
-    check_profile_string(&profile, package, "schema", "vmos-target-profile-requirements-v1")?;
+    check_profile_string(&profile, package, "schema", "visa-target-profile-requirements-v1")?;
     check_profile_string(&profile, package, "artifact_profile", artifact_profile)?;
     check_profile_string(&profile, package, "host_arch", host_arch)?;
     check_profile_string(&profile, package, "target_arch", target_arch)?;
@@ -471,7 +471,7 @@ mod tests {
     }
 
     fn temp_test_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("vmos-target-executor-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!("visa-target-executor-{name}-{}", std::process::id()))
     }
 
     fn test_entry(path: &str, code_payload: &[u8], image: &[u8]) -> ValidatedArtifactEntry {
@@ -504,7 +504,7 @@ mod tests {
 
     fn profile_payload(fingerprint: &str) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
-            "schema": "vmos-target-profile-requirements-v1",
+            "schema": "visa-target-profile-requirements-v1",
             "artifact_profile": "host-validation",
             "host_arch": std::env::consts::ARCH,
             "target_arch": std::env::consts::ARCH,
@@ -529,7 +529,7 @@ mod tests {
 
     fn simd_required_profile_payload() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
-            "schema": "vmos-target-profile-requirements-v1",
+            "schema": "visa-target-profile-requirements-v1",
             "artifact_profile": "host-validation",
             "host_arch": std::env::consts::ARCH,
             "target_arch": std::env::consts::ARCH,

@@ -9,7 +9,7 @@ use service_core::seccomp::{
     SECCOMP_IOCTL_NOTIF_SEND, SeccompDecision, SeccompFilterProgram, SeccompInstruction,
     linux_seccomp_notif_sizes_bytes, seccomp_action_available,
 };
-use vmos_abi::{
+use visa_abi::{
     AF_INET, AF_UNIX, ERR_E2BIG, ERR_EACCES, ERR_EAFNOSUPPORT, ERR_EAGAIN, ERR_EBADF, ERR_EBUSY,
     ERR_ECANCELED, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_ELOOP, ERR_EMFILE,
     ERR_ENAMETOOLONG, ERR_ENOENT, ERR_ENOMEM, ERR_ENOSYS, ERR_ENOTDIR, ERR_EOPNOTSUPP, ERR_EPERM,
@@ -163,9 +163,9 @@ const SA_SIGINFO: u64 = 0x4;
 const SA_ONSTACK: u64 = 0x0800_0000;
 const SA_RESTART: u64 = 0x1000_0000;
 const FCNTL_F_SETLKW: u64 = 7;
-const VMOS_SIGNAL_FRAME_MAGIC: u64 = 0x564d_4f53_5349_4746; // "VMOSSIGF"
-const VMOS_SIGNAL_FRAME_SIZE: usize = 160;
-const VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET: usize = 136;
+const VISA_SIGNAL_FRAME_MAGIC: u64 = 0x5649_5341_5349_4746; // "VISASIGF"
+const VISA_SIGNAL_FRAME_SIZE: usize = 160;
+const VISA_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET: usize = 136;
 const LINUX_SIGINFO_SIZE: usize = 128;
 const LINUX_UCONTEXT_MIN_SIZE: usize = 968;
 const LINUX_UCONTEXT_STACK_OFFSET: usize = 16;
@@ -250,7 +250,7 @@ pub(crate) fn run_demo(boot_info: &'static BootInfo) -> Result<(), &'static str>
         USER_MMAP_ALLOC_BASE,
         USER_MMAP_END,
         physical_memory_offset,
-        b"/bin/vmos-ltp".to_vec(),
+        b"/bin/visa-ltp".to_vec(),
     );
     install_active_context(&mut context);
 
@@ -1357,10 +1357,10 @@ fn execve_checked_path(
     let access = effective_access_snapshot();
     let (kind, mode, len, owner_uid, owner_gid) =
         active_context().supervisor.path_metadata_checked(resolved, access.ids())?;
-    if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == vmos_abi::NodeKind::Symlink {
+    if flags & AT_SYMLINK_NOFOLLOW != 0 && kind == visa_abi::NodeKind::Symlink {
         return Err(ERR_ELOOP);
     }
-    if kind != vmos_abi::NodeKind::File {
+    if kind != visa_abi::NodeKind::File {
         return Err(ERR_EACCES);
     }
     if mode & 0o111 == 0 {
@@ -1845,8 +1845,8 @@ fn sys_chdir(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let access = effective_access_snapshot();
     active_context().supervisor.check_path_access(&resolved, 0x1, access.ids())?;
-    if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
-        return Err(vmos_abi::ERR_ENOTDIR);
+    if active_context().supervisor.path_kind(&resolved)? != visa_abi::NodeKind::Directory {
+        return Err(visa_abi::ERR_ENOTDIR);
     }
     active_context().set_cwd(resolved);
     Ok(0)
@@ -1860,8 +1860,8 @@ fn sys_chroot(frame: &SyscallFrame) -> Result<i64, i32> {
     let resolved = resolve_path(AT_FDCWD, &path)?;
     let access = effective_access_snapshot();
     active_context().supervisor.check_path_access(&resolved, 0x1, access.ids())?;
-    if active_context().supervisor.path_kind(&resolved)? != vmos_abi::NodeKind::Directory {
-        return Err(vmos_abi::ERR_ENOTDIR);
+    if active_context().supervisor.path_kind(&resolved)? != visa_abi::NodeKind::Directory {
+        return Err(visa_abi::ERR_ENOTDIR);
     }
     active_context().set_root(resolved);
     Ok(0)
@@ -2247,7 +2247,7 @@ fn validate_capability_pid(pid: i32) -> Result<(), i32> {
         return Err(ERR_EINVAL);
     }
     if pid != 0 && pid as u32 != active_context().pid {
-        return Err(vmos_abi::ERR_ESRCH);
+        return Err(visa_abi::ERR_ESRCH);
     }
     Ok(())
 }
@@ -2588,23 +2588,23 @@ fn sys_prctl(frame: &SyscallFrame) -> Result<i64, i32> {
 }
 
 fn sys_ptrace(frame: &SyscallFrame) -> Result<i64, i32> {
-    if frame.rdi == vmos_abi::PTRACE_GETEVENTMSG {
+    if frame.rdi == visa_abi::PTRACE_GETEVENTMSG {
         let msg = active_context().supervisor.ptrace_geteventmsg(frame.rsi)?;
         write_user_u64(frame.r10, msg)?;
         return Ok(0);
     }
-    if frame.rdi == vmos_abi::PTRACE_GETREGS {
+    if frame.rdi == visa_abi::PTRACE_GETREGS {
         let regs = active_context().supervisor.ptrace_getregs(frame.rsi)?;
         write_user_bytes(frame.r10, &regs)?;
         return Ok(0);
     }
-    if frame.rdi == vmos_abi::PTRACE_SETREGS {
-        let regs = read_user_bytes(frame.r10, vmos_abi::PTRACE_USER_REGS_BYTES)?;
+    if frame.rdi == visa_abi::PTRACE_SETREGS {
+        let regs = read_user_bytes(frame.r10, visa_abi::PTRACE_USER_REGS_BYTES)?;
         active_context().supervisor.ptrace_setregs(frame.rsi, &regs)?;
         return Ok(0);
     }
-    if frame.rdi == vmos_abi::PTRACE_CONT || frame.rdi == vmos_abi::PTRACE_DETACH {
-        let result = if frame.rdi == vmos_abi::PTRACE_CONT {
+    if frame.rdi == visa_abi::PTRACE_CONT || frame.rdi == visa_abi::PTRACE_DETACH {
+        let result = if frame.rdi == visa_abi::PTRACE_CONT {
             active_context().supervisor.ptrace_continue(frame.rsi, frame.r10)
         } else {
             active_context().supervisor.ptrace_detach_from_ring3(frame.rsi, frame.r10)
@@ -2846,7 +2846,7 @@ fn sys_seccomp(frame: &SyscallFrame) -> Result<i64, i32> {
 
 fn seccomp_get_action_avail(ptr: u64) -> Result<i64, i32> {
     let action = read_user_u32(ptr)?;
-    if seccomp_action_available(action) { Ok(0) } else { Err(vmos_abi::ERR_EOPNOTSUPP) }
+    if seccomp_action_available(action) { Ok(0) } else { Err(visa_abi::ERR_EOPNOTSUPP) }
 }
 
 fn seccomp_get_notif_sizes(ptr: u64) -> Result<i64, i32> {
@@ -3048,7 +3048,7 @@ fn decode_utimensat_timespec(bytes: &[u8], now_ns: u64) -> Result<Option<u64>, i
 fn sys_mount(frame: &SyscallFrame) -> Result<i64, i32> {
     let target = read_user_c_string(frame.rsi, PATH_MAX)?;
     let target = resolve_path(AT_FDCWD, &target)?;
-    if active_context().supervisor.path_kind(&target)? != vmos_abi::NodeKind::Directory {
+    if active_context().supervisor.path_kind(&target)? != visa_abi::NodeKind::Directory {
         return Err(ERR_ENOTDIR);
     }
     let fs_type =
@@ -3514,7 +3514,7 @@ fn sys_rt_sigreturn(frame: &mut SyscallFrame) -> Result<i64, i32> {
 
 fn sys_pause(_frame: &SyscallFrame) -> Result<i64, i32> {
     active_context().supervisor.block_on_signal_wait()?;
-    Err(vmos_abi::ERR_EINTR)
+    Err(visa_abi::ERR_EINTR)
 }
 
 fn sys_rt_sigsuspend(frame: &SyscallFrame) -> Result<i64, i32> {
@@ -3530,10 +3530,10 @@ fn sys_rt_sigsuspend(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let wait_result = active_context().supervisor.block_on_signal_wait();
     match wait_result {
-        Err(vmos_abi::ERR_EINTR) => Err(vmos_abi::ERR_EINTR),
+        Err(visa_abi::ERR_EINTR) => Err(visa_abi::ERR_EINTR),
         Ok(()) => {
             active_context().supervisor.cancel_sigsuspend(tid);
-            Err(vmos_abi::ERR_EINTR)
+            Err(visa_abi::ERR_EINTR)
         }
         Err(errno) => {
             active_context().supervisor.cancel_sigsuspend(tid);
@@ -3600,15 +3600,15 @@ fn encode_linux_stack_t(out: &mut [u8], offset: usize, stack: SignalAltStack, on
 
 fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<UserReturnContext, i32> {
     let current = ring3::capture_user_return(frame);
-    let bytes = read_user_bytes(current.rsp, VMOS_SIGNAL_FRAME_SIZE)?;
-    if read_u64_from(&bytes, 0)? != VMOS_SIGNAL_FRAME_MAGIC {
+    let bytes = read_user_bytes(current.rsp, VISA_SIGNAL_FRAME_SIZE)?;
+    if read_u64_from(&bytes, 0)? != VISA_SIGNAL_FRAME_MAGIC {
         return Err(ERR_EINVAL);
     }
 
     let saved_fs_base = read_u64_from(&bytes, 32)?;
     let ucontext_sp = current
         .rsp
-        .checked_add(VMOS_SIGNAL_FRAME_SIZE as u64)
+        .checked_add(VISA_SIGNAL_FRAME_SIZE as u64)
         .and_then(|addr| addr.checked_add(LINUX_SIGINFO_SIZE as u64))
         .ok_or(ERR_EFAULT)?;
     let ucontext = read_user_bytes(ucontext_sp, LINUX_UCONTEXT_MIN_SIZE)?;
@@ -3618,7 +3618,7 @@ fn restore_from_signal_frame(frame: &mut SyscallFrame) -> Result<UserReturnConte
     if active_context().supervisor.set_sigmask(tid, 2, restored_sigmask).is_none() {
         crate::kwarn!("rt_sigreturn could not restore sigmask for tid {}", tid);
     }
-    if read_u64_from(&bytes, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET)? != 0 {
+    if read_u64_from(&bytes, VISA_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET)? != 0 {
         let stack = SignalAltStack {
             sp: read_u64_from(&bytes, 112)?,
             size: read_u64_from(&bytes, 120)?,
@@ -3671,7 +3671,7 @@ fn install_user_signal_frame(
         Some(stack) => stack.top().ok_or(ERR_EFAULT)?,
         None => saved.rsp,
     };
-    let total_len = 8 + VMOS_SIGNAL_FRAME_SIZE + LINUX_SIGINFO_SIZE + LINUX_UCONTEXT_MIN_SIZE;
+    let total_len = 8 + VISA_SIGNAL_FRAME_SIZE + LINUX_SIGINFO_SIZE + LINUX_UCONTEXT_MIN_SIZE;
     let base = stack_top.checked_sub(total_len as u64 + 16).ok_or(ERR_EFAULT)?;
     let frame_sp = (base & !15).checked_add(8).ok_or(ERR_EFAULT)?;
     if let Some(stack) = alt_stack {
@@ -3680,7 +3680,7 @@ fn install_user_signal_frame(
         }
     }
     let record_sp = frame_sp.checked_add(8).ok_or(ERR_EFAULT)?;
-    let siginfo_sp = record_sp.checked_add(VMOS_SIGNAL_FRAME_SIZE as u64).ok_or(ERR_EFAULT)?;
+    let siginfo_sp = record_sp.checked_add(VISA_SIGNAL_FRAME_SIZE as u64).ok_or(ERR_EFAULT)?;
     let ucontext_sp = siginfo_sp.checked_add(LINUX_SIGINFO_SIZE as u64).ok_or(ERR_EFAULT)?;
     let signal_stack =
         active_context().supervisor.signal_alt_stack(active_context().tid).unwrap_or_default();
@@ -3689,7 +3689,7 @@ fn install_user_signal_frame(
     write_user_u64(frame_sp, delivery.action.restorer)?;
     write_user_bytes(
         record_sp,
-        &encode_vmos_signal_frame(
+        &encode_visa_signal_frame(
             &saved,
             delivery.old_sigmask,
             delivery.signal.signo,
@@ -3749,14 +3749,14 @@ fn restartable_interrupted_syscall(frame: &SyscallFrame, syscall_nr: u64) -> boo
     }
 }
 
-fn encode_vmos_signal_frame(
+fn encode_visa_signal_frame(
     saved: &UserReturnContext,
     old_sigmask: u64,
     signo: u8,
     restore_alt_stack: Option<SignalAltStack>,
-) -> [u8; VMOS_SIGNAL_FRAME_SIZE] {
-    let mut out = [0u8; VMOS_SIGNAL_FRAME_SIZE];
-    write_u64(&mut out, 0, VMOS_SIGNAL_FRAME_MAGIC);
+) -> [u8; VISA_SIGNAL_FRAME_SIZE] {
+    let mut out = [0u8; VISA_SIGNAL_FRAME_SIZE];
+    write_u64(&mut out, 0, VISA_SIGNAL_FRAME_MAGIC);
     write_u64(&mut out, 8, signo as u64);
     write_u64(&mut out, 16, old_sigmask);
     write_u64(&mut out, 24, saved.rsp);
@@ -3774,7 +3774,7 @@ fn encode_vmos_signal_frame(
         write_u64(&mut out, 112, stack.sp);
         write_u64(&mut out, 120, stack.size);
         write_u32(&mut out, 128, stack.flags);
-        write_u64(&mut out, VMOS_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET, 1);
+        write_u64(&mut out, VISA_SIGNAL_FRAME_ALTSTACK_RESTORE_OFFSET, 1);
     }
     out
 }
@@ -5188,7 +5188,7 @@ fn sys_getpeername(frame: &SyscallFrame) -> Result<i64, i32> {
     let endpoint = active_context()
         .supervisor
         .socket_ipv4_endpoint(fd, true)?
-        .ok_or(vmos_abi::ERR_ENOTCONN)?;
+        .ok_or(visa_abi::ERR_ENOTCONN)?;
     write_sockaddr_in_endpoint(frame.rsi, frame.rdx, endpoint.addr, endpoint.port)
 }
 
@@ -5530,7 +5530,7 @@ fn write_getsockopt_u32(
 fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
     const LOOP_CTL_GET_FREE: u64 = 0x4c82;
     const BLKGETSIZE64: u64 = 0x8008_1272;
-    const VMOS_LTP_LOOP_BYTES: u64 = 300 * 1024 * 1024;
+    const VISA_LTP_LOOP_BYTES: u64 = 300 * 1024 * 1024;
 
     let fd = u32::try_from(linux_fd_arg(frame.rdi)).map_err(|_| ERR_EBADF)?;
     active_context().supervisor.fd_flags(fd)?;
@@ -5568,7 +5568,7 @@ fn sys_ioctl(frame: &SyscallFrame) -> Result<i64, i32> {
             if path != b"/dev/loop0" {
                 return Err(ERR_ENOTTY);
             }
-            write_user_u64(frame.rdx, VMOS_LTP_LOOP_BYTES)?;
+            write_user_u64(frame.rdx, VISA_LTP_LOOP_BYTES)?;
             Ok(0)
         }
         _ => Err(ERR_ENOTTY),
@@ -6044,7 +6044,7 @@ fn sys_mmap(frame: &SyscallFrame) -> Result<i64, i32> {
 
     let existing_ranges = active_context().mapped_user_subranges(addr, len);
     if fixed_noreplace && !existing_ranges.is_empty() {
-        return Err(vmos_abi::ERR_EEXIST);
+        return Err(visa_abi::ERR_EEXIST);
     }
     let as_limit = active_context().supervisor.get_rlimit(active_context().pid, RLIMIT_AS).cur;
     if rlimit_as_denies_replaced_mapping(
@@ -7221,7 +7221,7 @@ fn sys_futex(frame: &SyscallFrame) -> Result<i64, i32> {
         return sys_futex_cmp_requeue_pi(frame, current_word);
     }
     if op == FUTEX_WAIT_BITSET && current_word != frame.rdx {
-        return Err(vmos_abi::ERR_EAGAIN);
+        return Err(visa_abi::ERR_EAGAIN);
     }
     if op == FUTEX_REQUEUE || op == FUTEX_CMP_REQUEUE {
         return sys_futex_requeue(frame, op, current_word);
@@ -7263,7 +7263,7 @@ fn sys_futex_requeue(frame: &SyscallFrame, op: u32, current_word: u64) -> Result
         return Err(ERR_EINVAL);
     }
     if op == FUTEX_CMP_REQUEUE && current_word != frame.r9 {
-        return Err(vmos_abi::ERR_EAGAIN);
+        return Err(visa_abi::ERR_EAGAIN);
     }
     let requeue_count = frame.r10;
     let result = active_context()
@@ -7436,7 +7436,7 @@ fn sys_futex_lock_pi(
         return Err(ERR_EDEADLK);
     }
     if try_only {
-        return Err(vmos_abi::ERR_EAGAIN);
+        return Err(visa_abi::ERR_EAGAIN);
     }
 
     if active_context()
@@ -7645,7 +7645,7 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
 
     use semantic_core::{CredentialTransitionKind, LinuxCapSets};
-    use vmos_abi::{
+    use visa_abi::{
         AF_INET, AF_UNIX, ERR_EFAULT, ERR_EINTR, ERR_EPERM, FUTEX_CLOCK_REALTIME, FUTEX_LOCK_PI,
         FUTEX_LOCK_PI2, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI, FUTEX_UNLOCK_PI,
         FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAITERS, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4,
@@ -8012,7 +8012,7 @@ mod tests {
     fn sa_restart_rejects_non_restartable_or_non_eintr_results() {
         let mut frame = syscall_frame_with_ret(-(ERR_EINTR as i64));
         assert_eq!(signal_restart_syscall(&frame, SYS_READ, 0), None);
-        assert_eq!(signal_restart_syscall(&frame, vmos_abi::SYS_GETPID, SA_RESTART), None);
+        assert_eq!(signal_restart_syscall(&frame, visa_abi::SYS_GETPID, SA_RESTART), None);
 
         frame.rax = 0;
         assert_eq!(signal_restart_syscall(&frame, SYS_READ, SA_RESTART), None);
@@ -8020,7 +8020,7 @@ mod tests {
         frame.rax = (-(ERR_EINTR as i64)) as u64;
         frame.rsi = 0;
         assert!(!restartable_interrupted_syscall(&frame, SYS_FCNTL));
-        frame.rsi = vmos_abi::FUTEX_WAKE as u64;
+        frame.rsi = visa_abi::FUTEX_WAKE as u64;
         assert!(!restartable_interrupted_syscall(&frame, SYS_FUTEX));
     }
 
@@ -8224,7 +8224,7 @@ mod tests {
                 },
             )
             .err(),
-            Some(vmos_abi::ERR_EINVAL)
+            Some(visa_abi::ERR_EINVAL)
         );
     }
 
@@ -8281,7 +8281,7 @@ mod tests {
                 },
             )
             .err(),
-            Some(vmos_abi::ERR_EINVAL)
+            Some(visa_abi::ERR_EINVAL)
         );
     }
 
@@ -8483,7 +8483,7 @@ mod tests {
 
         assert_eq!(
             shared_mremap_tail_source(&source_mappings, 0x60_000, 8192).err(),
-            Some(vmos_abi::ERR_ENOSYS)
+            Some(visa_abi::ERR_ENOSYS)
         );
     }
 
@@ -8499,7 +8499,7 @@ mod tests {
         assert_eq!(
             mremap_growth_tail_page_mappings(&source_mappings, 0x70_000, 4096, 0x71_000, 4096)
                 .err(),
-            Some(vmos_abi::ERR_ENOSYS)
+            Some(visa_abi::ERR_ENOSYS)
         );
     }
 
@@ -8569,10 +8569,10 @@ mod tests {
     #[test]
     fn pselect6_nfds_honors_rlimit_before_user_fdsets() {
         assert_eq!(validate_pselect6_nfds(16, 16), Ok(16));
-        assert_eq!(validate_pselect6_nfds(17, 16), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(validate_pselect6_nfds(17, 16), Err(visa_abi::ERR_EINVAL));
         assert_eq!(
             validate_pselect6_nfds((PSELECT6_MAX_FDS + 1) as u64, u64::MAX),
-            Err(vmos_abi::ERR_EINVAL)
+            Err(visa_abi::ERR_EINVAL)
         );
     }
 
@@ -8580,23 +8580,23 @@ mod tests {
     fn iovcnt_validation_matches_linux_iov_max() {
         assert_eq!(validate_iovcnt(0), Ok(0));
         assert_eq!(validate_iovcnt(super::LINUX_IOV_MAX as u64), Ok(super::LINUX_IOV_MAX));
-        assert_eq!(validate_iovcnt(super::LINUX_IOV_MAX as u64 + 1), Err(vmos_abi::ERR_EINVAL));
-        assert_eq!(validate_iovcnt(u64::MAX), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(validate_iovcnt(super::LINUX_IOV_MAX as u64 + 1), Err(visa_abi::ERR_EINVAL));
+        assert_eq!(validate_iovcnt(u64::MAX), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
     fn preadv_offset_reconstructs_split_linux_offset() {
         assert_eq!(preadv_offset_from_split(0x89ab_cdef, 0x0123_4567), Ok(0x0123_4567_89ab_cdef));
         assert_eq!(preadv_offset_from_split(0xffff_ffff, 0x7fff_ffff), Ok(i64::MAX as usize));
-        assert_eq!(preadv_offset_from_split(0, 0x8000_0000), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(preadv_offset_from_split(0, 0x8000_0000), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
     fn positioned_io_offset_rejects_negative_linux_offsets() {
         assert_eq!(positioned_io_offset(0), Ok(0));
         assert_eq!(positioned_io_offset(i64::MAX as u64), Ok(i64::MAX as usize));
-        assert_eq!(positioned_io_offset(i64::MAX as u64 + 1), Err(vmos_abi::ERR_EINVAL));
-        assert_eq!(positioned_io_offset(u64::MAX), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(positioned_io_offset(i64::MAX as u64 + 1), Err(visa_abi::ERR_EINVAL));
+        assert_eq!(positioned_io_offset(u64::MAX), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
@@ -8609,7 +8609,7 @@ mod tests {
             preadv2_offset_from_split(0x89ab_cdef, 0x0123_4567),
             Ok(VectoredIoOffset::Explicit(0x0123_4567_89ab_cdef))
         );
-        assert_eq!(preadv2_offset_from_split(0, 0x8000_0000), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(preadv2_offset_from_split(0, 0x8000_0000), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
@@ -8618,8 +8618,8 @@ mod tests {
         assert_eq!(validate_preadv2_flags(0x0000_0008), Ok(()));
         assert_eq!(preadv2_flags_nowait(0), Ok(false));
         assert_eq!(preadv2_flags_nowait(0x0000_0008), Ok(true));
-        assert_eq!(validate_preadv2_flags(0x0000_0001), Err(vmos_abi::ERR_EOPNOTSUPP));
-        assert_eq!(validate_preadv2_flags(0x0000_0010), Err(vmos_abi::ERR_EOPNOTSUPP));
+        assert_eq!(validate_preadv2_flags(0x0000_0001), Err(visa_abi::ERR_EOPNOTSUPP));
+        assert_eq!(validate_preadv2_flags(0x0000_0010), Err(visa_abi::ERR_EOPNOTSUPP));
     }
 
     #[test]
@@ -8630,8 +8630,8 @@ mod tests {
         assert_eq!(validate_pwritev2_flags(0x0000_0018), Ok(()));
         assert_eq!(pwritev2_flags_append(0), Ok(false));
         assert_eq!(pwritev2_flags_append(0x0000_0018), Ok(true));
-        assert_eq!(validate_pwritev2_flags(0x0000_0001), Err(vmos_abi::ERR_EOPNOTSUPP));
-        assert_eq!(validate_pwritev2_flags(0x0000_0040), Err(vmos_abi::ERR_EOPNOTSUPP));
+        assert_eq!(validate_pwritev2_flags(0x0000_0001), Err(visa_abi::ERR_EOPNOTSUPP));
+        assert_eq!(validate_pwritev2_flags(0x0000_0040), Err(visa_abi::ERR_EOPNOTSUPP));
     }
 
     #[test]
@@ -8639,9 +8639,9 @@ mod tests {
         assert_eq!(select_timeval_ms(0, 0), Ok(0));
         assert_eq!(select_timeval_ms(0, 1), Ok(1));
         assert_eq!(select_timeval_ms(1, 999_001), Ok(2000));
-        assert_eq!(select_timeval_ms(-1, 0), Err(vmos_abi::ERR_EINVAL));
-        assert_eq!(select_timeval_ms(0, -1), Err(vmos_abi::ERR_EINVAL));
-        assert_eq!(select_timeval_ms(0, 1_000_000), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(select_timeval_ms(-1, 0), Err(visa_abi::ERR_EINVAL));
+        assert_eq!(select_timeval_ms(0, -1), Err(visa_abi::ERR_EINVAL));
+        assert_eq!(select_timeval_ms(0, 1_000_000), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
@@ -8769,7 +8769,7 @@ mod tests {
         let mut bytes = [0u8; 64];
         write_u64_at(&mut bytes, 0, 17);
 
-        assert_eq!(parse_clone3_request_bytes(&bytes, 64), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(parse_clone3_request_bytes(&bytes, 64), Err(visa_abi::ERR_EINVAL));
     }
 
     #[test]
@@ -8777,7 +8777,7 @@ mod tests {
         let mut bytes = [0u8; 80];
         write_u64_at(&mut bytes, 72, 1);
 
-        assert_eq!(parse_clone3_request_bytes(&bytes, 80), Err(vmos_abi::ERR_ENOSYS));
+        assert_eq!(parse_clone3_request_bytes(&bytes, 80), Err(visa_abi::ERR_ENOSYS));
     }
 }
 
@@ -8969,10 +8969,10 @@ fn finish_exited_runtime(status: i32) -> ! {
         serial_println!("{}", line);
     }
     if status == 0 {
-        serial_println!("vmos: demo completed");
+        serial_println!("visa: demo completed");
         qemu::exit_success();
     } else {
-        serial_println!("vmos: user ELF exited with status {}", status);
+        serial_println!("visa: user ELF exited with status {}", status);
         qemu::exit_failed();
     }
 
@@ -9198,12 +9198,12 @@ fn read_user_c_string(ptr: u64, max_len: usize) -> Result<Vec<u8>, i32> {
             }
             out.push(byte);
             if out.len() == max_len {
-                return Err(vmos_abi::ERR_ENAMETOOLONG);
+                return Err(visa_abi::ERR_ENAMETOOLONG);
             }
         }
         cursor = cursor.checked_add(chunk_len).ok_or(ERR_EFAULT)?;
     }
-    Err(vmos_abi::ERR_ENAMETOOLONG)
+    Err(visa_abi::ERR_ENAMETOOLONG)
 }
 
 fn read_exec_string_array(ptr: u64) -> Result<Vec<Vec<u8>>, i32> {
@@ -9692,7 +9692,7 @@ fn discard_active_user_page_range(start: u64, len: u64) -> Result<(), i32> {
     )
     .map_err(|err| {
         if err == "user page range has non-discardable backing" {
-            vmos_abi::ERR_EOPNOTSUPP
+            visa_abi::ERR_EOPNOTSUPP
         } else {
             ERR_EFAULT
         }
@@ -10508,7 +10508,7 @@ fn resolve_path(dirfd: i64, path: &[u8]) -> Result<Vec<u8>, i32> {
     } else if dirfd >= 0 {
         let base = active_context().supervisor.fd_path(dirfd as u32).map_err(|_| ERR_EBADF)?;
         if !path.is_empty()
-            && active_context().supervisor.path_kind(&base)? != vmos_abi::NodeKind::Directory
+            && active_context().supervisor.path_kind(&base)? != visa_abi::NodeKind::Directory
         {
             return Err(ERR_ENOTDIR);
         }
@@ -10533,7 +10533,7 @@ fn resolve_final_symlink_for_stat(
     if !follow {
         return Ok(path);
     }
-    if active_context().supervisor.path_kind(&path)? != vmos_abi::NodeKind::Symlink {
+    if active_context().supervisor.path_kind(&path)? != visa_abi::NodeKind::Symlink {
         return Ok(path);
     }
     let target = active_context().supervisor.read_link_path_bytes_checked(&path, access)?;
@@ -10602,7 +10602,7 @@ fn has_non_dir_prefix(path: &[u8]) -> bool {
         }
         prefix.extend_from_slice(component);
         match active_context().supervisor.path_kind(&prefix) {
-            Ok(vmos_abi::NodeKind::Directory) => {}
+            Ok(visa_abi::NodeKind::Directory) => {}
             Ok(_) => return true,
             Err(ERR_ENOENT) => return false,
             Err(_) => return false,

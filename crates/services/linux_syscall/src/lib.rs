@@ -7,7 +7,7 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
-use vmos_abi::{
+use visa_abi::{
     ERR_EAGAIN, ERR_EFAULT, ERR_EINVAL, ERR_ENOSYS, FUTEX_CLOCK_REALTIME, FUTEX_CMD_MASK,
     FUTEX_CMP_REQUEUE, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2,
     FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME, FUTEX_REQUEUE,
@@ -1419,15 +1419,15 @@ mod tests {
     fn connect_plan_preserves_sockaddr_metadata() {
         let _guard = test_guard();
         let ipv4 = u32::from_be_bytes([10, 0, 2, 2]);
-        let raw = dispatch(SYS_CONNECT, 7, 0x1000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 80);
+        let raw = dispatch(SYS_CONNECT, 7, 0x1000, 16, visa_abi::AF_INET as u64, ipv4 as u64, 80);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Connect));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 0x1000);
         assert_eq!(plan_arg(2), 16);
-        assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
+        assert_eq!(plan_arg(3), visa_abi::AF_INET as u64);
         assert_eq!(plan_arg(4), ipv4 as u64);
         assert_eq!(plan_arg(5), 80);
     }
@@ -1436,15 +1436,15 @@ mod tests {
     fn bind_plan_preserves_sockaddr_metadata() {
         let _guard = test_guard();
         let ipv4 = u32::from_be_bytes([127, 0, 0, 1]);
-        let raw = dispatch(SYS_BIND, 8, 0x2000, 16, vmos_abi::AF_INET as u64, ipv4 as u64, 8080);
+        let raw = dispatch(SYS_BIND, 8, 0x2000, 16, visa_abi::AF_INET as u64, ipv4 as u64, 8080);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Bind));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x2000);
         assert_eq!(plan_arg(2), 16);
-        assert_eq!(plan_arg(3), vmos_abi::AF_INET as u64);
+        assert_eq!(plan_arg(3), visa_abi::AF_INET as u64);
         assert_eq!(plan_arg(4), ipv4 as u64);
         assert_eq!(plan_arg(5), 8080);
     }
@@ -1458,7 +1458,7 @@ mod tests {
         let raw = dispatch(SYS_ACCEPT4, 8, 0x2100, 0x2200, flags, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Accept));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x2100);
@@ -1471,13 +1471,13 @@ mod tests {
         let _guard = test_guard();
         const SOCK_NONBLOCK: u64 = 0o4000;
         const SOCK_CLOEXEC: u64 = 0o2000000;
-        let ty = vmos_abi::SOCK_STREAM as u64 | SOCK_CLOEXEC | SOCK_NONBLOCK;
-        let raw = dispatch(SYS_SOCKETPAIR, vmos_abi::AF_UNIX as u64, ty, 0, 0x2300, 0, 0);
+        let ty = visa_abi::SOCK_STREAM as u64 | SOCK_CLOEXEC | SOCK_NONBLOCK;
+        let raw = dispatch(SYS_SOCKETPAIR, visa_abi::AF_UNIX as u64, ty, 0, 0x2300, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::SocketPair));
-        assert_eq!(plan_arg(0), vmos_abi::AF_UNIX as u64);
+        assert_eq!(plan_arg(0), visa_abi::AF_UNIX as u64);
         assert_eq!(plan_arg(1), ty);
         assert_eq!(plan_arg(2), 0);
         assert_eq!(plan_arg(3), 0x2300);
@@ -1489,7 +1489,7 @@ mod tests {
         const O_CLOEXEC: u64 = 0o2000000;
 
         let dup = PackedStep::decode(dispatch(SYS_DUP, 8, 0xdead, 0xbeef, 0, 0, 0));
-        assert_eq!(dup.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(dup.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(dup.aux), Some(PlanKind::Dup));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0);
@@ -1497,7 +1497,7 @@ mod tests {
         assert_eq!(plan_arg(3), 0);
 
         let dup2 = PackedStep::decode(dispatch(SYS_DUP2, 8, 15, 0xbeef, 0, 0, 0));
-        assert_eq!(dup2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(dup2.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(dup2.aux), Some(PlanKind::Dup));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 15);
@@ -1505,7 +1505,7 @@ mod tests {
         assert_eq!(plan_arg(3), 1);
 
         let dup3 = PackedStep::decode(dispatch(SYS_DUP3, 8, 16, O_CLOEXEC, 0, 0, 0));
-        assert_eq!(dup3.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(dup3.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(dup3.aux), Some(PlanKind::Dup));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 16);
@@ -1520,7 +1520,7 @@ mod tests {
         let raw = dispatch(SYS_CLOSE_RANGE, 8, 128, CLOSE_RANGE_CLOEXEC, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::CloseRange));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 128);
@@ -1532,14 +1532,14 @@ mod tests {
         let _guard = test_guard();
 
         let readv = PackedStep::decode(dispatch(SYS_READV, 8, 0x3000, 4, 0, 0, 0));
-        assert_eq!(readv.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(readv.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(readv.aux), Some(PlanKind::Readv));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x3000);
         assert_eq!(plan_arg(2), 4);
 
         let writev = PackedStep::decode(dispatch(SYS_WRITEV, 9, 0x4000, 5, 0, 0, 0));
-        assert_eq!(writev.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(writev.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(writev.aux), Some(PlanKind::Writev));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x4000);
@@ -1551,7 +1551,7 @@ mod tests {
         let _guard = test_guard();
 
         let recvmsg = PackedStep::decode(dispatch(SYS_RECVMSG, 8, 0x3000, 0x40, 0, 0, 0));
-        assert_eq!(recvmsg.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(recvmsg.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(recvmsg.aux), Some(PlanKind::RecvMsg));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x3000);
@@ -1563,7 +1563,7 @@ mod tests {
         let _guard = test_guard();
 
         let sendmsg = PackedStep::decode(dispatch(SYS_SENDMSG, 8, 0x3000, 0x40, 0, 0, 0));
-        assert_eq!(sendmsg.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(sendmsg.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(sendmsg.aux), Some(PlanKind::SendMsg));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x3000);
@@ -1575,7 +1575,7 @@ mod tests {
         let _guard = test_guard();
 
         let shutdown = PackedStep::decode(dispatch(SYS_SHUTDOWN, 8, 2, 0, 0, 0, 0));
-        assert_eq!(shutdown.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(shutdown.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(shutdown.aux), Some(PlanKind::Shutdown));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 2);
@@ -1586,14 +1586,14 @@ mod tests {
         let _guard = test_guard();
 
         let getsockname = PackedStep::decode(dispatch(SYS_GETSOCKNAME, 8, 0x2100, 0x2200, 0, 0, 0));
-        assert_eq!(getsockname.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getsockname.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getsockname.aux), Some(PlanKind::GetSockName));
         assert_eq!(plan_arg(0), 8);
         assert_eq!(plan_arg(1), 0x2100);
         assert_eq!(plan_arg(2), 0x2200);
 
         let getpeername = PackedStep::decode(dispatch(SYS_GETPEERNAME, 9, 0x2300, 0x2400, 0, 0, 0));
-        assert_eq!(getpeername.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getpeername.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getpeername.aux), Some(PlanKind::GetPeerName));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x2300);
@@ -1606,19 +1606,19 @@ mod tests {
         let raw = dispatch(
             SYS_GETSOCKOPT,
             8,
-            vmos_abi::SOL_SOCKET as u64,
-            vmos_abi::SO_ERROR as u64,
+            visa_abi::SOL_SOCKET as u64,
+            visa_abi::SO_ERROR as u64,
             0x2100,
             0x2200,
             0,
         );
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::GetSockOpt));
         assert_eq!(plan_arg(0), 8);
-        assert_eq!(plan_arg(1), vmos_abi::SOL_SOCKET as u64);
-        assert_eq!(plan_arg(2), vmos_abi::SO_ERROR as u64);
+        assert_eq!(plan_arg(1), visa_abi::SOL_SOCKET as u64);
+        assert_eq!(plan_arg(2), visa_abi::SO_ERROR as u64);
         assert_eq!(plan_arg(3), 0x2100);
         assert_eq!(plan_arg(4), 0x2200);
     }
@@ -1634,19 +1634,19 @@ mod tests {
         let raw = dispatch(
             SYS_SETSOCKOPT,
             8,
-            vmos_abi::SOL_SOCKET as u64,
-            vmos_abi::SO_REUSEADDR as u64,
+            visa_abi::SOL_SOCKET as u64,
+            visa_abi::SO_REUSEADDR as u64,
             ptr as u64,
             4,
             0,
         );
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::SetSockOpt));
         assert_eq!(plan_arg(0), 8);
-        assert_eq!(plan_arg(1), vmos_abi::SOL_SOCKET as u64);
-        assert_eq!(plan_arg(2), vmos_abi::SO_REUSEADDR as u64);
+        assert_eq!(plan_arg(1), visa_abi::SOL_SOCKET as u64);
+        assert_eq!(plan_arg(2), visa_abi::SO_REUSEADDR as u64);
         assert_eq!(plan_arg(3), ptr as u64);
         assert_eq!(plan_arg(4), 4);
         assert_eq!(plan_arg(5), 1);
@@ -1654,29 +1654,29 @@ mod tests {
         let keepalive = PackedStep::decode(dispatch(
             SYS_SETSOCKOPT,
             8,
-            vmos_abi::SOL_SOCKET as u64,
-            vmos_abi::SO_KEEPALIVE as u64,
+            visa_abi::SOL_SOCKET as u64,
+            visa_abi::SO_KEEPALIVE as u64,
             ptr as u64,
             4,
             0,
         ));
-        assert_eq!(keepalive.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(keepalive.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(keepalive.aux), Some(PlanKind::SetSockOpt));
-        assert_eq!(plan_arg(2), vmos_abi::SO_KEEPALIVE as u64);
+        assert_eq!(plan_arg(2), visa_abi::SO_KEEPALIVE as u64);
         assert_eq!(plan_arg(5), 1);
 
         let sndbuf = PackedStep::decode(dispatch(
             SYS_SETSOCKOPT,
             8,
-            vmos_abi::SOL_SOCKET as u64,
-            vmos_abi::SO_SNDBUF as u64,
+            visa_abi::SOL_SOCKET as u64,
+            visa_abi::SO_SNDBUF as u64,
             ptr as u64,
             4,
             0,
         ));
-        assert_eq!(sndbuf.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(sndbuf.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(sndbuf.aux), Some(PlanKind::SetSockOpt));
-        assert_eq!(plan_arg(2), vmos_abi::SO_SNDBUF as u64);
+        assert_eq!(plan_arg(2), visa_abi::SO_SNDBUF as u64);
         assert_eq!(plan_arg(5), 1);
     }
 
@@ -1686,15 +1686,15 @@ mod tests {
         let raw = dispatch(
             SYS_SETSOCKOPT,
             8,
-            vmos_abi::SOL_SOCKET as u64,
-            vmos_abi::SO_REUSEADDR as u64,
+            visa_abi::SOL_SOCKET as u64,
+            visa_abi::SO_REUSEADDR as u64,
             0,
             3,
             0,
         );
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Error);
+        assert_eq!(step.tag, visa_abi::StepTag::Error);
         assert_eq!(step.value, -ERR_EINVAL);
     }
 
@@ -1704,7 +1704,7 @@ mod tests {
         let raw = dispatch_futex_raw(0x1000, FUTEX_WAIT_REQUEUE_PI as u64, 7, u64::MAX, 7);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexWaitRequeuePi));
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), u64::MAX);
@@ -1738,7 +1738,7 @@ mod tests {
             src_word as u64,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexCmpRequeue));
         assert_eq!(plan_arg(0), src as u64);
         assert_eq!(plan_arg(1), 2);
@@ -1755,7 +1755,7 @@ mod tests {
             dst as u64,
             (src_word + 1) as u64,
         ));
-        assert_eq!(mismatch.tag, vmos_abi::StepTag::Error);
+        assert_eq!(mismatch.tag, visa_abi::StepTag::Error);
         assert_eq!(mismatch.value, -ERR_EAGAIN);
 
         let same_address = PackedStep::decode(dispatch(
@@ -1767,7 +1767,7 @@ mod tests {
             src as u64,
             src_word as u64,
         ));
-        assert_eq!(same_address.tag, vmos_abi::StepTag::Error);
+        assert_eq!(same_address.tag, visa_abi::StepTag::Error);
         assert_eq!(same_address.value, -ERR_EINVAL);
     }
 
@@ -1798,7 +1798,7 @@ mod tests {
             src_word as u64,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexCmpRequeuePi));
         assert_eq!(plan_arg(0), src as u64);
         assert_eq!(plan_arg(1), 2);
@@ -1815,7 +1815,7 @@ mod tests {
             dst as u64,
             (src_word + 1) as u64,
         ));
-        assert_eq!(mismatch.tag, vmos_abi::StepTag::Error);
+        assert_eq!(mismatch.tag, visa_abi::StepTag::Error);
         assert_eq!(mismatch.value, -ERR_EAGAIN);
 
         let bad_wake = PackedStep::decode(dispatch(
@@ -1827,7 +1827,7 @@ mod tests {
             dst as u64,
             src_word as u64,
         ));
-        assert_eq!(bad_wake.tag, vmos_abi::StepTag::Error);
+        assert_eq!(bad_wake.tag, visa_abi::StepTag::Error);
         assert_eq!(bad_wake.value, -ERR_EINVAL);
     }
 
@@ -1837,7 +1837,7 @@ mod tests {
         let raw = dispatch(SYS_PAUSE, 0, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Pause));
     }
 
@@ -1847,7 +1847,7 @@ mod tests {
         let raw = dispatch(SYS_WAIT4, u64::MAX, 0x1000, 1, 0x2000, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Wait4));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 0x1000);
@@ -1861,7 +1861,7 @@ mod tests {
         let raw = dispatch(SYS_EXIT, 23, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Exit));
         assert_eq!(plan_arg(0), 23);
     }
@@ -1871,154 +1871,154 @@ mod tests {
         let _guard = test_guard();
 
         let getpid = PackedStep::decode(dispatch(SYS_GETPID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(getpid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getpid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getpid.aux), Some(PlanKind::GetPid));
 
         let gettid = PackedStep::decode(dispatch(SYS_GETTID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(gettid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(gettid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(gettid.aux), Some(PlanKind::GetTid));
 
         let getuid = PackedStep::decode(dispatch(SYS_GETUID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(getuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getuid.aux), Some(PlanKind::GetUid));
 
         let getgid = PackedStep::decode(dispatch(SYS_GETGID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(getgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getgid.aux), Some(PlanKind::GetGid));
 
         let geteuid = PackedStep::decode(dispatch(SYS_GETEUID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(geteuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(geteuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(geteuid.aux), Some(PlanKind::GetEuid));
 
         let getegid = PackedStep::decode(dispatch(SYS_GETEGID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(getegid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getegid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getegid.aux), Some(PlanKind::GetEgid));
 
         let sigpending = PackedStep::decode(dispatch(SYS_RT_SIGPENDING, 0x1000, 8, 0, 0, 0, 0));
-        assert_eq!(sigpending.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(sigpending.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(sigpending.aux), Some(PlanKind::RtSigpending));
 
         let setuid = PackedStep::decode(dispatch(SYS_SETUID, 1000, 0, 0, 0, 0, 0));
-        assert_eq!(setuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setuid.aux), Some(PlanKind::SetUid));
         assert_eq!(plan_arg(0), 1000);
 
         let setgid = PackedStep::decode(dispatch(SYS_SETGID, 100, 0, 0, 0, 0, 0));
-        assert_eq!(setgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setgid.aux), Some(PlanKind::SetGid));
         assert_eq!(plan_arg(0), 100);
 
         let setreuid = PackedStep::decode(dispatch(SYS_SETREUID, u64::MAX, 2000, 0, 0, 0, 0));
-        assert_eq!(setreuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setreuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setreuid.aux), Some(PlanKind::SetReUid));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 2000);
 
         let setregid = PackedStep::decode(dispatch(SYS_SETREGID, u64::MAX, 200, 0, 0, 0, 0));
-        assert_eq!(setregid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setregid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setregid.aux), Some(PlanKind::SetReGid));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 200);
 
         let setresuid = PackedStep::decode(dispatch(SYS_SETRESUID, u64::MAX, 2000, 3000, 0, 0, 0));
-        assert_eq!(setresuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setresuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setresuid.aux), Some(PlanKind::SetResUid));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 2000);
         assert_eq!(plan_arg(2), 3000);
 
         let getresuid = PackedStep::decode(dispatch(SYS_GETRESUID, 0x10, 0x14, 0x18, 0, 0, 0));
-        assert_eq!(getresuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getresuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getresuid.aux), Some(PlanKind::GetResUid));
         assert_eq!(plan_arg(0), 0x10);
         assert_eq!(plan_arg(1), 0x14);
         assert_eq!(plan_arg(2), 0x18);
 
         let setresgid = PackedStep::decode(dispatch(SYS_SETRESGID, u64::MAX, 200, 300, 0, 0, 0));
-        assert_eq!(setresgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setresgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setresgid.aux), Some(PlanKind::SetResGid));
         assert_eq!(plan_arg(0), u64::MAX);
         assert_eq!(plan_arg(1), 200);
         assert_eq!(plan_arg(2), 300);
 
         let getresgid = PackedStep::decode(dispatch(SYS_GETRESGID, 0x20, 0x24, 0x28, 0, 0, 0));
-        assert_eq!(getresgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getresgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getresgid.aux), Some(PlanKind::GetResGid));
         assert_eq!(plan_arg(0), 0x20);
         assert_eq!(plan_arg(1), 0x24);
         assert_eq!(plan_arg(2), 0x28);
 
         let setfsuid = PackedStep::decode(dispatch(SYS_SETFSUID, 3000, 0, 0, 0, 0, 0));
-        assert_eq!(setfsuid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setfsuid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setfsuid.aux), Some(PlanKind::SetFsUid));
         assert_eq!(plan_arg(0), 3000);
 
         let setfsgid = PackedStep::decode(dispatch(SYS_SETFSGID, 300, 0, 0, 0, 0, 0));
-        assert_eq!(setfsgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setfsgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setfsgid.aux), Some(PlanKind::SetFsGid));
         assert_eq!(plan_arg(0), 300);
 
         let getgroups = PackedStep::decode(dispatch(SYS_GETGROUPS, 4, 0x30, 0, 0, 0, 0));
-        assert_eq!(getgroups.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getgroups.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getgroups.aux), Some(PlanKind::GetGroups));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), 0x30);
 
         let setgroups = PackedStep::decode(dispatch(SYS_SETGROUPS, 2, 0x40, 0, 0, 0, 0));
-        assert_eq!(setgroups.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setgroups.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setgroups.aux), Some(PlanKind::SetGroups));
         assert_eq!(plan_arg(0), 2);
         assert_eq!(plan_arg(1), 0x40);
 
         let capget = PackedStep::decode(dispatch(SYS_CAPGET, 0x50, 0x58, 0, 0, 0, 0));
-        assert_eq!(capget.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(capget.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(capget.aux), Some(PlanKind::CapGet));
         assert_eq!(plan_arg(0), 0x50);
         assert_eq!(plan_arg(1), 0x58);
 
         let capset = PackedStep::decode(dispatch(SYS_CAPSET, 0x60, 0x68, 0, 0, 0, 0));
-        assert_eq!(capset.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(capset.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(capset.aux), Some(PlanKind::CapSet));
         assert_eq!(plan_arg(0), 0x60);
         assert_eq!(plan_arg(1), 0x68);
 
         let getpgid = PackedStep::decode(dispatch(SYS_GETPGID, 42, 0, 0, 0, 0, 0));
-        assert_eq!(getpgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getpgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getpgid.aux), Some(PlanKind::GetPgid));
         assert_eq!(plan_arg(0), 42);
 
         let getpgrp = PackedStep::decode(dispatch(SYS_GETPGRP, 99, 0, 0, 0, 0, 0));
-        assert_eq!(getpgrp.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getpgrp.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getpgrp.aux), Some(PlanKind::GetPgid));
         assert_eq!(plan_arg(0), 0);
 
         let getsid = PackedStep::decode(dispatch(SYS_GETSID, 43, 0, 0, 0, 0, 0));
-        assert_eq!(getsid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(getsid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(getsid.aux), Some(PlanKind::GetSid));
         assert_eq!(plan_arg(0), 43);
 
         let setpgid = PackedStep::decode(dispatch(SYS_SETPGID, 44, 45, 0, 0, 0, 0));
-        assert_eq!(setpgid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setpgid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setpgid.aux), Some(PlanKind::SetPgid));
         assert_eq!(plan_arg(0), 44);
         assert_eq!(plan_arg(1), 45);
 
         let setsid = PackedStep::decode(dispatch(SYS_SETSID, 0, 0, 0, 0, 0, 0));
-        assert_eq!(setsid.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(setsid.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(setsid.aux), Some(PlanKind::SetSid));
     }
 
     #[test]
     fn kill_and_tgkill_plan_signal_delivery() {
         let _guard = test_guard();
-        let kill = PackedStep::decode(dispatch(vmos_abi::SYS_KILL, 12, 10, 0, 0, 0, 0));
-        assert_eq!(kill.tag, vmos_abi::StepTag::Plan);
+        let kill = PackedStep::decode(dispatch(visa_abi::SYS_KILL, 12, 10, 0, 0, 0, 0));
+        assert_eq!(kill.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(kill.aux), Some(PlanKind::Kill));
         assert_eq!(plan_arg(0), 12);
         assert_eq!(plan_arg(1), 10);
 
         let tgkill = PackedStep::decode(dispatch(SYS_TGKILL, 12, 13, 15, 0, 0, 0));
-        assert_eq!(tgkill.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(tgkill.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(tgkill.aux), Some(PlanKind::Tgkill));
         assert_eq!(plan_arg(0), 12);
         assert_eq!(plan_arg(1), 13);
@@ -2029,7 +2029,7 @@ mod tests {
     fn rt_signal_plans_preserve_abi_pointers() {
         let _guard = test_guard();
         let sigaction = PackedStep::decode(dispatch(SYS_RT_SIGACTION, 2, 0x1000, 0x2000, 8, 0, 0));
-        assert_eq!(sigaction.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(sigaction.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(sigaction.aux), Some(PlanKind::RtSigaction));
         assert_eq!(plan_arg(0), 2);
         assert_eq!(plan_arg(1), 0x1000);
@@ -2038,7 +2038,7 @@ mod tests {
 
         let sigprocmask =
             PackedStep::decode(dispatch(SYS_RT_SIGPROCMASK, 1, 0x3000, 0x4000, 8, 0, 0));
-        assert_eq!(sigprocmask.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(sigprocmask.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(sigprocmask.aux), Some(PlanKind::RtSigprocmask));
         assert_eq!(plan_arg(0), 1);
         assert_eq!(plan_arg(1), 0x3000);
@@ -2059,7 +2059,7 @@ mod tests {
 
         let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI as u64, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(0), ptr as u64);
         assert_eq!(plan_arg(1), 0);
@@ -2073,7 +2073,7 @@ mod tests {
         }
         let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_TRYLOCK_PI as u64, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(1), 7);
         assert_eq!(plan_arg(2), 1);
@@ -2083,7 +2083,7 @@ mod tests {
 
         let raw = dispatch(SYS_FUTEX, ptr as u64, FUTEX_UNLOCK_PI as u64, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexUnlockPi));
         assert_eq!(plan_arg(1), 7);
     }
@@ -2109,7 +2109,7 @@ mod tests {
         let raw =
             dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 16, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(0), ptr as u64);
         assert_eq!(plan_arg(1), 9);
@@ -2128,14 +2128,14 @@ mod tests {
             0,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(5), FUTEX_PI_TIMEOUT_REALTIME);
 
         let raw =
             dispatch(SYS_FUTEX, ptr as u64, FUTEX_LOCK_PI2 as u64, 0, timeout_ptr as u64, 0, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FutexLockPi));
         assert_eq!(plan_arg(3), timeout_ptr as u64);
         assert_eq!(plan_arg(4), 0);
@@ -2148,13 +2148,13 @@ mod tests {
         let raw = dispatch(SYS_EPOLL_CREATE, 16, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::EpollCreate1));
         assert_eq!(plan_arg(0), 0);
 
         let raw = dispatch(SYS_EPOLL_CREATE, 0, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Error);
+        assert_eq!(step.tag, visa_abi::StepTag::Error);
         assert_eq!(step.value, -ERR_EINVAL);
     }
 
@@ -2162,7 +2162,7 @@ mod tests {
     fn epoll_event_encoding_preserves_ready_mask() {
         let _guard = test_guard();
         let mut records = [0u8; 12];
-        records[0..4].copy_from_slice(&vmos_abi::EPOLLOUT.to_le_bytes());
+        records[0..4].copy_from_slice(&visa_abi::EPOLLOUT.to_le_bytes());
         records[4..12].copy_from_slice(&0xace0_0003u64.to_le_bytes());
 
         let len = pack_epoll_events(&records, 1);
@@ -2173,7 +2173,7 @@ mod tests {
                 len as usize,
             )
         };
-        assert_eq!(u32::from_le_bytes(result[0..4].try_into().unwrap()), vmos_abi::EPOLLOUT);
+        assert_eq!(u32::from_le_bytes(result[0..4].try_into().unwrap()), visa_abi::EPOLLOUT);
         assert_eq!(u64::from_le_bytes(result[4..12].try_into().unwrap()), 0xace0_0003);
     }
 
@@ -2202,7 +2202,7 @@ mod tests {
         let raw = dispatch(SYS_FCNTL, 4, F_SETLK, ptr as u64, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FcntlSetlk));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), F_SETLK);
@@ -2237,7 +2237,7 @@ mod tests {
         let raw = dispatch(SYS_FCNTL, 4, F_GETLK, ptr as u64, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::FcntlGetlk));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), ptr as u64);
@@ -2256,7 +2256,7 @@ mod tests {
         let raw = dispatch(SYS_FLOCK, 9, LOCK_EX | LOCK_NB, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Flock));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), LOCK_EX | LOCK_NB);
@@ -2268,7 +2268,7 @@ mod tests {
         let raw = dispatch(SYS_IOCTL, 9, 0x1234_5678, 0x2000, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Ioctl));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x1234_5678);
@@ -2302,7 +2302,7 @@ mod tests {
         );
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
         assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
         assert_eq!(plan_arg(1), old_ptr as u64);
@@ -2336,7 +2336,7 @@ mod tests {
             0,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
         assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
         assert_eq!(plan_arg(1), old_ptr as u64);
@@ -2356,7 +2356,7 @@ mod tests {
             new.len() as u64,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::RenameAt2));
         assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
         assert_eq!(plan_arg(1), old_ptr as u64);
@@ -2392,7 +2392,7 @@ mod tests {
             0,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::LinkAt));
         assert_eq!(plan_arg(0), AT_FDCWD_ENCODED);
         assert_eq!(plan_arg(1), old_ptr as u64);
@@ -2413,7 +2413,7 @@ mod tests {
             packed,
         );
         let step = PackedStep::decode(raw);
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::LinkAt));
         assert_eq!(plan_arg(5) & 0xffff_ffff, new.len() as u64);
         assert_eq!(plan_arg(5) >> 32, AT_SYMLINK_FOLLOW);
@@ -2425,7 +2425,7 @@ mod tests {
         let raw = dispatch(SYS_PRLIMIT64, 0, 7, 0x1000, 0x1010, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Prlimit64));
         assert_eq!(plan_arg(0), 0);
         assert_eq!(plan_arg(1), 7);
@@ -2441,7 +2441,7 @@ mod tests {
         let raw = dispatch(SYS_GETRLIMIT, 7, 0x2000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Getrlimit));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 0x2000);
@@ -2450,7 +2450,7 @@ mod tests {
         let raw = dispatch(SYS_SETRLIMIT, 9, 0x2010, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Setrlimit));
         assert_eq!(plan_arg(0), 9);
         assert_eq!(plan_arg(1), 0x2010);
@@ -2463,7 +2463,7 @@ mod tests {
         let raw = dispatch(SYS_POLL, 0x2000, 3, 250, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Poll));
         assert_eq!(plan_arg(0), 0x2000);
         assert_eq!(plan_arg(1), 3);
@@ -2476,13 +2476,13 @@ mod tests {
         let _guard = test_guard();
 
         let pipe = PackedStep::decode(dispatch(SYS_PIPE, 0x1000, 0xdead, 0, 0, 0, 0));
-        assert_eq!(pipe.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(pipe.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(pipe.aux), Some(PlanKind::Pipe));
         assert_eq!(plan_arg(0), 0x1000);
         assert_eq!(plan_arg(1), 0);
 
         let pipe2 = PackedStep::decode(dispatch(SYS_PIPE2, 0x2000, 0o2004000, 0, 0, 0, 0));
-        assert_eq!(pipe2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(pipe2.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(pipe2.aux), Some(PlanKind::Pipe));
         assert_eq!(plan_arg(0), 0x2000);
         assert_eq!(plan_arg(1), 0o2004000);
@@ -2494,7 +2494,7 @@ mod tests {
         let raw = dispatch(SYS_MMAP, 0, 0x3000, 0x3, 0x22, u64::MAX, 0x1000);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mmap));
         assert_eq!(plan_arg(0), 0);
         assert_eq!(plan_arg(1), 0x3000);
@@ -2510,7 +2510,7 @@ mod tests {
         let raw = dispatch(SYS_MLOCK, 0x4003, 0x2000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlock));
         assert_eq!(plan_arg(0), 0x4003);
         assert_eq!(plan_arg(1), 0x2000);
@@ -2519,7 +2519,7 @@ mod tests {
         let raw = dispatch(SYS_MLOCK2, 0x5000, 0x1000, 1, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlock));
         assert_eq!(plan_arg(0), 0x5000);
         assert_eq!(plan_arg(1), 0x1000);
@@ -2528,7 +2528,7 @@ mod tests {
         let raw = dispatch(SYS_MUNLOCK, 0x4000, 0x1000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Munlock));
         assert_eq!(plan_arg(0), 0x4000);
         assert_eq!(plan_arg(1), 0x1000);
@@ -2536,14 +2536,14 @@ mod tests {
         let raw = dispatch(SYS_MLOCKALL, 0x3, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Mlockall));
         assert_eq!(plan_arg(0), 0x3);
 
         let raw = dispatch(SYS_MUNLOCKALL, 0, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Munlockall));
     }
 
@@ -2553,7 +2553,7 @@ mod tests {
         let raw = dispatch(SYS_SECCOMP, 1, 2, 0x1234, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Seccomp));
         assert_eq!(plan_arg(0), 1);
         assert_eq!(plan_arg(1), 2);
@@ -2566,7 +2566,7 @@ mod tests {
         let raw = dispatch(SYS_BPF, 2, 0x1234, 32, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Bpf));
         assert_eq!(plan_arg(0), 2);
         assert_eq!(plan_arg(1), 0x1234);
@@ -2579,7 +2579,7 @@ mod tests {
         let raw = dispatch(SYS_PRCTL, 38, 1, 0x1234, 0x5678, 0x9abc, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Prctl));
         assert_eq!(plan_arg(0), 38);
         assert_eq!(plan_arg(1), 1);
@@ -2594,7 +2594,7 @@ mod tests {
         let raw = dispatch(SYS_PTRACE, 0x4206, 42, 0x1234, 0x80, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Ptrace));
         assert_eq!(plan_arg(0), 0x4206);
         assert_eq!(plan_arg(1), 42);
@@ -2606,13 +2606,13 @@ mod tests {
     fn robust_list_plans_preserve_registration_and_query_pointers() {
         let _guard = test_guard();
         let set = PackedStep::decode(dispatch(SYS_SET_ROBUST_LIST, 0x7000, 24, 0, 0, 0, 0));
-        assert_eq!(set.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(set.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(set.aux), Some(PlanKind::SetRobustList));
         assert_eq!(plan_arg(0), 0x7000);
         assert_eq!(plan_arg(1), 24);
 
         let get = PackedStep::decode(dispatch(SYS_GET_ROBUST_LIST, 12, 0x7100, 0x7200, 0, 0, 0));
-        assert_eq!(get.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(get.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(get.aux), Some(PlanKind::GetRobustList));
         assert_eq!(plan_arg(0), 12);
         assert_eq!(plan_arg(1), 0x7100);
@@ -2624,12 +2624,12 @@ mod tests {
         let _guard = test_guard();
         let set = PackedStep::decode(dispatch(SYS_SET_TID_ADDRESS, 0x7300, 0, 0, 0, 0, 0));
 
-        assert_eq!(set.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(set.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(set.aux), Some(PlanKind::SetTidAddress));
         assert_eq!(plan_arg(0), 0x7300);
 
         let clear = PackedStep::decode(dispatch(SYS_SET_TID_ADDRESS, 0, 0, 0, 0, 0, 0));
-        assert_eq!(clear.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(clear.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(clear.aux), Some(PlanKind::SetTidAddress));
         assert_eq!(plan_arg(0), 0);
     }
@@ -2640,7 +2640,7 @@ mod tests {
         let raw = dispatch(SYS_CLOCK_ADJTIME, 0, 0x3000, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::ClockAdjtime));
         assert_eq!(plan_arg(0), 0);
         assert_eq!(plan_arg(1), 0x3000);
@@ -2652,13 +2652,13 @@ mod tests {
         let _guard = test_guard();
 
         let create = PackedStep::decode(dispatch(SYS_TIMERFD_CREATE, 1, 0o2004000, 0, 0, 0, 0));
-        assert_eq!(create.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(create.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(create.aux), Some(PlanKind::TimerfdCreate));
         assert_eq!(plan_arg(0), 1);
         assert_eq!(plan_arg(1), 0o2004000);
 
         let settime = PackedStep::decode(dispatch(SYS_TIMERFD_SETTIME, 7, 1, 0x3000, 0x3040, 0, 0));
-        assert_eq!(settime.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(settime.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(settime.aux), Some(PlanKind::TimerfdSettime));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 1);
@@ -2666,7 +2666,7 @@ mod tests {
         assert_eq!(plan_arg(3), 0x3040);
 
         let gettime = PackedStep::decode(dispatch(SYS_TIMERFD_GETTIME, 7, 0x3080, 0, 0, 0, 0));
-        assert_eq!(gettime.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(gettime.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(gettime.aux), Some(PlanKind::TimerfdGettime));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 0x3080);
@@ -2677,13 +2677,13 @@ mod tests {
         let _guard = test_guard();
 
         let eventfd = PackedStep::decode(dispatch(SYS_EVENTFD, 5, 0xdead, 0, 0, 0, 0));
-        assert_eq!(eventfd.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(eventfd.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(eventfd.aux), Some(PlanKind::Eventfd));
         assert_eq!(plan_arg(0), 5);
         assert_eq!(plan_arg(1), 0);
 
         let eventfd2 = PackedStep::decode(dispatch(SYS_EVENTFD2, 7, 0o2004001, 0, 0, 0, 0));
-        assert_eq!(eventfd2.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(eventfd2.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(eventfd2.aux), Some(PlanKind::Eventfd));
         assert_eq!(plan_arg(0), 7);
         assert_eq!(plan_arg(1), 0o2004001);
@@ -2695,7 +2695,7 @@ mod tests {
         let raw = dispatch(SYS_CLOCK_GETTIME, 11, 0x3040, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::ClockGettime));
         assert_eq!(plan_arg(0), 11);
         assert_eq!(plan_arg(1), 0x3040);
@@ -2707,7 +2707,7 @@ mod tests {
         let raw = dispatch(SYS_CLOCK_GETRES, 1, 0, 0, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::ClockGetres));
         assert_eq!(plan_arg(0), 1);
         assert_eq!(plan_arg(1), 0);
@@ -2737,7 +2737,7 @@ mod tests {
         );
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Fsetxattr));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), name_ptr as u64);
@@ -2750,7 +2750,7 @@ mod tests {
             dispatch(SYS_FGETXATTR, 4, name_ptr as u64, name.len() as u64, value_ptr as u64, 64, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Fgetxattr));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), name_ptr as u64);
@@ -2761,7 +2761,7 @@ mod tests {
         let raw = dispatch(SYS_FLISTXATTR, 4, value_ptr as u64, 128, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Flistxattr));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), value_ptr as u64);
@@ -2770,7 +2770,7 @@ mod tests {
         let raw = dispatch(SYS_FREMOVEXATTR, 4, name_ptr as u64, name.len() as u64, 0, 0, 0);
         let step = PackedStep::decode(raw);
 
-        assert_eq!(step.tag, vmos_abi::StepTag::Plan);
+        assert_eq!(step.tag, visa_abi::StepTag::Plan);
         assert_eq!(PlanKind::from_raw(step.aux), Some(PlanKind::Fremovexattr));
         assert_eq!(plan_arg(0), 4);
         assert_eq!(plan_arg(1), name_ptr as u64);

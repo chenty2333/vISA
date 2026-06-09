@@ -1,4 +1,4 @@
-# Historical Archive: Expanded Semantic OS View
+# Historical Archive: Expanded Semantic vISA View
 
 Status: historical entry only.
 
@@ -37,5 +37,5 @@ spec in a compact form instead of reviving the old narrative.
 Local full-text snapshot for this cleanup pass:
 
 ```text
-/home/dia/.codex/tmp/vmos-reference-archive-20260429/archive/more.md
+/home/dia/.codex/tmp/visa-reference-archive-20260429/archive/more.md
 ```

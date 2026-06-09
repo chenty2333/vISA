@@ -263,7 +263,7 @@ fn compile_artifacts(
                 scheme: "prototype-self-signed-sha256".to_owned(),
                 artifact_hash: target_artifact_sha256,
                 manifest_binding_hash,
-                signer: "vmos-aotc-dev".to_owned(),
+                signer: "visa-aotc-dev".to_owned(),
                 public_key_hint: "prototype-dev-key".to_owned(),
                 signature: "unsigned-prototype-signature".to_owned(),
             },
@@ -363,7 +363,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::Manifest,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-target-artifact-manifest-v1",
+                "schema": "visa-target-artifact-manifest-v1",
                 "package": input.module.package,
                 "artifact_name": input.module.artifact_name,
                 "role": input.module.role.as_str(),
@@ -379,7 +379,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::ContractMetadata,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-contract-metadata-v1",
+                "schema": "visa-contract-metadata-v1",
                 "supervisor_contract": expected_supervisor_contract(),
                 "runtime_executor_abi": RUNTIME_ONLY_EXECUTOR_ABI,
                 "network_contract_version": NETWORK_CONTRACT_VERSION,
@@ -394,7 +394,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::HostcallImportTable,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-hostcall-import-table-v1",
+                "schema": "visa-hostcall-import-table-v1",
                 "imports": input.imports,
             }))?,
         },
@@ -402,7 +402,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::TrapMap,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-trap-map-v1",
+                "schema": "visa-trap-map-v1",
                 "entries": [],
                 "attribution": "wasmtime-frame-or-unknown-code-trap",
             }))?,
@@ -411,7 +411,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::PcRangeTable,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-pc-range-table-v1",
+                "schema": "visa-pc-range-table-v1",
                 "entries": [],
                 "native_pc": "not-authoritative-for-host-cwasm-validation",
             }))?,
@@ -420,7 +420,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::ProfileRequirements,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-target-profile-requirements-v1",
+                "schema": "visa-target-profile-requirements-v1",
                 "artifact_profile": input.profile,
                 "host_arch": env::consts::ARCH,
                 "target_arch": env::consts::ARCH,
@@ -448,7 +448,7 @@ fn build_target_artifact_image(
             kind: SectionKindV1::Signature,
             align: 8,
             payload: serde_json::to_vec_pretty(&serde_json::json!({
-                "schema": "vmos-target-signature-v1",
+                "schema": "visa-target-signature-v1",
                 "scheme": "unsigned-research",
                 "signature_enforced": false,
                 "signature_verified": false,

@@ -4,12 +4,12 @@ use semantic_core::{
     AuthorityId, AuthorityKind, AuthorityState, CapabilityDenyReason, CapabilityOwnerSummary,
     Generation, HostcallClass, ResourceHandle, ResourceId, ResourceKind, SemanticGraph, StoreId,
 };
-use vmos_abi::PlanKind;
+use visa_abi::PlanKind;
 
 use super::runtime::PrototypeRuntime;
 
 pub(crate) const SUBSTRATE_AUTHORITY_CONTRACT_VERSION: &str =
-    "vmos-substrate-authority-contract-v2";
+    "visa-substrate-authority-contract-v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HostcallBinding {
@@ -734,7 +734,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 #[cfg(test)]
 mod tests {
     use semantic_core::HostcallClass;
-    use vmos_abi::PlanKind;
+    use visa_abi::PlanKind;
 
     use super::hostcall_binding;
 

@@ -6,12 +6,12 @@ usage() {
 usage: scripts/run-host-ltp-log-adapter.sh <output-dir> [boundary] [profile] [runltp]
 
 Runs an external host-provided runltp binary and preserves raw LTP logs for the
-VMOS conformance log adapter.
+vISA conformance log adapter.
 
-This is not VMOS-backed LTP execution. It does not prove VMOS Linux personality
+This is not vISA-backed LTP execution. It does not prove vISA Linux personality
 compatibility, vISA portable artifact execution, or real target substrate
-execution. Use scripts/run-vmos-ltp-conformance.sh when LTP test binaries must
-execute through the VMOS Linux personality path.
+execution. Use scripts/run-visa-ltp-conformance.sh when LTP test binaries must
+execute through the vISA Linux personality path.
 
 Outputs:
 
@@ -20,7 +20,7 @@ Outputs:
   <output-dir>/host-ltp-log-adapter-artifact-gate.json
   <output-dir>/host-ltp-log-adapter-report-gate.json
 
-The report gate is expected to fail for pure host logs when VMOS-backed trace
+The report gate is expected to fail for pure host logs when vISA-backed trace
 artifacts are absent. The artifact gate validates the raw log bundle.
 EOF
 }
@@ -41,7 +41,7 @@ if ! command -v "$runltp_bin" >/dev/null 2>&1; then
 fi
 
 run_conformance() {
-    cargo run --quiet -p vmos-conformance -- "$@"
+    cargo run --quiet -p visa-conformance -- "$@"
 }
 
 logs_dir="$output_dir/logs"
@@ -75,9 +75,9 @@ if ! run_conformance validate-artifacts "$report" "$logs_dir" >"$artifact_gate";
 fi
 
 if ! run_conformance validate-report "$report" >"$report_gate"; then
-    echo "Host LTP report did not pass VMOS conformance gate, as expected for host-only logs: $report_gate" >&2
+    echo "Host LTP report did not pass vISA conformance gate, as expected for host-only logs: $report_gate" >&2
 else
-    echo "WARN: host-only LTP report passed conformance gate; verify the report contains VMOS execution traces" >&2
+    echo "WARN: host-only LTP report passed conformance gate; verify the report contains vISA execution traces" >&2
 fi
 
 if [[ "$run_failures" -ne 0 ]]; then

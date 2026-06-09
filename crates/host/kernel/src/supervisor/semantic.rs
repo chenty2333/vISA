@@ -366,13 +366,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         let active_dmw_leases = crate::substrate::dmw::active_lease_count() as u32;
         if active_dmw_leases != 0 {
             self.semantic
-                .record_failure_effect(FailureEffect::CompleteWithErrno(vmos_abi::ERR_EFAULT));
+                .record_failure_effect(FailureEffect::CompleteWithErrno(visa_abi::ERR_EFAULT));
             return Err("snapshot barrier observed active DMW leases");
         }
         crate::substrate::dmw::assert_quiescent()?;
         if self.semantic.active_transaction_count() != 0 {
             self.semantic
-                .record_failure_effect(FailureEffect::CompleteWithErrno(vmos_abi::ERR_EAGAIN));
+                .record_failure_effect(FailureEffect::CompleteWithErrno(visa_abi::ERR_EAGAIN));
             return Err("snapshot barrier observed active semantic transactions");
         }
 
@@ -399,7 +399,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         self.semantic.record_snapshot_barrier_exit(barrier);
         let package = self.semantic.migration_package(
-            "vmos-demo-migration-v0",
+            "visa-demo-migration-v0",
             host_arch(),
             "aarch64-demo-target",
             artifact_profile(),

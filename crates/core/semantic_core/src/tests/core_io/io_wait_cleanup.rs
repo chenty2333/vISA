@@ -188,7 +188,7 @@ pub(super) fn io_runtime_i9_rejects_stale_waits_and_cancels_device_faults() {
         other_device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "other-io-v1",
         "other device object",
     ));

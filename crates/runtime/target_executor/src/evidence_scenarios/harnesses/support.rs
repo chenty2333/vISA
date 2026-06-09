@@ -222,7 +222,7 @@ pub(crate) fn run_activation_harness(
         .start_activation(
             &store.store,
             code,
-            ActivationEntry::Symbol("vmos_service_entry".to_owned()),
+            ActivationEntry::Symbol("visa_service_entry".to_owned()),
         )
         .map_err(|error| error.message())?;
     if let Some(spec) = code.hostcalls.iter().find(|spec| spec.number < 9000) {

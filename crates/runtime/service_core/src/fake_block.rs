@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EINVAL, ERR_EIO};
+use visa_abi::{ERR_EINVAL, ERR_EIO};
 
 pub const FAKE_BLOCK_BACKEND_PROFILE: &str = "fake-block-v1";
 pub const FAKE_BLOCK_BACKEND_PROVIDER: &str = "service_core";

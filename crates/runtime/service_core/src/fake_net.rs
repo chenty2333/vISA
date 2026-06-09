@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EINVAL, ERR_EIO};
+use visa_abi::{ERR_EINVAL, ERR_EIO};
 
 use crate::{
     net_contract::{PACKET_FRAME_FORMAT_VERSION, PACKET_MAX_PAYLOAD_LEN, VIRTIO_NET0_CONTRACT},
@@ -8,7 +8,7 @@ use crate::{
 pub const FAKE_NET_BACKEND_PROFILE: &str = "fake-net-v1";
 pub const FAKE_NET_BACKEND_PROVIDER: &str = "service_core";
 pub const FAKE_NET_BACKEND_SEED: u64 = 0x766d_6f73_6e65_7431;
-pub const FAKE_NET_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
+pub const FAKE_NET_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello visa\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FakeNetBackendConfig {

@@ -1,7 +1,7 @@
 use super::super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
 use crate::serial;
 
-const CONSOLE_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_CONSOLE_SERVICE_WASM"));
+const CONSOLE_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_CONSOLE_SERVICE_WASM"));
 
 pub(crate) struct ConsoleService {
     module: ModuleInstance,

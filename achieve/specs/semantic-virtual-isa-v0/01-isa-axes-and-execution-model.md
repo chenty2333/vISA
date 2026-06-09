@@ -13,7 +13,7 @@ Wasm execution ISA
     implementations, and Component Model ecosystem.
 
 Semantic Virtual ISA
-    VMOS system semantics above Wasm: authority, capability, lifetime, wait,
+    vISA system semantics above Wasm: authority, capability, lifetime, wait,
     trap, cleanup, artifact identity, hostcall attribution, profile use, and
     contract-visible effects.
 

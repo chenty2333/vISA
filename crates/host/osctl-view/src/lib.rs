@@ -83,7 +83,7 @@ pub use inspect::{inspect_object, print_activation, print_event_log_tail};
 pub use replay::replay_until;
 use views::*;
 
-const OSCTL_JSON_SCHEMA_VERSION: &str = "vmos-osctl-json-v1";
+const OSCTL_JSON_SCHEMA_VERSION: &str = "visa-osctl-json-v1";
 
 pub fn print_summary(path: &Path) -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(path)?;

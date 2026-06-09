@@ -8,4 +8,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-vmos_abi = { workspace = true }
+visa_abi = { workspace = true }

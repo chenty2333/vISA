@@ -257,16 +257,16 @@ mod host_tap {
 
         #[test]
         fn tap_ifreq_encodes_tap_no_pi_flags() {
-            let ifreq = tap_ifreq("vmos0").unwrap();
-            assert_eq!(&ifreq[..5], b"vmos0");
+            let ifreq = tap_ifreq("visa0").unwrap();
+            assert_eq!(&ifreq[..5], b"visa0");
             let flags = i16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]]);
             assert_eq!(flags, IFF_TAP | IFF_NO_PI);
         }
 
         #[test]
         fn tap_hwaddr_ifreq_encodes_ethernet_mac() {
-            let ifreq = tap_hwaddr_ifreq("vmos0", [2, 0, 0, 0, 0, 1]).unwrap();
-            assert_eq!(&ifreq[..5], b"vmos0");
+            let ifreq = tap_hwaddr_ifreq("visa0", [2, 0, 0, 0, 0, 1]).unwrap();
+            assert_eq!(&ifreq[..5], b"visa0");
             let family = u16::from_ne_bytes([ifreq[IFNAMSIZ], ifreq[IFNAMSIZ + 1]]);
             assert_eq!(family, ARPHRD_ETHER);
             assert_eq!(&ifreq[IFNAMSIZ + 2..IFNAMSIZ + 8], &[2, 0, 0, 0, 0, 1]);
@@ -274,8 +274,8 @@ mod host_tap {
 
         #[test]
         fn tap_mtu_ifreq_encodes_requested_mtu() {
-            let ifreq = tap_mtu_ifreq("vmos0", 1500).unwrap();
-            assert_eq!(&ifreq[..5], b"vmos0");
+            let ifreq = tap_mtu_ifreq("visa0", 1500).unwrap();
+            assert_eq!(&ifreq[..5], b"visa0");
             let mtu = i32::from_ne_bytes([
                 ifreq[IFNAMSIZ],
                 ifreq[IFNAMSIZ + 1],
@@ -287,7 +287,7 @@ mod host_tap {
 
         #[test]
         fn tap_flags_helpers_preserve_existing_flags_when_marking_up() {
-            let mut ifreq = tap_name_ifreq("vmos0").unwrap();
+            let mut ifreq = tap_name_ifreq("visa0").unwrap();
             write_ifreq_flags(&mut ifreq, 0x0040);
             let flags = read_ifreq_flags(&ifreq) | NETDEV_IFF_UP;
             write_ifreq_flags(&mut ifreq, flags);

@@ -5,7 +5,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const LINUX_SOCKET_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SOCKET_SERVICE_WASM"));
+const LINUX_SOCKET_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_LINUX_SOCKET_SERVICE_WASM"));
 
 pub(crate) struct LinuxSocketService {
     io: BufferedModule,

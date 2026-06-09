@@ -223,7 +223,7 @@ fn registry_policy_preserves_hash_and_signature_status() {
         "prototype-self-signed-sha256",
         "profile-bound-unverified",
         false,
-        "vmos-aotc-dev",
+        "visa-aotc-dev",
     );
     let mut expected_list = Vec::new();
     expected_list.push(expected);
@@ -233,7 +233,7 @@ fn registry_policy_preserves_hash_and_signature_status() {
     good.signature_scheme = "prototype-self-signed-sha256".to_string();
     good.signature_status = "profile-bound-unverified".to_string();
     good.signature_verified = false;
-    good.signer = "vmos-aotc-dev".to_string();
+    good.signer = "visa-aotc-dev".to_string();
 
     let verified = registry.verify(good).expect("policy status matches");
     assert_eq!(verified.hash_status, "manifest-bound");
@@ -255,7 +255,7 @@ fn registry_policy_preserves_hash_and_signature_status() {
         "prototype-self-signed-sha256",
         "profile-bound-unverified",
         false,
-        "vmos-aotc-dev",
+        "visa-aotc-dev",
     );
     let mut expected_list = Vec::new();
     expected_list.push(expected);
@@ -264,7 +264,7 @@ fn registry_policy_preserves_hash_and_signature_status() {
     bad.hash_status = "hash-unchecked".to_string();
     bad.signature_scheme = "prototype-self-signed-sha256".to_string();
     bad.signature_status = "profile-bound-unverified".to_string();
-    bad.signer = "vmos-aotc-dev".to_string();
+    bad.signer = "visa-aotc-dev".to_string();
     assert_eq!(registry.verify(bad), Err(ArtifactRegistryError::HashStatusMismatch));
 }
 

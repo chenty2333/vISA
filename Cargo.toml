@@ -16,11 +16,11 @@ members = [
     "crates/runtime/service_core",
     "crates/runtime/supervisor_catalog",
     "crates/runtime/target_executor",
-    "crates/runtime/vms_runtime",
-    "crates/runtime/vms_wasmtime",
+    "crates/runtime/visa_runtime",
+    "crates/runtime/visa_wasmtime",
     "crates/backend/substrate_api",
     "crates/backend/substrate_virtio",
-    "crates/testing/vmos-conformance",
+    "crates/testing/visa-conformance",
     "crates/services/console_service",
     "crates/services/devfs_service",
     "crates/services/driver_virtio_net",
@@ -36,7 +36,7 @@ members = [
     "crates/services/replay_snapshot",
     "crates/services/vfs_service",
     "crates/services/wasm_app",
-    "crates/benchmarks/vmos-bench",
+    "crates/benchmarks/visa-bench",
 ]
 
 [workspace.dependencies]
@@ -66,9 +66,9 @@ supervisor_catalog = { path = "crates/runtime/supervisor_catalog" }
 target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
 visa_profile = { path = "crates/core/visa_profile" }
-vms_runtime = { path = "crates/runtime/vms_runtime" }
-vms_wasmtime = { path = "crates/runtime/vms_wasmtime" }
-vmos_abi = { path = "crates/abi/abi" }
+visa_runtime = { path = "crates/runtime/visa_runtime" }
+visa_wasmtime = { path = "crates/runtime/visa_wasmtime" }
+visa_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.2", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 xmas-elf = { version = "0.10.0", default-features = false }

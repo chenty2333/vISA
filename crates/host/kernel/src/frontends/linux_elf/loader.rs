@@ -74,8 +74,8 @@ impl AlignedElfBuffer {
     }
 }
 
-static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")).len() }> =
-    AlignedElf(*include_bytes!(env!("VMOS_LINUX_USER_DEMO_ELF")));
+static LINUX_USER_DEMO_ELF: AlignedElf<{ include_bytes!(env!("VISA_LINUX_USER_DEMO_ELF")).len() }> =
+    AlignedElf(*include_bytes!(env!("VISA_LINUX_USER_DEMO_ELF")));
 
 pub(crate) struct PreparedUserImage {
     pub(crate) entry: u64,
@@ -130,7 +130,7 @@ impl UserPageSwitchError {
 }
 
 pub(crate) fn demo_program_host_path() -> &'static str {
-    env!("VMOS_LINUX_USER_DEMO_ELF")
+    env!("VISA_LINUX_USER_DEMO_ELF")
 }
 
 pub(crate) fn user_page_flags(prot: u64) -> PageTableFlags {
@@ -1190,7 +1190,7 @@ fn load_user_program(
             linux_user_resource_bytes_for_path(path).ok_or("initial user ELF interpreter missing")
         })
         .transpose()?;
-    let argv = vec![b"/bin/vmos-ltp".to_vec()];
+    let argv = vec![b"/bin/visa-ltp".to_vec()];
     let envp = vec![
         b"KCONFIG_SKIP_CHECK=1".to_vec(),
         b"LTP_DEV=/dev/loop0".to_vec(),
@@ -1203,7 +1203,7 @@ fn load_user_program(
         interpreter_bytes,
         &argv,
         &envp,
-        b"/bin/vmos-ltp",
+        b"/bin/visa-ltp",
         DEFAULT_RLIMIT_STACK_BYTES,
         ExecStackCredentials::root(),
     )?;
@@ -1382,7 +1382,7 @@ fn build_initial_stack_slices(
 
     let execfn = push_c_string(&mut page_bytes, page_base, &mut cursor, execfn_bytes)?;
     let platform = push_c_string(&mut page_bytes, page_base, &mut cursor, b"x86_64")?;
-    let random = push_bytes(&mut page_bytes, page_base, &mut cursor, b"vmos-ltp-random!")?;
+    let random = push_bytes(&mut page_bytes, page_base, &mut cursor, b"visa-ltp-random!")?;
     let mut argv_ptrs = Vec::with_capacity(argv.len());
     for arg in argv.iter().rev() {
         argv_ptrs.push(push_c_string(&mut page_bytes, page_base, &mut cursor, arg)?);

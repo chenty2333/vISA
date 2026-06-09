@@ -10,8 +10,8 @@ QEMU, or Criterion execution by default. External workload runners remain
 separate:
 
   scripts/run-host-ltp-log-adapter.sh
-  scripts/run-vmos-ltp-conformance.sh
-  scripts/run-vmos-bench-conformance.sh
+  scripts/run-visa-ltp-conformance.sh
+  scripts/run-visa-bench-conformance.sh
 EOF
 }
 
@@ -20,10 +20,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     exit 2
 fi
 
-output_dir="${1:-target/vmos-report-gates}"
+output_dir="${1:-target/visa-report-gates}"
 mkdir -p "$output_dir"
 
-cargo test -p vmos-conformance >"$output_dir/vmos-conformance-tests.log" 2>&1
+cargo test -p visa-conformance >"$output_dir/visa-conformance-tests.log" 2>&1
 scripts/check-conformance-report.sh >"$output_dir/check-conformance-report.log" 2>&1
 
 echo "Report gates passed. Logs written to $output_dir"

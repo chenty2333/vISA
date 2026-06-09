@@ -57,7 +57,7 @@ const N22_BACKEND_RX_ARP_REQUEST: [u8; N22_FRAME_LEN] = [
 ];
 const N22_BACKEND_TX_ARP_REPLY: [u8; N22_FRAME_LEN] = [
     0x02, 0x00, 0x00, 0x00, 0x00, 0x02, // dst remote mac
-    0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01, // src vmos mac
+    0x02, 0x76, 0x6d, 0x6f, 0x73, 0x01, // src visa mac
     0x08, 0x06, // ethertype ARP
     0x00, 0x01, // htype ethernet
     0x08, 0x00, // ptype ipv4
@@ -239,7 +239,7 @@ pub(crate) fn record_network_runtime_n22_evidence(
         .and_then(|record| record.store_local_handle(vec!["tx".to_owned()]))
         .ok_or("n22 packet tx capability handle is missing")?;
 
-    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
+    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa())
         .map_err(|error| format!("n22 smoltcp stack init failed: {error}"))?;
     let mut driver = DriverVirtioNetState::new();
     let mut backend = InMemoryVirtioNetBackend::default();
@@ -390,7 +390,7 @@ pub(crate) fn record_network_runtime_n23_evidence(
         .map(|handle| handle.generation)
         .ok_or("linux_socket_service store handle is missing for n23 evidence")?;
 
-    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
+    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa())
         .map_err(|error| format!("n23 smoltcp stack init failed: {error}"))?;
     let mut driver = DriverVirtioNetState::new();
     let mut backend = InMemoryVirtioNetBackend::default();

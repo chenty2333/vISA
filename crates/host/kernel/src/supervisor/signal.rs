@@ -48,25 +48,25 @@ fn waitable_signal_set(wait_set: u64) -> u64 {
 }
 
 fn decode_signal_arg(raw: u64) -> Result<u8, i32> {
-    if raw >= 64 { Err(vmos_abi::ERR_EINVAL) } else { Ok(raw as u8) }
+    if raw >= 64 { Err(visa_abi::ERR_EINVAL) } else { Ok(raw as u8) }
 }
 
 fn decode_action_signal_arg(raw: u64) -> Result<u8, i32> {
     let signo = decode_signal_arg(raw)?;
-    if signo == 0 { Err(vmos_abi::ERR_EINVAL) } else { Ok(signo) }
+    if signo == 0 { Err(visa_abi::ERR_EINVAL) } else { Ok(signo) }
 }
 
 fn decode_positive_u32_arg(raw: u64) -> Result<u32, i32> {
     match u32::try_from(raw) {
         Ok(value) if value != 0 => Ok(value),
-        _ => Err(vmos_abi::ERR_EINVAL),
+        _ => Err(visa_abi::ERR_EINVAL),
     }
 }
 
 fn decode_kill_target(raw: u64) -> Result<KillTarget, i32> {
     let pid = raw as i32;
     if raw != pid as i64 as u64 {
-        return Err(vmos_abi::ERR_EINVAL);
+        return Err(visa_abi::ERR_EINVAL);
     }
     kill_target_from_pid(pid)
 }
@@ -76,24 +76,24 @@ fn kill_target_from_pid(pid: i32) -> Result<KillTarget, i32> {
         1..=i32::MAX => Ok(KillTarget::Process(pid as u32)),
         0 => Ok(KillTarget::CurrentProcessGroup),
         -1 => Ok(KillTarget::Broadcast),
-        i32::MIN => Err(vmos_abi::ERR_EINVAL),
+        i32::MIN => Err(visa_abi::ERR_EINVAL),
         -2147483647..=-2 => Ok(KillTarget::ProcessGroup(pid.unsigned_abs())),
     }
 }
 
 fn checked_linux_ptr(raw: u64) -> Result<u32, i32> {
-    u32::try_from(raw).map_err(|_| vmos_abi::ERR_EFAULT)
+    u32::try_from(raw).map_err(|_| visa_abi::ERR_EFAULT)
 }
 
 fn decode_linux_sigaction(bytes: &[u8]) -> Result<SigAction, i32> {
     if bytes.len() < LINUX_SIGACTION_BYTES {
-        return Err(vmos_abi::ERR_EFAULT);
+        return Err(visa_abi::ERR_EFAULT);
     }
     Ok(SigAction {
-        handler: u64::from_le_bytes(bytes[0..8].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
-        flags: u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
-        restorer: u64::from_le_bytes(bytes[16..24].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
-        mask: u64::from_le_bytes(bytes[24..32].try_into().map_err(|_| vmos_abi::ERR_EFAULT)?),
+        handler: u64::from_le_bytes(bytes[0..8].try_into().map_err(|_| visa_abi::ERR_EFAULT)?),
+        flags: u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| visa_abi::ERR_EFAULT)?),
+        restorer: u64::from_le_bytes(bytes[16..24].try_into().map_err(|_| visa_abi::ERR_EFAULT)?),
+        mask: u64::from_le_bytes(bytes[24..32].try_into().map_err(|_| visa_abi::ERR_EFAULT)?),
     })
 }
 
@@ -215,7 +215,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
         };
         if plan.args[3] != LINUX_SIGSET_BYTES as u64 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
 
         let pid = self.current_pid();
@@ -226,7 +226,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             };
             let bytes = match self.linux.read_bytes(act_ptr, LINUX_SIGACTION_BYTES as u32) {
                 Ok(bytes) => bytes,
-                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+                Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64))),
             };
             match decode_linux_sigaction(&bytes) {
                 Ok(action) => Some(action),
@@ -236,7 +236,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             None
         };
         if new_action.is_some() && matches!(signo, 9 | 19) {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
 
         let old = self.get_sigaction(pid, signo).unwrap_or_default();
@@ -246,13 +246,13 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
             };
             if self.linux.write_bytes(old_ptr, &encode_linux_sigaction(old)).is_err() {
-                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
             }
         }
 
         if let Some(action) = new_action {
             if !self.set_sigaction(pid, signo, action) {
-                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+                return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
             }
         }
 
@@ -264,7 +264,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
         if plan.args[3] != LINUX_SIGSET_BYTES as u64 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
 
         let tid = self.current_tid();
@@ -275,7 +275,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
             };
             if self.linux.write_bytes(old_ptr, &old_mask.to_le_bytes()).is_err() {
-                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
             }
         }
 
@@ -286,18 +286,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             };
             let bytes = match self.linux.read_bytes(set_ptr, LINUX_SIGSET_BYTES as u32) {
                 Ok(bytes) => bytes,
-                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+                Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64))),
             };
             let set = match bytes[..LINUX_SIGSET_BYTES].try_into() {
                 Ok(raw) => u64::from_le_bytes(raw),
-                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64))),
+                Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64))),
             };
             let how = match u32::try_from(plan.args[0]) {
                 Ok(how) => how,
-                Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+                Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64))),
             };
             if self.set_sigmask(tid, how, set).is_none() {
-                return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+                return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
             }
         }
 
@@ -309,7 +309,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         plan: LinuxPlan,
     ) -> Result<LinuxCallResult, &'static str> {
         if plan.args[1] != LINUX_SIGSET_BYTES as u64 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
         let set_ptr = match checked_linux_ptr(plan.args[0]) {
             Ok(ptr) => ptr,
@@ -317,10 +317,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let pending = match self.blocked_pending_signal_set(self.current_tid()) {
             Some(pending) => pending,
-            None => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ESRCH as i64))),
+            None => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_ESRCH as i64))),
         };
         if self.linux.write_bytes(set_ptr, &pending.to_le_bytes()).is_err() {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
         }
         Ok(LinuxCallResult::Ret(0))
     }
@@ -333,13 +333,13 @@ impl<'engine> PrototypeRuntime<'engine> {
         signal: u8,
     ) -> Result<(), i32> {
         if signal >= 64 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let exists = self.threads.iter().any(|thread| {
             thread.pid == tgid && thread.tid == tid && thread.state != ThreadRuntimeStateKind::Dead
         });
         if !exists {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         if signal == 0 {
             return Ok(());
@@ -354,7 +354,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         signal: u8,
     ) -> Result<(), i32> {
         if signal >= 64 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let target = kill_target_from_pid(pid_arg)?;
         self.queue_signal_to_kill_target(sender_pid, target, signal)
@@ -394,7 +394,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             KillTarget::CurrentProcessGroup => {
                 let Some(pgid) = self.query_process(self.current_pid()).map(|process| process.pgid)
                 else {
-                    return Err(vmos_abi::ERR_ESRCH);
+                    return Err(visa_abi::ERR_ESRCH);
                 };
                 self.processes
                     .iter()
@@ -412,9 +412,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 })
                 .map(|process| process.pid)
                 .collect(),
-            KillTarget::Broadcast => return Err(vmos_abi::ERR_ENOSYS),
+            KillTarget::Broadcast => return Err(visa_abi::ERR_ENOSYS),
         };
-        if pids.is_empty() { Err(vmos_abi::ERR_ESRCH) } else { Ok(pids) }
+        if pids.is_empty() { Err(visa_abi::ERR_ESRCH) } else { Ok(pids) }
     }
 
     fn queue_user_signal_to_threads(
@@ -435,14 +435,14 @@ impl<'engine> PrototypeRuntime<'engine> {
         let Some(sender) = self.processes.iter().find(|process| {
             process.pid == sender_pid && process.state != ProcessRuntimeStateKind::Dead
         }) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         let sender_uid = sender.access.real_uid;
         let limit = sender.rlimits[RLIMIT_SIGPENDING].cur;
         if limit != u64::MAX {
             let queued = self.pending_signal_count_for_uid(sender_uid);
             if queued.saturating_add(additions) > limit {
-                return Err(vmos_abi::ERR_EAGAIN);
+                return Err(visa_abi::ERR_EAGAIN);
             }
         }
         Ok(sender_uid)
@@ -638,10 +638,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::TIMER_HZ,
         );
         self.record_wait_token(token);
-        match self.block_on_wait("ring3_pause", token).map_err(|_| vmos_abi::ERR_EINVAL)? {
+        match self.block_on_wait("ring3_pause", token).map_err(|_| visa_abi::ERR_EINVAL)? {
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
-            LinuxCallResult::Ret(_) => Err(vmos_abi::ERR_EINTR),
-            _ => Err(vmos_abi::ERR_EINVAL),
+            LinuxCallResult::Ret(_) => Err(visa_abi::ERR_EINTR),
+            _ => Err(visa_abi::ERR_EINVAL),
         }
     }
 
@@ -674,11 +674,11 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.record_wait_token(token);
         match self
             .block_on_wait("ring3_rt_sigtimedwait", token)
-            .map_err(|_| vmos_abi::ERR_EINVAL)?
+            .map_err(|_| visa_abi::ERR_EINVAL)?
         {
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
             LinuxCallResult::Ret(_) => Ok(()),
-            _ => Err(vmos_abi::ERR_EINVAL),
+            _ => Err(visa_abi::ERR_EINVAL),
         }
     }
 
@@ -797,7 +797,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{
+    use visa_abi::{
         ERR_EAGAIN, ERR_EINVAL, ERR_ENOSYS, ERR_ESRCH, SYS_KILL, SYS_RT_SIGACTION,
         SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_TGKILL, SyscallContext,
     };

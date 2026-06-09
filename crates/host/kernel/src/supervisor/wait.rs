@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EAGAIN, ERR_ETIMEDOUT};
+use visa_abi::{ERR_EAGAIN, ERR_ETIMEDOUT};
 
 use super::{
     events::Event,

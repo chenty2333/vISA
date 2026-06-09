@@ -9,4 +9,4 @@ default = []
 seccomp-filter = []
 
 [dependencies]
-vmos_abi.workspace = true
+visa_abi.workspace = true

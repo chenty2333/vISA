@@ -835,8 +835,8 @@ pub const DEFAULT_MAX_TABLE_ELEMENTS: u32 = 0;
 pub const DEFAULT_MAX_HOSTCALLS_PER_ACTIVATION: u32 = 64;
 pub const DEFAULT_COMPONENT_MODEL_VERSION: &str = "wasm-core-module-v0";
 pub const DEFAULT_WASI_PROFILE: &str = "none";
-pub const DEFAULT_HOSTCALL_ABI_VERSION: &str = "vmos-target-hostcall-frame-v1";
-pub const DEFAULT_CAPABILITY_ABI_VERSION: &str = "vmos-capability-handle-v1";
+pub const DEFAULT_HOSTCALL_ABI_VERSION: &str = "visa-target-hostcall-frame-v1";
+pub const DEFAULT_CAPABILITY_ABI_VERSION: &str = "visa-capability-handle-v1";
 pub const DEFAULT_SEMANTIC_CONTRACT_SCHEMA_VERSION: &str = "semantic-contract-v0.1";
 
 /// Evidence boundary for each ObjectKind.

@@ -10,4 +10,4 @@ path = "src/lib.rs"
 
 [dependencies]
 service_core.workspace = true
-vmos_abi.workspace = true
+visa_abi.workspace = true

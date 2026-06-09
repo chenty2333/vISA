@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 
-use vmos_abi::NodeKind;
+use visa_abi::NodeKind;
 
 use super::super::{
     engine::{BufferedModule, SupervisorEngine, WasmFn, expect_len, expect_ok},
     types::ServiceCallError,
 };
 
-const DEVFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_DEVFS_SERVICE_WASM"));
+const DEVFS_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_DEVFS_SERVICE_WASM"));
 
 pub(crate) struct DevfsService {
     io: BufferedModule,

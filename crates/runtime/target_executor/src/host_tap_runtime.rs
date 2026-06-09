@@ -10,12 +10,12 @@ use substrate_virtio::net::HostTapPacketDeviceBackend;
 
 use crate::HOST_TAP_ENV;
 
-const HOST_TAP_REMOTE_IPV4_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_IPV4";
-const HOST_TAP_REMOTE_PORT_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REMOTE_PORT";
-const HOST_TAP_PUMP_STEPS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_STEPS";
-const HOST_TAP_PUMP_SLEEP_MS_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_PUMP_SLEEP_MS";
-const HOST_TAP_REQUIRE_ESTABLISHED_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REQUIRE_ESTABLISHED";
-const HOST_TAP_REQUIRE_RX_ENV: &str = "VMOS_TARGET_EXECUTOR_HOST_TAP_REQUIRE_RX";
+const HOST_TAP_REMOTE_IPV4_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_REMOTE_IPV4";
+const HOST_TAP_REMOTE_PORT_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_REMOTE_PORT";
+const HOST_TAP_PUMP_STEPS_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_PUMP_STEPS";
+const HOST_TAP_PUMP_SLEEP_MS_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_PUMP_SLEEP_MS";
+const HOST_TAP_REQUIRE_ESTABLISHED_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_REQUIRE_ESTABLISHED";
+const HOST_TAP_REQUIRE_RX_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP_REQUIRE_RX";
 const HOST_TAP_DEFAULT_REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
 const HOST_TAP_DEFAULT_REMOTE_PORT: u16 = 80;
 const HOST_TAP_DEFAULT_PUMP_STEPS: u32 = 16;
@@ -107,7 +107,7 @@ pub(crate) struct HostTapRuntimeReport {
 pub(crate) fn run_host_tap_runtime_probe(
     config: HostTapRuntimeConfig,
 ) -> Result<HostTapRuntimeReport, Box<dyn Error>> {
-    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())
+    let mut stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa())
         .map_err(|error| format!("host TAP smoltcp stack init failed: {error}"))?;
     let mut driver = DriverVirtioNetState::new();
     let mut backend = CountingHostTapBackend::open(&config.tap_name)?;

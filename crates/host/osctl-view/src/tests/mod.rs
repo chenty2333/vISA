@@ -24,7 +24,7 @@ mod simd_display_integrated_views;
 fn minimal_graph_package() -> MigrationPackageManifest {
     serde_json::from_value(serde_json::json!({
         "schema_version": 1,
-        "package_format": "vmos-semantic-package-v1",
+        "package_format": "visa-semantic-package-v1",
         "package_id": "graph-test",
         "source": { "arch": "x86_64" },
         "target": { "arch_requirement": "target-native" },
@@ -41,7 +41,7 @@ fn minimal_graph_package() -> MigrationPackageManifest {
             "compiler_engine": "wasmtime",
             "compiler_execution_mode": "precompiled-core-module",
             "artifact_format": "target-artifact-image-v1",
-            "runtime_executor_abi": "vmos-runtime-only-executor-v0"
+            "runtime_executor_abi": "visa-runtime-only-executor-v0"
         },
         "guest": {
             "canonical_isa": "riscv64",

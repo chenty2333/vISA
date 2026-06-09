@@ -7,7 +7,7 @@ use service_core::{
     packet::{PROTO_DEMO_TCP, decode_frame},
 };
 use substrate_api::{PacketDeviceBackend, PacketFrameSlot};
-use vmos_abi::{
+use visa_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_ECONNREFUSED, ERR_ECONNRESET, ERR_EINPROGRESS,
     ERR_EINVAL, ERR_EISCONN, ERR_ENOTCONN, ERR_EOPNOTSUPP, ERR_EPIPE, SOCK_STREAM,
 };
@@ -1632,7 +1632,7 @@ mod tests {
     use alloc::vec::Vec;
     use std::sync::{Mutex, MutexGuard};
 
-    use vmos_abi::{
+    use visa_abi::{
         AF_INET, EPOLL_CTL_ADD, EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EAGAIN,
         ERR_ECONNREFUSED, ERR_ECONNRESET, ERR_EINTR, ERR_EPIPE, SO_ACCEPTCONN, SO_RCVBUF,
         SO_SNDBUF, SOCK_STREAM, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CLOSE, SYS_CONNECT,
@@ -1646,7 +1646,7 @@ mod tests {
 
     const REMOTE_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
     const REMOTE_IPV4: [u8; 4] = [10, 0, 2, 2];
-    const VMOS_IPV4: [u8; 4] = [10, 0, 2, 15];
+    const VISA_IPV4: [u8; 4] = [10, 0, 2, 15];
     const MSG_PEEK: u32 = 0x02;
     const ARP_FRAME_LEN: usize = 42;
     const ETHERNET_HEADER_LEN: usize = 14;
@@ -1819,7 +1819,7 @@ mod tests {
             [AF_INET as u64, SOCK_STREAM as u64, 0, 0, 0, 0],
         );
         assert!(listener_fd >= 0);
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 runtime,
@@ -1880,7 +1880,7 @@ mod tests {
         frame[22..28].copy_from_slice(&REMOTE_MAC);
         frame[28..32].copy_from_slice(&REMOTE_IPV4);
         frame[32..38].copy_from_slice(&[0; 6]);
-        frame[38..42].copy_from_slice(&VMOS_IPV4);
+        frame[38..42].copy_from_slice(&VISA_IPV4);
         frame
     }
 
@@ -1919,7 +1919,7 @@ mod tests {
         frame[ip_start + 8] = 64;
         frame[ip_start + 9] = 6;
         frame[ip_start + 12..ip_start + 16].copy_from_slice(&REMOTE_IPV4);
-        frame[ip_start + 16..ip_start + 20].copy_from_slice(&VMOS_IPV4);
+        frame[ip_start + 16..ip_start + 20].copy_from_slice(&VISA_IPV4);
         let ip_checksum = internet_checksum(&frame[ip_start..ip_start + 20]);
         frame[ip_start + 10..ip_start + 12].copy_from_slice(&ip_checksum.to_be_bytes());
 
@@ -1930,7 +1930,7 @@ mod tests {
         frame[tcp_start + 12] = 5 << 4;
         frame[tcp_start + 13] = 0x02;
         frame[tcp_start + 14..tcp_start + 16].copy_from_slice(&64240u16.to_be_bytes());
-        let tcp_checksum = tcp_ipv4_checksum(&REMOTE_IPV4, &VMOS_IPV4, &frame[tcp_start..]);
+        let tcp_checksum = tcp_ipv4_checksum(&REMOTE_IPV4, &VISA_IPV4, &frame[tcp_start..]);
         frame[tcp_start + 16..tcp_start + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
         frame
     }
@@ -2459,7 +2459,7 @@ mod tests {
                 REMOTE_MAC,
                 REMOTE_IPV4,
                 service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-                VMOS_IPV4,
+                VISA_IPV4,
             );
             runtime.net_driver.deliver_rx_frame(0, &arp_reply).expect("deliver arp reply");
             runtime.poll_network_driver_events();
@@ -2485,7 +2485,7 @@ mod tests {
             REMOTE_MAC,
             REMOTE_IPV4,
             service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-            VMOS_IPV4,
+            VISA_IPV4,
         );
         runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
         runtime.pump_network_runtime();
@@ -2515,7 +2515,7 @@ mod tests {
             REMOTE_MAC,
             REMOTE_IPV4,
             service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-            VMOS_IPV4,
+            VISA_IPV4,
         );
         runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
         runtime.pump_network_runtime();
@@ -2542,7 +2542,7 @@ mod tests {
             REMOTE_MAC,
             REMOTE_IPV4,
             service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-            VMOS_IPV4,
+            VISA_IPV4,
         );
         runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
         runtime.pump_network_runtime();
@@ -2681,7 +2681,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18080u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -2740,7 +2740,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18083u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -2816,7 +2816,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18093u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -2891,7 +2891,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18084u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -2962,7 +2962,7 @@ mod tests {
         assert_eq!(getsockopt_u32(&mut runtime, listener_fd, SO_ACCEPTCONN as u64), 0);
 
         let local_port = 18090u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -3008,7 +3008,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18085u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -3059,7 +3059,7 @@ mod tests {
         assert_eq!(runtime.net_driver.pending_rx_frames().expect("driver rx"), 0);
         assert!(event_log_contains(&runtime, "PacketReceived"));
 
-        let reply = b"hello back from vmos";
+        let reply = b"hello back from visa";
         assert_eq!(write_fd(&mut runtime, accepted_fd, reply), reply.len() as i64);
         let last_tx = runtime
             .reference_packet_backend
@@ -3090,7 +3090,7 @@ mod tests {
         );
 
         let local_port = 18086u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -3301,7 +3301,7 @@ mod tests {
         );
 
         let local_port = 18088u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4084,7 +4084,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18091u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4163,7 +4163,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18087u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4247,7 +4247,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18086u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4370,7 +4370,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18095u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4481,7 +4481,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18087u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4599,7 +4599,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18094u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4767,7 +4767,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18088u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -4880,7 +4880,7 @@ mod tests {
                 SYS_CONNECT,
                 [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
             ),
-            -(vmos_abi::ERR_EINPROGRESS as i64)
+            -(visa_abi::ERR_EINPROGRESS as i64)
         );
         assert!(is_remote_arp_request(
             runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
@@ -4899,7 +4899,7 @@ mod tests {
                     epfd as u64,
                     EPOLL_CTL_ADD as u64,
                     fd as u64,
-                    (EPOLLIN | vmos_abi::EPOLLOUT) as u64,
+                    (EPOLLIN | visa_abi::EPOLLOUT) as u64,
                     epoll_data,
                     0,
                 ],
@@ -4921,7 +4921,7 @@ mod tests {
         let event_bytes = expect_bytes(
             runtime.block_on_wait("test_epoll_connect_resume", token).expect("connect epoll wait"),
         );
-        assert_epoll_event_exact(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
+        assert_epoll_event_exact(&event_bytes, visa_abi::EPOLLOUT, epoll_data);
 
         let event_bytes = dispatch_bytes(
             &mut runtime,
@@ -4929,7 +4929,7 @@ mod tests {
             SYS_EPOLL_WAIT,
             [epfd as u64, 1, 0, 0, 0, 0],
         );
-        assert_epoll_event_exact(&event_bytes, vmos_abi::EPOLLOUT, epoll_data);
+        assert_epoll_event_exact(&event_bytes, visa_abi::EPOLLOUT, epoll_data);
 
         let (opt_ptr, _) = runtime.linux.write_arg_bytes(&[0; 8]).expect("getsockopt buffer");
         runtime.linux.write_bytes(opt_ptr + 4, &4u32.to_le_bytes()).expect("getsockopt len");
@@ -4977,7 +4977,7 @@ mod tests {
                 SYS_CONNECT,
                 [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, remote_port as u64],
             ),
-            -(vmos_abi::ERR_EINPROGRESS as i64)
+            -(visa_abi::ERR_EINPROGRESS as i64)
         );
         assert!(is_remote_arp_request(
             runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
@@ -5039,7 +5039,7 @@ mod tests {
                 SYS_CONNECT,
                 [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, 18111],
             ),
-            -(vmos_abi::ERR_EINPROGRESS as i64)
+            -(visa_abi::ERR_EINPROGRESS as i64)
         );
         assert!(is_remote_arp_request(
             runtime.reference_packet_backend.last_tx_frame().expect("connect arp request"),
@@ -5064,7 +5064,7 @@ mod tests {
                 SYS_CONNECT,
                 [fd as u64, 0, 16, AF_INET as u64, remote_ipv4 as u64, 18112],
             ),
-            -(vmos_abi::ERR_EINPROGRESS as i64)
+            -(visa_abi::ERR_EINPROGRESS as i64)
         );
         let syn =
             runtime.reference_packet_backend.last_tx_frame().expect("reconnect emitted tcp syn");
@@ -5108,7 +5108,7 @@ mod tests {
             REMOTE_MAC,
             REMOTE_IPV4,
             service_core::net_contract::VIRTIO_NET0_CONTRACT.mac,
-            VMOS_IPV4,
+            VISA_IPV4,
         );
         runtime.reference_packet_backend.inject_rx_frame(&arp_reply).expect("inject arp reply");
         runtime.pump_network_runtime();
@@ -5143,7 +5143,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18081u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,
@@ -5204,7 +5204,7 @@ mod tests {
         );
         assert!(listener_fd >= 0);
         let local_port = 18082u16;
-        let local_ipv4 = u32::from_be_bytes(VMOS_IPV4);
+        let local_ipv4 = u32::from_be_bytes(VISA_IPV4);
         assert_eq!(
             dispatch_ret(
                 &mut runtime,

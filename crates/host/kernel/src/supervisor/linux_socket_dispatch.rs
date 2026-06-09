@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{
+use visa_abi::{
     AF_INET, ERR_EAGAIN, ERR_EALREADY, ERR_EBADF, ERR_EFAULT, ERR_EINPROGRESS, ERR_EINVAL,
     ERR_EMFILE, ERR_ENOSYS, ERR_ENOTCONN, ERR_EPERM, ERR_EPIPE, PlanKind, SO_ERROR, SO_RCVBUF,
     SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
@@ -40,7 +40,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let ty = raw_ty & !(SOCK_CLOEXEC | SOCK_NONBLOCK);
         let protocol = u32::try_from(plan.args[2]).map_err(|_| "socket protocol overflowed")?;
         if !self.can_allocate_fds(1) {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EMFILE as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EMFILE as i64)));
         }
         let socket_id = match self.net_core.create_socket(domain, ty, protocol) {
             Ok(socket_id) => socket_id,
@@ -212,7 +212,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 {
                     if matches!(result, LinuxCallResult::Ret(0)) {
                         match self.linux_socket.listen_socket(socket_id, backlog) {
-                            Ok(()) | Err(ServiceCallError::Errno(vmos_abi::ERR_EOPNOTSUPP)) => {}
+                            Ok(()) | Err(ServiceCallError::Errno(visa_abi::ERR_EOPNOTSUPP)) => {}
                             Err(ServiceCallError::Errno(errno)) => {
                                 return Ok(LinuxCallResult::Ret(-(errno as i64)));
                             }
@@ -1567,7 +1567,7 @@ mod tests {
     use service_core::packet::{
         PACKET_FRAME_CAPACITY, PACKET_PAYLOAD_CAPACITY, PacketFrameMeta, encode_frame,
     };
-    use vmos_abi::{
+    use visa_abi::{
         AF_INET, ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_ENOTCONN, ERR_ENOTSOCK,
         ERR_EPIPE, NodeKind, PlanKind, SO_KEEPALIVE, SO_RCVBUF, SO_SNDBUF, SOCK_STREAM, SOL_SOCKET,
         SYS_GETPEERNAME, SYS_GETSOCKNAME, SYS_GETSOCKOPT, SYS_RECVFROM, SYS_RECVMSG, SYS_SENDTO,

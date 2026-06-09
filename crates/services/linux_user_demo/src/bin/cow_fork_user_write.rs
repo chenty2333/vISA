@@ -3,7 +3,7 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-use vmos_abi::{SYS_EXIT, SYS_FORK, SYS_GETCWD, SYS_MMAP, SYS_WAIT4, SYS_WRITE};
+use visa_abi::{SYS_EXIT, SYS_FORK, SYS_GETCWD, SYS_MMAP, SYS_WAIT4, SYS_WRITE};
 
 const PROT_READ: u64 = 0x1;
 const PROT_WRITE: u64 = 0x2;

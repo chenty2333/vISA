@@ -21,7 +21,7 @@ substrate_api.workspace = true
 substrate_virtio.workspace = true
 supervisor_catalog.workspace = true
 uart_16550.workspace = true
-vmos_abi.workspace = true
+visa_abi.workspace = true
 x86_64.workspace = true
 xmas-elf.workspace = true
 

@@ -1,5 +1,5 @@
 use semantic_core::{FaultClass, TrapClass};
-use vmos_abi::{ERR_EFAULT, ERR_EIO, ERR_EPERM};
+use visa_abi::{ERR_EFAULT, ERR_EIO, ERR_EPERM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ClassifiedFault {

@@ -67,13 +67,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     if let Err(err) = supervisor::run() {
         crate::kerror!("demo failed: {}", err);
-        serial_println!("vmos: demo failed: {}", err);
+        serial_println!("visa: demo failed: {}", err);
         qemu::exit_failed();
     }
 
     if let Err(err) = user_mode::run_demo(boot_info) {
         crate::kerror!("user mode demo failed: {}", err);
-        serial_println!("vmos: demo failed: {}", err);
+        serial_println!("visa: demo failed: {}", err);
         qemu::exit_failed();
     }
 

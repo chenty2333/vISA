@@ -11,7 +11,7 @@ use service_core::{
 };
 use substrate_api::PacketDeviceBackend;
 use substrate_virtio::net::InMemoryVirtioNetBackend;
-use vmos_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
+use visa_abi::{SYS_EXIT, SYS_EXIT_GROUP, SYS_READ, SYS_RT_SIGRETURN, SYS_WRITE};
 
 use super::{
     artifacts::ArtifactRegistry,
@@ -182,7 +182,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         crate::kdebug!("instantiating linux_socket_service");
         let linux_socket = LinuxSocketService::new(engine)?;
         crate::kdebug!("instantiating smoltcp packet stack");
-        let net_stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos())?;
+        let net_stack = SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa())?;
         crate::kdebug!("instantiating driver_virtio_net");
         let net_driver = DriverVirtioNetService::new(engine)?;
         let mut reference_packet_backend = InMemoryVirtioNetBackend::default();
@@ -632,14 +632,14 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn set_seccomp_strict(&mut self, tid: Tid) -> Result<(), i32> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         match thread.seccomp {
             SeccompMode::Disabled | SeccompMode::Strict => {
                 thread.seccomp = SeccompMode::Strict;
                 Ok(())
             }
-            SeccompMode::Filter(_) => Err(vmos_abi::ERR_EINVAL),
+            SeccompMode::Filter(_) => Err(visa_abi::ERR_EINVAL),
         }
     }
 
@@ -653,10 +653,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         user_notif_listener: Option<u64>,
     ) -> Result<(), i32> {
         let Some(caller) = self.threads.iter().find(|thread| thread.tid == tid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         if !caller.no_new_privs && !privileged {
-            return Err(vmos_abi::ERR_EACCES);
+            return Err(visa_abi::ERR_EACCES);
         }
 
         if sync_threads {
@@ -668,18 +668,18 @@ impl<'engine> PrototypeRuntime<'engine> {
                     continue;
                 }
                 if !thread.no_new_privs && !privileged {
-                    return Err(vmos_abi::ERR_EACCES);
+                    return Err(visa_abi::ERR_EACCES);
                 }
                 if matches!(thread.seccomp, SeccompMode::Strict) {
-                    return Err(vmos_abi::ERR_EINVAL);
+                    return Err(visa_abi::ERR_EINVAL);
                 }
                 if thread.seccomp != caller_seccomp {
-                    return Err(vmos_abi::ERR_EINVAL);
+                    return Err(visa_abi::ERR_EINVAL);
                 }
                 targets.push(index);
             }
             if targets.is_empty() {
-                return Err(vmos_abi::ERR_ESRCH);
+                return Err(visa_abi::ERR_ESRCH);
             }
             for index in targets {
                 install_seccomp_filter_on_mode(
@@ -695,7 +695,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
 
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         install_seccomp_filter_on_mode(&mut thread.seccomp, program, log_non_allow)?;
         if user_notif_listener.is_some() {
@@ -923,7 +923,7 @@ fn install_seccomp_filter_on_mode(
             chain.push_with_log(program, log_non_allow);
             Ok(())
         }
-        SeccompMode::Strict => Err(vmos_abi::ERR_EINVAL),
+        SeccompMode::Strict => Err(visa_abi::ERR_EINVAL),
     }
 }
 

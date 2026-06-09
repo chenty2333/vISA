@@ -9,4 +9,4 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-vmos_abi.workspace = true
+visa_abi.workspace = true

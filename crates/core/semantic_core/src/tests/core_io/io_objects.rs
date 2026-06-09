@@ -54,7 +54,7 @@ pub(super) fn io_runtime_i0_device_object_records_resource_identity() {
             resource_generation: generation,
             backend: "fake-io-backend".to_string(),
             bus: "semantic-harness".to_string(),
-            vendor: "vmos".to_string(),
+            vendor: "visa".to_string(),
             model: "fake-io-v1".to_string(),
             note: "device object harness".to_string(),
         },
@@ -95,7 +95,7 @@ pub(super) fn io_runtime_i0_rejects_stale_or_non_device_resource() {
             resource_generation: fd_generation,
             backend: "fake-io-backend".to_string(),
             bus: "semantic-harness".to_string(),
-            vendor: "vmos".to_string(),
+            vendor: "visa".to_string(),
             model: "fake-io-v1".to_string(),
             note: "fd resource must reject".to_string(),
         },
@@ -118,7 +118,7 @@ pub(super) fn io_runtime_i0_rejects_stale_or_non_device_resource() {
             resource_generation: 2,
             backend: "fake-net-backend".to_string(),
             bus: "semantic-harness".to_string(),
-            vendor: "vmos".to_string(),
+            vendor: "visa".to_string(),
             model: "fake-net-v1".to_string(),
             note: "stale resource generation must reject".to_string(),
         },
@@ -135,7 +135,7 @@ pub(super) fn io_runtime_i0_rejects_stale_or_non_device_resource() {
         generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "device object harness",
     ));
@@ -159,7 +159,7 @@ pub(super) fn io_runtime_i1_queue_object_records_device_identity() {
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -211,7 +211,7 @@ pub(super) fn io_runtime_i1_rejects_stale_or_duplicate_queue() {
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -303,7 +303,7 @@ pub(super) fn io_runtime_i2_descriptor_object_records_queue_identity() {
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -364,7 +364,7 @@ pub(super) fn io_runtime_i2_rejects_stale_out_of_bounds_or_duplicate_descriptor(
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -483,7 +483,7 @@ pub(super) fn io_runtime_i3_dma_buffer_object_records_descriptor_and_resource_id
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -559,7 +559,7 @@ pub(super) fn io_runtime_i3_rejects_stale_wrong_resource_or_duplicate_dma_buffer
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -719,7 +719,7 @@ pub(super) fn io_runtime_i4_mmio_region_object_records_device_and_resource_ident
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -781,7 +781,7 @@ pub(super) fn io_runtime_i4_rejects_stale_wrong_resource_or_duplicate_mmio_regio
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -930,7 +930,7 @@ pub(super) fn io_runtime_i5_irq_line_object_records_device_and_resource_identity
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -989,7 +989,7 @@ pub(super) fn io_runtime_i5_rejects_stale_wrong_resource_or_duplicate_irq_line()
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -1111,7 +1111,7 @@ pub(super) fn io_runtime_i6_irq_event_records_line_device_and_driver_store_ident
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));
@@ -1190,7 +1190,7 @@ pub(super) fn io_runtime_i6_rejects_stale_wrong_store_or_duplicate_irq_event() {
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));

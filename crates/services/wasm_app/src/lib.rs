@@ -6,7 +6,7 @@ extern crate std;
 #[cfg(target_arch = "wasm32")]
 use core::panic::PanicInfo;
 
-use vmos_abi::PackedStep;
+use visa_abi::PackedStep;
 
 static APP_MESSAGE: &[u8] = b"wasm frontend: hello from wasm_app\n";
 

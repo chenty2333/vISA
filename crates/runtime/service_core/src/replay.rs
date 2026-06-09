@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EAGAIN, ERR_EFAULT};
+use visa_abi::{ERR_EAGAIN, ERR_EFAULT};
 
 pub struct ReplaySnapshotState {
     last_cursor: u64,

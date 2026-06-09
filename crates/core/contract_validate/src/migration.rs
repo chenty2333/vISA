@@ -4,7 +4,7 @@ pub fn validate_migration_package(package: &MigrationPackageManifest) -> Contrac
     if package.schema_version != 1 {
         return Err(ContractError::new("unsupported semantic package schema version"));
     }
-    if package.package_format != "vmos-semantic-package-v1" {
+    if package.package_format != "visa-semantic-package-v1" {
         return Err(ContractError::new("unsupported semantic package format"));
     }
     if package.guest.canonical_isa != "riscv64" {

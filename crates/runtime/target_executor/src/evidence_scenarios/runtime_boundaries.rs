@@ -128,7 +128,7 @@ pub(crate) fn record_page_table_backend_evidence(
 ) -> Result<(), Box<dyn Error>> {
     const TEST_VA: u64 = 0x40_0000;
     const COPY_LEN: usize = 4;
-    const COPY_SENTINEL: &[u8; COPY_LEN] = b"VMOS";
+    const COPY_SENTINEL: &[u8; COPY_LEN] = b"vISA";
 
     let mut backend = InMemoryPageTableBackend::default();
     let source_frame = backend
@@ -997,7 +997,7 @@ pub(crate) fn record_preemptive_runtime_context_evidence(
                 resource_generation: io_device_resource_generation,
                 backend: "fake-io-backend".to_owned(),
                 bus: "semantic-harness".to_owned(),
-                vendor: "vmos".to_owned(),
+                vendor: "visa".to_owned(),
                 model: "fake-io-v1".to_owned(),
                 note: "i0-record-device-object-harness".to_owned(),
             },
@@ -1390,7 +1390,7 @@ pub(crate) fn record_preemptive_runtime_context_evidence(
                 resource_generation: packet_device_resource_generation,
                 backend: "fake-net-backend".to_owned(),
                 bus: "semantic-harness".to_owned(),
-                vendor: "vmos".to_owned(),
+                vendor: "visa".to_owned(),
                 model: "fake-net-v1".to_owned(),
                 note: "n0-record-packet-backing-device-harness".to_owned(),
             },

@@ -15,7 +15,7 @@ use service_core::{
         VIRTIO_NET0_TX_QUEUE_DEPTH,
     },
 };
-use vmos_abi::ERR_EIO;
+use visa_abi::ERR_EIO;
 
 static mut REQUEST: [u8; REQUEST_CAPACITY] = [0; REQUEST_CAPACITY];
 static mut RESPONSE: [u8; RESPONSE_CAPACITY] = [0; RESPONSE_CAPACITY];

@@ -6,7 +6,7 @@ extern crate std;
 #[cfg(target_arch = "wasm32")]
 use core::panic::PanicInfo;
 
-use vmos_abi::ERR_EINVAL;
+use visa_abi::ERR_EINVAL;
 
 const BUFFER_CAPACITY: usize = 4096;
 static mut BUFFER: [u8; BUFFER_CAPACITY] = [0; BUFFER_CAPACITY];

@@ -9,8 +9,8 @@ use std::{
 };
 
 const QEMU_SUCCESS_EXIT_STATUS: i32 = 33;
-const DEMO_SUCCESS_MARKER: &str = "vmos: demo completed";
-const DEMO_FAILURE_MARKERS: [&str; 2] = ["vmos: demo failed:", "panic:"];
+const DEMO_SUCCESS_MARKER: &str = "visa: demo completed";
+const DEMO_FAILURE_MARKERS: [&str; 2] = ["visa: demo failed:", "panic:"];
 const QEMU_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn main() {
@@ -24,8 +24,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let config = RunConfig::parse(env::args().skip(1))?;
 
     let pid = std::process::id();
-    let serial_log = env::temp_dir().join(format!("vmos-qemu-serial-{pid}.log"));
-    let debug_log = env::temp_dir().join(format!("vmos-qemu-debug-{pid}.log"));
+    let serial_log = env::temp_dir().join(format!("visa-qemu-serial-{pid}.log"));
+    let debug_log = env::temp_dir().join(format!("visa-qemu-debug-{pid}.log"));
     let _ = fs::remove_file(&serial_log);
     let _ = fs::remove_file(&debug_log);
 
@@ -45,7 +45,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "isa-debug-exit,iobase=0xf4,iosize=0x04",
     ]);
 
-    let uefi_image = env!("VMOS_UEFI_IMAGE");
+    let uefi_image = env!("VISA_UEFI_IMAGE");
     let code = pick_ovmf_code()?;
     let vars_template = pick_ovmf_vars()?;
     let vars_copy = copy_vars_template(&vars_template)?;
@@ -109,7 +109,7 @@ fn pick_ovmf_vars() -> Result<PathBuf, Box<dyn Error>> {
 fn copy_vars_template(template: &PathBuf) -> Result<PathBuf, Box<dyn Error>> {
     let temp_dir = env::temp_dir();
     let pid = std::process::id();
-    let vars_copy = temp_dir.join(format!("vmos-ovmf-vars-{pid}.fd"));
+    let vars_copy = temp_dir.join(format!("visa-ovmf-vars-{pid}.fd"));
     fs::copy(template, &vars_copy)?;
     Ok(vars_copy)
 }
@@ -165,7 +165,7 @@ fn wait_for_demo(
 
 fn serial_has_expected_user_status(serial: &str, config: &RunConfig) -> bool {
     config.expected_user_status.is_some_and(|status| {
-        serial.contains(&format!("vmos: user ELF exited with status {status}"))
+        serial.contains(&format!("visa: user ELF exited with status {status}"))
     })
 }
 
@@ -195,7 +195,7 @@ fn sanitize_serial_output(serial: &str) -> String {
         .iter()
         .position(|line| {
             let trimmed = line.trim();
-            trimmed.starts_with("==") || trimmed.starts_with("vmos:")
+            trimmed.starts_with("==") || trimmed.starts_with("visa:")
         })
         .unwrap_or(0);
 
@@ -277,7 +277,7 @@ impl RunConfig {
 }
 
 fn configured_expected_user_status() -> Result<Option<i32>, Box<dyn Error>> {
-    for key in ["VMOS_EXPECT_USER_STATUS", "VMOS_EXPECT_USER_EXIT_STATUS"] {
+    for key in ["VISA_EXPECT_USER_STATUS", "VISA_EXPECT_USER_EXIT_STATUS"] {
         if let Ok(raw) = env::var(key) {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -292,7 +292,7 @@ fn configured_expected_user_status() -> Result<Option<i32>, Box<dyn Error>> {
 }
 
 fn configured_qemu_timeout() -> Result<Duration, Box<dyn Error>> {
-    for key in ["VMOS_QEMU_TIMEOUT", "VMOS_QEMU_TIMEOUT_SECS", "VMOS_LTP_RUN_TIMEOUT"] {
+    for key in ["VISA_QEMU_TIMEOUT", "VISA_QEMU_TIMEOUT_SECS", "VISA_LTP_RUN_TIMEOUT"] {
         if let Ok(raw) = env::var(key) {
             return parse_timeout_duration(&raw)
                 .ok_or_else(|| format!("invalid {key} value: {raw}").into());
@@ -342,11 +342,11 @@ mod tests {
         let config = config_with_expected_status(Some(135));
 
         assert!(serial_has_expected_user_status(
-            "vmos: user ELF exited with status 135\n",
+            "visa: user ELF exited with status 135\n",
             &config
         ));
         assert!(!serial_has_expected_user_status(
-            "vmos: user ELF exited with status 139\n",
+            "visa: user ELF exited with status 139\n",
             &config
         ));
     }
@@ -356,7 +356,7 @@ mod tests {
         let config = config_with_expected_status(None);
 
         assert!(!serial_has_expected_user_status(
-            "vmos: user ELF exited with status 135\n",
+            "visa: user ELF exited with status 135\n",
             &config
         ));
     }

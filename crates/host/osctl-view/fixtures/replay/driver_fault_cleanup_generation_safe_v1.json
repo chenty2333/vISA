@@ -1,5 +1,5 @@
 {
-  "schema": "vmos-replay-fixture-v1",
+  "schema": "visa-replay-fixture-v1",
   "name": "driver_fault_cleanup_generation_safe_v1",
   "commands": [
     {

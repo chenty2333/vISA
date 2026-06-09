@@ -497,7 +497,7 @@ mod tests {
             1,
             "virtio-blk",
             "pci",
-            "vmos",
+            "visa",
             "bench",
             "test",
         );

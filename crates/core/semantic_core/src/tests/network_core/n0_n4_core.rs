@@ -13,7 +13,7 @@ pub(super) fn network_runtime_n0_packet_device_object_records_contract_identity(
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n0 backing device",
     ));
@@ -69,7 +69,7 @@ pub(super) fn network_runtime_n0_rejects_stale_or_non_packet_device() {
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "n0 wrong backing device",
     ));
@@ -104,7 +104,7 @@ pub(super) fn network_runtime_n0_rejects_stale_or_non_packet_device() {
         packet_resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n0 stale backing device",
     ));
@@ -160,7 +160,7 @@ pub(super) fn network_runtime_n0_invariants_reject_packet_device_generation_leak
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n0 invariant backing device",
     ));
@@ -201,7 +201,7 @@ pub(super) fn network_runtime_n1_packet_buffer_object_records_generation_safe_id
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n1 backing device",
     ));
@@ -269,7 +269,7 @@ pub(super) fn network_runtime_n1_rejects_stale_format_and_oversized_buffer() {
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n1 backing device",
     ));
@@ -373,7 +373,7 @@ pub(super) fn network_runtime_n1_invariants_reject_packet_buffer_generation_leak
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n1 invariant backing device",
     ));
@@ -426,7 +426,7 @@ pub(super) fn network_runtime_n2_packet_queues_record_rx_and_tx_contract_identit
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n2 backing device",
     ));
@@ -505,7 +505,7 @@ pub(super) fn network_runtime_n2_rejects_stale_duplicate_and_overdepth_queue() {
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n2 backing device",
     ));
@@ -595,7 +595,7 @@ pub(super) fn network_runtime_n2_invariants_reject_packet_queue_generation_leak(
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n2 invariant backing device",
     ));
@@ -645,7 +645,7 @@ pub(in crate::tests) fn setup_n3_packet_descriptor_graph() -> SemanticGraph {
         resource_generation,
         "fake-net-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-net-v1",
         "n3 backing device",
     ));

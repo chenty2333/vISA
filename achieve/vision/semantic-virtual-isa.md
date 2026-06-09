@@ -3,13 +3,13 @@
 Status: narrative summary. The normative system spec lives in
 `../specs/semantic-virtual-isa-v0/00-overview.md`.
 
-VMOS is:
+vISA is:
 
 ```text
 a cross-ISA Semantic Virtual ISA for portable system semantics
 ```
 
-Wasm is the base execution virtual ISA. VMOS extends that execution substrate
+Wasm is the base execution virtual ISA. vISA extends that execution substrate
 with authority, capability, generation, lifetime, wait, event, trap, cleanup,
 artifact identity, hostcall attribution, and target profile semantics.
 

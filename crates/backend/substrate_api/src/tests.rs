@@ -428,8 +428,8 @@ fn event_queue_conformance_preserves_fifo_and_denials() {
 fn console_conformance_requires_full_write() {
     let mut console = BufferConsole { bytes: Vec::new() };
 
-    conformance::console_write_smoke(&mut console, b"vmos").unwrap();
-    assert_eq!(console.bytes, b"vmos");
+    conformance::console_write_smoke(&mut console, b"visa").unwrap();
+    assert_eq!(console.bytes, b"visa");
 }
 
 #[test]

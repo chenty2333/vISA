@@ -26,7 +26,7 @@ pub(in crate::tests) fn setup_i7_device_capability_graph() -> (
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "device object harness",
     ));

@@ -28,7 +28,7 @@ into vISA effects.
 ## Rules
 
 ```text
-frontend resources are not VMOS capabilities
+frontend resources are not vISA capabilities
 frontend handles are not ObjectRefs
 frontend blocking becomes WaitToken state
 frontend traps become TrapMap-attributed target/runtime traps
@@ -79,7 +79,7 @@ runtime use.
 
 ```text
 Linux syscall breadth is treated as vISA completeness
-WASI resource id is treated as a VMOS capability
+WASI resource id is treated as a vISA capability
 frontend ABI register frame is treated as Activation truth
 personality shortcut records no EventLog or ObjectRef evidence
 substrate trait is exposed directly as Wasm ABI

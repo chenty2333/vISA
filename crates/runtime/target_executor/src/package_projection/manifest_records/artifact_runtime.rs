@@ -1,4 +1,4 @@
-use vms_runtime::VisaRuntimeEvidenceSnapshot;
+use visa_runtime::VisaRuntimeEvidenceSnapshot;
 
 use super::{super::super::*, *};
 
@@ -147,7 +147,7 @@ mod tests {
         image.signature_status = "verified".to_owned();
         image.signature_verified = true;
         image.signer = "dev-key".to_owned();
-        image.imports.push("vms.hostcall_1".to_owned());
+        image.imports.push("visa.hostcall_1".to_owned());
         image.exports.push("visa_start".to_owned());
         image.hostcalls.push(HostcallSpec::new(
             1,
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(manifest.hash_status, "verified");
         assert_eq!(manifest.signature_scheme, "dev-ed25519");
         assert!(manifest.signature_verified);
-        assert_eq!(manifest.imports, vec![String::from("vms.hostcall_1")]);
+        assert_eq!(manifest.imports, vec![String::from("visa.hostcall_1")]);
         assert_eq!(manifest.exports, vec![String::from("visa_start")]);
         assert_eq!(manifest.hostcalls.len(), 1);
         assert_eq!(manifest.hostcalls[0].name, "visa.console.write");

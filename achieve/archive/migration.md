@@ -3,7 +3,7 @@
 Status: historical entry only.
 
 The old migration note described how to move from a native Rust kernel-shaped
-prototype toward the VMOS layering. The stable version of that decision is now:
+prototype toward the vISA layering. The stable version of that decision is now:
 
 ```text
 semantic_core
@@ -31,5 +31,5 @@ references/specs/target-runtime-abi/00-overview.md
 Local full-text snapshot for this cleanup pass:
 
 ```text
-/home/dia/.codex/tmp/vmos-reference-archive-20260429/archive/migration.md
+/home/dia/.codex/tmp/visa-reference-archive-20260429/archive/migration.md
 ```

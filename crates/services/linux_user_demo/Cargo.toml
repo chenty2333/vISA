@@ -36,4 +36,4 @@ test = false
 bench = false
 
 [dependencies]
-vmos_abi.workspace = true
+visa_abi.workspace = true

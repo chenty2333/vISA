@@ -177,7 +177,7 @@ fn interface_manifest(spec: &WasmModuleSpec) -> InterfaceRequirementManifest {
 fn minimal_migration_package() -> MigrationPackageManifest {
     MigrationPackageManifest {
         schema_version: 1,
-        package_format: "vmos-semantic-package-v1".to_owned(),
+        package_format: "visa-semantic-package-v1".to_owned(),
         package_id: "contract-root-test".to_owned(),
         source: MigrationHostManifest { arch: "x86_64".to_owned() },
         target: MigrationTargetManifest { arch_requirement: "target-native".to_owned() },

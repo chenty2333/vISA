@@ -11,7 +11,7 @@ pub(in crate::tests) fn add_x4_block_benchmark_evidence(graph: &mut SemanticGrap
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "x4 backing device",
     ));
@@ -558,7 +558,7 @@ pub(in crate::tests) fn add_i10_io_cleanup_setup_to_graph(
         device_resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "x6 device object harness",
     ));

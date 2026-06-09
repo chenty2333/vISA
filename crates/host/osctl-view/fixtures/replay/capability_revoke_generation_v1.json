@@ -1,5 +1,5 @@
 {
-  "schema": "vmos-replay-fixture-v1",
+  "schema": "visa-replay-fixture-v1",
   "name": "capability_revoke_generation_v1",
   "commands": [
     {

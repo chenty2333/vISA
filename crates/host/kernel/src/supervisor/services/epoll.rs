@@ -5,7 +5,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const EPOLL_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_EPOLL_SERVICE_WASM"));
+const EPOLL_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_EPOLL_SERVICE_WASM"));
 
 pub(crate) struct EpollService {
     io: BufferedModule,

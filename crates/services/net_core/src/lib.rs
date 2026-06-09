@@ -15,7 +15,7 @@ use service_core::{
     },
     packet::PACKET_FRAME_CAPACITY,
 };
-use vmos_abi::ERR_EIO;
+use visa_abi::ERR_EIO;
 
 const REQUEST_CAPACITY: usize = 2048;
 const RESPONSE_CAPACITY: usize = 2048;

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Conformance report gate for VMOS/vISA test claims.
+# Conformance report gate for vISA test claims.
 # This script exercises the report contract; real workload execution remains
 # owned by the corresponding runner.
 
 run_conformance() {
-    cargo run --quiet -p vmos-conformance -- "$@"
+    cargo run --quiet -p visa-conformance -- "$@"
 }
 
 tmp_root=$(mktemp -d)
@@ -23,8 +23,8 @@ mkdir -p "$pass_logs"
 run_conformance ltp-plan-lines "$pass_logs" >"$tmp_root/ltp-plan.tsv"
 while IFS=$'\t' read -r spec _scenario result_log; do
     printf '%s_case01 1 TPASS : passed\n' "$spec" >"$result_log"
-    cat >"$pass_logs/$spec.vmos-trace.jsonl" <<EOF
-{"schema_version":"vmos-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"${spec}_case01","test_binary":"target/ltp-bins/${spec}_case01","runner":"vmos-linux-personality","entered_vmos_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$spec.log","serial_log_uri":"$spec.serial.log"}
+    cat >"$pass_logs/$spec.visa-trace.jsonl" <<EOF
+{"schema_version":"visa-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"${spec}_case01","test_binary":"target/ltp-bins/${spec}_case01","runner":"visa-linux-personality","entered_visa_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$spec.log","serial_log_uri":"$spec.serial.log"}
 EOF
 done <"$tmp_root/ltp-plan.tsv"
 
@@ -115,22 +115,22 @@ test -s "$wrapper_output/host-ltp-log-adapter-artifact-gate.json"
 test -s "$wrapper_output/host-ltp-log-adapter-report-gate.json"
 if run_conformance validate-report "$wrapper_output/host-ltp-log-adapter-report.json" \
     >"$tmp_root/host-wrapper-gate.json"; then
-    echo "FAIL: host-only LTP adapter unexpectedly passed VMOS conformance gate"
+    echo "FAIL: host-only LTP adapter unexpectedly passed vISA conformance gate"
     exit 1
 fi
 run_conformance validate-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
     >"$tmp_root/wrapper-artifact-gate.json"
 if run_conformance validate-report-with-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
     >"$tmp_root/host-wrapper-combined-gate.json"; then
-    echo "FAIL: host-only LTP adapter unexpectedly passed combined VMOS conformance gate"
+    echo "FAIL: host-only LTP adapter unexpectedly passed combined vISA conformance gate"
     exit 1
 fi
 
 fake_ltp_root="$tmp_root/fake-ltp-bins"
 mkdir -p "$fake_ltp_root"
 touch "$fake_ltp_root/open01" "$fake_ltp_root/mmap01" "$fake_ltp_root/getpid01"
-fake_vmos_single="$tmp_root/run-vmos-ltp-single"
-cat >"$fake_vmos_single" <<'EOF'
+fake_visa_single="$tmp_root/run-visa-ltp-single"
+cat >"$fake_visa_single" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 spec="$1"
@@ -144,47 +144,47 @@ cat >"$serial_log" <<SERIAL
 == ring3 real ELF demo ==
 ${case_id} 1 TPASS : passed
 HostcallEntered label=ring3_openat class=immediate-privileged-op subject=linux_syscall object=vfs_service op=lookup
-vmos: demo completed
+visa: demo completed
 SERIAL
 printf '%s 1 TPASS : passed\n' "$case_id" >"$raw_log"
 cat >"$trace_log" <<TRACE
-{"schema_version":"vmos-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"$case_id","test_binary":"$_binary","runner":"vmos-linux-personality","entered_vmos_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$(basename "$raw_log")","serial_log_uri":"$(basename "$serial_log")"}
+{"schema_version":"visa-ltp-execution-trace-v0.1","spec_id":"$spec","case_id":"$case_id","test_binary":"$_binary","runner":"visa-linux-personality","entered_visa_execution":true,"linux_personality_dispatch":true,"syscalls_observed":1,"service_syscalls_observed":1,"exit_status":0,"runner_status":0,"raw_log_uri":"$(basename "$raw_log")","serial_log_uri":"$(basename "$serial_log")"}
 TRACE
 EOF
-chmod +x "$fake_vmos_single"
+chmod +x "$fake_visa_single"
 
-vmos_wrapper_output="$tmp_root/vmos-wrapper"
-scripts/run-vmos-ltp-conformance.sh "$vmos_wrapper_output" "$fake_ltp_root" \
-    portable-artifact-execution guest-frontend "$fake_vmos_single" >/dev/null
-test -s "$vmos_wrapper_output/vmos-ltp-gate.json"
-test -s "$vmos_wrapper_output/vmos-ltp-artifact-gate.json"
-test -s "$vmos_wrapper_output/vmos-ltp-combined-gate.json"
-run_conformance validate-report "$vmos_wrapper_output/vmos-ltp-report.json" \
-    >"$tmp_root/vmos-wrapper-gate.json"
-run_conformance validate-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "$vmos_wrapper_output/logs" \
-    >"$tmp_root/vmos-wrapper-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$vmos_wrapper_output/vmos-ltp-report.json" "$vmos_wrapper_output/logs" \
-    >"$tmp_root/vmos-wrapper-combined-gate.json"
+visa_wrapper_output="$tmp_root/visa-wrapper"
+scripts/run-visa-ltp-conformance.sh "$visa_wrapper_output" "$fake_ltp_root" \
+    portable-artifact-execution guest-frontend "$fake_visa_single" >/dev/null
+test -s "$visa_wrapper_output/visa-ltp-gate.json"
+test -s "$visa_wrapper_output/visa-ltp-artifact-gate.json"
+test -s "$visa_wrapper_output/visa-ltp-combined-gate.json"
+run_conformance validate-report "$visa_wrapper_output/visa-ltp-report.json" \
+    >"$tmp_root/visa-wrapper-gate.json"
+run_conformance validate-artifacts "$visa_wrapper_output/visa-ltp-report.json" "$visa_wrapper_output/logs" \
+    >"$tmp_root/visa-wrapper-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$visa_wrapper_output/visa-ltp-report.json" "$visa_wrapper_output/logs" \
+    >"$tmp_root/visa-wrapper-combined-gate.json"
 
-vmos_manifest="$tmp_root/vmos-ltp-manifest.tsv"
-cat >"$vmos_manifest" <<'EOF'
+visa_manifest="$tmp_root/visa-ltp-manifest.tsv"
+cat >"$visa_manifest" <<'EOF'
 # spec_id	case_id	relative_binary	source
 linux-ltp.syscalls.core	getpid01	getpid01	fake
 linux-ltp.fs.basic	open01	open01	fake
 EOF
 
-vmos_manifest_output="$tmp_root/vmos-manifest-wrapper"
-scripts/run-vmos-ltp-manifest.sh "$vmos_manifest_output" "$fake_ltp_root" "$vmos_manifest" \
-    portable-artifact-execution guest-frontend "$fake_vmos_single" >/dev/null
-test -s "$vmos_manifest_output/vmos-ltp-gate.json"
-test -s "$vmos_manifest_output/vmos-ltp-artifact-gate.json"
-test -s "$vmos_manifest_output/vmos-ltp-combined-gate.json"
-run_conformance validate-report "$vmos_manifest_output/vmos-ltp-report.json" \
-    >"$tmp_root/vmos-manifest-wrapper-gate.json"
-run_conformance validate-artifacts "$vmos_manifest_output/vmos-ltp-report.json" "$vmos_manifest_output/logs" \
-    >"$tmp_root/vmos-manifest-wrapper-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$vmos_manifest_output/vmos-ltp-report.json" "$vmos_manifest_output/logs" \
-    >"$tmp_root/vmos-manifest-wrapper-combined-gate.json"
+visa_manifest_output="$tmp_root/visa-manifest-wrapper"
+scripts/run-visa-ltp-manifest.sh "$visa_manifest_output" "$fake_ltp_root" "$visa_manifest" \
+    portable-artifact-execution guest-frontend "$fake_visa_single" >/dev/null
+test -s "$visa_manifest_output/visa-ltp-gate.json"
+test -s "$visa_manifest_output/visa-ltp-artifact-gate.json"
+test -s "$visa_manifest_output/visa-ltp-combined-gate.json"
+run_conformance validate-report "$visa_manifest_output/visa-ltp-report.json" \
+    >"$tmp_root/visa-manifest-wrapper-gate.json"
+run_conformance validate-artifacts "$visa_manifest_output/visa-ltp-report.json" "$visa_manifest_output/logs" \
+    >"$tmp_root/visa-manifest-wrapper-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$visa_manifest_output/visa-ltp-report.json" "$visa_manifest_output/logs" \
+    >"$tmp_root/visa-manifest-wrapper-combined-gate.json"
 
 criterion_root="$tmp_root/criterion"
 run_conformance performance-plan-lines "$criterion_root" >"$tmp_root/performance-plan.tsv"
@@ -205,17 +205,17 @@ while IFS=$'\t' read -r _spec_id _bench_id _metric estimate_path; do
 EOF
 done <"$tmp_root/performance-plan.tsv"
 
-bench_output="$tmp_root/vmos-bench-run"
-VMOS_SKIP_BENCH_RUN=1 scripts/run-vmos-bench-conformance.sh \
+bench_output="$tmp_root/visa-bench-run"
+VISA_SKIP_BENCH_RUN=1 scripts/run-visa-bench-conformance.sh \
     "$bench_output" "" "" "$criterion_root" >/dev/null
-test -s "$bench_output/vmos-performance-gate.json"
-test -s "$bench_output/vmos-performance-artifact-gate.json"
-test -s "$bench_output/vmos-performance-combined-gate.json"
-run_conformance validate-report "$bench_output/vmos-performance-report.json" \
-    >"$tmp_root/vmos-bench-gate.json"
-run_conformance validate-artifacts "$bench_output/vmos-performance-report.json" "$criterion_root" \
-    >"$tmp_root/vmos-bench-artifact-gate.json"
-run_conformance validate-report-with-artifacts "$bench_output/vmos-performance-report.json" "$criterion_root" \
-    >"$tmp_root/vmos-bench-combined-gate.json"
+test -s "$bench_output/visa-performance-gate.json"
+test -s "$bench_output/visa-performance-artifact-gate.json"
+test -s "$bench_output/visa-performance-combined-gate.json"
+run_conformance validate-report "$bench_output/visa-performance-report.json" \
+    >"$tmp_root/visa-bench-gate.json"
+run_conformance validate-artifacts "$bench_output/visa-performance-report.json" "$criterion_root" \
+    >"$tmp_root/visa-bench-artifact-gate.json"
+run_conformance validate-report-with-artifacts "$bench_output/visa-performance-report.json" "$criterion_root" \
+    >"$tmp_root/visa-bench-combined-gate.json"
 
 echo "Conformance report gate passed."

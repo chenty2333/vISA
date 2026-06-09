@@ -13,7 +13,7 @@ pub(super) fn block_runtime_b0_block_device_object_records_contract_identity() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b0 backing device",
     ));
@@ -66,7 +66,7 @@ pub(super) fn block_runtime_b0_rejects_stale_or_non_block_device() {
         resource_generation,
         "fake-io-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-io-v1",
         "b0 wrong backing device",
     ));
@@ -99,7 +99,7 @@ pub(super) fn block_runtime_b0_rejects_stale_or_non_block_device() {
         block_resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b0 stale backing device",
     ));
@@ -151,7 +151,7 @@ pub(super) fn block_runtime_b0_invariants_reject_block_device_generation_leak() 
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b0 invariant backing device",
     ));
@@ -190,7 +190,7 @@ pub(super) fn block_runtime_b1_block_range_records_sector_and_byte_bounds() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b1 backing device",
     ));
@@ -252,7 +252,7 @@ pub(super) fn block_runtime_b1_rejects_stale_out_of_bounds_and_over_transfer_ran
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b1 backing device",
     ));
@@ -324,7 +324,7 @@ pub(super) fn block_runtime_b1_invariants_reject_block_range_generation_leak() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b1 invariant backing device",
     ));
@@ -364,7 +364,7 @@ pub(super) fn block_runtime_b2_block_request_records_range_identity() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b2 backing device",
     ));
@@ -430,7 +430,7 @@ pub(super) fn block_runtime_b2_rejects_stale_duplicate_and_read_only_write() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b2 backing device",
     ));
@@ -519,7 +519,7 @@ pub(super) fn block_runtime_b2_invariants_reject_block_request_generation_leak()
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b2 invariant backing device",
     ));
@@ -569,7 +569,7 @@ pub(super) fn block_runtime_b3_block_completion_records_request_outcome() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b3 backing device",
     ));
@@ -645,7 +645,7 @@ pub(super) fn block_runtime_b3_rejects_stale_duplicate_and_bad_byte_count() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b3 backing device",
     ));
@@ -756,7 +756,7 @@ pub(super) fn block_runtime_b3_invariants_reject_completion_generation_leak() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b3 invariant backing device",
     ));
@@ -812,7 +812,7 @@ pub(super) fn block_runtime_b4_block_wait_bridges_wait_token_to_completion() {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b4 backing device",
     ));
@@ -940,7 +940,7 @@ pub(super) fn block_runtime_b4_rejects_stale_duplicate_and_bad_completion_waits(
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b4 reject backing device",
     ));
@@ -1086,7 +1086,7 @@ pub(super) fn block_runtime_b4_cancelled_wait_records_reason_and_invariant_gener
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b4 cancel backing device",
     ));
@@ -1177,7 +1177,7 @@ pub(super) fn block_runtime_b5_fake_block_backend_binds_exact_block_device_contr
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b5 backing device",
     ));
@@ -1241,7 +1241,7 @@ pub(super) fn block_runtime_b5_rejects_stale_duplicate_and_mismatched_backends()
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b5 reject backing device",
     ));
@@ -1345,7 +1345,7 @@ pub(super) fn block_runtime_b5_invariants_reject_fake_backend_generation_leak() 
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b5 invariant backing device",
     ));

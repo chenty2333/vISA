@@ -10,7 +10,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const NET_CORE_WASM: &[u8] = include_bytes!(env!("VMOS_NET_CORE_WASM"));
+const NET_CORE_WASM: &[u8] = include_bytes!(env!("VISA_NET_CORE_WASM"));
 
 pub(crate) struct NetCoreService {
     io: BufferedModule,
@@ -107,7 +107,7 @@ impl NetCoreService {
             .io
             .call(&self.ready_key, socket_id, "net_core trapped")
             .map_err(ServiceCallError::Trap)?;
-        if key == 0 { Err(ServiceCallError::Errno(vmos_abi::ERR_EBADF)) } else { Ok(key) }
+        if key == 0 { Err(ServiceCallError::Errno(visa_abi::ERR_EBADF)) } else { Ok(key) }
     }
 
     pub(crate) fn poll_socket(&mut self, socket_id: u32) -> Result<u32, ServiceCallError> {

@@ -2,7 +2,7 @@ use alloc::string::String;
 use core::fmt::Write;
 
 use semantic_core::ResourceHandle;
-use vmos_abi::{
+use visa_abi::{
     EPOLL_CTL_ADD, EPOLLIN, ERR_EPERM, FD_STDOUT, FUTEX_WAIT, FUTEX_WAKE, PackedStep,
     SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_WAIT, SYS_FUTEX, SYS_SENDTO, StepTag,
     SyscallContext,
@@ -286,14 +286,14 @@ impl<'engine> PrototypeRuntime<'engine> {
     fn open_demo_socket_for_demo(&mut self) -> Result<u32, &'static str> {
         let socket_id = self
             .net_core
-            .create_socket(vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0)
+            .create_socket(visa_abi::AF_INET, visa_abi::SOCK_STREAM, 0)
             .map_err(|_| "net_core failed to create demo socket")?;
         let ready_key = self
             .net_core
             .ready_key(socket_id)
             .map_err(|_| "net_core did not return a socket ready key")?;
         self.linux_socket
-            .register_socket(socket_id, vmos_abi::AF_INET, vmos_abi::SOCK_STREAM, 0, ready_key)
+            .register_socket(socket_id, visa_abi::AF_INET, visa_abi::SOCK_STREAM, 0, ready_key)
             .map_err(|_| "linux_socket_service failed to register demo socket")?;
         let fd = self
             .alloc_fd(FdEntry {

@@ -13,7 +13,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const DRIVER_VIRTIO_NET_WASM: &[u8] = include_bytes!(env!("VMOS_DRIVER_VIRTIO_NET_WASM"));
+const DRIVER_VIRTIO_NET_WASM: &[u8] = include_bytes!(env!("VISA_DRIVER_VIRTIO_NET_WASM"));
 const ETHERNET_HEADER_LEN: usize = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

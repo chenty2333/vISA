@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
+use visa_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
 
 use crate::net_contract::PACKET_MAX_PAYLOAD_LEN;
 pub use crate::net_contract::{DEMO_CLIENT_PORT, DEMO_SERVER_PORT, PROTO_DEMO_TCP};

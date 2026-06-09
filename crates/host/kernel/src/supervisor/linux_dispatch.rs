@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{
+use visa_abi::{
     ERR_EBADF, NodeKind, PackedStep, PlanKind, SYS_CLOSE, SYS_GETCWD, SYS_GETDENTS64, SYS_OPENAT,
     SYS_READ, SYS_READLINKAT, SYS_UNAME, SYS_WRITE, StepTag, SyscallContext,
 };
@@ -121,7 +121,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     pub(crate) fn path_kind(&mut self, path: &[u8]) -> Result<NodeKind, i32> {
         self.lookup_path(path).map(|info| info.node).map_err(|err| match err {
             ServiceCallError::Errno(errno) => errno,
-            ServiceCallError::Trap(_) | ServiceCallError::Invalid(_) => vmos_abi::ERR_EINVAL,
+            ServiceCallError::Trap(_) | ServiceCallError::Invalid(_) => visa_abi::ERR_EINVAL,
         })
     }
     pub(crate) fn dispatch_linux_syscall(
@@ -408,7 +408,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             | PlanKind::Fork
             | PlanKind::Vfork
             | PlanKind::Execve
-            | PlanKind::RtSigreturn => Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_ENOSYS as i64))),
+            | PlanKind::RtSigreturn => Ok(LinuxCallResult::Ret(-(visa_abi::ERR_ENOSYS as i64))),
         }
     }
 }

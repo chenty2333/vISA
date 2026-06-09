@@ -7,7 +7,7 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use vmos_abi::{ERR_EINVAL, ERR_EIO};
+use visa_abi::{ERR_EINVAL, ERR_EIO};
 
 const RESPONSE_CAPACITY: usize = 8 * 16;
 const MAX_WAITERS: usize = 16;

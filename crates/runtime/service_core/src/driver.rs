@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
+use visa_abi::{ERR_EAGAIN, ERR_EINVAL, ERR_EIO};
 
 use crate::{
     net_contract::VIRTIO_NET0_MTU,
@@ -13,7 +13,7 @@ pub const REQUEST_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
 pub const RESPONSE_CAPACITY: usize = RAW_ETHERNET_FRAME_CAPACITY;
 pub const RAW_RX_QUEUE_DEPTH: usize = 4;
 pub const RAW_TX_QUEUE_DEPTH: usize = 4;
-pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello vmos\n";
+pub const DEMO_HTTP_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\nContent-Length: 12\r\n\r\nhello visa\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -364,7 +364,7 @@ mod tests {
         for _ in 0..RAW_TX_QUEUE_DEPTH {
             assert_eq!(driver.submit_tx_frame(5, &frame).unwrap(), frame.len() as u32);
         }
-        assert_eq!(driver.submit_tx_frame(5, &frame), Err(vmos_abi::ERR_EAGAIN));
+        assert_eq!(driver.submit_tx_frame(5, &frame), Err(visa_abi::ERR_EAGAIN));
     }
 
     #[test]
@@ -439,21 +439,21 @@ mod tests {
         let mut driver = DriverVirtioNetState::new();
         let frame = [0xff; 42];
 
-        assert_eq!(driver.deliver_rx_frame(0, &[0u8; 4]), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(driver.deliver_rx_frame(0, &[0u8; 4]), Err(visa_abi::ERR_EINVAL));
         assert_eq!(
             driver.deliver_rx_frame(0, &[0u8; REQUEST_CAPACITY + 1]),
-            Err(vmos_abi::ERR_EIO)
+            Err(visa_abi::ERR_EIO)
         );
         for _ in 0..RAW_RX_QUEUE_DEPTH {
             assert_eq!(driver.deliver_rx_frame(0, &frame).unwrap(), frame.len() as u32);
         }
-        assert_eq!(driver.deliver_rx_frame(0, &frame), Err(vmos_abi::ERR_EAGAIN));
+        assert_eq!(driver.deliver_rx_frame(0, &frame), Err(visa_abi::ERR_EAGAIN));
     }
 
     #[test]
     fn short_tx_frame_is_rejected() {
         let mut driver = DriverVirtioNetState::new();
 
-        assert_eq!(driver.submit_tx_frame(0, &[0u8; 4]), Err(vmos_abi::ERR_EINVAL));
+        assert_eq!(driver.submit_tx_frame(0, &[0u8; 4]), Err(visa_abi::ERR_EINVAL));
     }
 }

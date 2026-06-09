@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
 use semantic_core::FailureEffect;
-use vmos_abi::{
+use visa_abi::{
     ERR_EAGAIN, ERR_EDEADLK, ERR_EFAULT, ERR_EINTR, ERR_EINVAL, ERR_EPERM, ERR_ETIMEDOUT,
     FUTEX_OWNER_DIED, FUTEX_PI_TIMEOUT_MONOTONIC, FUTEX_PI_TIMEOUT_NONE, FUTEX_PI_TIMEOUT_REALTIME,
     FUTEX_TID_MASK, FUTEX_WAITERS, PlanKind,
@@ -61,7 +61,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let bitset = u32::try_from(plan.args[3]).map_err(|_| "futex bitset overflowed")?;
         if bitset == 0 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
         self.plan_futex_wait_common(plan, bitset)
     }
@@ -148,7 +148,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let bitset = u32::try_from(plan.args[2]).map_err(|_| "futex bitset overflowed")?;
         if bitset == 0 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
         self.plan_futex_wake_common(plan, bitset)
     }
@@ -1013,7 +1013,7 @@ fn futex_pi_unlock_empty_word(word: u32) -> u32 {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{
+    use visa_abi::{
         ERR_EAGAIN, ERR_EDEADLK, ERR_EINTR, ERR_EINVAL, ERR_ETIMEDOUT, FUTEX_CMP_REQUEUE,
         FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI, FUTEX_LOCK_PI2, FUTEX_TID_MASK, FUTEX_TRYLOCK_PI,
         FUTEX_UNLOCK_PI, FUTEX_WAITERS, SYS_FUTEX, SYS_PAUSE, SyscallContext,

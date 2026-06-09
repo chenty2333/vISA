@@ -47,7 +47,7 @@ operation families backed by a contract ledger. Linux applications run through a
 optional frontend personality that translates Linux syscalls into vISA effects. The
 design intent was that the vISA, not the Linux ABI, would be the system center.
 
-We implemented this design in VMOS, a capability-oriented Semantic Virtual ISA backed by
+We implemented this design in vISA, a capability-oriented Semantic Virtual ISA backed by
 Wasm execution infrastructure. The implementation spans 225,000 lines of Rust across 36
 crates, including a bare-metal x86_64 kernel, a contract ledger with explicit ObjectRef
 identity and generation tracking, a frontend that dispatches over 110 Linux syscalls into vISA
@@ -74,7 +74,7 @@ The experiment produced four findings:
 
 3. **LTP-driven development is a practical ramp for syscall coverage, but it does not
    validate architectural value.** Systematically running Linux Test Project binaries
-   through the VMOS frontend forced the implementation to handle real — sometimes
+   through the vISA frontend forced the implementation to handle real — sometimes
    adversarial — syscall patterns. This expanded coverage from 28 to over 110 syscalls
    across 10 development increments. However, the LTP tests exercise the Linux frontend
    personality, not the vISA itself. Passing more LTP tests demonstrates Linux
@@ -117,7 +117,7 @@ Traditional operating systems conflate four distinct concerns that the vISA sepa
   AOT/interpreter/JIT implementations. Wasm solves the hardest problems in virtual
   execution: sandbox isolation, trap safety, and cross-platform code delivery.
 
-- **Semantic Virtual ISA** — the system-level semantics defined by VMOS: authority,
+- **Semantic Virtual ISA** — the system-level semantics defined by vISA: authority,
   capability, generation, lifetime, wait, trap, cleanup, artifact identity, hostcall
   attribution, and profile requirements. This is the system center in the design; it
   defines what "running a system" means in portable terms.
@@ -375,7 +375,7 @@ through validation and semantic recording before reaching any substrate trait ca
 
 ## 3. Implementation
 
-VMOS is implemented in 225,000 lines of Rust across 36 crates organized under a Cargo
+vISA is implemented in 225,000 lines of Rust across 36 crates organized under a Cargo
 workspace. The implementation spans four architectural layers mirroring the spec
 structure.
 
@@ -502,17 +502,17 @@ denial reasons.
 **LTP-driven syscall expansion.** The Linux syscall surface grew from 28 to over 110
 syscalls through 10 incremental development rounds driven by the Linux Test Project
 (LTP). Each round followed a pattern: select a batch of LTP syscall test binaries via a
-manifest (`run-vmos-ltp-manifest.sh`), execute them under the VMOS QEMU runner
-(`run-vmos-ltp-single.sh`), capture serial output and extract LTP result logs and VMOS
+manifest (`run-visa-ltp-manifest.sh`), execute them under the vISA QEMU runner
+(`run-visa-ltp-single.sh`), capture serial output and extract LTP result logs and vISA
 execution traces, then validate the combined evidence through a conformance gate
 (`run-ltp-conformance.sh`). Failed tests drove targeted frontend hardening: adding
 missing syscall dispatchers, correcting flag handling (e.g., `O_DIRECTORY`, status flag
 tracking), implementing credential-aware filesystem operations, and adding realtime
-clock behavior. Static LTP binaries are built via `build-vmos-ltp-static-syscalls.sh`
+clock behavior. Static LTP binaries are built via `build-visa-ltp-static-syscalls.sh`
 using a Docker-based cross-compilation toolchain, keeping LTP build artifacts outside
 the repository. The conformance framework distinguishes between host-native LTP results
-(reference data) and VMOS-backed LTP results (system-under-test evidence), producing
-comparable trace artifacts that gate on VMOS-specific execution evidence.
+(reference data) and vISA-backed LTP results (system-under-test evidence), producing
+comparable trace artifacts that gate on vISA-specific execution evidence.
 
 ---
 
@@ -644,7 +644,7 @@ technically sound and mechanically well-defined. Fuchsia's Starnix layer transla
 syscalls into Zircon kernel objects, preserving the design's internal purity. But the
 existence of Starnix means that application developers target Linux, not Zircon. The
 kernel object model becomes infrastructure, not interface. The design's internal quality
-does not translate to external value. VMOS reproduces this pattern: the Linux frontend
+does not translate to external value. vISA reproduces this pattern: the Linux frontend
 translates over 110 syscalls into vISA effects; application developers target Linux, not
 vISA; the contract ledger, capability model, and generation tracking are infrastructure,
 not interface.
@@ -714,7 +714,7 @@ directed at a non-problem.
 
 ### Tension 5: Wasm/WASI Programs Are Better Served by Existing Runtimes
 
-A vISA artifact running inside VMOS incurs layers of translation: Wasm execution →
+A vISA artifact running inside vISA incurs layers of translation: Wasm execution →
 HostcallFrame → vISA capability check → contract ledger recording → eventual substrate
 trait call. A Wasm/WASI program running directly on a Wasmtime-based runtime — or a
 unikernel Wasm runtime — bypasses all of these layers. The hostcall attribution,
@@ -734,7 +734,7 @@ the semantic recording itself.
 
 ## 6. Lessons for Systems Research
 
-Our experience with VMOS suggests several lessons that extend beyond this specific
+Our experience with vISA suggests several lessons that extend beyond this specific
 project.
 
 **The true system center is the compatibility interface, not the internal architecture.**

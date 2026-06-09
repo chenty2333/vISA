@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use semantic_core::{
     CredentialTransitionKind, GuestAddressSpaceRef, LinuxCapSets, ProcessState, TaskState,
 };
-use vmos_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
+use visa_abi::{FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS};
 
 use super::{
     events::Event,
@@ -40,7 +40,7 @@ const CLONE_NEWUSER: u64 = 0x10000000;
 const CLONE_NEWPID: u64 = 0x20000000;
 const CLONE_NEWNET: u64 = 0x40000000;
 const CLONE_IO: u64 = 0x80000000;
-const SUPPORTED_PTRACE_OPTIONS: u64 = vmos_abi::PTRACE_O_TRACESECCOMP;
+const SUPPORTED_PTRACE_OPTIONS: u64 = visa_abi::PTRACE_O_TRACESECCOMP;
 const SUPPORTED_SHARED_VM_CLONE_MASK: u64 = CLONE_EXIT_SIGNAL_MASK
     | CLONE_VM
     | CLONE_FS
@@ -193,31 +193,31 @@ impl<'engine> PrototypeRuntime<'engine> {
             .processes
             .iter()
             .find(|process| process.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent.state != ProcessRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let parent_thread = self
             .threads
             .iter()
             .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent_thread.state != ThreadRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
 
         let child_pid = self.next_pid.max(self.next_tid);
         let Some(next_id) = child_pid.checked_add(1) else {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         };
         let child_tid = child_pid;
         if child_pid == 0
             || self.processes.iter().any(|process| process.pid == child_pid)
             || self.threads.iter().any(|thread| thread.tid == child_tid)
         {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         }
 
         let runtime_access = ProcessAccessState::from_credentials(
@@ -254,7 +254,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups,
             capability_sets,
         ) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         self.next_pid = next_id;
         self.next_tid = next_id;
@@ -317,57 +317,57 @@ impl<'engine> PrototypeRuntime<'engine> {
         // context snapshots cwd/fd-table state when CLONE_FS/CLONE_FILES are
         // not requested; independent-VM fork/clone uses the sibling helper.
         if flags & CLONE_NS_MASK != 0 {
-            return Err(vmos_abi::ERR_ENOSYS);
+            return Err(visa_abi::ERR_ENOSYS);
         }
         if flags & CLONE_SIGHAND != 0 && flags & CLONE_VM == 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if flags & CLONE_THREAD != 0 && flags & CLONE_SIGHAND == 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if flags & !SUPPORTED_SHARED_VM_CLONE_MASK != 0 {
-            return Err(vmos_abi::ERR_ENOSYS);
+            return Err(visa_abi::ERR_ENOSYS);
         }
         if flags & CLONE_VM == 0 {
-            return Err(vmos_abi::ERR_ENOSYS);
+            return Err(visa_abi::ERR_ENOSYS);
         }
         if child_stack == 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let exit_signal = (flags & CLONE_EXIT_SIGNAL_MASK) as u8;
         if exit_signal >= 64 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
 
         let parent = self
             .processes
             .iter()
             .find(|process| process.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent.state != ProcessRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let parent_thread = self
             .threads
             .iter()
             .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent_thread.state != ThreadRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
 
         let child_pid = self.next_pid.max(self.next_tid);
         let Some(next_id) = child_pid.checked_add(1) else {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         };
         let child_tid = child_pid;
         if child_pid == 0
             || self.processes.iter().any(|process| process.pid == child_pid)
             || self.threads.iter().any(|thread| thread.tid == child_tid)
         {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         }
 
         let runtime_access = ProcessAccessState::from_credentials(
@@ -404,12 +404,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups,
             capability_sets,
         ) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if clear_child_tid.is_some()
             && !self.semantic.set_thread_clear_child_tid_by_tid(child_tid, clear_child_tid)
         {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
 
         self.next_pid = next_id;
@@ -469,7 +469,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     && process.access.real_uid == child_access.real_uid
             })
             .count() as u64;
-        if live_for_uid >= limit { Err(vmos_abi::ERR_EAGAIN) } else { Ok(()) }
+        if live_for_uid >= limit { Err(visa_abi::ERR_EAGAIN) } else { Ok(()) }
     }
 
     pub(crate) fn create_independent_vm_clone_child(
@@ -490,54 +490,54 @@ impl<'engine> PrototypeRuntime<'engine> {
         clear_child_tid: Option<u64>,
     ) -> Result<(TaskId, Pid, Tid), i32> {
         if flags & CLONE_NS_MASK != 0 {
-            return Err(vmos_abi::ERR_ENOSYS);
+            return Err(visa_abi::ERR_ENOSYS);
         }
         if flags & CLONE_VM != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if flags & CLONE_SIGHAND != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if flags & CLONE_THREAD != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if flags & !SUPPORTED_INDEPENDENT_VM_CLONE_MASK != 0 {
-            return Err(vmos_abi::ERR_ENOSYS);
+            return Err(visa_abi::ERR_ENOSYS);
         }
         let exit_signal = (flags & CLONE_EXIT_SIGNAL_MASK) as u8;
         if exit_signal >= 64 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
 
         let parent = self
             .processes
             .iter()
             .find(|process| process.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent.state != ProcessRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let parent_thread = self
             .threads
             .iter()
             .find(|thread| thread.tid == parent_tid && thread.pid == parent_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?
+            .ok_or(visa_abi::ERR_ESRCH)?
             .clone();
         if parent_thread.state != ThreadRuntimeStateKind::Running {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
 
         let child_pid = self.next_pid.max(self.next_tid);
         let Some(next_id) = child_pid.checked_add(1) else {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         };
         let child_tid = child_pid;
         if child_pid == 0
             || self.processes.iter().any(|process| process.pid == child_pid)
             || self.threads.iter().any(|thread| thread.tid == child_tid)
         {
-            return Err(vmos_abi::ERR_EAGAIN);
+            return Err(visa_abi::ERR_EAGAIN);
         }
 
         let runtime_access = ProcessAccessState::from_credentials(
@@ -574,12 +574,12 @@ impl<'engine> PrototypeRuntime<'engine> {
             supplementary_groups,
             capability_sets,
         ) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if clear_child_tid.is_some()
             && !self.semantic.set_thread_clear_child_tid_by_tid(child_tid, clear_child_tid)
         {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
 
         self.next_pid = next_id;
@@ -627,16 +627,16 @@ impl<'engine> PrototypeRuntime<'engine> {
         clear_child_tid: Option<u64>,
     ) -> Result<(), i32> {
         if !self.threads.iter().any(|thread| thread.tid == tid) {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         if clear_child_tid == Some(0) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if !self.semantic.set_thread_clear_child_tid_by_tid(tid, clear_child_tid) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let thread =
-            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
+            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(visa_abi::ERR_ESRCH)?;
         thread.clear_child_tid = clear_child_tid;
         Ok(())
     }
@@ -661,23 +661,23 @@ impl<'engine> PrototypeRuntime<'engine> {
         registration: Option<RobustListRegistration>,
     ) -> Result<(), i32> {
         if !self.threads.iter().any(|thread| thread.tid == tid) {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let (head, len) = match registration {
             Some(registration) => {
                 if registration.head == 0 {
-                    return Err(vmos_abi::ERR_EINVAL);
+                    return Err(visa_abi::ERR_EINVAL);
                 }
-                let len = usize::try_from(registration.len).map_err(|_| vmos_abi::ERR_EINVAL)?;
+                let len = usize::try_from(registration.len).map_err(|_| visa_abi::ERR_EINVAL)?;
                 (Some(registration.head), len)
             }
             None => (None, 0),
         };
         if !self.semantic.set_thread_robust_list_by_tid(tid, head, len) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let thread =
-            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(vmos_abi::ERR_ESRCH)?;
+            self.threads.iter_mut().find(|thread| thread.tid == tid).ok_or(visa_abi::ERR_ESRCH)?;
         thread.robust_list = registration;
         Ok(())
     }
@@ -706,17 +706,17 @@ impl<'engine> PrototypeRuntime<'engine> {
             .threads
             .iter()
             .find(|thread| thread.tid == caller_tid && thread.pid == caller_pid)
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if caller_thread.state == ThreadRuntimeStateKind::Dead {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let target_thread = self
             .threads
             .iter()
             .find(|thread| thread.tid == target_tid)
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if target_thread.state == ThreadRuntimeStateKind::Dead {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         if target_thread.tid == caller_thread.tid || target_thread.pid == caller_pid {
             return Ok(target_thread.robust_list);
@@ -728,18 +728,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             .find(|process| {
                 process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
             })
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         let target_process = self
             .processes
             .iter()
             .find(|process| {
                 process.pid == target_thread.pid && process.state != ProcessRuntimeStateKind::Dead
             })
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if robust_list_ptrace_may_access(caller_process, target_process) {
             Ok(target_thread.robust_list)
         } else {
-            Err(vmos_abi::ERR_EPERM)
+            Err(visa_abi::ERR_EPERM)
         }
     }
 
@@ -753,10 +753,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         registration: RseqRegistration,
     ) -> Result<(), i32> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         if thread.rseq.is_some() {
-            return Err(vmos_abi::ERR_EBUSY);
+            return Err(visa_abi::ERR_EBUSY);
         }
         thread.rseq = Some(registration);
         Ok(())
@@ -768,10 +768,10 @@ impl<'engine> PrototypeRuntime<'engine> {
         registration: RseqRegistration,
     ) -> Result<(), i32> {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.tid == tid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         if thread.rseq != Some(registration) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         thread.rseq = None;
         Ok(())
@@ -782,7 +782,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter()
             .find(|process| process.pid == pid && process.state != ProcessRuntimeStateKind::Dead)
             .map(|process| process.dumpable)
-            .ok_or(vmos_abi::ERR_ESRCH)
+            .ok_or(visa_abi::ERR_ESRCH)
     }
 
     pub(crate) fn set_process_dumpable(&mut self, pid: Pid, dumpable: bool) -> Result<(), i32> {
@@ -790,7 +790,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .processes
             .iter_mut()
             .find(|process| process.pid == pid && process.state != ProcessRuntimeStateKind::Dead)
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         process.dumpable = dumpable;
         Ok(())
     }
@@ -813,7 +813,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == target_pid && process.state != ProcessRuntimeStateKind::Dead
             })
             .map(|process| process.pgid)
-            .ok_or(vmos_abi::ERR_ESRCH)
+            .ok_or(visa_abi::ERR_ESRCH)
     }
 
     pub(crate) fn get_session_id(&self, caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
@@ -824,7 +824,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == target_pid && process.state != ProcessRuntimeStateKind::Dead
             })
             .map(|process| process.sid)
-            .ok_or(vmos_abi::ERR_ESRCH)
+            .ok_or(visa_abi::ERR_ESRCH)
     }
 
     pub(crate) fn set_process_group_id(
@@ -834,7 +834,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         pgid_arg: i32,
     ) -> Result<(), i32> {
         if pgid_arg < 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let target_pid = resolve_pid_arg(caller_pid, pid_arg)?;
         let caller = self
@@ -844,7 +844,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
             })
             .cloned()
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         let target = self
             .processes
             .iter()
@@ -852,16 +852,16 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == target_pid && process.state == ProcessRuntimeStateKind::Running
             })
             .cloned()
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
 
         if target_pid != caller_pid && target.ppid != caller_pid {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         if target_pid != caller_pid && target.execed {
-            return Err(vmos_abi::ERR_EACCES);
+            return Err(visa_abi::ERR_EACCES);
         }
         if target.sid != caller.sid || target.sid == target.pid {
-            return Err(vmos_abi::ERR_EPERM);
+            return Err(visa_abi::ERR_EPERM);
         }
 
         let new_pgid = if pgid_arg == 0 { target_pid } else { pgid_arg as Pid };
@@ -873,18 +873,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             })
             .map(|process| process.sid);
         match existing_group_session {
-            Some(session) if session != caller.sid => return Err(vmos_abi::ERR_EPERM),
+            Some(session) if session != caller.sid => return Err(visa_abi::ERR_EPERM),
             Some(_) => {}
-            None if new_pgid != target_pid => return Err(vmos_abi::ERR_EPERM),
+            None if new_pgid != target_pid => return Err(visa_abi::ERR_EPERM),
             None => {}
         }
 
         if !self.semantic.set_process_group_by_pid(target_pid, new_pgid) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let Some(target) = self.processes.iter_mut().find(|process| process.pid == target_pid)
         else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         target.pgid = new_pgid;
         Ok(())
@@ -898,16 +898,16 @@ impl<'engine> PrototypeRuntime<'engine> {
                 process.pid == caller_pid && process.state == ProcessRuntimeStateKind::Running
             })
             .cloned()
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if caller.pgid == caller.pid {
-            return Err(vmos_abi::ERR_EPERM);
+            return Err(visa_abi::ERR_EPERM);
         }
         if !self.semantic.set_process_session_by_pid(caller_pid, caller_pid, caller_pid) {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let Some(caller) = self.processes.iter_mut().find(|process| process.pid == caller_pid)
         else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         caller.sid = caller_pid;
         caller.pgid = caller_pid;
@@ -1163,7 +1163,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         options: u64,
     ) -> Result<Option<Wait4Match>, i32> {
         if options & !SUPPORTED_WAIT_OPTIONS != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let caller_pgid =
             self.processes.iter().find(|process| process.pid == caller_pid).map(|p| p.pgid);
@@ -1196,9 +1196,9 @@ impl<'engine> PrototypeRuntime<'engine> {
                 return Ok(None);
             }
             return if saw_matching_child || saw_matching_ptrace {
-                Err(vmos_abi::ERR_ENOSYS)
+                Err(visa_abi::ERR_ENOSYS)
             } else {
-                Err(vmos_abi::ERR_ECHILD)
+                Err(visa_abi::ERR_ECHILD)
             };
         };
 
@@ -1210,7 +1210,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn wait4_child_is_ready(&self, caller_pid: Pid, selector: i64) -> bool {
         match self.query_wait4(caller_pid, selector, WNOHANG) {
-            Ok(Some(_)) | Err(vmos_abi::ERR_ECHILD) => true,
+            Ok(Some(_)) | Err(visa_abi::ERR_ECHILD) => true,
             Ok(None) | Err(_) => false,
         }
     }
@@ -1227,10 +1227,10 @@ impl<'engine> PrototypeRuntime<'engine> {
             interrupts::TIMER_HZ,
         );
         self.record_wait_token(token);
-        match self.block_on_wait("ring3_wait4", token).map_err(|_| vmos_abi::ERR_EINVAL)? {
+        match self.block_on_wait("ring3_wait4", token).map_err(|_| visa_abi::ERR_EINVAL)? {
             LinuxCallResult::Ret(0) => Ok(()),
             LinuxCallResult::Ret(ret) if ret < 0 => Err((-ret) as i32),
-            _ => Err(vmos_abi::ERR_EINVAL),
+            _ => Err(visa_abi::ERR_EINVAL),
         }
     }
 
@@ -1241,7 +1241,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         caller_pgid: Option<Pid>,
     ) -> Option<Wait4Match> {
         for attachment in self.ptrace_attachments.iter().filter(|entry| {
-            entry.tracer_pid == caller_pid && entry.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+            entry.tracer_pid == caller_pid && entry.options & visa_abi::PTRACE_O_TRACESECCOMP != 0
         }) {
             let Some(tracee) = self.processes.iter().find(|process| {
                 process.pid == attachment.tracee_pid
@@ -1266,7 +1266,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             };
             return Some(Wait4Match {
                 pid: tracee.pid,
-                status: wait_ptrace_event_status(SIGTRAP, vmos_abi::PTRACE_EVENT_SECCOMP),
+                status: wait_ptrace_event_status(SIGTRAP, visa_abi::PTRACE_EVENT_SECCOMP),
                 action: Wait4Action::MarkPtraceSeccompReported { trace_id },
             });
         }
@@ -1313,16 +1313,16 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter()
             .position(|event| event.id == trace_id && event.state == SeccompTraceState::Queued)
         else {
-            return Err(vmos_abi::ERR_ECHILD);
+            return Err(visa_abi::ERR_ECHILD);
         };
         let event = &self.seccomp_trace_events[index];
         let traced_by_caller = self.ptrace_attachments.iter().any(|attachment| {
             attachment.tracer_pid == caller_pid
-                && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+                && attachment.options & visa_abi::PTRACE_O_TRACESECCOMP != 0
                 && (attachment.tracee_tid == event.tid || attachment.tracee_pid == event.pid)
         });
         if !traced_by_caller {
-            return Err(vmos_abi::ERR_ECHILD);
+            return Err(visa_abi::ERR_ECHILD);
         }
         self.seccomp_trace_events[index].state = SeccompTraceState::WaitReported;
         Ok(())
@@ -1334,28 +1334,28 @@ impl<'engine> PrototypeRuntime<'engine> {
         let _addr = plan.args[2];
         let data = plan.args[3];
         let result = match request {
-            vmos_abi::PTRACE_TRACEME => self.ptrace_traceme(),
-            vmos_abi::PTRACE_ATTACH => self.ptrace_attach(pid_arg, 0),
-            vmos_abi::PTRACE_SEIZE => self.ptrace_attach(pid_arg, data),
-            vmos_abi::PTRACE_SETOPTIONS => self.ptrace_setoptions(pid_arg, data),
-            vmos_abi::PTRACE_GETEVENTMSG => match self.ptrace_geteventmsg(pid_arg) {
+            visa_abi::PTRACE_TRACEME => self.ptrace_traceme(),
+            visa_abi::PTRACE_ATTACH => self.ptrace_attach(pid_arg, 0),
+            visa_abi::PTRACE_SEIZE => self.ptrace_attach(pid_arg, data),
+            visa_abi::PTRACE_SETOPTIONS => self.ptrace_setoptions(pid_arg, data),
+            visa_abi::PTRACE_GETEVENTMSG => match self.ptrace_geteventmsg(pid_arg) {
                 Ok(msg) => self.write_linux_bytes(data, &msg.to_le_bytes()).map(|()| 0),
                 Err(errno) => Err(errno),
             },
-            vmos_abi::PTRACE_GETREGS => match self.ptrace_getregs(pid_arg) {
+            visa_abi::PTRACE_GETREGS => match self.ptrace_getregs(pid_arg) {
                 Ok(regs) => self.write_linux_bytes(data, &regs).map(|()| 0),
                 Err(errno) => Err(errno),
             },
-            vmos_abi::PTRACE_SETREGS => match self
-                .read_linux_bytes(data, vmos_abi::PTRACE_USER_REGS_BYTES as u32)
+            visa_abi::PTRACE_SETREGS => match self
+                .read_linux_bytes(data, visa_abi::PTRACE_USER_REGS_BYTES as u32)
                 .and_then(|regs| self.ptrace_setregs(pid_arg, &regs))
             {
                 Ok(()) => Ok(0),
                 Err(errno) => Err(errno),
             },
-            vmos_abi::PTRACE_CONT => self.ptrace_continue(pid_arg, data),
-            vmos_abi::PTRACE_DETACH => self.ptrace_detach(pid_arg, data),
-            _ => Err(vmos_abi::ERR_EINVAL),
+            visa_abi::PTRACE_CONT => self.ptrace_continue(pid_arg, data),
+            visa_abi::PTRACE_DETACH => self.ptrace_detach(pid_arg, data),
+            _ => Err(visa_abi::ERR_EINVAL),
         };
         Ok(match result {
             Ok(ret) => LinuxCallResult::Ret(ret),
@@ -1367,19 +1367,19 @@ impl<'engine> PrototypeRuntime<'engine> {
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         let Some(attachment) = self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
-        attachment.last_event_msg.ok_or(vmos_abi::ERR_EINVAL)
+        attachment.last_event_msg.ok_or(visa_abi::ERR_EINVAL)
     }
 
     pub(crate) fn ptrace_getregs(
         &self,
         pid_arg: u64,
-    ) -> Result<[u8; vmos_abi::PTRACE_USER_REGS_BYTES], i32> {
+    ) -> Result<[u8; visa_abi::PTRACE_USER_REGS_BYTES], i32> {
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let event = self.ptrace_reported_seccomp_trace(caller_pid, tracee_tid, tracee_pid)?;
         Ok(encode_ptrace_user_regs(
@@ -1391,13 +1391,13 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     pub(crate) fn ptrace_setregs(&mut self, pid_arg: u64, bytes: &[u8]) -> Result<(), i32> {
-        if bytes.len() != vmos_abi::PTRACE_USER_REGS_BYTES {
-            return Err(vmos_abi::ERR_EINVAL);
+        if bytes.len() != visa_abi::PTRACE_USER_REGS_BYTES {
+            return Err(visa_abi::ERR_EINVAL);
         }
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let index = self.ptrace_reported_seccomp_trace_index(caller_pid, tracee_tid, tracee_pid)?;
         let orig_rax = read_ptrace_reg(bytes, PTRACE_REG_ORIG_RAX)?;
@@ -1407,7 +1407,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Ok(());
         }
         if orig_rax > u32::MAX as u64 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let args = [
             read_ptrace_reg(bytes, PTRACE_REG_RDI)?,
@@ -1428,12 +1428,12 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(crate) fn ptrace_continue(&mut self, pid_arg: u64, signal: u64) -> Result<i64, i32> {
         if signal != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         if self.ptrace_attachment(caller_pid, tracee_tid, tracee_pid).is_none() {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let trace_id = self
             .seccomp_trace_events
@@ -1469,22 +1469,22 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter()
             .find(|process| process.pid == tracee_pid)
             .map(|process| process.ppid)
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if tracer_pid == 0 || tracer_pid == tracee_pid {
-            return Err(vmos_abi::ERR_EPERM);
+            return Err(visa_abi::ERR_EPERM);
         }
         let tracer_tid = self
             .threads
             .iter()
             .find(|thread| thread.pid == tracer_pid && thread.state != ThreadRuntimeStateKind::Dead)
             .map(|thread| thread.tid)
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if self
             .ptrace_attachments
             .iter()
             .any(|entry| entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
         {
-            return Err(vmos_abi::ERR_EBUSY);
+            return Err(visa_abi::ERR_EBUSY);
         }
         self.ptrace_attachments.push(PtraceAttachment {
             tracer_pid,
@@ -1503,7 +1503,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let caller_tid = self.current_tid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         if tracee_pid == caller_pid {
-            return Err(vmos_abi::ERR_EPERM);
+            return Err(visa_abi::ERR_EPERM);
         }
         self.ptrace_may_access(caller_pid, tracee_pid)?;
         if self
@@ -1511,7 +1511,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter()
             .any(|entry| entry.tracee_tid == tracee_tid || entry.tracee_pid == tracee_pid)
         {
-            return Err(vmos_abi::ERR_EBUSY);
+            return Err(visa_abi::ERR_EBUSY);
         }
         self.ptrace_attachments.push(PtraceAttachment {
             tracer_pid: caller_pid,
@@ -1529,7 +1529,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         let Some(index) = self.ptrace_attachment_index(caller_pid, tracee_tid, tracee_pid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         self.ptrace_attachments[index].options = options;
         Ok(0)
@@ -1545,12 +1545,12 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn ptrace_detach(&mut self, pid_arg: u64, signal: u64) -> Result<i64, i32> {
         if signal != 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         let caller_pid = self.current_pid();
         let (tracee_tid, tracee_pid) = self.ptrace_target_thread(pid_arg)?;
         let Some(index) = self.ptrace_attachment_index(caller_pid, tracee_tid, tracee_pid) else {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         };
         self.ptrace_attachments.remove(index);
         if let Some(trace_id) = self
@@ -1572,7 +1572,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn ptrace_target_thread(&self, pid_arg: u64) -> Result<(Tid, Pid), i32> {
         if pid_arg == 0 || pid_arg > u32::MAX as u64 {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         let raw = pid_arg as u32;
         if let Some(thread) = self
@@ -1586,7 +1586,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             .iter()
             .find(|thread| thread.pid == raw && thread.state != ThreadRuntimeStateKind::Dead)
             .map(|thread| (thread.tid, thread.pid))
-            .ok_or(vmos_abi::ERR_ESRCH)
+            .ok_or(visa_abi::ERR_ESRCH)
     }
 
     fn ptrace_may_access(&self, caller_pid: Pid, tracee_pid: Pid) -> Result<(), i32> {
@@ -1596,18 +1596,18 @@ impl<'engine> PrototypeRuntime<'engine> {
             .find(|process| {
                 process.pid == caller_pid && process.state != ProcessRuntimeStateKind::Dead
             })
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         let tracee = self
             .processes
             .iter()
             .find(|process| {
                 process.pid == tracee_pid && process.state != ProcessRuntimeStateKind::Dead
             })
-            .ok_or(vmos_abi::ERR_ESRCH)?;
+            .ok_or(visa_abi::ERR_ESRCH)?;
         if robust_list_ptrace_may_access(caller, tracee) {
             Ok(())
         } else {
-            Err(vmos_abi::ERR_EPERM)
+            Err(visa_abi::ERR_EPERM)
         }
     }
 
@@ -1634,12 +1634,12 @@ impl<'engine> PrototypeRuntime<'engine> {
                     && (event.tid == tracee_tid || event.pid == tracee_pid)
                     && self.ptrace_attachments.iter().any(|attachment| {
                         attachment.tracer_pid == tracer_pid
-                            && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+                            && attachment.options & visa_abi::PTRACE_O_TRACESECCOMP != 0
                             && (attachment.tracee_tid == event.tid
                                 || attachment.tracee_pid == event.pid)
                     })
             })
-            .ok_or(vmos_abi::ERR_EINVAL)
+            .ok_or(visa_abi::ERR_EINVAL)
     }
 
     fn ptrace_attachment(
@@ -1667,7 +1667,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     }
 
     fn validate_ptrace_options(&self, options: u64) -> Result<(), i32> {
-        if options & !SUPPORTED_PTRACE_OPTIONS != 0 { Err(vmos_abi::ERR_EINVAL) } else { Ok(()) }
+        if options & !SUPPORTED_PTRACE_OPTIONS != 0 { Err(visa_abi::ERR_EINVAL) } else { Ok(()) }
     }
 
     pub(super) fn plan_wait4(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
@@ -1688,22 +1688,22 @@ impl<'engine> PrototypeRuntime<'engine> {
                 Ok(Some(wait)) => {
                     if let Some(ptr) = status_ptr {
                         if self.linux.read_bytes(ptr, 4).is_err() {
-                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
                         }
                     }
                     if let Some(ptr) = rusage_ptr {
                         if self.linux.read_bytes(ptr, LINUX_RUSAGE_SIZE as u32).is_err() {
-                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
                         }
                     }
                     if let Some(ptr) = status_ptr {
                         if self.linux.write_bytes(ptr, &wait.status.to_le_bytes()).is_err() {
-                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
                         }
                     }
                     if let Some(ptr) = rusage_ptr {
                         if self.linux.write_bytes(ptr, &[0u8; LINUX_RUSAGE_SIZE]).is_err() {
-                            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+                            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
                         }
                     }
                     match self.finish_wait4_match(caller_pid, wait) {
@@ -1712,7 +1712,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                     }
                 }
                 Ok(None) => return Ok(LinuxCallResult::Ret(0)),
-                Err(vmos_abi::ERR_ENOSYS) => {
+                Err(visa_abi::ERR_ENOSYS) => {
                     match self.block_on_wait4_child_exit(caller_pid, selector) {
                         Ok(()) => {}
                         Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
@@ -1790,7 +1790,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let before = self.current_access_state();
         let old = before.real_uid;
         let Some(after) = access_setuid(before, uid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         self.apply_current_credential_transition(
             after.clone(),
@@ -1806,7 +1806,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let before = self.current_access_state();
         let old = before.real_gid;
         let Some(after) = access_setgid(before, gid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         self.apply_current_credential_transition(
             after.clone(),
@@ -1827,7 +1827,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
         };
         let Some(after) = access_setreuid(self.current_access_state(), ruid, euid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         self.apply_current_credential_transition(
             after.clone(),
@@ -1848,7 +1848,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             Err(errno) => return Ok(LinuxCallResult::Ret(-(errno as i64))),
         };
         let Some(after) = access_setregid(self.current_access_state(), rgid, egid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         self.apply_current_credential_transition(
             after.clone(),
@@ -1874,7 +1874,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let before = self.current_access_state();
         let Some(after) = access_setresuid(before.clone(), ruid, euid, suid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         if before.credential_ids_differ(&after) || before.capability_state_differs(&after) {
             return self.apply_current_credential_transition(
@@ -1927,7 +1927,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let before = self.current_access_state();
         let Some(after) = access_setresgid(before.clone(), rgid, egid, sgid) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         if before.credential_ids_differ(&after) {
             return self.apply_current_credential_transition(
@@ -2002,14 +2002,14 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<LinuxCallResult, &'static str> {
         let size = match usize::try_from(plan.args[0]) {
             Ok(value) => value,
-            Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+            Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64))),
         };
         let groups = self.current_access_state().supplementary_groups;
         if size == 0 {
             return Ok(LinuxCallResult::Ret(groups.len() as i64));
         }
         if size < groups.len() {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
         let mut encoded = Vec::with_capacity(groups.len() * 4);
         for group in &groups {
@@ -2029,17 +2029,17 @@ impl<'engine> PrototypeRuntime<'engine> {
 
         let size = match usize::try_from(plan.args[0]) {
             Ok(value) => value,
-            Err(_) => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+            Err(_) => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64))),
         };
         if size > NGROUPS_MAX {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         }
         if !access_has_capability(&self.current_access_state(), CAP_SETGID) {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         }
         let len = match size.checked_mul(4).and_then(|value| u32::try_from(value).ok()) {
             Some(value) => value,
-            None => return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64))),
+            None => return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64))),
         };
         let bytes = if size == 0 {
             Vec::new()
@@ -2072,7 +2072,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let Some(data_len) = capability_data_len(version) else {
             let _ = self.write_linux_u32(plan.args[0], LINUX_CAPABILITY_VERSION_3);
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         };
         if plan.args[1] != 0 {
             let access = self.current_access_state();
@@ -2090,7 +2090,7 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     pub(super) fn plan_capset(&mut self, plan: LinuxPlan) -> Result<LinuxCallResult, &'static str> {
         if plan.args[1] == 0 {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EFAULT as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EFAULT as i64)));
         }
         let (version, pid) = match self.read_linux_cap_header(plan.args[0]) {
             Ok(header) => header,
@@ -2101,7 +2101,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         }
         let Some(data_len) = capability_data_len(version) else {
             let _ = self.write_linux_u32(plan.args[0], LINUX_CAPABILITY_VERSION_3);
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)));
         };
         let bytes = match self.read_linux_bytes(plan.args[1], data_len as u32) {
             Ok(bytes) => bytes,
@@ -2113,7 +2113,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         };
         let before = self.current_access_state();
         let Some(after) = access_capset(before.clone(), permitted, effective, inheritable) else {
-            return Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EPERM as i64)));
+            return Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EPERM as i64)));
         };
         self.apply_current_credential_transition(
             after.clone(),
@@ -2159,18 +2159,18 @@ impl<'engine> PrototypeRuntime<'engine> {
         ) {
             Ok(LinuxCallResult::Ret(ret))
         } else {
-            Ok(LinuxCallResult::Ret(-(vmos_abi::ERR_EINVAL as i64)))
+            Ok(LinuxCallResult::Ret(-(visa_abi::ERR_EINVAL as i64)))
         }
     }
 
     fn read_linux_bytes(&mut self, ptr: u64, len: u32) -> Result<Vec<u8>, i32> {
         let ptr = checked_linux_ptr(ptr)?;
-        self.linux.read_bytes(ptr, len).map_err(|_| vmos_abi::ERR_EFAULT)
+        self.linux.read_bytes(ptr, len).map_err(|_| visa_abi::ERR_EFAULT)
     }
 
     fn write_linux_bytes(&mut self, ptr: u64, bytes: &[u8]) -> Result<(), i32> {
         let ptr = checked_linux_ptr(ptr)?;
-        self.linux.write_bytes(ptr, bytes).map_err(|_| vmos_abi::ERR_EFAULT)
+        self.linux.write_bytes(ptr, bytes).map_err(|_| visa_abi::ERR_EFAULT)
     }
 
     fn write_linux_u32(&mut self, ptr: u64, value: u32) -> Result<(), i32> {
@@ -2186,10 +2186,10 @@ impl<'engine> PrototypeRuntime<'engine> {
 
     fn validate_capability_pid(&self, pid: i32) -> Result<(), i32> {
         if pid < 0 {
-            return Err(vmos_abi::ERR_EINVAL);
+            return Err(visa_abi::ERR_EINVAL);
         }
         if pid != 0 && pid as u32 != self.current_pid() {
-            return Err(vmos_abi::ERR_ESRCH);
+            return Err(visa_abi::ERR_ESRCH);
         }
         Ok(())
     }
@@ -2271,7 +2271,7 @@ impl<'engine> PrototypeRuntime<'engine> {
                 && process.pid == child_pid
                 && process.state == ProcessRuntimeStateKind::Zombie
         }) else {
-            return Err(vmos_abi::ERR_ECHILD);
+            return Err(visa_abi::ERR_ECHILD);
         };
         child.state = ProcessRuntimeStateKind::Dead;
         child.exit_code = None;
@@ -2311,8 +2311,8 @@ fn encode_ptrace_user_regs(
     args: [u64; 6],
     instruction_pointer: u64,
     return_override: Option<i64>,
-) -> [u8; vmos_abi::PTRACE_USER_REGS_BYTES] {
-    let mut regs = [0u8; vmos_abi::PTRACE_USER_REGS_BYTES];
+) -> [u8; visa_abi::PTRACE_USER_REGS_BYTES] {
+    let mut regs = [0u8; visa_abi::PTRACE_USER_REGS_BYTES];
     write_ptrace_reg(&mut regs, PTRACE_REG_R10, args[3]);
     write_ptrace_reg(&mut regs, PTRACE_REG_R9, args[5]);
     write_ptrace_reg(&mut regs, PTRACE_REG_R8, args[4]);
@@ -2332,36 +2332,36 @@ fn encode_ptrace_user_regs(
     regs
 }
 
-fn write_ptrace_reg(regs: &mut [u8; vmos_abi::PTRACE_USER_REGS_BYTES], index: usize, value: u64) {
+fn write_ptrace_reg(regs: &mut [u8; visa_abi::PTRACE_USER_REGS_BYTES], index: usize, value: u64) {
     let offset = index * 8;
     regs[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 fn read_ptrace_reg(bytes: &[u8], index: usize) -> Result<u64, i32> {
-    let offset = index.checked_mul(8).ok_or(vmos_abi::ERR_EINVAL)?;
-    let word = bytes.get(offset..offset + 8).ok_or(vmos_abi::ERR_EINVAL)?;
-    Ok(u64::from_le_bytes(word.try_into().map_err(|_| vmos_abi::ERR_EINVAL)?))
+    let offset = index.checked_mul(8).ok_or(visa_abi::ERR_EINVAL)?;
+    let word = bytes.get(offset..offset + 8).ok_or(visa_abi::ERR_EINVAL)?;
+    Ok(u64::from_le_bytes(word.try_into().map_err(|_| visa_abi::ERR_EINVAL)?))
 }
 
 fn optional_linux_ptr(raw: u64) -> Result<Option<u32>, i32> {
-    if raw == 0 { Ok(None) } else { u32::try_from(raw).map(Some).map_err(|_| vmos_abi::ERR_EFAULT) }
+    if raw == 0 { Ok(None) } else { u32::try_from(raw).map(Some).map_err(|_| visa_abi::ERR_EFAULT) }
 }
 
 fn checked_linux_ptr(raw: u64) -> Result<u32, i32> {
     if raw == 0 {
-        Err(vmos_abi::ERR_EFAULT)
+        Err(visa_abi::ERR_EFAULT)
     } else {
-        u32::try_from(raw).map_err(|_| vmos_abi::ERR_EFAULT)
+        u32::try_from(raw).map_err(|_| visa_abi::ERR_EFAULT)
     }
 }
 
 fn linux_i32_arg(raw: u64) -> Result<i32, i32> {
     let value = raw as i32;
-    if raw == value as i64 as u64 { Ok(value) } else { Err(vmos_abi::ERR_EINVAL) }
+    if raw == value as i64 as u64 { Ok(value) } else { Err(visa_abi::ERR_EINVAL) }
 }
 
 fn linux_id_arg(raw: u64) -> Result<u32, i32> {
-    u32::try_from(raw).map_err(|_| vmos_abi::ERR_EINVAL)
+    u32::try_from(raw).map_err(|_| visa_abi::ERR_EINVAL)
 }
 
 fn optional_linux_id_arg(raw: u64) -> Result<Option<u32>, i32> {
@@ -2737,7 +2737,7 @@ fn encode_capability_data(effective: u64, permitted: u64, inheritable: u64) -> [
 
 fn decode_capability_data(bytes: &[u8]) -> Result<(u64, u64, u64), i32> {
     if bytes.len() != 12 && bytes.len() != 24 {
-        return Err(vmos_abi::ERR_EINVAL);
+        return Err(visa_abi::ERR_EINVAL);
     }
     let read = |index: usize| -> u32 {
         u32::from_le_bytes([
@@ -2781,7 +2781,7 @@ fn futex_pi_handoff_word(word: u32, tid: u32, has_more_waiters: bool) -> u32 {
 mod tests {
     use alloc::{boxed::Box, vec::Vec};
 
-    use vmos_abi::{
+    use visa_abi::{
         ERR_ECHILD, ERR_EFAULT, ERR_EINVAL, ERR_EPERM, FUTEX_OWNER_DIED, FUTEX_TID_MASK,
         FUTEX_WAIT, FUTEX_WAITERS, SYS_CAPGET, SYS_CAPSET, SYS_EXIT, SYS_FUTEX, SYS_GETEGID,
         SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
@@ -3299,7 +3299,7 @@ mod tests {
                 SyscallContext::new(SYS_SETSID, [0, 0, 0, 0, 0, 0]),
             )
             .expect("setsid dispatch");
-        assert_eq!(expect_ret(setsid), -(vmos_abi::ERR_EPERM as i64));
+        assert_eq!(expect_ret(setsid), -(visa_abi::ERR_EPERM as i64));
 
         let bad_pgid = runtime
             .dispatch_linux_syscall_raw(
@@ -3307,7 +3307,7 @@ mod tests {
                 SyscallContext::new(SYS_SETPGID, [pid as u64, u64::MAX, 0, 0, 0, 0]),
             )
             .expect("bad setpgid dispatch");
-        assert_eq!(expect_ret(bad_pgid), -(vmos_abi::ERR_EINVAL as i64));
+        assert_eq!(expect_ret(bad_pgid), -(visa_abi::ERR_EINVAL as i64));
     }
 
     #[test]
@@ -3690,7 +3690,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(denied, Err(vmos_abi::ERR_EAGAIN));
+        assert_eq!(denied, Err(visa_abi::ERR_EAGAIN));
         assert_eq!(
             runtime.processes.iter().filter(|process| process.access.real_uid == 1000).count(),
             1
@@ -3799,7 +3799,7 @@ fn ptrace_credentials_match(caller: &ProcessAccessState, target: &ProcessAccessS
 
 fn resolve_pid_arg(caller_pid: Pid, pid_arg: i32) -> Result<Pid, i32> {
     if pid_arg < 0 {
-        Err(vmos_abi::ERR_EINVAL)
+        Err(visa_abi::ERR_EINVAL)
     } else if pid_arg == 0 {
         Ok(caller_pid)
     } else {

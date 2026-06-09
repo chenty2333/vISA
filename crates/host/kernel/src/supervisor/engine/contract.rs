@@ -86,7 +86,7 @@ impl ArtifactLoadError {
     pub(crate) const fn message(&self) -> &'static str {
         match self {
             Self::RawWasmRejected => {
-                "raw wasm supervisor artifact rejected; load VMOS TargetArtifactImage with cwasm CodeObject payload"
+                "raw wasm supervisor artifact rejected; load vISA TargetArtifactImage with cwasm CodeObject payload"
             }
             Self::RuntimeNotLinked => "target runtime-only executor is not linked yet",
             Self::EmptyArtifact => "supervisor artifact is empty",

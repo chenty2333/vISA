@@ -3,7 +3,7 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-use vmos_abi::{SYS_CLOSE, SYS_EXIT, SYS_MMAP, SYS_MREMAP, SYS_OPENAT, SYS_UNLINK, SYS_WRITE};
+use visa_abi::{SYS_CLOSE, SYS_EXIT, SYS_MMAP, SYS_MREMAP, SYS_OPENAT, SYS_UNLINK, SYS_WRITE};
 
 const AT_FDCWD: i32 = -100;
 const O_RDWR: u32 = 0x02;

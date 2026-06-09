@@ -13,7 +13,7 @@ fn image() -> TargetArtifactImage {
         "code-hash-1",
         TargetMemoryPlan::new(16, 32, 64),
     );
-    image.exports.push("vmos_service_entry".to_string());
+    image.exports.push("visa_service_entry".to_string());
     image.address_map.push(TargetAddressMapEntry::new("_start", 0, 64));
     image.trap_metadata.push(TargetTrapMetadata::new(TargetTrapClass::CodeObjectTrap, "_start", 0));
     image.capabilities.push(TargetCapabilitySpec::new("mmio.virtio-net", &["map"], "store"));

@@ -1278,7 +1278,7 @@ fn replay_fixtures_replay_to_expected_final_views() {
 
 fn parse_replay_fixture(source: &str) -> serde_json::Value {
     let value: serde_json::Value = serde_json::from_str(source).expect("replay fixture JSON");
-    assert_eq!(value["schema"], "vmos-replay-fixture-v1");
+    assert_eq!(value["schema"], "visa-replay-fixture-v1");
     assert!(!value["commands"].as_array().expect("commands").is_empty());
     assert!(!value["events"].as_array().expect("events").is_empty());
     assert!(value["validation"]["ok"].as_bool().expect("validation ok"));

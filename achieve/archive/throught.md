@@ -1,4 +1,4 @@
-# Historical Archive: Early Semantic OS Thought Log
+# Historical Archive: Early Semantic vISA Thought Log
 
 Status: historical entry only.
 
@@ -10,7 +10,7 @@ snapshot/replay, manifest, data/control planes, and trust invariants.
 The current framing supersedes it:
 
 ```text
-VMOS is a capability-oriented Semantic Virtual ISA.
+vISA is a capability-oriented Semantic Virtual ISA.
 Wasm is the base virtual ISA.
 Substrate traits are backend authority providers.
 Personality artifacts implement app-visible semantics.
@@ -29,5 +29,5 @@ references/specs/substrate-api-v0/00-overview.md
 Local full-text snapshot for this cleanup pass:
 
 ```text
-/home/dia/.codex/tmp/vmos-reference-archive-20260429/archive/throught.md
+/home/dia/.codex/tmp/visa-reference-archive-20260429/archive/throught.md
 ```

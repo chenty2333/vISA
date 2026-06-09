@@ -5,7 +5,7 @@ use super::super::{
     types::ServiceCallError,
 };
 
-const FUTEX_SERVICE_WASM: &[u8] = include_bytes!(env!("VMOS_FUTEX_SERVICE_WASM"));
+const FUTEX_SERVICE_WASM: &[u8] = include_bytes!(env!("VISA_FUTEX_SERVICE_WASM"));
 
 pub(crate) struct FutexService {
     io: BufferedModule,

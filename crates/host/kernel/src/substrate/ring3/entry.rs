@@ -88,8 +88,8 @@ static GDT: Lazy<(GlobalDescriptorTable, Selectors)> = Lazy::new(|| {
 
 global_asm!(
     r#"
-    .global vmos_syscall_entry
-vmos_syscall_entry:
+    .global visa_syscall_entry
+visa_syscall_entry:
     mov [rip + {saved_user_rsp}], rsp
     lea rsp, [rip + {syscall_stack}]
     add rsp, {stack_size}
@@ -125,7 +125,7 @@ vmos_syscall_entry:
 );
 
 unsafe extern "C" {
-    fn vmos_syscall_entry();
+    fn visa_syscall_entry();
 }
 
 extern "C" fn syscall_dispatch_trampoline(frame: *mut SyscallFrame) {
@@ -161,7 +161,7 @@ pub(crate) fn init(handler: SyscallHandler) {
         selectors.kernel_data,
     )
     .expect("GDT selectors must satisfy STAR layout");
-    LStar::write(VirtAddr::from_ptr(vmos_syscall_entry as *const ()));
+    LStar::write(VirtAddr::from_ptr(visa_syscall_entry as *const ()));
     SFMask::write(RFlags::INTERRUPT_FLAG);
 }
 

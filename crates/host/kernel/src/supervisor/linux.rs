@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
-use vmos_abi::PlanKind;
+use visa_abi::PlanKind;
 #[cfg(not(any(target_os = "none", test)))]
-use vmos_abi::{PackedStep, SyscallContext};
+use visa_abi::{PackedStep, SyscallContext};
 
 #[cfg(not(any(target_os = "none", test)))]
 use super::engine::{ModuleInstance, SupervisorEngine, WasmFn};
@@ -18,7 +18,7 @@ mod native;
 pub(super) use native::LinuxFrontend;
 
 #[cfg(not(any(target_os = "none", test)))]
-const LINUX_SYSCALL_WASM: &[u8] = include_bytes!(env!("VMOS_LINUX_SYSCALL_WASM"));
+const LINUX_SYSCALL_WASM: &[u8] = include_bytes!(env!("VISA_LINUX_SYSCALL_WASM"));
 
 #[derive(Debug)]
 pub(crate) enum LinuxCallResult {
@@ -233,7 +233,7 @@ impl LinuxFrontend {
     }
 
     #[allow(dead_code)]
-    pub(super) fn decode_step(raw: u64) -> vmos_abi::DecodedStep {
+    pub(super) fn decode_step(raw: u64) -> visa_abi::DecodedStep {
         PackedStep::decode(raw)
     }
 

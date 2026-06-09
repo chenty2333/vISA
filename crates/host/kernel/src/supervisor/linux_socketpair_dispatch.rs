@@ -1,4 +1,4 @@
-use vmos_abi::{
+use visa_abi::{
     AF_UNIX, ERR_EAFNOSUPPORT, ERR_EFAULT, ERR_EINVAL, ERR_EPROTONOSUPPORT, SOCK_STREAM,
 };
 

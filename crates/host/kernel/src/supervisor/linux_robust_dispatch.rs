@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ESRCH};
+use visa_abi::{ERR_EFAULT, ERR_EINVAL, ERR_ESRCH};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -100,7 +100,7 @@ fn errno_ret(errno: i32) -> LinuxCallResult {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{SYS_SET_TID_ADDRESS, SyscallContext};
+    use visa_abi::{SYS_SET_TID_ADDRESS, SyscallContext};
 
     use super::*;
     use crate::supervisor::{engine::RuntimeOnlyExecutor, runtime::PrototypeRuntime};

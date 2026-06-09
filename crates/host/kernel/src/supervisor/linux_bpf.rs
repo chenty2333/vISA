@@ -1,6 +1,6 @@
 use alloc::{vec, vec::Vec};
 
-use vmos_abi::{
+use visa_abi::{
     ERR_E2BIG, ERR_EBADF, ERR_EEXIST, ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOENT,
     ERR_EOPNOTSUPP, ERR_EPERM,
 };

@@ -2,13 +2,13 @@
 
 Status: canonical system specification.
 
-VMOS is:
+vISA is:
 
 ```text
 a cross-ISA Semantic Virtual ISA for portable system semantics
 ```
 
-Wasm is the base execution virtual ISA. VMOS extends that execution substrate
+Wasm is the base execution virtual ISA. vISA extends that execution substrate
 with system-level virtual ISA semantics: authority, capability, generation,
 lifetime, wait, event, trap, cleanup, artifact identity, hostcall attribution,
 and target profiles.
@@ -44,7 +44,7 @@ system center.
 
 ## Non-Goals
 
-VMOS is not primarily:
+vISA is not primarily:
 
 ```text
 a Linux compatibility layer
@@ -54,7 +54,7 @@ a semantic contract database
 a standalone migration tool
 ```
 
-VMOS is primarily:
+vISA is primarily:
 
 ```text
 a cross-ISA Semantic Virtual ISA

@@ -3,12 +3,12 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 pub const FAT_ADAPTER_IMPLEMENTATION: &str = "fatfs";
 pub const FAT_ADAPTER_VERSION: &str = "0.3.6";
 pub const FAT_ADAPTER_PROFILE: &str = "fatfs-read-write-demo-v1";
-pub const FAT_ADAPTER_VOLUME_LABEL: &str = "VMOSFAT";
+pub const FAT_ADAPTER_VOLUME_LABEL: &str = "VISAFAT";
 pub const FAT_ADAPTER_IMAGE_BYTES: usize = 1024 * 1024;
 pub const EXT4_ADAPTER_IMPLEMENTATION: &str = "ext4-view";
 pub const EXT4_ADAPTER_VERSION: &str = "0.9.3";
 pub const EXT4_ADAPTER_PROFILE: &str = "ext4-read-only-demo-v1";
-pub const EXT4_ADAPTER_VOLUME_LABEL: &str = "VMOSEXT4";
+pub const EXT4_ADAPTER_VOLUME_LABEL: &str = "VISAEXT4";
 pub const EXT4_ADAPTER_IMAGE_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub struct FatAdapterConfig {
 }
 
 impl FatAdapterConfig {
-    pub const fn default_vmos() -> Self {
+    pub const fn default_visa() -> Self {
         Self {
             image_bytes: FAT_ADAPTER_IMAGE_BYTES,
             file_path: "DEMO.TXT",
@@ -51,7 +51,7 @@ pub struct Ext4AdapterConfig {
 }
 
 impl Ext4AdapterConfig {
-    pub const fn default_vmos() -> Self {
+    pub const fn default_visa() -> Self {
         Self {
             image_bytes: EXT4_ADAPTER_IMAGE_BYTES,
             file_path: "/demo.txt",
@@ -364,9 +364,9 @@ mod tests {
 
     #[test]
     fn fat_adapter_formats_writes_and_reads_back_file() {
-        let payload = b"vmos fat adapter read write payload";
+        let payload = b"visa fat adapter read write payload";
         let evidence =
-            build_fat_read_write_evidence(FatAdapterConfig::default_vmos(), payload).unwrap();
+            build_fat_read_write_evidence(FatAdapterConfig::default_visa(), payload).unwrap();
 
         assert_eq!(evidence.implementation, FAT_ADAPTER_IMPLEMENTATION);
         assert_eq!(evidence.version, FAT_ADAPTER_VERSION);
@@ -384,14 +384,14 @@ mod tests {
     fn fat_adapter_rejects_invalid_config_or_empty_payload() {
         assert_eq!(
             build_fat_read_write_evidence(
-                FatAdapterConfig { image_bytes: 512, ..FatAdapterConfig::default_vmos() },
+                FatAdapterConfig { image_bytes: 512, ..FatAdapterConfig::default_visa() },
                 b"x"
             ),
             Err("fat adapter image is too small")
         );
         assert_eq!(
             build_fat_read_write_evidence(
-                FatAdapterConfig { file_path: "DIR/DEMO.TXT", ..FatAdapterConfig::default_vmos() },
+                FatAdapterConfig { file_path: "DIR/DEMO.TXT", ..FatAdapterConfig::default_visa() },
                 b"x"
             ),
             Err("fat adapter config is invalid")
@@ -400,23 +400,23 @@ mod tests {
             build_fat_read_write_evidence(
                 FatAdapterConfig {
                     volume_label: "LABEL-TOO-LONG",
-                    ..FatAdapterConfig::default_vmos()
+                    ..FatAdapterConfig::default_visa()
                 },
                 b"x"
             ),
             Err("fat adapter config is invalid")
         );
         assert_eq!(
-            build_fat_read_write_evidence(FatAdapterConfig::default_vmos(), b""),
+            build_fat_read_write_evidence(FatAdapterConfig::default_visa(), b""),
             Err("fat adapter config is invalid")
         );
     }
 
     #[test]
     fn ext4_adapter_reads_deterministic_read_only_image() {
-        let payload = b"vmos ext4 adapter read only payload";
+        let payload = b"visa ext4 adapter read only payload";
         let evidence =
-            build_ext4_read_only_evidence(Ext4AdapterConfig::default_vmos(), payload).unwrap();
+            build_ext4_read_only_evidence(Ext4AdapterConfig::default_visa(), payload).unwrap();
 
         assert_eq!(evidence.implementation, EXT4_ADAPTER_IMPLEMENTATION);
         assert_eq!(evidence.version, EXT4_ADAPTER_VERSION);
@@ -433,14 +433,14 @@ mod tests {
     fn ext4_adapter_rejects_invalid_config_or_empty_payload() {
         assert_eq!(
             build_ext4_read_only_evidence(
-                Ext4AdapterConfig { image_bytes: 1024, ..Ext4AdapterConfig::default_vmos() },
+                Ext4AdapterConfig { image_bytes: 1024, ..Ext4AdapterConfig::default_visa() },
                 b"x"
             ),
             Err("ext4 adapter config is invalid")
         );
         assert_eq!(
             build_ext4_read_only_evidence(
-                Ext4AdapterConfig { file_path: "demo.txt", ..Ext4AdapterConfig::default_vmos() },
+                Ext4AdapterConfig { file_path: "demo.txt", ..Ext4AdapterConfig::default_visa() },
                 b"x"
             ),
             Err("ext4 adapter config is invalid")
@@ -449,14 +449,14 @@ mod tests {
             build_ext4_read_only_evidence(
                 Ext4AdapterConfig {
                     volume_label: "LABEL-TOO-LONG-FOR-EXT4",
-                    ..Ext4AdapterConfig::default_vmos()
+                    ..Ext4AdapterConfig::default_visa()
                 },
                 b"x"
             ),
             Err("ext4 adapter config is invalid")
         );
         assert_eq!(
-            build_ext4_read_only_evidence(Ext4AdapterConfig::default_vmos(), b""),
+            build_ext4_read_only_evidence(Ext4AdapterConfig::default_visa(), b""),
             Err("ext4 adapter config is invalid")
         );
     }

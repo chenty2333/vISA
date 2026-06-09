@@ -1,0 +1,32 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+    image: visa-dev:latest
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    security_opt:
+      - label=disable
+    environment:
+      CARGO_TARGET_DIR: /workspace/target
+      CARGO_TERM_COLOR: always
+      PATH: /usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
+      VISA_LTP_BUILD_BACKEND: host
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target:/workspace/target
+      - ltp-cache:/home/visa/.cache/visa-ltp
+    command: bash
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  target:
+  ltp-cache:

@@ -12,7 +12,7 @@ pub(in crate::tests) fn setup_b7_block_read_graph() -> (SemanticGraph, u64) {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b7 backing device",
     ));
@@ -280,7 +280,7 @@ pub(in crate::tests) fn setup_b8_block_write_graph() -> (SemanticGraph, u64) {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b8 backing device",
     ));
@@ -548,7 +548,7 @@ pub(in crate::tests) fn setup_b9_block_request_queue_graph() -> SemanticGraph {
         resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b9 backing device",
     ));

@@ -53,7 +53,7 @@ pub(crate) fn demo_migration_package(
     let roots = semantic_roots(&logical_capabilities, semantic, target_v1);
     MigrationPackageManifest {
         schema_version: 1,
-        package_format: "vmos-semantic-package-v1".to_owned(),
+        package_format: "visa-semantic-package-v1".to_owned(),
         package_id: "target-executor-semantic-package-v1".to_owned(),
         source: MigrationHostManifest { arch: "x86_64".to_owned() },
         target: MigrationTargetManifest { arch_requirement: "target-native".to_owned() },

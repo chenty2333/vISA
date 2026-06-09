@@ -17,7 +17,7 @@ pub(crate) fn record_block_runtime_b0_evidence(
         block_resource_generation,
         "fake-block-backend",
         "semantic-harness",
-        "vmos",
+        "visa",
         "fake-block-v1",
         "b0-record-block-backing-device",
     ) {

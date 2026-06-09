@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use semantic_core::{LinuxCapSets, ResourceHandle, ResourceId};
 use service_core::seccomp::SeccompFilterChain;
-use vmos_abi::{NodeKind, RestartClass, ServiceRoute};
+use visa_abi::{NodeKind, RestartClass, ServiceRoute};
 
 pub(crate) type TaskId = u32;
 // ProcessId / ThreadId from semantic_core (u64) — use for semantic records

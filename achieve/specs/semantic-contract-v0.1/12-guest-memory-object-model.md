@@ -51,8 +51,8 @@ Guest code must not gain authority by guessing object ids.
 
 ## Comparisons
 
-VMOS resembles Zircon's VMO/VMAR split and seL4-style explicit authority, but
-VMOS does not claim seL4-like verification. The claim is narrower: memory and
+vISA resembles Zircon's VMO/VMAR split and seL4-style explicit authority, but
+vISA does not claim seL4-like verification. The claim is narrower: memory and
 authority are explicit semantic objects that can be validated, replayed, and
 observed across substrate bindings.
 

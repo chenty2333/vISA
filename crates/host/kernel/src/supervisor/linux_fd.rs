@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
 use semantic_core::ResourceHandle;
-use vmos_abi::{
+use visa_abi::{
     EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, ERR_EACCES, ERR_EAGAIN, ERR_EBADF,
     ERR_ECANCELED, ERR_EFBIG, ERR_EINVAL, ERR_EMFILE, ERR_ENOSYS, ERR_ENOTSOCK, ERR_EOPNOTSUPP,
     ERR_EPERM, NodeKind, ServiceRoute,
@@ -88,7 +88,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.require_fd_readable(fd)?;
         let (route, node, cursor, path, vfs_node_id) = self.service_fd_snapshot(fd)?;
         if node == NodeKind::Directory {
-            return Err(ServiceCallError::Errno(vmos_abi::ERR_EISDIR));
+            return Err(ServiceCallError::Errno(visa_abi::ERR_EISDIR));
         }
 
         let bytes = match route {
@@ -141,7 +141,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         if node == NodeKind::Directory {
-            return Err(vmos_abi::ERR_EISDIR);
+            return Err(visa_abi::ERR_EISDIR);
         }
         if node != NodeKind::File {
             return Err(ERR_EBADF);
@@ -165,7 +165,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         if node == NodeKind::Directory {
-            return Err(vmos_abi::ERR_EISDIR);
+            return Err(visa_abi::ERR_EISDIR);
         }
         if node != NodeKind::File {
             return Err(ERR_EBADF);
@@ -195,7 +195,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         if node == NodeKind::Directory {
-            return Err(vmos_abi::ERR_EISDIR);
+            return Err(visa_abi::ERR_EISDIR);
         }
         if node != NodeKind::File {
             return Err(ERR_EBADF);
@@ -406,7 +406,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         if node == NodeKind::Directory {
-            return Err(vmos_abi::ERR_EISDIR);
+            return Err(visa_abi::ERR_EISDIR);
         }
         if node != NodeKind::File {
             return Err(ERR_EBADF);
@@ -433,7 +433,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             return Err(ERR_EINVAL);
         }
         if node == NodeKind::Directory {
-            return Err(vmos_abi::ERR_EISDIR);
+            return Err(visa_abi::ERR_EISDIR);
         }
         if node != NodeKind::File {
             return Err(ERR_EBADF);
@@ -729,7 +729,7 @@ impl<'engine> PrototypeRuntime<'engine> {
             }
         }
         if size != 0 && size < visible.len() {
-            return Err(vmos_abi::ERR_ERANGE);
+            return Err(visa_abi::ERR_ERANGE);
         }
         Ok(visible)
     }
@@ -852,7 +852,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (route, node, _, path, vfs_node_id) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs {
-            return Err(vmos_abi::ERR_EOPNOTSUPP);
+            return Err(visa_abi::ERR_EOPNOTSUPP);
         }
         Ok((node, vfs_node_id, path))
     }
@@ -933,7 +933,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.check_path_traversal_access(&parent, access)?;
         let info = self.lookup_path(&parent).map_err(errno_from_service_error)?;
         if info.node != NodeKind::Directory {
-            return Err(vmos_abi::ERR_ENOTDIR);
+            return Err(visa_abi::ERR_ENOTDIR);
         }
         let mode = self.mode_for_service_node(info.route, info.node, &parent);
         let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, &parent);
@@ -959,7 +959,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         for parent in parents.iter().rev() {
             let info = self.lookup_path(parent).map_err(errno_from_service_error)?;
             if info.node != NodeKind::Directory {
-                return Err(vmos_abi::ERR_ENOTDIR);
+                return Err(visa_abi::ERR_ENOTDIR);
             }
             let mode = self.mode_for_service_node(info.route, info.node, parent);
             let (owner_uid, owner_gid) = self.owner_for_service_node(info.route, parent);
@@ -993,7 +993,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<Vec<u8>, ServiceCallError> {
         let (route, node, cursor, path, _) = self.service_fd_snapshot(fd)?;
         if node != NodeKind::Directory {
-            return Err(ServiceCallError::Errno(vmos_abi::ERR_ENOTDIR));
+            return Err(ServiceCallError::Errno(visa_abi::ERR_ENOTDIR));
         }
 
         let bytes = match route {
@@ -1381,7 +1381,7 @@ impl<'engine> PrototypeRuntime<'engine> {
     ) -> Result<(), i32> {
         self.require_capability("vfs_service", "vfs.namespace", "lookup").map_err(|_| ERR_EPERM)?;
         if self.lookup_path(path).is_ok() {
-            return Err(vmos_abi::ERR_EEXIST);
+            return Err(visa_abi::ERR_EEXIST);
         }
         self.check_parent_access(path, MAY_WRITE | MAY_EXEC, access)?;
         self.vfs.create_file(path, mode, access.uid, access.gid).map_err(errno_from_service_error)
@@ -2939,7 +2939,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         self.check_path_access(path, 0, access)?;
         let info = self.lookup_path(path).map_err(errno_from_service_error)?;
         if info.route != ServiceRoute::Vfs {
-            return Err(vmos_abi::ERR_EOPNOTSUPP);
+            return Err(visa_abi::ERR_EOPNOTSUPP);
         }
         let node_id = self.vfs.node_id_for_path(path);
         if check_permissions {
@@ -2972,7 +2972,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let (route, node, _, path, vfs_node_id) =
             self.service_fd_snapshot(fd).map_err(errno_from_service_error)?;
         if route != ServiceRoute::Vfs {
-            return Err(vmos_abi::ERR_EOPNOTSUPP);
+            return Err(visa_abi::ERR_EOPNOTSUPP);
         }
         if check_permissions {
             self.check_timestamp_update_access(
@@ -3067,7 +3067,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let node_id = self.vfs.node_id_for_path(path);
         match self.vfs.fgetxattr_by_id(node_id, path, name, 0) {
             Ok(value) => Ok(Some(value)),
-            Err(ServiceCallError::Errno(vmos_abi::ERR_ENODATA | vmos_abi::ERR_EOPNOTSUPP)) => {
+            Err(ServiceCallError::Errno(visa_abi::ERR_ENODATA | visa_abi::ERR_EOPNOTSUPP)) => {
                 Ok(None)
             }
             Err(err) => Err(errno_from_service_error(err)),
@@ -3424,7 +3424,7 @@ fn classify_xattr_namespace(name: &[u8]) -> Result<XattrNamespace, i32> {
     {
         return Ok(XattrNamespace::Privileged);
     }
-    Err(vmos_abi::ERR_EOPNOTSUPP)
+    Err(visa_abi::ERR_EOPNOTSUPP)
 }
 
 fn total_chunk_len(chunks: &[&[u8]]) -> Result<usize, ServiceCallError> {
@@ -3445,13 +3445,13 @@ fn fallocate_extends_size(mode: u32) -> Result<bool, i32> {
         FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_INSERT_RANGE | FALLOC_FL_UNSHARE_RANGE;
 
     if mode & !SUPPORTED != 0 || mode & UNSUPPORTED != 0 {
-        return Err(vmos_abi::ERR_EOPNOTSUPP);
+        return Err(visa_abi::ERR_EOPNOTSUPP);
     }
     let keep_size = mode & FALLOC_FL_KEEP_SIZE != 0;
     let punch_hole = mode & FALLOC_FL_PUNCH_HOLE != 0;
     let zero_range = mode & FALLOC_FL_ZERO_RANGE != 0;
     if punch_hole && (!keep_size || zero_range) {
-        return Err(vmos_abi::ERR_EOPNOTSUPP);
+        return Err(visa_abi::ERR_EOPNOTSUPP);
     }
     Ok(!keep_size)
 }
@@ -3685,7 +3685,7 @@ mod tests {
 
         assert_eq!(
             runtime.fallocate_fd(fd, FALLOC_FL_COLLAPSE_RANGE, 0, 10),
-            Err(vmos_abi::ERR_EOPNOTSUPP)
+            Err(visa_abi::ERR_EOPNOTSUPP)
         );
         assert_eq!(
             runtime

@@ -1,5 +1,5 @@
 use semantic_core::{FailureEffect, StoreId, TransactionId, TrapClass};
-use vmos_abi::ERR_EIO;
+use visa_abi::ERR_EIO;
 
 use super::{
     fault::classify_service_trap,
@@ -104,7 +104,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         detail: &str,
     ) -> Result<StoreMicroReboot, ServiceCallError> {
         self.require_capability("fault_manager", capability_object, "restart")
-            .map_err(|_| ServiceCallError::Errno(vmos_abi::ERR_EPERM))?;
+            .map_err(|_| ServiceCallError::Errno(visa_abi::ERR_EPERM))?;
         let reboot = self
             .store_manager
             .begin_micro_reboot(&mut self.semantic, package, trap, detail)

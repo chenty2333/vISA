@@ -7,7 +7,7 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::{ptr::addr_of_mut, slice};
 
-use vmos_abi::{ERR_EINVAL, ERR_EIO, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind, ServiceRoute};
+use visa_abi::{ERR_EINVAL, ERR_EIO, ERR_EISDIR, ERR_ENOENT, ERR_ENOTDIR, NodeKind, ServiceRoute};
 
 const REQUEST_CAPACITY: usize = 256;
 const RESPONSE_CAPACITY: usize = 4096;

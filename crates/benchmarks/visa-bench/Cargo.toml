@@ -1,0 +1,57 @@
+[package]
+name = "visa-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "visa_bench"
+path = "src/lib.rs"
+bench = false
+
+[[bench]]
+name = "block_iops"
+harness = false
+
+[[bench]]
+name = "network_throughput"
+harness = false
+
+[[bench]]
+name = "simd_context_switch"
+harness = false
+
+[[bench]]
+name = "preemption_latency"
+harness = false
+
+[[bench]]
+name = "simd_speedup"
+harness = false
+
+[[bench]]
+name = "framebuffer_throughput"
+harness = false
+
+[[bench]]
+name = "hostcall_latency"
+harness = false
+
+[[bench]]
+name = "activation_start"
+harness = false
+
+[[bench]]
+name = "snapshot_restore"
+harness = false
+
+[dependencies]
+sha2.workspace = true
+semantic_core.workspace = true
+substrate_api.workspace = true
+target_abi = { workspace = true, features = ["hash"] }
+visa_profile.workspace = true
+visa_runtime.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"

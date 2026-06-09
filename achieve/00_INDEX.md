@@ -4,7 +4,7 @@ Current source of truth:
 
 ```text
 1. specs/semantic-virtual-isa-v0/00-overview.md
-   Canonical system spec: VMOS as a cross-ISA Semantic Virtual ISA.
+   Canonical system spec: vISA as a cross-ISA Semantic Virtual ISA.
 
 2. specs/semantic-virtual-isa-v0/01-isa-axes-and-execution-model.md
    Host ISA, Wasm execution ISA, Semantic vISA, and optional guest ABI axes.
@@ -43,8 +43,8 @@ Current source of truth:
 Legacy and background:
 
 ```text
-vision/semantic-os-v0.md
-    Old Semantic OS entry point. Kept as a redirect to the vISA framing.
+vision/semantic-visa-v0.md
+    Old Semantic vISA entry point. Kept as a redirect to the vISA framing.
 
 vision/semantic-virtual-isa.md
     Narrative summary retained for orientation. The normative vISA spec lives

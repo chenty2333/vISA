@@ -1,5 +1,5 @@
 use semantic_core::{CapabilityId, Generation};
-use vms_runtime::{
+use visa_runtime::{
     VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
     VisaSubstrateUnsupportedEvidence,
 };

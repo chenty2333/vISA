@@ -57,7 +57,7 @@ impl NetCoreService {
         bytes: &[u8],
     ) -> Result<u32, ServiceCallError> {
         if bytes.len() > QUEUE_CAPACITY {
-            return errno(vmos_abi::ERR_EIO);
+            return errno(visa_abi::ERR_EIO);
         }
         map_errno(self.state.send_socket(socket_id, bytes))
     }

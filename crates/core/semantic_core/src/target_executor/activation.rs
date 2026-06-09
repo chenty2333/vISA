@@ -638,7 +638,7 @@ pub struct HostcallFrame {
 }
 
 impl HostcallFrame {
-    pub const ABI_VERSION: &'static str = "vmos-target-hostcall-frame-v1";
+    pub const ABI_VERSION: &'static str = "visa-target-hostcall-frame-v1";
     pub const FRAME_SIZE: u16 = ExecutorHostcallFrameV1::FRAME_SIZE;
 
     pub fn new(

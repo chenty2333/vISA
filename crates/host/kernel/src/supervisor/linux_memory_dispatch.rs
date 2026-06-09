@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use vmos_abi::{ERR_EBADF, ERR_EEXIST, ERR_EINVAL, ERR_ENOMEM, ERR_ENOSYS, ERR_EOPNOTSUPP};
+use visa_abi::{ERR_EBADF, ERR_EEXIST, ERR_EINVAL, ERR_ENOMEM, ERR_ENOSYS, ERR_EOPNOTSUPP};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},
@@ -710,7 +710,7 @@ fn encode_pollfds(entries: &[PollFdEntry]) -> Result<Vec<u8>, i32> {
 mod tests {
     use alloc::boxed::Box;
 
-    use vmos_abi::{
+    use visa_abi::{
         ERR_EINVAL, ERR_ENOMEM, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MUNLOCK,
         SYS_MUNLOCKALL, SyscallContext,
     };

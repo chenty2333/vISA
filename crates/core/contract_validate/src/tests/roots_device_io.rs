@@ -12,7 +12,7 @@ fn semantic_roots_reject_device_object_root_mismatch() {
         resource_generation: 1,
         backend: "fake-io-backend".to_owned(),
         bus: "semantic-harness".to_owned(),
-        vendor: "vmos".to_owned(),
+        vendor: "visa".to_owned(),
         model: "fake-io-v1".to_owned(),
         generation: 1,
         state: "registered".to_owned(),

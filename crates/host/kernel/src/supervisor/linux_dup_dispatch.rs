@@ -1,4 +1,4 @@
-use vmos_abi::{ERR_EBADF, ERR_EINVAL};
+use visa_abi::{ERR_EBADF, ERR_EINVAL};
 
 use super::{
     linux::{LinuxCallResult, LinuxPlan},

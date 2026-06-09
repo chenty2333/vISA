@@ -9,7 +9,7 @@ use service_core::seccomp::{
     SeccompDecision, SeccompFilterProgram, SeccompInstruction, linux_seccomp_notif_sizes_bytes,
     seccomp_action_available,
 };
-use vmos_abi::{
+use visa_abi::{
     ERR_EAGAIN, ERR_EBADF, ERR_EFAULT, ERR_EINVAL, ERR_EMFILE, ERR_ENOENT, ERR_ENOSYS,
     ERR_EOPNOTSUPP, ERR_EPERM, ERR_ESRCH,
 };
@@ -657,7 +657,7 @@ impl<'engine> PrototypeRuntime<'engine> {
         let mut tracer = None;
         for attachment in &mut self.ptrace_attachments {
             if (attachment.tracee_tid == tid || attachment.tracee_pid == pid)
-                && attachment.options & vmos_abi::PTRACE_O_TRACESECCOMP != 0
+                && attachment.options & visa_abi::PTRACE_O_TRACESECCOMP != 0
             {
                 attachment.last_event_msg = Some(data as u64);
                 tracer = Some((attachment.tracer_pid, attachment.tracer_tid));
@@ -1060,7 +1060,7 @@ mod tests {
         SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_LOG,
         SECCOMP_RET_TRACE, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF,
     };
-    use vmos_abi::{
+    use visa_abi::{
         ERR_EACCES, ERR_EINTR, ERR_EINVAL, ERR_ENOSYS, ERR_EPERM, PTRACE_CONT,
         PTRACE_EVENT_SECCOMP, PTRACE_GETEVENTMSG, PTRACE_GETREGS, PTRACE_O_TRACESECCOMP,
         PTRACE_SEIZE, PTRACE_SETOPTIONS, PTRACE_SETREGS, PTRACE_USER_REGS_BYTES, SYS_GETPID,

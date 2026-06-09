@@ -39,7 +39,7 @@ pub(super) fn block_runtime_b15_fat_adapter_records_read_write_contract() {
             implementation: "fatfs".to_string(),
             version: "0.3.6".to_string(),
             profile: "fatfs-read-write-demo-v1".to_string(),
-            volume_label: "VMOSFAT".to_string(),
+            volume_label: "VISAFAT".to_string(),
             image_bytes: 1_048_576,
             adapter_path: "DEMO.TXT".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -75,7 +75,7 @@ pub(super) fn block_runtime_b15_fat_adapter_records_read_write_contract() {
     assert_eq!(adapter.state, FatAdapterObjectState::Verified);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
-        "FatAdapterObjectRecorded fat_adapter_object=1855 directory_object=1850@1 file_object=1845@1 block_device=1824@1 implementation=fatfs version=0.3.6 profile=fatfs-read-write-demo-v1 volume_label=VMOSFAT image_bytes=1048576 adapter_path=DEMO.TXT semantic_path=/demo/file.txt bytes_written=35 bytes_read=35 write_digest=20817 read_digest=20817 file_content_digest=2835 state=verified generation=1"
+        "FatAdapterObjectRecorded fat_adapter_object=1855 directory_object=1850@1 file_object=1845@1 block_device=1824@1 implementation=fatfs version=0.3.6 profile=fatfs-read-write-demo-v1 volume_label=VISAFAT image_bytes=1048576 adapter_path=DEMO.TXT semantic_path=/demo/file.txt bytes_written=35 bytes_read=35 write_digest=20817 read_digest=20817 file_content_digest=2835 state=verified generation=1"
     );
     assert!(graph.check_invariants().is_ok());
 }
@@ -98,7 +98,7 @@ pub(super) fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_ada
             implementation: "fatfs".to_string(),
             version: "0.3.6".to_string(),
             profile: "fatfs-read-write-demo-v1".to_string(),
-            volume_label: "VMOSFAT".to_string(),
+            volume_label: "VISAFAT".to_string(),
             image_bytes: 1_048_576,
             adapter_path: "DEMO.TXT".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -131,7 +131,7 @@ pub(super) fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_ada
             implementation: "fatfs".to_string(),
             version: "0.3.6".to_string(),
             profile: "fatfs-read-write-demo-v1".to_string(),
-            volume_label: "VMOSFAT".to_string(),
+            volume_label: "VISAFAT".to_string(),
             image_bytes: 1_048_576,
             adapter_path: "BROKEN.TXT".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -164,7 +164,7 @@ pub(super) fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_ada
             implementation: "fatfs".to_string(),
             version: "0.3.6".to_string(),
             profile: "fatfs-read-write-demo-v1".to_string(),
-            volume_label: "VMOSFAT".to_string(),
+            volume_label: "VISAFAT".to_string(),
             image_bytes: 1_048_576,
             adapter_path: "INVALID.TXT".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -191,7 +191,7 @@ pub(super) fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_ada
         "fatfs",
         "0.3.6",
         "fatfs-read-write-demo-v1",
-        "VMOSFAT",
+        "VISAFAT",
         1_048_576,
         "DEMO.TXT",
         "/demo/file.txt",
@@ -217,7 +217,7 @@ pub(super) fn block_runtime_b15_rejects_stale_mismatch_duplicate_and_invalid_ada
             implementation: "fatfs".to_string(),
             version: "0.3.6".to_string(),
             profile: "fatfs-read-write-demo-v1".to_string(),
-            volume_label: "VMOSFAT".to_string(),
+            volume_label: "VISAFAT".to_string(),
             image_bytes: 1_048_576,
             adapter_path: "DEMO.TXT".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -248,7 +248,7 @@ pub(super) fn block_runtime_b15_invariants_reject_fat_adapter_generation_leak() 
         "fatfs",
         "0.3.6",
         "fatfs-read-write-demo-v1",
-        "VMOSFAT",
+        "VISAFAT",
         1_048_576,
         "DEMO.TXT",
         "/demo/file.txt",
@@ -293,7 +293,7 @@ pub(super) fn block_runtime_b16_ext4_adapter_records_read_only_contract() {
             implementation: "ext4-view".to_string(),
             version: "0.9.3".to_string(),
             profile: "ext4-read-only-demo-v1".to_string(),
-            volume_label: "VMOSEXT4".to_string(),
+            volume_label: "VISAEXT4".to_string(),
             image_bytes: 32_768,
             adapter_path: "/demo.txt".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -329,7 +329,7 @@ pub(super) fn block_runtime_b16_ext4_adapter_records_read_only_contract() {
     assert_eq!(adapter.state, Ext4AdapterObjectState::Verified);
     assert_eq!(
         graph.event_log_tail(1)[0].kind.summary(),
-        "Ext4AdapterObjectRecorded ext4_adapter_object=1860 directory_object=1850@1 file_object=1845@1 block_device=1824@1 implementation=ext4-view version=0.9.3 profile=ext4-read-only-demo-v1 volume_label=VMOSEXT4 image_bytes=32768 adapter_path=/demo.txt semantic_path=/demo/file.txt bytes_read=34 read_digest=24929 file_content_digest=2835 directory_entries=1 read_only_enforced=true state=verified generation=1"
+        "Ext4AdapterObjectRecorded ext4_adapter_object=1860 directory_object=1850@1 file_object=1845@1 block_device=1824@1 implementation=ext4-view version=0.9.3 profile=ext4-read-only-demo-v1 volume_label=VISAEXT4 image_bytes=32768 adapter_path=/demo.txt semantic_path=/demo/file.txt bytes_read=34 read_digest=24929 file_content_digest=2835 directory_entries=1 read_only_enforced=true state=verified generation=1"
     );
     assert!(graph.check_invariants().is_ok());
 }
@@ -352,7 +352,7 @@ pub(super) fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invali
             implementation: "ext4-view".to_string(),
             version: "0.9.3".to_string(),
             profile: "ext4-read-only-demo-v1".to_string(),
-            volume_label: "VMOSEXT4".to_string(),
+            volume_label: "VISAEXT4".to_string(),
             image_bytes: 32_768,
             adapter_path: "/demo.txt".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -385,7 +385,7 @@ pub(super) fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invali
             implementation: "ext4-view".to_string(),
             version: "0.9.3".to_string(),
             profile: "ext4-read-only-demo-v1".to_string(),
-            volume_label: "VMOSEXT4".to_string(),
+            volume_label: "VISAEXT4".to_string(),
             image_bytes: 32_768,
             adapter_path: "/demo-ro-false.txt".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -418,7 +418,7 @@ pub(super) fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invali
             implementation: "ext4-view".to_string(),
             version: "0.9.3".to_string(),
             profile: "ext4-read-only-demo-v1".to_string(),
-            volume_label: "VMOSEXT4".to_string(),
+            volume_label: "VISAEXT4".to_string(),
             image_bytes: 32_768,
             adapter_path: "/invalid.txt".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -448,7 +448,7 @@ pub(super) fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invali
         "ext4-view",
         "0.9.3",
         "ext4-read-only-demo-v1",
-        "VMOSEXT4",
+        "VISAEXT4",
         32_768,
         "/demo.txt",
         "/demo/file.txt",
@@ -474,7 +474,7 @@ pub(super) fn block_runtime_b16_rejects_stale_not_read_only_duplicate_and_invali
             implementation: "ext4-view".to_string(),
             version: "0.9.3".to_string(),
             profile: "ext4-read-only-demo-v1".to_string(),
-            volume_label: "VMOSEXT4".to_string(),
+            volume_label: "VISAEXT4".to_string(),
             image_bytes: 32_768,
             adapter_path: "/demo.txt".to_string(),
             semantic_path: "/demo/file.txt".to_string(),
@@ -505,7 +505,7 @@ pub(super) fn block_runtime_b16_invariants_reject_ext4_adapter_generation_leak()
         "ext4-view",
         "0.9.3",
         "ext4-read-only-demo-v1",
-        "VMOSEXT4",
+        "VISAEXT4",
         32_768,
         "/demo.txt",
         "/demo/file.txt",

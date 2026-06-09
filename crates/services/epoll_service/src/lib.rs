@@ -7,7 +7,7 @@ extern crate std;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 
-use vmos_abi::{
+use visa_abi::{
     EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, ERR_EEXIST, ERR_EINVAL, ERR_EIO, ERR_ELOOP,
     ERR_ENOENT,
 };

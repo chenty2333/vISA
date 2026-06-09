@@ -46,7 +46,7 @@ pub struct SmoltcpAdapterConfig {
 }
 
 impl SmoltcpAdapterConfig {
-    pub const fn default_vmos() -> Self {
+    pub const fn default_visa() -> Self {
         Self {
             contract: VIRTIO_NET0_CONTRACT,
             ipv4_addr: DEFAULT_IPV4_ADDR,
@@ -601,13 +601,13 @@ fn pump_driver_rx_to_stack(
 
 fn driver_errno_to_substrate(errno: i32) -> SubstrateError {
     match errno {
-        vmos_abi::ERR_EAGAIN => {
+        visa_abi::ERR_EAGAIN => {
             SubstrateError::ContractViolation { detail: "driver packet queue is full" }
         }
-        vmos_abi::ERR_EINVAL => {
+        visa_abi::ERR_EINVAL => {
             SubstrateError::ContractViolation { detail: "driver rejected invalid packet frame" }
         }
-        vmos_abi::ERR_EIO => {
+        visa_abi::ERR_EIO => {
             SubstrateError::ContractViolation { detail: "driver packet buffer contract violation" }
         }
         _ => SubstrateError::HardwareFault {
@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn smoltcp_adapter_builds_ethernet_ipv4_tcp_profile() {
-        let evidence = build_smoltcp_adapter_evidence(SmoltcpAdapterConfig::default_vmos())
+        let evidence = build_smoltcp_adapter_evidence(SmoltcpAdapterConfig::default_visa())
             .expect("smoltcp adapter evidence");
 
         assert_eq!(evidence.implementation, "smoltcp");
@@ -825,14 +825,14 @@ mod tests {
 
     #[test]
     fn smoltcp_adapter_rejects_contract_and_prefix_mismatch() {
-        let mut config = SmoltcpAdapterConfig::default_vmos();
+        let mut config = SmoltcpAdapterConfig::default_visa();
         config.contract.mtu += 1;
         assert_eq!(
             build_smoltcp_adapter_evidence(config),
             Err("smoltcp adapter packet device contract mismatch")
         );
 
-        let mut config = SmoltcpAdapterConfig::default_vmos();
+        let mut config = SmoltcpAdapterConfig::default_visa();
         config.ipv4_prefix_len = 0;
         assert_eq!(
             build_smoltcp_adapter_evidence(config),
@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn tcp_socket_recv_capacity_is_bounded_at_creation() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
 
         let socket = stack.create_tcp_socket_with_buffer_capacity(2048, 1024).expect("tcp socket");
         let snapshot = stack.tcp_snapshot(socket).expect("tcp snapshot");
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn packet_stack_pumps_arp_request_through_smoltcp_device() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let request =
             arp_request(remote_mac, [10, 0, 2, 2], VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
@@ -889,7 +889,7 @@ mod tests {
     #[test]
     fn packet_backend_pump_bridges_raw_frames_into_smoltcp() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let request =
             arp_request(remote_mac, [10, 0, 2, 2], VIRTIO_NET0_CONTRACT.mac, DEFAULT_IPV4_ADDR);
@@ -957,7 +957,7 @@ mod tests {
         );
 
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         assert_eq!(
             stack.pump_backend(&mut backend, 1),
             Err(SubstrateError::ContractViolation {
@@ -969,7 +969,7 @@ mod tests {
     #[test]
     fn stack_driver_backend_pump_moves_frames_across_full_runtime_boundary() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let request =
@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn stack_driver_backend_pump_drains_rearmed_driver_rx_queue() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
         let mut backend = InMemoryPacketBackend::new();
         for index in 0..RAW_RX_QUEUE_DEPTH {
@@ -1030,7 +1030,7 @@ mod tests {
     #[test]
     fn stack_driver_backend_pump_until_quiescent_drains_multiple_backend_batches() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
         let mut backend = InMemoryPacketBackend::new();
         let frame_count = DRIVER_BACKEND_RX_BATCH * 2;
@@ -1069,7 +1069,7 @@ mod tests {
     #[test]
     fn stack_driver_backend_pump_until_quiescent_reports_saturation() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
         let mut backend = InMemoryPacketBackend::new();
         let frame_count = DRIVER_BACKEND_RX_BATCH * 2;
@@ -1105,7 +1105,7 @@ mod tests {
     #[test]
     fn stack_driver_backend_pump_until_quiescent_rejects_invalid_limit() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let mut driver = DriverVirtioNetState::new();
         let mut backend = InMemoryPacketBackend::new();
 
@@ -1140,7 +1140,7 @@ mod tests {
     #[test]
     fn tcp_connect_resolves_arp_and_emits_syn_frame() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let socket = stack.create_tcp_socket().expect("tcp socket");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let remote_ip = [10, 0, 2, 2];
@@ -1184,7 +1184,7 @@ mod tests {
     #[test]
     fn tcp_connect_reaches_established_after_syn_ack() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let socket = stack.create_tcp_socket().expect("tcp socket");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let remote_ip = [10, 0, 2, 2];
@@ -1218,7 +1218,7 @@ mod tests {
     #[test]
     fn tcp_remote_fin_marks_receive_half_closed() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let socket = stack.create_tcp_socket().expect("tcp socket");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let remote_ip = [10, 0, 2, 2];
@@ -1254,7 +1254,7 @@ mod tests {
     #[test]
     fn tcp_listen_reaches_established_after_remote_handshake() {
         let mut stack =
-            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_vmos()).expect("packet stack");
+            SmoltcpPacketStack::new(SmoltcpAdapterConfig::default_visa()).expect("packet stack");
         let socket = stack.create_tcp_socket().expect("tcp socket");
         let remote_mac = [0x02, 0, 0, 0, 0, 2];
         let remote_ip = [10, 0, 2, 2];

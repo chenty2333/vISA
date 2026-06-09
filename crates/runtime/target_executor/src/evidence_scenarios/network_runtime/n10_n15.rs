@@ -3,7 +3,7 @@ use super::super::super::*;
 pub(crate) fn record_network_runtime_n10_evidence(
     semantic: &mut SemanticGraph,
 ) -> Result<(), Box<dyn Error>> {
-    let evidence = build_smoltcp_adapter_evidence(SmoltcpAdapterConfig::default_vmos())
+    let evidence = build_smoltcp_adapter_evidence(SmoltcpAdapterConfig::default_visa())
         .map_err(|err| format!("network runtime n10 smoltcp adapter evidence failed: {err}"))?;
     let backend = ContractObjectRef::new(ContractObjectKind::VirtioNetBackendObject, 10_010, 1);
     let command = CommandEnvelope::new(
