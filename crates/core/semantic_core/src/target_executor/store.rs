@@ -93,6 +93,24 @@ impl TargetStoreManager {
         store_id
     }
 
+    pub fn register_store_record(
+        &mut self,
+        store: StoreRecord,
+        rebind_policy: &str,
+    ) -> Result<StoreId, TargetStoreManagerError> {
+        if store.id == 0 || self.records.iter().any(|record| record.store.id == store.id) {
+            return Err(TargetStoreManagerError::InvalidTransition);
+        }
+        let store_id = store.id;
+        self.next_store_id = self.next_store_id.max(store_id + 1);
+        self.records.push(ManagedStoreRecord {
+            resource_arena: format!("store-arena:{}", store.package),
+            rebind_policy: rebind_policy.to_string(),
+            store,
+        });
+        Ok(store_id)
+    }
+
     pub fn set_running(&mut self, store: StoreId) -> Result<(), TargetStoreManagerError> {
         self.set_state(store, StoreState::Running)
     }

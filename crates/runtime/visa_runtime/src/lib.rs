@@ -912,14 +912,16 @@ impl VisaRuntime {
             Some("visa-runtime-loop"),
         );
 
-        let store_id = self.store_manager.register_verified_artifact_with_id(
-            store_id,
-            &verified,
-            "restartable",
-            "visa-runtime",
-        );
-        self.store_manager
-            .set_running(store_id)
+        let semantic_store = self
+            .semantic
+            .stores()
+            .iter()
+            .find(|record| record.id == store_id)
+            .cloned()
+            .ok_or(VisaRuntimeError::MissingStore(store_id))?;
+        let store_id = self
+            .store_manager
+            .register_store_record(semantic_store, "visa-runtime")
             .map_err(|error| VisaRuntimeError::Store(error.message()))?;
 
         let store_generation = self.store_generation(store_id)?;
@@ -2276,7 +2278,7 @@ pub mod personality {
 mod tests {
     use std::{collections::BTreeMap, fs, vec};
 
-    use semantic_core::{EventKind, target_executor::HostcallCategory};
+    use semantic_core::{EventKind, target_executor::HostcallCategory, validate_contract_graph};
     use sha2::{Digest, Sha256};
     use substrate_api::SubstrateResult;
     use target_abi::{
@@ -2728,6 +2730,142 @@ mod tests {
         assert!(!runtime.events().iter().any(|event| {
             matches!(event, VisaRuntimeEvent::SubstrateAuthorityExtracted { .. })
         }));
+    }
+
+    #[test]
+    fn runtime_rejects_malformed_artifact_images_before_contract_state() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let initial_events = runtime.events().len();
+        let mut substrate = MockSubstrate::default();
+        let descriptor = VisaArtifactDescriptor::new(
+            45,
+            "bad-image",
+            "bad-image-artifact",
+            SubstrateProfile::GuestFrontend,
+        );
+
+        let err = runtime
+            .load_artifact(
+                VisaArtifactInput { bytes: b"not-a-target-artifact", descriptor },
+                &mut substrate,
+            )
+            .expect_err("bad wire image must be rejected");
+
+        assert_eq!(err, VisaRuntimeError::Artifact(TargetArtifactError::ImageTooSmall));
+        assert!(substrate.loaded.is_empty());
+        assert!(substrate.published.is_empty());
+        assert_eq!(runtime.events().len(), initial_events);
+        let evidence = runtime.evidence_snapshot();
+        assert!(evidence.contract_graph.artifacts.is_empty());
+        assert!(evidence.contract_graph.code_objects.is_empty());
+        assert!(evidence.contract_graph.stores.is_empty());
+        assert!(evidence.contract_graph.activations.is_empty());
+        assert_eq!(evidence.hostcall_trace_count(), 0);
+    }
+
+    #[test]
+    fn runtime_rejects_artifact_without_code_object_before_substrate_dispatch() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let initial_events = runtime.events().len();
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&[
+            SectionKindV1::Manifest,
+            SectionKindV1::HostcallImportTable,
+            SectionKindV1::TrapMap,
+            SectionKindV1::PcRangeTable,
+            SectionKindV1::ProfileRequirements,
+            SectionKindV1::Signature,
+        ]);
+        let descriptor = VisaArtifactDescriptor::new(
+            46,
+            "missing-code",
+            "missing-code-artifact",
+            SubstrateProfile::GuestFrontend,
+        );
+
+        let err = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect_err("missing CodeObject section must be rejected");
+
+        assert_eq!(
+            err,
+            VisaRuntimeError::Artifact(TargetArtifactError::MissingRequiredSection(
+                SectionKindV1::CodeObject
+            ))
+        );
+        assert!(substrate.loaded.is_empty());
+        assert!(substrate.published.is_empty());
+        assert_eq!(runtime.events().len(), initial_events);
+        assert!(runtime.snapshot().artifacts.is_empty());
+        assert!(runtime.snapshot().code_objects.is_empty());
+        assert!(runtime.snapshot().stores.is_empty());
+    }
+
+    #[test]
+    fn runtime_trap_evidence_preserves_activation_path_identities() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let loaded = runtime
+            .load_artifact(
+                VisaArtifactInput {
+                    bytes: &artifact,
+                    descriptor: VisaArtifactDescriptor::new(
+                        47,
+                        "trap-demo",
+                        "trap-demo-artifact",
+                        SubstrateProfile::GuestFrontend,
+                    ),
+                },
+                &mut substrate,
+            )
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        runtime.record_synthetic_trap(
+            activation.activation_id,
+            activation.store_id,
+            "runtime evidence trap",
+        );
+
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(validate_contract_graph(&evidence.contract_graph), Vec::new());
+        assert_eq!(evidence.contract_graph.artifacts.len(), 1);
+        assert_eq!(evidence.contract_graph.code_objects.len(), 1);
+        assert_eq!(evidence.contract_graph.stores.len(), 1);
+        assert_eq!(evidence.contract_graph.activations.len(), 1);
+        assert_eq!(evidence.contract_graph.traps.len(), 1);
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.store, Some(activation.store_id));
+        assert_eq!(trap.activation, Some(activation.activation_id));
+        assert_eq!(trap.code_object, Some(activation.code_object_id));
+        assert_eq!(trap.artifact, Some(activation.artifact_id));
+        assert_eq!(trap.attribution_status, "synthetic");
+        assert_eq!(trap.detail, "runtime evidence trap");
+
+        let snapshot_json = evidence.contract_graph_snapshot_artifact_json();
+        assert!(snapshot_json.contains("\"artifacts\":[{\"id\":47,\"generation\":1}]"));
+        assert!(snapshot_json.contains(&format!(
+            "\"code_objects\":[{{\"id\":{},\"generation\":{}}}]",
+            activation.code_object_id, evidence.contract_graph.code_objects[0].generation
+        )));
+        assert!(snapshot_json.contains(&format!(
+            "\"stores\":[{{\"id\":{},\"generation\":{}}}]",
+            activation.store_id, evidence.contract_graph.stores[0].generation
+        )));
+        assert!(snapshot_json.contains(&format!(
+            "\"activations\":[{{\"id\":{},\"generation\":{}}}]",
+            activation.activation_id, evidence.contract_graph.activations[0].generation
+        )));
+        assert!(snapshot_json.contains(&format!(
+            "\"traps\":[{{\"id\":{},\"generation\":{}}}]",
+            trap.id, trap.generation
+        )));
     }
 
     #[test]

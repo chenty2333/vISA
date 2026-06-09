@@ -429,6 +429,68 @@ fn hostcall_derives_subject_from_code_and_reports_bad_abi_with_trace() {
 }
 
 #[test]
+fn hostcall_rejects_stale_activation_generation_without_success_trace() {
+    let (_artifact, store, code, capabilities) = running_store_and_code();
+    let cap = capabilities.check("driver_virtio_net", "mmio.virtio-net", "map").unwrap().clone();
+    let mut executor = TargetExecutor::new();
+    let activation = executor
+        .start_activation(
+            &store.store,
+            &code,
+            ActivationEntry::Symbol("hostcall_generation".to_string()),
+        )
+        .unwrap();
+
+    let prepared = executor
+        .preflight_hostcall(
+            &code,
+            HostcallFrame::new_bound(
+                activation,
+                &store.store,
+                &code,
+                1,
+                "mmio.virtio-net",
+                "map",
+                cap.generation,
+            )
+            .with_cap_args(Vec::from([CapabilityHandleArg::from_record(&cap, 1, &["map"])]))
+            .to_wire_frame(),
+            &capabilities,
+        )
+        .unwrap();
+    executor.commit_hostcall_success(prepared).unwrap();
+    assert_eq!(executor.hostcall_trace().len(), 1);
+    assert_eq!(executor.hostcall_trace()[0].result, "complete");
+    assert_eq!(
+        executor.activations().iter().find(|record| record.id == activation).unwrap().generation,
+        2
+    );
+
+    let stale_frame = HostcallFrame::new_bound(
+        activation,
+        &store.store,
+        &code,
+        1,
+        "mmio.virtio-net",
+        "map",
+        cap.generation,
+    )
+    .with_cap_args(Vec::from([CapabilityHandleArg::from_record(&cap, 1, &["map"])]))
+    .to_wire_frame();
+
+    assert!(matches!(
+        executor.preflight_hostcall(&code, stale_frame, &capabilities),
+        Err(TargetExecutorError::ActivationStoreMismatch)
+    ));
+    assert_eq!(executor.hostcall_trace().len(), 1);
+    assert_eq!(
+        executor.activations().iter().find(|record| record.id == activation).unwrap().generation,
+        2
+    );
+    assert!(executor.traps().is_empty());
+}
+
+#[test]
 fn cap_args_are_checked_against_ledger_generation_and_rights() {
     let (_artifact, store, code, capabilities) = running_store_and_code();
     let cap = capabilities.check("driver_virtio_net", "mmio.virtio-net", "map").unwrap().clone();
