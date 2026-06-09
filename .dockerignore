@@ -5,6 +5,7 @@ target/
 **/target/
 
 .cache/
+.ci-cache/
 .cargo/registry/
 .cargo/git/
 

@@ -61,20 +61,26 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && rustup default "${RUST_TOOLCHAIN}" \
     && printf '%s\n' 'export PATH=/usr/local/cargo/bin:$PATH' >/etc/profile.d/visa-rust.sh
 
-RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
-    && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
-    && mkdir -p \
+RUN set -eux; \
+    if getent group "${USER_GID}" >/dev/null; then \
+        group_name="$(getent group "${USER_GID}" | cut -d: -f1)"; \
+    else \
+        groupadd --gid "${USER_GID}" "${USERNAME}"; \
+        group_name="${USERNAME}"; \
+    fi; \
+    useradd --uid "${USER_UID}" --gid "${group_name}" -m -s /bin/bash "${USERNAME}"; \
+    mkdir -p \
         /workspace/target \
         /usr/local/cargo/git \
         /usr/local/cargo/registry \
-        /home/"${USERNAME}"/.cache/visa-ltp \
-    && chown -R "${USERNAME}:${USERNAME}" \
+        /home/"${USERNAME}"/.cache/visa-ltp; \
+    chown -R "${USERNAME}:${group_name}" \
         /workspace \
         /usr/local/cargo \
         /usr/local/rustup \
-        /home/"${USERNAME}"/.cache \
-    && echo "${USERNAME} ALL=(root) NOPASSWD:ALL" >/etc/sudoers.d/"${USERNAME}" \
-    && chmod 0440 /etc/sudoers.d/"${USERNAME}"
+        /home/"${USERNAME}"/.cache; \
+    echo "${USERNAME} ALL=(root) NOPASSWD:ALL" >/etc/sudoers.d/"${USERNAME}"; \
+    chmod 0440 /etc/sudoers.d/"${USERNAME}"
 
 USER ${USERNAME}
 WORKDIR /workspace

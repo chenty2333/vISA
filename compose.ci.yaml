@@ -1,0 +1,11 @@
+services:
+  dev:
+    environment:
+      CI: "true"
+      GITHUB_ACTIONS: ${GITHUB_ACTIONS:-}
+    volumes:
+      - .:/workspace
+      - ./.ci-cache/cargo-registry:/usr/local/cargo/registry
+      - ./.ci-cache/cargo-git:/usr/local/cargo/git
+      - ./.ci-cache/target:/workspace/target
+      - ./.ci-cache/visa-ltp:/home/visa/.cache/visa-ltp

@@ -4,8 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        USER_UID: ${UID:-1000}
-        USER_GID: ${GID:-1000}
+        USER_UID: ${VISA_DOCKER_UID:-1000}
+        USER_GID: ${VISA_DOCKER_GID:-1000}
     image: visa-dev:latest
     working_dir: /workspace
     stdin_open: true

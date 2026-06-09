@@ -1,3 +1,4 @@
 /target
+/.ci-cache
 
 .codex
