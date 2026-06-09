@@ -51,6 +51,10 @@ visa-conformance
 kernel
 ```
 
+The `visa-conformance` gate runs both the crate tests and
+`cargo run -p visa-conformance -- validate-sample`, which validates the
+conformance catalog, sample reports, and minimum mature evidence matrix.
+
 Inside the container, `VISA_LTP_BUILD_BACKEND=host` is set so
 `scripts/build-visa-ltp-static-syscalls.sh` uses the container's own toolchain
 instead of starting nested Docker.

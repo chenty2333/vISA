@@ -1,5 +1,6 @@
 mod artifacts;
 mod catalog;
+mod evidence_matrix;
 mod hash;
 mod ltp;
 mod performance;
@@ -16,6 +17,10 @@ pub use artifacts::{artifact_uri_is_bundle_relative, validate_report_artifacts};
 pub use catalog::{
     full_catalog, linux_ltp_catalog, performance_catalog, substrate_profile_catalog,
     visa_core_catalog, wasi_personality_catalog,
+};
+pub use evidence_matrix::{
+    EVIDENCE_MATRIX_SCHEMA_VERSION, EvidenceMatrix, EvidenceMatrixEntry,
+    minimum_mature_evidence_matrix, validate_evidence_matrix,
 };
 pub use ltp::{
     LTP_FULL_SUITE_ID, LTP_VISA_SUBSET_SUITE_ID, LTP_VISA_TRACE_SCHEMA_VERSION,

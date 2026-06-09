@@ -47,6 +47,80 @@ fn visa_native_full_hostcall_spec_is_primary_visa_conformance() {
 }
 
 #[test]
+fn minimum_mature_evidence_matrix_is_valid_and_layered() {
+    let catalog = full_catalog();
+    let matrix = minimum_mature_evidence_matrix();
+    let validation = validate_evidence_matrix(&matrix, &catalog);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    assert_eq!(matrix.schema_version, EVIDENCE_MATRIX_SCHEMA_VERSION);
+    assert_eq!(matrix.entries.len(), 3);
+
+    let semantic = matrix
+        .entries
+        .iter()
+        .find(|entry| entry.claim_id == "mature.semantic-model")
+        .expect("semantic model matrix entry");
+    assert_eq!(semantic.evidence_boundary, Boundary::SemanticModel);
+    assert_eq!(semantic.claim_kind, ClaimKind::VisaSemanticConformance);
+    assert_eq!(semantic.required_artifacts, vec![EvidenceArtifactKind::ContractGraphSnapshot]);
+    assert!(semantic.profile_rule.contains("semantic-harness"));
+    assert!(semantic.known_risks.iter().any(|risk| risk.contains("Does not prove artifact")));
+
+    let portable = matrix
+        .entries
+        .iter()
+        .find(|entry| entry.claim_id == "mature.portable-artifact-execution")
+        .expect("portable artifact execution matrix entry");
+    assert_eq!(portable.evidence_boundary, Boundary::PortableArtifactExecution);
+    assert_eq!(portable.claim_kind, ClaimKind::VisaSemanticConformance);
+    assert!(portable.proving_spec_ids.iter().any(|id| id == "visa.artifact.load"));
+    assert!(portable.proving_spec_ids.iter().any(|id| id == "visa.native.full-hostcall-abi"));
+    assert_eq!(portable.required_artifacts, vec![EvidenceArtifactKind::ContractGraphSnapshot]);
+    assert!(portable.known_risks.iter().any(|risk| risk.contains("real target")));
+
+    let real_target = matrix
+        .entries
+        .iter()
+        .find(|entry| entry.claim_id == "mature.real-target-substrate-execution")
+        .expect("real target substrate matrix entry");
+    assert_eq!(real_target.evidence_boundary, Boundary::RealTargetSubstrate);
+    assert_eq!(real_target.claim_kind, ClaimKind::SubstrateProfileConformance);
+    assert_eq!(real_target.report_suite, "visa-substrate-profile-conformance");
+    assert!(
+        real_target.required_artifacts.contains(&EvidenceArtifactKind::SubstrateExtractionTrace)
+    );
+    assert!(real_target.required_artifacts.contains(&EvidenceArtifactKind::DeviceTrace));
+    assert!(real_target.profile_rule.contains("actual target profile"));
+    assert!(real_target.known_risks.iter().any(|risk| risk.contains("Local semantic")));
+}
+
+#[test]
+fn evidence_matrix_rejects_unknown_or_incomplete_claim_entries() {
+    let catalog = full_catalog();
+    let mut matrix = minimum_mature_evidence_matrix();
+    matrix.entries[0].proving_spec_ids.push("missing.spec".to_string());
+    matrix.entries[1].known_risks.clear();
+    matrix.entries[2].required_artifacts.clear();
+
+    let validation = validate_evidence_matrix(&matrix, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "unknown-evidence-proving-spec")
+    );
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "missing-evidence-known-risks")
+    );
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-evidence-artifact-requirement")
+    );
+}
+
+#[test]
 fn substrate_conformance_report_maps_to_unified_report() {
     let substrate_report = passing_substrate_report(SubstrateProfile::SemanticHarness);
     let report = substrate_report_from_conformance(

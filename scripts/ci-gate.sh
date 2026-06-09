@@ -70,6 +70,8 @@ gate_check_wasm() {
 
 gate_visa_conformance() {
     run_gate "visa-conformance: cargo test" cargo test -p visa-conformance
+    run_gate "visa-conformance: validate sample reports and evidence matrix" \
+        cargo run -p visa-conformance -- validate-sample
 }
 
 gate_kernel() {

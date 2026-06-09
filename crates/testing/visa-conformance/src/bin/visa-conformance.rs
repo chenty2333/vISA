@@ -12,9 +12,10 @@ use visa_conformance::{
     criterion_performance_report_from_estimates_dir_with_boundary, default_visa_ltp_plan,
     full_catalog, gate_report_json, linux_ltp_catalog, ltp_raw_log_from_serial,
     ltp_report_from_log_dir as build_ltp_report_from_log_dir, ltp_visa_subset_report_from_log_dir,
-    ltp_visa_trace_from_serial, parse_report_json, performance_catalog, sample_ltp_report,
-    sample_performance_report, sample_report, validate_catalog, validate_report,
-    validate_report_artifacts, visa_ltp_manifest_plan,
+    ltp_visa_trace_from_serial, minimum_mature_evidence_matrix, parse_report_json,
+    performance_catalog, sample_ltp_report, sample_performance_report, sample_report,
+    validate_catalog, validate_evidence_matrix, validate_report, validate_report_artifacts,
+    visa_ltp_manifest_plan,
 };
 
 fn main() -> ExitCode {
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
             let catalog = full_catalog();
             print_json(&sample_report(&catalog))
         }
+        "evidence-matrix-json" => print_json(&minimum_mature_evidence_matrix()),
         "ltp-plan-json" => print_json(&LtpInvocation::default_plan("target/ltp")),
         "ltp-plan-lines" => {
             let output_dir = args.next().unwrap_or_else(|| "target/ltp".to_string());
@@ -235,6 +237,8 @@ fn main() -> ExitCode {
         "validate-sample" => {
             let catalog = full_catalog();
             let catalog_report = validate_catalog(&catalog);
+            let matrix_report =
+                validate_evidence_matrix(&minimum_mature_evidence_matrix(), &catalog);
             let layered_sample = sample_report(&catalog);
             let layered_report = validate_report(&layered_sample, &catalog);
             let ltp_catalog = linux_ltp_catalog();
@@ -243,13 +247,19 @@ fn main() -> ExitCode {
             let perf_catalog = performance_catalog();
             let perf_sample = sample_performance_report();
             let perf_report = validate_report(&perf_sample, &perf_catalog);
-            if catalog_report.ok && layered_report.ok && ltp_report.ok && perf_report.ok {
+            if catalog_report.ok
+                && matrix_report.ok
+                && layered_report.ok
+                && ltp_report.ok
+                && perf_report.ok
+            {
                 println!("visa-conformance sample reports are structurally valid");
                 ExitCode::SUCCESS
             } else {
                 eprintln!(
-                    "catalog findings: {}\nlayered sample findings: {}\nltp sample findings: {}\nperformance sample findings: {}",
+                    "catalog findings: {}\nevidence matrix findings: {}\nlayered sample findings: {}\nltp sample findings: {}\nperformance sample findings: {}",
                     serde_json::to_string_pretty(&catalog_report).unwrap(),
+                    serde_json::to_string_pretty(&matrix_report).unwrap(),
                     serde_json::to_string_pretty(&layered_report).unwrap(),
                     serde_json::to_string_pretty(&ltp_report).unwrap(),
                     serde_json::to_string_pretty(&perf_report).unwrap()
@@ -590,7 +600,7 @@ fn write_json_file<T: serde::Serialize>(path: &str, value: &T) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: visa-conformance [plan-json|sample-report-json|ltp-plan-json|ltp-plan-lines [output-dir]|visa-ltp-plan-lines [output-dir] [binary-root]|visa-ltp-manifest-plan-lines <output-dir> <binary-root> <manifest>|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|ltp-visa-report-from-logs <dir> [boundary] [profile]|ltp-raw-log-from-serial <case-id> <serial-log> [runner-status]|ltp-visa-trace-from-serial <spec-id> <case-id> <binary> <raw-log-uri> <serial-log-uri> <serial-log> [runner-status]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
+        "usage: visa-conformance [plan-json|sample-report-json|evidence-matrix-json|ltp-plan-json|ltp-plan-lines [output-dir]|visa-ltp-plan-lines [output-dir] [binary-root]|visa-ltp-manifest-plan-lines <output-dir> <binary-root> <manifest>|sample-ltp-report-json|sample-performance-report-json|ltp-report-from-logs <dir> [boundary] [profile]|ltp-visa-report-from-logs <dir> [boundary] [profile]|ltp-raw-log-from-serial <case-id> <serial-log> [runner-status]|ltp-visa-trace-from-serial <spec-id> <case-id> <binary> <raw-log-uri> <serial-log-uri> <serial-log> [runner-status]|performance-plan-lines [criterion-dir]|performance-report-from-criterion <dir> [boundary] [profile]|attach-evidence-artifact <report path|-> <spec-id|*> <kind> <uri> <sha256> <description...>|attach-evidence-artifact-file <report path|-> <spec-id|*> <kind> <path> <description...>|validate-report <path|->|validate-artifacts <path|-> [artifact-root]|validate-report-with-artifacts <path|-> [artifact-root]|write-sample-report <path>|write-sample-ltp-report <path>|write-sample-performance-report <path>|validate-sample]"
     );
     ExitCode::FAILURE
 }
