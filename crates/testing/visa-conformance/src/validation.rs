@@ -81,14 +81,7 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                 ),
             ));
         }
-        if let Some(profile) = &result.observed_profile
-            && SubstrateProfile::parse(profile).is_none()
-        {
-            findings.push(finding(
-                "unknown-observed-profile",
-                format!("{} observed unknown profile {}", result.spec_id, profile),
-            ));
-        }
+        validate_result_profile(spec, result, &mut findings);
         validate_evidence_artifacts(result, &mut findings);
         if is_linux_ltp_spec(spec)
             && !matches!(result.outcome, Outcome::NotRun)
@@ -136,6 +129,49 @@ pub fn validate_report(report: &ConformanceReport, catalog: &[TestSpec]) -> Vali
                     "missing-contract-graph-snapshot-artifact",
                     format!(
                         "{} claims portable vISA semantic execution without a contract graph snapshot artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
+            if profile_gate_event_count(result) > 0.0 && !has_profile_gate_trace_artifact(result) {
+                findings.push(finding(
+                    "missing-profile-gate-trace-artifact",
+                    format!(
+                        "{} reports profile gate events without a profile gate trace artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
+            if unsupported_substrate_event_count(result) > 0.0
+                && !has_substrate_event_trace_artifact(result)
+            {
+                findings.push(finding(
+                    "missing-substrate-event-trace-artifact",
+                    format!(
+                        "{} reports unsupported substrate events without a substrate event trace artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
+            if denied_substrate_event_count(result) > 0.0
+                && !has_substrate_event_trace_artifact(result)
+            {
+                findings.push(finding(
+                    "missing-substrate-event-trace-artifact",
+                    format!(
+                        "{} reports denied substrate events without a substrate event trace artifact",
+                        result.spec_id
+                    ),
+                ));
+            }
+            if authority_extraction_event_count(result) > 0.0
+                && !has_substrate_event_trace_artifact(result)
+                && !has_substrate_extraction_trace_artifact(result)
+            {
+                findings.push(finding(
+                    "missing-substrate-event-trace-artifact",
+                    format!(
+                        "{} reports substrate authority extraction events without a substrate event or extraction trace artifact",
                         result.spec_id
                     ),
                 ));
@@ -196,12 +232,87 @@ fn validate_evidence_artifacts(result: &TestResult, findings: &mut Vec<Validatio
     }
 }
 
+fn validate_result_profile(
+    spec: &TestSpec,
+    result: &TestResult,
+    findings: &mut Vec<ValidationFinding>,
+) {
+    let observed = match result.observed_profile.as_deref() {
+        Some(profile) => match SubstrateProfile::parse(profile) {
+            Some(profile) => Some(profile),
+            None => {
+                findings.push(finding(
+                    "unknown-observed-profile",
+                    format!("{} observed unknown profile {}", result.spec_id, profile),
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+    let required = spec.required_profile.as_deref().and_then(SubstrateProfile::parse);
+    let Some(required) = required else {
+        return;
+    };
+    if !matches!(result.outcome, Outcome::Pass | Outcome::Fail) {
+        return;
+    }
+    if observed.is_none() {
+        findings.push(finding(
+            "missing-observed-profile",
+            format!(
+                "{} requires profile {} but result has no observed profile",
+                result.spec_id,
+                required.as_str()
+            ),
+        ));
+        return;
+    }
+    if let Some(observed) = observed
+        && !observed.satisfies(required)
+    {
+        findings.push(finding(
+            "insufficient-observed-profile",
+            format!(
+                "{} observed profile {} but requires {}",
+                result.spec_id,
+                observed.as_str(),
+                required.as_str()
+            ),
+        ));
+    }
+}
+
 fn has_real_target_extraction_artifact(result: &TestResult) -> bool {
     result.evidence_artifacts.iter().any(|artifact| {
         matches!(
             artifact.kind,
             EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
         ) && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn has_profile_gate_trace_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::ProfileGateTrace
+            && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn has_substrate_event_trace_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::SubstrateEventTrace
+            && !artifact.uri.trim().is_empty()
+            && is_sha256_hex(&artifact.sha256)
+    })
+}
+
+fn has_substrate_extraction_trace_artifact(result: &TestResult) -> bool {
+    result.evidence_artifacts.iter().any(|artifact| {
+        artifact.kind == EvidenceArtifactKind::SubstrateExtractionTrace
+            && !artifact.uri.trim().is_empty()
             && is_sha256_hex(&artifact.sha256)
     })
 }
@@ -228,6 +339,30 @@ fn has_linux_personality_trace_artifact(result: &TestResult) -> bool {
             && !artifact.uri.trim().is_empty()
             && is_sha256_hex(&artifact.sha256)
     })
+}
+
+fn profile_gate_event_count(result: &TestResult) -> f64 {
+    metric_value(result, "profile_gate_event_count")
+        + metric_value(result, "profile_gate_rejection_count")
+        + metric_value(result, "profile_gate_degradation_count")
+}
+
+fn unsupported_substrate_event_count(result: &TestResult) -> f64 {
+    metric_value(result, "unsupported_substrate_event_count")
+}
+
+fn denied_substrate_event_count(result: &TestResult) -> f64 {
+    metric_value(result, "denied_substrate_event_count")
+        .max(metric_value(result, "capability_denied_substrate_event_count"))
+}
+
+fn authority_extraction_event_count(result: &TestResult) -> f64 {
+    metric_value(result, "authority_extraction_event_count")
+        .max(metric_value(result, "substrate_authority_extraction_count"))
+}
+
+fn metric_value(result: &TestResult, name: &str) -> f64 {
+    result.metrics.get(name).copied().filter(|value| *value > 0.0).unwrap_or(0.0)
 }
 
 fn is_linux_ltp_spec(spec: &TestSpec) -> bool {

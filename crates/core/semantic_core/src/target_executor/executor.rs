@@ -111,6 +111,7 @@ impl TargetExecutor {
             code_object: code.id,
             code_generation: code.generation,
             artifact: code.artifact_id,
+            profile: code.owner_profile.clone(),
             entry,
             generation: 1,
             state: ActivationState::Running,
@@ -607,7 +608,7 @@ impl TargetExecutor {
             "complete",
             HostcallReturnTag::Ok,
             None,
-            None,
+            prepared.frame.wait_token_out,
         );
         let transition_event = self.next_event("activation-hostcall-complete");
         let old_generation = self.activations[prepared.activation_index].generation;
@@ -1148,10 +1149,12 @@ impl TargetExecutor {
         let mut unbound = false;
         let mut code_generation = None;
         let mut code_ref = None;
+        let mut previous_code_ref = None;
         if let Some(code) = code.as_deref_mut() {
             if code.bound_store == Some(store.id)
                 && code.bound_store_generation == Some(expected_store_generation)
             {
+                previous_code_ref = Some(code.object_ref());
                 code.bound_store = None;
                 code.bound_store_generation = None;
                 code.hostcall_table = None;
@@ -1201,6 +1204,17 @@ impl TargetExecutor {
             }
         }
         if let Some(code_ref) = code_ref {
+            if let Some(previous_code_ref) = previous_code_ref
+                && previous_code_ref != code_ref
+            {
+                self.tombstones.push(TombstoneRecord::new(
+                    ContractObjectKind::CodeObject,
+                    previous_code_ref.id,
+                    previous_code_ref.generation,
+                    finished_at,
+                    "fault-cleanup-code-target-retired",
+                ));
+            }
             self.tombstones.push(TombstoneRecord::new(
                 ContractObjectKind::CodeObject,
                 code_ref.id,

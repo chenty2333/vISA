@@ -40,7 +40,7 @@ fi
 output_dir="$1"
 binary_root="$2"
 boundary="${3:-portable-artifact-execution}"
-profile="${4:-guest-frontend}"
+profile="${4:-device-capable}"
 single_runner="${5:-scripts/run-visa-ltp-single.sh}"
 
 if [[ ! -d "$binary_root" ]]; then

@@ -1,6 +1,8 @@
+use artifact_manifest::ProfileGateEventManifest;
 use semantic_core::{CapabilityId, Generation};
 use visa_runtime::{
-    VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
+    VisaProfileGateRejectionEvidence, VisaRuntimeEvidenceSnapshot,
+    VisaSubstrateAuthorityExtractionEvidence, VisaSubstrateCapabilityDeniedEvidence,
     VisaSubstrateUnsupportedEvidence,
 };
 
@@ -57,6 +59,7 @@ pub(crate) fn activation_record_manifest(
         code_object: activation.code_object,
         code_generation: activation.code_generation,
         artifact: activation.artifact,
+        profile: activation.profile.clone(),
         entry: activation.entry.summary(),
         generation: activation.generation,
         state: activation.state.as_str().to_owned(),
@@ -176,12 +179,27 @@ pub fn runtime_evidence_substrate_event_manifests(
     evidence: &VisaRuntimeEvidenceSnapshot,
 ) -> Vec<SubstrateEventManifest> {
     let mut events = Vec::with_capacity(
-        evidence.authority_extractions.len() + evidence.unsupported_substrate_events.len(),
+        evidence.authority_extractions.len()
+            + evidence.unsupported_substrate_events.len()
+            + evidence.denied_substrate_events.len(),
     );
     events.extend(evidence.authority_extractions.iter().map(runtime_authority_extraction_manifest));
     events.extend(
         evidence.unsupported_substrate_events.iter().map(runtime_unsupported_substrate_manifest),
     );
+    events.extend(evidence.denied_substrate_events.iter().map(runtime_capability_denied_manifest));
+    events.sort_by_key(|event| (event.epoch, event.id));
+    events
+}
+
+pub fn runtime_evidence_profile_gate_event_manifests(
+    evidence: &VisaRuntimeEvidenceSnapshot,
+) -> Vec<ProfileGateEventManifest> {
+    let mut events = evidence
+        .profile_gate_rejections
+        .iter()
+        .map(runtime_profile_gate_rejection_manifest)
+        .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.epoch, event.id));
     events
 }
@@ -194,6 +212,7 @@ fn runtime_authority_extraction_manifest(
         id: extraction.event_id,
         epoch: extraction.event_epoch,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: extraction.authority_family.clone(),
         authority: extraction.authority.clone(),
         operation: extraction.operation.clone(),
         requester: extraction.requester.clone(),
@@ -218,6 +237,7 @@ fn runtime_unsupported_substrate_manifest(
         id: unsupported.event_id,
         epoch: unsupported.event_epoch,
         event_kind: "unsupported".to_owned(),
+        authority_family: unsupported.authority_family.clone(),
         authority: unsupported.authority.clone(),
         operation: unsupported.operation.clone(),
         requester: unsupported.requester.clone(),
@@ -231,9 +251,63 @@ fn runtime_unsupported_substrate_manifest(
     }
 }
 
+fn runtime_capability_denied_manifest(
+    denied: &VisaSubstrateCapabilityDeniedEvidence,
+) -> SubstrateEventManifest {
+    let requester_label = denied.requester.as_deref().unwrap_or("unknown");
+    SubstrateEventManifest {
+        id: denied.event_id,
+        epoch: denied.event_epoch,
+        event_kind: "capability-denied".to_owned(),
+        authority_family: denied.authority_family.clone(),
+        authority: denied.authority.clone(),
+        operation: denied.operation.clone(),
+        requester: denied.requester.clone(),
+        artifact: denied.artifact_id,
+        store: denied.store_id,
+        capability: substrate_capability_manifest(
+            denied.capability_id,
+            denied.capability_generation,
+        ),
+        explanation: format!(
+            "{requester_label} was denied {}::{} by capability gate",
+            denied.authority, denied.operation
+        ),
+    }
+}
+
+fn runtime_profile_gate_rejection_manifest(
+    rejection: &VisaProfileGateRejectionEvidence,
+) -> ProfileGateEventManifest {
+    ProfileGateEventManifest {
+        id: rejection.event_id,
+        epoch: rejection.event_epoch,
+        event_kind: "profile-gate-rejected".to_owned(),
+        package: rejection.package.clone(),
+        artifact: rejection.artifact.clone(),
+        artifact_id: rejection.artifact_id,
+        required_profile: rejection.required_profile.clone(),
+        reported_profile: rejection.reported_profile.clone(),
+        enforced_profile: rejection.enforced_profile.clone(),
+        reason: rejection.reason.clone(),
+        missing_required: rejection.missing_required.clone(),
+        degraded_optional: rejection.degraded_optional.clone(),
+        forbidden_present: rejection.forbidden_present.clone(),
+        explanation: format!(
+            "{} rejected before code start: required_profile={} reported_profile={} enforced_profile={} reason={}",
+            rejection.package,
+            rejection.required_profile,
+            rejection.reported_profile,
+            rejection.enforced_profile,
+            rejection.reason
+        ),
+    }
+}
+
 pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateEventManifest> {
     match &event.kind {
         EventKind::SubstrateAuthorityExtracted {
+            authority_family,
             authority,
             operation,
             requester,
@@ -249,6 +323,7 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 id: event.id,
                 epoch: event.epoch,
                 event_kind: "authority-extracted".to_owned(),
+                authority_family: authority_family.clone(),
                 authority: authority.clone(),
                 operation: operation.clone(),
                 requester: requester.clone(),
@@ -260,12 +335,20 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 ),
             })
         }
-        EventKind::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
+        EventKind::SubstrateUnsupported {
+            authority_family,
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+        } => {
             let requester_label = requester.as_deref().unwrap_or("unknown");
             Some(SubstrateEventManifest {
                 id: event.id,
                 epoch: event.epoch,
                 event_kind: "unsupported".to_owned(),
+                authority_family: authority_family.clone(),
                 authority: authority.clone(),
                 operation: operation.clone(),
                 requester: requester.clone(),
@@ -278,6 +361,7 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
             })
         }
         EventKind::SubstrateCapabilityDenied {
+            authority_family,
             authority,
             operation,
             requester,
@@ -293,6 +377,7 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 id: event.id,
                 epoch: event.epoch,
                 event_kind: "capability-denied".to_owned(),
+                authority_family: authority_family.clone(),
                 authority: authority.clone(),
                 operation: operation.clone(),
                 requester: requester.clone(),
@@ -305,6 +390,7 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
             })
         }
         EventKind::SubstratePanic {
+            authority_family,
             authority,
             operation,
             requester,
@@ -319,6 +405,7 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 id: event.id,
                 epoch: event.epoch,
                 event_kind: "panic".to_owned(),
+                authority_family: authority_family.clone(),
                 authority: authority.clone(),
                 operation: operation.clone(),
                 requester: requester.clone(),
@@ -330,6 +417,74 @@ pub(crate) fn substrate_event_manifest(event: &EventRecord) -> Option<SubstrateE
                 ),
             })
         }
+        _ => None,
+    }
+}
+
+pub(crate) fn profile_gate_event_manifests(
+    events: &[EventRecord],
+) -> Vec<ProfileGateEventManifest> {
+    events.iter().filter_map(profile_gate_event_manifest).collect()
+}
+
+pub(crate) fn profile_gate_event_manifest(event: &EventRecord) -> Option<ProfileGateEventManifest> {
+    match &event.kind {
+        EventKind::ProfileGateRejected {
+            package,
+            artifact,
+            artifact_id,
+            required_profile,
+            reported_profile,
+            enforced_profile,
+            reason,
+            missing_required,
+            degraded_optional,
+            forbidden_present,
+        } => Some(ProfileGateEventManifest {
+            id: event.id,
+            epoch: event.epoch,
+            event_kind: "profile-gate-rejected".to_owned(),
+            package: package.clone(),
+            artifact: artifact.clone(),
+            artifact_id: *artifact_id,
+            required_profile: required_profile.clone(),
+            reported_profile: reported_profile.clone(),
+            enforced_profile: enforced_profile.clone(),
+            reason: reason.clone(),
+            missing_required: missing_required.clone(),
+            degraded_optional: degraded_optional.clone(),
+            forbidden_present: forbidden_present.clone(),
+            explanation: format!(
+                "{package} rejected before code start: required_profile={required_profile} reported_profile={reported_profile} enforced_profile={enforced_profile} reason={reason}"
+            ),
+        }),
+        EventKind::ProfileGateDegraded {
+            package,
+            artifact,
+            artifact_id,
+            required_profile,
+            reported_profile,
+            enforced_profile,
+            reason,
+            degraded_optional,
+        } => Some(ProfileGateEventManifest {
+            id: event.id,
+            epoch: event.epoch,
+            event_kind: "profile-gate-degraded".to_owned(),
+            package: package.clone(),
+            artifact: artifact.clone(),
+            artifact_id: *artifact_id,
+            required_profile: required_profile.clone(),
+            reported_profile: reported_profile.clone(),
+            enforced_profile: enforced_profile.clone(),
+            reason: reason.clone(),
+            missing_required: Vec::new(),
+            degraded_optional: degraded_optional.clone(),
+            forbidden_present: Vec::new(),
+            explanation: format!(
+                "{package} accepted with optional profile degradation: required_profile={required_profile} reported_profile={reported_profile} enforced_profile={enforced_profile} reason={reason}"
+            ),
+        }),
         _ => None,
     }
 }
@@ -409,6 +564,8 @@ pub(crate) fn interface_event_manifest(event: &EventRecord) -> Option<InterfaceE
 
 #[cfg(test)]
 mod runtime_evidence_tests {
+    use visa_runtime::VisaProfileGateRejectionEvidence;
+
     use super::*;
 
     #[test]
@@ -420,6 +577,7 @@ mod runtime_evidence_tests {
             authority_extractions: vec![VisaSubstrateAuthorityExtractionEvidence {
                 event_id: 9,
                 event_epoch: 4,
+                authority_family: "dma".to_owned(),
                 authority: "DmaAuthority".to_owned(),
                 operation: "dma_alloc".to_owned(),
                 requester: Some("native-visa".to_owned()),
@@ -431,23 +589,28 @@ mod runtime_evidence_tests {
             unsupported_substrate_events: vec![VisaSubstrateUnsupportedEvidence {
                 event_id: 8,
                 event_epoch: 3,
+                authority_family: "console".to_owned(),
                 authority: "ConsoleAuthority".to_owned(),
                 operation: "console_write".to_owned(),
                 requester: Some("native-visa".to_owned()),
                 artifact_id: Some(29),
                 store_id: Some(1),
             }],
+            denied_substrate_events: Vec::new(),
+            profile_gate_rejections: Vec::new(),
         };
 
         let manifests = runtime_evidence_substrate_event_manifests(&evidence);
 
         assert_eq!(manifests.len(), 2);
         assert_eq!(manifests[0].event_kind, "unsupported");
+        assert_eq!(manifests[0].authority_family, "console");
         assert_eq!(manifests[0].id, 8);
         assert_eq!(manifests[0].epoch, 3);
         assert_eq!(manifests[0].requester.as_deref(), Some("native-visa"));
         assert!(manifests[0].capability.is_none());
         assert_eq!(manifests[1].event_kind, "authority-extracted");
+        assert_eq!(manifests[1].authority_family, "dma");
         assert_eq!(manifests[1].id, 9);
         assert_eq!(manifests[1].epoch, 4);
         assert_eq!(manifests[1].authority, "DmaAuthority");
@@ -456,6 +619,75 @@ mod runtime_evidence_tests {
         assert_eq!(manifests[1].store, Some(1));
         assert_eq!(manifests[1].capability.as_ref().map(|cap| cap.id), Some(7));
         assert_eq!(manifests[1].capability.as_ref().map(|cap| cap.generation), Some(3));
+    }
+
+    #[test]
+    fn runtime_evidence_projects_profile_gate_rejection_manifests() {
+        let evidence = VisaRuntimeEvidenceSnapshot {
+            contract_graph: semantic_core::ContractGraphSnapshot::default(),
+            event_log_cursor: 5,
+            runtime_events: Vec::new(),
+            authority_extractions: Vec::new(),
+            unsupported_substrate_events: Vec::new(),
+            denied_substrate_events: Vec::new(),
+            profile_gate_rejections: vec![VisaProfileGateRejectionEvidence {
+                event_id: 4,
+                event_epoch: 2,
+                package: "driver".to_owned(),
+                artifact: "driver-artifact".to_owned(),
+                artifact_id: Some(11),
+                required_profile: "device-capable".to_owned(),
+                reported_profile: "guest-frontend".to_owned(),
+                enforced_profile: "guest-frontend".to_owned(),
+                reason: "reported-profile-below-required".to_owned(),
+                missing_required: vec!["mmio:required=true:actual=false".to_owned()],
+                degraded_optional: Vec::new(),
+                forbidden_present: Vec::new(),
+            }],
+        };
+
+        let manifests = runtime_evidence_profile_gate_event_manifests(&evidence);
+
+        assert_eq!(manifests.len(), 1);
+        assert_eq!(manifests[0].event_kind, "profile-gate-rejected");
+        assert_eq!(manifests[0].artifact_id, Some(11));
+        assert_eq!(manifests[0].required_profile, "device-capable");
+        assert_eq!(manifests[0].reported_profile, "guest-frontend");
+        assert_eq!(manifests[0].enforced_profile, "guest-frontend");
+        assert_eq!(manifests[0].reason, "reported-profile-below-required");
+        assert_eq!(
+            manifests[0].missing_required,
+            vec![String::from("mmio:required=true:actual=false")]
+        );
+    }
+
+    #[test]
+    fn event_log_projects_profile_gate_degraded_manifest() {
+        let mut graph = semantic_core::SemanticGraph::new();
+        graph.record_profile_gate_degraded(
+            "service",
+            "service-artifact",
+            Some(5),
+            "guest-frontend",
+            "host-validation",
+            "minimal-bare-metal",
+            "optional-authority-missing",
+            vec!["dma:required=mediated-or-better:actual=none".to_owned()],
+        );
+
+        let manifests = profile_gate_event_manifests(graph.event_log().events());
+
+        assert_eq!(manifests.len(), 1);
+        assert_eq!(manifests[0].event_kind, "profile-gate-degraded");
+        assert_eq!(manifests[0].artifact_id, Some(5));
+        assert_eq!(manifests[0].required_profile, "guest-frontend");
+        assert_eq!(manifests[0].reported_profile, "host-validation");
+        assert_eq!(manifests[0].enforced_profile, "minimal-bare-metal");
+        assert_eq!(manifests[0].reason, "optional-authority-missing");
+        assert_eq!(
+            manifests[0].degraded_optional,
+            vec![String::from("dma:required=mediated-or-better:actual=none")]
+        );
     }
 }
 
@@ -608,6 +840,7 @@ mod tests {
             source: "substrate".to_owned(),
             causal_parent: None,
             kind: EventKind::SubstrateAuthorityExtracted {
+                authority_family: "console".to_owned(),
                 authority: "ConsoleAuthority".to_owned(),
                 operation: "console_write".to_owned(),
                 requester: Some("wasi-app".to_owned()),
@@ -621,6 +854,7 @@ mod tests {
         let manifest = substrate_event_manifest(&event).expect("project extracted authority");
 
         assert_eq!(manifest.event_kind, "authority-extracted");
+        assert_eq!(manifest.authority_family, "console");
         assert_eq!(manifest.authority, "ConsoleAuthority");
         assert_eq!(manifest.operation, "console_write");
         assert_eq!(manifest.requester.as_deref(), Some("wasi-app"));

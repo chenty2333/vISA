@@ -262,6 +262,7 @@ pub(crate) fn run_integrated_display_panic_harness(
     semantic: &mut SemanticGraph,
 ) -> Result<(), Box<dyn Error>> {
     let substrate_panic_event = semantic.record_substrate_panic(
+        "unknown",
         "PanicRing",
         "extract-after-substrate-panic",
         Some("substrate.panic".to_owned()),

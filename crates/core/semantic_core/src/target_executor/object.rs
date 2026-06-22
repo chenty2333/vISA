@@ -128,6 +128,7 @@ pub enum ContractObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
+    GuestMemoryOperation,
     // Process/Thread family
     Process,
     Thread,
@@ -294,6 +295,7 @@ impl ContractObjectKind {
             Self::GuestAddressSpace => "guest-address-space",
             Self::VmaRegion => "vma-region",
             Self::PageObject => "page-object",
+            Self::GuestMemoryOperation => "guest-memory-operation",
             Self::EventLog => "event-log",
             // Process/Thread family
             Self::Process => "process",

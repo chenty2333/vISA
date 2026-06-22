@@ -75,8 +75,8 @@ pub(crate) fn demo_migration_package(
         guest: GuestStateManifest {
             canonical_isa: "riscv64".to_owned(),
             register_count: 33,
-            memory_page_count: 0,
-            vma_count: 0,
+            memory_page_count: semantic.page_object_count() as u64,
+            vma_count: semantic.vma_region_count() as u32,
             signal_queue_count: 0,
             note: "host-side package proving cross-ISA restore/rebind boundaries".to_owned(),
         },
@@ -167,6 +167,10 @@ pub(crate) fn demo_migration_package(
             block_request_queue_count: semantic.block_request_queue_count(),
             block_dma_buffer_count: semantic.block_dma_buffer_count(),
             block_page_object_count: semantic.block_page_object_count(),
+            guest_address_space_count: semantic.guest_address_space_count(),
+            vma_region_count: semantic.vma_region_count(),
+            page_object_count: semantic.page_object_count(),
+            guest_memory_fault_count: semantic.guest_memory_fault_count(),
             buffer_cache_object_count: semantic.buffer_cache_object_count(),
             file_object_count: semantic.file_object_count(),
             directory_object_count: semantic.directory_object_count(),
@@ -233,6 +237,7 @@ pub(crate) fn demo_migration_package(
             snapshot_validation_violation_count: target_v1.snapshot_validation.violation_count,
             replay_validation_violation_count: target_v1.replay_validation.violation_count,
             substrate_event_count: target_v1.substrate_events.len(),
+            profile_gate_event_count: target_v1.profile_gate_events.len(),
             command_result_count: target_v1.command_results.len(),
             interface_event_count: target_v1.interface_events.len(),
             target_artifacts: target_v1.target_artifacts.clone(),
@@ -565,6 +570,18 @@ pub(crate) fn demo_migration_package(
                 .iter()
                 .map(block_page_object_manifest)
                 .collect(),
+            guest_address_spaces: semantic
+                .guest_address_spaces()
+                .iter()
+                .map(guest_address_space_manifest)
+                .collect(),
+            vma_regions: semantic.vma_regions().iter().map(vma_region_manifest).collect(),
+            page_objects: semantic.page_objects().iter().map(page_object_manifest).collect(),
+            guest_memory_faults: semantic
+                .guest_memory_faults()
+                .iter()
+                .map(guest_memory_fault_manifest)
+                .collect(),
             buffer_cache_objects: semantic
                 .buffer_cache_objects()
                 .iter()
@@ -743,6 +760,7 @@ pub(crate) fn demo_migration_package(
             snapshot_validation: target_v1.snapshot_validation.clone(),
             replay_validation: target_v1.replay_validation.clone(),
             substrate_events: target_v1.substrate_events.clone(),
+            profile_gate_events: target_v1.profile_gate_events.clone(),
             command_results: target_v1.command_results.clone(),
             interface_events: target_v1.interface_events.clone(),
             network_socket_count: 1,

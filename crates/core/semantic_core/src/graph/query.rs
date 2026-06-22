@@ -134,6 +134,7 @@ impl SemanticGraph {
         self.check_network_recovery_benchmark_invariants()?;
         self.check_network_generation_audit_invariants()?;
         self.check_network_fault_injection_invariants()?;
+        self.check_guest_memory_invariants()?;
         self.check_block_device_object_invariants()?;
         self.check_block_range_object_invariants()?;
         self.check_block_request_object_invariants()?;

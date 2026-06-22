@@ -26,6 +26,7 @@ pub fn validate_migration_package(package: &MigrationPackageManifest) -> Contrac
         }
     }
     validate_semantic_roots(package)?;
+    validate_target_runtime_profile_provenance(package)?;
     Ok(())
 }
 
@@ -571,6 +572,26 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("block page object root/count mismatch"));
     }
+    if roots.guest_address_space_roots.len() != package.semantic.guest_address_space_count
+        || package.semantic.guest_address_spaces.len() != package.semantic.guest_address_space_count
+    {
+        return Err(ContractError::new("guest address space root/count mismatch"));
+    }
+    if roots.vma_region_roots.len() != package.semantic.vma_region_count
+        || package.semantic.vma_regions.len() != package.semantic.vma_region_count
+    {
+        return Err(ContractError::new("vma region root/count mismatch"));
+    }
+    if roots.page_object_roots.len() != package.semantic.page_object_count
+        || package.semantic.page_objects.len() != package.semantic.page_object_count
+    {
+        return Err(ContractError::new("page object root/count mismatch"));
+    }
+    if roots.guest_memory_fault_roots.len() != package.semantic.guest_memory_fault_count
+        || package.semantic.guest_memory_faults.len() != package.semantic.guest_memory_fault_count
+    {
+        return Err(ContractError::new("guest memory fault root/count mismatch"));
+    }
     if roots.buffer_cache_object_roots.len() != package.semantic.buffer_cache_object_count
         || package.semantic.buffer_cache_objects.len() != package.semantic.buffer_cache_object_count
     {
@@ -866,6 +887,11 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
     {
         return Err(ContractError::new("substrate event root/count mismatch"));
     }
+    if roots.profile_gate_event_roots.len() != package.semantic.profile_gate_event_count
+        || package.semantic.profile_gate_events.len() != package.semantic.profile_gate_event_count
+    {
+        return Err(ContractError::new("profile gate event root/count mismatch"));
+    }
     if roots.command_result_roots.len() != package.semantic.command_result_count
         || package.semantic.command_results.len() != package.semantic.command_result_count
     {
@@ -901,6 +927,95 @@ pub fn validate_semantic_roots(package: &MigrationPackageManifest) -> ContractRe
             "event log cursor is nonzero but package has no event tail",
         ));
     }
+    Ok(())
+}
+
+fn validate_target_runtime_profile_provenance(
+    package: &MigrationPackageManifest,
+) -> ContractResult<()> {
+    for artifact in &package.semantic.target_artifacts {
+        if artifact.target_profile.is_empty() {
+            return Err(ContractError::new(format!(
+                "{} target artifact profile provenance is missing",
+                artifact.package
+            )));
+        }
+    }
+
+    for code in &package.semantic.code_objects {
+        let artifact = package
+            .semantic
+            .target_artifacts
+            .iter()
+            .find(|artifact| artifact.id == code.artifact_id)
+            .ok_or_else(|| {
+                ContractError::new(format!(
+                    "{} code object artifact provenance is missing",
+                    code.package
+                ))
+            })?;
+        if code.owner_profile.is_empty() || code.owner_profile != artifact.target_profile {
+            return Err(ContractError::new(format!(
+                "{} code object profile provenance mismatch",
+                code.package
+            )));
+        }
+    }
+
+    for store in &package.semantic.store_records {
+        let artifact = package
+            .semantic
+            .target_artifacts
+            .iter()
+            .find(|artifact| {
+                artifact.package == store.package && artifact.artifact_name == store.artifact
+            })
+            .ok_or_else(|| {
+                ContractError::new(format!(
+                    "{} store artifact provenance is missing",
+                    store.package
+                ))
+            })?;
+        if store.owner_profile.is_empty() || store.owner_profile != artifact.target_profile {
+            return Err(ContractError::new(format!(
+                "{} store profile provenance mismatch",
+                store.package
+            )));
+        }
+    }
+
+    for activation in &package.semantic.activation_records {
+        let code = package
+            .semantic
+            .code_objects
+            .iter()
+            .find(|code| {
+                code.id == activation.code_object && code.artifact_id == activation.artifact
+            })
+            .ok_or_else(|| {
+                ContractError::new(format!(
+                    "activation {} code profile provenance is missing",
+                    activation.id
+                ))
+            })?;
+        if activation.profile.is_empty() || activation.profile != code.owner_profile {
+            return Err(ContractError::new(format!(
+                "activation {} profile provenance mismatch",
+                activation.id
+            )));
+        }
+        if let Some(store) =
+            package.semantic.store_records.iter().find(|store| store.id == activation.store)
+        {
+            if store.owner_profile.is_empty() || store.owner_profile != activation.profile {
+                return Err(ContractError::new(format!(
+                    "activation {} store profile provenance mismatch",
+                    activation.id
+                )));
+            }
+        }
+    }
+
     Ok(())
 }
 

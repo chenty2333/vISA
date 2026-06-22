@@ -16,6 +16,13 @@ pub fn is_supported_real_target_arch(arch: &str) -> bool {
     SUPPORTED_REAL_TARGET_ARCHES.contains(&arch)
 }
 
+pub fn capabilities_for_reported_profile(profile: &str) -> Option<SubstrateCapabilitySet> {
+    if profile == "host-validation" {
+        return Some(SubstrateCapabilitySet::host_validation());
+    }
+    SubstrateProfile::parse(profile).map(SubstrateCapabilitySet::for_profile)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DmwSupport {
     None,
@@ -105,6 +112,196 @@ pub struct SubstrateCapabilitySet {
     pub packet_device: bool,
     pub snapshot: SnapshotSupport,
     pub code_publish: CodePublishSupport,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AuthorityFamily {
+    Console,
+    Timer,
+    Event,
+    Memory,
+    Artifact,
+    CodePublish,
+    Dmw,
+    PageTable,
+    Mmio,
+    Irq,
+    Dma,
+    PacketDevice,
+    Snapshot,
+}
+
+impl AuthorityFamily {
+    pub const CORE_P1_P2: [Self; 4] = [Self::Console, Self::Timer, Self::Event, Self::Memory];
+
+    pub const ALL: [Self; 13] = [
+        Self::Console,
+        Self::Timer,
+        Self::Event,
+        Self::Memory,
+        Self::Artifact,
+        Self::CodePublish,
+        Self::Dmw,
+        Self::PageTable,
+        Self::Mmio,
+        Self::Irq,
+        Self::Dma,
+        Self::PacketDevice,
+        Self::Snapshot,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Console => "console",
+            Self::Timer => "timer",
+            Self::Event => "event",
+            Self::Memory => "memory",
+            Self::Artifact => "artifact",
+            Self::CodePublish => "code-publish",
+            Self::Dmw => "dmw",
+            Self::PageTable => "page-table",
+            Self::Mmio => "mmio",
+            Self::Irq => "irq",
+            Self::Dma => "dma",
+            Self::PacketDevice => "packet-device",
+            Self::Snapshot => "snapshot",
+        }
+    }
+
+    pub const fn profile_authority(self) -> &'static str {
+        match self {
+            Self::Console => "console",
+            Self::Timer => "timer",
+            Self::Event => "event-queue",
+            Self::Memory => "guest-memory",
+            Self::Artifact => "artifact-loading",
+            Self::CodePublish => "code-publish",
+            Self::Dmw => "dmw",
+            Self::PageTable => "page-table",
+            Self::Mmio => "mmio",
+            Self::Irq => "irq",
+            Self::Dma => "dma",
+            Self::PacketDevice => "packet-device",
+            Self::Snapshot => "snapshot",
+        }
+    }
+
+    pub const fn authority_trait(self) -> &'static str {
+        match self {
+            Self::Console => "ConsoleAuthority",
+            Self::Timer => "TimerAuthority",
+            Self::Event => "EventQueueAuthority",
+            Self::Memory => "GuestMemoryAuthority",
+            Self::Artifact => "ArtifactAuthority",
+            Self::CodePublish => "CodePublisherAuthority",
+            Self::Dmw => "DmwAuthority",
+            Self::PageTable => "PageTableAuthority",
+            Self::Mmio => "MmioAuthority",
+            Self::Irq => "IrqAuthority",
+            Self::Dma => "DmaAuthority",
+            Self::PacketDevice => "PacketDeviceBackend",
+            Self::Snapshot => "SnapshotAuthority",
+        }
+    }
+
+    pub const fn operations(self) -> &'static [&'static str] {
+        match self {
+            Self::Console => &["console_write"],
+            Self::Timer => &["now", "arm_timer"],
+            Self::Event => &["push_event", "pop_event"],
+            Self::Memory => &["copyin", "copyout"],
+            Self::Artifact => &["load_artifact_image"],
+            Self::CodePublish => &["publish_code", "unpublish_code"],
+            Self::Dmw => &["map_user_window", "unmap_user_window"],
+            Self::PageTable => &[
+                "alloc_frame",
+                "map_page",
+                "unmap_page",
+                "protect_page",
+                "copy_frame",
+                "flush_tlb",
+            ],
+            Self::Mmio => &["mmio_read32", "mmio_write32"],
+            Self::Irq => &["irq_ack", "irq_mask", "irq_unmask"],
+            Self::Dma => &["dma_alloc", "dma_free"],
+            Self::PacketDevice => &["init", "submit_tx", "poll_rx", "mtu"],
+            Self::Snapshot => &["enter_snapshot_barrier", "exit_snapshot_barrier"],
+        }
+    }
+
+    pub const fn parse(value: &str) -> Option<Self> {
+        match value.as_bytes() {
+            b"console" => Some(Self::Console),
+            b"timer" => Some(Self::Timer),
+            b"event" | b"event-queue" => Some(Self::Event),
+            b"memory" | b"guest-memory" => Some(Self::Memory),
+            b"artifact" | b"artifact-loading" => Some(Self::Artifact),
+            b"code-publish" => Some(Self::CodePublish),
+            b"dmw" => Some(Self::Dmw),
+            b"page-table" => Some(Self::PageTable),
+            b"mmio" => Some(Self::Mmio),
+            b"irq" => Some(Self::Irq),
+            b"dma" => Some(Self::Dma),
+            b"packet-device" => Some(Self::PacketDevice),
+            b"snapshot" => Some(Self::Snapshot),
+            _ => None,
+        }
+    }
+
+    pub const fn from_authority_trait(value: &str) -> Option<Self> {
+        match value.as_bytes() {
+            b"ConsoleAuthority" => Some(Self::Console),
+            b"TimerAuthority" => Some(Self::Timer),
+            b"EventQueueAuthority" => Some(Self::Event),
+            b"GuestMemoryAuthority" => Some(Self::Memory),
+            b"ArtifactAuthority" => Some(Self::Artifact),
+            b"CodePublisherAuthority" | b"CodePublishAuthority" => Some(Self::CodePublish),
+            b"DmwAuthority" => Some(Self::Dmw),
+            b"PageTableAuthority" => Some(Self::PageTable),
+            b"MmioAuthority" => Some(Self::Mmio),
+            b"IrqAuthority" => Some(Self::Irq),
+            b"DmaAuthority" => Some(Self::Dma),
+            b"PacketDeviceBackend" => Some(Self::PacketDevice),
+            b"SnapshotAuthority" => Some(Self::Snapshot),
+            _ => None,
+        }
+    }
+
+    pub const fn is_supported_by(self, capabilities: SubstrateCapabilitySet) -> bool {
+        match self {
+            Self::Console => capabilities.console,
+            Self::Timer => capabilities.timer,
+            Self::Event => capabilities.event_queue,
+            Self::Memory => capabilities.guest_memory,
+            Self::Artifact => capabilities.artifact_loading,
+            Self::CodePublish => !matches!(capabilities.code_publish, CodePublishSupport::None),
+            Self::Dmw => !matches!(capabilities.dmw, DmwSupport::None),
+            Self::PageTable => capabilities.page_table,
+            Self::Mmio => capabilities.mmio,
+            Self::Irq => capabilities.irq,
+            Self::Dma => !matches!(capabilities.dma, DmaSupport::None),
+            Self::PacketDevice => capabilities.packet_device,
+            Self::Snapshot => !matches!(capabilities.snapshot, SnapshotSupport::None),
+        }
+    }
+
+    pub const fn is_required_by(self, requirements: AuthorityRequirementSet) -> bool {
+        match self {
+            Self::Console => requirements.console,
+            Self::Timer => requirements.timer,
+            Self::Event => requirements.event_queue,
+            Self::Memory => requirements.guest_memory,
+            Self::Artifact => requirements.artifact_loading,
+            Self::CodePublish => !matches!(requirements.code_publish, CodePublishRequirement::None),
+            Self::Dmw => !matches!(requirements.dmw, DmwRequirement::None),
+            Self::PageTable => requirements.page_table,
+            Self::Mmio => requirements.mmio,
+            Self::Irq => requirements.irq,
+            Self::Dma => !matches!(requirements.dma, DmaRequirement::None),
+            Self::PacketDevice => requirements.packet_device,
+            Self::Snapshot => !matches!(requirements.snapshot, SnapshotRequirement::None),
+        }
+    }
 }
 
 impl SubstrateCapabilitySet {
@@ -969,6 +1166,54 @@ mod tests {
                     enforced_index >= required_index
                 );
             }
+        }
+    }
+
+    #[test]
+    fn reported_profile_capability_selection_is_centralized() {
+        for profile in VisaProfileLevel::ALL_ASCENDING {
+            assert_eq!(
+                capabilities_for_reported_profile(profile.as_str()),
+                Some(VisaCapabilitySet::for_profile(profile))
+            );
+        }
+
+        let host = capabilities_for_reported_profile("host-validation").expect("host validation");
+        assert_eq!(host, VisaCapabilitySet::host_validation());
+        assert_eq!(capabilities_for_reported_profile("unknown-profile"), None);
+    }
+
+    #[test]
+    fn core_authority_families_have_profile_declarations_and_trait_mapping() {
+        let p1 = VisaProfileLevel::MinimalBareMetal.requirements();
+        let p2 = VisaProfileLevel::GuestFrontend.requirements();
+
+        for (family, id, authority, profile_authority, p1_required, p2_required) in [
+            (AuthorityFamily::Console, "console", "ConsoleAuthority", "console", true, true),
+            (AuthorityFamily::Timer, "timer", "TimerAuthority", "timer", true, true),
+            (AuthorityFamily::Event, "event", "EventQueueAuthority", "event-queue", true, true),
+            (
+                AuthorityFamily::Memory,
+                "memory",
+                "GuestMemoryAuthority",
+                "guest-memory",
+                false,
+                true,
+            ),
+        ] {
+            assert_eq!(AuthorityFamily::parse(id), Some(family));
+            assert_eq!(AuthorityFamily::from_authority_trait(authority), Some(family));
+            assert_eq!(family.authority_trait(), authority);
+            assert_eq!(family.profile_authority(), profile_authority);
+            assert_eq!(family.is_required_by(p1), p1_required);
+            assert_eq!(family.is_required_by(p2), p2_required);
+            assert_eq!(
+                family.is_supported_by(VisaCapabilitySet::for_profile(
+                    VisaProfileLevel::GuestFrontend
+                )),
+                true
+            );
+            assert!(!family.operations().is_empty());
         }
     }
 

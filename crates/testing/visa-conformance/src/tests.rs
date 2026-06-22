@@ -347,6 +347,52 @@ fn report_rejects_insufficient_boundary() {
 }
 
 #[test]
+fn report_rejects_missing_observed_profile_for_profiled_claim() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let spec = catalog.iter().find(|spec| spec.id == "visa.artifact.load").unwrap();
+    report.results = vec![TestResult {
+        spec_id: spec.id.clone(),
+        outcome: Outcome::Pass,
+        observed_boundary: spec.minimum_boundary,
+        observed_profile: None,
+        evidence: "artifact path passed without reporting target profile".to_string(),
+        remaining_uncertainty: "profile evidence is intentionally absent".to_string(),
+        metrics: BTreeMap::new(),
+        evidence_artifacts: vec![contract_graph_snapshot_artifact()],
+    }];
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(validation.findings.iter().any(|finding| finding.code == "missing-observed-profile"));
+}
+
+#[test]
+fn report_rejects_observed_profile_below_required_profile() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let spec = catalog.iter().find(|spec| spec.id == "visa.capability.hostcall").unwrap();
+    report.results = vec![TestResult {
+        spec_id: spec.id.clone(),
+        outcome: Outcome::Pass,
+        observed_boundary: spec.minimum_boundary,
+        observed_profile: Some("guest-frontend".to_string()),
+        evidence: "capability hostcall claim tried to pass on a lower profile".to_string(),
+        remaining_uncertainty: "profile mismatch is intentional".to_string(),
+        metrics: BTreeMap::new(),
+        evidence_artifacts: vec![contract_graph_snapshot_artifact()],
+    }];
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation.findings.iter().any(|finding| finding.code == "insufficient-observed-profile")
+    );
+}
+
+#[test]
 fn report_rejects_real_target_claim_without_extraction_artifact() {
     let catalog = linux_ltp_catalog();
     let mut report = sample_ltp_report();
@@ -434,6 +480,14 @@ fn evidence_artifact_kind_parse_is_stable() {
         EvidenceArtifactKind::parse("substrate-extraction-trace"),
         Some(EvidenceArtifactKind::SubstrateExtractionTrace)
     );
+    assert_eq!(
+        EvidenceArtifactKind::parse("profile-gate-trace"),
+        Some(EvidenceArtifactKind::ProfileGateTrace)
+    );
+    assert_eq!(
+        EvidenceArtifactKind::parse("substrate-event-trace"),
+        Some(EvidenceArtifactKind::SubstrateEventTrace)
+    );
     assert_eq!(EvidenceArtifactKind::DeviceTrace.as_str(), "device-trace");
     assert_eq!(
         EvidenceArtifactKind::parse("linux-personality-trace"),
@@ -492,6 +546,98 @@ fn report_rejects_non_bundle_relative_evidence_artifact_uri() {
         finding.code == "non-bundle-relative-evidence-artifact-uri"
             && finding.detail.contains("linux-ltp.fs.basic")
     }));
+}
+
+#[test]
+fn report_rejects_profile_gate_event_count_without_trace_artifact() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result =
+        report.results.iter_mut().find(|result| result.spec_id == "visa.artifact.load").unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "artifact load path recorded a profile gate rejection".to_string();
+    result.remaining_uncertainty = "unit fixture omits profile gate trace metadata".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+    result.metrics.insert("profile_gate_rejection_count".to_string(), 1.0);
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-profile-gate-trace-artifact")
+    );
+}
+
+#[test]
+fn report_accepts_profile_gate_event_count_with_trace_artifact_metadata() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result =
+        report.results.iter_mut().find(|result| result.spec_id == "visa.artifact.load").unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "artifact load path recorded profile gate evidence".to_string();
+    result.remaining_uncertainty = "unit fixture validates report metadata only".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+    result.evidence_artifacts.push(profile_gate_trace_artifact());
+    result.metrics.insert("profile_gate_rejection_count".to_string(), 1.0);
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+}
+
+#[test]
+fn report_rejects_unsupported_substrate_event_count_without_trace_artifact() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result = report
+        .results
+        .iter_mut()
+        .find(|result| result.spec_id == "visa.capability.hostcall")
+        .unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "hostcall path observed unsupported substrate authority".to_string();
+    result.remaining_uncertainty = "unit fixture omits substrate event trace metadata".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+    result.metrics.insert("unsupported_substrate_event_count".to_string(), 1.0);
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-substrate-event-trace-artifact")
+    );
+}
+
+#[test]
+fn report_accepts_unsupported_substrate_event_count_with_trace_artifact_metadata() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result = report
+        .results
+        .iter_mut()
+        .find(|result| result.spec_id == "visa.capability.hostcall")
+        .unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "hostcall path observed unsupported substrate authority".to_string();
+    result.remaining_uncertainty = "unit fixture validates report metadata only".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+    result.evidence_artifacts.push(substrate_event_trace_artifact());
+    result.metrics.insert("unsupported_substrate_event_count".to_string(), 1.0);
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
 }
 
 #[test]
@@ -587,6 +733,384 @@ fn artifact_gate_validates_device_trace_event_identity() {
 }
 
 #[test]
+fn artifact_gate_validates_profile_gate_trace_files() {
+    let root = temp_criterion_dir("profile-gate-trace-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("profile-gate.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":4,"event_epoch":2,"event_kind":"profile-gate-rejected","package":"driver","artifact":"driver-artifact","artifact_id":11,"required_profile":"device-capable","reported_profile":"semantic-harness","enforced_profile":"semantic-harness","reason":"reported-profile-below-required","missing_required":["mmio:required=true:actual=false"],"degraded_optional":[],"forbidden_present":[]}
+{"event_id":5,"event_epoch":3,"event_kind":"profile-gate-degraded","package":"driver","artifact":"driver-artifact","artifact_id":11,"required_profile":"guest-frontend","reported_profile":"host-validation","enforced_profile":"minimal-bare-metal","reason":"optional-authority-missing","missing_required":[],"degraded_optional":["dma:required=mediated-or-better:actual=none"],"forbidden_present":[]}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].metrics.insert("profile_gate_event_count".to_string(), 2.0);
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ProfileGateTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "profile gate rejection and degradation trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_profile_gate_trace_with_unknown_profiles() {
+    let root = temp_criterion_dir("profile-gate-trace-unknown-profile");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("profile-gate.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":4,"event_epoch":2,"event_kind":"profile-gate-rejected","package":"driver","artifact":"driver-artifact","required_profile":"device-capable","reported_profile":"unknown-profile","enforced_profile":"semantic-harness","reason":"reported-profile-below-required","missing_required":["mmio:required=true:actual=false"]}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ProfileGateTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "profile gate trace with unknown reported profile".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("unknown reported_profile")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_profile_gate_trace_count_mismatch() {
+    let root = temp_criterion_dir("profile-gate-trace-count-mismatch");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("profile-gate.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":4,"event_epoch":2,"event_kind":"profile-gate-rejected","package":"driver","artifact":"driver-artifact","required_profile":"device-capable","reported_profile":"semantic-harness","enforced_profile":"semantic-harness","reason":"reported-profile-below-required","missing_required":["mmio:required=true:actual=false"]}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].metrics.insert("profile_gate_event_count".to_string(), 2.0);
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ProfileGateTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "profile gate trace with fewer entries than reported".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-boundary-overclaim"
+                && finding.detail.contains("has 1 matching entries but result reports 2")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_counts_profile_gate_rejection_and_degradation_metrics_together() {
+    let root = temp_criterion_dir("profile-gate-trace-split-count");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("profile-gate.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":4,"event_epoch":2,"event_kind":"profile-gate-rejected","package":"driver","artifact":"driver-artifact","required_profile":"device-capable","reported_profile":"semantic-harness","enforced_profile":"semantic-harness","reason":"reported-profile-below-required","missing_required":["mmio:required=true:actual=false"]}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].metrics.insert("profile_gate_rejection_count".to_string(), 1.0);
+    report.results[0].metrics.insert("profile_gate_degradation_count".to_string(), 1.0);
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ProfileGateTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "profile gate trace with only one of two reported entries".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "evidence-artifact-boundary-overclaim"
+                && finding.detail.contains("has 1 matching entries but result reports 2")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_validates_substrate_event_trace_files() {
+    let root = temp_criterion_dir("substrate-event-trace-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":8,"event_epoch":3,"event_kind":"unsupported","authority_family":"console","authority":"ConsoleAuthority","operation":"console_write","requester":"native-visa","artifact":29,"store":1}
+{"event_id":9,"event_epoch":4,"event_kind":"authority-extracted","authority_family":"dma","authority":"DmaAuthority","operation":"dma_alloc","requester":"native-visa","artifact":29,"store":1}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].metrics.insert("unsupported_substrate_event_count".to_string(), 1.0);
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "substrate unsupported and extraction event trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_validates_capability_denied_substrate_event_trace_count() {
+    let root = temp_criterion_dir("substrate-event-denied-trace-artifact");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":10,"event_epoch":5,"event_kind":"capability-denied","authority_family":"memory","authority":"GuestMemoryAuthority","operation":"copyin","requester":"guest-memory-app","artifact":44,"store":2,"capability":7,"capability_generation":3}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].metrics.insert("denied_substrate_event_count".to_string(), 1.0);
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "substrate capability denied event trace".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(validation.ok, "{:#?}", validation.findings);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_unattributed_unsupported_substrate_event_trace() {
+    let root = temp_criterion_dir("substrate-event-unattributed");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":8,"event_epoch":3,"event_kind":"unsupported","authority_family":"console","authority":"ConsoleAuthority","operation":"console_write"}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "unsupported substrate event without attribution".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("requires requester, artifact, or store attribution")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_substrate_event_trace_without_authority() {
+    let root = temp_criterion_dir("substrate-event-missing-authority");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":8,"event_epoch":3,"event_kind":"unsupported","authority_family":"console","operation":"console_write","requester":"native-visa","artifact":29,"store":1}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "substrate event without authority trait".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("authority")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_substrate_event_trace_without_authority_family() {
+    let root = temp_criterion_dir("substrate-event-missing-family");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":8,"event_epoch":3,"event_kind":"unsupported","authority":"ConsoleAuthority","operation":"console_write","requester":"native-visa","artifact":29,"store":1}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "substrate event without authority family".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("authority_family")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_substrate_event_trace_family_authority_mismatch() {
+    let root = temp_criterion_dir("substrate-event-family-mismatch");
+    fs::create_dir_all(&root).unwrap();
+    let trace = root.join("substrate-events.jsonl");
+    let sha256 = write_file_with_sha256(
+        &trace,
+        br#"{"event_id":8,"event_epoch":3,"event_kind":"unsupported","authority_family":"timer","authority":"ConsoleAuthority","operation":"console_write","requester":"native-visa","artifact":29,"store":1}
+"#,
+    )
+    .unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: trace.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "substrate event with mismatched authority family".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("does not match authority_family")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn report_rejects_denied_substrate_event_count_without_trace_artifact() {
+    let catalog = full_catalog();
+    let mut report = sample_report(&catalog);
+    let result = report
+        .results
+        .iter_mut()
+        .find(|result| result.spec_id == "visa.capability.hostcall")
+        .unwrap();
+    result.outcome = Outcome::Pass;
+    result.observed_boundary = Boundary::PortableArtifactExecution;
+    result.evidence = "hostcall path observed denied substrate authority".to_string();
+    result.remaining_uncertainty = "unit fixture omits substrate event trace metadata".to_string();
+    result.evidence_artifacts.push(contract_graph_snapshot_artifact());
+    result.metrics.insert("denied_substrate_event_count".to_string(), 1.0);
+
+    let validation = validate_report(&report, &catalog);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-substrate-event-trace-artifact")
+    );
+}
+
+#[test]
 fn artifact_gate_validates_real_target_device_trace_context() {
     let root = temp_criterion_dir("real-target-device-trace-artifact");
     fs::create_dir_all(&root).unwrap();
@@ -655,7 +1179,7 @@ fn artifact_gate_validates_contract_graph_snapshot_schema() {
     let root = temp_criterion_dir("contract-graph-snapshot-artifact");
     fs::create_dir_all(&root).unwrap();
     let snapshot = root.join("contract-graph-snapshot.json");
-    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution");
+    let snapshot_json = portable_contract_graph_snapshot_json("portable-artifact-execution");
     let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
     let mut report = sample_ltp_report();
     for result in &mut report.results {
@@ -675,11 +1199,149 @@ fn artifact_gate_validates_contract_graph_snapshot_schema() {
 }
 
 #[test]
+fn artifact_gate_rejects_empty_portable_contract_graph_snapshot_claim() {
+    let root = temp_criterion_dir("empty-portable-contract-graph-snapshot-claim");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "empty portable artifact contract graph snapshot".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("requires non-empty artifacts")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_portable_contract_graph_snapshot_without_execution_effect() {
+    let root = temp_criterion_dir("portable-contract-graph-snapshot-no-execution-effect");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = portable_contract_graph_snapshot_json("portable-artifact-execution")
+        .replace("  \"hostcalls\": [{\"id\":5,\"generation\":1}],\n", "  \"hostcalls\": [],\n");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "portable artifact snapshot without hostcall or trap evidence".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("requires at least one hostcall or trap")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_portable_contract_graph_snapshot_wait_without_edge() {
+    let root = temp_criterion_dir("portable-contract-graph-snapshot-wait-without-edge");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = portable_contract_graph_snapshot_json("portable-artifact-execution")
+        .replace("  \"waits\": [],\n", "  \"waits\": [{\"id\":31,\"generation\":1}],\n");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "portable artifact snapshot with unlinked wait token".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("requires wait-token explicit_edges")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_portable_contract_graph_snapshot_cleanup_without_edge() {
+    let root = temp_criterion_dir("portable-contract-graph-snapshot-cleanup-without-edge");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = portable_contract_graph_snapshot_json("portable-artifact-execution")
+        .replace(
+            "  \"cleanup_transactions\": [],\n",
+            "  \"cleanup_transactions\": [{\"id\":41,\"generation\":1}],\n",
+        );
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "portable artifact snapshot with unlinked cleanup transaction".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("requires cleanup-transaction explicit_edges")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn artifact_gate_rejects_contract_graph_snapshot_boundary_overclaim() {
     let root = temp_criterion_dir("contract-graph-snapshot-overclaim-artifact");
     fs::create_dir_all(&root).unwrap();
     let snapshot = root.join("contract-graph-snapshot.json");
-    let snapshot_json = contract_graph_snapshot_json("real-target-substrate");
+    let snapshot_json = portable_contract_graph_snapshot_json("real-target-substrate");
     let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
     let mut report = sample_ltp_report();
     for result in &mut report.results {
@@ -742,26 +1404,26 @@ fn artifact_gate_rejects_malformed_contract_graph_snapshot_identities() {
     let cases = [
         (
             "zero-artifact-id",
-            contract_graph_snapshot_json("portable-artifact-execution")
+            contract_graph_snapshot_json("semantic-model")
                 .replace("\"artifacts\": []", "\"artifacts\": [{\"id\":0,\"generation\":1}]"),
         ),
         (
             "zero-tombstone-generation",
-            contract_graph_snapshot_json("portable-artifact-execution").replace(
+            contract_graph_snapshot_json("semantic-model").replace(
                 "\"tombstones\": []",
                 "\"tombstones\": [{\"kind\":\"store\",\"id\":1,\"generation\":0}]",
             ),
         ),
         (
             "zero-external-ref-id",
-            contract_graph_snapshot_json("portable-artifact-execution").replace(
+            contract_graph_snapshot_json("semantic-model").replace(
                 "\"external_objects\": []",
                 "\"external_objects\": [{\"object\":{\"kind\":\"external-object\",\"id\":0,\"generation\":0},\"provider\":\"pci\",\"class\":\"device\"}]",
             ),
         ),
         (
             "zero-internal-edge-generation",
-            contract_graph_snapshot_json("portable-artifact-execution").replace(
+            contract_graph_snapshot_json("semantic-model").replace(
                 "\"explicit_edges\": []",
                 "\"explicit_edges\": [{\"from\":{\"kind\":\"store\",\"id\":1,\"generation\":1},\"to\":{\"kind\":\"task\",\"id\":2,\"generation\":0},\"mode\":\"live\",\"evidence_level\":\"portable-artifact-execution\",\"epoch\":1}]",
             ),
@@ -826,6 +1488,110 @@ fn artifact_gate_rejects_unknown_contract_graph_snapshot_schema_version() {
             .findings
             .iter()
             .any(|finding| finding.code == "invalid-evidence-artifact-content")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_contract_graph_snapshot_missing_required_fields() {
+    let root = temp_criterion_dir("missing-contract-graph-snapshot-fields");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution")
+        .replace("  \"code_objects\": [],\n", "");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "contract graph snapshot missing required fields".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("missing or non-array code_objects")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_contract_graph_snapshot_illegal_fields() {
+    let root = temp_criterion_dir("illegal-contract-graph-snapshot-fields");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution")
+        .replace("  \"explicit_edges\": []", "  \"explicit_edges\": [],\n  \"raw_page_table\": []");
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "contract graph snapshot with illegal field".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("unknown contract graph snapshot field raw_page_table")),
+        "{:#?}",
+        validation.findings
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn artifact_gate_rejects_contract_graph_snapshot_unsupported_restore_record() {
+    let root = temp_criterion_dir("unsupported-contract-graph-snapshot-record");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = root.join("contract-graph-snapshot.json");
+    let snapshot_json = contract_graph_snapshot_json("portable-artifact-execution").replace(
+        "\"tombstones\": []",
+        "\"tombstones\": [{\"kind\":\"device-object\",\"id\":7,\"generation\":1}]",
+    );
+    let sha256 = write_file_with_sha256(&snapshot, snapshot_json.as_bytes()).unwrap();
+    let mut report = sample_ltp_report();
+    for result in &mut report.results {
+        result.evidence_artifacts.clear();
+    }
+    report.results[0].evidence_artifacts.push(EvidenceArtifact {
+        kind: EvidenceArtifactKind::ContractGraphSnapshot,
+        uri: snapshot.file_name().unwrap().to_string_lossy().into_owned(),
+        sha256,
+        description: "contract graph snapshot with unsupported restore record".to_string(),
+    });
+
+    let validation = validate_report_artifacts(&report, &root);
+
+    assert!(!validation.ok);
+    assert!(
+        validation
+            .findings
+            .iter()
+            .any(|finding| finding.code == "invalid-evidence-artifact-content"
+                && finding.detail.contains("unsupported tombstone kind device-object")),
+        "{:#?}",
+        validation.findings
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -1819,10 +2585,55 @@ fn contract_graph_snapshot_artifact() -> EvidenceArtifact {
     }
 }
 
+fn profile_gate_trace_artifact() -> EvidenceArtifact {
+    EvidenceArtifact {
+        kind: EvidenceArtifactKind::ProfileGateTrace,
+        uri: "target/evidence/profile-gate.jsonl".to_string(),
+        sha256: "c".repeat(64),
+        description: "profile gate rejection or degradation trace".to_string(),
+    }
+}
+
+fn substrate_event_trace_artifact() -> EvidenceArtifact {
+    EvidenceArtifact {
+        kind: EvidenceArtifactKind::SubstrateEventTrace,
+        uri: "target/evidence/substrate-events.jsonl".to_string(),
+        sha256: "d".repeat(64),
+        description: "substrate unsupported or authority event trace".to_string(),
+    }
+}
+
 fn contract_graph_snapshot_json(claimed_boundary: &str) -> String {
     contract_graph_snapshot_json_with_schema(
         CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION,
         claimed_boundary,
+    )
+}
+
+fn portable_contract_graph_snapshot_json(claimed_boundary: &str) -> String {
+    format!(
+        r#"{{
+  "schema_version": "{}",
+  "claimed_evidence_level": "{claimed_boundary}",
+  "artifacts": [{{"id":1,"generation":1}}],
+  "code_objects": [{{"id":2,"generation":1}}],
+  "stores": [{{"id":3,"generation":1}}],
+  "activations": [{{"id":4,"generation":1}}],
+  "hostcalls": [{{"id":5,"generation":1}}],
+  "traps": [],
+  "capabilities": [],
+  "waits": [],
+  "cleanup_transactions": [],
+  "tombstones": [],
+  "external_objects": [],
+  "explicit_edges": [
+    {{"from":{{"kind":"artifact","id":1,"generation":1}},"to":{{"kind":"code-object","id":2,"generation":1}},"mode":"live","evidence_level":"portable-artifact-execution","label":"artifact-loads-code-object","epoch":1}},
+    {{"from":{{"kind":"code-object","id":2,"generation":1}},"to":{{"kind":"store","id":3,"generation":1}},"mode":"live","evidence_level":"portable-artifact-execution","label":"code-object-bound-to-store","epoch":1}},
+    {{"from":{{"kind":"store","id":3,"generation":1}},"to":{{"kind":"activation","id":4,"generation":1}},"mode":"live","evidence_level":"portable-artifact-execution","label":"store-starts-activation","epoch":1}},
+    {{"from":{{"kind":"activation","id":4,"generation":1}},"to":{{"kind":"hostcall","id":5,"generation":1}},"mode":"live","evidence_level":"portable-artifact-execution","label":"activation-dispatches-hostcall-frame","epoch":1}}
+  ]
+}}"#,
+        CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION
     )
 }
 

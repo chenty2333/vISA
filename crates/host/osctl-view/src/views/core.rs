@@ -197,6 +197,13 @@ pub(crate) fn canonical_view_kind(kind: &str) -> &'static str {
         "hart" => "hart",
         "task" => "task",
         "activation" | "runtime-activation" => "activation",
+        "artifact" | "target-artifact" | "target-artifact-image" => "artifact",
+        "code-object" | "target-code-object" => "code-object",
+        "activation-record" | "target-activation" | "target-activation-record" => {
+            "activation-record"
+        }
+        "trap" | "trap-record" => "trap",
+        "hostcall" | "hostcall-trace" => "hostcall",
         "activation-context" | "context" => "activation-context",
         "saved-context" => "saved-context",
         "timer-interrupt" => "timer-interrupt",
@@ -264,6 +271,10 @@ pub(crate) fn canonical_view_kind(kind: &str) -> &'static str {
         "block-request-queue" | "block-queue" => "block-request-queue",
         "block-dma-buffer" | "block-buffer" => "block-dma-buffer",
         "block-page-object" | "block-page" => "block-page-object",
+        "guest-address-space" | "guest-aspace" | "address-space" => "guest-address-space",
+        "vma-region" | "vma" => "vma-region",
+        "page-object" | "guest-page" => "page-object",
+        "guest-memory-fault" | "page-fault-event" | "page-fault" => "page-fault-event",
         "buffer-cache-object" | "buffer-cache" | "fs-cache" => "buffer-cache-object",
         "file-object" | "file" => "file-object",
         "directory-object" | "directory" => "directory-object",

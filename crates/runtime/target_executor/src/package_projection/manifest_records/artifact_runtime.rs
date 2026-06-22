@@ -114,6 +114,7 @@ pub(crate) fn store_record_manifest(store: &StoreRecord) -> StoreRecordManifest 
         id: store.id,
         package: store.package.clone(),
         artifact: store.artifact.clone(),
+        owner_profile: store.owner_profile.clone(),
         role: store.role.clone(),
         fault_policy: store.fault_policy.clone(),
         fault_domain: store.fault_domain,
@@ -152,7 +153,7 @@ mod tests {
         image.hostcalls.push(HostcallSpec::new(
             1,
             "visa.console.write",
-            HostcallCategory::Service,
+            HostcallCategory::Console,
             "visa.console",
             "write",
             false,
@@ -181,6 +182,8 @@ mod tests {
             runtime_events: Vec::new(),
             authority_extractions: Vec::new(),
             unsupported_substrate_events: Vec::new(),
+            denied_substrate_events: Vec::new(),
+            profile_gate_rejections: Vec::new(),
         };
 
         let manifests = runtime_evidence_target_artifact_manifests(&evidence);

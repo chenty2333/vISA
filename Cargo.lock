@@ -66,6 +66,7 @@ dependencies = [
  "sha2",
  "supervisor_catalog",
  "target_abi",
+ "visa_profile",
  "wasmtime",
 ]
 

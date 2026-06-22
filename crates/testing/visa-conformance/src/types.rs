@@ -156,7 +156,9 @@ pub struct EvidenceArtifact {
 #[serde(rename_all = "kebab-case")]
 pub enum EvidenceArtifactKind {
     ContractGraphSnapshot,
+    ProfileGateTrace,
     SubstrateExtractionTrace,
+    SubstrateEventTrace,
     DeviceTrace,
     SerialLog,
     BenchmarkRawOutput,
@@ -168,7 +170,9 @@ impl EvidenceArtifactKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ContractGraphSnapshot => "contract-graph-snapshot",
+            Self::ProfileGateTrace => "profile-gate-trace",
             Self::SubstrateExtractionTrace => "substrate-extraction-trace",
+            Self::SubstrateEventTrace => "substrate-event-trace",
             Self::DeviceTrace => "device-trace",
             Self::SerialLog => "serial-log",
             Self::BenchmarkRawOutput => "benchmark-raw-output",
@@ -180,7 +184,9 @@ impl EvidenceArtifactKind {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "contract-graph-snapshot" => Some(Self::ContractGraphSnapshot),
+            "profile-gate-trace" => Some(Self::ProfileGateTrace),
             "substrate-extraction-trace" => Some(Self::SubstrateExtractionTrace),
+            "substrate-event-trace" => Some(Self::SubstrateEventTrace),
             "device-trace" => Some(Self::DeviceTrace),
             "serial-log" => Some(Self::SerialLog),
             "benchmark-raw-output" => Some(Self::BenchmarkRawOutput),

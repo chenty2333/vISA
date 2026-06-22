@@ -35,6 +35,7 @@ use target_abi::artifact::{
     TARGET_SECTION_HEADER_LEN, TargetAbiCodeV1, TargetArchCodeV1, TargetArtifactHeaderV1,
     TargetArtifactImage, TargetSectionHeaderV1, canonical_zero_field_image_hash,
 };
+use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
 use wasmtime::{Config, Engine, ExternType, Instance, Module, Precompiled, Store, Strategy};
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
@@ -358,6 +359,10 @@ struct TargetArtifactSectionPayload {
 fn build_target_artifact_image(
     input: TargetArtifactBuildInput<'_>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
+    let interfaces = module_interface_spec(input.module);
+    let enforced_profile =
+        SubstrateProfile::strongest_satisfied_by(SubstrateCapabilitySet::host_validation())
+            .ok_or("host-validation substrate capabilities do not satisfy any vISA profile")?;
     let sections = vec![
         TargetArtifactSectionPayload {
             kind: SectionKindV1::Manifest,
@@ -422,6 +427,8 @@ fn build_target_artifact_image(
             payload: serde_json::to_vec_pretty(&serde_json::json!({
                 "schema": "visa-target-profile-requirements-v1",
                 "artifact_profile": input.profile,
+                "substrate_profile_required": interfaces.substrate_profile_required,
+                "enforced_profile": enforced_profile.as_str(),
                 "host_arch": env::consts::ARCH,
                 "target_arch": env::consts::ARCH,
                 "compiler_engine": SUPERVISOR_COMPILER_ENGINE,

@@ -74,6 +74,7 @@ impl OperationSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapabilityClass {
     ServiceImport,
+    Console,
     Device,
     PacketDevice,
     CodePublish,
@@ -96,7 +97,14 @@ pub enum CapabilityClass {
 
 impl CapabilityClass {
     pub fn from_object(object: &str) -> Self {
-        if object.starts_with("packet-device.") {
+        if object.starts_with("console.")
+            || object.starts_with("visa.console")
+            || object.starts_with("test.console")
+            || object.starts_with("bench.console")
+            || object == "wasi.fd"
+        {
+            Self::Console
+        } else if object.starts_with("packet-device.") {
             Self::PacketDevice
         } else if object.starts_with("code-publish.") || object.starts_with("code-object.") {
             Self::CodePublish
@@ -140,6 +148,7 @@ impl CapabilityClass {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::ServiceImport => "service-import",
+            Self::Console => "console",
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
             Self::CodePublish => "code-publish",
@@ -182,6 +191,7 @@ impl CapabilityClass {
             Self::GuestMemoryAccess => 16,
             Self::FileHandle => 17,
             Self::Display => 18,
+            Self::Console => 19,
         }
     }
 
@@ -206,6 +216,7 @@ impl CapabilityClass {
             16 => Some(Self::GuestMemoryAccess),
             17 => Some(Self::FileHandle),
             18 => Some(Self::Display),
+            19 => Some(Self::Console),
             _ => None,
         }
     }
@@ -221,7 +232,8 @@ impl CapabilityClass {
             Self::FaultDomain => ContractObjectKind::FaultDomain,
             Self::EventLog => ContractObjectKind::EventLog,
             Self::StoreControl => ContractObjectKind::Store,
-            Self::ServiceImport
+            Self::Console
+            | Self::ServiceImport
             | Self::Device
             | Self::PacketDevice
             | Self::MmioRegion

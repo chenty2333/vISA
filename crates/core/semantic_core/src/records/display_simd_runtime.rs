@@ -882,6 +882,7 @@ pub struct StoreRecord {
     pub id: StoreId,
     pub package: String,
     pub artifact: String,
+    pub owner_profile: String,
     pub role: String,
     pub fault_policy: String,
     pub fault_domain: FaultDomainId,

@@ -416,6 +416,34 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|transition| transition.id == id && transition.generation == generation)
                 .map(CredentialTransitionRecord::object_ref),
+            ContractObjectKind::GuestAddressSpace => snapshot
+                .guest_address_spaces
+                .iter()
+                .find(|aspace| aspace.aspace.id() == id && aspace.aspace.generation() == generation)
+                .map(GuestAddressSpaceRecord::object_ref),
+            ContractObjectKind::VmaRegion => snapshot
+                .vma_regions
+                .iter()
+                .find(|region| region.region.id() == id && region.region.generation() == generation)
+                .map(VmaRegionRecord::object_ref),
+            ContractObjectKind::PageObject => snapshot
+                .page_objects
+                .iter()
+                .find(|page| page.page.id() == id && page.page.generation() == generation)
+                .map(PageObjectRecord::object_ref),
+            ContractObjectKind::PageFaultEvent => snapshot
+                .guest_memory_faults
+                .iter()
+                .find(|fault| fault.id == id && fault.generation == generation)
+                .map(GuestMemoryFaultRecord::object_ref),
+            ContractObjectKind::GuestMemoryOperation => snapshot
+                .guest_memory_operations
+                .iter()
+                .find(|operation| {
+                    operation.operation_ref.id() == id
+                        && operation.operation_ref.generation() == generation
+                })
+                .map(GuestMemoryOperationRecord::object_ref),
             ContractObjectKind::ExternalObject => snapshot
                 .external_objects
                 .iter()
@@ -851,6 +879,31 @@ impl ContractGraphValidator {
                 .iter()
                 .find(|transition| transition.id == id)
                 .map(CredentialTransitionRecord::object_ref),
+            ContractObjectKind::GuestAddressSpace => snapshot
+                .guest_address_spaces
+                .iter()
+                .find(|aspace| aspace.aspace.id() == id)
+                .map(GuestAddressSpaceRecord::object_ref),
+            ContractObjectKind::VmaRegion => snapshot
+                .vma_regions
+                .iter()
+                .find(|region| region.region.id() == id)
+                .map(VmaRegionRecord::object_ref),
+            ContractObjectKind::PageObject => snapshot
+                .page_objects
+                .iter()
+                .find(|page| page.page.id() == id)
+                .map(PageObjectRecord::object_ref),
+            ContractObjectKind::PageFaultEvent => snapshot
+                .guest_memory_faults
+                .iter()
+                .find(|fault| fault.id == id)
+                .map(GuestMemoryFaultRecord::object_ref),
+            ContractObjectKind::GuestMemoryOperation => snapshot
+                .guest_memory_operations
+                .iter()
+                .find(|operation| operation.operation_ref.id() == id)
+                .map(GuestMemoryOperationRecord::object_ref),
             ContractObjectKind::ExternalObject => snapshot
                 .external_objects
                 .iter()
@@ -907,9 +960,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::Resource
             | ContractObjectKind::FaultDomain
             | ContractObjectKind::MemoryObject
-            | ContractObjectKind::GuestAddressSpace
-            | ContractObjectKind::VmaRegion
-            | ContractObjectKind::PageObject
             | ContractObjectKind::EventLog
             | ContractObjectKind::Tombstone
             | ContractObjectKind::SignalDisposition
@@ -917,7 +967,6 @@ impl ContractGraphValidator {
             | ContractObjectKind::SignalMask
             | ContractObjectKind::SignalFrame
             | ContractObjectKind::SignalDelivery
-            | ContractObjectKind::PageFaultEvent
             | ContractObjectKind::CowBreakEvent
             | ContractObjectKind::VmaSplitEvent
             | ContractObjectKind::PageAllocSubstrateEvent
@@ -990,6 +1039,11 @@ impl ContractGraphValidator {
                 | ContractObjectKind::OpenFileDescription
                 | ContractObjectKind::Credential
                 | ContractObjectKind::CredentialTransition
+                | ContractObjectKind::GuestAddressSpace
+                | ContractObjectKind::VmaRegion
+                | ContractObjectKind::PageObject
+                | ContractObjectKind::PageFaultEvent
+                | ContractObjectKind::GuestMemoryOperation
         )
     }
 

@@ -51,6 +51,66 @@ pub(crate) fn runtime_activation_record_manifest(
     }
 }
 
+pub(crate) fn guest_address_space_manifest(
+    aspace: &semantic_core::GuestAddressSpaceRecord,
+) -> GuestAddressSpaceManifest {
+    GuestAddressSpaceManifest {
+        id: aspace.aspace.id(),
+        owner: contract_object_ref_manifest(aspace.owner),
+        generation: aspace.generation,
+        state: aspace.state.as_str().to_owned(),
+        root_region: aspace
+            .root_region
+            .map(|region| contract_object_ref_manifest(region.object_ref())),
+        vma_generation: aspace.vma_generation,
+        page_map_generation: aspace.page_map_generation,
+    }
+}
+
+pub(crate) fn vma_region_manifest(region: &semantic_core::VmaRegionRecord) -> VmaRegionManifest {
+    VmaRegionManifest {
+        id: region.region.id(),
+        aspace: contract_object_ref_manifest(region.aspace.object_ref()),
+        range: GuestVaRangeManifest { start: region.range.start, len: region.range.len },
+        perms: GuestPermsManifest {
+            readable: region.perms.contains(semantic_core::GuestPerms::READ),
+            writable: region.perms.contains(semantic_core::GuestPerms::WRITE),
+            executable: region.perms.contains(semantic_core::GuestPerms::EXEC),
+        },
+        flags: VmaFlagsManifest {
+            cow: region.flags.cow,
+            shared: region.flags.shared,
+            device: region.flags.device,
+        },
+        backing: contract_object_ref_manifest(region.backing.object_ref()),
+        generation: region.generation,
+        state: region.state.as_str().to_owned(),
+    }
+}
+
+pub(crate) fn page_object_manifest(page: &semantic_core::PageObjectRecord) -> PageObjectManifest {
+    PageObjectManifest {
+        id: page.page.id(),
+        backing: page.backing.as_str().to_owned(),
+        cow: page.cow.as_str().to_owned(),
+        dirty_generation: page.dirty_generation,
+        generation: page.generation,
+        state: page.state.as_str().to_owned(),
+    }
+}
+
+pub(crate) fn guest_memory_fault_manifest(
+    fault: &semantic_core::GuestMemoryFaultRecord,
+) -> GuestMemoryFaultManifest {
+    GuestMemoryFaultManifest {
+        id: fault.id,
+        generation: fault.generation,
+        page: contract_object_ref_manifest(fault.page.object_ref()),
+        reason: fault.reason.clone(),
+        historical: fault.historical,
+    }
+}
+
 pub(crate) fn runnable_queue_manifest(
     queue: &semantic_core::RunnableQueueRecord,
 ) -> RunnableQueueManifest {

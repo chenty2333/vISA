@@ -99,6 +99,7 @@ impl TargetTrapMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostcallCategory {
     Service,
+    Console,
     Device,
     PacketDevice,
     Mmio,
@@ -120,6 +121,7 @@ impl HostcallCategory {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Service => "service",
+            Self::Console => "console",
             Self::Device => "device",
             Self::PacketDevice => "packet-device",
             Self::Mmio => "mmio",
@@ -141,7 +143,8 @@ impl HostcallCategory {
     pub const fn requires_capability(self) -> bool {
         matches!(
             self,
-            Self::Device
+            Self::Console
+                | Self::Device
                 | Self::PacketDevice
                 | Self::Mmio
                 | Self::Dma
@@ -163,6 +166,7 @@ pub const fn capability_class_requires_hostcall_gate(class: CapabilityClass) -> 
     matches!(
         class,
         CapabilityClass::Device
+            | CapabilityClass::Console
             | CapabilityClass::PacketDevice
             | CapabilityClass::CodePublish
             | CapabilityClass::MmioRegion
@@ -364,6 +368,10 @@ impl AuthorityMatrix {
             },
             CapabilityClass::Device => match operation {
                 "probe" | "read" | "configure" | "reset" | "poll" => Some(operation),
+                _ => return Err(AuthorityMatrixError::UnknownOperation),
+            },
+            CapabilityClass::Console => match operation {
+                "write" | "read" | "inspect" => Some(operation),
                 _ => return Err(AuthorityMatrixError::UnknownOperation),
             },
             CapabilityClass::GuestMemoryAccess => match operation {

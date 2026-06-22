@@ -148,6 +148,7 @@ pub type SignalFrameId = u64;
 pub type SignalDeliveryId = u64;
 // Memory expansion
 pub type PageFaultEventId = u64;
+pub type GuestMemoryOperationId = u64;
 pub type CowBreakEventId = u64;
 pub type VmaSplitEventId = u64;
 pub type PageAllocSubstrateEventId = u64;

@@ -30,13 +30,15 @@ cargo run -p visa-conformance -- write-sample-report target/visa-conformance.jso
 cargo run -p visa-conformance -- validate-report target/visa-conformance.json
 cargo run -p visa-conformance -- validate-artifacts target/visa-conformance.json .
 cargo run -p visa-conformance -- validate-report-with-artifacts target/visa-conformance.json .
-cargo run -p visa-conformance -- ltp-report-from-logs target/ltp portable-artifact-execution guest-frontend
+cargo run -p visa-conformance -- ltp-report-from-logs target/ltp reference-service device-capable
 cargo run -p visa-conformance -- ltp-visa-report-from-logs target/visa-ltp/logs portable-artifact-execution guest-frontend
 cargo run -p visa-conformance -- performance-plan-lines target/criterion
 cargo run -p visa-conformance -- performance-report-from-criterion target/criterion
 cargo run -p visa-conformance -- attach-evidence-artifact target/visa-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "real target extraction trace"
 cargo run -p visa-conformance -- attach-evidence-artifact-file target/visa-conformance.json '*' substrate-extraction-trace target/evidence/substrate.jsonl "real target extraction trace"
-scripts/run-host-ltp-log-adapter.sh target/host-ltp-run portable-artifact-execution guest-frontend runltp
+cargo run -p visa-conformance -- attach-evidence-artifact target/visa-conformance.json visa.artifact.load profile-gate-trace target/evidence/profile-gate.jsonl cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc "profile gate trace"
+cargo run -p visa-conformance -- attach-evidence-artifact target/visa-conformance.json visa.capability.hostcall substrate-event-trace target/evidence/substrate-events.jsonl dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd "substrate event trace"
+scripts/run-host-ltp-log-adapter.sh target/host-ltp-run reference-service device-capable runltp
 scripts/run-visa-ltp-conformance.sh target/visa-ltp-run /opt/ltp/testcases/bin
 scripts/run-visa-bench-conformance.sh target/visa-bench-run
 scripts/run-report-gates.sh
@@ -73,6 +75,18 @@ Portable-or-stronger `visa-semantic-conformance` pass/fail results must include 
 and carry the core snapshot arrays needed by the artifact gate. The artifact gate
 rejects unknown snapshot schema ids, snapshot boundary overclaims relative to the
 owning result, and artifact paths that are absolute or escape the artifact root.
+Results that report non-zero `profile_gate_event_count`,
+`profile_gate_rejection_count`, or `profile_gate_degradation_count` must attach a
+`profile-gate-trace` JSONL artifact. Each entry records event id/epoch, kind,
+package, artifact, required/reported/enforced profile, reason, and missing,
+degraded, or forbidden authority evidence. `required_profile` and
+`enforced_profile` must be P0-P4 profiles parsed by `visa_profile`;
+`reported_profile` uses the same centralized reported-profile capability helper
+so `host-validation` remains a fixture label rather than a P0-P4 profile.
+Results that report non-zero `unsupported_substrate_event_count` must attach a
+`substrate-event-trace` JSONL artifact. Unsupported entries must include event
+id/epoch, authority, operation, and requester, artifact, or store attribution so
+unsupported authority evidence is inspectable outside free-form prose.
 Results that claim `real-target-substrate` must include a structured
 `substrate-extraction-trace` or `device-trace` evidence artifact with a URI,
 SHA-256 digest, and description. Free-form evidence text alone is not enough for

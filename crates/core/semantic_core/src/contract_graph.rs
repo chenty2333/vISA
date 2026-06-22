@@ -122,6 +122,11 @@ pub struct ContractGraphSnapshot {
     pub block_range_objects: Vec<BlockRangeObjectRecord>,
     pub block_request_queues: Vec<BlockRequestQueueRecord>,
     pub block_dma_buffers: Vec<BlockDmaBufferRecord>,
+    pub guest_address_spaces: Vec<GuestAddressSpaceRecord>,
+    pub vma_regions: Vec<VmaRegionRecord>,
+    pub page_objects: Vec<PageObjectRecord>,
+    pub guest_memory_faults: Vec<GuestMemoryFaultRecord>,
+    pub guest_memory_operations: Vec<GuestMemoryOperationRecord>,
     pub harts: Vec<HartRecord>,
     pub tasks: Vec<TaskRecord>,
     pub runtime_activations: Vec<RuntimeActivationRecord>,
@@ -573,6 +578,177 @@ mod tests {
         }
     }
 
+    fn runtime_artifact_snapshot_fixture() -> ContractGraphSnapshot {
+        let hostcall = HostcallSpec::new(
+            1,
+            "visa.console.write",
+            HostcallCategory::Console,
+            "visa.console",
+            "write",
+            false,
+        );
+        let artifact = VerifiedArtifact {
+            artifact_id: 1,
+            package: "native-visa".to_string(),
+            artifact_name: "visa-native-artifact".to_string(),
+            role: "visa-native-workload".to_string(),
+            target_profile: "minimal-bare-metal".to_string(),
+            artifact_hash: "artifact-hash".to_string(),
+            hash_status: "manifest-bound".to_string(),
+            abi_fingerprint: "abi".to_string(),
+            manifest_binding_hash: "binding".to_string(),
+            code_hash: "code-hash".to_string(),
+            signature_scheme: "prototype-self-signed-sha256".to_string(),
+            signature_status: "profile-bound-unverified".to_string(),
+            signature_verified: false,
+            signer: "test-signer".to_string(),
+            imports: Vec::new(),
+            exports: vec!["visa_start".to_string()],
+            memory_plan: TargetMemoryPlan::new(1, 0, 8),
+            trap_metadata: Vec::new(),
+            address_map: Vec::new(),
+            capabilities: Vec::new(),
+            hostcalls: vec![hostcall.clone()],
+            payload_len: 64,
+            generation: 1,
+        };
+        let code = CodeObject {
+            id: 1,
+            artifact_id: 1,
+            package: "native-visa".to_string(),
+            owner_profile: "minimal-bare-metal".to_string(),
+            generation: 1,
+            text: TargetAddressRange::new(0x1000, 64, CodeRangePermission::ReadExecute),
+            rodata: TargetAddressRange::new(0x2000, 16, CodeRangePermission::ReadOnly),
+            trap_metadata: Vec::new(),
+            address_map: Vec::new(),
+            hostcall_table: Some(1),
+            hostcalls: vec![hostcall.clone()],
+            state: CodeObjectState::BoundToStore,
+            bound_store: Some(1),
+            bound_store_generation: Some(1),
+            code_hash: "code-hash".to_string(),
+            simd_requirement: CodeObjectSimdRequirement::scalar_only("unit fixture"),
+        };
+        let activation = ActivationRecord {
+            id: 1,
+            store: 1,
+            store_generation: 1,
+            code_object: 1,
+            code_generation: 1,
+            artifact: 1,
+            profile: "minimal-bare-metal".to_string(),
+            entry: ActivationEntry::Symbol("visa_start".to_string()),
+            generation: 1,
+            state: ActivationState::Running,
+            start_event: 1,
+            exit_event: None,
+            active_dmw_leases: 0,
+            blocked_wait: None,
+            trap: Some(1),
+            return_tag: None,
+        };
+        let trap = TargetTrapRecord {
+            id: 1,
+            generation: 1,
+            class: TargetTrapClass::HostcallTrap,
+            store: Some(1),
+            store_generation: Some(1),
+            activation: Some(1),
+            activation_generation: Some(1),
+            code_object: Some(1),
+            code_generation: Some(1),
+            artifact: Some(1),
+            artifact_generation: Some(1),
+            offset: Some(16),
+            target_pc: Some(0x1010),
+            trap_kind: Some("hostcall-fault".to_string()),
+            function_index: None,
+            wasm_offset: None,
+            debug_symbol: None,
+            classification_status: Some("classified".to_string()),
+            attribution_status: "trap-map-attributed".to_string(),
+            simd_attribution: None,
+            hostcall: Some("visa.console.write".to_string()),
+            fault_policy: "abort".to_string(),
+            effect: FailureEffect::CompleteWithErrno(5),
+            detail: "target trap evidence".to_string(),
+        };
+        let hostcall_trace = HostcallTraceRecord {
+            id: 1,
+            generation: 1,
+            abi_version: HostcallFrame::ABI_VERSION.to_string(),
+            frame_size: 128,
+            flags: 0,
+            activation: 1,
+            activation_generation: 1,
+            store: 1,
+            store_generation: 1,
+            code_object: 1,
+            code_generation: 1,
+            artifact: 1,
+            artifact_generation: 1,
+            hostcall_number: 1,
+            hostcall_seq: 1,
+            caller_offset: 16,
+            name: hostcall.name.clone(),
+            category: hostcall.category,
+            subject: "native-visa".to_string(),
+            subject_source: HostcallTraceRecord::SUBJECT_SOURCE_ACTIVE_STATE.to_string(),
+            object: hostcall.object.clone(),
+            operation: hostcall.operation.clone(),
+            args: [0; 6],
+            cap_args: Vec::new(),
+            record_mode: RecordMode::Deterministic,
+            allowed: true,
+            gate_status: "exit".to_string(),
+            result: "ok".to_string(),
+            denial_reason: None,
+            ret_tag: HostcallReturnTag::Ok,
+            ret0: 0,
+            ret1: 0,
+            trap_out: Some(1),
+            trap_generation_out: Some(1),
+            wait_token_out: None,
+            wait_token_generation_out: None,
+        };
+        let cleanup = FaultCleanupTransaction {
+            id: 1,
+            store: 1,
+            store_generation: 1,
+            result_store_generation: Some(2),
+            activation: Some(1),
+            activation_generation: Some(1),
+            code_object: Some(1),
+            code_generation: Some(1),
+            generation: 1,
+            started_at: 2,
+            finished_at: Some(3),
+            state: CleanupTransactionState::Completed,
+            reason: "trap".to_string(),
+            steps: Vec::new(),
+            effects: Vec::new(),
+            released_dmw_leases: 0,
+            cancelled_waits: 0,
+            revoked_capabilities: Vec::new(),
+            revoked_capability_refs: Vec::new(),
+            dropped_resources: 0,
+            unbound_code_object: false,
+            state_digest: "unit-cleanup".to_string(),
+            effect: FailureEffect::CompleteWithErrno(5),
+        };
+        ContractGraphSnapshot {
+            claimed_evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+            artifacts: vec![artifact],
+            code_objects: vec![code],
+            activations: vec![activation],
+            traps: vec![trap],
+            hostcalls: vec![hostcall_trace],
+            cleanup_transactions: vec![cleanup],
+            ..ContractGraphSnapshot::default()
+        }
+    }
+
     #[test]
     fn portable_subset_preserves_stores_and_capabilities() {
         let graph = fixture_with_devices_and_stores();
@@ -581,6 +757,21 @@ mod tests {
 
         let portable = snapshot.portable_subset();
         assert_eq!(portable.stores.len(), snapshot.stores.len());
+    }
+
+    #[test]
+    fn portable_subset_preserves_runtime_artifact_identity_records() {
+        let snapshot = runtime_artifact_snapshot_fixture();
+
+        let portable = snapshot.portable_subset();
+
+        assert_eq!(portable.claimed_evidence_level, snapshot.claimed_evidence_level);
+        assert_eq!(portable.artifacts, snapshot.artifacts);
+        assert_eq!(portable.code_objects, snapshot.code_objects);
+        assert_eq!(portable.activations, snapshot.activations);
+        assert_eq!(portable.traps, snapshot.traps);
+        assert_eq!(portable.hostcalls, snapshot.hostcalls);
+        assert_eq!(portable.cleanup_transactions, snapshot.cleanup_transactions);
     }
 
     #[test]
@@ -598,6 +789,55 @@ mod tests {
         assert!(portable.fake_block_backends.is_empty());
         assert!(portable.virtio_blk_backends.is_empty());
         assert!(!portable.stores.is_empty());
+    }
+
+    #[test]
+    fn portable_subset_strips_scheduler_view_and_audit_projection_records() {
+        let graph = fixture_with_devices_and_stores();
+        let mut snapshot = graph.snapshot();
+        snapshot.runtime_activations.push(RuntimeActivationRecord {
+            id: 1,
+            owner_task: 1,
+            owner_task_generation: 1,
+            owner_store: Some(1),
+            owner_store_generation: Some(1),
+            code_object: Some(ContractObjectRef::new(ContractObjectKind::CodeObject, 1, 1)),
+            generation: 1,
+            state: RuntimeActivationState::Created,
+            runnable_queue: None,
+            runnable_queue_generation: None,
+            last_event: Some(1),
+        });
+        snapshot.external_objects.push(ExternalObjectDeclaration::new(
+            ContractObjectRef::new(ContractObjectKind::EventLog, 1, 1),
+            "debugger",
+            "external-event-log",
+            "event-log",
+        ));
+        snapshot.explicit_edges.push(
+            ContractEdgeRecord::new(
+                ContractObjectRef::new(ContractObjectKind::Store, 1, 1),
+                ContractObjectRef::new(ContractObjectKind::Task, 1, 1),
+                ContractEdgeMode::Live,
+                "test-edge",
+                1,
+            )
+            .with_evidence_level(EvidenceBoundaryLevel::SemanticModel),
+        );
+
+        let portable = snapshot.portable_subset();
+
+        assert!(portable.harts.is_empty());
+        assert!(portable.runnable_queues.is_empty());
+        assert!(portable.scheduler_decisions.is_empty());
+        assert!(portable.activation_contexts.is_empty());
+        assert!(portable.activation_migrations.is_empty());
+        assert!(portable.smp_snapshot_barriers.is_empty());
+        assert!(portable.waits.is_empty());
+        assert!(portable.external_objects.is_empty());
+        assert!(portable.explicit_edges.is_empty());
+        assert!(!portable.tasks.is_empty());
+        assert!(!portable.runtime_activations.is_empty());
     }
 
     #[test]

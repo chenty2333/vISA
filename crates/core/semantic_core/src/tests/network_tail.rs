@@ -257,6 +257,7 @@ pub(super) fn substrate_unsupported_is_event_log_visible() {
     let mut graph = SemanticGraph::new();
 
     let event = graph.record_substrate_unsupported(
+        "dma",
         "DmaAuthority",
         "dma_alloc",
         Some("driver.fake_net".to_string()),
@@ -268,7 +269,7 @@ pub(super) fn substrate_unsupported_is_event_log_visible() {
     assert_eq!(record.id, event);
     assert_eq!(
         record.kind.summary(),
-        "SubstrateUnsupported authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4"
+        "SubstrateUnsupported family=dma authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4"
     );
 }
 
@@ -277,6 +278,7 @@ pub(super) fn substrate_capability_denied_is_event_log_visible() {
     let mut graph = SemanticGraph::new();
 
     let event = graph.record_substrate_capability_denied(
+        "dma",
         "DmaAuthority",
         "dma_alloc",
         Some("driver.fake_net".to_string()),
@@ -290,7 +292,7 @@ pub(super) fn substrate_capability_denied_is_event_log_visible() {
     assert_eq!(record.id, event);
     assert_eq!(
         record.kind.summary(),
-        "SubstrateCapabilityDenied authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4 capability=7 generation=2"
+        "SubstrateCapabilityDenied family=dma authority=DmaAuthority op=dma_alloc requester=driver.fake_net artifact=9 store=4 capability=7 generation=2"
     );
 }
 

@@ -289,6 +289,7 @@ pub enum SemanticInvariantError {
         attribution: HartEventAttributionId,
         activation: ActivationId,
     },
+    InvalidGuestMemory,
     TaskReferencesMissingResource {
         task: TaskId,
         resource: ResourceId,

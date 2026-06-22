@@ -33,6 +33,8 @@ pub struct SubstrateEventManifest {
     pub id: u64,
     pub epoch: u64,
     pub event_kind: String,
+    #[serde(default)]
+    pub authority_family: String,
     pub authority: String,
     pub operation: String,
     pub requester: Option<String>,
@@ -40,6 +42,27 @@ pub struct SubstrateEventManifest {
     pub store: Option<u64>,
     #[serde(default)]
     pub capability: Option<CapabilityHandleArgManifest>,
+    pub explanation: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ProfileGateEventManifest {
+    pub id: u64,
+    pub epoch: u64,
+    pub event_kind: String,
+    pub package: String,
+    pub artifact: String,
+    pub artifact_id: Option<u64>,
+    pub required_profile: String,
+    pub reported_profile: String,
+    pub enforced_profile: String,
+    pub reason: String,
+    #[serde(default)]
+    pub missing_required: Vec<String>,
+    #[serde(default)]
+    pub degraded_optional: Vec<String>,
+    #[serde(default)]
+    pub forbidden_present: Vec<String>,
     pub explanation: String,
 }
 
@@ -74,6 +97,96 @@ pub struct InterfaceEventManifest {
     pub artifact: Option<u64>,
     pub store: Option<u64>,
     pub explanation: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GuestAddressSpaceManifest {
+    pub id: u64,
+    pub owner: ContractObjectRefManifest,
+    pub generation: u64,
+    pub state: String,
+    #[serde(default)]
+    pub root_region: Option<ContractObjectRefManifest>,
+    pub vma_generation: u64,
+    pub page_map_generation: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GuestVaRangeManifest {
+    pub start: u64,
+    pub len: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GuestPermsManifest {
+    pub readable: bool,
+    pub writable: bool,
+    pub executable: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmaFlagsManifest {
+    pub cow: bool,
+    pub shared: bool,
+    pub device: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmaRegionManifest {
+    pub id: u64,
+    pub aspace: ContractObjectRefManifest,
+    pub range: GuestVaRangeManifest,
+    pub perms: GuestPermsManifest,
+    pub flags: VmaFlagsManifest,
+    pub backing: ContractObjectRefManifest,
+    pub generation: u64,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PageObjectManifest {
+    pub id: u64,
+    pub backing: String,
+    pub cow: String,
+    pub dirty_generation: u64,
+    pub generation: u64,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GuestMemoryFaultManifest {
+    pub id: u64,
+    pub generation: u64,
+    pub page: ContractObjectRefManifest,
+    pub reason: String,
+    pub historical: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GuestMemoryOperationManifest {
+    pub id: u64,
+    pub generation: u64,
+    pub operation: String,
+    pub status: String,
+    pub aspace: ContractObjectRefManifest,
+    pub range: GuestVaRangeManifest,
+    #[serde(default)]
+    pub region_before: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub region_after: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub page_before: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub page_after: Option<ContractObjectRefManifest>,
+    #[serde(default)]
+    pub perms_before: Option<GuestPermsManifest>,
+    #[serde(default)]
+    pub perms_after: Option<GuestPermsManifest>,
+    #[serde(default)]
+    pub brk_before: Option<u64>,
+    #[serde(default)]
+    pub brk_after: Option<u64>,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

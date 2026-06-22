@@ -66,6 +66,7 @@ mod framebuffer_object;
 mod framebuffer_window_lease;
 mod framebuffer_write;
 mod fs_wait;
+mod guest_memory;
 mod hart;
 mod hart_event;
 mod integrated_code_publish_smp_workload;
@@ -105,6 +106,7 @@ mod packet_descriptor_object;
 mod packet_device_object;
 mod packet_queue_object;
 mod process;
+mod profile;
 mod query;
 mod queue_object;
 mod remote;
@@ -225,6 +227,12 @@ impl SemanticGraph {
             virtio_net_backends: d.network.virtio_net_backends.clone(),
             // device domain
             device_objects: d.device.device_objects.clone(),
+            // guest memory domain
+            guest_address_spaces: d.memory.guest_address_spaces.clone(),
+            vma_regions: d.memory.vma_regions.clone(),
+            page_objects: d.memory.page_objects.clone(),
+            guest_memory_faults: d.memory.guest_memory_faults.clone(),
+            guest_memory_operations: d.memory.guest_memory_operations.clone(),
             // block domain
             fake_block_backends: d.block.fake_block_backends.clone(),
             virtio_blk_backends: d.block.virtio_blk_backends.clone(),
@@ -459,6 +467,7 @@ mod tests {
             id: 99,
             package: "other".into(),
             artifact: "other-art".into(),
+            owner_profile: String::new(),
             role: "role".into(),
             fault_policy: "restartable".into(),
             fault_domain: 99,
@@ -486,5 +495,31 @@ mod tests {
             source.stores().iter().find(|record| record.id == store).cloned().unwrap();
         store_record.generation = 0;
         assert!(!SemanticGraph::new().restore_store_record(store_record));
+    }
+
+    #[test]
+    fn runtime_store_instances_preserve_package_provenance_with_unique_identity() {
+        let mut source = SemanticGraph::new();
+        let first = source.register_store_instance("pkg", "art", "runtime-artifact", "restartable");
+        let second =
+            source.register_store_instance("pkg", "art", "runtime-artifact", "restartable");
+
+        assert_ne!(first, second);
+        assert_eq!(source.stores().len(), 2);
+        assert!(source.stores().iter().all(|store| store.package == "pkg"));
+        assert_eq!(source.fault_domain_count(), 2);
+
+        let mut restored = SemanticGraph::new();
+        for store in source.stores() {
+            assert!(
+                restored.restore_store_record(store.clone()),
+                "runtime store instance should restore: {store:?}"
+            );
+        }
+        assert_eq!(restored.stores(), source.stores());
+        assert!(
+            restored.check_invariants().is_ok(),
+            "restored multi-instance runtime stores must stay invariant-clean"
+        );
     }
 }

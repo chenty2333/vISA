@@ -31,7 +31,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "$#" -lt 1 ]]; then
 fi
 
 output_dir="$1"
-boundary="${2:-portable-artifact-execution}"
+boundary="${2:-reference-service}"
 profile="${3:-guest-frontend}"
 runltp_bin="${4:-runltp}"
 

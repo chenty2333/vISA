@@ -1,11 +1,11 @@
-Before work, read the relevant policies under `references/`.
+Before work, read the relevant policies under `docs/policies/`.
 
 Always follow:
 
-- `references/execution-policy.md`
-- `references/documentation-policy.md`
-- `references/intervention-policy.md`
-- `references/evidence-policy.md`
+- `docs/policies/execution-policy.md`
+- `docs/policies/documentation-policy.md`
+- `docs/policies/intervention-policy.md`
+- `docs/policies/evidence-policy.md`
 
 Use task files for continuity.
 Use long-lived docs only for durable knowledge.

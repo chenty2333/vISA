@@ -29,31 +29,32 @@ use artifact_manifest::{
     FileObjectManifest, FramebufferBenchmarkManifest, FramebufferDirtyRegionManifest,
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
     FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallTraceManifest,
-    IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
-    IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedOsctlTraceReplayManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
-    IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
+    GuestAddressSpaceManifest, GuestMemoryFaultManifest, HartEventAttributionManifest,
+    HartRecordManifest, HostcallTraceManifest, IntegratedCodePublishSmpWorkloadManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedDisplayPanicManifest,
+    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedOsctlTraceReplayManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoFaultInjectionManifest, IoValidationReportManifest, IoWaitManifest, IpiEventManifest,
+    IrqEventManifest, IrqLineObjectManifest, MigrationPackageManifest, MmioRegionObjectManifest,
     NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
     NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
     NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
     NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
     PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
-    QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest, RunnableQueueManifest,
-    RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
-    SimdBenchmarkManifest, SimdContextSwitchBenchmarkManifest, SimdFaultInjectionManifest,
-    SmpCleanupQuiescenceManifest, SmpCodePublishBarrierManifest, SmpSafePointManifest,
-    SmpScalingBenchmarkManifest, SmpSnapshotBarrierManifest, SmpStressRunManifest,
-    SocketObjectManifest, SocketOperationManifest, SocketWaitManifest,
-    StopTheWorldRendezvousManifest, StoreRecordManifest, SubstrateEventManifest,
-    TargetArtifactImageManifest, TargetFeatureSetManifest, TaskRecordManifest,
-    TimerInterruptManifest, TrapRecordManifest, VectorStateManifest,
-    VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest, WaitRecordManifest,
+    PacketQueueObjectManifest, PageObjectManifest, PreemptionLatencySampleManifest,
+    PreemptionManifest, ProfileGateEventManifest, QueueObjectManifest, RemoteParkManifest,
+    RemotePreemptManifest, RunnableQueueManifest, RuntimeActivationRecordManifest,
+    SavedContextManifest, SchedulerDecisionManifest, SimdBenchmarkManifest,
+    SimdContextSwitchBenchmarkManifest, SimdFaultInjectionManifest, SmpCleanupQuiescenceManifest,
+    SmpCodePublishBarrierManifest, SmpSafePointManifest, SmpScalingBenchmarkManifest,
+    SmpSnapshotBarrierManifest, SmpStressRunManifest, SocketObjectManifest,
+    SocketOperationManifest, SocketWaitManifest, StopTheWorldRendezvousManifest,
+    StoreRecordManifest, SubstrateEventManifest, TargetArtifactImageManifest,
+    TargetFeatureSetManifest, TaskRecordManifest, TimerInterruptManifest, TrapRecordManifest,
+    VectorStateManifest, VirtioBlkBackendObjectManifest, VirtioNetBackendObjectManifest,
+    VmaRegionManifest, WaitRecordManifest,
 };
 use contract_core::VIEW_SCHEMA_V1;
 use contract_validate::{
@@ -65,7 +66,7 @@ use contract_validate::{
     validate_migration_package, validate_replay_quiescent,
 };
 use semantic_core::{CapabilityClass, RuntimeMode};
-use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
+use visa_profile::{SubstrateCapabilitySet, capabilities_for_reported_profile};
 
 mod graph;
 mod inspect;
@@ -305,8 +306,10 @@ fn contract_validation_view_v1(
         .contract_violations
         .iter()
         .map(|violation| {
+            let classification = validation_issue_classification(&violation.kind);
             serde_json::json!({
                 "code": violation.kind,
+                "classification": classification,
                 "severity": "error",
                 "subject": {
                     "kind": violation.from.kind,
@@ -322,6 +325,7 @@ fn contract_validation_view_v1(
     if let Some(error) = structural_error {
         violations.push(serde_json::json!({
             "code": "package-structure",
+            "classification": "schema",
             "severity": "error",
             "subject": {
                 "kind": "migration-package",
@@ -356,10 +360,12 @@ fn contract_validation_view_v1(
         },
         "structure_validation": {
             "ok": structural_error.is_none(),
+            "classification": "schema",
             "violation_count": usize::from(structural_error.is_some()),
             "violations": structural_error
                 .map(|error| vec![serde_json::json!({
                     "code": "package-structure",
+                    "classification": "schema",
                     "message": error
                 })])
                 .unwrap_or_default()
@@ -372,6 +378,20 @@ fn contract_validation_view_v1(
         },
         "last_error": last_error
     })
+}
+
+fn validation_issue_classification(code: &str) -> &'static str {
+    if code.contains("evidence-boundary") || code.contains("boundary") {
+        "evidence-boundary"
+    } else if code.contains("schema")
+        || code.contains("structure")
+        || code.contains("package-format")
+        || code.contains("package-structure")
+    {
+        "schema"
+    } else {
+        "semantic"
+    }
 }
 
 pub fn print_plan(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -408,10 +428,7 @@ pub fn check_substrate_compatibility(
 }
 
 fn substrate_capabilities_for_profile(profile: &str) -> Option<SubstrateCapabilitySet> {
-    if profile == "host-validation" {
-        return Some(SubstrateCapabilitySet::host_validation());
-    }
-    SubstrateProfile::parse(profile).map(SubstrateCapabilitySet::for_profile)
+    capabilities_for_reported_profile(profile)
 }
 
 fn print_substrate_compatibility_text(
@@ -728,6 +745,50 @@ pub fn print_substrate_events(path: &Path, json: bool) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+pub fn print_profile_gate_events(path: &Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let package = serde_json::from_slice::<MigrationPackageManifest>(&fs::read(path)?)?;
+    if json {
+        let value = serde_json::json!({
+            "schema": VIEW_SCHEMA_V1,
+            "schema_version": OSCTL_JSON_SCHEMA_VERSION,
+            "kind": "profile-gate-events",
+            "command": "profile.gate.events",
+            "package": &package.package_id,
+            "event_count": package.semantic.profile_gate_events.len(),
+            "events": package.semantic.profile_gate_events.iter().map(profile_gate_event_view_v1).collect::<Vec<_>>(),
+            "references": {
+                "event_log_cursor": package.semantic.event_log_cursor,
+                "root_count": package.semantic.roots.profile_gate_event_roots.len()
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    println!(
+        "profile gate events package={} events={} roots={}",
+        package.package_id,
+        package.semantic.profile_gate_events.len(),
+        package.semantic.roots.profile_gate_event_roots.len()
+    );
+    for event in &package.semantic.profile_gate_events {
+        println!(
+            "#{} epoch={} kind={} package={} artifact={} required={} reported={} enforced={} reason={} explanation={}",
+            event.id,
+            event.epoch,
+            event.event_kind,
+            event.package,
+            event.artifact,
+            event.required_profile,
+            event.reported_profile,
+            event.enforced_profile,
+            event.reason,
+            event.explanation
+        );
+    }
+    Ok(())
+}
+
 fn substrate_event_view_v1(event: &SubstrateEventManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -735,10 +796,19 @@ fn substrate_event_view_v1(event: &SubstrateEventManifest) -> serde_json::Value 
         "id": event.id,
         "generation": 1,
         "state": &event.event_kind,
+        "authority_family": &event.authority_family,
         "authority": &event.authority,
         "operation": &event.operation,
         "requester": &event.requester,
-        "capability": &event.capability,
+        "capability": {
+            "state": if event.capability.is_some() { "present" } else { "absent" },
+            "handle": &event.capability
+        },
+        "evidence": {
+            "unsupported": event.event_kind == "unsupported",
+            "denied": event.event_kind == "capability-denied",
+            "authority_extracted": event.event_kind == "authority-extracted"
+        },
         "references": {
             "artifact": event.artifact,
             "store": event.store,
@@ -746,8 +816,46 @@ fn substrate_event_view_v1(event: &SubstrateEventManifest) -> serde_json::Value 
         },
         "last_transition": {
             "event_kind": &event.event_kind,
+            "authority_family": &event.authority_family,
             "authority": &event.authority,
             "operation": &event.operation
+        },
+        "last_error": &event.explanation
+    })
+}
+
+fn profile_gate_event_view_v1(event: &ProfileGateEventManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "profile-gate-event",
+        "id": event.id,
+        "generation": 1,
+        "state": &event.event_kind,
+        "identity": {
+            "package": &event.package,
+            "artifact": &event.artifact,
+            "artifact_id": event.artifact_id,
+        },
+        "profiles": {
+            "required": &event.required_profile,
+            "reported": &event.reported_profile,
+            "enforced": &event.enforced_profile,
+        },
+        "reason": &event.reason,
+        "evidence": {
+            "missing_required": &event.missing_required,
+            "degraded_optional": &event.degraded_optional,
+            "forbidden_present": &event.forbidden_present,
+        },
+        "references": {
+            "artifact": event.artifact_id,
+            "event_epoch": event.epoch
+        },
+        "last_transition": {
+            "event_kind": &event.event_kind,
+            "required_profile": &event.required_profile,
+            "reported_profile": &event.reported_profile,
+            "enforced_profile": &event.enforced_profile
         },
         "last_error": &event.explanation
     })
@@ -994,7 +1102,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.event_log_cursor
     );
     println!(
-        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} target_feature_sets={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} command_results={} interface_events={}",
+        "semantic roots: harts={} tasks={} resources={} authorities={}/{} waits={} capabilities={} stores={} fastpath={}/{} boundaries={} artifacts={} activations={} executor_transitions={} target_artifacts={} code_objects={} activation_records={} traps={} hostcalls={} migration_objects={} timer_interrupts={} ipi_events={} remote_preempts={} remote_parks={} cross_hart_scheduler_decisions={} activation_migrations={} smp_safe_points={} stop_the_world_rendezvous={} smp_code_publish_barriers={} smp_cleanup_quiescence={} smp_snapshot_barriers={} smp_stress_runs={} smp_scaling_benchmarks={} devices={} queues={} descriptors={} dma_buffers={} mmio_regions={} irq_lines={} irq_events={} device_capabilities={} driver_store_bindings={} io_waits={} io_cleanups={} io_fault_injections={} io_validation_reports={} packet_devices={} packet_buffers={} packet_queues={} packet_descriptors={} fake_net_backends={} virtio_net_backends={} socket_waits={} network_backpressures={} network_driver_cleanups={} network_generation_audits={} network_fault_injections={} network_benchmarks={} network_recovery_benchmarks={} block_devices={} block_ranges={} block_requests={} block_completions={} block_waits={} fake_block_backends={} virtio_blk_backends={} block_read_paths={} block_write_paths={} block_request_queues={} block_dma_buffers={} block_page_objects={} buffer_cache_objects={} file_objects={} directory_objects={} fat_adapter_objects={} ext4_adapter_objects={} file_handle_capabilities={} fs_waits={} block_driver_cleanups={} block_recovery_benchmarks={} target_feature_sets={} activation_cleanups={} preemption_latency_samples={} hart_event_attributions={} substrate_events={} profile_gate_events={} command_results={} interface_events={}",
         package.semantic.hart_count,
         package.semantic.task_count,
         package.semantic.resource_count,
@@ -1080,6 +1188,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
         package.semantic.preemption_latency_sample_count,
         package.semantic.hart_event_attribution_count,
         package.semantic.substrate_event_count,
+        package.semantic.profile_gate_event_count,
         package.semantic.command_result_count,
         package.semantic.interface_event_count
     );
@@ -1109,6 +1218,7 @@ fn print_migration_summary(package: &MigrationPackageManifest) {
     print_roots("hostcall", &package.semantic.roots.hostcall_trace_roots);
     print_roots("migration-object", &package.semantic.roots.migration_object_roots);
     print_roots("substrate-event", &package.semantic.roots.substrate_event_roots);
+    print_roots("profile-gate-event", &package.semantic.roots.profile_gate_event_roots);
     print_roots("command-result", &package.semantic.roots.command_result_roots);
     print_roots("interface-event", &package.semantic.roots.interface_event_roots);
     print_roots("socket-wait", &package.semantic.roots.socket_wait_roots);

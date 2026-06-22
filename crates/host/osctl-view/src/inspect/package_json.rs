@@ -569,6 +569,19 @@ pub(crate) fn inspect_package_object_json(
             package.semantic.command_results.iter().map(command_result_view_v1).collect::<Vec<_>>(),
             serde_json::json!({ "root_count": package.semantic.roots.command_result_roots.len() }),
         ),
+        "profile-gate-event" | "profile-gate" => (
+            "profile-gate-event",
+            package.semantic.profile_gate_event_count,
+            package
+                .semantic
+                .profile_gate_events
+                .iter()
+                .map(profile_gate_event_view_v1)
+                .collect::<Vec<_>>(),
+            serde_json::json!({
+                "root_count": package.semantic.roots.profile_gate_event_roots.len()
+            }),
+        ),
         "contract" => (
             "contract",
             package.semantic.contract_violation_count,

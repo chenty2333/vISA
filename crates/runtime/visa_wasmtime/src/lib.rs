@@ -430,6 +430,8 @@ fn adapter_supports_hostcall(object: &str, operation: &str) -> bool {
             | ("visa.timer", "now")
             | ("timer.wasi", "arm")
             | ("visa.timer", "arm")
+            | ("event-log.visa", "append")
+            | ("event-log.visa", "inspect")
             | ("guest-memory", "read")
             | ("guest-memory", "copyin")
             | ("visa.memory", "copyin")
@@ -496,6 +498,14 @@ fn hostcall_payload_for_object(
                 arg_u64("wait_token_generation", c)?,
             ),
         }),
+        ("event-log.visa", "append") => Ok(VisaHostcallPayload::EventPush {
+            event: substrate_api::SubstrateEvent::unsupported(
+                "ConsoleAuthority",
+                "console_write",
+                None,
+            ),
+        }),
+        ("event-log.visa", "inspect") => Ok(VisaHostcallPayload::EventPop),
         ("guest-memory", "read") | ("guest-memory", "copyin") | ("visa.memory", "copyin") => {
             let memory = substrate_api::UserMemoryHandle::new(
                 arg_u64("memory_id", a)?,
@@ -659,6 +669,7 @@ fn hostcall_result_i64(value: &VisaHostcallValue) -> i64 {
         VisaHostcallValue::U32(v) => i64::from(*v),
         VisaHostcallValue::U64(v) => *v as i64,
         VisaHostcallValue::Bytes(b) => b.len() as i64,
+        VisaHostcallValue::Event(event) => i64::from(event.is_some()),
         VisaHostcallValue::WindowLease(_) => 1,
         VisaHostcallValue::DmaBuffer(_) => 1,
         VisaHostcallValue::SnapshotBarrier(_) => 1,
@@ -692,6 +703,7 @@ mod tests {
         console: Vec<u8>,
         fail_console: bool,
         timers: usize,
+        events: Vec<substrate_api::SubstrateEvent>,
         guest_memory_source: Vec<u8>,
         guest_memory_sink: Vec<u8>,
         dmw_live: bool,
@@ -726,7 +738,16 @@ mod tests {
         }
     }
 
-    impl EventQueueAuthority for TestSubstrate {}
+    impl EventQueueAuthority for TestSubstrate {
+        fn push_event(&mut self, event: substrate_api::SubstrateEvent) -> SubstrateResult<()> {
+            self.events.push(event);
+            Ok(())
+        }
+
+        fn pop_event(&mut self) -> Option<substrate_api::SubstrateEvent> {
+            if self.events.is_empty() { None } else { Some(self.events.remove(0)) }
+        }
+    }
     impl GuestMemoryAuthority for TestSubstrate {
         fn copyin(
             &self,
@@ -1073,19 +1094,21 @@ mod tests {
   (import "visa" "hostcall_1" (func $console_write (param i64 i64 i64 i64 i64 i64) (result i64)))
   (import "visa" "hostcall_2" (func $timer_now (param i64 i64 i64 i64 i64 i64) (result i64)))
   (import "visa" "hostcall_3" (func $timer_arm (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_4" (func $memory_copyin (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_5" (func $memory_copyout (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_6" (func $dmw_map (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_7" (func $dmw_unmap (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_8" (func $mmio_read32 (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_9" (func $mmio_write32 (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_10" (func $dma_alloc (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_11" (func $dma_free (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_12" (func $irq_ack (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_13" (func $irq_mask (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_14" (func $irq_unmask (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_15" (func $snapshot_enter (param i64 i64 i64 i64 i64 i64) (result i64)))
-  (import "visa" "hostcall_16" (func $snapshot_exit (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_4" (func $event_push (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_5" (func $event_pop (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_6" (func $memory_copyin (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_7" (func $memory_copyout (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_8" (func $dmw_map (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_9" (func $dmw_unmap (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_10" (func $mmio_read32 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_11" (func $mmio_write32 (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_12" (func $dma_alloc (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_13" (func $dma_free (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_14" (func $irq_ack (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_15" (func $irq_mask (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_16" (func $irq_unmask (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_17" (func $snapshot_enter (param i64 i64 i64 i64 i64 i64) (result i64)))
+  (import "visa" "hostcall_18" (func $snapshot_exit (param i64 i64 i64 i64 i64 i64) (result i64)))
   (memory (export "memory") 1)
   (data (i32.const 16) "native-vISA")
   (func (export "visa_start") (result i64)
@@ -1114,6 +1137,24 @@ mod tests {
     i64.const 0
     i64.const 0
     call $timer_arm
+    drop
+
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $event_push
+    drop
+
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    i64.const 0
+    call $event_pop
     drop
 
     i64.const 1
@@ -1251,11 +1292,12 @@ mod tests {
             .with_hostcall(HostcallSpec::new(
                 1,
                 "test.write",
-                HostcallCategory::Service,
+                HostcallCategory::Console,
                 "test.console",
                 "write",
                 false,
             ))
+            .with_capability("test.console", &["write"], "activation")
     }
 
     // ── tests ─────────────────────────────────────────────────────────────
@@ -1448,25 +1490,27 @@ mod tests {
             .expect("run native vISA full ABI artifact");
 
         assert_eq!(report.loaded.artifact_id, 29);
-        assert_eq!(report.hostcalls.len(), 16);
+        assert_eq!(report.hostcalls.len(), 18);
         assert_eq!(report.hostcalls[0].object, "visa.console");
         assert_eq!(report.hostcalls[0].value, VisaHostcallValue::U64(11));
         assert_eq!(report.hostcalls[1].value, VisaHostcallValue::U64(42));
-        assert_eq!(report.hostcalls[3].value, VisaHostcallValue::Bytes(b"vISA".to_vec()));
+        assert_eq!(report.hostcalls[3].object, "event-log.visa");
+        assert_eq!(report.hostcalls[4].object, "event-log.visa");
+        assert_eq!(report.hostcalls[5].value, VisaHostcallValue::Bytes(b"vISA".to_vec()));
         assert!(matches!(
-            report.hostcalls[5].value,
+            report.hostcalls[7].value,
             VisaHostcallValue::WindowLease(substrate_api::WindowLeaseRef { id: 1, generation: 1 })
         ));
-        assert_eq!(report.hostcalls[8].value, VisaHostcallValue::U32(123));
+        assert_eq!(report.hostcalls[10].value, VisaHostcallValue::U32(123));
         assert!(matches!(
-            report.hostcalls[9].value,
+            report.hostcalls[11].value,
             VisaHostcallValue::DmaBuffer(substrate_api::DmaBufferCapability {
                 id: 1,
                 generation: 1
             })
         ));
         assert!(matches!(
-            report.hostcalls[14].value,
+            report.hostcalls[16].value,
             VisaHostcallValue::SnapshotBarrier(substrate_api::SnapshotBarrierRef {
                 id: 1,
                 generation: 1
@@ -1479,10 +1523,10 @@ mod tests {
             "probe must observe copyin bytes in guest memory: {probe:?}"
         );
         let summary = report.evidence_summary();
-        assert_eq!(summary.hostcall_dispatches, 16);
-        assert_eq!(summary.substrate_authority_extractions, 16);
+        assert_eq!(summary.hostcall_dispatches, 18);
+        assert_eq!(summary.substrate_authority_extractions, 18);
         assert!(summary.can_claim_portable_artifact_execution);
-        assert_eq!(executor.runtime().executor().hostcall_trace().len(), 16);
+        assert_eq!(executor.runtime().executor().hostcall_trace().len(), 18);
         let extracted = executor
             .runtime()
             .semantic()
@@ -1507,7 +1551,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(extracted.len(), 16);
+        assert_eq!(extracted.len(), 18);
         assert!(extracted.iter().any(|entry| {
             *entry
                 == (
@@ -1528,13 +1572,13 @@ mod tests {
             *authority == "SnapshotAuthority" && *operation == "exit_snapshot_barrier"
         }));
         let evidence = executor.runtime().evidence_snapshot();
-        assert_eq!(evidence.hostcall_trace_count(), 16);
-        assert_eq!(evidence.authority_extraction_count(), 16);
+        assert_eq!(evidence.hostcall_trace_count(), 18);
+        assert_eq!(evidence.authority_extraction_count(), 18);
         assert_eq!(evidence.unsupported_substrate_event_count(), 0);
         assert_eq!(evidence.contract_graph.artifacts.len(), 1);
         assert_eq!(evidence.contract_graph.code_objects.len(), 1);
         assert_eq!(evidence.contract_graph.activations.len(), 1);
-        assert_eq!(evidence.contract_graph.hostcalls.len(), 16);
+        assert_eq!(evidence.contract_graph.hostcalls.len(), 18);
         let snapshot_json = evidence.contract_graph_snapshot_artifact_json();
         assert!(snapshot_json.contains(CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION));
         assert!(

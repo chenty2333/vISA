@@ -10,7 +10,7 @@ Define and verify identity rules for core contract objects, live versus historic
 Complete. Move this task to `tasks/done/`.
 
 ## Progress
-Policies under `references/` were read. Audit found existing `ObjectRef`, tombstone, live/historical edge checks, and conformance schema gates. Added focused semantic-core tests for core object kind names and `object_ref()` triples, live vs historical generation behavior, tombstone history, trap history generation requirements, and snapshot schema version. Updated trap validator paths to use the shared historical edge checker for `trap->code` and `trap->artifact`. Added `docs/DECISIONS.md` with durable identity, tombstone, schema version, and fixture migration policy.
+Policies under `docs/policies/` were read. Audit found existing `ObjectRef`, tombstone, live/historical edge checks, and conformance schema gates. Added focused semantic-core tests for core object kind names and `object_ref()` triples, live vs historical generation behavior, tombstone history, trap history generation requirements, and snapshot schema version. Updated trap validator paths to use the shared historical edge checker for `trap->code` and `trap->artifact`. Added `docs/DECISIONS.md` with durable identity, tombstone, schema version, and fixture migration policy.
 
 ## Next Actions
 Future schema-breaking changes must bump `CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION` and migrate fixtures in the same change.

@@ -79,6 +79,7 @@ impl TargetStoreManager {
                 id: store_id,
                 package: artifact.package.clone(),
                 artifact: artifact.artifact_name.clone(),
+                owner_profile: artifact.target_profile.clone(),
                 role: artifact.role.clone(),
                 fault_policy: fault_policy.to_string(),
                 fault_domain: store_id,

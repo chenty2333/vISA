@@ -189,6 +189,7 @@ pub(crate) fn record_page_table_backend_evidence(
         ["alloc_frame", "map_page", "protect_page", "copy_frame", "flush_tlb", "unmap_page"]
     {
         semantic.record_substrate_authority_extracted(
+            "page-table",
             "PageTableAuthority",
             operation,
             requester.clone(),
@@ -1522,11 +1523,19 @@ pub(crate) fn record_substrate_event(semantic: &mut SemanticGraph, event: Substr
     match event {
         SubstrateEvent::Unsupported { authority, operation, requester } => {
             let (requester, artifact, store) = substrate_requester_parts(requester);
-            semantic.record_substrate_unsupported(authority, operation, requester, artifact, store);
+            semantic.record_substrate_unsupported(
+                authority_family_for_authority(authority),
+                authority,
+                operation,
+                requester,
+                artifact,
+                store,
+            );
         }
         SubstrateEvent::CapabilityDenied { authority, operation, requester, capability } => {
             let (requester, artifact, store) = substrate_requester_parts(requester);
             semantic.record_substrate_capability_denied(
+                authority_family_for_authority(authority),
                 authority,
                 operation,
                 requester,
@@ -1537,6 +1546,12 @@ pub(crate) fn record_substrate_event(semantic: &mut SemanticGraph, event: Substr
             );
         }
     }
+}
+
+fn authority_family_for_authority(authority: &str) -> &'static str {
+    visa_profile::AuthorityFamily::from_authority_trait(authority)
+        .map(visa_profile::AuthorityFamily::as_str)
+        .unwrap_or("unknown")
 }
 
 pub(crate) fn substrate_requester_parts(

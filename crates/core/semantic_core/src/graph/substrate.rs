@@ -4,6 +4,7 @@ impl SemanticGraph {
     #[allow(clippy::too_many_arguments)]
     pub fn record_substrate_authority_extracted(
         &mut self,
+        authority_family: impl Into<String>,
         authority: impl Into<String>,
         operation: impl Into<String>,
         requester: Option<String>,
@@ -15,6 +16,7 @@ impl SemanticGraph {
         self.event_log.push(
             "substrate",
             EventKind::SubstrateAuthorityExtracted {
+                authority_family: authority_family.into(),
                 authority: authority.into(),
                 operation: operation.into(),
                 requester,
@@ -28,6 +30,7 @@ impl SemanticGraph {
 
     pub fn record_substrate_unsupported(
         &mut self,
+        authority_family: impl Into<String>,
         authority: impl Into<String>,
         operation: impl Into<String>,
         requester: Option<String>,
@@ -37,6 +40,7 @@ impl SemanticGraph {
         self.event_log.push(
             "substrate",
             EventKind::SubstrateUnsupported {
+                authority_family: authority_family.into(),
                 authority: authority.into(),
                 operation: operation.into(),
                 requester,
@@ -48,6 +52,7 @@ impl SemanticGraph {
 
     pub fn record_substrate_capability_denied(
         &mut self,
+        authority_family: impl Into<String>,
         authority: impl Into<String>,
         operation: impl Into<String>,
         requester: Option<String>,
@@ -59,6 +64,7 @@ impl SemanticGraph {
         self.event_log.push(
             "substrate",
             EventKind::SubstrateCapabilityDenied {
+                authority_family: authority_family.into(),
                 authority: authority.into(),
                 operation: operation.into(),
                 requester,
@@ -73,6 +79,7 @@ impl SemanticGraph {
     #[allow(clippy::too_many_arguments)]
     pub fn record_substrate_panic(
         &mut self,
+        authority_family: impl Into<String>,
         authority: impl Into<String>,
         operation: impl Into<String>,
         requester: Option<String>,
@@ -85,6 +92,7 @@ impl SemanticGraph {
         self.event_log.push(
             "substrate",
             EventKind::SubstratePanic {
+                authority_family: authority_family.into(),
                 authority: authority.into(),
                 operation: operation.into(),
                 requester,

@@ -87,7 +87,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
     let hostcall = artifact_manifest::HostcallSpecManifest {
         number: 1,
         name: "visa.console.write".to_owned(),
-        category: "service".to_owned(),
+        category: "console".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
         may_pending: false,
@@ -131,16 +131,57 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         ..Default::default()
     }];
 
+    package.semantic.store_record_count = 1;
+    package.semantic.roots.target_store_record_roots = vec!["store id=1".to_owned()];
+    package.semantic.store_records = vec![artifact_manifest::StoreRecordManifest {
+        id: 1,
+        package: "native-visa".to_owned(),
+        artifact: "visa-native-artifact".to_owned(),
+        owner_profile: "minimal-bare-metal".to_owned(),
+        role: "visa-native-workload".to_owned(),
+        fault_policy: "abort".to_owned(),
+        fault_domain: 1,
+        state: "running".to_owned(),
+        generation: 1,
+        ..Default::default()
+    }];
+
     package.semantic.activation_record_count = 1;
     package.semantic.roots.activation_record_roots = vec!["activation id=1".to_owned()];
     package.semantic.activation_records = vec![artifact_manifest::ActivationRecordManifest {
         id: 1,
         store: 1,
+        store_generation: 1,
         code_object: 1,
+        code_generation: 1,
         artifact: 1,
+        profile: "minimal-bare-metal".to_owned(),
         entry: "visa_start".to_owned(),
         generation: 1,
         state: "running".to_owned(),
+        ..Default::default()
+    }];
+
+    package.semantic.trap_record_count = 1;
+    package.semantic.roots.trap_roots = vec!["trap id=1".to_owned()];
+    package.semantic.trap_records = vec![artifact_manifest::TrapRecordManifest {
+        id: 1,
+        generation: 1,
+        class: "fault".to_owned(),
+        store: Some(1),
+        store_generation: Some(1),
+        activation: Some(1),
+        activation_generation: Some(1),
+        code_object: Some(1),
+        code_generation: Some(1),
+        artifact: Some(1),
+        artifact_generation: Some(1),
+        offset: Some(16),
+        trap_kind: Some("hostcall-fault".to_owned()),
+        attribution_status: "trap-map-attributed".to_owned(),
+        fault_policy: "abort".to_owned(),
+        effect: "trap".to_owned(),
+        detail: "target trap evidence".to_owned(),
         ..Default::default()
     }];
 
@@ -154,7 +195,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         artifact: 1,
         hostcall_number: 1,
         name: "visa.console.write".to_owned(),
-        category: "service".to_owned(),
+        category: "console".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
         allowed: true,

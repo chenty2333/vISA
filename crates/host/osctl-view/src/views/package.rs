@@ -190,6 +190,117 @@ pub(crate) fn preemption_latency_view_v1(
     })
 }
 
+pub(crate) fn guest_address_space_view_v1(aspace: &GuestAddressSpaceManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "guest-address-space",
+        "id": aspace.id,
+        "generation": aspace.generation,
+        "state": aspace.state,
+        "owner": {
+            "object": object_ref_manifest_json(&aspace.owner),
+        },
+        "references": {
+            "owner": object_ref_manifest_json(&aspace.owner),
+            "root_region": aspace.root_region.as_ref().map(object_ref_manifest_json),
+        },
+        "memory_generation": {
+            "vma_generation": aspace.vma_generation,
+            "page_map_generation": aspace.page_map_generation,
+        },
+        "last_transition": {
+            "generation": aspace.generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+pub(crate) fn vma_region_view_v1(region: &VmaRegionManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "vma-region",
+        "id": region.id,
+        "generation": region.generation,
+        "state": region.state,
+        "owner": {
+            "aspace": object_ref_manifest_json(&region.aspace),
+        },
+        "references": {
+            "aspace": object_ref_manifest_json(&region.aspace),
+            "backing": object_ref_manifest_json(&region.backing),
+        },
+        "range": {
+            "start": region.range.start,
+            "len": region.range.len,
+            "end": region.range.start.saturating_add(region.range.len),
+        },
+        "permissions": {
+            "readable": region.perms.readable,
+            "writable": region.perms.writable,
+            "executable": region.perms.executable,
+        },
+        "flags": {
+            "cow": region.flags.cow,
+            "shared": region.flags.shared,
+            "device": region.flags.device,
+        },
+        "last_transition": {
+            "generation": region.generation,
+            "page_generation": region.backing.generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+pub(crate) fn page_object_view_v1(page: &PageObjectManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "page-object",
+        "id": page.id,
+        "generation": page.generation,
+        "state": page.state,
+        "owner": {
+            "memory_model": "guest-memory",
+        },
+        "references": {},
+        "page": {
+            "backing": page.backing,
+            "cow": page.cow,
+            "dirty_generation": page.dirty_generation,
+        },
+        "last_transition": {
+            "generation": page.generation,
+            "dirty_generation": page.dirty_generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
+pub(crate) fn guest_memory_fault_view_v1(fault: &GuestMemoryFaultManifest) -> serde_json::Value {
+    serde_json::json!({
+        "schema": VIEW_SCHEMA_V1,
+        "kind": "page-fault-event",
+        "id": fault.id,
+        "generation": fault.generation,
+        "state": if fault.historical { "historical" } else { "active" },
+        "owner": {
+            "page": object_ref_manifest_json(&fault.page),
+        },
+        "references": {
+            "page": object_ref_manifest_json(&fault.page),
+        },
+        "fault": {
+            "reason": fault.reason,
+            "historical": fault.historical,
+        },
+        "last_transition": {
+            "generation": fault.generation,
+            "page_generation": fault.page.generation,
+        },
+        "last_error": serde_json::Value::Null,
+    })
+}
+
 pub(crate) fn scheduler_view_v1(package: &MigrationPackageManifest) -> serde_json::Value {
     serde_json::json!({
         "schema": VIEW_SCHEMA_V1,
@@ -620,6 +731,7 @@ pub(crate) fn activation_view_v1(activation: &ActivationRecordManifest) -> serde
         "owner": {
             "store": activation.store,
             "store_generation": activation.store_generation,
+            "profile": activation.profile,
         },
         "references": {
             "code_object": {
@@ -784,6 +896,7 @@ pub(crate) fn store_view_v1(store: &StoreRecordManifest) -> serde_json::Value {
         "owner": {
             "package": store.package,
             "role": store.role,
+            "profile": store.owner_profile,
         },
         "references": {
             "artifact": store.artifact,
@@ -1008,6 +1121,21 @@ pub(crate) fn stable_views_for_kind(
     match kind {
         "hart" => Ok(package.semantic.hart_records.iter().map(hart_view_v1).collect()),
         "task" => Ok(package.semantic.task_records.iter().map(task_view_v1).collect()),
+        "artifact" | "target-artifact" | "target-artifact-image" => {
+            Ok(package.semantic.target_artifacts.iter().map(artifact_view_v1).collect())
+        }
+        "code-object" | "target-code-object" => {
+            Ok(package.semantic.code_objects.iter().map(code_object_view_v1).collect())
+        }
+        "activation-record" | "target-activation" | "target-activation-record" => {
+            Ok(package.semantic.activation_records.iter().map(activation_view_v1).collect())
+        }
+        "trap" | "trap-record" => {
+            Ok(package.semantic.trap_records.iter().map(trap_view_v1).collect())
+        }
+        "hostcall" | "hostcall-trace" => {
+            Ok(package.semantic.hostcall_trace.iter().map(hostcall_trace_view_v1).collect())
+        }
         "activation" | "runtime-activation" => Ok(package
             .semantic
             .runtime_activation_records
@@ -1387,6 +1515,24 @@ pub(crate) fn stable_views_for_kind(
         "block-page-object" | "block-page" => {
             Ok(package.semantic.block_page_objects.iter().map(block_page_object_view_v1).collect())
         }
+        "guest-address-space" | "guest-aspace" | "address-space" => Ok(package
+            .semantic
+            .guest_address_spaces
+            .iter()
+            .map(guest_address_space_view_v1)
+            .collect()),
+        "vma-region" | "vma" => {
+            Ok(package.semantic.vma_regions.iter().map(vma_region_view_v1).collect())
+        }
+        "page-object" | "guest-page" => {
+            Ok(package.semantic.page_objects.iter().map(page_object_view_v1).collect())
+        }
+        "guest-memory-fault" | "page-fault-event" | "page-fault" => Ok(package
+            .semantic
+            .guest_memory_faults
+            .iter()
+            .map(guest_memory_fault_view_v1)
+            .collect()),
         "buffer-cache-object" | "buffer-cache" | "fs-cache" => Ok(package
             .semantic
             .buffer_cache_objects

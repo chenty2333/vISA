@@ -39,9 +39,284 @@ impl ContractGraphValidator {
         Self::validate_capabilities(snapshot, &mut violations);
         Self::validate_waits(snapshot, &mut violations);
         Self::validate_cleanups(snapshot, &mut violations);
+        Self::validate_guest_memory(snapshot, &mut violations);
         Self::validate_evidence_boundary_claims(snapshot, &mut violations);
         Self::validate_explicit_edges(snapshot, &mut violations);
         violations
+    }
+
+    pub(super) fn validate_guest_memory(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        for aspace in &snapshot.guest_address_spaces {
+            let from = aspace.object_ref();
+            if aspace.aspace.generation() != aspace.generation || aspace.generation == 0 {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "guest-address-space->self",
+                    from,
+                    Some(aspace.aspace.object_ref()),
+                    "guest address space generation does not match its object ref",
+                ));
+            }
+            if let Some(root) = aspace.root_region {
+                Self::check_contract_ref_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "guest-address-space->root-vma",
+                    root.object_ref(),
+                    ContractEdgeMode::Live,
+                    None,
+                );
+            }
+        }
+
+        for region in &snapshot.vma_regions {
+            let from = region.object_ref();
+            if region.region.generation() != region.generation || region.generation == 0 {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "vma-region->self",
+                    from,
+                    Some(region.region.object_ref()),
+                    "VMA generation does not match its object ref",
+                ));
+            }
+            let edge_mode = if region.state == VmaState::Mapped {
+                ContractEdgeMode::Live
+            } else {
+                ContractEdgeMode::Historical
+            };
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vma-region->aspace",
+                region.aspace.object_ref(),
+                edge_mode,
+                None,
+            );
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "vma-region->page",
+                region.backing.object_ref(),
+                edge_mode,
+                None,
+            );
+        }
+
+        for page in &snapshot.page_objects {
+            let from = page.object_ref();
+            if page.page.generation() != page.generation || page.generation == 0 {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "page-object->self",
+                    from,
+                    Some(page.page.object_ref()),
+                    "page object generation does not match its object ref",
+                ));
+            }
+            if page.dirty_generation == 0 {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "page-object->dirty-generation",
+                    from,
+                    None,
+                    "page object dirty generation must be nonzero",
+                ));
+            }
+        }
+
+        for fault in &snapshot.guest_memory_faults {
+            let from = fault.object_ref();
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "page-fault-event->page",
+                fault.page.object_ref(),
+                ContractEdgeMode::Historical,
+                None,
+            );
+            if fault.reason.is_empty() {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "page-fault-event->reason",
+                    from,
+                    None,
+                    "page fault event reason must be nonempty",
+                ));
+            }
+        }
+
+        for operation in &snapshot.guest_memory_operations {
+            let from = operation.object_ref();
+            if operation.operation_ref.generation() != operation.generation
+                || operation.generation == 0
+            {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::GenerationMismatch,
+                    "guest-memory-operation->self",
+                    from,
+                    Some(operation.operation_ref.object_ref()),
+                    "guest memory operation generation does not match its object ref",
+                ));
+            }
+            Self::check_contract_ref_edge(
+                snapshot,
+                violations,
+                from,
+                "guest-memory-operation->aspace",
+                operation.aspace.object_ref(),
+                ContractEdgeMode::Historical,
+                None,
+            );
+            Self::check_guest_memory_historical_ref(
+                snapshot,
+                violations,
+                from,
+                "guest-memory-operation->region-before",
+                operation.region_before.map(VmaRegionRef::object_ref),
+            );
+            Self::check_guest_memory_historical_ref(
+                snapshot,
+                violations,
+                from,
+                "guest-memory-operation->page-before",
+                operation.page_before.map(PageObjectRef::object_ref),
+            );
+            if let Some(region) = operation.region_after {
+                Self::check_contract_ref_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "guest-memory-operation->region-after",
+                    region.object_ref(),
+                    ContractEdgeMode::Historical,
+                    None,
+                );
+            }
+            if let Some(page) = operation.page_after {
+                Self::check_contract_ref_edge(
+                    snapshot,
+                    violations,
+                    from,
+                    "guest-memory-operation->page-after",
+                    page.object_ref(),
+                    ContractEdgeMode::Historical,
+                    None,
+                );
+            }
+            if operation.reason.is_empty() {
+                violations.push(ContractViolation::new(
+                    ContractViolationKind::ExternalEdgeMetadataMismatch,
+                    "guest-memory-operation->reason",
+                    from,
+                    None,
+                    "guest memory operation reason must be nonempty",
+                ));
+            }
+            Self::validate_guest_memory_operation_shape(operation, violations);
+        }
+    }
+
+    fn check_guest_memory_historical_ref(
+        snapshot: &ContractGraphSnapshot,
+        violations: &mut Vec<ContractViolation>,
+        from: ContractObjectRef,
+        edge: &str,
+        target: Option<ContractObjectRef>,
+    ) {
+        let Some(target) = target else {
+            return;
+        };
+        if target.generation == 0 {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::HistoricalEdgeMissingGeneration,
+                edge,
+                from,
+                Some(target),
+                "guest memory operation historical edge is missing exact generation",
+            ));
+            return;
+        }
+        if Self::object_ref_by_id_generation(snapshot, target.kind, target.id, target.generation)
+            .is_some()
+            || Self::current_object_ref(snapshot, target.kind, target.id).is_some()
+            || Self::has_tombstone(snapshot, target)
+        {
+            return;
+        }
+        violations.push(ContractViolation::new(
+            ContractViolationKind::DanglingEdge,
+            edge,
+            from,
+            Some(target),
+            "guest memory operation historical edge references an unknown object id",
+        ));
+    }
+
+    fn validate_guest_memory_operation_shape(
+        operation: &GuestMemoryOperationRecord,
+        violations: &mut Vec<ContractViolation>,
+    ) {
+        let from = operation.object_ref();
+        let valid = match operation.operation {
+            GuestMemoryOperationKind::Mmap => {
+                operation.range.len != 0
+                    && operation.region_before.is_none()
+                    && operation.region_after.is_some()
+                    && operation.page_after.is_some()
+                    && operation.perms_before.is_none()
+                    && operation.perms_after.is_some()
+                    && operation.brk_before.is_none()
+                    && operation.brk_after.is_none()
+            }
+            GuestMemoryOperationKind::Munmap => {
+                operation.range.len != 0
+                    && operation.region_before.is_some()
+                    && operation.region_after.is_some()
+                    && operation.page_before.is_some()
+                    && operation.page_after.is_some()
+                    && operation.perms_before.is_some()
+                    && operation.perms_after.is_none()
+                    && operation.brk_before.is_none()
+                    && operation.brk_after.is_none()
+            }
+            GuestMemoryOperationKind::Mprotect => {
+                operation.range.len != 0
+                    && operation.region_before.is_some()
+                    && operation.region_after.is_some()
+                    && operation.page_before.is_some()
+                    && operation.page_after.is_some()
+                    && operation.perms_before.is_some()
+                    && operation.perms_after.is_some()
+                    && operation.brk_before.is_none()
+                    && operation.brk_after.is_none()
+            }
+            GuestMemoryOperationKind::Brk => {
+                operation.region_before.is_none()
+                    && operation.region_after.is_none()
+                    && operation.page_before.is_none()
+                    && operation.page_after.is_none()
+                    && operation.perms_before.is_none()
+                    && operation.perms_after.is_none()
+                    && operation.brk_after.is_some()
+            }
+        };
+        if !valid {
+            violations.push(ContractViolation::new(
+                ContractViolationKind::ExternalEdgeMetadataMismatch,
+                "guest-memory-operation->shape",
+                from,
+                None,
+                "guest memory operation record is missing required operation-specific fields",
+            ));
+        }
     }
 
     pub(super) fn validate_evidence_boundary_claims(

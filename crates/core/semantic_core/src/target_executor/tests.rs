@@ -27,6 +27,14 @@ fn image() -> TargetArtifactImage {
     ));
     image.hostcalls.push(HostcallSpec::new(
         2,
+        "hostcall.console.denied",
+        HostcallCategory::Console,
+        "console.denied",
+        "write",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        3,
         "hostcall.mmio.denied",
         HostcallCategory::Mmio,
         "mmio.denied",
@@ -34,7 +42,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        3,
+        4,
         "hostcall.dma.denied",
         HostcallCategory::Dma,
         "dma.denied",
@@ -42,7 +50,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        4,
+        5,
         "hostcall.irq.denied",
         HostcallCategory::Irq,
         "irq.denied",
@@ -50,7 +58,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        5,
+        6,
         "hostcall.dmw.denied",
         HostcallCategory::Dmw,
         "dmw.denied",
@@ -58,7 +66,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        6,
+        7,
         "hostcall.code-publish.denied",
         HostcallCategory::CodePublish,
         "code-publish.denied",
@@ -66,7 +74,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        7,
+        8,
         "hostcall.packet-device.denied",
         HostcallCategory::PacketDevice,
         "packet-device.net0",
@@ -74,7 +82,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        8,
+        9,
         "hostcall.wait.pending",
         HostcallCategory::Wait,
         "wait.timer",
@@ -82,7 +90,7 @@ fn image() -> TargetArtifactImage {
         true,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9,
+        10,
         "hostcall.device.denied",
         HostcallCategory::Device,
         "device.denied",
@@ -90,7 +98,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        10,
+        11,
         "hostcall.virtqueue.denied",
         HostcallCategory::Virtqueue,
         "virtqueue.denied",
@@ -98,7 +106,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        11,
+        12,
         "hostcall.timer.denied",
         HostcallCategory::Timer,
         "timer.denied",
@@ -106,7 +114,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        12,
+        13,
         "hostcall.guest-memory.denied",
         HostcallCategory::GuestMemory,
         "guest-memory.denied",
@@ -114,7 +122,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        13,
+        14,
         "hostcall.snapshot.denied",
         HostcallCategory::Snapshot,
         "snapshot.denied",
@@ -122,7 +130,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        14,
+        15,
         "hostcall.fault-domain.denied",
         HostcallCategory::FaultDomain,
         "fault-domain.denied",
@@ -130,7 +138,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        15,
+        16,
         "hostcall.event-log.denied",
         HostcallCategory::EventLog,
         "event-log.denied",
@@ -138,7 +146,7 @@ fn image() -> TargetArtifactImage {
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        16,
+        17,
         "hostcall.store-control.denied",
         HostcallCategory::StoreControl,
         "store-control.denied",

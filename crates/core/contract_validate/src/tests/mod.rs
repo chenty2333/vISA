@@ -3,10 +3,10 @@ use artifact_manifest::{
     CapabilityManifest, CommandResultManifest, CompilerManifest, ExternManifest,
     GuestStateManifest, InterfaceEventManifest, InterfaceRequirementManifest,
     MigrationHostManifest, MigrationPackageManifest, MigrationTargetManifest,
-    ModuleArtifactManifest, RequiredArtifactProfileManifest, ResourceLimitsManifest,
-    RuntimeActivationRecordManifest, SemanticRootSetManifest, SemanticSnapshotManifest,
-    SignatureManifest, SubstrateAuthorityRequirementManifest, SubstrateBoundaryManifest,
-    SubstrateEventManifest, TargetManifest,
+    ModuleArtifactManifest, ProfileGateEventManifest, RequiredArtifactProfileManifest,
+    ResourceLimitsManifest, RuntimeActivationRecordManifest, SemanticRootSetManifest,
+    SemanticSnapshotManifest, SignatureManifest, SubstrateAuthorityRequirementManifest,
+    SubstrateBoundaryManifest, SubstrateEventManifest, TargetManifest,
 };
 use contract_core::*;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
@@ -285,6 +285,10 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             block_request_queue_count: 0,
             block_dma_buffer_count: 0,
             block_page_object_count: 0,
+            guest_address_space_count: 0,
+            vma_region_count: 0,
+            page_object_count: 0,
+            guest_memory_fault_count: 0,
             buffer_cache_object_count: 0,
             file_object_count: 0,
             directory_object_count: 0,
@@ -353,6 +357,7 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             snapshot_validation_violation_count: 0,
             replay_validation_violation_count: 0,
             substrate_event_count: 0,
+            profile_gate_event_count: 0,
             command_result_count: 0,
             interface_event_count: 0,
             target_artifacts: Vec::new(),
@@ -431,6 +436,10 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             block_request_queues: Vec::new(),
             block_dma_buffers: Vec::new(),
             block_page_objects: Vec::new(),
+            guest_address_spaces: Vec::new(),
+            vma_regions: Vec::new(),
+            page_objects: Vec::new(),
+            guest_memory_faults: Vec::new(),
             buffer_cache_objects: Vec::new(),
             file_objects: Vec::new(),
             directory_objects: Vec::new(),
@@ -483,6 +492,7 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             snapshot_validation: Default::default(),
             replay_validation: Default::default(),
             substrate_events: Vec::new(),
+            profile_gate_events: Vec::new(),
             command_results: Vec::new(),
             interface_events: Vec::new(),
             network_socket_count: 0,
@@ -514,7 +524,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
     let hostcall = artifact_manifest::HostcallSpecManifest {
         number: 1,
         name: "visa.console.write".to_owned(),
-        category: "service".to_owned(),
+        category: "console".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
         may_pending: false,
@@ -538,6 +548,12 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         code_hash: "native-visa-code".to_owned(),
         exports: vec!["visa_start".to_owned()],
         hostcalls: vec![hostcall.clone()],
+        capabilities: vec![artifact_manifest::TargetCapabilitySpecManifest {
+            object: "visa.console".to_owned(),
+            operations: vec!["write".to_owned()],
+            lifetime: "activation".to_owned(),
+            class: "console".to_owned(),
+        }],
         memory_plan: artifact_manifest::TargetMemoryPlanManifest {
             max_memory_pages: 16,
             max_table_elements: 0,
@@ -567,6 +583,40 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         ..Default::default()
     }];
 
+    package.semantic.store_record_count = 1;
+    package.semantic.roots.target_store_record_roots = vec!["store id=1".to_owned()];
+    package.semantic.store_records = vec![artifact_manifest::StoreRecordManifest {
+        id: 1,
+        package: "native-visa".to_owned(),
+        artifact: "visa-native-artifact".to_owned(),
+        owner_profile: "minimal-bare-metal".to_owned(),
+        role: "visa-native-workload".to_owned(),
+        fault_policy: "abort".to_owned(),
+        fault_domain: 1,
+        state: "running".to_owned(),
+        generation: 1,
+        ..Default::default()
+    }];
+
+    package.semantic.capability_record_count = 1;
+    package.semantic.roots.target_capability_record_roots =
+        vec!["capability-record id=1 generation=1".to_owned()];
+    package.semantic.capability_records = vec![artifact_manifest::CapabilityRecordManifest {
+        id: 1,
+        subject: "native-visa".to_owned(),
+        object: "visa.console".to_owned(),
+        rights: vec!["write".to_owned()],
+        lifetime: "activation".to_owned(),
+        class: "console".to_owned(),
+        owner_store: Some(1),
+        owner_store_generation: Some(1),
+        source: "native-portable-execution-chain".to_owned(),
+        generation: 1,
+        manifest_decl: true,
+        debug_object_label: "visa.console".to_owned(),
+        ..Default::default()
+    }];
+
     package.semantic.activation_record_count = 1;
     package.semantic.roots.activation_record_roots = vec!["activation id=1".to_owned()];
     package.semantic.activation_records = vec![artifact_manifest::ActivationRecordManifest {
@@ -576,6 +626,7 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         code_object: 1,
         code_generation: 1,
         artifact: 1,
+        profile: "minimal-bare-metal".to_owned(),
         entry: "symbol:visa_start".to_owned(),
         generation: 1,
         state: "running".to_owned(),
@@ -596,12 +647,13 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         artifact: 1,
         hostcall_number: 1,
         name: "visa.console.write".to_owned(),
-        category: "service".to_owned(),
+        category: "console".to_owned(),
         subject: "native-visa".to_owned(),
         subject_source: "active-state".to_owned(),
         object: "visa.console".to_owned(),
         operation: "write".to_owned(),
         record_mode: "live".to_owned(),
+        cap_args: vec![console_capability_handle_arg()],
         allowed: true,
         gate_status: "allowed".to_owned(),
         result: "ok".to_owned(),
@@ -609,6 +661,99 @@ fn add_native_portable_execution_chain(package: &mut MigrationPackageManifest) {
         ..Default::default()
     }];
     add_portable_boundary_validation(package);
+}
+
+fn console_capability_handle_arg() -> artifact_manifest::CapabilityHandleArgManifest {
+    artifact_manifest::CapabilityHandleArgManifest {
+        id: 1,
+        object: "visa.console".to_owned(),
+        generation: 1,
+        rights: vec!["write".to_owned()],
+        rights_mask: 1,
+        owner_store: Some(1),
+        owner_store_generation: Some(1),
+        ..Default::default()
+    }
+}
+
+fn event_queue_capability_handle_arg() -> artifact_manifest::CapabilityHandleArgManifest {
+    artifact_manifest::CapabilityHandleArgManifest {
+        id: 1,
+        object: "event-log.visa".to_owned(),
+        generation: 1,
+        rights: vec!["append".to_owned()],
+        rights_mask: 1,
+        owner_store: Some(1),
+        owner_store_generation: Some(1),
+        ..Default::default()
+    }
+}
+
+fn retarget_portable_execution_chain_to_event_push(package: &mut MigrationPackageManifest) {
+    let event_hostcall = artifact_manifest::HostcallSpecManifest {
+        number: 1,
+        name: "visa.event.push".to_owned(),
+        category: "event-log".to_owned(),
+        object: "event-log.visa".to_owned(),
+        operation: "append".to_owned(),
+        may_pending: false,
+    };
+    package.semantic.target_artifacts[0].hostcalls[0] = event_hostcall.clone();
+    package.semantic.target_artifacts[0].capabilities[0] =
+        artifact_manifest::TargetCapabilitySpecManifest {
+            object: "event-log.visa".to_owned(),
+            operations: vec!["append".to_owned()],
+            lifetime: "activation".to_owned(),
+            class: "event-log".to_owned(),
+        };
+    package.semantic.code_objects[0].hostcalls[0] = event_hostcall;
+    package.semantic.capability_records[0] = artifact_manifest::CapabilityRecordManifest {
+        id: 1,
+        subject: "native-visa".to_owned(),
+        object: "event-log.visa".to_owned(),
+        rights: vec!["append".to_owned()],
+        lifetime: "activation".to_owned(),
+        class: "event-log".to_owned(),
+        owner_store: Some(1),
+        owner_store_generation: Some(1),
+        source: "native-portable-execution-chain".to_owned(),
+        generation: 1,
+        manifest_decl: true,
+        debug_object_label: "event-log.visa".to_owned(),
+        ..Default::default()
+    };
+    package.semantic.hostcall_trace[0].name = "visa.event.push".to_owned();
+    package.semantic.hostcall_trace[0].category = "event-log".to_owned();
+    package.semantic.hostcall_trace[0].object = "event-log.visa".to_owned();
+    package.semantic.hostcall_trace[0].operation = "append".to_owned();
+    package.semantic.hostcall_trace[0].cap_args = vec![event_queue_capability_handle_arg()];
+}
+
+fn retarget_portable_execution_chain(
+    package: &mut MigrationPackageManifest,
+    package_name: &str,
+    artifact_name: &str,
+    role: &str,
+    hostcall_object: Option<&str>,
+) {
+    package.semantic.target_artifacts[0].package = package_name.to_owned();
+    package.semantic.target_artifacts[0].artifact_name = artifact_name.to_owned();
+    package.semantic.target_artifacts[0].role = role.to_owned();
+    package.semantic.code_objects[0].package = package_name.to_owned();
+    package.semantic.store_records[0].package = package_name.to_owned();
+    package.semantic.store_records[0].artifact = artifact_name.to_owned();
+    package.semantic.store_records[0].role = role.to_owned();
+    package.semantic.capability_records[0].subject = package_name.to_owned();
+    package.semantic.hostcall_trace[0].subject = package_name.to_owned();
+    if let Some(object) = hostcall_object {
+        package.semantic.target_artifacts[0].hostcalls[0].object = object.to_owned();
+        package.semantic.target_artifacts[0].capabilities[0].object = object.to_owned();
+        package.semantic.code_objects[0].hostcalls[0].object = object.to_owned();
+        package.semantic.capability_records[0].object = object.to_owned();
+        package.semantic.capability_records[0].debug_object_label = object.to_owned();
+        package.semantic.hostcall_trace[0].object = object.to_owned();
+        package.semantic.hostcall_trace[0].cap_args[0].object = object.to_owned();
+    }
 }
 
 fn add_portable_boundary_validation(package: &mut MigrationPackageManifest) {
@@ -715,6 +860,33 @@ fn external_audit_accepts_visa_native_portable_artifact_chain() {
     assert!(report.portable_artifact_execution_claim);
     assert!(report.visa_native_portable_artifact_execution_claim);
     assert_eq!(report.visa_native_artifact_count, 1);
+}
+
+#[test]
+fn migration_package_rejects_store_profile_provenance_mismatch() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.store_records[0].owner_profile = "guest-frontend".to_owned();
+
+    let err = validate_migration_package(&package).expect_err("store profile mismatch must fail");
+    assert_eq!(err.to_string(), "native-visa store profile provenance mismatch");
+}
+
+#[test]
+fn external_audit_rejects_activation_profile_provenance_mismatch() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    package.semantic.activation_records[0].profile = "guest-frontend".to_owned();
+
+    let report = audit_migration_package(&package);
+
+    assert!(!report.contract_package_valid);
+    assert!(!report.portable_artifact_execution_claim);
+    assert!(!report.visa_native_portable_artifact_execution_claim);
+    assert!(report.errors().any(|finding| {
+        finding.code == "contract-package-invalid"
+            && finding.detail.contains("activation 1 profile provenance mismatch")
+    }));
 }
 
 #[test]
@@ -898,14 +1070,13 @@ fn external_audit_does_not_accept_execution_claims_from_invalid_package() {
 fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
-    let artifact = &mut package.semantic.target_artifacts[0];
-    artifact.package = "frontend".to_owned();
-    artifact.artifact_name = "frontend-artifact".to_owned();
-    artifact.role = "frontend-personality".to_owned();
-    artifact.hostcalls[0].object = "wasi.console".to_owned();
-    package.semantic.code_objects[0].package = "frontend".to_owned();
-    package.semantic.code_objects[0].hostcalls[0].object = "wasi.console".to_owned();
-    package.semantic.hostcall_trace[0].object = "wasi.console".to_owned();
+    retarget_portable_execution_chain(
+        &mut package,
+        "frontend",
+        "frontend-artifact",
+        "frontend-personality",
+        Some("wasi.console"),
+    );
 
     let report = audit_migration_package(&package);
 
@@ -921,14 +1092,13 @@ fn external_audit_distinguishes_generic_portable_chain_from_native_chain() {
 fn external_audit_rejects_name_only_visa_native_spoof() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
-    let artifact = &mut package.semantic.target_artifacts[0];
-    artifact.package = "frontend".to_owned();
-    artifact.artifact_name = "visa-native-spoof".to_owned();
-    artifact.role = "frontend-personality".to_owned();
-    artifact.hostcalls[0].object = "wasi.console".to_owned();
-    package.semantic.code_objects[0].package = "frontend".to_owned();
-    package.semantic.code_objects[0].hostcalls[0].object = "wasi.console".to_owned();
-    package.semantic.hostcall_trace[0].object = "wasi.console".to_owned();
+    retarget_portable_execution_chain(
+        &mut package,
+        "frontend",
+        "visa-native-spoof",
+        "frontend-personality",
+        Some("wasi.console"),
+    );
 
     let report = audit_migration_package(&package);
 
@@ -942,10 +1112,13 @@ fn external_audit_rejects_name_only_visa_native_spoof() {
 fn external_audit_rejects_personality_role_with_visa_hostcall_as_native_consumer() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
-    let artifact = &mut package.semantic.target_artifacts[0];
-    artifact.package = "frontend".to_owned();
-    artifact.role = "frontend-personality".to_owned();
-    package.semantic.code_objects[0].package = "frontend".to_owned();
+    retarget_portable_execution_chain(
+        &mut package,
+        "frontend",
+        "visa-native-artifact",
+        "frontend-personality",
+        None,
+    );
 
     let report = audit_migration_package(&package);
 
@@ -959,10 +1132,13 @@ fn external_audit_rejects_personality_role_with_visa_hostcall_as_native_consumer
 fn external_audit_rejects_case_variant_personality_role_as_native_consumer() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
-    let artifact = &mut package.semantic.target_artifacts[0];
-    artifact.package = "frontend".to_owned();
-    artifact.role = "frontend-Personality".to_owned();
-    package.semantic.code_objects[0].package = "frontend".to_owned();
+    retarget_portable_execution_chain(
+        &mut package,
+        "frontend",
+        "visa-native-artifact",
+        "frontend-Personality",
+        None,
+    );
 
     let report = audit_migration_package(&package);
 
@@ -977,7 +1153,9 @@ fn external_audit_rejects_case_variant_personality_role_as_native_consumer() {
 fn external_audit_requires_linked_portable_execution_chain() {
     let mut package = minimal_migration_package();
     add_native_portable_execution_chain(&mut package);
-    package.semantic.code_objects[0].artifact_id = 99;
+    package.semantic.hostcall_trace_count = 0;
+    package.semantic.roots.hostcall_trace_roots.clear();
+    package.semantic.hostcall_trace.clear();
 
     let report = audit_migration_package(&package);
 
@@ -1352,6 +1530,7 @@ fn external_audit_rejects_real_target_arch_mismatch() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1385,6 +1564,7 @@ fn external_audit_rejects_real_target_unknown_arch_token() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("native-visa".to_owned()),
@@ -1415,6 +1595,7 @@ fn external_audit_rejects_generic_substrate_event_as_real_target_extraction() {
         id: 1,
         epoch: 1,
         event_kind: "unsupported".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1448,6 +1629,7 @@ fn external_audit_rejects_sparse_real_target_extraction_context() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: String::new(),
         operation: "read32".to_owned(),
         requester: None,
@@ -1496,6 +1678,7 @@ fn external_audit_rejects_unlinked_real_target_extraction_event() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1527,6 +1710,7 @@ fn external_audit_rejects_real_target_extraction_for_unexecuted_store() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1559,6 +1743,7 @@ fn external_audit_rejects_real_target_extraction_for_unmatched_hostcall() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1646,6 +1831,7 @@ fn external_audit_rejects_real_target_extraction_from_unverified_code_object() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "MmioAuthority".to_owned(),
         operation: "mmio_read32".to_owned(),
         requester: Some("native-visa".to_owned()),
@@ -1684,6 +1870,7 @@ fn external_audit_rejects_real_target_extraction_requester_subject_mismatch() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("other-subject".to_owned()),
@@ -1720,12 +1907,13 @@ fn external_audit_rejects_real_target_claim_with_only_portable_boundary_validati
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("native-visa".to_owned()),
         artifact: Some(1),
         store: Some(1),
-        capability: None,
+        capability: Some(console_capability_handle_arg()),
         explanation: "real target extraction with only portable boundary validation".to_owned(),
     }];
 
@@ -1757,6 +1945,7 @@ fn external_audit_rejects_real_target_without_linked_portable_chain() {
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "mmio".to_owned(),
         authority: "mmio".to_owned(),
         operation: "read32".to_owned(),
         requester: Some("real-target-smoke".to_owned()),
@@ -1795,12 +1984,13 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("native-visa".to_owned()),
         artifact: Some(1),
         store: Some(1),
-        capability: None,
+        capability: Some(console_capability_handle_arg()),
         explanation: "concrete substrate extraction event for the linked console hostcall"
             .to_owned(),
     }];
@@ -1813,6 +2003,82 @@ fn external_audit_accepts_real_target_claim_with_concrete_arch_and_extraction_ev
     assert_eq!(report.authority_extraction_event_count, 1);
     assert_eq!(report.linked_authority_extraction_event_count, 1);
     assert!(report.errors().next().is_none());
+}
+
+#[test]
+fn external_audit_links_event_queue_authority_to_event_log_hostcall() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    retarget_portable_execution_chain_to_event_push(&mut package);
+    add_real_target_boundary_validation(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:EventQueueAuthority:push_event requester=native-visa"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority_family: "event".to_owned(),
+        authority: "EventQueueAuthority".to_owned(),
+        operation: "push_event".to_owned(),
+        requester: Some("native-visa".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: Some(event_queue_capability_handle_arg()),
+        explanation: "concrete substrate extraction event for the linked event queue hostcall"
+            .to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.ok(), "{:#?}", report.findings);
+    assert!(report.real_target_substrate_claim);
+    assert!(report.visa_native_portable_artifact_execution_claim);
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 1);
+}
+
+#[test]
+fn external_audit_rejects_event_queue_extraction_operation_mismatch() {
+    let mut package = minimal_migration_package();
+    add_native_portable_execution_chain(&mut package);
+    retarget_portable_execution_chain_to_event_push(&mut package);
+    add_real_target_boundary_validation(&mut package);
+    package.target.arch_requirement = "riscv64".to_owned();
+    package.required_artifact_profile.target_arch = "riscv64".to_owned();
+    package.substrate_boundary.native_state_policy = REAL_TARGET_SUBSTRATE_POLICY.to_owned();
+    package.semantic.substrate_event_count = 1;
+    package.semantic.roots.substrate_event_roots = vec![
+        "substrate-event:authority-extracted:EventQueueAuthority:pop_event requester=native-visa"
+            .to_owned(),
+    ];
+    package.semantic.substrate_events = vec![SubstrateEventManifest {
+        id: 1,
+        epoch: 1,
+        event_kind: "authority-extracted".to_owned(),
+        authority_family: "event".to_owned(),
+        authority: "EventQueueAuthority".to_owned(),
+        operation: "pop_event".to_owned(),
+        requester: Some("native-visa".to_owned()),
+        artifact: Some(1),
+        store: Some(1),
+        capability: Some(event_queue_capability_handle_arg()),
+        explanation: "event queue extraction operation does not match linked append hostcall"
+            .to_owned(),
+    }];
+
+    let report = audit_migration_package(&package);
+
+    assert!(report.real_target_substrate_claim);
+    assert_eq!(report.authority_extraction_event_count, 1);
+    assert_eq!(report.linked_authority_extraction_event_count, 0);
+    assert!(!report.ok());
+    assert!(report.errors().any(|finding| finding.code == "real-target-without-extraction-events"));
 }
 
 #[test]
@@ -1832,6 +2098,7 @@ fn external_audit_rejects_real_target_extraction_capability_not_consumed_by_host
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("native-visa".to_owned()),
@@ -1882,6 +2149,7 @@ fn external_audit_rejects_real_target_extraction_with_unbacked_hostcall_capabili
         id: 1,
         epoch: 1,
         event_kind: "authority-extracted".to_owned(),
+        authority_family: "console".to_owned(),
         authority: "ConsoleAuthority".to_owned(),
         operation: "console_write".to_owned(),
         requester: Some("native-visa".to_owned()),
@@ -2046,6 +2314,7 @@ mod object_refs;
 mod roots_block_activation;
 mod roots_block_fs;
 mod roots_device_io;
+mod roots_guest_memory;
 mod roots_network_runtime;
 mod roots_network_storage;
 mod roots_scheduler_smp;

@@ -247,6 +247,7 @@ pub enum ObjectKind {
     GuestAddressSpace,
     VmaRegion,
     PageObject,
+    GuestMemoryOperation,
     // Process/Thread family
     Process,
     Thread,
@@ -416,6 +417,7 @@ impl ObjectKind {
             Self::GuestAddressSpace => "guest-address-space",
             Self::VmaRegion => "vma-region",
             Self::PageObject => "page-object",
+            Self::GuestMemoryOperation => "guest-memory-operation",
             // Process/Thread family
             Self::Process => "process",
             Self::Thread => "thread",
@@ -719,6 +721,7 @@ typed_ref!(HostcallTraceRef, ObjectKind::Hostcall);
 typed_ref!(GuestAddressSpaceRef, ObjectKind::GuestAddressSpace);
 typed_ref!(VmaRegionRef, ObjectKind::VmaRegion);
 typed_ref!(PageObjectRef, ObjectKind::PageObject);
+typed_ref!(GuestMemoryOperationRef, ObjectKind::GuestMemoryOperation);
 typed_ref!(ExternalObjectRef, ObjectKind::External);
 // Process/Thread family
 typed_ref!(ProcessRef, ObjectKind::Process);
@@ -754,6 +757,42 @@ typed_ref!(XattrRef, ObjectKind::Xattr);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeObjectViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivationViewV1 {
+    pub schema: u16,
+    pub kind: ObjectKind,
+    pub object: ObjectRef,
+    pub state: String,
+    pub owner: Option<ObjectRef>,
+    pub references: Vec<ContractEdge>,
+    pub last_transition: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrapViewV1 {
     pub schema: u16,
     pub kind: ObjectKind,
     pub object: ObjectRef,
@@ -866,9 +905,10 @@ pub fn object_kind_evidence_level(kind: ObjectKind) -> EvidenceBoundaryLevel {
         ObjectKind::SignalFrame => PortableArtifactExecution, // contains arch regs — arch-specific evidence layer
 
         // Memory expansion — semantic facts, NOT physical page table state
-        ObjectKind::PageFaultEvent | ObjectKind::CowBreakEvent | ObjectKind::VmaSplitEvent => {
-            SemanticModel
-        }
+        ObjectKind::GuestMemoryOperation
+        | ObjectKind::PageFaultEvent
+        | ObjectKind::CowBreakEvent
+        | ObjectKind::VmaSplitEvent => SemanticModel,
         ObjectKind::PageAllocSubstrateEvent => RealTargetSubstrate, // physical frame identity
 
         // Futex family — pure semantic
@@ -1029,7 +1069,7 @@ pub const fn object_kind_count() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{EvidenceBoundaryLevel, ObjectKind, object_kind_count, object_kind_evidence_level};
+    use super::{EvidenceBoundaryLevel, ObjectKind, object_kind_evidence_level};
 
     #[test]
     fn evidence_boundary_levels_are_ordered_by_claim_strength() {
@@ -1124,6 +1164,7 @@ mod tests {
             ObjectKind::SignalMask,
             ObjectKind::SignalFrame,
             ObjectKind::SignalDelivery,
+            ObjectKind::GuestMemoryOperation,
             ObjectKind::PageFaultEvent,
             ObjectKind::CowBreakEvent,
             ObjectKind::VmaSplitEvent,

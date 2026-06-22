@@ -209,7 +209,48 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
             "HostcallEntered label={label} class={} subject={subject} object={object} op={operation}",
             class.as_str()
         ),
+        EventKind::ProfileGateRejected {
+            package,
+            artifact,
+            artifact_id,
+            required_profile,
+            reported_profile,
+            enforced_profile,
+            reason,
+            missing_required,
+            degraded_optional,
+            forbidden_present,
+        } => {
+            let artifact_id = artifact_id
+                .map(|artifact_id| artifact_id.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "ProfileGateRejected package={package} artifact={artifact} artifact_id={artifact_id} required={required_profile} reported={reported_profile} enforced={enforced_profile} reason={reason} missing_required={} degraded_optional={} forbidden_present={}",
+                missing_required.join("|"),
+                degraded_optional.join("|"),
+                forbidden_present.join("|")
+            )
+        }
+        EventKind::ProfileGateDegraded {
+            package,
+            artifact,
+            artifact_id,
+            required_profile,
+            reported_profile,
+            enforced_profile,
+            reason,
+            degraded_optional,
+        } => {
+            let artifact_id = artifact_id
+                .map(|artifact_id| artifact_id.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "ProfileGateDegraded package={package} artifact={artifact} artifact_id={artifact_id} required={required_profile} reported={reported_profile} enforced={enforced_profile} reason={reason} degraded_optional={}",
+                degraded_optional.join("|")
+            )
+        }
         EventKind::SubstrateAuthorityExtracted {
+            authority_family,
             authority,
             operation,
             requester,
@@ -229,19 +270,27 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
                 .map(|generation| generation.to_string())
                 .unwrap_or_else(|| "none".to_string());
             format!(
-                "SubstrateAuthorityExtracted authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
+                "SubstrateAuthorityExtracted family={authority_family} authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
             )
         }
-        EventKind::SubstrateUnsupported { authority, operation, requester, artifact, store } => {
+        EventKind::SubstrateUnsupported {
+            authority_family,
+            authority,
+            operation,
+            requester,
+            artifact,
+            store,
+        } => {
             let requester = requester.as_deref().unwrap_or("none");
             let artifact =
                 artifact.map(|artifact| artifact.to_string()).unwrap_or_else(|| "none".to_string());
             let store = store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
             format!(
-                "SubstrateUnsupported authority={authority} op={operation} requester={requester} artifact={artifact} store={store}"
+                "SubstrateUnsupported family={authority_family} authority={authority} op={operation} requester={requester} artifact={artifact} store={store}"
             )
         }
         EventKind::SubstrateCapabilityDenied {
+            authority_family,
             authority,
             operation,
             requester,
@@ -261,10 +310,11 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
                 .map(|generation| generation.to_string())
                 .unwrap_or_else(|| "none".to_string());
             format!(
-                "SubstrateCapabilityDenied authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
+                "SubstrateCapabilityDenied family={authority_family} authority={authority} op={operation} requester={requester} artifact={artifact} store={store} capability={capability} generation={generation}"
             )
         }
         EventKind::SubstratePanic {
+            authority_family,
             authority,
             operation,
             requester,
@@ -279,7 +329,7 @@ pub(super) fn summary(kind: &EventKind) -> Option<String> {
                 artifact.map(|artifact| artifact.to_string()).unwrap_or_else(|| "none".to_string());
             let store = store.map(|store| store.to_string()).unwrap_or_else(|| "none".to_string());
             format!(
-                "SubstratePanic authority={authority} op={operation} requester={requester} artifact={artifact} store={store} panic_epoch={panic_epoch} panic_cpu={panic_cpu} panic_reason_code={panic_reason_code}"
+                "SubstratePanic family={authority_family} authority={authority} op={operation} requester={requester} artifact={artifact} store={store} panic_epoch={panic_epoch} panic_cpu={panic_cpu} panic_reason_code={panic_reason_code}"
             )
         }
         EventKind::InterfaceUnsupported {

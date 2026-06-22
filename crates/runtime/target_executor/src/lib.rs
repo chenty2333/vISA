@@ -42,24 +42,26 @@ use artifact_manifest::{
     FakeNetBackendObjectManifest, FatAdapterObjectManifest, FileHandleCapabilityManifest,
     FileObjectManifest, FramebufferBenchmarkManifest, FramebufferDirtyRegionManifest,
     FramebufferFlushRegionManifest, FramebufferMappingManifest, FramebufferObjectManifest,
-    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest, GuestStateManifest,
-    HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest, HostcallTraceManifest,
-    IntegratedCodePublishSmpWorkloadManifest, IntegratedDiskPreemptFaultManifest,
-    IntegratedDisplayPanicManifest, IntegratedDisplaySchedulerLoadManifest,
-    IntegratedNetworkDiskIoManifest, IntegratedOsctlTraceReplayManifest,
-    IntegratedSimdMigrationManifest, IntegratedSmpNetworkFaultManifest,
-    IntegratedSmpPreemptionCleanupManifest, IntegratedSnapshotIoLeaseBarrierManifest,
-    InterfaceEventManifest, IoCleanupManifest, IoCleanupStepManifest, IoFaultInjectionManifest,
-    IoValidationReportManifest, IoValidationViolationManifest, IoWaitManifest, IpiEventManifest,
-    IrqEventManifest, IrqLineObjectManifest, MemoryClassPolicyManifest,
-    MigrationCapabilityManifest, MigrationHostManifest, MigrationObjectManifest,
-    MigrationPackageManifest, MigrationTargetManifest, MmioRegionObjectManifest,
-    NetworkBackpressureManifest, NetworkBenchmarkManifest, NetworkDriverCleanupManifest,
-    NetworkFaultInjectionManifest, NetworkGenerationAuditManifest,
-    NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest, NetworkRxWaitResolutionManifest,
-    NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest, NetworkTxCompletionManifest,
-    PacketBufferObjectManifest, PacketDescriptorObjectManifest, PacketDeviceObjectManifest,
-    PacketQueueObjectManifest, PreemptionLatencySampleManifest, PreemptionManifest,
+    FramebufferWindowLeaseManifest, FramebufferWriteManifest, FsWaitManifest,
+    GuestAddressSpaceManifest, GuestMemoryFaultManifest, GuestPermsManifest, GuestStateManifest,
+    GuestVaRangeManifest, HartEventAttributionManifest, HartRecordManifest, HostcallSpecManifest,
+    HostcallTraceManifest, IntegratedCodePublishSmpWorkloadManifest,
+    IntegratedDiskPreemptFaultManifest, IntegratedDisplayPanicManifest,
+    IntegratedDisplaySchedulerLoadManifest, IntegratedNetworkDiskIoManifest,
+    IntegratedOsctlTraceReplayManifest, IntegratedSimdMigrationManifest,
+    IntegratedSmpNetworkFaultManifest, IntegratedSmpPreemptionCleanupManifest,
+    IntegratedSnapshotIoLeaseBarrierManifest, InterfaceEventManifest, IoCleanupManifest,
+    IoCleanupStepManifest, IoFaultInjectionManifest, IoValidationReportManifest,
+    IoValidationViolationManifest, IoWaitManifest, IpiEventManifest, IrqEventManifest,
+    IrqLineObjectManifest, MemoryClassPolicyManifest, MigrationCapabilityManifest,
+    MigrationHostManifest, MigrationObjectManifest, MigrationPackageManifest,
+    MigrationTargetManifest, MmioRegionObjectManifest, NetworkBackpressureManifest,
+    NetworkBenchmarkManifest, NetworkDriverCleanupManifest, NetworkFaultInjectionManifest,
+    NetworkGenerationAuditManifest, NetworkRecoveryBenchmarkManifest, NetworkRxInterruptManifest,
+    NetworkRxWaitResolutionManifest, NetworkStackAdapterManifest, NetworkTxCapabilityGateManifest,
+    NetworkTxCompletionManifest, PacketBufferObjectManifest, PacketDescriptorObjectManifest,
+    PacketDeviceObjectManifest, PacketQueueObjectManifest, PageObjectManifest,
+    PreemptionLatencySampleManifest, PreemptionManifest, ProfileGateEventManifest,
     QueueObjectManifest, RemoteParkManifest, RemotePreemptManifest,
     RequiredArtifactProfileManifest, RunnableQueueEntryManifest, RunnableQueueManifest,
     RuntimeActivationRecordManifest, SavedContextManifest, SchedulerDecisionManifest,
@@ -75,11 +77,12 @@ use artifact_manifest::{
     TargetCapabilitySpecManifest, TargetFeatureSetManifest, TargetMemoryPlanManifest,
     TargetTrapMetadataManifest, TaskRecordManifest, TimerInterruptManifest, TombstoneManifest,
     TrapRecordManifest, VectorStateManifest, VirtioBlkBackendObjectManifest,
-    VirtioNetBackendObjectManifest, WaitRecordManifest,
+    VirtioNetBackendObjectManifest, VmaFlagsManifest, VmaRegionManifest, WaitRecordManifest,
 };
 use contract_validate::{
     ValidatedArtifactEntry, ValidatedArtifactPlan, audit_migration_package,
-    build_validated_artifact_plan, validate_migration_against_manifest, validate_replay_quiescent,
+    build_validated_artifact_plan, check_module_substrate_profile_gate,
+    validate_migration_against_manifest, validate_replay_quiescent,
 };
 use evidence_scenarios::*;
 use fs_adapter::{
@@ -141,6 +144,7 @@ use target_abi::{
     OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, PANIC_RECORD_MAX_LEN, PANIC_RING_SIZE,
     PanicRecordKindV1, PanicRingV1, RV64_ENTRY_TRAP_EBREAK_OFFSET, TrapKindV1, TrapMapEntryV1,
 };
+use visa_profile::{SubstrateCapabilitySet, SubstrateProfile};
 
 const DEFAULT_ARTIFACT_ROOT: &str = "target/aotc/wasmtime/host-validation/debug";
 const HOST_TAP_ENV: &str = "VISA_TARGET_EXECUTOR_HOST_TAP";
@@ -171,6 +175,7 @@ pub(crate) struct TargetExecutorV1Report {
     replay_validation: BoundaryValidationReportManifest,
     target_event_tail: Vec<String>,
     substrate_events: Vec<SubstrateEventManifest>,
+    profile_gate_events: Vec<ProfileGateEventManifest>,
     command_results: Vec<CommandResultManifest>,
     interface_events: Vec<InterfaceEventManifest>,
 }
@@ -525,6 +530,44 @@ fn publish_host_boundary_status(semantic: &mut SemanticGraph, manifest: &Artifac
     );
 }
 
+fn record_optional_profile_degradation_events(
+    plan: &ValidatedArtifactPlan,
+    semantic: &mut SemanticGraph,
+) -> Result<(), Box<dyn Error>> {
+    let capabilities = SubstrateCapabilitySet::host_validation();
+    let enforced_profile = SubstrateProfile::strongest_satisfied_by(capabilities)
+        .map(SubstrateProfile::as_str)
+        .unwrap_or("none");
+    for (index, module) in plan.modules.iter().enumerate() {
+        let report = check_module_substrate_profile_gate(
+            module,
+            "host-validation",
+            enforced_profile,
+            capabilities,
+        )?;
+        if report.degraded_optional.is_empty() {
+            continue;
+        }
+        semantic.record_profile_gate_degraded(
+            module.package.clone(),
+            module.package.clone(),
+            Some((index + 1) as u64),
+            report.substrate_profile_required.clone(),
+            report.reported_profile.clone(),
+            report.enforced_profile.clone(),
+            "optional-authority-missing",
+            report
+                .degraded_optional
+                .iter()
+                .map(|item| {
+                    format!("{}:required={}:actual={}", item.authority, item.expected, item.actual)
+                })
+                .collect(),
+        );
+    }
+    Ok(())
+}
+
 fn build_target_executor_v1(
     plan: &ValidatedArtifactPlan,
     semantic: &mut SemanticGraph,
@@ -537,6 +580,7 @@ fn build_target_executor_v1(
     let mut ledger = CapabilityLedger::new();
     let mut report = TargetExecutorV1Report::default();
     let mut verified_artifacts = Vec::new();
+    record_optional_profile_degradation_events(plan, semantic)?;
 
     for (index, entry) in plan.modules.iter().enumerate() {
         let mut image = target_artifact_image((index + 1) as u64, entry, plan);
@@ -824,6 +868,8 @@ fn build_target_executor_v1(
         .collect();
     report.target_event_tail = executor.event_log().to_vec();
     report.substrate_events = substrate_event_manifests(semantic.event_log().tail(usize::MAX));
+    report.profile_gate_events =
+        profile_gate_event_manifests(semantic.event_log().tail(usize::MAX));
     report.command_results =
         semantic.command_results().iter().map(command_result_manifest).collect();
     report.interface_events = interface_event_manifests(semantic.event_log().tail(usize::MAX));
@@ -900,6 +946,14 @@ fn target_artifact_image(
     }
     image.hostcalls.push(HostcallSpec::new(
         9000,
+        "hostcall.console.denied",
+        HostcallCategory::Console,
+        "console.denied",
+        "write",
+        false,
+    ));
+    image.hostcalls.push(HostcallSpec::new(
+        9001,
         "hostcall.mmio.denied",
         HostcallCategory::Mmio,
         "mmio.denied",
@@ -907,7 +961,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9001,
+        9002,
         "hostcall.dma.denied",
         HostcallCategory::Dma,
         "dma.denied",
@@ -915,7 +969,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9002,
+        9003,
         "hostcall.irq.denied",
         HostcallCategory::Irq,
         "irq.denied",
@@ -923,7 +977,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9003,
+        9004,
         "hostcall.dmw.denied",
         HostcallCategory::Dmw,
         "dmw.denied",
@@ -931,7 +985,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9004,
+        9005,
         "hostcall.code-publish.denied",
         HostcallCategory::CodePublish,
         "code-publish.denied",
@@ -939,7 +993,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9005,
+        9006,
         "hostcall.wait.pending",
         HostcallCategory::Wait,
         "wait.timer",
@@ -947,7 +1001,7 @@ fn target_artifact_image(
         true,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9006,
+        9007,
         "hostcall.packet-device.denied",
         HostcallCategory::PacketDevice,
         "packet-device.denied",
@@ -955,7 +1009,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9007,
+        9008,
         "hostcall.device.denied",
         HostcallCategory::Device,
         "device.denied",
@@ -963,7 +1017,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9008,
+        9009,
         "hostcall.virtqueue.denied",
         HostcallCategory::Virtqueue,
         "virtqueue.denied",
@@ -971,7 +1025,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9009,
+        9010,
         "hostcall.timer.denied",
         HostcallCategory::Timer,
         "timer.denied",
@@ -979,7 +1033,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9010,
+        9011,
         "hostcall.guest-memory.denied",
         HostcallCategory::GuestMemory,
         "guest-memory.denied",
@@ -987,7 +1041,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9011,
+        9012,
         "hostcall.snapshot.denied",
         HostcallCategory::Snapshot,
         "snapshot.denied",
@@ -995,7 +1049,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9012,
+        9013,
         "hostcall.fault-domain.denied",
         HostcallCategory::FaultDomain,
         "fault-domain.denied",
@@ -1003,7 +1057,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9013,
+        9014,
         "hostcall.event-log.denied",
         HostcallCategory::EventLog,
         "event-log.denied",
@@ -1011,7 +1065,7 @@ fn target_artifact_image(
         false,
     ));
     image.hostcalls.push(HostcallSpec::new(
-        9014,
+        9015,
         "hostcall.store-control.denied",
         HostcallCategory::StoreControl,
         "store-control.denied",
@@ -1022,7 +1076,14 @@ fn target_artifact_image(
 }
 
 fn hostcall_category_for_object(object: &str) -> HostcallCategory {
-    if object.starts_with("packet-device.") {
+    if object.starts_with("console.")
+        || object.starts_with("visa.console")
+        || object.starts_with("test.console")
+        || object.starts_with("bench.console")
+        || object == "wasi.fd"
+    {
+        HostcallCategory::Console
+    } else if object.starts_with("packet-device.") {
         HostcallCategory::PacketDevice
     } else if object.starts_with("code-publish.") || object.starts_with("code-object.") {
         HostcallCategory::CodePublish
@@ -1189,67 +1250,7 @@ mod tests {
         };
         let image = target_artifact_image(1, &entry, &plan);
         let artifact = target_artifact_manifest(&image);
-        let hostcall = artifact.hostcalls.first().expect("visa native hostcall").clone();
-        let report = TargetExecutorV1Report {
-            target_artifacts: vec![artifact.clone()],
-            code_objects: vec![CodeObjectManifest {
-                id: 1,
-                artifact_id: artifact.id,
-                package: artifact.package.clone(),
-                owner_profile: artifact.target_profile.clone(),
-                generation: 1,
-                state: "bound-to-store".to_owned(),
-                bound_store: Some(1),
-                bound_store_generation: Some(1),
-                text_permission: "rx".to_owned(),
-                rodata_permission: "ro".to_owned(),
-                code_hash: artifact.code_hash.clone(),
-                hostcalls: artifact.hostcalls.clone(),
-                trap_metadata: artifact.trap_metadata.clone(),
-                address_map: artifact.address_map.clone(),
-                ..Default::default()
-            }],
-            activation_records: vec![ActivationRecordManifest {
-                id: 1,
-                store: 1,
-                store_generation: 1,
-                code_object: 1,
-                code_generation: 1,
-                artifact: artifact.id,
-                entry: "run".to_owned(),
-                generation: 1,
-                state: "exited".to_owned(),
-                ..Default::default()
-            }],
-            hostcall_trace: vec![HostcallTraceManifest {
-                id: 1,
-                generation: 1,
-                activation: 1,
-                activation_generation: 1,
-                store: 1,
-                store_generation: 1,
-                code_object: 1,
-                code_generation: 1,
-                artifact: artifact.id,
-                artifact_generation: 1,
-                hostcall_number: hostcall.number,
-                name: hostcall.name,
-                category: hostcall.category,
-                subject: entry.package.clone(),
-                subject_source: "artifact".to_owned(),
-                object: hostcall.object,
-                operation: hostcall.operation,
-                record_mode: "live".to_owned(),
-                allowed: true,
-                gate_status: "allowed".to_owned(),
-                result: "ok".to_owned(),
-                ret_tag: "ok".to_owned(),
-                ..Default::default()
-            }],
-            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
-            replay_validation: test_boundary_validation_report("package-replay"),
-            ..Default::default()
-        };
+        let report = test_portable_execution_report(&entry, &artifact);
         let semantic = SemanticGraph::new();
         let package = demo_migration_package(&manifest, &semantic, &report);
         let audit = contract_validate::audit_migration_package(&package);
@@ -1262,6 +1263,54 @@ mod tests {
         assert_eq!(audit.visa_native_artifact_count, 1);
         assert_eq!(audit.linux_weighted_artifact_count, 0);
         validate_external_audit(&package).expect("generated package should pass audit gate");
+    }
+
+    #[test]
+    fn generated_package_projects_guest_memory_semantic_records() {
+        let manifest = test_manifest();
+        let mut memory = semantic_core::GuestMemoryManager::new();
+        let store = ContractObjectRef::new(ContractObjectKind::Store, 7, 3);
+        let aspace = memory.create_address_space(store);
+        let page = memory
+            .create_page(semantic_core::PageBacking::Anonymous, semantic_core::CowState::Shared);
+        memory
+            .map_region(
+                aspace,
+                semantic_core::GuestVaRange::new(0x4000, 0x1000),
+                semantic_core::GuestPerms::READ_WRITE,
+                semantic_core::VmaFlags::cow(),
+                page,
+            )
+            .expect("map guest memory");
+        memory.record_page_fault(page, "copyout-cow");
+        let mut semantic = SemanticGraph::new();
+        assert!(semantic.record_guest_memory_manager(&memory));
+
+        let report = TargetExecutorV1Report {
+            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
+            replay_validation: test_boundary_validation_report("package-replay"),
+            ..Default::default()
+        };
+        let package = demo_migration_package(&manifest, &semantic, &report);
+
+        assert_eq!(package.guest.memory_page_count, 1);
+        assert_eq!(package.guest.vma_count, 1);
+        assert_eq!(package.semantic.guest_address_space_count, 1);
+        assert_eq!(package.semantic.vma_region_count, 1);
+        assert_eq!(package.semantic.page_object_count, 1);
+        assert_eq!(package.semantic.guest_memory_fault_count, 1);
+        assert_eq!(package.semantic.roots.guest_address_space_roots.len(), 1);
+        assert_eq!(package.semantic.roots.vma_region_roots.len(), 1);
+        assert_eq!(package.semantic.roots.page_object_roots.len(), 1);
+        assert_eq!(package.semantic.roots.guest_memory_fault_roots.len(), 1);
+        assert!(package.semantic.roots.vma_region_roots[0].contains("flags=cow:true"));
+        assert_eq!(package.semantic.guest_address_spaces[0].id, aspace.id());
+        assert_eq!(package.semantic.vma_regions[0].range.start, 0x4000);
+        assert_eq!(package.semantic.vma_regions[0].backing.kind, "page-object");
+        assert_eq!(package.semantic.page_objects[0].cow, "shared");
+        assert_eq!(package.semantic.guest_memory_faults[0].reason, "copyout-cow");
+        contract_validate::validate_migration_package(&package)
+            .expect("guest memory package projection should validate");
     }
 
     #[test]
@@ -1287,67 +1336,7 @@ mod tests {
         };
         let image = target_artifact_image(1, &entry, &plan);
         let artifact = target_artifact_manifest(&image);
-        let hostcall = artifact.hostcalls.first().expect("generic hostcall").clone();
-        let report = TargetExecutorV1Report {
-            target_artifacts: vec![artifact.clone()],
-            code_objects: vec![CodeObjectManifest {
-                id: 1,
-                artifact_id: artifact.id,
-                package: artifact.package.clone(),
-                owner_profile: artifact.target_profile.clone(),
-                generation: 1,
-                state: "bound-to-store".to_owned(),
-                bound_store: Some(1),
-                bound_store_generation: Some(1),
-                text_permission: "rx".to_owned(),
-                rodata_permission: "ro".to_owned(),
-                code_hash: artifact.code_hash.clone(),
-                hostcalls: artifact.hostcalls.clone(),
-                trap_metadata: artifact.trap_metadata.clone(),
-                address_map: artifact.address_map.clone(),
-                ..Default::default()
-            }],
-            activation_records: vec![ActivationRecordManifest {
-                id: 1,
-                store: 1,
-                store_generation: 1,
-                code_object: 1,
-                code_generation: 1,
-                artifact: artifact.id,
-                entry: "run".to_owned(),
-                generation: 1,
-                state: "exited".to_owned(),
-                ..Default::default()
-            }],
-            hostcall_trace: vec![HostcallTraceManifest {
-                id: 1,
-                generation: 1,
-                activation: 1,
-                activation_generation: 1,
-                store: 1,
-                store_generation: 1,
-                code_object: 1,
-                code_generation: 1,
-                artifact: artifact.id,
-                artifact_generation: 1,
-                hostcall_number: hostcall.number,
-                name: hostcall.name,
-                category: hostcall.category,
-                subject: entry.package.clone(),
-                subject_source: "artifact".to_owned(),
-                object: hostcall.object,
-                operation: hostcall.operation,
-                record_mode: "live".to_owned(),
-                allowed: true,
-                gate_status: "allowed".to_owned(),
-                result: "ok".to_owned(),
-                ret_tag: "ok".to_owned(),
-                ..Default::default()
-            }],
-            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
-            replay_validation: test_boundary_validation_report("package-replay"),
-            ..Default::default()
-        };
+        let report = test_portable_execution_report(&entry, &artifact);
         let semantic = SemanticGraph::new();
         let package = demo_migration_package(&manifest, &semantic, &report);
         let audit = contract_validate::audit_migration_package(&package);
@@ -1408,6 +1397,114 @@ mod tests {
             hash_status: "manifest-bound".to_owned(),
             signature_status: "profile-bound-unverified".to_owned(),
             signature_verified: false,
+        }
+    }
+
+    fn test_portable_execution_report(
+        entry: &ValidatedArtifactEntry,
+        artifact: &TargetArtifactImageManifest,
+    ) -> TargetExecutorV1Report {
+        let hostcall = artifact.hostcalls.first().expect("portable execution hostcall").clone();
+        let cap_arg = CapabilityHandleArgManifest {
+            id: 1,
+            object: hostcall.object.clone(),
+            generation: 1,
+            owner_store: Some(1),
+            owner_store_generation: Some(1),
+            handle_slot: 0,
+            handle_generation: 1,
+            handle_tag: 1,
+            rights_mask: 1,
+            rights: vec![hostcall.operation.clone()],
+        };
+
+        TargetExecutorV1Report {
+            target_artifacts: vec![artifact.clone()],
+            code_objects: vec![CodeObjectManifest {
+                id: 1,
+                artifact_id: artifact.id,
+                package: artifact.package.clone(),
+                owner_profile: artifact.target_profile.clone(),
+                generation: 1,
+                state: "bound-to-store".to_owned(),
+                bound_store: Some(1),
+                bound_store_generation: Some(1),
+                text_permission: "rx".to_owned(),
+                rodata_permission: "ro".to_owned(),
+                code_hash: artifact.code_hash.clone(),
+                hostcalls: artifact.hostcalls.clone(),
+                trap_metadata: artifact.trap_metadata.clone(),
+                address_map: artifact.address_map.clone(),
+                ..Default::default()
+            }],
+            store_records: vec![StoreRecordManifest {
+                id: 1,
+                package: artifact.package.clone(),
+                artifact: artifact.artifact_name.clone(),
+                owner_profile: artifact.target_profile.clone(),
+                role: artifact.role.clone(),
+                fault_policy: entry.fault_policy.clone(),
+                fault_domain: 1,
+                state: "running".to_owned(),
+                generation: 1,
+                ..Default::default()
+            }],
+            capability_records: vec![CapabilityRecordManifest {
+                id: cap_arg.id,
+                subject: entry.package.clone(),
+                object: hostcall.object.clone(),
+                rights: vec![hostcall.operation.clone()],
+                lifetime: "activation".to_owned(),
+                class: hostcall.category.clone(),
+                owner_store: Some(1),
+                owner_store_generation: Some(1),
+                source: "target-artifact-manifest".to_owned(),
+                generation: cap_arg.generation,
+                manifest_decl: true,
+                ..Default::default()
+            }],
+            activation_records: vec![ActivationRecordManifest {
+                id: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                profile: artifact.target_profile.clone(),
+                entry: "run".to_owned(),
+                generation: 1,
+                state: "exited".to_owned(),
+                ..Default::default()
+            }],
+            hostcall_trace: vec![HostcallTraceManifest {
+                id: 1,
+                generation: 1,
+                activation: 1,
+                activation_generation: 1,
+                store: 1,
+                store_generation: 1,
+                code_object: 1,
+                code_generation: 1,
+                artifact: artifact.id,
+                artifact_generation: 1,
+                hostcall_number: hostcall.number,
+                name: hostcall.name,
+                category: hostcall.category,
+                subject: entry.package.clone(),
+                subject_source: "artifact".to_owned(),
+                object: hostcall.object,
+                operation: hostcall.operation,
+                cap_args: vec![cap_arg],
+                record_mode: "live".to_owned(),
+                allowed: true,
+                gate_status: "allowed".to_owned(),
+                result: "ok".to_owned(),
+                ret_tag: "ok".to_owned(),
+                ..Default::default()
+            }],
+            snapshot_validation: test_boundary_validation_report("snapshot-barrier"),
+            replay_validation: test_boundary_validation_report("package-replay"),
+            ..Default::default()
         }
     }
 

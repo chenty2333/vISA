@@ -774,6 +774,10 @@ pub(crate) fn print_replay_json(
         serde_json::json!(package.semantic.roots.substrate_event_roots.len()),
     );
     roots.insert(
+        "profile_gate_events".to_owned(),
+        serde_json::json!(package.semantic.roots.profile_gate_event_roots.len()),
+    );
+    roots.insert(
         "command_results".to_owned(),
         serde_json::json!(package.semantic.roots.command_result_roots.len()),
     );

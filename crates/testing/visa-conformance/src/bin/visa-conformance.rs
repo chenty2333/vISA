@@ -18,6 +18,9 @@ use visa_conformance::{
     visa_ltp_manifest_plan,
 };
 
+const HOST_LTP_DEFAULT_BOUNDARY: Boundary = Boundary::ReferenceService;
+const VISA_LTP_DEFAULT_BOUNDARY: Boundary = Boundary::PortableArtifactExecution;
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "plan-json".to_string());
@@ -93,7 +96,7 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 },
-                None => Boundary::PortableArtifactExecution,
+                None => HOST_LTP_DEFAULT_BOUNDARY,
             };
             let profile = args.next();
             ltp_report_from_log_dir_command(&log_dir, boundary, profile)
@@ -110,7 +113,7 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 },
-                None => Boundary::PortableArtifactExecution,
+                None => VISA_LTP_DEFAULT_BOUNDARY,
             };
             let profile = args.next();
             ltp_visa_report_from_log_dir_command(&log_dir, boundary, profile)
@@ -615,5 +618,16 @@ fn print_json<T: serde::Serialize>(value: &T) -> ExitCode {
             eprintln!("failed to serialize json: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ltp_cli_defaults_keep_host_logs_below_portable_artifact_execution() {
+        assert_eq!(HOST_LTP_DEFAULT_BOUNDARY, Boundary::ReferenceService);
+        assert_eq!(VISA_LTP_DEFAULT_BOUNDARY, Boundary::PortableArtifactExecution);
     }
 }

@@ -6,6 +6,7 @@ fn store_view_v1_exposes_stable_identity_state_and_references() {
         id: 7,
         package: "vfs_service".to_owned(),
         artifact: "vfs_service.cwasm".to_owned(),
+        owner_profile: "minimal-bare-metal".to_owned(),
         role: "service".to_owned(),
         fault_policy: "restartable".to_owned(),
         fault_domain: 3,
@@ -18,6 +19,7 @@ fn store_view_v1_exposes_stable_identity_state_and_references() {
     assert_eq!(view["kind"], "store");
     assert_eq!(view["id"], 7);
     assert_eq!(view["generation"], 2);
+    assert_eq!(view["owner"]["profile"], "minimal-bare-metal");
     assert_eq!(view["references"]["fault_domain"], 3);
 }
 
@@ -149,6 +151,7 @@ fn b4_core_view_package() -> MigrationPackageManifest {
         id: 1,
         package: "driver_virtio_net".to_owned(),
         artifact: "driver.cwasm".to_owned(),
+        owner_profile: "device-capable".to_owned(),
         role: "driver".to_owned(),
         fault_policy: "restartable".to_owned(),
         fault_domain: 1,
@@ -294,6 +297,150 @@ fn stable_view_collection_v1_covers_core_object_families() {
 }
 
 #[test]
+fn stable_view_collection_v1_covers_target_runtime_object_families() {
+    let mut package = minimal_graph_package();
+    package.package_id = "target-runtime-view-boundary".to_owned();
+    add_native_portable_execution_chain(&mut package);
+
+    for (kind, expected_collection_kind, expected_item_kind) in [
+        ("artifact", "artifact", "artifact"),
+        ("target-artifact", "artifact", "artifact"),
+        ("code-object", "code-object", "code-object"),
+        ("activation-record", "activation-record", "activation"),
+        ("target-activation", "activation-record", "activation"),
+        ("trap", "trap", "trap"),
+        ("hostcall", "hostcall", "hostcall"),
+    ] {
+        let view = stable_view_collection_v1(kind, "list", &package, None)
+            .expect("target runtime view collection");
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+        assert_eq!(view["kind"], expected_collection_kind);
+        assert_eq!(view["command"], format!("{expected_collection_kind}.list"));
+        assert_eq!(view["package"], "target-runtime-view-boundary");
+        assert_eq!(view["count"], 1);
+        assert_eq!(view["items"][0]["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["items"][0]["kind"], expected_item_kind);
+        assert!(view["items"][0]["references"].is_object());
+    }
+
+    let selected =
+        stable_view_collection_v1("code-object", "show", &package, Some("1")).expect("show code");
+    assert_eq!(selected["command"], "code-object.show");
+    assert_eq!(selected["items"][0]["references"]["artifact"]["generation"], 1);
+
+    let activation = stable_view_collection_v1("activation-record", "show", &package, Some("1"))
+        .expect("show activation");
+    assert_eq!(activation["items"][0]["owner"]["profile"], "minimal-bare-metal");
+
+    let runtime_activation = stable_view_collection_v1("activation", "list", &package, None)
+        .expect("runtime activation");
+    assert_eq!(
+        runtime_activation["kind"], "activation",
+        "legacy activation kind remains runtime activation; target activation uses activation-record"
+    );
+    assert_eq!(runtime_activation["count"], 0);
+}
+
+#[test]
+fn stable_view_collection_v1_covers_guest_memory_object_families() {
+    let mut package = minimal_graph_package();
+    package.package_id = "guest-memory-view-boundary".to_owned();
+    package.semantic.guest_address_space_count = 1;
+    package.semantic.vma_region_count = 1;
+    package.semantic.page_object_count = 1;
+    package.semantic.guest_memory_fault_count = 1;
+    package.semantic.guest_address_spaces = vec![artifact_manifest::GuestAddressSpaceManifest {
+        id: 70,
+        owner: ContractObjectRefManifest { kind: "store".to_owned(), id: 7, generation: 3 },
+        generation: 1,
+        state: "live".to_owned(),
+        root_region: Some(ContractObjectRefManifest {
+            kind: "vma-region".to_owned(),
+            id: 71,
+            generation: 1,
+        }),
+        vma_generation: 2,
+        page_map_generation: 2,
+    }];
+    package.semantic.vma_regions = vec![artifact_manifest::VmaRegionManifest {
+        id: 71,
+        aspace: ContractObjectRefManifest {
+            kind: "guest-address-space".to_owned(),
+            id: 70,
+            generation: 1,
+        },
+        range: artifact_manifest::GuestVaRangeManifest { start: 0x4000, len: 0x1000 },
+        perms: artifact_manifest::GuestPermsManifest {
+            readable: true,
+            writable: true,
+            executable: false,
+        },
+        flags: artifact_manifest::VmaFlagsManifest { cow: true, shared: false, device: false },
+        backing: ContractObjectRefManifest {
+            kind: "page-object".to_owned(),
+            id: 72,
+            generation: 1,
+        },
+        generation: 1,
+        state: "mapped".to_owned(),
+    }];
+    package.semantic.page_objects = vec![artifact_manifest::PageObjectManifest {
+        id: 72,
+        backing: "anonymous".to_owned(),
+        cow: "shared".to_owned(),
+        dirty_generation: 1,
+        generation: 1,
+        state: "live".to_owned(),
+    }];
+    package.semantic.guest_memory_faults = vec![artifact_manifest::GuestMemoryFaultManifest {
+        id: 73,
+        generation: 1,
+        page: ContractObjectRefManifest { kind: "page-object".to_owned(), id: 72, generation: 1 },
+        reason: "copyin-efault".to_owned(),
+        historical: true,
+    }];
+
+    for (kind, expected_collection_kind, expected_item_kind) in [
+        ("guest-aspace", "guest-address-space", "guest-address-space"),
+        ("vma", "vma-region", "vma-region"),
+        ("guest-page", "page-object", "page-object"),
+        ("page-fault", "page-fault-event", "page-fault-event"),
+    ] {
+        let view = stable_view_collection_v1(kind, "list", &package, None)
+            .expect("guest memory view collection");
+        assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["schema_version"], OSCTL_JSON_SCHEMA_VERSION);
+        assert_eq!(view["kind"], expected_collection_kind);
+        assert_eq!(view["command"], format!("{expected_collection_kind}.list"));
+        assert_eq!(view["package"], "guest-memory-view-boundary");
+        assert_eq!(view["count"], 1);
+        assert_eq!(view["items"][0]["schema"], VIEW_SCHEMA_V1);
+        assert_eq!(view["items"][0]["kind"], expected_item_kind);
+        assert!(view["items"][0]["references"].is_object());
+    }
+
+    let aspace = stable_view_collection_v1("guest-address-space", "show", &package, Some("70"))
+        .expect("show guest address space");
+    assert_eq!(aspace["items"][0]["references"]["root_region"]["kind"], "vma-region");
+    assert_eq!(aspace["items"][0]["memory_generation"]["vma_generation"], 2);
+
+    let vma =
+        stable_view_collection_v1("vma-region", "show", &package, Some("71")).expect("show vma");
+    assert_eq!(vma["items"][0]["range"]["end"], 0x5000);
+    assert_eq!(vma["items"][0]["flags"]["cow"], true);
+
+    let page = stable_view_collection_v1("page-object", "show", &package, Some("72"))
+        .expect("show page object");
+    assert_eq!(page["items"][0]["page"]["cow"], "shared");
+
+    let fault = stable_view_collection_v1("guest-memory-fault", "show", &package, Some("73"))
+        .expect("show guest memory fault");
+    assert_eq!(fault["items"][0]["fault"]["reason"], "copyin-efault");
+    assert_eq!(fault["items"][0]["state"], "historical");
+}
+
+#[test]
 fn contract_validation_view_v1_exposes_contract_and_structure_errors_as_json() {
     let mut package = minimal_graph_package();
     package.package_id = "b4-contract-error".to_owned();
@@ -314,17 +461,44 @@ fn contract_validation_view_v1_exposes_contract_and_structure_errors_as_json() {
     assert_eq!(contract_error["state"], "failed");
     assert_eq!(contract_error["contract"]["violation_count"], 1);
     assert_eq!(contract_error["violations"][0]["code"], "dangling-edge");
+    assert_eq!(contract_error["violations"][0]["classification"], "semantic");
     assert_eq!(contract_error["violations"][0]["subject"]["generation"], 1);
     assert_eq!(contract_error["last_error"], "contract-validation-failed");
 
     let structure_error = contract_validation_view_v1(&package, Some("missing roots"));
     assert_eq!(structure_error["ok"], false);
+    assert_eq!(structure_error["structure_validation"]["classification"], "schema");
     assert_eq!(
         structure_error["structure_validation"]["violations"][0]["code"],
         "package-structure"
     );
+    assert_eq!(
+        structure_error["structure_validation"]["violations"][0]["classification"],
+        "schema"
+    );
     assert_eq!(structure_error["violations"][1]["code"], "package-structure");
+    assert_eq!(structure_error["violations"][1]["classification"], "schema");
     assert_eq!(structure_error["last_error"], "missing roots");
+}
+
+#[test]
+fn contract_validation_view_v1_classifies_evidence_boundary_violations() {
+    let mut package = minimal_graph_package();
+    package.package_id = "boundary-classification".to_owned();
+    package.semantic.contract_violation_count = 1;
+    package.semantic.contract_violations.push(ContractViolationManifest {
+        kind: "evidence-boundary-overclaim".to_owned(),
+        edge: "snapshot->claim".to_owned(),
+        from: ContractObjectRefManifest { kind: "store".to_owned(), id: 1, generation: 1 },
+        to: None,
+        detail: "snapshot claims real-target-substrate without evidence".to_owned(),
+    });
+
+    let view = contract_validation_view_v1(&package, None);
+
+    assert_eq!(view["ok"], false);
+    assert_eq!(view["violations"][0]["code"], "evidence-boundary-overclaim");
+    assert_eq!(view["violations"][0]["classification"], "evidence-boundary");
 }
 
 #[test]

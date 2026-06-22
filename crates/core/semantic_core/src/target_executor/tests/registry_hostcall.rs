@@ -310,20 +310,21 @@ fn hostcall_capability_gate_allows_granted_mmio_and_traps_ungranted_privileged_h
     assert_eq!(executor.hostcall_trace()[0].artifact_generation, 1);
 
     for (number, object, operation) in [
-        (2, "mmio.denied", "map"),
-        (3, "dma.denied", "map"),
-        (4, "irq.denied", "bind"),
-        (5, "dmw.denied", "open"),
-        (6, "code-publish.denied", "publish"),
-        (7, "packet-device.net0", "rx"),
-        (9, "device.denied", "read"),
-        (10, "virtqueue.denied", "kick"),
-        (11, "timer.denied", "arm"),
-        (12, "guest-memory.denied", "read"),
-        (13, "snapshot.denied", "enter"),
-        (14, "fault-domain.denied", "restart"),
-        (15, "event-log.denied", "append"),
-        (16, "store-control.denied", "kill"),
+        (2, "console.denied", "write"),
+        (3, "mmio.denied", "map"),
+        (4, "dma.denied", "map"),
+        (5, "irq.denied", "bind"),
+        (6, "dmw.denied", "open"),
+        (7, "code-publish.denied", "publish"),
+        (8, "packet-device.net0", "rx"),
+        (10, "device.denied", "read"),
+        (11, "virtqueue.denied", "kick"),
+        (12, "timer.denied", "arm"),
+        (13, "guest-memory.denied", "read"),
+        (14, "snapshot.denied", "enter"),
+        (15, "fault-domain.denied", "restart"),
+        (16, "event-log.denied", "append"),
+        (17, "store-control.denied", "kill"),
     ] {
         let activation = executor
             .start_activation(&store.store, &code, ActivationEntry::Symbol("_start".to_string()))
@@ -346,7 +347,7 @@ fn hostcall_capability_gate_allows_granted_mmio_and_traps_ungranted_privileged_h
             Err(TargetExecutorError::CapabilityDenied)
         );
     }
-    assert_eq!(executor.traps().len(), 14);
+    assert_eq!(executor.traps().len(), 15);
     assert!(executor.traps().iter().all(|trap| trap.class == TargetTrapClass::CapabilityTrap));
     assert!(executor.event_log().iter().any(|event| event.contains("CapabilityDenied")));
 }
@@ -758,6 +759,7 @@ fn hostcall_gate_closure_records_positive_and_negative_trace_reasons() {
 #[test]
 fn authority_matrix_covers_privileged_object_classes_and_fails_closed() {
     for (object, operation) in [
+        ("console.main", "write"),
         ("mmio.regs", "read32"),
         ("dma.buf", "sync_for_device"),
         ("irq.net0", "ack"),

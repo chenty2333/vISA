@@ -239,6 +239,22 @@ pub(super) fn push_target_runtime_roots(
             )
         })
         .collect();
+    roots.profile_gate_event_roots = target_v1
+        .profile_gate_events
+        .iter()
+        .map(|event| {
+            format!(
+                "profile-gate-event:{}:{}:{} required={} reported={} enforced={} reason={}",
+                event.event_kind,
+                event.package,
+                event.artifact,
+                event.required_profile,
+                event.reported_profile,
+                event.enforced_profile,
+                event.reason
+            )
+        })
+        .collect();
     roots.command_result_roots = target_v1
         .command_results
         .iter()

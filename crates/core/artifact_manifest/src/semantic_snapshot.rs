@@ -221,6 +221,16 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_page_object_count: usize,
     #[serde(default)]
+    pub guest_address_space_count: usize,
+    #[serde(default)]
+    pub vma_region_count: usize,
+    #[serde(default)]
+    pub page_object_count: usize,
+    #[serde(default)]
+    pub guest_memory_fault_count: usize,
+    #[serde(default)]
+    pub guest_memory_operation_count: usize,
+    #[serde(default)]
     pub buffer_cache_object_count: usize,
     #[serde(default)]
     pub file_object_count: usize,
@@ -348,6 +358,8 @@ pub struct SemanticSnapshotManifest {
     pub replay_validation_violation_count: usize,
     #[serde(default)]
     pub substrate_event_count: usize,
+    #[serde(default)]
+    pub profile_gate_event_count: usize,
     #[serde(default)]
     pub command_result_count: usize,
     #[serde(default)]
@@ -509,6 +521,16 @@ pub struct SemanticSnapshotManifest {
     #[serde(default)]
     pub block_page_objects: Vec<BlockPageObjectManifest>,
     #[serde(default)]
+    pub guest_address_spaces: Vec<GuestAddressSpaceManifest>,
+    #[serde(default)]
+    pub vma_regions: Vec<VmaRegionManifest>,
+    #[serde(default)]
+    pub page_objects: Vec<PageObjectManifest>,
+    #[serde(default)]
+    pub guest_memory_faults: Vec<GuestMemoryFaultManifest>,
+    #[serde(default)]
+    pub guest_memory_operations: Vec<GuestMemoryOperationManifest>,
+    #[serde(default)]
     pub buffer_cache_objects: Vec<BufferCacheObjectManifest>,
     #[serde(default)]
     pub file_objects: Vec<FileObjectManifest>,
@@ -608,6 +630,8 @@ pub struct SemanticSnapshotManifest {
     pub replay_validation: BoundaryValidationReportManifest,
     #[serde(default)]
     pub substrate_events: Vec<SubstrateEventManifest>,
+    #[serde(default)]
+    pub profile_gate_events: Vec<ProfileGateEventManifest>,
     #[serde(default)]
     pub command_results: Vec<CommandResultManifest>,
     #[serde(default)]
@@ -777,6 +801,16 @@ pub struct SemanticRootSetManifest {
     #[serde(default)]
     pub block_page_object_roots: Vec<String>,
     #[serde(default)]
+    pub guest_address_space_roots: Vec<String>,
+    #[serde(default)]
+    pub vma_region_roots: Vec<String>,
+    #[serde(default)]
+    pub page_object_roots: Vec<String>,
+    #[serde(default)]
+    pub guest_memory_fault_roots: Vec<String>,
+    #[serde(default)]
+    pub guest_memory_operation_roots: Vec<String>,
+    #[serde(default)]
     pub buffer_cache_object_roots: Vec<String>,
     #[serde(default)]
     pub file_object_roots: Vec<String>,
@@ -896,6 +930,8 @@ pub struct SemanticRootSetManifest {
     pub replay_validation_roots: Vec<String>,
     #[serde(default)]
     pub substrate_event_roots: Vec<String>,
+    #[serde(default)]
+    pub profile_gate_event_roots: Vec<String>,
     #[serde(default)]
     pub command_result_roots: Vec<String>,
     #[serde(default)]

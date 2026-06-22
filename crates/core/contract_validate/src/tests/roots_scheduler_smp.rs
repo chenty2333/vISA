@@ -7,6 +7,7 @@ fn semantic_roots_reject_substrate_event_count_mismatch() {
         id: 1,
         epoch: 7,
         event_kind: "unsupported".to_owned(),
+        authority_family: "dma".to_owned(),
         authority: "DmaAuthority".to_owned(),
         operation: "dma_alloc".to_owned(),
         requester: Some("test".to_owned()),
@@ -23,6 +24,35 @@ fn semantic_roots_reject_substrate_event_count_mismatch() {
 
     let err = validate_migration_package(&package).expect_err("count mismatch must fail");
     assert_eq!(err.to_string(), "substrate event root/count mismatch");
+}
+
+#[test]
+fn semantic_roots_reject_profile_gate_event_count_mismatch() {
+    let mut package = minimal_migration_package();
+    package.semantic.profile_gate_events.push(ProfileGateEventManifest {
+        id: 2,
+        epoch: 8,
+        event_kind: "profile-gate-degraded".to_owned(),
+        package: "driver".to_owned(),
+        artifact: "driver-artifact".to_owned(),
+        artifact_id: Some(5),
+        required_profile: "device-capable".to_owned(),
+        reported_profile: "host-validation".to_owned(),
+        enforced_profile: "minimal-bare-metal".to_owned(),
+        reason: "optional-authority-missing".to_owned(),
+        missing_required: Vec::new(),
+        degraded_optional: vec!["dma:required=iommu-strict:actual=mediated".to_owned()],
+        forbidden_present: Vec::new(),
+        explanation: "driver accepted with optional profile degradation".to_owned(),
+    });
+    package
+        .semantic
+        .roots
+        .profile_gate_event_roots
+        .push("profile-gate-event:profile-gate-degraded:driver:driver-artifact".to_owned());
+
+    let err = validate_migration_package(&package).expect_err("count mismatch must fail");
+    assert_eq!(err.to_string(), "profile gate event root/count mismatch");
 }
 
 #[test]

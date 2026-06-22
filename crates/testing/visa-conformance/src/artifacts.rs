@@ -1,9 +1,11 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Component, Path, PathBuf},
 };
 
 use contract_core::CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION;
+use visa_profile::{AuthorityFamily, SubstrateProfile, capabilities_for_reported_profile};
 
 use crate::{
     hash::sha256_hex,
@@ -13,6 +15,13 @@ use crate::{
         ValidationFinding, ValidationReport,
     },
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SnapshotRef<'a> {
+    kind: &'a str,
+    id: u64,
+    generation: u64,
+}
 
 pub fn validate_report_artifacts(
     report: &ConformanceReport,
@@ -118,7 +127,9 @@ fn artifact_path_escapes_root(uri: &str) -> bool {
 fn validate_artifact_content(kind: EvidenceArtifactKind, bytes: &[u8]) -> Result<(), String> {
     match kind {
         EvidenceArtifactKind::ContractGraphSnapshot => validate_contract_graph_snapshot(bytes),
+        EvidenceArtifactKind::ProfileGateTrace => validate_profile_gate_trace(bytes),
         EvidenceArtifactKind::SubstrateExtractionTrace => validate_extraction_trace(bytes),
+        EvidenceArtifactKind::SubstrateEventTrace => validate_substrate_event_trace(bytes),
         EvidenceArtifactKind::DeviceTrace => validate_device_trace(bytes),
         EvidenceArtifactKind::SerialLog => validate_non_empty_text(bytes, "serial log"),
         EvidenceArtifactKind::BenchmarkRawOutput => validate_criterion_estimates(bytes),
@@ -145,6 +156,12 @@ fn validate_artifact_context(
                 ))
             }
         }
+        EvidenceArtifactKind::ProfileGateTrace => {
+            validate_profile_gate_trace_context(result, bytes)
+        }
+        EvidenceArtifactKind::SubstrateEventTrace => {
+            validate_substrate_event_trace_context(result, bytes)
+        }
         EvidenceArtifactKind::SubstrateExtractionTrace | EvidenceArtifactKind::DeviceTrace
             if result.observed_boundary == Boundary::RealTargetSubstrate =>
         {
@@ -161,6 +178,7 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
     let value: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let object = value.as_object().ok_or_else(|| "expected JSON object".to_string())?;
+    validate_contract_graph_snapshot_fields(object)?;
 
     let schema_version = object
         .get("schema_version")
@@ -174,9 +192,8 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
         .get("claimed_evidence_level")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "missing claimed_evidence_level".to_string())?;
-    if Boundary::parse(claimed).is_none() {
-        return Err(format!("unknown claimed_evidence_level {claimed}"));
-    }
+    let claimed_boundary = Boundary::parse(claimed)
+        .ok_or_else(|| format!("unknown claimed_evidence_level {claimed}"))?;
 
     for field in [
         "artifacts",
@@ -213,8 +230,287 @@ fn validate_contract_graph_snapshot(bytes: &[u8]) -> Result<(), String> {
     validate_tombstone_array(object)?;
     validate_external_object_array(object)?;
     validate_explicit_edge_array(object)?;
+    if claimed_boundary.can_claim(Boundary::PortableArtifactExecution) {
+        validate_portable_artifact_execution_snapshot(object)?;
+    }
 
     Ok(())
+}
+
+fn validate_portable_artifact_execution_snapshot(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for field in ["artifacts", "code_objects", "stores", "activations"] {
+        validate_non_empty_snapshot_array(object, field, "portable artifact execution snapshot")?;
+    }
+
+    if snapshot_array(object, "hostcalls")?.is_empty()
+        && snapshot_array(object, "traps")?.is_empty()
+    {
+        return Err("portable artifact execution snapshot requires at least one hostcall or trap"
+            .to_string());
+    }
+    validate_portable_artifact_execution_edges(object)?;
+    validate_portable_wait_edges(object)?;
+    validate_portable_cleanup_edges(object)?;
+
+    Ok(())
+}
+
+fn validate_portable_artifact_execution_edges(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for artifact in snapshot_refs(object, "artifacts", "artifact")? {
+        let code_objects = linked_targets(object, artifact, "code-object")?;
+        for code_object in code_objects {
+            let stores = linked_targets(object, code_object, "store")?;
+            for store in stores {
+                let activations = linked_targets(object, store, "activation")?;
+                for activation in activations {
+                    if has_linked_target(object, activation, "hostcall")?
+                        || has_linked_target(object, activation, "trap")?
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    Err(
+        "portable artifact execution snapshot requires explicit_edges linking artifact -> code-object -> store -> activation -> hostcall/trap"
+            .to_string(),
+    )
+}
+
+fn validate_portable_wait_edges(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for wait in snapshot_refs(object, "waits", "wait-token")? {
+        if !has_incoming_link(object, wait, "hostcall")?
+            && !has_incoming_link(object, wait, "activation")?
+        {
+            return Err(
+                "portable artifact execution snapshot requires wait-token explicit_edges from hostcall or activation"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_portable_cleanup_edges(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for cleanup in snapshot_refs(object, "cleanup_transactions", "cleanup-transaction")? {
+        if !has_incoming_link(object, cleanup, "activation")?
+            && !has_incoming_link(object, cleanup, "store")?
+        {
+            return Err(
+                "portable artifact execution snapshot requires cleanup-transaction explicit_edges from activation or store"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn snapshot_refs<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    kind: &'a str,
+) -> Result<Vec<SnapshotRef<'a>>, String> {
+    let mut refs = Vec::new();
+    for value in snapshot_array(object, field)? {
+        let entry = value.as_object().ok_or_else(|| format!("{field} entry must be an object"))?;
+        let id = entry
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("{field} entry missing numeric id"))?;
+        let generation = entry
+            .get("generation")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("{field} entry missing numeric generation"))?;
+        refs.push(SnapshotRef { kind, id, generation });
+    }
+    Ok(refs)
+}
+
+fn linked_targets<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    from: SnapshotRef<'a>,
+    target_kind: &str,
+) -> Result<Vec<SnapshotRef<'a>>, String> {
+    let mut targets = Vec::new();
+    for edge in snapshot_array(object, "explicit_edges")? {
+        let edge =
+            edge.as_object().ok_or_else(|| "explicit_edges entry must be an object".to_string())?;
+        if !edge_mode_can_carry_portable_path(edge) {
+            continue;
+        }
+        let evidence_level = edge
+            .get("evidence_level")
+            .and_then(serde_json::Value::as_str)
+            .and_then(Boundary::parse);
+        if !evidence_level.is_some_and(|level| level.can_claim(Boundary::PortableArtifactExecution))
+        {
+            continue;
+        }
+
+        let edge_from = edge
+            .get("from")
+            .ok_or_else(|| "explicit_edges entry missing from".to_string())
+            .and_then(|value| edge_ref(value, "explicit_edges.from"))?;
+        if edge_from != from {
+            continue;
+        }
+
+        let edge_to = edge
+            .get("to")
+            .ok_or_else(|| "explicit_edges entry missing to".to_string())
+            .and_then(|value| edge_ref(value, "explicit_edges.to"))?;
+        if edge_to.kind == target_kind && snapshot_ref_exists(object, edge_to)? {
+            targets.push(edge_to);
+        }
+    }
+
+    Ok(targets)
+}
+
+fn has_linked_target(
+    object: &serde_json::Map<String, serde_json::Value>,
+    from: SnapshotRef<'_>,
+    target_kind: &str,
+) -> Result<bool, String> {
+    Ok(!linked_targets(object, from, target_kind)?.is_empty())
+}
+
+fn has_incoming_link(
+    object: &serde_json::Map<String, serde_json::Value>,
+    target: SnapshotRef<'_>,
+    source_kind: &str,
+) -> Result<bool, String> {
+    for edge in snapshot_array(object, "explicit_edges")? {
+        let edge =
+            edge.as_object().ok_or_else(|| "explicit_edges entry must be an object".to_string())?;
+        if !edge_mode_can_carry_portable_path(edge) {
+            continue;
+        }
+        let evidence_level = edge
+            .get("evidence_level")
+            .and_then(serde_json::Value::as_str)
+            .and_then(Boundary::parse);
+        if !evidence_level.is_some_and(|level| level.can_claim(Boundary::PortableArtifactExecution))
+        {
+            continue;
+        }
+        let edge_from = edge
+            .get("from")
+            .ok_or_else(|| "explicit_edges entry missing from".to_string())
+            .and_then(|value| edge_ref(value, "explicit_edges.from"))?;
+        let edge_to = edge
+            .get("to")
+            .ok_or_else(|| "explicit_edges entry missing to".to_string())
+            .and_then(|value| edge_ref(value, "explicit_edges.to"))?;
+        if edge_from.kind == source_kind
+            && snapshot_ref_exists(object, edge_from)?
+            && edge_to == target
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn edge_mode_can_carry_portable_path(edge: &serde_json::Map<String, serde_json::Value>) -> bool {
+    matches!(edge.get("mode").and_then(serde_json::Value::as_str), Some("live" | "historical"))
+}
+
+fn snapshot_ref_exists(
+    object: &serde_json::Map<String, serde_json::Value>,
+    reference: SnapshotRef<'_>,
+) -> Result<bool, String> {
+    let Some(field) = snapshot_field_for_ref_kind(reference.kind) else {
+        return Ok(false);
+    };
+    Ok(snapshot_refs(object, field, reference.kind)?.iter().any(|candidate| {
+        candidate.id == reference.id && candidate.generation == reference.generation
+    }))
+}
+
+fn snapshot_field_for_ref_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "artifact" => Some("artifacts"),
+        "code-object" => Some("code_objects"),
+        "store" => Some("stores"),
+        "activation" => Some("activations"),
+        "hostcall" => Some("hostcalls"),
+        "trap" => Some("traps"),
+        "wait-token" => Some("waits"),
+        "cleanup-transaction" => Some("cleanup_transactions"),
+        _ => None,
+    }
+}
+
+fn edge_ref<'a>(value: &'a serde_json::Value, field: &str) -> Result<SnapshotRef<'a>, String> {
+    let object = value.as_object().ok_or_else(|| format!("{field} ref must be an object"))?;
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{field} ref missing kind"))?;
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field} ref missing numeric id"))?;
+    let generation = object
+        .get("generation")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{field} ref missing numeric generation"))?;
+    Ok(SnapshotRef { kind, id, generation })
+}
+
+fn validate_non_empty_snapshot_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    label: &str,
+) -> Result<(), String> {
+    if snapshot_array(object, field)?.is_empty() {
+        return Err(format!("{label} requires non-empty {field}"));
+    }
+    Ok(())
+}
+
+fn validate_contract_graph_snapshot_fields(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let allowed = contract_graph_snapshot_stable_fields();
+    for field in object.keys() {
+        if !allowed.contains(field.as_str()) {
+            return Err(format!("unknown contract graph snapshot field {field}"));
+        }
+    }
+    Ok(())
+}
+
+fn contract_graph_snapshot_stable_fields() -> BTreeSet<&'static str> {
+    [
+        "schema_version",
+        "claimed_evidence_level",
+        "artifacts",
+        "code_objects",
+        "stores",
+        "activations",
+        "hostcalls",
+        "traps",
+        "capabilities",
+        "waits",
+        "cleanup_transactions",
+        "tombstones",
+        "external_objects",
+        "explicit_edges",
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn snapshot_array<'a>(
@@ -272,6 +568,9 @@ fn validate_tombstone_array(
             .ok_or_else(|| format!("tombstones[{index}] missing kind"))?;
         if kind.trim().is_empty() {
             return Err(format!("tombstones[{index}] kind must be non-empty"));
+        }
+        if !matches!(kind, "code-object" | "store" | "activation" | "trap" | "cleanup") {
+            return Err(format!("unsupported tombstone kind {kind}"));
         }
         validate_identity_object(value, "tombstones", index)?;
     }
@@ -398,6 +697,123 @@ fn validate_extraction_trace(bytes: &[u8]) -> Result<(), String> {
     })
 }
 
+fn validate_profile_gate_trace(bytes: &[u8]) -> Result<(), String> {
+    validate_json_lines(bytes, |value| {
+        validate_u64_field(value, "event_id", "profile gate trace")?;
+        validate_u64_field(value, "event_epoch", "profile gate trace")?;
+        let event_kind = required_str_field(value, "event_kind", "profile gate trace")?;
+        if !matches!(event_kind, "profile-gate-rejected" | "profile-gate-degraded") {
+            return Err(format!("profile gate trace unknown event_kind {event_kind}"));
+        }
+        for field in [
+            "package",
+            "artifact",
+            "required_profile",
+            "reported_profile",
+            "enforced_profile",
+            "reason",
+        ] {
+            required_str_field(value, field, "profile gate trace")?;
+        }
+        let required_profile = required_str_field(value, "required_profile", "profile gate trace")?;
+        if SubstrateProfile::parse(required_profile).is_none() {
+            return Err(format!("profile gate trace unknown required_profile {required_profile}"));
+        }
+        let reported_profile = required_str_field(value, "reported_profile", "profile gate trace")?;
+        if capabilities_for_reported_profile(reported_profile).is_none() {
+            return Err(format!("profile gate trace unknown reported_profile {reported_profile}"));
+        }
+        let enforced_profile = required_str_field(value, "enforced_profile", "profile gate trace")?;
+        if SubstrateProfile::parse(enforced_profile).is_none() {
+            return Err(format!("profile gate trace unknown enforced_profile {enforced_profile}"));
+        }
+        for field in ["missing_required", "degraded_optional", "forbidden_present"] {
+            validate_optional_string_array(value, field, "profile gate trace")?;
+        }
+        if event_kind == "profile-gate-rejected"
+            && empty_or_missing_string_array(value, "missing_required")
+            && empty_or_missing_string_array(value, "forbidden_present")
+            && empty_or_missing_string_array(value, "degraded_optional")
+        {
+            return Err(
+                "profile gate rejection trace requires at least one missing, forbidden, or degraded evidence entry"
+                    .to_string(),
+            );
+        }
+        if event_kind == "profile-gate-degraded"
+            && empty_or_missing_string_array(value, "degraded_optional")
+        {
+            return Err(
+                "profile gate degradation trace requires degraded_optional evidence".to_string()
+            );
+        }
+        Ok(())
+    })
+}
+
+fn validate_substrate_event_trace(bytes: &[u8]) -> Result<(), String> {
+    validate_json_lines(bytes, |value| {
+        validate_u64_field(value, "event_id", "substrate event trace")?;
+        validate_u64_field(value, "event_epoch", "substrate event trace")?;
+        let event_kind = required_str_field(value, "event_kind", "substrate event trace")?;
+        if !matches!(
+            event_kind,
+            "unsupported" | "authority-extracted" | "capability-denied" | "panic"
+        ) {
+            return Err(format!("substrate event trace unknown event_kind {event_kind}"));
+        }
+        let authority_family =
+            required_str_field(value, "authority_family", "substrate event trace")?;
+        let Some(authority_family) = AuthorityFamily::parse(authority_family) else {
+            return Err(format!(
+                "substrate event trace unknown authority_family {authority_family}"
+            ));
+        };
+        let authority = required_str_field(value, "authority", "substrate event trace")?;
+        if let Some(expected_family) = AuthorityFamily::from_authority_trait(authority)
+            && expected_family != authority_family
+        {
+            return Err(format!(
+                "substrate event trace authority {authority} does not match authority_family {}",
+                authority_family.as_str()
+            ));
+        }
+        let operation = required_str_field(value, "operation", "substrate event trace")?;
+        if !authority_family.operations().contains(&operation) {
+            return Err(format!(
+                "substrate event trace operation {operation} is not declared for authority_family {}",
+                authority_family.as_str()
+            ));
+        }
+        if matches!(event_kind, "unsupported" | "capability-denied") {
+            let requester = value.get("requester").and_then(serde_json::Value::as_str);
+            let artifact = value.get("artifact").and_then(serde_json::Value::as_u64);
+            let store = value.get("store").and_then(serde_json::Value::as_u64);
+            if requester.is_none_or(|requester| requester.trim().is_empty())
+                && artifact.is_none()
+                && store.is_none()
+            {
+                return Err(
+                    "unsupported substrate event trace requires requester, artifact, or store attribution"
+                        .to_string(),
+                );
+            }
+        }
+        if event_kind == "capability-denied" {
+            let capability = value.get("capability").and_then(serde_json::Value::as_u64);
+            let capability_generation =
+                value.get("capability_generation").and_then(serde_json::Value::as_u64);
+            if capability.is_some() != capability_generation.is_some() {
+                return Err(
+                    "capability denied substrate event trace capability and generation must appear together"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    })
+}
+
 fn validate_device_trace(bytes: &[u8]) -> Result<(), String> {
     validate_json_lines(bytes, |value| {
         let has_device = value
@@ -422,6 +838,54 @@ fn validate_device_trace(bytes: &[u8]) -> Result<(), String> {
     })
 }
 
+fn validate_profile_gate_trace_context(result: &TestResult, bytes: &[u8]) -> Result<(), String> {
+    let expected = profile_gate_expected_count(result);
+    validate_trace_expected_count(bytes, expected, "profile gate trace", |value| {
+        matches!(
+            value.get("event_kind").and_then(serde_json::Value::as_str),
+            Some("profile-gate-rejected" | "profile-gate-degraded")
+        )
+    })
+}
+
+fn profile_gate_expected_count(result: &TestResult) -> Option<u64> {
+    if let Some(count) = positive_metric_count(result, "profile_gate_event_count") {
+        return Some(count);
+    }
+    let rejections = positive_metric_count(result, "profile_gate_rejection_count").unwrap_or(0);
+    let degradations = positive_metric_count(result, "profile_gate_degradation_count").unwrap_or(0);
+    let total = rejections + degradations;
+    (total > 0).then_some(total)
+}
+
+fn validate_substrate_event_trace_context(result: &TestResult, bytes: &[u8]) -> Result<(), String> {
+    validate_trace_expected_count(
+        bytes,
+        positive_metric_count(result, "unsupported_substrate_event_count"),
+        "unsupported substrate event trace",
+        |value| value.get("event_kind").and_then(serde_json::Value::as_str) == Some("unsupported"),
+    )?;
+    validate_trace_expected_count(
+        bytes,
+        positive_metric_count(result, "denied_substrate_event_count")
+            .or_else(|| positive_metric_count(result, "capability_denied_substrate_event_count")),
+        "denied substrate event trace",
+        |value| {
+            value.get("event_kind").and_then(serde_json::Value::as_str) == Some("capability-denied")
+        },
+    )?;
+    validate_trace_expected_count(
+        bytes,
+        positive_metric_count(result, "authority_extraction_event_count")
+            .or_else(|| positive_metric_count(result, "substrate_authority_extraction_count")),
+        "authority extraction substrate event trace",
+        |value| {
+            value.get("event_kind").and_then(serde_json::Value::as_str)
+                == Some("authority-extracted")
+        },
+    )
+}
+
 fn validate_real_target_trace_context(
     kind: EvidenceArtifactKind,
     bytes: &[u8],
@@ -440,6 +904,54 @@ fn validate_real_target_trace_context(
     })
 }
 
+fn validate_trace_expected_count<F>(
+    bytes: &[u8],
+    expected: Option<u64>,
+    label: &str,
+    count_entry: F,
+) -> Result<(), String>
+where
+    F: Fn(&serde_json::Value) -> bool,
+{
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let observed = count_json_lines(bytes, count_entry)?;
+    if observed >= expected {
+        Ok(())
+    } else {
+        Err(format!("{label} has {observed} matching entries but result reports {expected}"))
+    }
+}
+
+fn count_json_lines<F>(bytes: &[u8], count_entry: F) -> Result<u64, String>
+where
+    F: Fn(&serde_json::Value) -> bool,
+{
+    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let mut entries = 0u64;
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|error| format!("line {} is not JSON: {}", index + 1, error))?;
+        if count_entry(&value) {
+            entries += 1;
+        }
+    }
+    Ok(entries)
+}
+
+fn positive_metric_count(result: &TestResult, name: &str) -> Option<u64> {
+    let value = result.metrics.get(name).copied()?;
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some(value.ceil() as u64)
+}
+
 fn validate_linux_personality_trace_context(spec_id: &str, bytes: &[u8]) -> Result<(), String> {
     validate_json_lines(bytes, |value| {
         let trace_spec = value.get("spec_id").and_then(serde_json::Value::as_str);
@@ -452,6 +964,48 @@ fn validate_linux_personality_trace_context(spec_id: &str, bytes: &[u8]) -> Resu
             ))
         }
     })
+}
+
+fn required_str_field<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+    label: &str,
+) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{label} requires non-empty {field}"))
+}
+
+fn validate_u64_field(value: &serde_json::Value, field: &str, label: &str) -> Result<(), String> {
+    if value.get(field).and_then(serde_json::Value::as_u64).is_some() {
+        Ok(())
+    } else {
+        Err(format!("{label} requires numeric {field}"))
+    }
+}
+
+fn validate_optional_string_array(
+    value: &serde_json::Value,
+    field: &str,
+    label: &str,
+) -> Result<(), String> {
+    let Some(array) = value.get(field) else {
+        return Ok(());
+    };
+    let Some(array) = array.as_array() else {
+        return Err(format!("{label} {field} must be an array"));
+    };
+    if array.iter().all(|entry| entry.as_str().is_some_and(|entry| !entry.trim().is_empty())) {
+        Ok(())
+    } else {
+        Err(format!("{label} {field} entries must be non-empty strings"))
+    }
+}
+
+fn empty_or_missing_string_array(value: &serde_json::Value, field: &str) -> bool {
+    value.get(field).and_then(serde_json::Value::as_array).is_none_or(|array| array.is_empty())
 }
 
 fn validate_json_lines<F>(bytes: &[u8], validate_entry: F) -> Result<(), String>

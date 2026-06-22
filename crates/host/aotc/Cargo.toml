@@ -18,4 +18,5 @@ service_core.workspace = true
 sha2.workspace = true
 supervisor_catalog.workspace = true
 target_abi = { workspace = true, features = ["hash"] }
+visa_profile.workspace = true
 wasmtime = { workspace = true, features = ["runtime", "cranelift"] }

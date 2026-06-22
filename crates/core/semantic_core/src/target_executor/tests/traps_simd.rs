@@ -12,7 +12,7 @@ fn dmw_handle_mode_lease_cannot_cross_pending_or_snapshot_barrier() {
     assert_eq!(
         executor.invoke_hostcall(
             &code,
-            HostcallFrame::new_bound(activation, &store.store, &code, 8, "wait.timer", "park", 1,)
+            HostcallFrame::new_bound(activation, &store.store, &code, 9, "wait.timer", "park", 1,)
                 .to_wire_frame(),
             &capabilities,
         ),
@@ -563,6 +563,7 @@ fn simd_runtime_v12_context_switch_benchmark_validates_preempt_resume_vector_ref
         code_object: code.id,
         code_generation: code.generation,
         artifact: artifact.artifact_id,
+        profile: code.owner_profile.clone(),
         entry: ActivationEntry::Symbol("v12_vector_context_switch".to_string()),
         generation: 5,
         state: ActivationState::Running,
@@ -698,6 +699,7 @@ fn simd_runtime_v12_rejects_benchmark_resume_vector_mismatch() {
         code_object: code.id,
         code_generation: code.generation,
         artifact: artifact.artifact_id,
+        profile: code.owner_profile.clone(),
         entry: ActivationEntry::Symbol("v12_vector_context_switch".to_string()),
         generation: 5,
         state: ActivationState::Running,

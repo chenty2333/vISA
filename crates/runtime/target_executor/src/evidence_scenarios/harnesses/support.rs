@@ -247,20 +247,21 @@ pub(crate) fn run_activation_harness(
 
     if index == 0 {
         for (number, object, operation) in [
-            (9000, "mmio.denied", "map"),
-            (9001, "dma.denied", "map"),
-            (9002, "irq.denied", "bind"),
-            (9003, "dmw.denied", "open"),
-            (9004, "code-publish.denied", "publish"),
-            (9006, "packet-device.denied", "rx"),
-            (9007, "device.denied", "read"),
-            (9008, "virtqueue.denied", "kick"),
-            (9009, "timer.denied", "arm"),
-            (9010, "guest-memory.denied", "read"),
-            (9011, "snapshot.denied", "enter"),
-            (9012, "fault-domain.denied", "restart"),
-            (9013, "event-log.denied", "append"),
-            (9014, "store-control.denied", "kill"),
+            (9000, "console.denied", "write"),
+            (9001, "mmio.denied", "map"),
+            (9002, "dma.denied", "map"),
+            (9003, "irq.denied", "bind"),
+            (9004, "dmw.denied", "open"),
+            (9005, "code-publish.denied", "publish"),
+            (9007, "packet-device.denied", "rx"),
+            (9008, "device.denied", "read"),
+            (9009, "virtqueue.denied", "kick"),
+            (9010, "timer.denied", "arm"),
+            (9011, "guest-memory.denied", "read"),
+            (9012, "snapshot.denied", "enter"),
+            (9013, "fault-domain.denied", "restart"),
+            (9014, "event-log.denied", "append"),
+            (9015, "store-control.denied", "kill"),
         ] {
             let denied = executor
                 .start_activation(
@@ -389,7 +390,7 @@ pub(crate) fn run_activation_harness(
             .map_err(|error| error.message())?;
         let _ = executor.invoke_hostcall(
             code,
-            HostcallFrame::new_bound(dmw, &store.store, code, 9005, "wait.timer", "park", 1)
+            HostcallFrame::new_bound(dmw, &store.store, code, 9006, "wait.timer", "park", 1)
                 .to_wire_frame(),
             ledger,
         );

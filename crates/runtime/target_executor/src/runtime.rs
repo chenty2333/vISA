@@ -14,6 +14,7 @@ use supervisor_catalog::{
     SUPERVISOR_COMPILER_ENGINE, SUPERVISOR_EXECUTION_MODE, WASM_FEATURE_PROFILE,
 };
 use target_abi::{SectionKindV1, TargetArtifactImage};
+use visa_profile::SubstrateProfile;
 use wasmtime::{Config, Engine, Instance, Module, Precompiled, Store};
 
 const TARGET_SIMD_SUPPORTED: bool = false;
@@ -282,6 +283,17 @@ fn validate_profile_requirements_payload(
     let target_arch = std::env::consts::ARCH;
     check_profile_string(&profile, package, "schema", "visa-target-profile-requirements-v1")?;
     check_profile_string(&profile, package, "artifact_profile", artifact_profile)?;
+    let required_profile =
+        check_substrate_profile(&profile, package, "substrate_profile_required")?;
+    let enforced_profile = check_substrate_profile(&profile, package, "enforced_profile")?;
+    if !enforced_profile.satisfies(required_profile) {
+        return Err(format!(
+            "{package} ProfileRequirements profile mismatch: required `{}`, enforced `{}`",
+            required_profile.as_str(),
+            enforced_profile.as_str()
+        )
+        .into());
+    }
     check_profile_string(&profile, package, "host_arch", host_arch)?;
     check_profile_string(&profile, package, "target_arch", target_arch)?;
     check_profile_string(&profile, package, "compiler_engine", SUPERVISOR_COMPILER_ENGINE)?;
@@ -358,6 +370,23 @@ fn check_profile_string(
     Ok(())
 }
 
+fn check_substrate_profile(
+    profile: &serde_json::Value,
+    package: &str,
+    field: &str,
+) -> Result<SubstrateProfile, Box<dyn Error>> {
+    let value = profile
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{package} ProfileRequirements missing string field `{field}`"))?;
+    SubstrateProfile::parse(value).ok_or_else(|| {
+        format!(
+            "{package} ProfileRequirements unknown vISA substrate profile `{value}` in `{field}`"
+        )
+        .into()
+    })
+}
+
 fn check_profile_bool(
     profile: &serde_json::Value,
     package: &str,
@@ -417,6 +446,85 @@ mod tests {
 
         validate_profile_requirements_payload("test_service", "host-validation", &payload)
             .expect("current host profile is compatible");
+    }
+
+    #[test]
+    fn profile_requirements_accept_p0_p4_through_visa_profile() {
+        for profile in SubstrateProfile::ALL_ASCENDING {
+            let payload = profile_payload_with_profiles(
+                &canonical_wasmtime_config_fingerprint(
+                    std::env::consts::ARCH,
+                    std::env::consts::ARCH,
+                ),
+                profile.as_str(),
+                profile.as_str(),
+            );
+
+            validate_profile_requirements_payload("test_service", "host-validation", &payload)
+                .unwrap_or_else(|error| panic!("{} should pass: {error}", profile.as_str()));
+        }
+    }
+
+    #[test]
+    fn profile_requirements_reject_downgrade_before_deserialize() {
+        let root = temp_test_dir("profile-downgrade");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let code_payload = b"not a real cwasm module";
+        let payload = profile_payload_with_profiles(
+            &canonical_wasmtime_config_fingerprint(std::env::consts::ARCH, std::env::consts::ARCH),
+            "device-capable",
+            "guest-frontend",
+        );
+        let image = target_artifact_with_profile(code_payload, &payload);
+        let artifact_path = root.join("test_service.tart");
+        fs::write(&artifact_path, &image).expect("write test tart");
+        let entry = test_entry("test_service.tart", code_payload, &image);
+        let executor = RuntimeOnlyExecutor::host_validation(root.clone(), "host-validation")
+            .expect("executor");
+
+        let error = match executor.load_store(&entry) {
+            Ok(_) => panic!("profile downgrade should reject before deserialize"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("ProfileRequirements profile mismatch"));
+        assert!(message.contains("required `device-capable`"));
+        assert!(message.contains("enforced `guest-frontend`"));
+        assert!(!message.contains("not a precompiled artifact"));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn profile_requirements_reject_unknown_substrate_profile_before_deserialize() {
+        let root = temp_test_dir("unknown-substrate-profile");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let code_payload = b"not a real cwasm module";
+        let payload = profile_payload_with_profiles(
+            &canonical_wasmtime_config_fingerprint(std::env::consts::ARCH, std::env::consts::ARCH),
+            "not-a-profile",
+            "snapshot-replay-capable",
+        );
+        let image = target_artifact_with_profile(code_payload, &payload);
+        let artifact_path = root.join("test_service.tart");
+        fs::write(&artifact_path, &image).expect("write test tart");
+        let entry = test_entry("test_service.tart", code_payload, &image);
+        let executor = RuntimeOnlyExecutor::host_validation(root.clone(), "host-validation")
+            .expect("executor");
+
+        let error = match executor.load_store(&entry) {
+            Ok(_) => panic!("unknown substrate profile should reject before deserialize"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("unknown vISA substrate profile `not-a-profile`"));
+        assert!(!message.contains("not a precompiled artifact"));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
     #[test]
@@ -503,9 +611,23 @@ mod tests {
     }
 
     fn profile_payload(fingerprint: &str) -> Vec<u8> {
+        profile_payload_with_profiles(
+            fingerprint,
+            SubstrateProfile::SemanticHarness.as_str(),
+            SubstrateProfile::SnapshotReplayCapable.as_str(),
+        )
+    }
+
+    fn profile_payload_with_profiles(
+        fingerprint: &str,
+        substrate_profile_required: &str,
+        enforced_profile: &str,
+    ) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "schema": "visa-target-profile-requirements-v1",
             "artifact_profile": "host-validation",
+            "substrate_profile_required": substrate_profile_required,
+            "enforced_profile": enforced_profile,
             "host_arch": std::env::consts::ARCH,
             "target_arch": std::env::consts::ARCH,
             "compiler_engine": SUPERVISOR_COMPILER_ENGINE,
@@ -531,6 +653,8 @@ mod tests {
         serde_json::to_vec(&serde_json::json!({
             "schema": "visa-target-profile-requirements-v1",
             "artifact_profile": "host-validation",
+            "substrate_profile_required": "semantic-harness",
+            "enforced_profile": "snapshot-replay-capable",
             "host_arch": std::env::consts::ARCH,
             "target_arch": std::env::consts::ARCH,
             "compiler_engine": SUPERVISOR_COMPILER_ENGINE,

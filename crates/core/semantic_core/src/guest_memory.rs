@@ -88,6 +88,31 @@ impl PageObjectRef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GuestMemoryOperationRef(pub ContractObjectRef);
+
+impl GuestMemoryOperationRef {
+    pub const fn new(id: GuestMemoryOperationId, generation: Generation) -> Self {
+        Self(ContractObjectRef::new(
+            ContractObjectKind::GuestMemoryOperation,
+            id,
+            generation,
+        ))
+    }
+
+    pub const fn id(self) -> GuestMemoryOperationId {
+        self.0.id
+    }
+
+    pub const fn generation(self) -> Generation {
+        self.0.generation
+    }
+
+    pub const fn object_ref(self) -> ContractObjectRef {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AddressSpaceState {
     Live,
     Frozen,
@@ -250,6 +275,40 @@ impl CowState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuestMemoryOperationKind {
+    Mmap,
+    Munmap,
+    Mprotect,
+    Brk,
+}
+
+impl GuestMemoryOperationKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mmap => "mmap",
+            Self::Munmap => "munmap",
+            Self::Mprotect => "mprotect",
+            Self::Brk => "brk",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuestMemoryOperationStatus {
+    Applied,
+    Rejected,
+}
+
+impl GuestMemoryOperationStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuestAddressSpaceRecord {
     pub aspace: GuestAddressSpaceRef,
@@ -259,6 +318,12 @@ pub struct GuestAddressSpaceRecord {
     pub root_region: Option<VmaRegionRef>,
     pub vma_generation: Generation,
     pub page_map_generation: Generation,
+}
+
+impl GuestAddressSpaceRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        self.aspace.object_ref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -273,6 +338,12 @@ pub struct VmaRegionRecord {
     pub state: VmaState,
 }
 
+impl VmaRegionRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        self.region.object_ref()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageObjectRecord {
     pub page: PageObjectRef,
@@ -281,6 +352,12 @@ pub struct PageObjectRecord {
     pub dirty_generation: Generation,
     pub generation: Generation,
     pub state: PageObjectState,
+}
+
+impl PageObjectRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        self.page.object_ref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,9 +385,42 @@ pub struct SnapshotBarrierReport {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuestMemoryFaultRecord {
+    pub id: PageFaultEventId,
+    pub generation: Generation,
     pub page: PageObjectRef,
     pub reason: String,
     pub historical: bool,
+}
+
+impl GuestMemoryFaultRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        ContractObjectRef::new(ContractObjectKind::PageFaultEvent, self.id, self.generation)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestMemoryOperationRecord {
+    pub operation_ref: GuestMemoryOperationRef,
+    pub generation: Generation,
+    pub operation: GuestMemoryOperationKind,
+    pub status: GuestMemoryOperationStatus,
+    pub aspace: GuestAddressSpaceRef,
+    pub range: GuestVaRange,
+    pub region_before: Option<VmaRegionRef>,
+    pub region_after: Option<VmaRegionRef>,
+    pub page_before: Option<PageObjectRef>,
+    pub page_after: Option<PageObjectRef>,
+    pub perms_before: Option<GuestPerms>,
+    pub perms_after: Option<GuestPerms>,
+    pub brk_before: Option<GuestVa>,
+    pub brk_after: Option<GuestVa>,
+    pub reason: String,
+}
+
+impl GuestMemoryOperationRecord {
+    pub const fn object_ref(&self) -> ContractObjectRef {
+        self.operation_ref.object_ref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +444,7 @@ pub enum GuestMemoryError {
     PendingCleanup,
     VmaUnmapped,
     PageDead,
+    InvalidRange,
 }
 
 impl GuestMemoryError {
@@ -350,6 +461,7 @@ impl GuestMemoryError {
             Self::PendingCleanup => "pending-cleanup",
             Self::VmaUnmapped => "vma-unmapped",
             Self::PageDead => "page-dead",
+            Self::InvalidRange => "invalid-range",
         }
     }
 }
@@ -359,10 +471,14 @@ pub struct GuestMemoryManager {
     next_aspace: GuestAddressSpaceId,
     next_region: VmaRegionId,
     next_page: PageObjectId,
+    next_fault: PageFaultEventId,
+    next_operation: GuestMemoryOperationId,
     aspaces: Vec<GuestAddressSpaceRecord>,
     regions: Vec<VmaRegionRecord>,
     pages: Vec<PageObjectRecord>,
     fault_history: Vec<GuestMemoryFaultRecord>,
+    operation_history: Vec<GuestMemoryOperationRecord>,
+    heap_breaks: Vec<(GuestAddressSpaceRef, GuestVa)>,
     active_dmw_leases: u32,
     snapshot_barrier_active: bool,
     pending_cleanup_stores: Vec<ContractObjectRef>,
@@ -374,10 +490,14 @@ impl GuestMemoryManager {
             next_aspace: 1,
             next_region: 1,
             next_page: 1,
+            next_fault: 1,
+            next_operation: 1,
             aspaces: Vec::new(),
             regions: Vec::new(),
             pages: Vec::new(),
             fault_history: Vec::new(),
+            operation_history: Vec::new(),
+            heap_breaks: Vec::new(),
             active_dmw_leases: 0,
             snapshot_barrier_active: false,
             pending_cleanup_stores: Vec::new(),
@@ -483,6 +603,9 @@ impl GuestMemoryManager {
         flags: VmaFlags,
         page: PageObjectRef,
     ) -> Result<VmaRegionRef, GuestMemoryError> {
+        if range.len == 0 {
+            return Err(GuestMemoryError::InvalidRange);
+        }
         self.aspace_exact(aspace)?;
         self.page_exact(page)?;
         let region = VmaRegionRef::new(self.next_region, 1);
@@ -501,7 +624,35 @@ impl GuestMemoryManager {
         aspace_record.root_region.get_or_insert(region);
         aspace_record.vma_generation += 1;
         aspace_record.page_map_generation += 1;
+        self.push_operation(GuestMemoryOperationRecord {
+            operation_ref: self.next_operation_ref(),
+            generation: 1,
+            operation: GuestMemoryOperationKind::Mmap,
+            status: GuestMemoryOperationStatus::Applied,
+            aspace,
+            range,
+            region_before: None,
+            region_after: Some(region),
+            page_before: None,
+            page_after: Some(page),
+            perms_before: None,
+            perms_after: Some(perms),
+            brk_before: None,
+            brk_after: None,
+            reason: "mapped".to_string(),
+        });
         Ok(region)
+    }
+
+    pub fn mmap(
+        &mut self,
+        aspace: GuestAddressSpaceRef,
+        range: GuestVaRange,
+        perms: GuestPerms,
+        flags: VmaFlags,
+        page: PageObjectRef,
+    ) -> Result<VmaRegionRef, GuestMemoryError> {
+        self.map_region(aspace, range, perms, flags, page)
     }
 
     pub fn build_user_buffer_fast_path(
@@ -616,14 +767,112 @@ impl GuestMemoryManager {
 
     pub fn unmap_region(&mut self, region: VmaRegionRef) -> Result<(), GuestMemoryError> {
         let index = self.region_index(region)?;
+        let before = self.regions[index].clone();
         let aspace = self.regions[index].aspace;
         self.regions[index].state = VmaState::Unmapped;
         self.regions[index].generation += 1;
         self.regions[index].region = VmaRegionRef::new(region.id(), self.regions[index].generation);
+        let after = self.regions[index].clone();
         let aspace = self.aspace_exact_mut(aspace)?;
         aspace.vma_generation += 1;
         aspace.page_map_generation += 1;
+        self.push_operation(GuestMemoryOperationRecord {
+            operation_ref: self.next_operation_ref(),
+            generation: 1,
+            operation: GuestMemoryOperationKind::Munmap,
+            status: GuestMemoryOperationStatus::Applied,
+            aspace: before.aspace,
+            range: before.range,
+            region_before: Some(before.region),
+            region_after: Some(after.region),
+            page_before: Some(before.backing),
+            page_after: Some(after.backing),
+            perms_before: Some(before.perms),
+            perms_after: None,
+            brk_before: None,
+            brk_after: None,
+            reason: "unmapped".to_string(),
+        });
         Ok(())
+    }
+
+    pub fn mprotect(
+        &mut self,
+        region: VmaRegionRef,
+        perms: GuestPerms,
+    ) -> Result<VmaRegionRef, GuestMemoryError> {
+        let index = self.region_index(region)?;
+        if self.regions[index].state != VmaState::Mapped {
+            return Err(GuestMemoryError::VmaUnmapped);
+        }
+        let before = self.regions[index].clone();
+        self.regions[index].perms = perms;
+        self.regions[index].generation += 1;
+        self.regions[index].region = VmaRegionRef::new(region.id(), self.regions[index].generation);
+        let after = self.regions[index].clone();
+        let aspace = self.aspace_exact_mut(before.aspace)?;
+        aspace.vma_generation += 1;
+        aspace.page_map_generation += 1;
+        self.push_operation(GuestMemoryOperationRecord {
+            operation_ref: self.next_operation_ref(),
+            generation: 1,
+            operation: GuestMemoryOperationKind::Mprotect,
+            status: GuestMemoryOperationStatus::Applied,
+            aspace: before.aspace,
+            range: before.range,
+            region_before: Some(before.region),
+            region_after: Some(after.region),
+            page_before: Some(before.backing),
+            page_after: Some(after.backing),
+            perms_before: Some(before.perms),
+            perms_after: Some(perms),
+            brk_before: None,
+            brk_after: None,
+            reason: "permissions-updated".to_string(),
+        });
+        Ok(after.region)
+    }
+
+    pub fn brk(
+        &mut self,
+        aspace: GuestAddressSpaceRef,
+        new_break: GuestVa,
+    ) -> Result<GuestVa, GuestMemoryError> {
+        self.aspace_exact(aspace)?;
+        let old_break = self
+            .heap_breaks
+            .iter()
+            .find(|(record_aspace, _)| *record_aspace == aspace)
+            .map(|(_, brk)| *brk);
+        match self.heap_breaks.iter_mut().find(|(record_aspace, _)| *record_aspace == aspace) {
+            Some((_, brk)) => *brk = new_break,
+            None => self.heap_breaks.push((aspace, new_break)),
+        }
+        let aspace_record = self.aspace_exact_mut(aspace)?;
+        aspace_record.vma_generation += 1;
+        aspace_record.page_map_generation += 1;
+        let range_start = old_break.unwrap_or(new_break).min(new_break);
+        let range_len = old_break
+            .map(|old_break| old_break.max(new_break) - old_break.min(new_break))
+            .unwrap_or(0);
+        self.push_operation(GuestMemoryOperationRecord {
+            operation_ref: self.next_operation_ref(),
+            generation: 1,
+            operation: GuestMemoryOperationKind::Brk,
+            status: GuestMemoryOperationStatus::Applied,
+            aspace,
+            range: GuestVaRange::new(range_start, range_len),
+            region_before: None,
+            region_after: None,
+            page_before: None,
+            page_after: None,
+            perms_before: None,
+            perms_after: None,
+            brk_before: old_break,
+            brk_after: Some(new_break),
+            reason: "program-break-updated".to_string(),
+        });
+        Ok(old_break.unwrap_or(0))
     }
 
     pub fn cow_break(&mut self, page: PageObjectRef) -> Result<(), GuestMemoryError> {
@@ -655,7 +904,11 @@ impl GuestMemoryManager {
     }
 
     pub fn record_page_fault(&mut self, page: PageObjectRef, reason: &str) {
+        let id = self.next_fault;
+        self.next_fault += 1;
         self.fault_history.push(GuestMemoryFaultRecord {
+            id,
+            generation: 1,
             page,
             reason: reason.to_string(),
             historical: true,
@@ -725,6 +978,32 @@ impl GuestMemoryManager {
 
     pub fn fault_history(&self) -> &[GuestMemoryFaultRecord] {
         &self.fault_history
+    }
+
+    pub fn operations(&self) -> &[GuestMemoryOperationRecord] {
+        &self.operation_history
+    }
+
+    pub fn address_spaces(&self) -> &[GuestAddressSpaceRecord] {
+        &self.aspaces
+    }
+
+    pub fn regions(&self) -> &[VmaRegionRecord] {
+        &self.regions
+    }
+
+    pub fn pages(&self) -> &[PageObjectRecord] {
+        &self.pages
+    }
+
+    fn next_operation_ref(&mut self) -> GuestMemoryOperationRef {
+        let operation_ref = GuestMemoryOperationRef::new(self.next_operation, 1);
+        self.next_operation += 1;
+        operation_ref
+    }
+
+    fn push_operation(&mut self, operation: GuestMemoryOperationRecord) {
+        self.operation_history.push(operation);
     }
 
     fn aspace_exact(
@@ -1129,5 +1408,79 @@ mod tests {
         assert_eq!(mappings[0].region, h.region);
         assert_eq!(mappings[0].page, h.page);
         assert_eq!(mappings[0].source, "rebuilt-from-semantic-guest-memory");
+    }
+
+    #[test]
+    fn guest_memory_records_enter_contract_graph_snapshot_and_validate() {
+        let mut h = Harness::new();
+        h.memory.record_page_fault(h.page, "copyin-efault");
+        let mut graph = SemanticGraph::new();
+
+        assert!(graph.record_guest_memory_manager(&h.memory));
+        assert_eq!(graph.guest_address_space_count(), 1);
+        assert_eq!(graph.vma_region_count(), 1);
+        assert_eq!(graph.page_object_count(), 1);
+        assert_eq!(graph.guest_memory_fault_count(), 1);
+        assert_eq!(graph.check_invariants(), Ok(()));
+
+        let snapshot = graph.snapshot();
+        assert_eq!(snapshot.guest_address_spaces[0].aspace, h.aspace);
+        assert_eq!(snapshot.vma_regions[0].region, h.region);
+        assert_eq!(snapshot.page_objects[0].page, h.page);
+        assert_eq!(snapshot.guest_memory_faults[0].page, h.page);
+        assert_eq!(validate_contract_graph(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn guest_memory_contract_graph_rejects_stale_vma_page_reference() {
+        let h = Harness::new();
+        let mut snapshot = ContractGraphSnapshot {
+            guest_address_spaces: h.memory.address_spaces().to_vec(),
+            vma_regions: h.memory.regions().to_vec(),
+            page_objects: h.memory.pages().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        snapshot.vma_regions[0].backing = PageObjectRef::new(h.page.id(), h.page.generation() + 1);
+
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(
+            violations.iter().any(|violation| {
+                violation.kind == ContractViolationKind::GenerationMismatch
+                    && violation.edge == "vma-region->page"
+            }),
+            "expected stale page generation violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn guest_memory_contract_graph_rejects_malformed_page_and_fault_records() {
+        let mut h = Harness::new();
+        h.memory.record_page_fault(h.page, "");
+        let mut snapshot = ContractGraphSnapshot {
+            guest_address_spaces: h.memory.address_spaces().to_vec(),
+            vma_regions: h.memory.regions().to_vec(),
+            page_objects: h.memory.pages().to_vec(),
+            guest_memory_faults: h.memory.fault_history().to_vec(),
+            ..ContractGraphSnapshot::default()
+        };
+        snapshot.page_objects[0].dirty_generation = 0;
+
+        let violations = validate_contract_graph(&snapshot);
+
+        assert!(
+            violations.iter().any(|violation| {
+                violation.edge == "page-object->dirty-generation"
+                    && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+            }),
+            "expected dirty generation violation: {violations:?}"
+        );
+        assert!(
+            violations.iter().any(|violation| {
+                violation.edge == "page-fault-event->reason"
+                    && violation.kind == ContractViolationKind::ExternalEdgeMetadataMismatch
+            }),
+            "expected empty page-fault reason violation: {violations:?}"
+        );
     }
 }

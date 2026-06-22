@@ -29,7 +29,9 @@ EOF
 done <"$tmp_root/ltp-plan.tsv"
 
 pass_report="$tmp_root/ltp-pass-report.json"
-run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution guest-frontend \
+# Positive portable LTP fixture: raw logs are accompanied by synthetic vISA
+# Linux personality traces, so this can claim portable artifact execution.
+run_conformance ltp-report-from-logs "$pass_logs" portable-artifact-execution device-capable \
     >"$pass_report"
 run_conformance validate-report "$pass_report" >/dev/null
 run_conformance validate-artifacts "$pass_report" "$pass_logs" >/dev/null
@@ -41,7 +43,7 @@ cat >"$real_target_trace" <<'EOF'
 EOF
 real_target_trace_sha=$(sha256sum "$real_target_trace" | awk '{ print $1 }')
 real_target_report="$tmp_root/ltp-real-target-report.json"
-run_conformance ltp-report-from-logs "$pass_logs" real-target-substrate guest-frontend \
+run_conformance ltp-report-from-logs "$pass_logs" real-target-substrate device-capable \
     >"$real_target_report"
 real_target_attached_report="$tmp_root/ltp-real-target-attached-report.json"
 run_conformance attach-evidence-artifact \
@@ -62,6 +64,8 @@ first_partial_log=$(
 printf 'open01 1 TPASS : open succeeded\n' >"$first_partial_log"
 
 partial_report="$tmp_root/ltp-partial-report.json"
+# Negative portable fixture: partial raw logs without a full suite and without
+# vISA traces must not satisfy the portable artifact execution report gate.
 run_conformance ltp-report-from-logs "$partial_logs" portable-artifact-execution guest-frontend \
     >"$partial_report"
 
@@ -107,20 +111,57 @@ printf '%s_case01 1 TPASS : passed\n' "$scenario" >"$output"
 EOF
 chmod +x "$fake_runltp"
 
-wrapper_output="$tmp_root/wrapper"
-scripts/run-host-ltp-log-adapter.sh "$wrapper_output" portable-artifact-execution guest-frontend \
+reference_wrapper_output="$tmp_root/wrapper-reference-default"
+PATH="$tmp_root:$PATH" scripts/run-host-ltp-log-adapter.sh "$reference_wrapper_output" >/dev/null
+test -s "$reference_wrapper_output/host-ltp-log-adapter-report.json"
+test -s "$reference_wrapper_output/host-ltp-log-adapter-artifact-gate.json"
+test -s "$reference_wrapper_output/host-ltp-log-adapter-report-gate.json"
+if ! grep -q '"observed_boundary": "reference-service"' \
+    "$reference_wrapper_output/host-ltp-log-adapter-report.json"; then
+    echo "FAIL: host-only LTP adapter default did not report reference-service boundary"
+    exit 1
+fi
+if ! grep -q '"insufficient-evidence-boundary"' \
+    "$reference_wrapper_output/host-ltp-log-adapter-report-gate.json"; then
+    echo "FAIL: host-only reference LTP report did not fail on evidence boundary"
+    exit 1
+fi
+run_conformance validate-artifacts "$reference_wrapper_output/host-ltp-log-adapter-report.json" \
+    "$reference_wrapper_output/logs" \
+    >"$tmp_root/reference-wrapper-artifact-gate.json"
+if run_conformance validate-report-with-artifacts \
+    "$reference_wrapper_output/host-ltp-log-adapter-report.json" \
+    "$reference_wrapper_output/logs" \
+    >"$tmp_root/reference-wrapper-combined-gate.json"; then
+    echo "FAIL: host-only reference LTP adapter unexpectedly satisfied combined vISA gate"
+    exit 1
+fi
+
+portable_overclaim_wrapper_output="$tmp_root/wrapper-portable-overclaim"
+scripts/run-host-ltp-log-adapter.sh "$portable_overclaim_wrapper_output" \
+    portable-artifact-execution guest-frontend \
     "$fake_runltp" >/dev/null
-test -s "$wrapper_output/host-ltp-log-adapter-report.json"
-test -s "$wrapper_output/host-ltp-log-adapter-artifact-gate.json"
-test -s "$wrapper_output/host-ltp-log-adapter-report-gate.json"
-if run_conformance validate-report "$wrapper_output/host-ltp-log-adapter-report.json" \
+test -s "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report.json"
+test -s "$portable_overclaim_wrapper_output/host-ltp-log-adapter-artifact-gate.json"
+test -s "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report-gate.json"
+if ! grep -q '"observed_boundary": "portable-artifact-execution"' \
+    "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report.json"; then
+    echo "FAIL: host-only LTP overclaim fixture did not report portable boundary"
+    exit 1
+fi
+if ! grep -q '"missing-linux-personality-trace-artifact"' \
+    "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report-gate.json"; then
+    echo "FAIL: host-only portable LTP overclaim did not fail on missing vISA trace"
+    exit 1
+fi
+if run_conformance validate-report "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report.json" \
     >"$tmp_root/host-wrapper-gate.json"; then
     echo "FAIL: host-only LTP adapter unexpectedly passed vISA conformance gate"
     exit 1
 fi
-run_conformance validate-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
+run_conformance validate-artifacts "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report.json" "$portable_overclaim_wrapper_output/logs" \
     >"$tmp_root/wrapper-artifact-gate.json"
-if run_conformance validate-report-with-artifacts "$wrapper_output/host-ltp-log-adapter-report.json" "$wrapper_output/logs" \
+if run_conformance validate-report-with-artifacts "$portable_overclaim_wrapper_output/host-ltp-log-adapter-report.json" "$portable_overclaim_wrapper_output/logs" \
     >"$tmp_root/host-wrapper-combined-gate.json"; then
     echo "FAIL: host-only LTP adapter unexpectedly passed combined vISA conformance gate"
     exit 1
@@ -155,7 +196,7 @@ chmod +x "$fake_visa_single"
 
 visa_wrapper_output="$tmp_root/visa-wrapper"
 scripts/run-visa-ltp-conformance.sh "$visa_wrapper_output" "$fake_ltp_root" \
-    portable-artifact-execution guest-frontend "$fake_visa_single" >/dev/null
+    portable-artifact-execution device-capable "$fake_visa_single" >/dev/null
 test -s "$visa_wrapper_output/visa-ltp-gate.json"
 test -s "$visa_wrapper_output/visa-ltp-artifact-gate.json"
 test -s "$visa_wrapper_output/visa-ltp-combined-gate.json"

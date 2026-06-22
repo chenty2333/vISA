@@ -828,6 +828,37 @@ pub(crate) fn inspect_package_object(
                 );
             }
         }
+        "profile-gate-event" | "profile-gate" => {
+            println!(
+                "inspect profile-gate-event package={} count={}",
+                package.package_id, package.semantic.profile_gate_event_count
+            );
+            for event in &package.semantic.profile_gate_events {
+                let line = format!(
+                    "profile-gate-event id={} epoch={} package={} artifact={} artifact_id={} required={} reported={} enforced={} reason={} missing_required={} degraded_optional={} forbidden_present={}",
+                    event.id,
+                    event.epoch,
+                    event.package,
+                    event.artifact,
+                    display_option_u64(event.artifact_id),
+                    event.required_profile,
+                    event.reported_profile,
+                    event.enforced_profile,
+                    event.reason,
+                    event.missing_required.join("|"),
+                    event.degraded_optional.join("|"),
+                    event.forbidden_present.join("|")
+                );
+                print_if_matches(&line, filter);
+            }
+            if package.semantic.profile_gate_events.is_empty() {
+                print_roots_filtered(
+                    "profile-gate-event",
+                    &package.semantic.roots.profile_gate_event_roots,
+                    filter,
+                );
+            }
+        }
         "framebuffer-object" | "framebuffer" | "fb" => {
             println!(
                 "inspect framebuffer-object package={} count={}",

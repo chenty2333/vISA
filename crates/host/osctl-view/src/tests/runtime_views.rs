@@ -1676,6 +1676,7 @@ fn substrate_event_view_v1_explains_unsupported_authority() {
         id: 21,
         epoch: 34,
         event_kind: "unsupported".to_owned(),
+        authority_family: "dma".to_owned(),
         authority: "DmaAuthority".to_owned(),
         operation: "dma_alloc".to_owned(),
         requester: Some("driver.fake_net".to_owned()),
@@ -1688,15 +1689,99 @@ fn substrate_event_view_v1_explains_unsupported_authority() {
     assert_eq!(view["kind"], "substrate-event");
     assert_eq!(view["id"], 21);
     assert_eq!(view["state"], "unsupported");
+    assert_eq!(view["authority_family"], "dma");
     assert_eq!(view["authority"], "DmaAuthority");
     assert_eq!(view["operation"], "dma_alloc");
     assert_eq!(view["requester"], "driver.fake_net");
     assert_eq!(view["references"]["artifact"], 9);
     assert_eq!(view["references"]["store"], 4);
     assert_eq!(view["references"]["event_epoch"], 34);
+    assert_eq!(view["capability"]["state"], "absent");
+    assert_eq!(view["evidence"]["unsupported"], true);
+    assert_eq!(view["evidence"]["denied"], false);
     assert_eq!(
         view["last_error"],
         "driver.fake_net observed DmaAuthority::dma_alloc as unsupported"
+    );
+}
+
+#[test]
+fn substrate_event_view_v1_exposes_denied_authority_family_and_capability_state() {
+    let view = substrate_event_view_v1(&SubstrateEventManifest {
+        id: 22,
+        epoch: 35,
+        event_kind: "capability-denied".to_owned(),
+        authority_family: "memory".to_owned(),
+        authority: "GuestMemoryAuthority".to_owned(),
+        operation: "copyin".to_owned(),
+        requester: Some("guest-memory-app".to_owned()),
+        artifact: Some(10),
+        store: Some(2),
+        capability: Some(artifact_manifest::CapabilityHandleArgManifest {
+            id: 7,
+            object: "substrate-capability".to_owned(),
+            generation: 3,
+            owner_store: None,
+            owner_store_generation: None,
+            handle_slot: 0,
+            handle_generation: 0,
+            handle_tag: 0,
+            rights_mask: 0,
+            rights: Vec::new(),
+        }),
+        explanation: "guest-memory-app was denied GuestMemoryAuthority::copyin by capability gate"
+            .to_owned(),
+    });
+
+    assert_eq!(view["kind"], "substrate-event");
+    assert_eq!(view["state"], "capability-denied");
+    assert_eq!(view["authority_family"], "memory");
+    assert_eq!(view["authority"], "GuestMemoryAuthority");
+    assert_eq!(view["operation"], "copyin");
+    assert_eq!(view["capability"]["state"], "present");
+    assert_eq!(view["capability"]["handle"]["id"], 7);
+    assert_eq!(view["evidence"]["unsupported"], false);
+    assert_eq!(view["evidence"]["denied"], true);
+    assert_eq!(view["evidence"]["authority_extracted"], false);
+    assert_eq!(view["last_transition"]["authority_family"], "memory");
+}
+
+#[test]
+fn profile_gate_event_view_v1_exposes_profile_downgrade_evidence() {
+    let view = profile_gate_event_view_v1(&ProfileGateEventManifest {
+        id: 31,
+        epoch: 44,
+        event_kind: "profile-gate-rejected".to_owned(),
+        package: "device-driver".to_owned(),
+        artifact: "device-driver-artifact".to_owned(),
+        artifact_id: Some(8),
+        required_profile: "device-capable".to_owned(),
+        reported_profile: "semantic-harness".to_owned(),
+        enforced_profile: "semantic-harness".to_owned(),
+        reason: "reported-profile-below-required".to_owned(),
+        missing_required: vec!["mmio:required=true:actual=false".to_owned()],
+        degraded_optional: Vec::new(),
+        forbidden_present: Vec::new(),
+        explanation:
+            "device-driver rejected before code start: required_profile=device-capable reported_profile=semantic-harness enforced_profile=semantic-harness reason=reported-profile-below-required"
+                .to_owned(),
+    });
+    assert_eq!(view["schema"], VIEW_SCHEMA_V1);
+    assert_eq!(view["kind"], "profile-gate-event");
+    assert_eq!(view["id"], 31);
+    assert_eq!(view["state"], "profile-gate-rejected");
+    assert_eq!(view["identity"]["package"], "device-driver");
+    assert_eq!(view["identity"]["artifact"], "device-driver-artifact");
+    assert_eq!(view["identity"]["artifact_id"], 8);
+    assert_eq!(view["profiles"]["required"], "device-capable");
+    assert_eq!(view["profiles"]["reported"], "semantic-harness");
+    assert_eq!(view["profiles"]["enforced"], "semantic-harness");
+    assert_eq!(view["reason"], "reported-profile-below-required");
+    assert_eq!(view["evidence"]["missing_required"][0], "mmio:required=true:actual=false");
+    assert_eq!(view["references"]["event_epoch"], 44);
+    assert_eq!(
+        view["last_error"],
+        "device-driver rejected before code start: required_profile=device-capable reported_profile=semantic-harness enforced_profile=semantic-harness reason=reported-profile-below-required"
     );
 }
 

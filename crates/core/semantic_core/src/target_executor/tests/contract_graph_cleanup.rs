@@ -637,6 +637,7 @@ fn contract_graph_validator_enforces_live_cleanup_and_external_edges() {
         code_object: code.id,
         code_generation: code.generation,
         artifact: code.artifact_id,
+        profile: code.owner_profile.clone(),
         entry: ActivationEntry::Symbol("_start".to_string()),
         generation: 1,
         state: ActivationState::Running,

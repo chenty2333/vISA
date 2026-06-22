@@ -711,10 +711,22 @@ impl ProcessDomain {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct MemoryDomain;
+pub(crate) struct MemoryDomain {
+    pub(crate) guest_address_spaces: Vec<GuestAddressSpaceRecord>,
+    pub(crate) vma_regions: Vec<VmaRegionRecord>,
+    pub(crate) page_objects: Vec<PageObjectRecord>,
+    pub(crate) guest_memory_faults: Vec<GuestMemoryFaultRecord>,
+    pub(crate) guest_memory_operations: Vec<GuestMemoryOperationRecord>,
+}
 
 impl MemoryDomain {
     fn new() -> Self {
-        Self
+        Self {
+            guest_address_spaces: Vec::new(),
+            vma_regions: Vec::new(),
+            page_objects: Vec::new(),
+            guest_memory_faults: Vec::new(),
+            guest_memory_operations: Vec::new(),
+        }
     }
 }

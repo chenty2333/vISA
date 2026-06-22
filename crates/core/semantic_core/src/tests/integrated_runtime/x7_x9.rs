@@ -158,6 +158,7 @@ pub(in crate::tests) fn x8_integrated_display_panic_graph() -> SemanticGraph {
         "x8 panic last-frame evidence",
     ));
     graph.record_substrate_panic(
+        "unknown",
         "PanicRing",
         "extract-after-substrate-panic",
         Some("substrate.panic".to_string()),

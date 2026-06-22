@@ -15,6 +15,7 @@ pub struct RuntimeEvidenceTargetRuntimeManifests {
     pub cleanup_transactions: Vec<CleanupTransactionManifest>,
     pub tombstones: Vec<TombstoneManifest>,
     pub substrate_events: Vec<SubstrateEventManifest>,
+    pub profile_gate_events: Vec<ProfileGateEventManifest>,
 }
 
 pub fn runtime_evidence_target_runtime_manifests(
@@ -37,6 +38,7 @@ pub fn runtime_evidence_target_runtime_manifests(
             .collect(),
         tombstones: graph.tombstones.iter().map(tombstone_manifest).collect(),
         substrate_events: runtime_evidence_substrate_event_manifests(evidence),
+        profile_gate_events: runtime_evidence_profile_gate_event_manifests(evidence),
     }
 }
 
@@ -55,8 +57,8 @@ mod tests {
     };
     use visa_profile::SubstrateProfile;
     use visa_runtime::{
-        VisaArtifactInput, VisaExecutionStep, VisaRuntime, VisaRuntimeConfig,
-        VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
+        VisaArtifactDescriptor, VisaArtifactInput, VisaExecutionStep, VisaRuntime,
+        VisaRuntimeConfig, VisaRuntimeEvidenceSnapshot, VisaSubstrateAuthorityExtractionEvidence,
         VisaSubstrateUnsupportedEvidence, personality,
     };
     use visa_wasmtime::WasmVisaExecutor;
@@ -137,6 +139,7 @@ mod tests {
             id: 7,
             package: "native-visa".to_owned(),
             artifact: "native-visa-artifact".to_owned(),
+            owner_profile: "minimal-bare-metal".to_owned(),
             role: "visa-native-workload".to_owned(),
             fault_policy: "restartable".to_owned(),
             fault_domain: 3,
@@ -156,6 +159,7 @@ mod tests {
             authority_extractions: vec![VisaSubstrateAuthorityExtractionEvidence {
                 event_id: 9,
                 event_epoch: 4,
+                authority_family: "dma".to_owned(),
                 authority: "DmaAuthority".to_owned(),
                 operation: "dma_alloc".to_owned(),
                 requester: Some("native-visa".to_owned()),
@@ -167,12 +171,15 @@ mod tests {
             unsupported_substrate_events: vec![VisaSubstrateUnsupportedEvidence {
                 event_id: 8,
                 event_epoch: 3,
+                authority_family: "console".to_owned(),
                 authority: "ConsoleAuthority".to_owned(),
                 operation: "console_write".to_owned(),
                 requester: Some("native-visa".to_owned()),
                 artifact_id: Some(29),
                 store_id: Some(7),
             }],
+            denied_substrate_events: Vec::new(),
+            profile_gate_rejections: Vec::new(),
         };
 
         let bundle = runtime_evidence_target_runtime_manifests(&evidence);
@@ -260,6 +267,7 @@ mod tests {
             cleanup_transactions: bundle.cleanup_transactions.clone(),
             tombstones: bundle.tombstones.clone(),
             substrate_events: bundle.substrate_events.clone(),
+            profile_gate_events: bundle.profile_gate_events.clone(),
             snapshot_validation: runtime_evidence_validation_report("snapshot-barrier"),
             replay_validation: runtime_evidence_validation_report("package-replay"),
             ..Default::default()
@@ -279,6 +287,37 @@ mod tests {
         assert!(audit.real_target_substrate_claim);
         assert_eq!(audit.linked_authority_extraction_event_count, 1);
         validate_external_audit(&package).expect("runtime evidence package should pass audit gate");
+    }
+
+    #[test]
+    fn runtime_evidence_bundle_projects_profile_gate_rejection_from_runtime_snapshot() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::SemanticHarness));
+        let mut substrate = ProjectionSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            43,
+            "device-driver",
+            "device-driver-artifact",
+            SubstrateProfile::DeviceCapable,
+        );
+
+        let err = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect_err("profile gate rejects before load");
+
+        assert!(matches!(err, visa_runtime::VisaRuntimeError::ProfileGateRejected { .. }));
+        assert!(substrate.loaded.is_empty());
+        let evidence = runtime.evidence_snapshot();
+        let bundle = runtime_evidence_target_runtime_manifests(&evidence);
+
+        assert_eq!(bundle.target_artifacts.len(), 0);
+        assert_eq!(bundle.profile_gate_events.len(), 1);
+        assert_eq!(bundle.profile_gate_events[0].artifact_id, Some(43));
+        assert_eq!(bundle.profile_gate_events[0].required_profile, "device-capable");
+        assert_eq!(bundle.profile_gate_events[0].reported_profile, "semantic-harness");
+        assert_eq!(bundle.profile_gate_events[0].enforced_profile, "semantic-harness");
+        assert_eq!(bundle.profile_gate_events[0].reason, "reported-profile-below-required");
     }
 
     #[test]
@@ -330,6 +369,7 @@ mod tests {
             cleanup_transactions: bundle.cleanup_transactions.clone(),
             tombstones: bundle.tombstones.clone(),
             substrate_events: bundle.substrate_events.clone(),
+            profile_gate_events: bundle.profile_gate_events.clone(),
             snapshot_validation: runtime_evidence_validation_report("snapshot-barrier"),
             replay_validation: runtime_evidence_validation_report("package-replay"),
             ..Default::default()

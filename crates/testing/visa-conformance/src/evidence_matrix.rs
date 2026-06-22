@@ -95,7 +95,7 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                         .to_string(),
                 required_artifacts: vec![EvidenceArtifactKind::ContractGraphSnapshot],
                 profile_rule:
-                    "Each result must satisfy its catalog profile; the minimum mature portable set includes minimal-bare-metal, device-capable, and snapshot-replay-capable vISA-native specs"
+                    "Each result must satisfy its catalog profile; profile gate rejection/degradation claims require profile-gate-trace artifacts and unsupported substrate claims require substrate-event-trace artifacts"
                         .to_string(),
                 proving_spec_ids: strings(&portable_specs),
                 proving_tests: runners_for(&specs, &portable_specs),
@@ -124,6 +124,7 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                         .to_string(),
                 required_artifacts: vec![
                     EvidenceArtifactKind::SubstrateExtractionTrace,
+                    EvidenceArtifactKind::SubstrateEventTrace,
                     EvidenceArtifactKind::DeviceTrace,
                 ],
                 profile_rule:

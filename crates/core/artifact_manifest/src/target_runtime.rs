@@ -115,6 +115,8 @@ pub struct StoreRecordManifest {
     pub id: u64,
     pub package: String,
     pub artifact: String,
+    #[serde(default)]
+    pub owner_profile: String,
     pub role: String,
     pub fault_policy: String,
     pub fault_domain: u64,
@@ -186,6 +188,8 @@ pub struct ActivationRecordManifest {
     #[serde(default)]
     pub code_generation: u64,
     pub artifact: u64,
+    #[serde(default)]
+    pub profile: String,
     pub entry: String,
     pub generation: u64,
     pub state: String,

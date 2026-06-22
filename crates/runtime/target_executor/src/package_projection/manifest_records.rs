@@ -13,8 +13,10 @@ pub(crate) use block_tail_simd_display::*;
 pub(crate) use device_block_fs::*;
 pub(crate) use integrated::*;
 pub(crate) use io_network::*;
-pub use runtime_events::runtime_evidence_substrate_event_manifests;
 pub(crate) use runtime_events::*;
+pub use runtime_events::{
+    runtime_evidence_profile_gate_event_manifests, runtime_evidence_substrate_event_manifests,
+};
 pub use runtime_evidence::{
     RuntimeEvidenceTargetRuntimeManifests, runtime_evidence_target_runtime_manifests,
 };

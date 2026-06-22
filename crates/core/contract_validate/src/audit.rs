@@ -403,7 +403,7 @@ fn code_has_linked_execution_effect(
         .filter(|activation| {
             activation.artifact == artifact_id
                 && activation.code_object == code.id
-                && code_matches_activation_store(code, activation)
+                && code_matches_activation_store(package, code, activation)
                 && activation_entry_matches_artifact_exports(artifact, activation)
                 && required_store.is_none_or(|store| activation.store == store)
         })
@@ -443,11 +443,19 @@ fn activation_entry_matches_export(entry: &str, export: &str) -> bool {
 }
 
 fn code_matches_activation_store(
+    package: &MigrationPackageManifest,
     code: &artifact_manifest::CodeObjectManifest,
     activation: &artifact_manifest::ActivationRecordManifest,
 ) -> bool {
     code.bound_store == Some(activation.store)
         && code.bound_store_generation == Some(activation.store_generation)
+        && activation.profile == code.owner_profile
+        && package
+            .semantic
+            .store_records
+            .iter()
+            .find(|store| store.id == activation.store)
+            .is_some_and(|store| store.owner_profile == activation.profile)
 }
 
 fn hostcall_matches_activation_generation(
@@ -620,7 +628,7 @@ fn extraction_event_matches_linked_hostcall(
                 .filter(|activation| {
                     activation.artifact == artifact_id
                         && activation.code_object == code.id
-                        && code_matches_activation_store(code, activation)
+                        && code_matches_activation_store(package, code, activation)
                         && activation_entry_matches_artifact_exports(artifact, activation)
                 })
                 .any(|activation| {
@@ -691,7 +699,8 @@ fn hostcall_requires_capability(hostcall: &artifact_manifest::HostcallTraceManif
 fn hostcall_category_requires_capability(category: &str) -> bool {
     matches!(
         normalize_token(category).as_str(),
-        "device"
+        "console"
+            | "device"
             | "packetdevice"
             | "mmio"
             | "dma"
@@ -704,6 +713,7 @@ fn hostcall_category_requires_capability(category: &str) -> bool {
             | "timer"
             | "faultdomain"
             | "eventlog"
+            | "eventqueue"
             | "storecontrol"
     )
 }
@@ -711,7 +721,9 @@ fn hostcall_category_requires_capability(category: &str) -> bool {
 fn hostcall_object_requires_capability(object: &str) -> bool {
     matches!(
         normalize_token(object).as_str(),
-        "device"
+        "console"
+            | "visaconsole"
+            | "device"
             | "visadevice"
             | "packetdevice"
             | "visapacketdevice"
@@ -737,8 +749,13 @@ fn hostcall_object_requires_capability(object: &str) -> bool {
             | "visatimer"
             | "faultdomain"
             | "visafaultdomain"
+            | "event"
+            | "visaevent"
             | "eventlog"
             | "visaeventlog"
+            | "eventlogvisa"
+            | "eventqueue"
+            | "visaeventqueue"
             | "storecontrol"
             | "visastorecontrol"
     )
@@ -782,6 +799,8 @@ fn substrate_authority_matches_hostcall_object(authority: &str, object: &str) ->
     let expected = match object.as_str() {
         "visaconsole" | "console" => "console",
         "visatimer" | "timer" => "timer",
+        "visaevent" | "event" | "visaeventlog" | "eventlog" | "eventlogvisa" | "visaeventqueue"
+        | "eventqueue" => "eventqueue",
         "visamemory" | "memory" | "guestmemory" => "guestmemory",
         "visadmw" | "dmw" => "dmw",
         "visammio" | "mmio" => "mmio",
@@ -807,6 +826,16 @@ fn canonical_substrate_operation(object: &str, operation: &str) -> Option<&'stat
         ("visaconsole" | "console", "write") => Some("console_write"),
         ("visatimer" | "timer", "now") => Some("now"),
         ("visatimer" | "timer", "arm") => Some("arm_timer"),
+        (
+            "visaevent" | "event" | "visaeventlog" | "eventlog" | "eventlogvisa" | "visaeventqueue"
+            | "eventqueue",
+            "append" | "push",
+        ) => Some("push_event"),
+        (
+            "visaevent" | "event" | "visaeventlog" | "eventlog" | "eventlogvisa" | "visaeventqueue"
+            | "eventqueue",
+            "inspect" | "pop",
+        ) => Some("pop_event"),
         ("visamemory" | "memory" | "guestmemory", "copyin") => Some("copyin"),
         ("visamemory" | "memory" | "guestmemory", "copyout") => Some("copyout"),
         ("visadmw" | "dmw", "map") => Some("map_user_window"),

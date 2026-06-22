@@ -1216,6 +1216,14 @@ fn substrate_profile_selection_is_stable_for_json_checks() {
     assert_eq!(host.snapshot.as_str(), "deterministic-replay");
     assert!(!semantic.artifact_loading);
     assert_eq!(semantic.dma.as_str(), "none");
+    for profile in visa_profile::SubstrateProfile::ALL_ASCENDING {
+        assert_eq!(
+            substrate_capabilities_for_profile(profile.as_str()),
+            Some(visa_profile::SubstrateCapabilitySet::for_profile(profile)),
+            "{} should resolve through the central profile helper",
+            profile.as_str()
+        );
+    }
     assert!(substrate_capabilities_for_profile("unknown-profile").is_none());
 }
 

@@ -27,8 +27,8 @@ use semantic_core::{
     CapabilityLedger, CodeObjectId, CodePublishState, CommandEnvelope, ContractEdgeRecord,
     ContractGraphSnapshot, ContractGraphSnapshotInputs, EntrypointState, EventId, EventKind,
     ExternalObjectDeclaration, FrontendKind, Generation, HostcallClass, HostcallLinkState,
-    MemoryLayoutState, NonPortableStateKind, RuntimeMode, SemanticCommand, SemanticGraph, StoreId,
-    StoreState, TargetArtifactId, TrapSurfaceState,
+    MemoryLayoutState, NonPortableStateKind, RestartPolicy, RuntimeMode, SemanticCommand,
+    SemanticGraph, SemanticWaitKind, StoreId, StoreState, TargetArtifactId, TrapSurfaceState,
     target_executor::{
         ActivationEntry, ArtifactRegistry, CapabilityHandleArg, CodeObject, CodePublisher,
         ContractObjectKind, ContractObjectRef, HostcallFrame, HostcallSpec, ManagedStoreRecord,
@@ -45,7 +45,10 @@ use substrate_api::{
     WaitTokenRef, WindowLeaseRef, WindowPerms,
 };
 use target_abi::{SectionKindV1, TargetArtifactError, TargetArtifactImage as WireArtifactImage};
-use visa_profile::{SubstrateCapabilitySet, SubstrateCompatibilityReport, SubstrateProfile};
+use visa_profile::{
+    AuthorityFamily, AuthorityMismatch, SubstrateCapabilitySet, SubstrateCompatibilityReport,
+    SubstrateProfile,
+};
 
 pub trait VisaSubstrate:
     ArtifactAuthority
@@ -195,6 +198,8 @@ pub enum VisaHostcallPayload {
     ConsoleWrite { bytes: Vec<u8> },
     TimerNow,
     TimerArm { deadline_ticks: u64, token: WaitTokenRef },
+    EventPush { event: SubstrateEvent },
+    EventPop,
     GuestMemoryCopyIn { memory: UserMemoryHandle, ptr: u64, len: usize },
     GuestMemoryCopyOut { memory: UserMemoryHandle, ptr: u64, bytes: Vec<u8> },
     DmwMap { memory: UserMemoryHandle, ptr: u64, len: usize, perms: WindowPerms },
@@ -215,6 +220,7 @@ impl VisaHostcallPayload {
         match self {
             Self::None | Self::TimerNow | Self::SnapshotEnter => [0; 6],
             Self::ConsoleWrite { bytes } => [bytes.len() as u64, 0, 0, 0, 0, 0],
+            Self::EventPush { .. } | Self::EventPop => [0; 6],
             Self::TimerArm { deadline_ticks, token } => {
                 [*deadline_ticks, token.id, token.generation, 0, 0, 0]
             }
@@ -247,12 +253,20 @@ impl VisaHostcallPayload {
             Self::SnapshotExit { barrier } => [barrier.id, barrier.generation, 0, 0, 0, 0],
         }
     }
+
+    const fn wait_token_out(&self) -> Option<WaitTokenRef> {
+        match self {
+            Self::TimerArm { token, .. } => Some(*token),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VisaHostcallValue {
     None,
     Bytes(GuestBytes),
+    Event(Option<SubstrateEvent>),
     U32(u32),
     U64(u64),
     WindowLease(WindowLeaseRef),
@@ -379,6 +393,8 @@ pub struct VisaRuntimeEvidenceSnapshot {
     pub runtime_events: Vec<VisaRuntimeEvent>,
     pub authority_extractions: Vec<VisaSubstrateAuthorityExtractionEvidence>,
     pub unsupported_substrate_events: Vec<VisaSubstrateUnsupportedEvidence>,
+    pub denied_substrate_events: Vec<VisaSubstrateCapabilityDeniedEvidence>,
+    pub profile_gate_rejections: Vec<VisaProfileGateRejectionEvidence>,
 }
 
 impl VisaRuntimeEvidenceSnapshot {
@@ -388,6 +404,14 @@ impl VisaRuntimeEvidenceSnapshot {
 
     pub fn unsupported_substrate_event_count(&self) -> usize {
         self.unsupported_substrate_events.len()
+    }
+
+    pub fn denied_substrate_event_count(&self) -> usize {
+        self.denied_substrate_events.len()
+    }
+
+    pub fn profile_gate_rejection_count(&self) -> usize {
+        self.profile_gate_rejections.len()
     }
 
     pub fn hostcall_trace_count(&self) -> usize {
@@ -402,6 +426,58 @@ impl VisaRuntimeEvidenceSnapshot {
         let mut out = String::new();
         for extraction in &self.authority_extractions {
             extraction.write_json_line(&mut out);
+            out.push('\n');
+        }
+        out
+    }
+
+    pub fn unsupported_substrate_events_jsonl(&self) -> String {
+        let mut out = String::new();
+        for event in &self.unsupported_substrate_events {
+            event.write_json_line(&mut out);
+            out.push('\n');
+        }
+        out
+    }
+
+    pub fn denied_substrate_events_jsonl(&self) -> String {
+        let mut out = String::new();
+        for event in &self.denied_substrate_events {
+            event.write_json_line(&mut out);
+            out.push('\n');
+        }
+        out
+    }
+
+    pub fn substrate_events_jsonl(&self) -> String {
+        let mut events = Vec::with_capacity(
+            self.authority_extractions.len()
+                + self.unsupported_substrate_events.len()
+                + self.denied_substrate_events.len(),
+        );
+        for event in &self.authority_extractions {
+            events.push(SubstrateEventJsonLine::AuthorityExtracted(event));
+        }
+        for event in &self.unsupported_substrate_events {
+            events.push(SubstrateEventJsonLine::Unsupported(event));
+        }
+        for event in &self.denied_substrate_events {
+            events.push(SubstrateEventJsonLine::CapabilityDenied(event));
+        }
+        events.sort_by_key(|event| (event.epoch(), event.id()));
+
+        let mut out = String::new();
+        for event in events {
+            event.write_json_line(&mut out);
+            out.push('\n');
+        }
+        out
+    }
+
+    pub fn profile_gate_rejections_jsonl(&self) -> String {
+        let mut out = String::new();
+        for rejection in &self.profile_gate_rejections {
+            rejection.write_json_line(&mut out);
             out.push('\n');
         }
         out
@@ -501,6 +577,7 @@ impl VisaRuntimeEvidenceSnapshot {
 pub struct VisaSubstrateAuthorityExtractionEvidence {
     pub event_id: EventId,
     pub event_epoch: u64,
+    pub authority_family: String,
     pub authority: String,
     pub operation: String,
     pub requester: Option<String>,
@@ -537,6 +614,10 @@ impl VisaSubstrateAuthorityExtractionEvidence {
         out.push(',');
         push_json_u64_field(out, "event_epoch", self.event_epoch);
         out.push(',');
+        push_json_str_field(out, "event_kind", "authority-extracted");
+        out.push(',');
+        push_json_str_field(out, "authority_family", &self.authority_family);
+        out.push(',');
         push_json_str_field(out, "authority", &self.authority);
         out.push(',');
         push_json_str_field(out, "operation", &self.operation);
@@ -557,11 +638,158 @@ impl VisaSubstrateAuthorityExtractionEvidence {
 pub struct VisaSubstrateUnsupportedEvidence {
     pub event_id: EventId,
     pub event_epoch: u64,
+    pub authority_family: String,
     pub authority: String,
     pub operation: String,
     pub requester: Option<String>,
     pub artifact_id: Option<TargetArtifactId>,
     pub store_id: Option<StoreId>,
+}
+
+impl VisaSubstrateUnsupportedEvidence {
+    fn write_json_line(&self, out: &mut String) {
+        out.push('{');
+        push_json_u64_field(out, "event_id", self.event_id);
+        out.push(',');
+        push_json_u64_field(out, "event_epoch", self.event_epoch);
+        out.push(',');
+        push_json_str_field(out, "event_kind", "unsupported");
+        out.push(',');
+        push_json_str_field(out, "authority_family", &self.authority_family);
+        out.push(',');
+        push_json_str_field(out, "authority", &self.authority);
+        out.push(',');
+        push_json_str_field(out, "operation", &self.operation);
+        out.push(',');
+        push_json_optional_str_field(out, "requester", self.requester.as_deref());
+        out.push(',');
+        push_json_optional_u64_field(out, "artifact", self.artifact_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "store", self.store_id);
+        out.push('}');
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaSubstrateCapabilityDeniedEvidence {
+    pub event_id: EventId,
+    pub event_epoch: u64,
+    pub authority_family: String,
+    pub authority: String,
+    pub operation: String,
+    pub requester: Option<String>,
+    pub artifact_id: Option<TargetArtifactId>,
+    pub store_id: Option<StoreId>,
+    pub capability_id: Option<CapabilityId>,
+    pub capability_generation: Option<Generation>,
+}
+
+impl VisaSubstrateCapabilityDeniedEvidence {
+    fn write_json_line(&self, out: &mut String) {
+        out.push('{');
+        push_json_u64_field(out, "event_id", self.event_id);
+        out.push(',');
+        push_json_u64_field(out, "event_epoch", self.event_epoch);
+        out.push(',');
+        push_json_str_field(out, "event_kind", "capability-denied");
+        out.push(',');
+        push_json_str_field(out, "authority_family", &self.authority_family);
+        out.push(',');
+        push_json_str_field(out, "authority", &self.authority);
+        out.push(',');
+        push_json_str_field(out, "operation", &self.operation);
+        out.push(',');
+        push_json_optional_str_field(out, "requester", self.requester.as_deref());
+        out.push(',');
+        push_json_optional_u64_field(out, "artifact", self.artifact_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "store", self.store_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "capability", self.capability_id);
+        out.push(',');
+        push_json_optional_u64_field(out, "capability_generation", self.capability_generation);
+        out.push('}');
+    }
+}
+
+enum SubstrateEventJsonLine<'a> {
+    AuthorityExtracted(&'a VisaSubstrateAuthorityExtractionEvidence),
+    Unsupported(&'a VisaSubstrateUnsupportedEvidence),
+    CapabilityDenied(&'a VisaSubstrateCapabilityDeniedEvidence),
+}
+
+impl SubstrateEventJsonLine<'_> {
+    fn id(&self) -> EventId {
+        match self {
+            Self::AuthorityExtracted(event) => event.event_id,
+            Self::Unsupported(event) => event.event_id,
+            Self::CapabilityDenied(event) => event.event_id,
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        match self {
+            Self::AuthorityExtracted(event) => event.event_epoch,
+            Self::Unsupported(event) => event.event_epoch,
+            Self::CapabilityDenied(event) => event.event_epoch,
+        }
+    }
+
+    fn write_json_line(&self, out: &mut String) {
+        match self {
+            Self::AuthorityExtracted(event) => event.write_json_line(out),
+            Self::Unsupported(event) => event.write_json_line(out),
+            Self::CapabilityDenied(event) => event.write_json_line(out),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisaProfileGateRejectionEvidence {
+    pub event_id: EventId,
+    pub event_epoch: u64,
+    pub package: String,
+    pub artifact: String,
+    pub artifact_id: Option<TargetArtifactId>,
+    pub required_profile: String,
+    pub reported_profile: String,
+    pub enforced_profile: String,
+    pub reason: String,
+    pub missing_required: Vec<String>,
+    pub degraded_optional: Vec<String>,
+    pub forbidden_present: Vec<String>,
+}
+
+impl VisaProfileGateRejectionEvidence {
+    fn write_json_line(&self, out: &mut String) {
+        out.push('{');
+        push_json_u64_field(out, "event_id", self.event_id);
+        out.push(',');
+        push_json_u64_field(out, "event_epoch", self.event_epoch);
+        out.push(',');
+        push_json_str_field(out, "event_kind", "profile-gate-rejected");
+        out.push(',');
+        push_json_str_field(out, "package", &self.package);
+        out.push(',');
+        push_json_str_field(out, "artifact", &self.artifact);
+        out.push(',');
+        push_json_optional_u64_field(out, "artifact_id", self.artifact_id);
+        out.push(',');
+        push_json_str_field(out, "required_profile", &self.required_profile);
+        out.push(',');
+        push_json_str_field(out, "reported_profile", &self.reported_profile);
+        out.push(',');
+        push_json_str_field(out, "enforced_profile", &self.enforced_profile);
+        out.push(',');
+        push_json_str_field(out, "reason", &self.reason);
+        out.push(',');
+        push_json_str_array_field(out, "missing_required", &self.missing_required);
+        out.push(',');
+        push_json_str_array_field(out, "degraded_optional", &self.degraded_optional);
+        out.push(',');
+        push_json_str_array_field(out, "forbidden_present", &self.forbidden_present);
+        out.push('}');
+    }
 }
 
 fn push_json_u64_field(out: &mut String, key: &str, value: u64) {
@@ -588,6 +816,18 @@ fn push_json_optional_str_field(out: &mut String, key: &str, value: Option<&str>
         Some(value) => push_json_string(out, value),
         None => out.push_str("null"),
     }
+}
+
+fn push_json_str_array_field(out: &mut String, key: &str, values: &[String]) {
+    push_json_key(out, key);
+    out.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        push_json_string(out, value);
+    }
+    out.push(']');
 }
 
 fn push_json_identity_array_field<T, F>(out: &mut String, key: &str, items: &[T], mut identity: F)
@@ -755,14 +995,39 @@ pub enum VisaRuntimeEvent {
         operation: String,
     },
     SubstrateAuthorityExtracted {
+        authority_family: String,
         authority: String,
         operation: String,
         artifact_id: TargetArtifactId,
         store_id: Option<u64>,
     },
     SubstrateUnsupported {
+        authority_family: &'static str,
         authority: &'static str,
         operation: &'static str,
+    },
+    FaultCleanupStarted {
+        activation_id: ActivationId,
+        store_id: u64,
+        code_object_id: CodeObjectId,
+        cleanup_id: u64,
+        reason: String,
+    },
+    FaultCleanupCompleted {
+        activation_id: ActivationId,
+        store_id: u64,
+        code_object_id: CodeObjectId,
+        cleanup_id: u64,
+        reason: String,
+    },
+    ProfileGateRejected {
+        package: String,
+        artifact: String,
+        artifact_id: TargetArtifactId,
+        required_profile: SubstrateProfile,
+        reported_profile: SubstrateProfile,
+        enforced_profile: String,
+        reason: String,
     },
 }
 
@@ -863,6 +1128,11 @@ impl VisaRuntime {
         let required_profile =
             stronger_profile(self.config.required_profile, input.descriptor.target_profile);
         if !profile_report.ok || !self.config.reported_profile.satisfies(required_profile) {
+            self.record_profile_gate_rejection(
+                &input.descriptor,
+                required_profile,
+                &profile_report,
+            );
             return Err(VisaRuntimeError::ProfileGateRejected {
                 required: required_profile,
                 reported: self.config.reported_profile,
@@ -891,12 +1161,13 @@ impl VisaRuntime {
             .map_err(|error| VisaRuntimeError::Registry(error.message()))?;
         self.dispatch_artifact_load(backend, &verified)?;
 
-        let store_id = self.semantic.register_store(
+        let store_id = self.semantic.register_store_instance(
             &verified.package,
             &verified.artifact_name,
             &verified.role,
             "restartable",
         );
+        self.semantic.set_store_owner_profile(store_id, &verified.target_profile);
         self.semantic.set_store_state(store_id, StoreState::Instantiating);
         self.semantic.set_store_state(store_id, StoreState::Running);
         self.semantic.record_store_activation(
@@ -1051,6 +1322,195 @@ impl VisaRuntime {
         payload: VisaHostcallPayload,
         backend: &mut B,
     ) -> Result<HostcallDispatchReport, VisaRuntimeError> {
+        let (_store, code, spec, frame, capability_arg) =
+            self.prepare_runtime_hostcall_frame(activation, hostcall_number, &payload)?;
+        if let Some(token) = payload.wait_token_out() {
+            debug_assert_eq!(frame.wait_token_out, Some(token.id));
+            debug_assert_eq!(frame.wait_token_generation_out, Some(token.generation));
+        }
+        let substrate_authority = substrate_authority_for_payload(&payload);
+        self.semantic.record_hostcall(
+            &spec.name,
+            HostcallClass::ImmediatePrivilegedOp,
+            &code.package,
+            &spec.object,
+            &spec.operation,
+        );
+        let prepared_hostcall =
+            match self.executor.preflight_hostcall(&code, frame.to_wire_frame(), &self.ledger) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    if matches!(error, TargetExecutorError::CapabilityDenied)
+                        && let Some(authority) = substrate_authority
+                    {
+                        self.record_substrate_capability_denied_for_hostcall(
+                            &code,
+                            authority,
+                            capability_arg.as_ref(),
+                        );
+                    }
+                    return Err(VisaRuntimeError::Executor(error));
+                }
+            };
+        let value = self.dispatch_hostcall_payload(backend, &code, &spec, payload)?;
+        self.executor
+            .commit_hostcall_success(prepared_hostcall)
+            .map_err(VisaRuntimeError::Executor)?;
+        if let Some(authority) = substrate_authority {
+            self.semantic.record_substrate_authority_extracted(
+                authority.family.as_str(),
+                authority.authority,
+                authority.operation,
+                Some(code.package.clone()),
+                Some(code.artifact_id),
+                code.bound_store,
+                capability_arg.as_ref().map(|capability| capability.id),
+                capability_arg.as_ref().map(|capability| capability.generation),
+            );
+            self.events.push(VisaRuntimeEvent::SubstrateAuthorityExtracted {
+                authority_family: authority.family.as_str().to_string(),
+                authority: authority.authority.to_string(),
+                operation: authority.operation.to_string(),
+                artifact_id: code.artifact_id,
+                store_id: code.bound_store,
+            });
+        }
+        self.events.push(VisaRuntimeEvent::HostcallDispatched {
+            activation_id: activation.activation_id,
+            hostcall_number,
+            object: spec.object.clone(),
+            operation: spec.operation.clone(),
+        });
+        Ok(HostcallDispatchReport {
+            hostcall_number,
+            object: spec.object,
+            operation: spec.operation,
+            value,
+        })
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn preflight_hostcall_frame_for_test(
+        &mut self,
+        activation: &ActivationHandle,
+        hostcall_number: u32,
+        payload: &VisaHostcallPayload,
+        mutate: impl FnOnce(&mut semantic_core::target_executor::ExecutorHostcallFrameV1),
+    ) -> Result<(), VisaRuntimeError> {
+        let (_, code, _, frame, _) =
+            self.prepare_runtime_hostcall_frame(activation, hostcall_number, payload)?;
+        let mut wire_frame = frame.to_wire_frame();
+        mutate(&mut wire_frame);
+        self.executor
+            .preflight_hostcall(&code, wire_frame, &self.ledger)
+            .map(|_| ())
+            .map_err(VisaRuntimeError::Executor)
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn record_trap_by_pc_for_test(
+        &mut self,
+        activation: &ActivationHandle,
+        pc: u64,
+        trap_map: &[target_abi::TrapMapEntryV1],
+    ) -> Result<u64, VisaRuntimeError> {
+        let code = self.code_object(activation.code_object_id)?.clone();
+        self.executor
+            .trap_exit_by_pc(activation.activation_id, &code, pc, trap_map)
+            .map_err(VisaRuntimeError::Executor)
+    }
+
+    pub fn begin_fault_cleanup(
+        &mut self,
+        activation: &ActivationHandle,
+        reason: &str,
+    ) -> Result<u64, VisaRuntimeError> {
+        let store = self.store_record(activation.store_id)?.store.clone();
+        let code = self.code_object(activation.code_object_id)?.clone();
+        let cleanup_id = self.executor.begin_fault_cleanup_transaction(
+            &store,
+            Some(activation.activation_id),
+            Some(&code),
+            reason,
+        );
+        self.events.push(VisaRuntimeEvent::FaultCleanupStarted {
+            activation_id: activation.activation_id,
+            store_id: activation.store_id,
+            code_object_id: activation.code_object_id,
+            cleanup_id,
+            reason: reason.to_string(),
+        });
+        Ok(cleanup_id)
+    }
+
+    pub fn complete_fault_cleanup(
+        &mut self,
+        activation: &ActivationHandle,
+        reason: &str,
+    ) -> Result<u64, VisaRuntimeError> {
+        let store = &mut self
+            .store_manager
+            .record_mut(activation.store_id)
+            .map_err(|error| VisaRuntimeError::Store(error.message()))?
+            .store;
+        let code = self
+            .publisher
+            .object_mut(activation.code_object_id)
+            .map_err(|error| VisaRuntimeError::CodePublisher(error.message()))?;
+        let cleanup_id = self
+            .executor
+            .run_fault_cleanup(
+                store,
+                Some(activation.activation_id),
+                Some(code),
+                &mut self.ledger,
+                reason,
+            )
+            .map_err(VisaRuntimeError::Executor)?;
+        self.sync_semantic_store_record(activation.store_id)?;
+        self.events.push(VisaRuntimeEvent::FaultCleanupCompleted {
+            activation_id: activation.activation_id,
+            store_id: activation.store_id,
+            code_object_id: activation.code_object_id,
+            cleanup_id,
+            reason: reason.to_string(),
+        });
+        Ok(cleanup_id)
+    }
+
+    fn sync_semantic_store_record(&mut self, store_id: StoreId) -> Result<(), VisaRuntimeError> {
+        let store = self.store_record(store_id)?.store.clone();
+        let Some(current) = self.semantic.stores().iter().find(|record| record.id == store_id)
+        else {
+            return Err(VisaRuntimeError::MissingStore(store_id));
+        };
+        if current.generation == store.generation && current.state == store.state {
+            return Ok(());
+        }
+        if current.generation + 1 != store.generation {
+            return Err(VisaRuntimeError::Store("runtime store generation drift"));
+        }
+        self.semantic.set_store_state(store_id, store.state);
+        Ok(())
+    }
+
+    fn prepare_runtime_hostcall_frame(
+        &self,
+        activation: &ActivationHandle,
+        hostcall_number: u32,
+        payload: &VisaHostcallPayload,
+    ) -> Result<
+        (
+            semantic_core::StoreRecord,
+            CodeObject,
+            HostcallSpec,
+            HostcallFrame,
+            Option<CapabilityHandleArg>,
+        ),
+        VisaRuntimeError,
+    > {
         let store = self.store_record(activation.store_id)?.store.clone();
         let code = self.code_object(activation.code_object_id)?.clone();
         let spec = code
@@ -1058,7 +1518,16 @@ impl VisaRuntime {
             .iter()
             .find(|spec| spec.number == hostcall_number)
             .cloned()
-            .ok_or(VisaRuntimeError::MissingHostcall(hostcall_number))?;
+            .unwrap_or_else(|| {
+                HostcallSpec::new(
+                    hostcall_number,
+                    "hostcall.unsupported",
+                    semantic_core::target_executor::HostcallCategory::Service,
+                    "hostcall.unsupported",
+                    "decode",
+                    false,
+                )
+            });
         let current_activation_generation = self
             .executor
             .activations()
@@ -1077,6 +1546,10 @@ impl VisaRuntime {
         )
         .with_args(payload.args());
         frame.activation_generation = current_activation_generation;
+        if let Some(token) = payload.wait_token_out() {
+            frame.wait_token_out = Some(token.id);
+            frame.wait_token_generation_out = Some(token.generation);
+        }
         let capability_arg = if spec.requires_capability() {
             capability_handle_arg_for(&self.ledger, &code.package, &spec)
         } else {
@@ -1087,51 +1560,8 @@ impl VisaRuntime {
         {
             frame = frame.with_cap_args(vec![cap_arg]);
         }
-        self.semantic.record_hostcall(
-            &spec.name,
-            HostcallClass::ImmediatePrivilegedOp,
-            &code.package,
-            &spec.object,
-            &spec.operation,
-        );
-        let prepared_hostcall = self
-            .executor
-            .preflight_hostcall(&code, frame.to_wire_frame(), &self.ledger)
-            .map_err(VisaRuntimeError::Executor)?;
-        let substrate_authority = substrate_authority_for_payload(&payload);
-        let value = self.dispatch_hostcall_payload(backend, &code, &spec, payload)?;
-        self.executor
-            .commit_hostcall_success(prepared_hostcall)
-            .map_err(VisaRuntimeError::Executor)?;
-        if let Some((authority, operation)) = substrate_authority {
-            self.semantic.record_substrate_authority_extracted(
-                authority,
-                operation,
-                Some(code.package.clone()),
-                Some(code.artifact_id),
-                code.bound_store,
-                capability_arg.as_ref().map(|capability| capability.id),
-                capability_arg.as_ref().map(|capability| capability.generation),
-            );
-            self.events.push(VisaRuntimeEvent::SubstrateAuthorityExtracted {
-                authority: authority.to_string(),
-                operation: operation.to_string(),
-                artifact_id: code.artifact_id,
-                store_id: code.bound_store,
-            });
-        }
-        self.events.push(VisaRuntimeEvent::HostcallDispatched {
-            activation_id: activation.activation_id,
-            hostcall_number,
-            object: spec.object.clone(),
-            operation: spec.operation.clone(),
-        });
-        Ok(HostcallDispatchReport {
-            hostcall_number,
-            object: spec.object,
-            operation: spec.operation,
-            value,
-        })
+
+        Ok((store, code, spec, frame, capability_arg))
     }
 
     fn publish_runtime_boundaries(&mut self) {
@@ -1162,6 +1592,53 @@ impl VisaRuntime {
     ) -> SubstrateCompatibilityReport {
         let required_profile = stronger_profile(self.config.required_profile, artifact_profile);
         self.config.enforced_capabilities.check_profile(required_profile)
+    }
+
+    fn record_profile_gate_rejection(
+        &mut self,
+        descriptor: &VisaArtifactDescriptor,
+        required_profile: SubstrateProfile,
+        report: &SubstrateCompatibilityReport,
+    ) {
+        let enforced_profile =
+            SubstrateProfile::strongest_satisfied_by(self.config.enforced_capabilities)
+                .map(SubstrateProfile::as_str)
+                .unwrap_or("none")
+                .to_string();
+        let reason =
+            profile_gate_rejection_reason(self.config.reported_profile, required_profile, report)
+                .to_string();
+        let missing_required =
+            report.missing_required.iter().map(profile_mismatch_summary).collect::<Vec<_>>();
+        let degraded_optional =
+            report.degraded_optional.iter().map(profile_mismatch_summary).collect::<Vec<_>>();
+        let forbidden_present = report
+            .forbidden_present
+            .iter()
+            .map(|present| format!("{}:actual={}", present.authority, present.actual))
+            .collect::<Vec<_>>();
+
+        self.semantic.record_profile_gate_rejected(
+            descriptor.package.clone(),
+            descriptor.artifact_name.clone(),
+            Some(descriptor.id),
+            required_profile.as_str(),
+            self.config.reported_profile.as_str(),
+            enforced_profile.clone(),
+            reason.clone(),
+            missing_required,
+            degraded_optional,
+            forbidden_present,
+        );
+        self.events.push(VisaRuntimeEvent::ProfileGateRejected {
+            package: descriptor.package.clone(),
+            artifact: descriptor.artifact_name.clone(),
+            artifact_id: descriptor.id,
+            required_profile,
+            reported_profile: self.config.reported_profile,
+            enforced_profile,
+            reason,
+        });
     }
 
     fn dispatch_artifact_load<B: VisaSubstrate + ?Sized>(
@@ -1257,8 +1734,34 @@ impl VisaRuntime {
                         )
                     },
                 )?;
+                self.semantic.record_wait_created_with_details(
+                    token.id,
+                    None,
+                    code.bound_store,
+                    code.bound_store_generation,
+                    SemanticWaitKind::Timer,
+                    token.generation,
+                    Vec::new(),
+                    Some(deadline_ticks),
+                    RestartPolicy::RestartIfAllowed,
+                    Some(format!("hostcall:{}:{}", spec.object, spec.operation)),
+                );
                 Ok(VisaHostcallValue::None)
             }
+            VisaHostcallPayload::EventPush { event } => {
+                backend.push_event(event).map_err(|error| {
+                    self.map_hostcall_substrate_error(
+                        backend,
+                        code,
+                        spec,
+                        "EventQueueAuthority",
+                        "push_event",
+                        error,
+                    )
+                })?;
+                Ok(VisaHostcallValue::None)
+            }
+            VisaHostcallPayload::EventPop => Ok(VisaHostcallValue::Event(backend.pop_event())),
             VisaHostcallPayload::GuestMemoryCopyIn { memory, ptr, len } => {
                 let bytes = backend.copyin(memory, ptr, len).map_err(|error| {
                     self.map_hostcall_substrate_error(
@@ -1465,7 +1968,9 @@ impl VisaRuntime {
         error: SubstrateError,
     ) -> Result<(), VisaRuntimeError> {
         if let SubstrateError::Unsupported { authority, operation } = error {
+            let authority_family = authority_family_for_authority(authority);
             self.semantic.record_substrate_unsupported(
+                authority_family,
                 authority,
                 operation,
                 Some(requester.subject.clone()),
@@ -1474,10 +1979,53 @@ impl VisaRuntime {
             );
             let event = SubstrateEvent::unsupported(authority, operation, Some(requester));
             let _ = backend.push_event(event);
-            self.events.push(VisaRuntimeEvent::SubstrateUnsupported { authority, operation });
+            self.events.push(VisaRuntimeEvent::SubstrateUnsupported {
+                authority_family,
+                authority,
+                operation,
+            });
+            return Err(VisaRuntimeError::SubstrateDispatch { authority, operation, error });
+        }
+        if let SubstrateError::Denied { capability } = error {
+            let authority_family = authority_family_for_authority(authority);
+            self.semantic.record_substrate_capability_denied(
+                authority_family,
+                authority,
+                operation,
+                Some(requester.subject.clone()),
+                requester.artifact.map(|artifact| artifact.id),
+                requester.store.map(|store| store.id),
+                capability.map(|capability| capability.id),
+                capability.map(|capability| capability.generation),
+            );
+            let event = SubstrateEvent::CapabilityDenied {
+                authority,
+                operation,
+                requester: Some(requester),
+                capability,
+            };
+            let _ = backend.push_event(event);
             return Err(VisaRuntimeError::SubstrateDispatch { authority, operation, error });
         }
         Err(VisaRuntimeError::SubstrateDispatch { authority, operation, error })
+    }
+
+    fn record_substrate_capability_denied_for_hostcall(
+        &mut self,
+        code: &CodeObject,
+        authority: SubstrateAuthorityDescriptor,
+        capability: Option<&CapabilityHandleArg>,
+    ) {
+        self.semantic.record_substrate_capability_denied(
+            authority.family.as_str(),
+            authority.authority,
+            authority.operation,
+            Some(code.package.clone()),
+            Some(code.artifact_id),
+            code.bound_store,
+            capability.map(|capability| capability.id),
+            capability.map(|capability| capability.generation),
+        );
     }
 
     fn store_record(&self, store: u64) -> Result<&ManagedStoreRecord, VisaRuntimeError> {
@@ -1546,6 +2094,15 @@ impl VisaRuntime {
             &snapshot.credential_transitions,
         ) {
             return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid process record"));
+        }
+
+        if !semantic.restore_guest_memory_records(
+            &snapshot.guest_address_spaces,
+            &snapshot.vma_regions,
+            &snapshot.page_objects,
+            &snapshot.guest_memory_faults,
+        ) {
+            return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid guest memory record"));
         }
 
         let mut ledger = CapabilityLedger::new();
@@ -1622,6 +2179,7 @@ impl VisaRuntime {
         tombstones.extend_from_slice(self.publisher.tombstones());
         tombstones.extend_from_slice(self.store_manager.tombstones());
         tombstones.extend_from_slice(self.executor.tombstones());
+        let explicit_edges = self.runtime_artifact_path_edges();
         let inputs = ContractGraphSnapshotInputs {
             claimed_evidence_level: self.config.evidence_level,
             artifacts: self.registry.verified(),
@@ -1632,9 +2190,196 @@ impl VisaRuntime {
             capabilities: &cap_records,
             cleanup_transactions: self.executor.cleanup_transactions(),
             tombstones: &tombstones,
+            explicit_edges: &explicit_edges,
             ..Default::default()
         };
         self.semantic.snapshot_with(inputs)
+    }
+
+    fn runtime_artifact_path_edges(&self) -> Vec<ContractEdgeRecord> {
+        let mut edges = Vec::new();
+        for code in self.publisher.objects() {
+            let Some(artifact) = self
+                .registry
+                .verified()
+                .iter()
+                .find(|artifact| artifact.artifact_id == code.artifact_id)
+            else {
+                continue;
+            };
+            let code_edge_mode = if matches!(
+                code.state,
+                semantic_core::target_executor::CodeObjectState::Faulted
+                    | semantic_core::target_executor::CodeObjectState::Retired
+                    | semantic_core::target_executor::CodeObjectState::Unpublished
+            ) {
+                semantic_core::ContractEdgeMode::Historical
+            } else {
+                semantic_core::ContractEdgeMode::Live
+            };
+            edges.push(runtime_artifact_path_edge(
+                artifact.object_ref(),
+                code.object_ref(),
+                code_edge_mode,
+                "artifact-loads-code-object",
+            ));
+
+            let mut store_refs = Vec::new();
+            if let (Some(store_id), Some(store_generation)) =
+                (code.bound_store, code.bound_store_generation)
+            {
+                push_unique_store_ref(&mut store_refs, store_id, store_generation);
+            }
+            for activation in self.executor.activations().iter().filter(|activation| {
+                activation.code_object == code.id
+                    && activation.code_generation == code.generation
+                    && activation.artifact == artifact.artifact_id
+            }) {
+                push_unique_store_ref(
+                    &mut store_refs,
+                    activation.store,
+                    activation.store_generation,
+                );
+            }
+            for cleanup in self.executor.cleanup_transactions().iter().filter(|cleanup| {
+                cleanup.code_object == Some(code.id)
+                    && cleanup.code_generation == Some(code.generation)
+            }) {
+                push_unique_store_ref(&mut store_refs, cleanup.store, cleanup.store_generation);
+                if let Some(result_generation) = cleanup.result_store_generation {
+                    push_unique_store_ref(&mut store_refs, cleanup.store, result_generation);
+                }
+            }
+
+            for (store_id, store_generation) in store_refs {
+                let Some(store) = self
+                    .semantic
+                    .stores()
+                    .iter()
+                    .find(|store| store.id == store_id && store.generation == store_generation)
+                else {
+                    continue;
+                };
+                let store_edge_mode = if code_edge_mode == semantic_core::ContractEdgeMode::Live
+                    && store.state != StoreState::Dead
+                {
+                    semantic_core::ContractEdgeMode::Live
+                } else {
+                    semantic_core::ContractEdgeMode::Historical
+                };
+                edges.push(runtime_artifact_path_edge(
+                    code.object_ref(),
+                    store.object_ref(),
+                    store_edge_mode,
+                    "code-object-bound-to-store",
+                ));
+
+                for activation in self.executor.activations().iter().filter(|activation| {
+                    activation.store == store.id
+                        && activation.store_generation == store.generation
+                        && activation.code_object == code.id
+                        && activation.code_generation == code.generation
+                        && activation.artifact == artifact.artifact_id
+                }) {
+                    let activation_edge_mode = if matches!(
+                        activation.state,
+                        semantic_core::target_executor::ActivationState::Running
+                            | semantic_core::target_executor::ActivationState::Pending
+                    ) && store_edge_mode
+                        == semantic_core::ContractEdgeMode::Live
+                    {
+                        semantic_core::ContractEdgeMode::Live
+                    } else {
+                        semantic_core::ContractEdgeMode::Historical
+                    };
+                    edges.push(runtime_artifact_path_edge(
+                        store.object_ref(),
+                        activation.object_ref(),
+                        activation_edge_mode,
+                        "store-starts-activation",
+                    ));
+
+                    for hostcall in self.executor.hostcall_trace().iter().filter(|hostcall| {
+                        hostcall.activation == activation.id
+                            && hostcall.store == activation.store
+                            && hostcall.code_object == code.id
+                            && hostcall.artifact == artifact.artifact_id
+                            && hostcall.artifact_generation == artifact.generation
+                    }) {
+                        edges.push(runtime_artifact_path_edge(
+                            activation.object_ref(),
+                            hostcall.object_ref(),
+                            activation_edge_mode,
+                            "activation-dispatches-hostcall-frame",
+                        ));
+                        if let Some(wait_id) = hostcall.wait_token_out
+                            && let Some(wait) =
+                                self.semantic.wait_records().iter().find(|wait| wait.id == wait_id)
+                        {
+                            edges.push(runtime_artifact_path_edge(
+                                hostcall.object_ref(),
+                                wait.object_ref(),
+                                activation_edge_mode,
+                                "hostcall-produces-wait-token",
+                            ));
+                        }
+                    }
+
+                    for trap in self.executor.traps().iter().filter(|trap| {
+                        trap.activation == Some(activation.id)
+                            && trap.store == Some(activation.store)
+                            && trap.code_object == Some(code.id)
+                            && trap.artifact == Some(artifact.artifact_id)
+                            && trap.artifact_generation == Some(artifact.generation)
+                    }) {
+                        edges.push(runtime_artifact_path_edge(
+                            activation.object_ref(),
+                            trap.object_ref(),
+                            activation_edge_mode,
+                            "activation-records-trap-map",
+                        ));
+                    }
+                }
+
+                for cleanup in self.executor.cleanup_transactions().iter().filter(|cleanup| {
+                    cleanup.store == store.id
+                        && (cleanup.store_generation == store.generation
+                            || cleanup.result_store_generation == Some(store.generation))
+                        && cleanup.code_object == Some(code.id)
+                        && cleanup.code_generation == Some(code.generation)
+                }) {
+                    let cleanup_edge_mode = if cleanup.state
+                        == semantic_core::target_executor::CleanupTransactionState::Pending
+                        && store_edge_mode == semantic_core::ContractEdgeMode::Live
+                    {
+                        semantic_core::ContractEdgeMode::Live
+                    } else {
+                        semantic_core::ContractEdgeMode::Historical
+                    };
+                    edges.push(runtime_artifact_path_edge(
+                        store.object_ref(),
+                        cleanup.object_ref(),
+                        cleanup_edge_mode,
+                        "store-starts-cleanup-transaction",
+                    ));
+                    if let Some(activation_id) = cleanup.activation
+                        && let Some(activation) = self
+                            .executor
+                            .activations()
+                            .iter()
+                            .find(|activation| activation.id == activation_id)
+                    {
+                        edges.push(runtime_artifact_path_edge(
+                            activation.object_ref(),
+                            cleanup.object_ref(),
+                            cleanup_edge_mode,
+                            "activation-enters-cleanup-transaction",
+                        ));
+                    }
+                }
+            }
+        }
+        edges
     }
 
     pub fn evidence_snapshot(&self) -> VisaRuntimeEvidenceSnapshot {
@@ -1644,6 +2389,7 @@ impl VisaRuntime {
             .iter()
             .filter_map(|event| match &event.kind {
                 EventKind::SubstrateAuthorityExtracted {
+                    authority_family,
                     authority,
                     operation,
                     requester,
@@ -1654,6 +2400,7 @@ impl VisaRuntime {
                 } => Some(VisaSubstrateAuthorityExtractionEvidence {
                     event_id: event.id,
                     event_epoch: event.epoch,
+                    authority_family: authority_family.clone(),
                     authority: authority.clone(),
                     operation: operation.clone(),
                     requester: requester.clone(),
@@ -1670,6 +2417,7 @@ impl VisaRuntime {
             .iter()
             .filter_map(|event| match &event.kind {
                 EventKind::SubstrateUnsupported {
+                    authority_family,
                     authority,
                     operation,
                     requester,
@@ -1678,11 +2426,72 @@ impl VisaRuntime {
                 } => Some(VisaSubstrateUnsupportedEvidence {
                     event_id: event.id,
                     event_epoch: event.epoch,
+                    authority_family: authority_family.clone(),
                     authority: authority.clone(),
                     operation: operation.clone(),
                     requester: requester.clone(),
                     artifact_id: *artifact,
                     store_id: *store,
+                }),
+                _ => None,
+            })
+            .collect();
+        let denied_substrate_events = event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::SubstrateCapabilityDenied {
+                    authority_family,
+                    authority,
+                    operation,
+                    requester,
+                    artifact,
+                    store,
+                    capability,
+                    capability_generation,
+                } => Some(VisaSubstrateCapabilityDeniedEvidence {
+                    event_id: event.id,
+                    event_epoch: event.epoch,
+                    authority_family: authority_family.clone(),
+                    authority: authority.clone(),
+                    operation: operation.clone(),
+                    requester: requester.clone(),
+                    artifact_id: *artifact,
+                    store_id: *store,
+                    capability_id: *capability,
+                    capability_generation: *capability_generation,
+                }),
+                _ => None,
+            })
+            .collect();
+        let profile_gate_rejections = event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::ProfileGateRejected {
+                    package,
+                    artifact,
+                    artifact_id,
+                    required_profile,
+                    reported_profile,
+                    enforced_profile,
+                    reason,
+                    missing_required,
+                    degraded_optional,
+                    forbidden_present,
+                } => Some(VisaProfileGateRejectionEvidence {
+                    event_id: event.id,
+                    event_epoch: event.epoch,
+                    package: package.clone(),
+                    artifact: artifact.clone(),
+                    artifact_id: *artifact_id,
+                    required_profile: required_profile.clone(),
+                    reported_profile: reported_profile.clone(),
+                    enforced_profile: enforced_profile.clone(),
+                    reason: reason.clone(),
+                    missing_required: missing_required.clone(),
+                    degraded_optional: degraded_optional.clone(),
+                    forbidden_present: forbidden_present.clone(),
                 }),
                 _ => None,
             })
@@ -1694,6 +2503,8 @@ impl VisaRuntime {
             runtime_events: self.events.clone(),
             authority_extractions,
             unsupported_substrate_events,
+            denied_substrate_events,
+            profile_gate_rejections,
         }
     }
 
@@ -1795,30 +2606,93 @@ fn capability_handle_arg_for(
     Some(CapabilityHandleArg::from_record(capability, 1u64 << index, &[spec.operation.as_str()]))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SubstrateAuthorityDescriptor {
+    family: AuthorityFamily,
+    authority: &'static str,
+    operation: &'static str,
+}
+
+const fn authority_descriptor(
+    family: AuthorityFamily,
+    authority: &'static str,
+    operation: &'static str,
+) -> SubstrateAuthorityDescriptor {
+    SubstrateAuthorityDescriptor { family, authority, operation }
+}
+
 fn substrate_authority_for_payload(
     payload: &VisaHostcallPayload,
-) -> Option<(&'static str, &'static str)> {
+) -> Option<SubstrateAuthorityDescriptor> {
     match payload {
         VisaHostcallPayload::None => None,
-        VisaHostcallPayload::ConsoleWrite { .. } => Some(("ConsoleAuthority", "console_write")),
-        VisaHostcallPayload::TimerNow => Some(("TimerAuthority", "now")),
-        VisaHostcallPayload::TimerArm { .. } => Some(("TimerAuthority", "arm_timer")),
-        VisaHostcallPayload::GuestMemoryCopyIn { .. } => Some(("GuestMemoryAuthority", "copyin")),
-        VisaHostcallPayload::GuestMemoryCopyOut { .. } => Some(("GuestMemoryAuthority", "copyout")),
-        VisaHostcallPayload::DmwMap { .. } => Some(("DmwAuthority", "map_user_window")),
-        VisaHostcallPayload::DmwUnmap { .. } => Some(("DmwAuthority", "unmap_user_window")),
-        VisaHostcallPayload::MmioRead32 { .. } => Some(("MmioAuthority", "mmio_read32")),
-        VisaHostcallPayload::MmioWrite32 { .. } => Some(("MmioAuthority", "mmio_write32")),
-        VisaHostcallPayload::DmaAlloc { .. } => Some(("DmaAuthority", "dma_alloc")),
-        VisaHostcallPayload::DmaFree { .. } => Some(("DmaAuthority", "dma_free")),
-        VisaHostcallPayload::IrqAck { .. } => Some(("IrqAuthority", "irq_ack")),
-        VisaHostcallPayload::IrqMask { .. } => Some(("IrqAuthority", "irq_mask")),
-        VisaHostcallPayload::IrqUnmask { .. } => Some(("IrqAuthority", "irq_unmask")),
-        VisaHostcallPayload::SnapshotEnter => Some(("SnapshotAuthority", "enter_snapshot_barrier")),
-        VisaHostcallPayload::SnapshotExit { .. } => {
-            Some(("SnapshotAuthority", "exit_snapshot_barrier"))
+        VisaHostcallPayload::ConsoleWrite { .. } => Some(authority_descriptor(
+            AuthorityFamily::Console,
+            "ConsoleAuthority",
+            "console_write",
+        )),
+        VisaHostcallPayload::TimerNow => {
+            Some(authority_descriptor(AuthorityFamily::Timer, "TimerAuthority", "now"))
         }
+        VisaHostcallPayload::TimerArm { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Timer, "TimerAuthority", "arm_timer"))
+        }
+        VisaHostcallPayload::EventPush { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Event, "EventQueueAuthority", "push_event"))
+        }
+        VisaHostcallPayload::EventPop => {
+            Some(authority_descriptor(AuthorityFamily::Event, "EventQueueAuthority", "pop_event"))
+        }
+        VisaHostcallPayload::GuestMemoryCopyIn { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Memory, "GuestMemoryAuthority", "copyin"))
+        }
+        VisaHostcallPayload::GuestMemoryCopyOut { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Memory, "GuestMemoryAuthority", "copyout"))
+        }
+        VisaHostcallPayload::DmwMap { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Dmw, "DmwAuthority", "map_user_window"))
+        }
+        VisaHostcallPayload::DmwUnmap { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Dmw, "DmwAuthority", "unmap_user_window"))
+        }
+        VisaHostcallPayload::MmioRead32 { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Mmio, "MmioAuthority", "mmio_read32"))
+        }
+        VisaHostcallPayload::MmioWrite32 { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Mmio, "MmioAuthority", "mmio_write32"))
+        }
+        VisaHostcallPayload::DmaAlloc { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Dma, "DmaAuthority", "dma_alloc"))
+        }
+        VisaHostcallPayload::DmaFree { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Dma, "DmaAuthority", "dma_free"))
+        }
+        VisaHostcallPayload::IrqAck { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Irq, "IrqAuthority", "irq_ack"))
+        }
+        VisaHostcallPayload::IrqMask { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Irq, "IrqAuthority", "irq_mask"))
+        }
+        VisaHostcallPayload::IrqUnmask { .. } => {
+            Some(authority_descriptor(AuthorityFamily::Irq, "IrqAuthority", "irq_unmask"))
+        }
+        VisaHostcallPayload::SnapshotEnter => Some(authority_descriptor(
+            AuthorityFamily::Snapshot,
+            "SnapshotAuthority",
+            "enter_snapshot_barrier",
+        )),
+        VisaHostcallPayload::SnapshotExit { .. } => Some(authority_descriptor(
+            AuthorityFamily::Snapshot,
+            "SnapshotAuthority",
+            "exit_snapshot_barrier",
+        )),
     }
+}
+
+fn authority_family_for_authority(authority: &str) -> &'static str {
+    AuthorityFamily::from_authority_trait(authority)
+        .map(AuthorityFamily::as_str)
+        .unwrap_or("unknown")
 }
 
 fn requester_for(artifact: &VerifiedArtifact) -> SubstrateRequester {
@@ -1838,6 +2712,48 @@ fn requester_with_optional_store(
 
 fn stronger_profile(left: SubstrateProfile, right: SubstrateProfile) -> SubstrateProfile {
     if left.satisfies(right) { left } else { right }
+}
+
+fn profile_gate_rejection_reason(
+    reported_profile: SubstrateProfile,
+    required_profile: SubstrateProfile,
+    report: &SubstrateCompatibilityReport,
+) -> &'static str {
+    if !reported_profile.satisfies(required_profile) {
+        "reported-profile-below-required"
+    } else if !report.missing_required.is_empty() {
+        "missing-required-authority"
+    } else if !report.forbidden_present.is_empty() {
+        "forbidden-authority-present"
+    } else {
+        "profile-gate-rejected"
+    }
+}
+
+fn profile_mismatch_summary(mismatch: &AuthorityMismatch) -> String {
+    format!("{}:required={}:actual={}", mismatch.authority, mismatch.required, mismatch.actual)
+}
+
+fn runtime_artifact_path_edge(
+    from: ContractObjectRef,
+    to: ContractObjectRef,
+    mode: semantic_core::ContractEdgeMode,
+    label: &str,
+) -> ContractEdgeRecord {
+    ContractEdgeRecord::new(from, to, mode, label, 1)
+        .with_evidence_level(EvidenceBoundaryLevel::PortableArtifactExecution)
+}
+
+fn push_unique_store_ref(
+    refs: &mut Vec<(StoreId, Generation)>,
+    id: StoreId,
+    generation: Generation,
+) {
+    if !refs.iter().any(|(existing_id, existing_generation)| {
+        *existing_id == id && *existing_generation == generation
+    }) {
+        refs.push((id, generation));
+    }
 }
 
 fn static_operation(operation: &str) -> &'static str {
@@ -1871,7 +2787,7 @@ pub mod personality {
         };
         use substrate_api::{
             DmaAllocRequest, DmaBufferCapability, IrqLine, MmioRegionRef, SnapshotBarrierRef,
-            UserMemoryHandle, WaitTokenRef, WindowLeaseRef, WindowPerms,
+            SubstrateEvent, UserMemoryHandle, WaitTokenRef, WindowLeaseRef, WindowPerms,
         };
         use visa_profile::SubstrateProfile;
 
@@ -1880,19 +2796,21 @@ pub mod personality {
         pub const VISA_CONSOLE_WRITE: u32 = 1;
         pub const VISA_TIMER_NOW: u32 = 2;
         pub const VISA_TIMER_ARM: u32 = 3;
-        pub const VISA_MEMORY_COPYIN: u32 = 4;
-        pub const VISA_MEMORY_COPYOUT: u32 = 5;
-        pub const VISA_DMW_MAP: u32 = 6;
-        pub const VISA_DMW_UNMAP: u32 = 7;
-        pub const VISA_MMIO_READ32: u32 = 8;
-        pub const VISA_MMIO_WRITE32: u32 = 9;
-        pub const VISA_DMA_ALLOC: u32 = 10;
-        pub const VISA_DMA_FREE: u32 = 11;
-        pub const VISA_IRQ_ACK: u32 = 12;
-        pub const VISA_IRQ_MASK: u32 = 13;
-        pub const VISA_IRQ_UNMASK: u32 = 14;
-        pub const VISA_SNAPSHOT_ENTER: u32 = 15;
-        pub const VISA_SNAPSHOT_EXIT: u32 = 16;
+        pub const VISA_EVENT_PUSH: u32 = 4;
+        pub const VISA_EVENT_POP: u32 = 5;
+        pub const VISA_MEMORY_COPYIN: u32 = 6;
+        pub const VISA_MEMORY_COPYOUT: u32 = 7;
+        pub const VISA_DMW_MAP: u32 = 8;
+        pub const VISA_DMW_UNMAP: u32 = 9;
+        pub const VISA_MMIO_READ32: u32 = 10;
+        pub const VISA_MMIO_WRITE32: u32 = 11;
+        pub const VISA_DMA_ALLOC: u32 = 12;
+        pub const VISA_DMA_FREE: u32 = 13;
+        pub const VISA_IRQ_ACK: u32 = 14;
+        pub const VISA_IRQ_MASK: u32 = 15;
+        pub const VISA_IRQ_UNMASK: u32 = 16;
+        pub const VISA_SNAPSHOT_ENTER: u32 = 17;
+        pub const VISA_SNAPSHOT_EXIT: u32 = 18;
 
         #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct VisaNativePersonality {
@@ -1916,7 +2834,7 @@ pub mod personality {
                 .with_hostcall(HostcallSpec::new(
                     VISA_CONSOLE_WRITE,
                     "visa.console.write",
-                    HostcallCategory::Service,
+                    HostcallCategory::Console,
                     "visa.console",
                     "write",
                     false,
@@ -1936,10 +2854,36 @@ pub mod personality {
                     "visa.timer",
                     "arm",
                     true,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    VISA_EVENT_PUSH,
+                    "visa.event.push",
+                    HostcallCategory::EventLog,
+                    "event-log.visa",
+                    "append",
+                    false,
+                ))
+                .with_hostcall(HostcallSpec::new(
+                    VISA_EVENT_POP,
+                    "visa.event.pop",
+                    HostcallCategory::EventLog,
+                    "event-log.visa",
+                    "inspect",
+                    false,
+                ));
+                descriptor.capabilities.push(TargetCapabilitySpec::new(
+                    "visa.console",
+                    &["write"],
+                    "activation",
                 ));
                 descriptor.capabilities.push(TargetCapabilitySpec::new(
                     "visa.timer",
                     &["now", "arm"],
+                    "activation",
+                ));
+                descriptor.capabilities.push(TargetCapabilitySpec::new(
+                    "event-log.visa",
+                    &["append", "inspect"],
                     "activation",
                 ));
 
@@ -2109,6 +3053,14 @@ pub mod personality {
                 VisaHostcallPayload::TimerArm { deadline_ticks, token }
             }
 
+            pub const fn event_push(&self, event: SubstrateEvent) -> VisaHostcallPayload {
+                VisaHostcallPayload::EventPush { event }
+            }
+
+            pub const fn event_pop(&self) -> VisaHostcallPayload {
+                VisaHostcallPayload::EventPop
+            }
+
             pub const fn memory_copyin(
                 &self,
                 memory: UserMemoryHandle,
@@ -2225,7 +3177,7 @@ pub mod personality {
                 .with_hostcall(HostcallSpec::new(
                     WASI_FD_WRITE,
                     "wasi.fd_write",
-                    HostcallCategory::Service,
+                    HostcallCategory::Console,
                     "wasi.fd",
                     "write",
                     false,
@@ -2245,6 +3197,11 @@ pub mod personality {
                     "timer.wasi",
                     "arm",
                     true,
+                ));
+                descriptor.capabilities.push(TargetCapabilitySpec::new(
+                    "wasi.fd",
+                    &["write"],
+                    "activation",
                 ));
                 descriptor.capabilities.push(TargetCapabilitySpec::new(
                     "timer.wasi",
@@ -2278,11 +3235,16 @@ pub mod personality {
 mod tests {
     use std::{collections::BTreeMap, fs, vec};
 
-    use semantic_core::{EventKind, target_executor::HostcallCategory, validate_contract_graph};
+    use semantic_core::{
+        ContractEdgeMode, EventKind,
+        target_executor::{ContractObjectRef, HostcallCategory, HostcallReturnTag},
+        validate_contract_graph,
+    };
     use sha2::{Digest, Sha256};
     use substrate_api::SubstrateResult;
     use target_abi::{
-        TargetArtifactHeaderV1, TargetSectionHeaderV1, canonical_zero_field_image_hash,
+        OBJECT_KIND_CODE_OBJECT_V1, ObjectRefRaw, TargetArtifactHeaderV1, TargetSectionHeaderV1,
+        TrapKindV1, TrapMapEntryV1, canonical_zero_field_image_hash,
     };
 
     use super::*;
@@ -2316,8 +3278,10 @@ mod tests {
         published: Vec<(ArtifactImageRef, CodeObjectRef)>,
         console: Vec<u8>,
         fail_console: bool,
+        deny_console: bool,
         timers: Vec<(VirtualTime, WaitTokenRef)>,
         events: Vec<SubstrateEvent>,
+        memory_writes: Vec<(UserMemoryHandle, u64, Vec<u8>)>,
         now: u64,
     }
 
@@ -2343,6 +3307,11 @@ mod tests {
         fn console_write(&mut self, bytes: &[u8]) -> SubstrateResult<usize> {
             if self.fail_console {
                 return Err(SubstrateError::unsupported("ConsoleAuthority", "console_write"));
+            }
+            if self.deny_console {
+                return Err(SubstrateError::denied(Some(substrate_api::CapabilityHandle::new(
+                    55, 1,
+                ))));
             }
             self.console.extend_from_slice(bytes);
             Ok(bytes.len())
@@ -2371,7 +3340,21 @@ mod tests {
         }
     }
 
-    impl GuestMemoryAuthority for MockSubstrate {}
+    impl GuestMemoryAuthority for MockSubstrate {
+        fn copyin(
+            &self,
+            _mem: UserMemoryHandle,
+            _ptr: u64,
+            len: usize,
+        ) -> SubstrateResult<GuestBytes> {
+            Ok(vec![0x76; len])
+        }
+
+        fn copyout(&mut self, mem: UserMemoryHandle, ptr: u64, data: &[u8]) -> SubstrateResult<()> {
+            self.memory_writes.push((mem, ptr, data.to_vec()));
+            Ok(())
+        }
+    }
     impl DmwAuthority for MockSubstrate {}
     impl MmioAuthority for MockSubstrate {}
     impl DmaAuthority for MockSubstrate {}
@@ -2427,6 +3410,37 @@ mod tests {
     }
 
     #[test]
+    fn runtime_profile_gate_accepts_p0_p4_before_code_start() {
+        for (index, profile) in SubstrateProfile::ALL_ASCENDING.into_iter().enumerate() {
+            let mut runtime = VisaRuntime::new(VisaRuntimeConfig::for_profile(profile));
+            let mut substrate = MockSubstrate::default();
+            let artifact = fake_image(&REQUIRED_SECTIONS);
+            let descriptor = VisaArtifactDescriptor::new(
+                100 + index as u64,
+                &format!("profile-{}", profile.as_str()),
+                "profile-artifact",
+                profile,
+            );
+
+            let loaded = runtime
+                .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+                .unwrap_or_else(|error| panic!("{} should pass: {error:?}", profile.as_str()));
+
+            assert_eq!(loaded.artifact_id, 100 + index as u64);
+            assert_eq!(substrate.loaded, vec![ArtifactImageRef::new(100 + index as u64, 1)]);
+            assert_eq!(substrate.published.len(), 1);
+            assert_eq!(runtime.evidence_snapshot().profile_gate_rejection_count(), 0);
+            assert!(
+                runtime
+                    .snapshot()
+                    .stores
+                    .iter()
+                    .any(|store| { store.owner_profile == profile.as_str() })
+            );
+        }
+    }
+
+    #[test]
     fn runtime_rejects_profile_before_substrate_dispatch() {
         let mut runtime =
             VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::SemanticHarness));
@@ -2446,6 +3460,117 @@ mod tests {
         assert!(matches!(err, VisaRuntimeError::ProfileGateRejected { .. }));
         assert!(substrate.loaded.is_empty());
         assert!(substrate.published.is_empty());
+        assert!(runtime.events().iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::ProfileGateRejected {
+                    package,
+                    artifact_id: 8,
+                    required_profile: SubstrateProfile::DeviceCapable,
+                    reported_profile: SubstrateProfile::SemanticHarness,
+                    reason,
+                    ..
+                } if package == "device-driver" && reason == "reported-profile-below-required"
+            )
+        }));
+        let profile_event = runtime
+            .semantic()
+            .event_log()
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::ProfileGateRejected { .. }))
+            .expect("profile gate rejection event");
+        assert!(profile_event.summary().contains(
+            "ProfileGateRejected package=device-driver artifact=device-driver-artifact artifact_id=8"
+        ));
+        assert!(profile_event.summary().contains(
+            "required=device-capable reported=semantic-harness enforced=semantic-harness reason=reported-profile-below-required"
+        ));
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.profile_gate_rejection_count(), 1);
+        assert_eq!(evidence.profile_gate_rejections[0].required_profile, "device-capable");
+        assert_eq!(evidence.profile_gate_rejections[0].reported_profile, "semantic-harness");
+        assert_eq!(evidence.profile_gate_rejections[0].reason, "reported-profile-below-required");
+        let profile_gate_jsonl = evidence.profile_gate_rejections_jsonl();
+        assert!(profile_gate_jsonl.contains("\"event_kind\":\"profile-gate-rejected\""));
+        assert!(profile_gate_jsonl.contains("\"artifact_id\":8"));
+        let root = temp_runtime_test_dir("profile-gate-trace");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("profile-gate.jsonl");
+        fs::write(&path, profile_gate_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.artifact.load".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(
+                    SubstrateProfile::SemanticHarness.canonical_id().to_string(),
+                ),
+                evidence: "runtime recorded artifact profile gate rejection".to_string(),
+                remaining_uncertainty:
+                    "profile gate rejection is failure evidence, not successful code start"
+                        .to_string(),
+                metrics: BTreeMap::from([("profile_gate_rejection_count".to_string(), 1.0)]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::ProfileGateTrace,
+                    uri: "profile-gate.jsonl".to_string(),
+                    sha256: test_sha256_hex(profile_gate_jsonl.as_bytes()),
+                    description: "runtime profile gate rejection trace".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_profile_gate_rejects_each_p0_p4_downgrade_before_substrate_dispatch() {
+        let profiles = SubstrateProfile::ALL_ASCENDING;
+        for pair in profiles.windows(2) {
+            let reported = pair[0];
+            let required = pair[1];
+            let mut runtime = VisaRuntime::new(VisaRuntimeConfig {
+                required_profile: reported,
+                reported_profile: reported,
+                enforced_capabilities: SubstrateCapabilitySet::for_profile(reported),
+                evidence_level: EvidenceBoundaryLevel::PortableArtifactExecution,
+                runtime_mode: RuntimeMode::Production,
+            });
+            let mut substrate = MockSubstrate::default();
+            let artifact = fake_image(&REQUIRED_SECTIONS);
+            let descriptor = VisaArtifactDescriptor::new(
+                200 + reported as u64,
+                &format!("downgrade-{}-{}", reported.as_str(), required.as_str()),
+                "downgrade-artifact",
+                required,
+            );
+
+            let error = runtime
+                .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+                .expect_err("profile downgrade should reject");
+
+            assert!(matches!(
+                error,
+                VisaRuntimeError::ProfileGateRejected { required: observed_required, reported: observed_reported, .. }
+                    if observed_required == required && observed_reported == reported
+            ));
+            assert!(substrate.loaded.is_empty());
+            assert!(substrate.published.is_empty());
+            let evidence = runtime.evidence_snapshot();
+            assert_eq!(evidence.profile_gate_rejection_count(), 1);
+            assert_eq!(evidence.profile_gate_rejections[0].required_profile, required.as_str());
+            assert_eq!(evidence.profile_gate_rejections[0].reported_profile, reported.as_str());
+            assert_eq!(evidence.profile_gate_rejections[0].enforced_profile, reported.as_str());
+            assert_eq!(
+                evidence.profile_gate_rejections[0].reason,
+                "reported-profile-below-required"
+            );
+        }
     }
 
     #[test]
@@ -2543,22 +3668,50 @@ mod tests {
         assert_eq!(evidence.contract_graph.code_objects.len(), 1);
         assert_eq!(evidence.contract_graph.activations.len(), 1);
         assert_eq!(evidence.contract_graph.hostcalls.len(), 3);
+        assert!(
+            evidence.contract_graph.waits.iter().any(|wait| wait.id == 31 && wait.generation == 1)
+        );
+        let timer_hostcall = evidence
+            .contract_graph
+            .hostcalls
+            .iter()
+            .find(|hostcall| hostcall.hostcall_number == personality::wasi::WASI_TIMER_ARM)
+            .expect("timer arm hostcall trace");
+        assert_eq!(timer_hostcall.wait_token_out, Some(31));
+        assert_eq!(timer_hostcall.wait_token_generation_out, Some(1));
+        let wait_ref = evidence
+            .contract_graph
+            .waits
+            .iter()
+            .find(|wait| wait.id == 31)
+            .expect("timer wait")
+            .object_ref();
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == timer_hostcall.object_ref()
+                && edge.to == wait_ref
+                && edge.mode == ContractEdgeMode::Live
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "hostcall-produces-wait-token"
+        }));
         assert_eq!(
             evidence.authority_extractions[0],
             VisaSubstrateAuthorityExtractionEvidence {
                 event_id: evidence.authority_extractions[0].event_id,
                 event_epoch: evidence.authority_extractions[0].event_epoch,
+                authority_family: "console".into(),
                 authority: "ConsoleAuthority".into(),
                 operation: "console_write".into(),
                 requester: Some("wasi-app".into()),
                 artifact_id: Some(9),
                 store_id: Some(1),
-                capability_id: None,
-                capability_generation: None,
+                capability_id: Some(1),
+                capability_generation: Some(1),
             }
         );
         let extraction_jsonl = evidence.authority_extractions_jsonl();
         assert_eq!(extraction_jsonl.lines().count(), 3);
+        assert!(extraction_jsonl.contains("\"authority_family\":\"console\""));
+        assert!(extraction_jsonl.contains("\"authority_family\":\"timer\""));
         assert!(extraction_jsonl.contains("\"authority\":\"ConsoleAuthority\""));
         assert!(extraction_jsonl.contains("\"operation\":\"console_write\""));
         assert!(extraction_jsonl.contains("\"requester\":\"wasi-app\""));
@@ -2571,6 +3724,8 @@ mod tests {
             snapshot_json.contains("\"claimed_evidence_level\":\"portable-artifact-execution\"")
         );
         assert!(snapshot_json.contains("\"hostcalls\":[{\"id\":1,\"generation\":1}"));
+        assert!(snapshot_json.contains("\"waits\":[{\"id\":31,\"generation\":1}]"));
+        assert!(snapshot_json.contains("\"label\":\"hostcall-produces-wait-token\""));
         let root = temp_runtime_test_dir("snapshot-artifact");
         fs::create_dir_all(&root).unwrap();
         let path = root.join("contract-graph-snapshot.json");
@@ -2668,6 +3823,151 @@ mod tests {
         out
     }
 
+    fn assert_no_success_dispatch(runtime: &VisaRuntime) {
+        assert!(
+            !runtime
+                .events()
+                .iter()
+                .any(|event| matches!(event, VisaRuntimeEvent::HostcallDispatched { .. }))
+        );
+        assert!(!runtime.events().iter().any(|event| {
+            matches!(event, VisaRuntimeEvent::SubstrateAuthorityExtracted { .. })
+        }));
+        assert!(
+            !runtime.semantic().event_log().events().iter().any(|event| {
+                matches!(&event.kind, EventKind::SubstrateAuthorityExtracted { .. })
+            })
+        );
+    }
+
+    fn assert_snapshot_has_portable_failure_path(
+        evidence: &VisaRuntimeEvidenceSnapshot,
+        activation: &ActivationHandle,
+        hostcall_result: Option<&str>,
+        trap_kind: Option<&str>,
+    ) {
+        assert_eq!(validate_contract_graph(&evidence.contract_graph), Vec::new());
+        assert_eq!(evidence.contract_graph.artifacts.len(), 1);
+        assert_eq!(evidence.contract_graph.code_objects.len(), 1);
+        assert_eq!(evidence.contract_graph.stores.len(), 1);
+        assert_eq!(evidence.contract_graph.activations.len(), 1);
+        assert_eq!(evidence.contract_graph.traps.len(), 1);
+        if let Some(hostcall_result) = hostcall_result {
+            assert_eq!(evidence.contract_graph.hostcalls.len(), 1);
+            let hostcall = &evidence.contract_graph.hostcalls[0];
+            assert!(!hostcall.allowed);
+            assert_eq!(hostcall.result, hostcall_result);
+            assert_eq!(hostcall.activation, activation.activation_id);
+            assert_eq!(hostcall.store, activation.store_id);
+            assert_eq!(hostcall.code_object, activation.code_object_id);
+            assert_eq!(hostcall.artifact, activation.artifact_id);
+            assert_eq!(hostcall.trap_out, Some(evidence.contract_graph.traps[0].id));
+        }
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.activation, Some(activation.activation_id));
+        assert_eq!(trap.store, Some(activation.store_id));
+        assert_eq!(trap.code_object, Some(activation.code_object_id));
+        assert_eq!(trap.artifact, Some(activation.artifact_id));
+        if let Some(trap_kind) = trap_kind {
+            assert_eq!(trap.trap_kind.as_deref(), Some(trap_kind));
+        }
+
+        let artifact_ref = evidence.contract_graph.artifacts[0].object_ref();
+        let code_ref = evidence.contract_graph.code_objects[0].object_ref();
+        let store_ref = evidence.contract_graph.stores[0].object_ref();
+        let activation_ref = evidence.contract_graph.activations[0].object_ref();
+        assert_portable_path_edge(
+            evidence,
+            artifact_ref,
+            code_ref,
+            &[ContractEdgeMode::Live],
+            "artifact-loads-code-object",
+        );
+        assert_portable_path_edge(
+            evidence,
+            code_ref,
+            store_ref,
+            &[ContractEdgeMode::Live],
+            "code-object-bound-to-store",
+        );
+        assert_portable_path_edge(
+            evidence,
+            store_ref,
+            activation_ref,
+            &[ContractEdgeMode::Live, ContractEdgeMode::Historical],
+            "store-starts-activation",
+        );
+        if let Some(hostcall) = evidence.contract_graph.hostcalls.first() {
+            assert_portable_path_edge(
+                evidence,
+                activation_ref,
+                hostcall.object_ref(),
+                &[ContractEdgeMode::Live, ContractEdgeMode::Historical],
+                "activation-dispatches-hostcall-frame",
+            );
+        }
+        assert_portable_path_edge(
+            evidence,
+            activation_ref,
+            trap.object_ref(),
+            &[ContractEdgeMode::Live, ContractEdgeMode::Historical],
+            "activation-records-trap-map",
+        );
+    }
+
+    fn assert_portable_path_edge(
+        evidence: &VisaRuntimeEvidenceSnapshot,
+        from: ContractObjectRef,
+        to: ContractObjectRef,
+        allowed_modes: &[ContractEdgeMode],
+        label: &str,
+    ) {
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == from
+                && edge.to == to
+                && allowed_modes.contains(&edge.mode)
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == label
+        }));
+    }
+
+    fn assert_contract_graph_snapshot_artifact_gate_accepts(
+        evidence: &VisaRuntimeEvidenceSnapshot,
+        name: &str,
+    ) {
+        let snapshot_json = evidence.contract_graph_snapshot_artifact_json();
+        let root = temp_runtime_test_dir(name);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("contract-graph-snapshot.json");
+        fs::write(&path, snapshot_json.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.artifact.failure".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime produced artifact-path failure contract graph snapshot"
+                    .to_string(),
+                remaining_uncertainty:
+                    "failure snapshot proves attribution, not successful dispatch".to_string(),
+                metrics: BTreeMap::new(),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::ContractGraphSnapshot,
+                    uri: "contract-graph-snapshot.json".to_string(),
+                    sha256: test_sha256_hex(snapshot_json.as_bytes()),
+                    description: "runtime failure contract graph snapshot artifact".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn failed_substrate_hostcall_does_not_commit_success_trace() {
         let personality =
@@ -2708,6 +4008,7 @@ mod tests {
             VisaSubstrateUnsupportedEvidence {
                 event_id: evidence.unsupported_substrate_events[0].event_id,
                 event_epoch: evidence.unsupported_substrate_events[0].event_epoch,
+                authority_family: "console".into(),
                 authority: "ConsoleAuthority".into(),
                 operation: "console_write".into(),
                 requester: Some("wasi-app".into()),
@@ -2730,6 +4031,140 @@ mod tests {
         assert!(!runtime.events().iter().any(|event| {
             matches!(event, VisaRuntimeEvent::SubstrateAuthorityExtracted { .. })
         }));
+        let unsupported_jsonl = evidence.unsupported_substrate_events_jsonl();
+        assert!(unsupported_jsonl.contains("\"event_kind\":\"unsupported\""));
+        assert!(unsupported_jsonl.contains("\"authority_family\":\"console\""));
+        assert!(unsupported_jsonl.contains("\"artifact\":44"));
+        let root = temp_runtime_test_dir("unsupported-substrate-trace");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("substrate-events.jsonl");
+        fs::write(&path, unsupported_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.capability.hostcall".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime recorded unsupported substrate dispatch evidence".to_string(),
+                remaining_uncertainty: "unsupported dispatch is failure evidence and does not commit a successful hostcall trace".to_string(),
+                metrics: BTreeMap::from([(
+                    "unsupported_substrate_event_count".to_string(),
+                    1.0,
+                )]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::SubstrateEventTrace,
+                    uri: "substrate-events.jsonl".to_string(),
+                    sha256: test_sha256_hex(unsupported_jsonl.as_bytes()),
+                    description: "runtime unsupported substrate event trace".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn denied_substrate_dispatch_records_event_log_and_trace_evidence() {
+        let personality =
+            personality::wasi::WasiPersonality::new("wasi-app", SubstrateProfile::GuestFrontend);
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate { deny_console: true, ..MockSubstrate::default() };
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+
+        let err = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(62) },
+                ActivationEntry::Symbol("wasi_start".into()),
+                [VisaExecutionStep::new(
+                    personality::wasi::WASI_FD_WRITE,
+                    personality.fd_write(b"denied"),
+                )],
+                &mut substrate,
+            )
+            .expect_err("denied substrate dispatch must reject execution");
+
+        assert!(matches!(
+            err,
+            VisaRuntimeError::SubstrateDispatch {
+                authority: "ConsoleAuthority",
+                operation: "console_write",
+                error: SubstrateError::Denied { .. },
+            }
+        ));
+        assert_eq!(substrate.console, b"");
+        assert!(matches!(
+            substrate.events.as_slice(),
+            [SubstrateEvent::CapabilityDenied {
+                authority: "ConsoleAuthority",
+                operation: "console_write",
+                ..
+            }]
+        ));
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_eq!(evidence.denied_substrate_event_count(), 1);
+        assert_eq!(evidence.denied_substrate_events[0].authority_family, "console");
+        assert_eq!(evidence.denied_substrate_events[0].capability_id, Some(55));
+        assert_eq!(evidence.denied_substrate_events[0].capability_generation, Some(1));
+        assert!(runtime.semantic().event_log().events().iter().any(|event| {
+            matches!(
+                &event.kind,
+                EventKind::SubstrateCapabilityDenied {
+                    authority_family,
+                    authority,
+                    operation,
+                    artifact: Some(62),
+                    store: Some(1),
+                    capability: Some(55),
+                    capability_generation: Some(1),
+                    ..
+                } if authority_family == "console"
+                    && authority == "ConsoleAuthority"
+                    && operation == "console_write"
+            )
+        }));
+        let substrate_events_jsonl = evidence.substrate_events_jsonl();
+        assert!(substrate_events_jsonl.contains("\"event_kind\":\"capability-denied\""));
+        assert!(substrate_events_jsonl.contains("\"authority_family\":\"console\""));
+        assert!(substrate_events_jsonl.contains("\"capability\":55"));
+
+        let root = temp_runtime_test_dir("denied-substrate-dispatch");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("substrate-events.jsonl");
+        fs::write(&path, substrate_events_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.capability.hostcall".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime recorded substrate denied dispatch evidence".to_string(),
+                remaining_uncertainty:
+                    "denied dispatch proves failure visibility, not successful operation"
+                        .to_string(),
+                metrics: BTreeMap::from([("denied_substrate_event_count".to_string(), 1.0)]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::SubstrateEventTrace,
+                    uri: "substrate-events.jsonl".to_string(),
+                    sha256: test_sha256_hex(substrate_events_jsonl.as_bytes()),
+                    description: "runtime denied substrate event trace".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2804,6 +4239,425 @@ mod tests {
     }
 
     #[test]
+    fn runtime_unsupported_hostcall_records_artifact_path_failure_evidence() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            49,
+            "unsupported-hostcall-app",
+            "unsupported-hostcall-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "declared.noop",
+            HostcallCategory::Service,
+            "declared.noop",
+            "call",
+            false,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        let err = runtime
+            .invoke_hostcall(&activation, 404, VisaHostcallPayload::None, &mut substrate)
+            .expect_err("undeclared hostcall must be trapped by executor attribution");
+
+        assert!(matches!(
+            err,
+            VisaRuntimeError::Executor(TargetExecutorError::HostcallNotDeclared)
+        ));
+        assert_no_success_dispatch(&runtime);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_snapshot_has_portable_failure_path(
+            &evidence,
+            &activation,
+            Some("unsupported-call"),
+            None,
+        );
+        let hostcall = &evidence.contract_graph.hostcalls[0];
+        assert_eq!(hostcall.hostcall_number, 404);
+        assert_eq!(hostcall.name, "hostcall.unsupported");
+        assert_eq!(hostcall.ret_tag, HostcallReturnTag::BadAbi);
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.class, semantic_core::target_executor::TargetTrapClass::HostcallTrap);
+        assert_eq!(trap.fault_policy, "unsupported-hostcall");
+        assert_eq!(trap.detail, "hostcall unsupported by artifact import table");
+        assert_contract_graph_snapshot_artifact_gate_accepts(
+            &evidence,
+            "unsupported-hostcall-snapshot-artifact",
+        );
+    }
+
+    #[test]
+    fn runtime_console_capability_denial_records_trap_before_substrate_dispatch() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            63,
+            "console-cap-denied-app",
+            "console-cap-denied-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "visa.console.write",
+            HostcallCategory::Console,
+            "visa.console",
+            "write",
+            false,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        let err = runtime
+            .invoke_hostcall(
+                &activation,
+                1,
+                VisaHostcallPayload::ConsoleWrite { bytes: b"no-cap".to_vec() },
+                &mut substrate,
+            )
+            .expect_err("missing console capability must deny before substrate call");
+
+        assert!(matches!(err, VisaRuntimeError::Executor(TargetExecutorError::CapabilityDenied)));
+        assert_eq!(substrate.console, b"");
+        assert_no_success_dispatch(&runtime);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_eq!(evidence.denied_substrate_event_count(), 1);
+        assert_eq!(evidence.denied_substrate_events[0].authority_family, "console");
+        assert_eq!(evidence.denied_substrate_events[0].authority, "ConsoleAuthority");
+        assert_eq!(evidence.denied_substrate_events[0].operation, "console_write");
+        assert_eq!(
+            evidence.denied_substrate_events[0].requester.as_deref(),
+            Some("console-cap-denied-app")
+        );
+        assert_eq!(evidence.denied_substrate_events[0].artifact_id, Some(63));
+        assert_eq!(evidence.denied_substrate_events[0].store_id, Some(1));
+        assert!(evidence.denied_substrate_events[0].capability_id.is_none());
+        assert!(evidence.denied_substrate_events[0].capability_generation.is_none());
+        assert_snapshot_has_portable_failure_path(
+            &evidence,
+            &activation,
+            Some("cap-arg-required"),
+            None,
+        );
+        let hostcall = &evidence.contract_graph.hostcalls[0];
+        assert_eq!(hostcall.category, HostcallCategory::Console);
+        assert_eq!(hostcall.object, "visa.console");
+        assert_eq!(hostcall.operation, "write");
+        assert_eq!(hostcall.ret_tag, HostcallReturnTag::Trap);
+        assert_eq!(hostcall.denial_reason.as_deref(), Some("cap-arg-required"));
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.class, semantic_core::target_executor::TargetTrapClass::CapabilityTrap);
+        assert_eq!(trap.fault_policy, "capability-handle");
+        assert_eq!(trap.detail, "hostcall capability handle argument failed validation");
+        assert!(runtime.semantic().event_log().events().iter().any(|event| {
+            matches!(
+                &event.kind,
+                EventKind::SubstrateCapabilityDenied {
+                    authority_family,
+                    authority,
+                    operation,
+                    requester,
+                    artifact: Some(63),
+                    store: Some(1),
+                    capability: None,
+                    capability_generation: None,
+                } if authority_family == "console"
+                    && authority == "ConsoleAuthority"
+                    && operation == "console_write"
+                    && requester.as_deref() == Some("console-cap-denied-app")
+            )
+        }));
+        let denied_jsonl = evidence.denied_substrate_events_jsonl();
+        assert!(denied_jsonl.contains("\"event_kind\":\"capability-denied\""));
+        assert!(denied_jsonl.contains("\"authority_family\":\"console\""));
+        assert!(denied_jsonl.contains("\"artifact\":63"));
+        let root = temp_runtime_test_dir("console-capability-denied-substrate-trace");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("substrate-events.jsonl");
+        fs::write(&path, denied_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.capability.hostcall".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime recorded console capability denied substrate evidence"
+                    .to_string(),
+                remaining_uncertainty:
+                    "denial evidence proves failure attribution, not successful dispatch"
+                        .to_string(),
+                metrics: BTreeMap::from([("denied_substrate_event_count".to_string(), 1.0)]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::SubstrateEventTrace,
+                    uri: "substrate-events.jsonl".to_string(),
+                    sha256: test_sha256_hex(denied_jsonl.as_bytes()),
+                    description: "runtime console capability denied substrate event trace"
+                        .to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_capability_denial_records_trap_before_substrate_dispatch() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            50,
+            "cap-denied-app",
+            "cap-denied-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            8,
+            "guest.memory.read",
+            HostcallCategory::GuestMemory,
+            "guest-memory.main",
+            "read",
+            true,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        let err = runtime
+            .invoke_hostcall(
+                &activation,
+                8,
+                VisaHostcallPayload::GuestMemoryCopyIn {
+                    memory: UserMemoryHandle::new(7, 1),
+                    ptr: 0,
+                    len: 4,
+                },
+                &mut substrate,
+            )
+            .expect_err("missing capability handle must deny before substrate call");
+
+        assert!(matches!(err, VisaRuntimeError::Executor(TargetExecutorError::CapabilityDenied)));
+        assert_no_success_dispatch(&runtime);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.authority_extraction_count(), 0);
+        assert_eq!(evidence.unsupported_substrate_event_count(), 0);
+        assert_eq!(evidence.denied_substrate_event_count(), 1);
+        assert_eq!(evidence.denied_substrate_events[0].authority_family, "memory");
+        assert_eq!(evidence.denied_substrate_events[0].authority, "GuestMemoryAuthority");
+        assert_eq!(evidence.denied_substrate_events[0].operation, "copyin");
+        assert_eq!(
+            evidence.denied_substrate_events[0].requester.as_deref(),
+            Some("cap-denied-app")
+        );
+        assert_eq!(evidence.denied_substrate_events[0].artifact_id, Some(50));
+        assert_eq!(evidence.denied_substrate_events[0].store_id, Some(1));
+        assert_snapshot_has_portable_failure_path(
+            &evidence,
+            &activation,
+            Some("cap-arg-required"),
+            None,
+        );
+        let hostcall = &evidence.contract_graph.hostcalls[0];
+        assert_eq!(hostcall.ret_tag, HostcallReturnTag::Trap);
+        assert_eq!(hostcall.denial_reason.as_deref(), Some("cap-arg-required"));
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.class, semantic_core::target_executor::TargetTrapClass::CapabilityTrap);
+        assert_eq!(trap.fault_policy, "capability-handle");
+        assert_eq!(trap.detail, "hostcall capability handle argument failed validation");
+        assert_contract_graph_snapshot_artifact_gate_accepts(
+            &evidence,
+            "capability-denial-snapshot-artifact",
+        );
+        let denied_jsonl = evidence.denied_substrate_events_jsonl();
+        assert!(denied_jsonl.contains("\"event_kind\":\"capability-denied\""));
+        assert!(denied_jsonl.contains("\"authority_family\":\"memory\""));
+        assert!(denied_jsonl.contains("\"artifact\":50"));
+        let root = temp_runtime_test_dir("capability-denied-substrate-trace");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("substrate-events.jsonl");
+        fs::write(&path, denied_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.capability.hostcall".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime recorded capability denied substrate evidence".to_string(),
+                remaining_uncertainty:
+                    "denial evidence proves failure attribution, not successful dispatch"
+                        .to_string(),
+                metrics: BTreeMap::from([("denied_substrate_event_count".to_string(), 1.0)]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::SubstrateEventTrace,
+                    uri: "substrate-events.jsonl".to_string(),
+                    sha256: test_sha256_hex(denied_jsonl.as_bytes()),
+                    description: "runtime capability denied substrate event trace".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_bad_hostcall_abi_records_failure_trace_without_dispatch() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            51,
+            "bad-abi-app",
+            "bad-abi-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "abi.noop",
+            HostcallCategory::Service,
+            "abi.noop",
+            "call",
+            false,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+
+        let err = runtime
+            .preflight_hostcall_frame_for_test(
+                &activation,
+                1,
+                &VisaHostcallPayload::None,
+                |frame| {
+                    frame.abi_version = 0xffff;
+                },
+            )
+            .expect_err("bad hostcall ABI must trap during preflight");
+
+        assert!(matches!(
+            err,
+            VisaRuntimeError::Executor(TargetExecutorError::HostcallAbiMismatch)
+        ));
+        assert_no_success_dispatch(&runtime);
+        let evidence = runtime.evidence_snapshot();
+        assert_snapshot_has_portable_failure_path(
+            &evidence,
+            &activation,
+            Some("bad-hostcall-abi"),
+            None,
+        );
+        let hostcall = &evidence.contract_graph.hostcalls[0];
+        assert_eq!(hostcall.ret_tag, HostcallReturnTag::BadAbi);
+        assert_eq!(hostcall.abi_version, "wire-v65535");
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.class, semantic_core::target_executor::TargetTrapClass::HostcallTrap);
+        assert_eq!(trap.fault_policy, "bad-hostcall-abi");
+        assert_eq!(trap.detail, "hostcall frame ABI version mismatch");
+        assert_contract_graph_snapshot_artifact_gate_accepts(
+            &evidence,
+            "bad-abi-snapshot-artifact",
+        );
+    }
+
+    #[test]
+    fn runtime_wasm_trap_map_records_portable_artifact_failure_evidence() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let loaded = runtime
+            .load_artifact(
+                VisaArtifactInput {
+                    bytes: &artifact,
+                    descriptor: VisaArtifactDescriptor::new(
+                        52,
+                        "wasm-trap-app",
+                        "wasm-trap-artifact",
+                        SubstrateProfile::GuestFrontend,
+                    ),
+                },
+                &mut substrate,
+            )
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+        let code = runtime.code_object(activation.code_object_id).expect("code object").clone();
+        let trap_offset = 0x20;
+        let trap_map = [TrapMapEntryV1::new(
+            ObjectRefRaw::new(OBJECT_KIND_CODE_OBJECT_V1, code.id, code.generation),
+            trap_offset,
+            trap_offset + 4,
+            TrapKindV1::WasmUnreachable,
+            3,
+            0x44,
+            9,
+        )];
+
+        let trap_id = runtime
+            .record_trap_by_pc_for_test(&activation, code.text.start + trap_offset, &trap_map)
+            .expect("record trap by pc");
+
+        assert_no_success_dispatch(&runtime);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.contract_graph.hostcalls.len(), 0);
+        assert_snapshot_has_portable_failure_path(
+            &evidence,
+            &activation,
+            None,
+            Some("wasm-unreachable"),
+        );
+        let trap = &evidence.contract_graph.traps[0];
+        assert_eq!(trap.id, trap_id);
+        assert_eq!(trap.class, semantic_core::target_executor::TargetTrapClass::GuestTrap);
+        assert_eq!(trap.attribution_status, "trap-map-attributed");
+        assert_eq!(trap.target_pc, Some(code.text.start + trap_offset));
+        assert_eq!(trap.offset, Some(trap_offset));
+        assert_eq!(trap.function_index, Some(3));
+        assert_eq!(trap.wasm_offset, Some(0x44));
+        assert_eq!(trap.debug_symbol, Some(9));
+        assert_contract_graph_snapshot_artifact_gate_accepts(
+            &evidence,
+            "wasm-trap-snapshot-artifact",
+        );
+    }
+
+    #[test]
     fn runtime_trap_evidence_preserves_activation_path_identities() {
         let mut runtime =
             VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
@@ -2866,6 +4720,267 @@ mod tests {
             "\"traps\":[{{\"id\":{},\"generation\":{}}}]",
             trap.id, trap.generation
         )));
+    }
+
+    #[test]
+    fn runtime_cleanup_evidence_preserves_activation_path_identities() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            48,
+            "cleanup-app",
+            "cleanup-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            99,
+            "cleanup.noop",
+            HostcallCategory::Service,
+            "cleanup.noop",
+            "call",
+            false,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("wasi_start".into()))
+            .expect("start activation");
+        runtime
+            .invoke_hostcall(&activation, 99, VisaHostcallPayload::None, &mut substrate)
+            .expect("dispatch hostcall");
+
+        let cleanup_id = runtime
+            .begin_fault_cleanup(&activation, "portable-cleanup-evidence")
+            .expect("begin cleanup");
+        assert!(runtime.events().iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::FaultCleanupStarted {
+                    activation_id,
+                    store_id,
+                    code_object_id,
+                    cleanup_id: observed_cleanup_id,
+                    reason,
+                } if *activation_id == activation.activation_id
+                    && *store_id == activation.store_id
+                    && *code_object_id == activation.code_object_id
+                    && *observed_cleanup_id == cleanup_id
+                    && reason == "portable-cleanup-evidence"
+            )
+        }));
+        assert!(!runtime.events().iter().any(|event| {
+            matches!(event, VisaRuntimeEvent::FaultCleanupCompleted { cleanup_id: observed_cleanup_id, .. } if *observed_cleanup_id == cleanup_id)
+        }));
+
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(validate_contract_graph(&evidence.contract_graph), Vec::new());
+        assert_eq!(evidence.contract_graph.cleanup_transactions.len(), 1);
+        let cleanup = &evidence.contract_graph.cleanup_transactions[0];
+        assert_eq!(cleanup.id, cleanup_id);
+        assert_eq!(cleanup.store, activation.store_id);
+        assert_eq!(cleanup.activation, Some(activation.activation_id));
+        assert_eq!(cleanup.code_object, Some(activation.code_object_id));
+        assert_eq!(cleanup.reason, "portable-cleanup-evidence");
+        let store_ref = evidence
+            .contract_graph
+            .stores
+            .iter()
+            .find(|store| store.id == activation.store_id)
+            .expect("cleanup store")
+            .object_ref();
+        let activation_ref = evidence
+            .contract_graph
+            .activations
+            .iter()
+            .find(|record| record.id == activation.activation_id)
+            .expect("cleanup activation")
+            .object_ref();
+        let cleanup_ref = cleanup.object_ref();
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == store_ref
+                && edge.to == cleanup_ref
+                && edge.mode == ContractEdgeMode::Live
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "store-starts-cleanup-transaction"
+        }));
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == activation_ref
+                && edge.to == cleanup_ref
+                && edge.mode == ContractEdgeMode::Live
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "activation-enters-cleanup-transaction"
+        }));
+
+        let snapshot_json = evidence.contract_graph_snapshot_artifact_json();
+        assert!(snapshot_json.contains(&format!(
+            "\"cleanup_transactions\":[{{\"id\":{},\"generation\":{}}}]",
+            cleanup.id, cleanup.generation
+        )));
+        assert!(snapshot_json.contains("\"label\":\"store-starts-cleanup-transaction\""));
+        assert!(snapshot_json.contains("\"label\":\"activation-enters-cleanup-transaction\""));
+        let root = temp_runtime_test_dir("cleanup-snapshot-artifact");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("contract-graph-snapshot.json");
+        fs::write(&path, snapshot_json.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.artifact.cleanup".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime produced artifact-path cleanup contract graph snapshot"
+                    .to_string(),
+                remaining_uncertainty: "cleanup transaction is pending; completed cleanup generation synchronization is covered separately".to_string(),
+                metrics: BTreeMap::new(),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::ContractGraphSnapshot,
+                    uri: "contract-graph-snapshot.json".to_string(),
+                    sha256: test_sha256_hex(snapshot_json.as_bytes()),
+                    description: "runtime cleanup contract graph snapshot artifact".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_completed_cleanup_synchronizes_generations_and_preserves_history_edges() {
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate::default();
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let descriptor = VisaArtifactDescriptor::new(
+            53,
+            "completed-cleanup-app",
+            "completed-cleanup-artifact",
+            SubstrateProfile::GuestFrontend,
+        )
+        .with_hostcall(HostcallSpec::new(
+            1,
+            "completed.cleanup.noop",
+            HostcallCategory::Service,
+            "completed.cleanup",
+            "call",
+            false,
+        ));
+        let loaded = runtime
+            .load_artifact(VisaArtifactInput { bytes: &artifact, descriptor }, &mut substrate)
+            .expect("load artifact");
+        let activation = runtime
+            .start_activation(&loaded, ActivationEntry::Symbol("entry".into()))
+            .expect("start activation");
+        runtime
+            .invoke_hostcall(&activation, 1, VisaHostcallPayload::None, &mut substrate)
+            .expect("dispatch hostcall");
+
+        let cleanup_id = runtime
+            .complete_fault_cleanup(&activation, "completed-cleanup-evidence")
+            .expect("complete cleanup");
+        assert!(runtime.events().iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::FaultCleanupCompleted {
+                    activation_id,
+                    store_id,
+                    code_object_id,
+                    cleanup_id: observed_cleanup_id,
+                    reason,
+                } if *activation_id == activation.activation_id
+                    && *store_id == activation.store_id
+                    && *code_object_id == activation.code_object_id
+                    && *observed_cleanup_id == cleanup_id
+                    && reason == "completed-cleanup-evidence"
+            )
+        }));
+        assert!(!runtime.events().iter().any(|event| {
+            matches!(event, VisaRuntimeEvent::FaultCleanupStarted { cleanup_id: observed_cleanup_id, .. } if *observed_cleanup_id == cleanup_id)
+        }));
+
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(validate_contract_graph(&evidence.contract_graph), Vec::new());
+        assert_eq!(evidence.contract_graph.cleanup_transactions.len(), 1);
+        let store = evidence
+            .contract_graph
+            .stores
+            .iter()
+            .find(|store| store.id == activation.store_id)
+            .expect("store");
+        assert_eq!(store.state, StoreState::Dead);
+        let code = evidence
+            .contract_graph
+            .code_objects
+            .iter()
+            .find(|code| code.id == activation.code_object_id)
+            .expect("code");
+        assert_eq!(code.state, semantic_core::target_executor::CodeObjectState::Retired);
+        assert_eq!(code.bound_store, None);
+        let activation_record = evidence
+            .contract_graph
+            .activations
+            .iter()
+            .find(|record| record.id == activation.activation_id)
+            .expect("activation");
+        assert_eq!(
+            activation_record.state,
+            semantic_core::target_executor::ActivationState::Dropped
+        );
+        assert_eq!(activation_record.store_generation, store.generation);
+        assert_eq!(activation_record.code_generation, code.generation);
+        let cleanup = &evidence.contract_graph.cleanup_transactions[0];
+        assert_eq!(cleanup.id, cleanup_id);
+        assert_eq!(
+            cleanup.state,
+            semantic_core::target_executor::CleanupTransactionState::Completed
+        );
+        assert_eq!(cleanup.result_store_generation, Some(store.generation));
+        assert_eq!(cleanup.activation_generation, Some(activation_record.generation));
+        assert_eq!(cleanup.code_generation, Some(code.generation));
+        assert!(cleanup.unbound_code_object);
+        assert!(cleanup.revoked_capabilities.is_empty());
+        assert!(evidence.contract_graph.tombstones.iter().any(|tombstone| {
+            tombstone.kind == ContractObjectKind::Store
+                && tombstone.id == store.id
+                && tombstone.generation == store.generation
+        }));
+        assert!(evidence.contract_graph.tombstones.iter().any(|tombstone| {
+            tombstone.kind == ContractObjectKind::CodeObject
+                && tombstone.id == code.id
+                && tombstone.generation + 1 == code.generation
+        }));
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == code.object_ref()
+                && edge.to == store.object_ref()
+                && edge.mode == ContractEdgeMode::Historical
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "code-object-bound-to-store"
+        }));
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == store.object_ref()
+                && edge.to == cleanup.object_ref()
+                && edge.mode == ContractEdgeMode::Historical
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "store-starts-cleanup-transaction"
+        }));
+        assert!(evidence.contract_graph.explicit_edges.iter().any(|edge| {
+            edge.from == activation_record.object_ref()
+                && edge.to == cleanup.object_ref()
+                && edge.mode == ContractEdgeMode::Historical
+                && edge.evidence_level == EvidenceBoundaryLevel::PortableArtifactExecution
+                && edge.label == "activation-enters-cleanup-transaction"
+        }));
+        assert_contract_graph_snapshot_artifact_gate_accepts(
+            &evidence,
+            "completed-cleanup-snapshot-artifact",
+        );
     }
 
     #[test]
@@ -2985,6 +5100,129 @@ mod tests {
     }
 
     #[test]
+    fn runtime_records_console_timer_event_and_memory_authority_families() {
+        let personality = personality::native::VisaNativePersonality::new(
+            "authority-family-app",
+            SubstrateProfile::GuestFrontend,
+        );
+        let mut runtime =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::GuestFrontend));
+        let mut substrate = MockSubstrate { now: 13, ..MockSubstrate::default() };
+        let artifact = fake_image(&REQUIRED_SECTIONS);
+        let token = WaitTokenRef::new(88, 1);
+        let memory = UserMemoryHandle::new(3, 1);
+
+        let report = runtime
+            .run(
+                VisaArtifactInput { bytes: &artifact, descriptor: personality.descriptor(61) },
+                ActivationEntry::Symbol("visa_start".into()),
+                [
+                    VisaExecutionStep::new(
+                        personality::native::VISA_CONSOLE_WRITE,
+                        personality.console_write(b"family"),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_TIMER_NOW,
+                        personality.timer_now(),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_TIMER_ARM,
+                        personality.timer_arm(144, token),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_EVENT_PUSH,
+                        personality.event_push(SubstrateEvent::unsupported(
+                            "ConsoleAuthority",
+                            "console_write",
+                            Some(SubstrateRequester::new("authority-family-app")),
+                        )),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_EVENT_POP,
+                        personality.event_pop(),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_MEMORY_COPYIN,
+                        personality.memory_copyin(memory, 0x1000, 4),
+                    ),
+                    VisaExecutionStep::new(
+                        personality::native::VISA_MEMORY_COPYOUT,
+                        personality.memory_copyout(memory, 0x1004, b"out"),
+                    ),
+                ],
+                &mut substrate,
+            )
+            .expect("run authority family workload");
+
+        assert_eq!(report.hostcalls.len(), 7);
+        assert_eq!(report.hostcalls[5].value, VisaHostcallValue::Bytes(vec![0x76; 4]));
+        assert_eq!(substrate.memory_writes, vec![(memory, 0x1004, b"out".to_vec())]);
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.authority_extraction_count(), 7);
+        let family_operations = evidence
+            .authority_extractions
+            .iter()
+            .map(|event| (event.authority_family.as_str(), event.operation.as_str()))
+            .collect::<Vec<_>>();
+        for expected in [
+            ("console", "console_write"),
+            ("timer", "now"),
+            ("timer", "arm_timer"),
+            ("event", "push_event"),
+            ("event", "pop_event"),
+            ("memory", "copyin"),
+            ("memory", "copyout"),
+        ] {
+            assert!(family_operations.contains(&expected), "{family_operations:?}");
+        }
+        assert!(evidence.denied_substrate_events.is_empty());
+        assert!(evidence.unsupported_substrate_events.is_empty());
+
+        let substrate_events_jsonl = evidence.substrate_events_jsonl();
+        assert_eq!(substrate_events_jsonl.lines().count(), 7);
+        for family in ["console", "timer", "event", "memory"] {
+            assert!(
+                substrate_events_jsonl.contains(&format!("\"authority_family\":\"{family}\"")),
+                "{substrate_events_jsonl}"
+            );
+        }
+
+        let root = temp_runtime_test_dir("authority-family-substrate-events");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("substrate-events.jsonl");
+        fs::write(&path, substrate_events_jsonl.as_bytes()).unwrap();
+        let conformance_report = visa_conformance::ConformanceReport {
+            schema_version: visa_conformance::REPORT_SCHEMA_VERSION.to_string(),
+            suite_id: "visa-layered-conformance".to_string(),
+            target: "visa-runtime-unit".to_string(),
+            generated_by: "visa-runtime-test".to_string(),
+            results: vec![visa_conformance::TestResult {
+                spec_id: "visa.capability.hostcall".to_string(),
+                outcome: visa_conformance::Outcome::Pass,
+                observed_boundary: visa_conformance::Boundary::PortableArtifactExecution,
+                observed_profile: Some(SubstrateProfile::GuestFrontend.canonical_id().to_string()),
+                evidence: "runtime recorded family-tagged substrate authority evidence".to_string(),
+                remaining_uncertainty:
+                    "unit fixture validates authority families, not real target substrate"
+                        .to_string(),
+                metrics: BTreeMap::from([(
+                    "authority_extraction_event_count".to_string(),
+                    evidence.authority_extraction_count() as f64,
+                )]),
+                evidence_artifacts: vec![visa_conformance::EvidenceArtifact {
+                    kind: visa_conformance::EvidenceArtifactKind::SubstrateEventTrace,
+                    uri: "substrate-events.jsonl".to_string(),
+                    sha256: test_sha256_hex(substrate_events_jsonl.as_bytes()),
+                    description: "family-tagged substrate event trace".to_string(),
+                }],
+            }],
+        };
+        let validation = visa_conformance::validate_report_artifacts(&conformance_report, &root);
+        assert!(validation.ok, "{:#?}", validation.findings);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn visa_native_descriptor_scales_with_substrate_profile() {
         let guest = personality::native::VisaNativePersonality::new(
             "guest",
@@ -3037,6 +5275,24 @@ mod tests {
 
         assert!(matches!(err, VisaRuntimeError::ProfileGateRejected { .. }));
         assert!(substrate.loaded.is_empty());
+        assert!(runtime.events().iter().any(|event| {
+            matches!(
+                event,
+                VisaRuntimeEvent::ProfileGateRejected {
+                    package,
+                    artifact_id: 10,
+                    required_profile: SubstrateProfile::GuestFrontend,
+                    reported_profile: SubstrateProfile::SemanticHarness,
+                    reason,
+                    ..
+                } if package == "profile-underclaim" && reason == "reported-profile-below-required"
+            )
+        }));
+        let evidence = runtime.evidence_snapshot();
+        assert_eq!(evidence.profile_gate_rejection_count(), 1);
+        assert_eq!(evidence.profile_gate_rejections[0].artifact_id, Some(10));
+        assert_eq!(evidence.profile_gate_rejections[0].enforced_profile, "guest-frontend");
+        assert_eq!(evidence.profile_gate_rejections[0].reason, "reported-profile-below-required");
     }
 
     fn fake_image(kinds: &[SectionKindV1]) -> Vec<u8> {
@@ -3292,6 +5548,44 @@ mod tests {
         assert_eq!(restored.thread_groups, snapshot.thread_groups);
         assert_eq!(restored.fd_tables, snapshot.fd_tables);
         assert_eq!(restored.credentials, snapshot.credentials);
+    }
+
+    #[test]
+    fn restore_portable_subset_preserves_guest_memory_records() {
+        let mut memory = semantic_core::GuestMemoryManager::new();
+        let store = ContractObjectRef::new(ContractObjectKind::Store, 7, 3);
+        let aspace = memory.create_address_space(store);
+        let page = memory
+            .create_page(semantic_core::PageBacking::Anonymous, semantic_core::CowState::None);
+        memory
+            .map_region(
+                aspace,
+                semantic_core::GuestVaRange::new(0x4000, 0x1000),
+                semantic_core::GuestPerms::READ_WRITE,
+                semantic_core::VmaFlags::anonymous(),
+                page,
+            )
+            .expect("map region");
+        memory.record_page_fault(page, "copyin-efault");
+
+        let mut graph = SemanticGraph::new();
+        assert!(graph.record_guest_memory_manager(&memory));
+        let snapshot = graph.snapshot().portable_subset();
+        assert_eq!(snapshot.guest_address_spaces.len(), 1);
+        assert_eq!(snapshot.vma_regions.len(), 1);
+        assert_eq!(snapshot.page_objects.len(), 1);
+        assert_eq!(snapshot.guest_memory_faults.len(), 1);
+
+        let mut rt =
+            VisaRuntime::new(VisaRuntimeConfig::for_profile(SubstrateProfile::MinimalBareMetal));
+        rt.restore_portable_subset(&snapshot).expect("guest-memory portable snapshot must restore");
+        let restored = rt.snapshot();
+
+        assert_eq!(restored.guest_address_spaces, snapshot.guest_address_spaces);
+        assert_eq!(restored.vma_regions, snapshot.vma_regions);
+        assert_eq!(restored.page_objects, snapshot.page_objects);
+        assert_eq!(restored.guest_memory_faults, snapshot.guest_memory_faults);
+        assert!(rt.semantic().check_invariants().is_ok());
     }
 
     #[test]

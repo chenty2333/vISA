@@ -1,3 +1,5 @@
+use visa_profile::SubstrateProfile;
+
 use super::*;
 
 #[test]
@@ -89,6 +91,82 @@ fn substrate_compatibility_reports_missing_required_authority() {
     assert!(driver.missing_required.iter().any(|item| item.authority == "dma"));
     assert!(driver.missing_required.iter().any(|item| item.authority == "mmio"));
     assert!(driver.forbidden_requested.is_empty());
+}
+
+#[test]
+fn substrate_compatibility_reports_optional_degradation_without_rejecting_module() {
+    let manifest = valid_manifest();
+    let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+    let mut linux = plan.entry("linux_syscall").expect("linux module").clone();
+    linux.interfaces.substrate_authorities.optional.push("dma:iommu-strict".to_owned());
+
+    let report =
+        check_module_substrate_compatibility(&linux, SubstrateCapabilitySet::host_validation())
+            .expect("compatibility report");
+
+    assert!(report.ok);
+    assert!(report.profile_ok);
+    assert!(report.authority_ok);
+    assert!(report.missing_required.is_empty());
+    assert!(report.forbidden_requested.is_empty());
+    assert_eq!(report.degraded_optional.len(), 1);
+    assert_eq!(report.degraded_optional[0].authority, "dma");
+    assert_eq!(report.degraded_optional[0].expected, "iommu-strict");
+    assert_eq!(report.degraded_optional[0].actual, "mediated");
+}
+
+#[test]
+fn substrate_profile_gate_accepts_p0_p4_and_rejects_lower_enforcement() {
+    let manifest = valid_manifest();
+    let plan = build_validated_artifact_plan(&manifest).expect("valid plan");
+    let template = plan.entry("linux_syscall").expect("linux module").clone();
+
+    for (index, profile) in SubstrateProfile::ALL_ASCENDING.into_iter().enumerate() {
+        let mut module = template.clone();
+        module.interfaces.substrate_profile_required = profile.as_str().to_owned();
+        module.interfaces.substrate_authorities.required.clear();
+        module.interfaces.substrate_authorities.optional.clear();
+        module.interfaces.substrate_authorities.forbidden.clear();
+
+        let accepted = check_module_substrate_profile_gate(
+            &module,
+            profile.as_str(),
+            profile.as_str(),
+            SubstrateCapabilitySet::for_profile(profile),
+        )
+        .unwrap_or_else(|error| panic!("{} should parse and pass: {error}", profile.as_str()));
+
+        assert!(accepted.ok, "{} should pass with matching capabilities", profile.as_str());
+        assert!(accepted.profile_ok);
+        assert_eq!(accepted.substrate_profile_required, profile.as_str());
+        assert_eq!(accepted.reported_profile, profile.as_str());
+        assert_eq!(accepted.enforced_profile, profile.as_str());
+
+        if index == 0 {
+            continue;
+        }
+        let lower = SubstrateProfile::ALL_ASCENDING[index - 1];
+        let rejected = check_module_substrate_profile_gate(
+            &module,
+            lower.as_str(),
+            lower.as_str(),
+            SubstrateCapabilitySet::for_profile(lower),
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} required with {} capabilities should report a gate failure, not parse-fail: {error}",
+                profile.as_str(),
+                lower.as_str()
+            )
+        });
+
+        assert!(!rejected.ok);
+        assert!(!rejected.profile_ok);
+        assert_eq!(rejected.substrate_profile_required, profile.as_str());
+        assert_eq!(rejected.reported_profile, lower.as_str());
+        assert_eq!(rejected.enforced_profile, lower.as_str());
+        assert!(!rejected.missing_required.is_empty());
+    }
 }
 
 #[test]

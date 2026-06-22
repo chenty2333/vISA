@@ -124,6 +124,7 @@ pub struct ActivationRecord {
     pub code_object: CodeObjectId,
     pub code_generation: Generation,
     pub artifact: TargetArtifactId,
+    pub profile: String,
     pub entry: ActivationEntry,
     pub generation: Generation,
     pub state: ActivationState,
@@ -144,13 +145,14 @@ impl ActivationRecord {
         let trap = self.trap.map(|trap| trap.to_string()).unwrap_or_else(|| "none".to_string());
         let return_tag = self.return_tag.map(|tag| tag.as_str()).unwrap_or("none");
         format!(
-            "activation id={} store={} store_generation={} code={} code_generation={} artifact={} entry={} state={} generation={} start={} exit={} dmw_leases={} wait={} trap={} return={}",
+            "activation id={} store={} store_generation={} code={} code_generation={} artifact={} profile={} entry={} state={} generation={} start={} exit={} dmw_leases={} wait={} trap={} return={}",
             self.id,
             self.store,
             self.store_generation,
             self.code_object,
             self.code_generation,
             self.artifact,
+            self.profile,
             self.entry.summary(),
             self.state.as_str(),
             self.generation,
