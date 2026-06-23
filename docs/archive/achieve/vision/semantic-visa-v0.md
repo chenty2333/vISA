@@ -19,23 +19,23 @@ vISA is a capability-oriented Semantic Virtual ISA for portable system
 semantics.
 ```
 
-Read these files instead:
+Read these archived background files instead:
 
 ```text
-references/vision/semantic-virtual-isa.md
+docs/archive/achieve/vision/semantic-virtual-isa.md
     Narrative summary retained for orientation.
 
-references/specs/semantic-virtual-isa-v0/00-overview.md
+docs/archive/achieve/specs/semantic-virtual-isa-v0/00-overview.md
     Canonical system spec for the cross-ISA Semantic Virtual ISA.
 
-references/specs/semantic-contract-v0.1/00-overview.md
+docs/archive/achieve/specs/semantic-contract-v0.1/00-overview.md
     Contract ledger, ObjectRef, capability, wait, cleanup, and view boundaries.
 
-references/specs/target-runtime-abi/00-overview.md
+docs/archive/achieve/specs/target-runtime-abi/00-overview.md
     TargetArtifactImage, CodeObject, HostcallFrame, TrapMap, profile, and
     no_std extraction boundaries.
 
-references/specs/substrate-api-v0/00-overview.md
+docs/archive/achieve/specs/substrate-api-v0/00-overview.md
     Rust trait backend for machine authority providers.
 ```
 
@@ -70,6 +70,5 @@ TargetArtifactImage is the vISA target-side artifact envelope.
 not the vISA semantic ABI.
 ```
 
-Historical long-form notes remain available under `references/archive/` and in
-git history. Do not add new architecture material here; update
-`../specs/semantic-virtual-isa-v0/` or the relevant child spec instead.
+Do not add new architecture material here; create or update Spec Kit artifacts
+for active work.

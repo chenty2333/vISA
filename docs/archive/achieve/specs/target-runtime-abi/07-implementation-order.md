@@ -44,6 +44,5 @@ target-to-host JSONL ViewV1
 single-hart local icache profile
 ```
 
-Do not add external work plans or progress logs here. Sequencing belongs in the
-current task prompt or issue tracker; this file only keeps runtime boundary
-rules.
+Do not add external work plans or progress logs here. Active sequencing belongs
+in Spec Kit artifacts; this file only keeps runtime boundary rules.

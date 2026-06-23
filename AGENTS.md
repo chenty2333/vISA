@@ -1,5 +1,6 @@
 Use Spec Kit as the active workflow for feature work.
-Use `docs/archive/achieve/` only as historical vISA background.
+Use `docs/archive/achieve/specs/` and `docs/archive/achieve/vision/` only as
+historical vISA background.
 Use `docs/DOCKER.md` for Docker validation commands when needed.
 
 <!-- SPECKIT START -->
