@@ -1,14 +1,8 @@
-Before work, read the relevant policies under `docs/policies/`.
+Use Spec Kit as the active workflow for feature work.
+Use `docs/archive/achieve/` only as historical vISA background.
+Use `docs/DOCKER.md` for Docker validation commands when needed.
 
-Always follow:
-
-- `docs/policies/execution-policy.md`
-- `docs/policies/documentation-policy.md`
-- `docs/policies/intervention-policy.md`
-- `docs/policies/evidence-policy.md`
-
-Use task files for continuity.
-Use long-lived docs only for durable knowledge.
-Complete the accepted scope.
-Do not stop for local implementation choices.
-Escalate only when project intent, core semantics, security boundary, or roadmap changes.
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
