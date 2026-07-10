@@ -551,9 +551,9 @@ impl GuestMemoryManager {
     ) -> PageFaultResolution {
         if write && vma.flags.cow {
             PageFaultResolution::CowCopy { page: vma.backing }
-        } else if write && !vma.perms.contains(GuestPerms::WRITE) {
-            PageFaultResolution::ProtectionViolation
-        } else if !vma.perms.contains(GuestPerms::READ) {
+        } else if (write && !vma.perms.contains(GuestPerms::WRITE))
+            || !vma.perms.contains(GuestPerms::READ)
+        {
             PageFaultResolution::ProtectionViolation
         } else {
             PageFaultResolution::DemandMapping { page: vma.backing }
@@ -567,7 +567,7 @@ impl GuestMemoryManager {
             .iter()
             .filter(|r| r.aspace == aspace && r.state == VmaState::Mapped)
             .map(|r| {
-                let end = r.range.start.checked_add(r.range.len).unwrap_or(u64::MAX);
+                let end = r.range.start.saturating_add(r.range.len);
                 (r.range.start, end)
             })
             .collect();

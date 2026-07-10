@@ -235,7 +235,7 @@ impl SemanticGraph {
             }
         }
 
-        for violation in self.check_process_invariants() {
+        if let Some(violation) = self.check_process_invariants().into_iter().next() {
             return Err(SemanticInvariantError::ProcessInvariantViolation { detail: violation });
         }
 

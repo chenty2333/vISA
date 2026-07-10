@@ -130,7 +130,7 @@ impl PageTableAuthority for FullConformanceBackend {
         writable: bool,
         executable: bool,
     ) -> SubstrateResult<()> {
-        if va == 0 || va % 4096 != 0 || phys == 0 || phys % 4096 != 0 {
+        if va == 0 || !va.is_multiple_of(4096) || phys == 0 || !phys.is_multiple_of(4096) {
             return Err(SubstrateError::InvalidObject { object: "page" });
         }
         if !self.page_frames.iter().any(|frame| frame.phys == phys) {

@@ -278,7 +278,7 @@ fn matching_log_names(
     let prefix = format!("{spec_id}.");
     let mut names = Vec::new();
 
-    match fs::read(&log_dir.join(&exact)) {
+    match fs::read(log_dir.join(&exact)) {
         Ok(_) => names.push(exact.clone()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),

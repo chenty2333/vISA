@@ -1231,8 +1231,8 @@ fn ids_are_unique<T>(records: &[T], mut id_of: impl FnMut(&T) -> u64) -> bool {
     true
 }
 
-fn next_id<T>(records: &[T], mut id: impl FnMut(&T) -> u64) -> u64 {
-    records.iter().map(|record| id(record)).max().unwrap_or(0) + 1
+fn next_id<T>(records: &[T], id: impl FnMut(&T) -> u64) -> u64 {
+    records.iter().map(id).max().unwrap_or(0) + 1
 }
 
 #[cfg(test)]
