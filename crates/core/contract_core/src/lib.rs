@@ -13,7 +13,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
-use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
 use core::{error::Error, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +44,10 @@ pub const EDGE_SCHEMA_V1: u16 = 1;
 pub const EVENT_SCHEMA_V1: u16 = 1;
 pub const TRACE_SCHEMA_V1: u16 = 1;
 pub const CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION: &str = "contract-graph-snapshot-v0.1";
+pub const FEATURE_002_ID: &str = "002-contract-core-stabilization";
+pub const FEATURE_002_EVIDENCE_SHAPE_STATUS: &str = "feature-local";
+pub const FEATURE_002_EVIDENCE_BOUNDARY: EvidenceBoundaryLevel =
+    EvidenceBoundaryLevel::SemanticModel;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EvidenceBoundaryLevel {
@@ -532,6 +536,490 @@ impl ContractEdge {
         self.evidence_level = evidence_level;
         self
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase2SemanticFamily {
+    ObjectIdentity,
+    Generation,
+    GraphEdges,
+    CapabilityAuthority,
+    WaitState,
+    EventEvidence,
+    TrapAttribution,
+    Cleanup,
+    GuestMemory,
+    StableViews,
+    GraphValidation,
+}
+
+impl Phase2SemanticFamily {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ObjectIdentity => "object-identity",
+            Self::Generation => "generation",
+            Self::GraphEdges => "graph-edges",
+            Self::CapabilityAuthority => "capability-authority",
+            Self::WaitState => "wait-state",
+            Self::EventEvidence => "event-evidence",
+            Self::TrapAttribution => "trap-attribution",
+            Self::Cleanup => "cleanup",
+            Self::GuestMemory => "guest-memory",
+            Self::StableViews => "stable-views",
+            Self::GraphValidation => "graph-validation",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "object-identity" => Some(Self::ObjectIdentity),
+            "generation" => Some(Self::Generation),
+            "graph-edges" => Some(Self::GraphEdges),
+            "capability-authority" => Some(Self::CapabilityAuthority),
+            "wait-state" => Some(Self::WaitState),
+            "event-evidence" => Some(Self::EventEvidence),
+            "trap-attribution" => Some(Self::TrapAttribution),
+            "cleanup" => Some(Self::Cleanup),
+            "guest-memory" => Some(Self::GuestMemory),
+            "stable-views" => Some(Self::StableViews),
+            "graph-validation" => Some(Self::GraphValidation),
+            _ => None,
+        }
+    }
+
+    pub const fn all() -> &'static [Self] {
+        &PHASE2_SEMANTIC_FAMILIES
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase2CoverageSurfaceKind {
+    ObjectKind,
+    EdgeMode,
+    CommandArea,
+    StateTransition,
+}
+
+impl Phase2CoverageSurfaceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ObjectKind => "object-kind",
+            Self::EdgeMode => "edge-mode",
+            Self::CommandArea => "command-area",
+            Self::StateTransition => "state-transition",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Phase2CoverageUnit {
+    pub unit_id: &'static str,
+    pub family: Phase2SemanticFamily,
+    pub surface_kind: Phase2CoverageSurfaceKind,
+    pub surface: &'static str,
+    pub positive_scenario: &'static str,
+    pub negative_scenario: &'static str,
+}
+
+pub const PHASE2_SEMANTIC_FAMILIES: [Phase2SemanticFamily; 11] = [
+    Phase2SemanticFamily::ObjectIdentity,
+    Phase2SemanticFamily::Generation,
+    Phase2SemanticFamily::GraphEdges,
+    Phase2SemanticFamily::CapabilityAuthority,
+    Phase2SemanticFamily::WaitState,
+    Phase2SemanticFamily::EventEvidence,
+    Phase2SemanticFamily::TrapAttribution,
+    Phase2SemanticFamily::Cleanup,
+    Phase2SemanticFamily::GuestMemory,
+    Phase2SemanticFamily::StableViews,
+    Phase2SemanticFamily::GraphValidation,
+];
+
+pub const PHASE2_COVERAGE_UNITS: [Phase2CoverageUnit; 11] = [
+    Phase2CoverageUnit {
+        unit_id: "phase2.object-identity",
+        family: Phase2SemanticFamily::ObjectIdentity,
+        surface_kind: Phase2CoverageSurfaceKind::ObjectKind,
+        surface: "stable-object-kind-and-nonzero-id",
+        positive_scenario: "object ref has a stable kind and nonzero identity",
+        negative_scenario: "object ref with id=0 is rejected",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.generation",
+        family: Phase2SemanticFamily::Generation,
+        surface_kind: Phase2CoverageSurfaceKind::ObjectKind,
+        surface: "generation-bearing-internal-object",
+        positive_scenario: "internal object carries a nonzero generation",
+        negative_scenario: "internal object generation=0 is rejected",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.graph-edges",
+        family: Phase2SemanticFamily::GraphEdges,
+        surface_kind: Phase2CoverageSurfaceKind::EdgeMode,
+        surface: "live-historical-cleanup-effect-external-edge",
+        positive_scenario: "edge mode preserves live, history, cleanup, or external meaning",
+        negative_scenario: "edge mode cannot claim stronger evidence than the carrier boundary",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.capability-authority",
+        family: Phase2SemanticFamily::CapabilityAuthority,
+        surface_kind: Phase2CoverageSurfaceKind::StateTransition,
+        surface: "grant-delegate-attenuate-revoke-authority",
+        positive_scenario: "capability authority records subject, object, rights, and provenance",
+        negative_scenario: "stale or unproven capability authority is rejected",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.wait-state",
+        family: Phase2SemanticFamily::WaitState,
+        surface_kind: Phase2CoverageSurfaceKind::StateTransition,
+        surface: "wait-create-pending-resolve-cancel-restart",
+        positive_scenario: "wait lifecycle records owner generation and event bridge",
+        negative_scenario: "wait referencing inactive owner generation is rejected",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.event-evidence",
+        family: Phase2SemanticFamily::EventEvidence,
+        surface_kind: Phase2CoverageSurfaceKind::CommandArea,
+        surface: "event-log-command-evidence",
+        positive_scenario: "event evidence is bounded to semantic-model facts",
+        negative_scenario: "event evidence cannot import private runtime state",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.trap-attribution",
+        family: Phase2SemanticFamily::TrapAttribution,
+        surface_kind: Phase2CoverageSurfaceKind::ObjectKind,
+        surface: "trap-attribution-to-stable-objects",
+        positive_scenario: "trap is attributed to stable store, activation, code, or artifact refs",
+        negative_scenario: "trap attribution missing a generation-bearing ref is rejected",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.cleanup",
+        family: Phase2SemanticFamily::Cleanup,
+        surface_kind: Phase2CoverageSurfaceKind::StateTransition,
+        surface: "cleanup-begin-step-commit-idempotence",
+        positive_scenario: "cleanup effect records tombstone and release effects",
+        negative_scenario: "cleanup effect cannot create live ownership",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.guest-memory",
+        family: Phase2SemanticFamily::GuestMemory,
+        surface_kind: Phase2CoverageSurfaceKind::ObjectKind,
+        surface: "guest-address-space-vma-page-operation",
+        positive_scenario: "guest memory facts describe semantic addresses and operations",
+        negative_scenario: "guest memory fact cannot claim physical substrate truth",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.stable-views",
+        family: Phase2SemanticFamily::StableViews,
+        surface_kind: Phase2CoverageSurfaceKind::CommandArea,
+        surface: "stable-validation-and-view-records",
+        positive_scenario: "stable views expose semantic state and structured violations",
+        negative_scenario: "stable view cannot expose private runtime fields",
+    },
+    Phase2CoverageUnit {
+        unit_id: "phase2.graph-validation",
+        family: Phase2SemanticFamily::GraphValidation,
+        surface_kind: Phase2CoverageSurfaceKind::CommandArea,
+        surface: "all-independent-violations",
+        positive_scenario: "validator reports every independently detectable violation",
+        negative_scenario: "missing positive or negative coverage for a Phase 2 unit is rejected",
+    },
+];
+
+pub const fn phase2_semantic_families() -> &'static [Phase2SemanticFamily] {
+    &PHASE2_SEMANTIC_FAMILIES
+}
+
+pub const fn phase2_coverage_units() -> &'static [Phase2CoverageUnit] {
+    &PHASE2_COVERAGE_UNITS
+}
+
+pub fn phase2_coverage_unit(unit_id: &str) -> Option<&'static Phase2CoverageUnit> {
+    PHASE2_COVERAGE_UNITS.iter().find(|unit| unit.unit_id == unit_id)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandTransactionStatus {
+    Applied,
+    Noop,
+    Rejected,
+}
+
+impl CommandTransactionStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Noop => "noop",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractFactEffect {
+    pub subject: ObjectRef,
+    pub relation: String,
+    pub detail: String,
+    pub evidence_level: EvidenceBoundaryLevel,
+}
+
+impl ContractFactEffect {
+    pub fn semantic(subject: ObjectRef, relation: &str, detail: &str) -> Self {
+        Self {
+            subject,
+            relation: relation.to_owned(),
+            detail: detail.to_owned(),
+            evidence_level: FEATURE_002_EVIDENCE_BOUNDARY,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventEvidence {
+    pub event_id: u64,
+    pub kind: String,
+    pub subject: ObjectRef,
+    pub epoch: u64,
+    pub evidence_level: EvidenceBoundaryLevel,
+    pub claim_limit: EvidenceBoundaryLevel,
+}
+
+impl EventEvidence {
+    pub fn semantic(event_id: u64, kind: &str, subject: ObjectRef, epoch: u64) -> Self {
+        Self {
+            event_id,
+            kind: kind.to_owned(),
+            subject,
+            epoch,
+            evidence_level: FEATURE_002_EVIDENCE_BOUNDARY,
+            claim_limit: FEATURE_002_EVIDENCE_BOUNDARY,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StableViewRecord {
+    pub schema: u16,
+    pub family: Phase2SemanticFamily,
+    pub object: ObjectRef,
+    pub state: String,
+    pub evidence_level: EvidenceBoundaryLevel,
+}
+
+impl StableViewRecord {
+    pub fn semantic(family: Phase2SemanticFamily, object: ObjectRef, state: &str) -> Self {
+        Self {
+            schema: VIEW_SCHEMA_V1,
+            family,
+            object,
+            state: state.to_owned(),
+            evidence_level: FEATURE_002_EVIDENCE_BOUNDARY,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidationViolation {
+    pub kind: String,
+    pub subject: ObjectRef,
+    pub relation: String,
+    pub expected: String,
+    pub actual: String,
+    pub severity: String,
+    pub message: String,
+}
+
+impl ValidationViolation {
+    pub fn new(
+        kind: &str,
+        subject: ObjectRef,
+        relation: &str,
+        expected: &str,
+        actual: &str,
+        message: &str,
+    ) -> Self {
+        Self {
+            kind: kind.to_owned(),
+            subject,
+            relation: relation.to_owned(),
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+            severity: "error".to_owned(),
+            message: message.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandTransaction {
+    pub command_id: String,
+    pub issuer: String,
+    pub command_area: String,
+    pub preconditions: Vec<String>,
+    pub effects: Vec<ContractFactEffect>,
+    pub events: Vec<EventEvidence>,
+    pub postconditions: Vec<String>,
+    pub status: CommandTransactionStatus,
+    pub violations: Vec<ValidationViolation>,
+}
+
+impl CommandTransaction {
+    pub fn new(command_id: &str, issuer: &str, command_area: &str) -> Self {
+        Self {
+            command_id: command_id.to_owned(),
+            issuer: issuer.to_owned(),
+            command_area: command_area.to_owned(),
+            preconditions: Vec::new(),
+            effects: Vec::new(),
+            events: Vec::new(),
+            postconditions: Vec::new(),
+            status: CommandTransactionStatus::Noop,
+            violations: Vec::new(),
+        }
+    }
+
+    pub fn with_effect(mut self, effect: ContractFactEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+
+    pub fn with_event(mut self, event: EventEvidence) -> Self {
+        self.events.push(event);
+        self
+    }
+
+    pub fn applied(mut self) -> Self {
+        self.status = CommandTransactionStatus::Applied;
+        self
+    }
+
+    pub fn rejected(mut self, violation: ValidationViolation) -> Self {
+        self.status = CommandTransactionStatus::Rejected;
+        self.effects.clear();
+        self.events.clear();
+        self.violations.push(violation);
+        self
+    }
+
+    pub const fn is_rejected(&self) -> bool {
+        matches!(self.status, CommandTransactionStatus::Rejected)
+    }
+
+    pub fn validates_no_mutation_on_reject(&self) -> ContractResult<()> {
+        if self.is_rejected() && (!self.effects.is_empty() || !self.events.is_empty()) {
+            return Err(ContractError::new(
+                "rejected command transaction must not contain effects or events",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceBoundaryClaim {
+    pub feature_id: String,
+    pub level: EvidenceBoundaryLevel,
+    pub claim_limit: EvidenceBoundaryLevel,
+    pub stable_roots: Vec<String>,
+    pub exclusions: Vec<String>,
+}
+
+impl EvidenceBoundaryClaim {
+    pub fn feature_002() -> Self {
+        Self {
+            feature_id: FEATURE_002_ID.to_owned(),
+            level: FEATURE_002_EVIDENCE_BOUNDARY,
+            claim_limit: FEATURE_002_EVIDENCE_BOUNDARY,
+            stable_roots: vec![
+                "contract-core-records".to_owned(),
+                "phase2-coverage-registry".to_owned(),
+                "feature-local-evidence-carrier".to_owned(),
+            ],
+            exclusions: vec![
+                "artifact-profile-completion".to_owned(),
+                "frontend-personality-breadth".to_owned(),
+                "real-target-substrate-behavior".to_owned(),
+                "migration-restoration".to_owned(),
+                "cross-isa-portability".to_owned(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractEvidenceCarrierKind {
+    ArtifactShaped,
+    MigrationShaped,
+}
+
+impl ContractEvidenceCarrierKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactShaped => "artifact-shaped",
+            Self::MigrationShaped => "migration-shaped",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "artifact-shaped" => Some(Self::ArtifactShaped),
+            "migration-shaped" => Some(Self::MigrationShaped),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoadmapPhase {
+    Phase3ArtifactProfile,
+    Phase4FrontendPersonality,
+    Phase5SubstrateAuthority,
+    Phase6Portability,
+}
+
+impl RoadmapPhase {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Phase3ArtifactProfile => "phase3-artifact-profile",
+            Self::Phase4FrontendPersonality => "phase4-frontend-personality",
+            Self::Phase5SubstrateAuthority => "phase5-substrate-authority",
+            Self::Phase6Portability => "phase6-portability",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoadmapDeferral {
+    pub phase: RoadmapPhase,
+    pub surface: &'static str,
+    pub reason: &'static str,
+}
+
+pub const FEATURE_002_ROADMAP_DEFERRALS: [RoadmapDeferral; 4] = [
+    RoadmapDeferral {
+        phase: RoadmapPhase::Phase3ArtifactProfile,
+        surface: "artifact/profile gate completion",
+        reason: "Feature 002 reuses artifact-shaped evidence without proving portable artifact execution",
+    },
+    RoadmapDeferral {
+        phase: RoadmapPhase::Phase4FrontendPersonality,
+        surface: "frontend/personality breadth",
+        reason: "Feature 002 defines contract facts only, not Linux/WASI personality completeness",
+    },
+    RoadmapDeferral {
+        phase: RoadmapPhase::Phase5SubstrateAuthority,
+        surface: "real target substrate authority",
+        reason: "Feature 002 remains at semantic-model evidence and excludes physical substrate behavior",
+    },
+    RoadmapDeferral {
+        phase: RoadmapPhase::Phase6Portability,
+        surface: "migration restoration and cross-ISA portability",
+        reason: "Feature 002 uses migration-shaped carriers without claiming restored execution",
+    },
+];
+
+pub const fn feature_002_roadmap_deferrals() -> &'static [RoadmapDeferral] {
+    &FEATURE_002_ROADMAP_DEFERRALS
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1069,7 +1557,7 @@ pub const fn object_kind_count() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{EvidenceBoundaryLevel, ObjectKind, object_kind_evidence_level};
+    use super::*;
 
     #[test]
     fn evidence_boundary_levels_are_ordered_by_claim_strength() {
@@ -1108,6 +1596,99 @@ mod tests {
         assert_eq!(
             EvidenceBoundaryLevel::parse("real-target-substrate"),
             Some(EvidenceBoundaryLevel::RealTargetSubstrate)
+        );
+    }
+
+    #[test]
+    fn phase2_registry_covers_every_semantic_family_once() {
+        assert_eq!(phase2_semantic_families().len(), 11);
+        assert_eq!(phase2_coverage_units().len(), phase2_semantic_families().len());
+        for family in phase2_semantic_families() {
+            let count =
+                phase2_coverage_units().iter().filter(|unit| unit.family == *family).count();
+            assert_eq!(count, 1, "{} must have exactly one canonical unit", family.as_str());
+        }
+        for unit in phase2_coverage_units() {
+            assert_eq!(phase2_coverage_unit(unit.unit_id), Some(unit));
+            assert!(!unit.positive_scenario.is_empty());
+            assert!(!unit.negative_scenario.is_empty());
+        }
+    }
+
+    #[test]
+    fn object_refs_require_stable_kind_identity_and_generation() {
+        let store = ObjectRef::new(ObjectKind::Store, 1, 1).expect("valid store ref");
+        assert_eq!(store.kind, ObjectKind::Store);
+        assert!(ObjectRef::new(ObjectKind::Store, 0, 1).is_err());
+        assert!(ObjectRef::new(ObjectKind::Store, 1, 0).is_err());
+        assert!(ObjectRef::new(ObjectKind::External, 1, 0).is_ok());
+    }
+
+    #[test]
+    fn edge_modes_and_feature_002_evidence_boundary_are_stable_contract_names() {
+        let store = ObjectRef::new(ObjectKind::Store, 1, 1).expect("valid store ref");
+        let wait = ObjectRef::new(ObjectKind::WaitToken, 2, 1).expect("valid wait ref");
+        let edge = ContractEdge::new(store, wait, RefMode::Live, "store->wait", 7);
+
+        assert_eq!(RefMode::Live.as_str(), "live");
+        assert_eq!(RefMode::Historical.as_str(), "historical");
+        assert_eq!(RefMode::CleanupEffect.as_str(), "cleanup-effect");
+        assert_eq!(RefMode::External.as_str(), "external");
+        assert_eq!(edge.evidence_level, EvidenceBoundaryLevel::SemanticModel);
+        assert!(!FEATURE_002_EVIDENCE_BOUNDARY.can_claim(EvidenceBoundaryLevel::ReferenceService));
+    }
+
+    #[test]
+    fn command_transaction_event_view_and_violation_records_keep_rejections_effect_free() {
+        let store = ObjectRef::new(ObjectKind::Store, 1, 1).expect("valid store ref");
+        let effect = ContractFactEffect::semantic(store, "grants", "capability=9");
+        let event = EventEvidence::semantic(10, "capability-grant", store, 1);
+        let view =
+            StableViewRecord::semantic(Phase2SemanticFamily::CapabilityAuthority, store, "granted");
+        let violation = ValidationViolation::new(
+            "precondition-failed",
+            store,
+            "generation",
+            "1",
+            "0",
+            "stale generation",
+        );
+
+        let applied = CommandTransaction::new("cmd-1", "test", "capability")
+            .with_effect(effect)
+            .with_event(event)
+            .applied();
+        assert_eq!(applied.status, CommandTransactionStatus::Applied);
+        assert_eq!(view.evidence_level, EvidenceBoundaryLevel::SemanticModel);
+
+        let rejected = applied.rejected(violation);
+        assert!(rejected.is_rejected());
+        assert!(rejected.effects.is_empty());
+        assert!(rejected.events.is_empty());
+        rejected.validates_no_mutation_on_reject().expect("rejected command must not mutate");
+    }
+
+    #[test]
+    fn feature_002_claim_and_deferrals_exclude_later_roadmap_surfaces() {
+        let claim = EvidenceBoundaryClaim::feature_002();
+        assert_eq!(claim.feature_id, FEATURE_002_ID);
+        assert_eq!(claim.level, EvidenceBoundaryLevel::SemanticModel);
+        assert_eq!(claim.claim_limit, EvidenceBoundaryLevel::SemanticModel);
+        for exclusion in [
+            "artifact-profile-completion",
+            "frontend-personality-breadth",
+            "real-target-substrate-behavior",
+            "migration-restoration",
+            "cross-isa-portability",
+        ] {
+            assert!(claim.exclusions.iter().any(|entry| entry == exclusion));
+        }
+
+        assert_eq!(feature_002_roadmap_deferrals().len(), 4);
+        assert!(
+            feature_002_roadmap_deferrals()
+                .iter()
+                .any(|deferral| deferral.phase == RoadmapPhase::Phase6Portability)
         );
     }
 

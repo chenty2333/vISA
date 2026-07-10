@@ -27,6 +27,7 @@ pub fn validate_migration_package(package: &MigrationPackageManifest) -> Contrac
     }
     validate_semantic_roots(package)?;
     validate_target_runtime_profile_provenance(package)?;
+    validate_migration_contract_core_evidence(package)?;
     Ok(())
 }
 

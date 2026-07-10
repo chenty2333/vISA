@@ -18,6 +18,39 @@ pub struct BoundaryValidationReportManifest {
     pub violations: Vec<BoundaryValidationViolationManifest>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ContractCoreEvidenceManifest {
+    pub feature_id: String,
+    pub evidence_boundary: String,
+    pub carrier_kind: String,
+    pub evidence_shape_status: String,
+    #[serde(default)]
+    pub contract_facts: Vec<ContractCoreFactManifest>,
+    #[serde(default)]
+    pub coverage_matrix: Vec<ContractCoreCoverageUnitManifest>,
+    #[serde(default)]
+    pub overclaim_guards: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ContractCoreFactManifest {
+    pub kind: String,
+    pub subject: String,
+    pub relation: String,
+    pub detail: String,
+    pub evidence_boundary: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ContractCoreCoverageUnitManifest {
+    pub unit_id: String,
+    pub semantic_family: String,
+    pub owned_surface: String,
+    pub positive_scenario: String,
+    pub negative_scenario: String,
+    pub coverage_status: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SubstrateBoundaryManifest {
     pub timer_epoch: u64,

@@ -16,6 +16,8 @@ pub struct MigrationPackageManifest {
     pub logical_capabilities: Vec<MigrationCapabilityManifest>,
     pub substrate_boundary: SubstrateBoundaryManifest,
     pub not_migrated: Vec<String>,
+    #[serde(default)]
+    pub contract_core_evidence: Option<ContractCoreEvidenceManifest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -938,4 +940,71 @@ pub struct SemanticRootSetManifest {
     pub interface_event_roots: Vec<String>,
     #[serde(default)]
     pub event_log_tail: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feature_002_envelope(carrier_kind: &str) -> ContractCoreEvidenceManifest {
+        ContractCoreEvidenceManifest {
+            feature_id: "002-contract-core-stabilization".to_owned(),
+            evidence_boundary: "semantic-model".to_owned(),
+            carrier_kind: carrier_kind.to_owned(),
+            evidence_shape_status: "feature-local".to_owned(),
+            contract_facts: vec![ContractCoreFactManifest {
+                kind: "semantic-family".to_owned(),
+                subject: "phase2.object-identity".to_owned(),
+                relation: "covers".to_owned(),
+                detail: "stable object kind and generation-bearing identity".to_owned(),
+                evidence_boundary: "semantic-model".to_owned(),
+            }],
+            coverage_matrix: vec![ContractCoreCoverageUnitManifest {
+                unit_id: "phase2.object-identity".to_owned(),
+                semantic_family: "object-identity".to_owned(),
+                owned_surface: "stable-object-kind-and-nonzero-id".to_owned(),
+                positive_scenario: "object ref has a stable kind and nonzero identity".to_owned(),
+                negative_scenario: "object ref with id=0 is rejected".to_owned(),
+                coverage_status: "covered".to_owned(),
+            }],
+            overclaim_guards: vec![
+                "artifact-profile-completion".to_owned(),
+                "frontend-personality-breadth".to_owned(),
+                "real-target-substrate-behavior".to_owned(),
+                "migration-restoration".to_owned(),
+                "cross-isa-portability".to_owned(),
+            ],
+        }
+    }
+
+    #[test]
+    fn contract_core_evidence_envelope_serializes_as_feature_local_shape() {
+        let envelope = feature_002_envelope("migration-shaped");
+
+        let encoded = serde_json::to_string(&envelope).expect("serialize Feature 002 envelope");
+        assert!(encoded.contains("\"feature_id\":\"002-contract-core-stabilization\""));
+        assert!(encoded.contains("\"evidence_shape_status\":\"feature-local\""));
+        assert!(encoded.contains("\"carrier_kind\":\"migration-shaped\""));
+
+        let decoded: ContractCoreEvidenceManifest =
+            serde_json::from_str(&encoded).expect("deserialize Feature 002 envelope");
+        assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn feature_local_evidence_shape_keeps_post_completion_claims_explicitly_guarded() {
+        let envelope = feature_002_envelope("artifact-shaped");
+
+        assert_eq!(envelope.evidence_boundary, "semantic-model");
+        assert_eq!(envelope.evidence_shape_status, "feature-local");
+        for guard in [
+            "artifact-profile-completion",
+            "frontend-personality-breadth",
+            "real-target-substrate-behavior",
+            "migration-restoration",
+            "cross-isa-portability",
+        ] {
+            assert!(envelope.overclaim_guards.iter().any(|entry| entry == guard));
+        }
+    }
 }

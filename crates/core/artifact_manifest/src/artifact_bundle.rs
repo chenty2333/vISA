@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ContractCoreEvidenceManifest;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ArtifactBundleManifest {
     pub schema_version: u32,
@@ -11,6 +13,8 @@ pub struct ArtifactBundleManifest {
     pub target: TargetManifest,
     pub compiler: CompilerManifest,
     pub modules: Vec<ModuleArtifactManifest>,
+    #[serde(default)]
+    pub contract_core_evidence: Option<ContractCoreEvidenceManifest>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

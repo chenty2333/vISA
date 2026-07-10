@@ -81,6 +81,7 @@ pub fn validate_artifact_manifest(manifest: &ArtifactBundleManifest) -> Contract
         let entry = manifest_entry_for_spec(manifest, spec)?;
         validate_manifest_entry(spec, entry)?;
     }
+    validate_artifact_contract_core_evidence(manifest)?;
     Ok(())
 }
 

@@ -2,3 +2,20 @@
 /.ci-cache
 
 .codex
+
+# Rust build outputs
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+
+# Local tooling and transient files
+.env*
+*.log
+*.tmp
+*.swp
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

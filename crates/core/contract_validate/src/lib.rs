@@ -7,8 +7,8 @@
 
 use artifact_manifest::{
     ArtifactBundleManifest, BoundaryValidationReportManifest, CapabilityManifest,
-    InterfaceRequirementManifest, MigrationPackageManifest, ModuleArtifactManifest,
-    ResourceLimitsManifest, SupervisorContractManifest,
+    ContractCoreEvidenceManifest, InterfaceRequirementManifest, MigrationPackageManifest,
+    ModuleArtifactManifest, ResourceLimitsManifest, SupervisorContractManifest,
 };
 use contract_core::*;
 use service_core::net_contract::NETWORK_CONTRACT_VERSION;
@@ -176,10 +176,12 @@ pub struct ArtifactInterfaceCompatibilityReport {
 
 mod artifact;
 mod audit;
+mod contract_core_evidence;
 mod migration;
 
 pub use artifact::*;
 pub use audit::*;
+pub use contract_core_evidence::*;
 pub use migration::*;
 
 #[cfg(test)]

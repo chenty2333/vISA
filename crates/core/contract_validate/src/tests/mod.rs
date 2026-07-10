@@ -122,6 +122,7 @@ fn valid_manifest() -> ArtifactBundleManifest {
             runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
         },
         modules,
+        contract_core_evidence: None,
     }
 }
 
@@ -289,6 +290,7 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             vma_region_count: 0,
             page_object_count: 0,
             guest_memory_fault_count: 0,
+            guest_memory_operation_count: 0,
             buffer_cache_object_count: 0,
             file_object_count: 0,
             directory_object_count: 0,
@@ -440,6 +442,7 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             vma_regions: Vec::new(),
             page_objects: Vec::new(),
             guest_memory_faults: Vec::new(),
+            guest_memory_operations: Vec::new(),
             buffer_cache_objects: Vec::new(),
             file_objects: Vec::new(),
             directory_objects: Vec::new(),
@@ -517,6 +520,7 @@ fn minimal_migration_package() -> MigrationPackageManifest {
             native_state_policy: "test".to_owned(),
         },
         not_migrated: Vec::new(),
+        contract_core_evidence: None,
     }
 }
 
@@ -2309,6 +2313,7 @@ fn migration_package_rejects_boundary_violation_root_mismatch() {
 }
 
 mod compatibility;
+mod contract_core_evidence;
 mod manifest_validation;
 mod object_refs;
 mod roots_block_activation;

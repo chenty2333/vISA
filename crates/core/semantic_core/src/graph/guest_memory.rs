@@ -180,10 +180,12 @@ fn operation_refs_are_valid(
     regions: &[VmaRegionRecord],
     pages: &[PageObjectRecord],
 ) -> bool {
-    let before_refs_valid = operation.region_before.is_none_or(|region| contains_region_id(regions, region))
-        && operation.page_before.is_none_or(|page| contains_page_id(pages, page));
-    let after_refs_valid = operation.region_after.is_none_or(|region| contains_region_ref(regions, region))
-        && operation.page_after.is_none_or(|page| contains_page_ref(pages, page));
+    let before_refs_valid =
+        operation.region_before.is_none_or(|region| contains_region_id(regions, region))
+            && operation.page_before.is_none_or(|page| contains_page_id(pages, page));
+    let after_refs_valid =
+        operation.region_after.is_none_or(|region| contains_region_ref(regions, region))
+            && operation.page_after.is_none_or(|page| contains_page_ref(pages, page));
     if !before_refs_valid || !after_refs_valid {
         return false;
     }

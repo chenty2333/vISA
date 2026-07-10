@@ -9,6 +9,7 @@ mod contract_graph;
 mod io_capability_binding;
 mod io_objects;
 mod io_wait_cleanup;
+mod phase2_contract_core;
 mod store_wait;
 
 pub(super) use capability::handle_for;

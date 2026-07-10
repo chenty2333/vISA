@@ -92,11 +92,7 @@ pub struct GuestMemoryOperationRef(pub ContractObjectRef);
 
 impl GuestMemoryOperationRef {
     pub const fn new(id: GuestMemoryOperationId, generation: Generation) -> Self {
-        Self(ContractObjectRef::new(
-            ContractObjectKind::GuestMemoryOperation,
-            id,
-            generation,
-        ))
+        Self(ContractObjectRef::new(ContractObjectKind::GuestMemoryOperation, id, generation))
     }
 
     pub const fn id(self) -> GuestMemoryOperationId {
@@ -624,8 +620,9 @@ impl GuestMemoryManager {
         aspace_record.root_region.get_or_insert(region);
         aspace_record.vma_generation += 1;
         aspace_record.page_map_generation += 1;
+        let operation_ref = self.next_operation_ref();
         self.push_operation(GuestMemoryOperationRecord {
-            operation_ref: self.next_operation_ref(),
+            operation_ref,
             generation: 1,
             operation: GuestMemoryOperationKind::Mmap,
             status: GuestMemoryOperationStatus::Applied,
@@ -776,8 +773,9 @@ impl GuestMemoryManager {
         let aspace = self.aspace_exact_mut(aspace)?;
         aspace.vma_generation += 1;
         aspace.page_map_generation += 1;
+        let operation_ref = self.next_operation_ref();
         self.push_operation(GuestMemoryOperationRecord {
-            operation_ref: self.next_operation_ref(),
+            operation_ref,
             generation: 1,
             operation: GuestMemoryOperationKind::Munmap,
             status: GuestMemoryOperationStatus::Applied,
@@ -813,8 +811,9 @@ impl GuestMemoryManager {
         let aspace = self.aspace_exact_mut(before.aspace)?;
         aspace.vma_generation += 1;
         aspace.page_map_generation += 1;
+        let operation_ref = self.next_operation_ref();
         self.push_operation(GuestMemoryOperationRecord {
-            operation_ref: self.next_operation_ref(),
+            operation_ref,
             generation: 1,
             operation: GuestMemoryOperationKind::Mprotect,
             status: GuestMemoryOperationStatus::Applied,
@@ -855,8 +854,9 @@ impl GuestMemoryManager {
         let range_len = old_break
             .map(|old_break| old_break.max(new_break) - old_break.min(new_break))
             .unwrap_or(0);
+        let operation_ref = self.next_operation_ref();
         self.push_operation(GuestMemoryOperationRecord {
-            operation_ref: self.next_operation_ref(),
+            operation_ref,
             generation: 1,
             operation: GuestMemoryOperationKind::Brk,
             status: GuestMemoryOperationStatus::Applied,
