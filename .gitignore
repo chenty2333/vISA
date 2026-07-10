@@ -1,21 +1,19 @@
-/target
-/.ci-cache
+# Repository build and CI outputs
+/target/
+/.ci-cache/
 
-.codex
+# Root-local environment files; templates remain visible
+/.env*
+!/.env.example
+!/.env.sample
+!/.env.template
 
-# Rust build outputs
-debug/
-release/
-*.rs.bk
-*.rlib
-*.prof*
-
-# Local tooling and transient files
-.env*
-*.log
-*.tmp
+# Root-local editor state
+/.vscode/
+/.idea/
 *.swp
-.vscode/
-.idea/
+*.swo
+
+# OS metadata
 .DS_Store
 Thumbs.db

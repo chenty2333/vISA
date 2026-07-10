@@ -145,6 +145,11 @@ LTP caches below `.ci-cache/`; the normal Compose configuration uses named
 volumes. LTP build helpers default to an XDG or home cache outside repository
 build output because their artifacts can be large.
 
+Local LTP binaries, generated manifests, logs, reports, and other runner output
+must use a scenario-specific path below `target/<scenario>/` or a location
+outside the repository. Do not create catch-all `output/`, `manifest/`, or log
+directories beside source code and then hide them with broad ignore rules.
+
 Do not commit generated logs, reports, binaries, or caches merely because a
 runner produced them. Commit an evidence artifact only when a maintained
 validation contract explicitly requires it and its provenance is recorded.
