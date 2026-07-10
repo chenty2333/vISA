@@ -26,30 +26,30 @@ providers, hand-written reports, or direct canonical-state mutation.
 
 ## Current automated gates
 
-GitHub Actions currently runs one Docker-based job on pushes and pull requests.
-It validates the Compose configuration, builds the development image, and runs
-the gates in `scripts/ci-gate.sh`. The supported local wrapper is documented in
-[DEVELOPMENT.md](DEVELOPMENT.md).
+GitHub Actions currently runs one Docker-based `full` job on pushes and pull
+requests. It validates the Compose configuration, builds the development image,
+and invokes the same tier implementation exposed locally by
+`scripts/run-docker-ci-gate.sh`.
 
-| Gate | Current operation | What a pass establishes |
+| Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
-| `metadata` | `cargo metadata --no-deps` | Cargo can resolve workspace metadata. |
-| `fmt` | `cargo fmt --all --check` | Workspace Rust source satisfies rustfmt. |
-| `check-wasm` | `cargo check-wasm` | The selected service, driver, Linux, network, snapshot, VFS, and Wasm application packages type-check for `wasm32-unknown-unknown`. |
-| `visa-conformance` | Tests the `visa-conformance` crate, then runs `validate-sample` | The conformance validator's tests pass and the checked-in catalog/sample reports satisfy its current format and minimum-matrix rules. |
-| `kernel` | Checks the `kernel` package for `x86_64-unknown-none` | The kernel package type-checks for that target. |
+| `fast` | Locked metadata, formatting, active-spine dependency migration guard, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, Wasmtime adapter, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
+| `full` | Everything in `fast`, shell parsing, default-feature workspace tests, current opt-in feature tests, active no-std check, selected Wasm check, kernel target check, benchmark compilation, and report/artifact fixture gates | The checked repository builds and tests across its declared compile targets and current fixture contracts. It does not prove a live handoff. |
 
-The currently implemented local entry point is `scripts/run-docker-ci-gate.sh`;
-it accepts the gate names above. The tiers below are a target organization,
-not additional implemented command names.
+The dependency migration guard is not the final architecture check. It protects
+only the Stage 1 production spine, permits a shrinking set of four named
+pre-reset edges, and fails on any new violation. Comparison-oracle packages such
+as `contract_validate` remain compiled by `full` but are not production-spine
+truth. `python3 scripts/check-dependency-direction.py --strict` rejects all four;
+strict mode becomes the fast gate as soon as those edges have been removed.
 
 ### Current limitations
 
 The standard CI job does not currently run:
 
-- Clippy;
-- a full workspace `cargo check` or `cargo test`;
-- all core, runtime, adapter, and integration tests;
+- workspace-wide Clippy outside the Stage 1 active spine;
+- `cargo deny`; the tool is not installed in the development image and the
+  existing multiple-version policy has not been reconciled with the lockfile;
 - an end-to-end handoff with real timer/KV adapters, destination
   reauthorization, source fencing, and lifecycle fault injection;
 - the target multi-dimensional claim/evidence matrix: the current conformance
@@ -65,24 +65,27 @@ The standard CI job does not currently run:
 A green CI result means only that these repository checks passed. It does not
 establish continuity, migration, heterogeneity, or production safety.
 
-## Target validation tiers
+## Validation tiers
 
-Until a consolidated developer interface is implemented, these tiers define
-coverage rather than shell commands.
+`fast` and `full` are implemented shell commands. `system`, `release`, and claim
+gates below remain acceptance contracts until their executable runners exist.
 
 ### Fast
 
-The fast tier is the ordinary edit loop: formatting, linting, metadata, focused
-contract/reducer/coordinator and deterministic state-machine tests, plus
-dependency-direction checks. It proves local logic and structural invariants,
-not adapter or continuity behavior.
+The fast tier is the ordinary edit loop: formatting, locked metadata, strict
+linting and focused tests for the active spine, plus the dependency migration
+guard. It proves local logic and guarded structural direction, not adapter or
+continuity behavior. While migration mode remains enabled, a fast pass does not
+mean the final dependency graph is already clean.
 
 ### Full
 
-The full tier is the pull-request integration gate: all applicable workspace
-tests, Clippy, feature combinations, host/`no_std`/Wasm/kernel checks,
-compatibility round trips, and coordinator-adapter integration. It proves
-repository consistency, not a live handoff or heterogeneous claim.
+The full tier is the pull-request integration gate. It adds workspace tests,
+declared opt-in feature tests, host/no-std/Wasm/kernel compilation, benchmark
+compilation, and compatibility/report fixture checks. Clippy is intentionally
+strict on the active spine rather than frozen later-stage code. A pass proves
+repository consistency within those named targets, not a live handoff or a
+heterogeneous claim.
 
 ### System
 

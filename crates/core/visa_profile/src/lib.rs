@@ -1207,11 +1207,10 @@ mod tests {
             assert_eq!(family.profile_authority(), profile_authority);
             assert_eq!(family.is_required_by(p1), p1_required);
             assert_eq!(family.is_required_by(p2), p2_required);
-            assert_eq!(
+            assert!(
                 family.is_supported_by(VisaCapabilitySet::for_profile(
                     VisaProfileLevel::GuestFrontend
-                )),
-                true
+                ))
             );
             assert!(!family.operations().is_empty());
         }

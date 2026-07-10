@@ -123,18 +123,17 @@ Run the current repository gates with:
 scripts/run-docker-ci-gate.sh
 ```
 
-Or run selected gates while editing documentation or repository metadata:
+Run the ordinary edit-loop gate while developing:
 
 ```sh
-scripts/run-docker-ci-gate.sh metadata fmt
+scripts/run-docker-ci-gate.sh fast
 ```
 
-The current gate covers metadata, formatting, selected Wasm packages,
-`visa-conformance` report/schema checks, and the kernel target check. It is not
-yet a complete workspace, cross-runtime, cross-ISA, or system-continuity gate.
-The developer command surface will be consolidated as implementation work
-proceeds; the target validation tiers are already defined in the validation
-document.
+The cumulative `full` gate additionally covers workspace and feature tests,
+selected Wasm packages, no-std and kernel target checks, benchmark compilation,
+and report fixtures. It is not a system-continuity gate; that command will be
+added only when it runs the real Stage 1 source/destination scenario and its
+fault matrix.
 
 ## Engineering principles
 

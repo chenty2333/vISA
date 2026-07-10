@@ -53,56 +53,61 @@ VISA_DOCKER_UID="$(id -u)" VISA_DOCKER_GID="$(id -g)" \
 The repository is mounted at `/workspace`. Cargo and LTP caches use Docker
 volumes by default.
 
-## Current repository gate
+## Repository gates
 
-Run every currently defined CI gate in the development image:
-
-```sh
-scripts/run-docker-ci-gate.sh
-```
-
-Run only named gates while iterating:
+The repository exposes two implemented, cumulative validation tiers. Run the
+ordinary edit-loop gate with:
 
 ```sh
-scripts/run-docker-ci-gate.sh metadata fmt
-scripts/run-docker-ci-gate.sh check-wasm visa-conformance kernel
+scripts/run-docker-ci-gate.sh fast
 ```
 
-`scripts/run-docker-ci-gate.sh` builds the image, then invokes
-`scripts/ci-gate.sh` inside it. `--skip-build` reuses an existing image.
-`--ci-cache` overlays `compose.ci.yaml` and uses bind-mounted `.ci-cache/`
-directories, matching the cache layout used by GitHub Actions.
+Run the pull-request gate with:
 
-The available gate names and current actions are:
+```sh
+scripts/run-docker-ci-gate.sh full
+```
 
-| Gate | Current action |
-| --- | --- |
-| `metadata` | `cargo metadata --no-deps` |
-| `fmt` | `cargo fmt --all --check` |
-| `check-wasm` | `cargo check-wasm` for the selected Wasm-target packages |
-| `visa-conformance` | Package tests plus `validate-sample` |
-| `kernel` | Check `kernel` for `x86_64-unknown-none` |
+With no tier argument the wrapper runs `full`. It validates the Compose
+configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
+implementation used by CI. `--skip-build` reuses an existing image.
+`--ci-cache` overlays `compose.ci.yaml` and uses the bind-mounted `.ci-cache/`
+layout used by GitHub Actions.
 
-See [VALIDATION.md](VALIDATION.md) for what each pass establishes and does not
-establish. In particular, `validate-sample` checks format and current policy; it
-does not substitute for executing a real workload.
+`fast` checks locked metadata, formatting, active-spine dependency direction,
+strict Clippy for active-spine targets, and active-spine tests. `full` includes
+`fast`, then adds shell parsing, default-feature workspace tests, every current
+opt-in feature, active no-std compilation, selected Wasm packages, the kernel
+target, benchmark compilation, and report/artifact fixture gates. See
+[VALIDATION.md](VALIDATION.md) for the exact proof boundary.
 
-CI uses these same gates through the two Compose files, building
-`visa-dev:latest` before running each gate in a separate container.
+The dependency checker currently runs in an explicit migration mode. It allows
+only a shrinking, named set of pre-reset direction violations and rejects any
+new violation. Inspect the final target at any time with:
+
+```sh
+python3 scripts/check-dependency-direction.py --strict
+```
+
+Strict mode is intentionally red until the four listed production edges are removed.
+Once none remain, change the fast gate to use `--strict` and delete the migration
+debt set rather than retaining compatibility exceptions.
+
+There is no `system` command yet. A schema-valid fixture or a placeholder runner
+would not satisfy the Stage 1 system contract, so that tier will be added only
+with the real isolated source/destination handoff runner.
 
 ## Host Cargo commands
 
-The repository currently defines these aliases in `.cargo/config.toml`:
+The repository defines these target-specific aliases in `.cargo/config.toml`:
 
 ```sh
-cargo check-host
 cargo check-wasm
 cargo wasm
 cargo kernel
 cargo run-vm --verbose
 ```
 
-- `check-host` checks the workspace for the host target.
 - `check-wasm` checks the selected Wasm-target packages for
   `wasm32-unknown-unknown`.
 - `wasm` builds those packages.
@@ -119,7 +124,8 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` is its container-side implementation.
+   `ci-gate.sh` implements the cumulative `fast` and `full` tiers inside the
+   development environment.
 2. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
@@ -176,12 +182,9 @@ Choose validation based on the claim affected by the change:
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
-## Future command surface
+## Next validation tier
 
-The repository reset intends to converge on one small root interface for
-build, test, and scenario execution with fast, full, system, and release/claim
-validation levels. Until an interface is implemented and CI calls it, the
-Docker gate and current Cargo aliases above remain the truthful interfaces.
-
-The wrapper may delegate to these scripts or a Rust task runner; stable command
-semantics and honest validation boundaries are the goal.
+The next command-surface addition is `system`, backed by the Stage 1 cooperative
+handoff runner and evidence validator. Release and claim gates follow only when
+their runtime/ISA/substrate matrix and provenance inputs exist. Until then,
+`fast` and `full` are the complete implemented root interface.

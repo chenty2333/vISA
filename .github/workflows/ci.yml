@@ -67,17 +67,5 @@ jobs:
       - name: Inspect Docker dev image
         run: docker image inspect visa-dev:latest >/dev/null
 
-      - name: Metadata
-        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh metadata
-
-      - name: Format
-        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh fmt
-
-      - name: Check wasm targets
-        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh check-wasm
-
-      - name: visa-conformance
-        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh visa-conformance
-
-      - name: Kernel target check
-        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh kernel
+      - name: Full repository gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh full
