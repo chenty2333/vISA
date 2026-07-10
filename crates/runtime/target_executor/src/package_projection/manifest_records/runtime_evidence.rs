@@ -451,6 +451,7 @@ mod tests {
                 target_artifact_format: "target-artifact-image-v1".to_owned(),
                 runtime_executor_abi: "test-runtime-executor-abi".to_owned(),
             },
+            contract_core_evidence: None,
             modules: Vec::new(),
         }
     }

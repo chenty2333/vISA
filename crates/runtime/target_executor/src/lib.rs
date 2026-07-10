@@ -1534,6 +1534,7 @@ mod tests {
                 target_artifact_format: "target-artifact-image-v1".to_owned(),
                 runtime_executor_abi: "visa-runtime-only-executor-v0".to_owned(),
             },
+            contract_core_evidence: None,
             modules: Vec::new(),
         }
     }

@@ -111,6 +111,42 @@ pub(crate) fn guest_memory_fault_manifest(
     }
 }
 
+pub(crate) fn guest_memory_operation_manifest(
+    operation: &semantic_core::GuestMemoryOperationRecord,
+) -> artifact_manifest::GuestMemoryOperationManifest {
+    let perms = |value: semantic_core::GuestPerms| GuestPermsManifest {
+        readable: value.contains(semantic_core::GuestPerms::READ),
+        writable: value.contains(semantic_core::GuestPerms::WRITE),
+        executable: value.contains(semantic_core::GuestPerms::EXEC),
+    };
+
+    artifact_manifest::GuestMemoryOperationManifest {
+        id: operation.operation_ref.id(),
+        generation: operation.generation,
+        operation: operation.operation.as_str().to_owned(),
+        status: operation.status.as_str().to_owned(),
+        aspace: contract_object_ref_manifest(operation.aspace.object_ref()),
+        range: GuestVaRangeManifest { start: operation.range.start, len: operation.range.len },
+        region_before: operation
+            .region_before
+            .map(|value| contract_object_ref_manifest(value.object_ref())),
+        region_after: operation
+            .region_after
+            .map(|value| contract_object_ref_manifest(value.object_ref())),
+        page_before: operation
+            .page_before
+            .map(|value| contract_object_ref_manifest(value.object_ref())),
+        page_after: operation
+            .page_after
+            .map(|value| contract_object_ref_manifest(value.object_ref())),
+        perms_before: operation.perms_before.map(perms),
+        perms_after: operation.perms_after.map(perms),
+        brk_before: operation.brk_before,
+        brk_after: operation.brk_after,
+        reason: operation.reason.clone(),
+    }
+}
+
 pub(crate) fn runnable_queue_manifest(
     queue: &semantic_core::RunnableQueueRecord,
 ) -> RunnableQueueManifest {

@@ -296,6 +296,7 @@ fn compile_artifacts(
             target_artifact_format: TARGET_ARTIFACT_FORMAT_V1.to_owned(),
             runtime_executor_abi: RUNTIME_ONLY_EXECUTOR_ABI.to_owned(),
         },
+        contract_core_evidence: None,
         modules,
     };
     let manifest_path = artifact_root.join("manifest.json");

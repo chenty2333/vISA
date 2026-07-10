@@ -2101,6 +2101,7 @@ impl VisaRuntime {
             &snapshot.vma_regions,
             &snapshot.page_objects,
             &snapshot.guest_memory_faults,
+            &snapshot.guest_memory_operations,
         ) {
             return Err(VisaRuntimeError::InvalidPortableSnapshot("invalid guest memory record"));
         }

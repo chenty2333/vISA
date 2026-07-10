@@ -171,6 +171,7 @@ pub(crate) fn demo_migration_package(
             vma_region_count: semantic.vma_region_count(),
             page_object_count: semantic.page_object_count(),
             guest_memory_fault_count: semantic.guest_memory_fault_count(),
+            guest_memory_operation_count: semantic.guest_memory_operation_count(),
             buffer_cache_object_count: semantic.buffer_cache_object_count(),
             file_object_count: semantic.file_object_count(),
             directory_object_count: semantic.directory_object_count(),
@@ -582,6 +583,11 @@ pub(crate) fn demo_migration_package(
                 .iter()
                 .map(guest_memory_fault_manifest)
                 .collect(),
+            guest_memory_operations: semantic
+                .guest_memory_operations()
+                .iter()
+                .map(guest_memory_operation_manifest)
+                .collect(),
             buffer_cache_objects: semantic
                 .buffer_cache_objects()
                 .iter()
@@ -796,6 +802,7 @@ pub(crate) fn demo_migration_package(
             "IRQ registrations".to_owned(),
             "translated guest code cache".to_owned(),
         ],
+        contract_core_evidence: None,
     }
 }
 

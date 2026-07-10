@@ -33,6 +33,7 @@ fn c1_manifest_stub() -> ArtifactBundleManifest {
             target_artifact_format: "target-artifact-image-v1".to_owned(),
             runtime_executor_abi: "visa-runtime-only-executor-v0".to_owned(),
         },
+        contract_core_evidence: None,
         modules: vec![artifact_manifest::ModuleArtifactManifest {
             package: "console_service".to_owned(),
             artifact_name: "driver_console".to_owned(),
