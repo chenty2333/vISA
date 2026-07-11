@@ -41,7 +41,7 @@ if ! command -v "$runltp_bin" >/dev/null 2>&1; then
 fi
 
 run_conformance() {
-    cargo run --quiet -p visa-conformance -- "$@"
+    cargo run --quiet -p conformance-oracle -- "$@"
 }
 
 logs_dir="$output_dir/logs"

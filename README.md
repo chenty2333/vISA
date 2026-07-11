@@ -4,16 +4,18 @@
 are rebound.**
 
 vISA is a research system for capability-safe state continuity and conformance
-across heterogeneous WebAssembly runtimes and substrates. Its initial design
-direction is to let a stateful component stop at an explicit safe point, carry
+across heterogeneous WebAssembly runtimes and substrates. Its first reference
+capability lets a stateful component stop at an explicit safe point, carry
 portable semantic state instead of native handles, reacquire authority, rebuild
 resource bindings, resume, and produce executable evidence about what happened.
 
-> **Project status:** architecture reset and research prototype. The target
-> boundary is documented, but the current implementation is still converging
-> toward one canonical state model and one runtime path. Do not interpret the
-> existing breadth of crates, scenarios, or sample reports as a stable public
-> API or as proof of cross-runtime or cross-ISA continuity.
+> **Project status:** research prototype. The Stage 1 named reference cell is
+> implemented and has passed all 31 registered lifecycle and fault cases plus
+> independent evidence-bundle validation. That cell uses isolated source and
+> destination processes through the vISA Wasmtime adapter on x86-64 Linux, with
+> host-process isolation and a durable SQLite timer/KV provider. This is not a
+> stable public API or proof of cross-runtime, cross-ISA, or production
+> continuity.
 
 ## The problem
 
@@ -86,11 +88,10 @@ capability.
 
 ## Current repository
 
-The repository contains substantial exploratory work across semantic modeling,
-artifact/runtime paths, a no-std kernel target, Linux and service personalities,
-Virtio-backed adapters, migration packages, benchmarks, and conformance report
-tooling. Some of these paths predate the current boundary and are migration or
-deletion candidates rather than stable architecture.
+The active Stage 1 spine is protected by strict dependency-direction and legacy
+deletion checks. Broader pre-reset models and target experiments remain isolated
+as oracle, reference, or compile-only paths; they do not define Stage 1 semantic
+truth.
 
 Current documentation:
 
@@ -131,9 +132,18 @@ scripts/run-docker-ci-gate.sh fast
 
 The cumulative `full` gate additionally covers workspace and feature tests,
 selected Wasm packages, no-std and kernel target checks, benchmark compilation,
-and report fixtures. It is not a system-continuity gate; that command will be
-added only when it runs the real Stage 1 source/destination scenario and its
-fault matrix.
+and report fixtures. It is not a live handoff gate.
+
+Run the standalone Stage 1 system gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system
+```
+
+`system` executes the real 31-case source/destination lifecycle, retains its
+artifacts, and independently validates the resulting evidence bundle. It does
+not repeat `full`; run both tiers when validating the repository and the named
+Stage 1 reference cell together.
 
 ## Engineering principles
 

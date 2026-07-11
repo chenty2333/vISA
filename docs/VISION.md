@@ -95,10 +95,10 @@ comparison baselines. They must not become portable semantic truth.
 
 ## Unit of continuity
 
-The initial design direction uses a vISA-aware WebAssembly component or
-component workload at an explicit quiescence boundary. Whether the eventual
-stable unit is one component, a composed component group, or another workload
-container remains to be validated by real use cases.
+The Stage 1 reference cell uses a vISA-aware WebAssembly component at an
+explicit quiescence boundary. Whether the eventual stable unit is one
+component, a composed component group, or another workload container remains
+to be validated by real use cases.
 
 vISA does not promise transparent continuation of an arbitrary unmodified
 native process at any instruction. A compute-state carrier may preserve Wasm
@@ -148,9 +148,10 @@ the success criteria are:
 - successful, denied, unsupported, failed, cancelled, and cleanup paths;
 - destination reauthorization and source fencing;
 - portable snapshot and replayable semantic evidence;
-- fault injection at every lifecycle transition; and
+- the named Stage 1 lifecycle and fault matrix; and
 - external users who can run the conformance harness on their own workload.
 
-Until then, vISA is a research prototype. A schema-valid report, a reference
-harness, or a broad object catalog is not evidence that the complete system
-claim has been achieved.
+vISA remains a research prototype while later matrix cells and external
+workloads are unvalidated. A schema-valid report, a reference harness, or a
+broad object catalog is not evidence that a wider system claim has been
+achieved.

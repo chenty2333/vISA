@@ -3,14 +3,29 @@ set -Eeuo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-gate.sh [fast|full]
+usage: scripts/ci-gate.sh [fast|full|system]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
-
-Stage 1 system validation is not implemented and is intentionally not exposed.
+The system tier independently runs and validates the real Stage 1 lifecycle;
+it does not repeat the full tier.
 EOF
 }
+
+system_artifact_root=""
+system_bundle_path=""
+
+on_error() {
+    local status=$?
+    trap - ERR
+    if [[ -n "$system_artifact_root" ]]; then
+        printf 'Stage 1 artifact root retained after failure: %s\n' "$system_artifact_root" >&2
+        printf 'Stage 1 evidence bundle path: %s\n' "$system_bundle_path" >&2
+    fi
+    exit "$status"
+}
+
+trap on_error ERR
 
 in_github_actions() {
     [[ -n "${GITHUB_ACTIONS:-}" ]]
@@ -59,12 +74,15 @@ run_gate() {
 
 active_spine_packages=(
     contract_core
+    handoff-component
     visa_profile
     semantic_core
     substrate_api
+    substrate_host
     visa_runtime
     visa_wasmtime
     visa-conformance
+    visa-system
 )
 active_spine_args=()
 for package in "${active_spine_packages[@]}"; do
@@ -81,8 +99,13 @@ gate_fmt() {
 }
 
 gate_dependency_direction() {
-    run_gate "dependencies: active-spine migration guard" \
-        python3 scripts/check-dependency-direction.py --migration
+    run_gate "dependencies: strict active-spine direction" \
+        python3 scripts/check-dependency-direction.py
+}
+
+gate_stage1_deletions() {
+    run_gate "deletions: Stage 1 legacy and oracle boundary" \
+        python3 scripts/check-stage1-deletions.py
 }
 
 gate_active_clippy() {
@@ -104,8 +127,8 @@ gate_workspace_tests() {
 }
 
 gate_feature_tests() {
-    run_gate "features: substrate conformance" \
-        cargo test --locked -p substrate_api --features conformance
+    run_gate "features: substrate oracle conformance" \
+        cargo test --locked -p substrate-oracle --features conformance
     run_gate "features: Linux host TAP adapter" \
         cargo test --locked -p substrate_virtio --features host-tap
     run_gate "features: seccomp service contract" \
@@ -147,6 +170,7 @@ gate_fast() {
     gate_metadata
     gate_fmt
     gate_dependency_direction
+    gate_stage1_deletions
     gate_active_clippy
     gate_active_tests
 }
@@ -163,6 +187,23 @@ gate_full() {
     gate_reports
 }
 
+gate_system() {
+    local system_parent="$PWD/target/visa-system"
+    mkdir -p "$system_parent"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage1-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage1-evidence.json"
+
+    run_gate "system: real Stage 1 lifecycle" \
+        cargo run --locked -p visa-system --bin visa-system -- \
+            stage1 "$system_artifact_root"
+    run_gate "system: independent Stage 1 evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage1 "$system_bundle_path" "$system_artifact_root"
+
+    printf 'Stage 1 artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 1 evidence bundle: %s\n' "$system_bundle_path"
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -172,6 +213,7 @@ tier="${1:-full}"
 case "$tier" in
     fast) gate_fast ;;
     full) gate_full ;;
+    system) gate_system ;;
     -h|--help|help)
         usage
         ;;

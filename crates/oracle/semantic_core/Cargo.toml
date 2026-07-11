@@ -1,0 +1,12 @@
+[package]
+name = "semantic-oracle"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata.visa]
+role = "comparison-oracle"
+
+[dependencies]
+contract_core = { package = "contract-oracle", path = "../contract_core" }
+target_abi = { workspace = true, default-features = false }

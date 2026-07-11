@@ -5,7 +5,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use contract_core::CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION;
 use substrate_api::conformance::{
     ConformanceCheck, ConformanceEvidenceContext, ConformanceStatus, SubstrateConformanceReport,
 };

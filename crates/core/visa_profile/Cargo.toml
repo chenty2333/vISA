@@ -1,6 +1,6 @@
 [package]
 name = "visa_profile"
-version = "0.1.0"
+version = "0.2.0"
 publish = false
 edition = "2024"
 
@@ -8,3 +8,5 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
+contract_core = { path = "../contract_core" }
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }

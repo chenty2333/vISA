@@ -1,0 +1,28 @@
+[package]
+name = "visa-system"
+version = "0.1.0"
+publish = false
+edition = "2024"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+substrate_api = { path = "../../backend/substrate_api" }
+substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../../runtime/visa_runtime" }
+visa_wasmtime = { path = "../../runtime/visa_wasmtime", features = ["test-control"] }
+visa-conformance = { path = "../visa-conformance" }
+
+[build-dependencies]
+handoff-component = { path = "../handoff-component", artifact = "cdylib", target = "wasm32-unknown-unknown" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+wit-component = "=0.244.0"

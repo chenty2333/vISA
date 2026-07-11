@@ -1,9 +1,11 @@
 [package]
 name = "semantic_core"
-version = "0.1.0"
+version = "0.2.0"
 publish = false
 edition = "2024"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
-contract_core.workspace = true
-target_abi = { workspace = true, default-features = false }
+contract_core = { path = "../contract_core" }

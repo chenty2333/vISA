@@ -58,15 +58,15 @@ name = "aotc"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
- "contract_core",
+ "contract-oracle",
  "contract_validate",
  "hex",
+ "profile-oracle",
  "serde_json",
  "service_core",
  "sha2",
  "supervisor_catalog",
  "target_abi",
- "visa_profile",
  "wasmtime",
 ]
 
@@ -270,6 +270,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "conformance-oracle"
+version = "0.1.0"
+dependencies = [
+ "profile-oracle",
+ "serde",
+ "serde_json",
+ "sha2",
+ "substrate-oracle",
+]
+
+[[package]]
 name = "console_service"
 version = "0.1.0"
 dependencies = [
@@ -283,20 +294,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413d67b29ef1021b4d60f4aa1e925ca031751e213832b4b1d588fae623c05c60"
 
 [[package]]
-name = "contract_core"
+name = "contract-oracle"
 version = "0.2.0"
+
+[[package]]
+name = "contract_core"
+version = "0.3.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "sha2",
+]
 
 [[package]]
 name = "contract_validate"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
- "contract_core",
+ "contract-oracle",
  "hex",
+ "profile-oracle",
  "service_core",
  "sha2",
  "supervisor_catalog",
- "visa_profile",
 ]
 
 [[package]]
@@ -642,6 +662,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "epoll_service"
 version = "0.1.0"
 dependencies = [
@@ -673,6 +702,18 @@ dependencies = [
  "bitflags 2.11.1",
  "crc",
 ]
+
+[[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fastrand"
@@ -790,6 +831,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "handoff-component"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.51.0",
+]
+
+[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -823,6 +871,18 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+dependencies = [
+ "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248"
+dependencies = [
+ "hashbrown 0.17.0",
+]
 
 [[package]]
 name = "heapless"
@@ -949,11 +1009,11 @@ dependencies = [
  "linked_list_allocator",
  "net_stack_adapter",
  "pic8259",
- "semantic_core",
+ "semantic-oracle",
  "service_core",
  "sha2",
  "spin",
- "substrate_api",
+ "substrate-oracle",
  "substrate_virtio",
  "supervisor_catalog",
  "uart_16550",
@@ -979,6 +1039,17 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.38.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
 
 [[package]]
 name = "linked_list_allocator"
@@ -1082,7 +1153,7 @@ version = "0.1.0"
 dependencies = [
  "service_core",
  "smoltcp",
- "substrate_api",
+ "substrate-oracle",
  "visa_abi",
 ]
 
@@ -1131,13 +1202,13 @@ name = "osctl-view"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
- "contract_core",
+ "contract-oracle",
  "contract_validate",
- "semantic_core",
+ "profile-oracle",
+ "semantic-oracle",
  "serde_json",
  "service_core",
  "supervisor_catalog",
- "visa_profile",
 ]
 
 [[package]]
@@ -1148,6 +1219,12 @@ checksum = "cb844b5b01db1e0b17938685738f113bfc903846f18932b378bc0eabfa40e194"
 dependencies = [
  "x86_64 0.14.13",
 ]
+
+[[package]]
+name = "pkg-config"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plotters"
@@ -1236,6 +1313,10 @@ version = "0.1.0"
 dependencies = [
  "visa_abi",
 ]
+
+[[package]]
+name = "profile-oracle"
+version = "0.1.0"
 
 [[package]]
 name = "pulley-interpreter"
@@ -1356,11 +1437,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsqlite-vfs"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
+dependencies = [
+ "hashbrown 0.16.1",
+ "thiserror",
+]
+
+[[package]]
 name = "runner"
 version = "0.1.0"
 dependencies = [
  "bootloader",
  "kernel",
+]
+
+[[package]]
+name = "runtime-oracle"
+version = "0.1.0"
+dependencies = [
+ "conformance-oracle",
+ "contract-oracle",
+ "profile-oracle",
+ "semantic-oracle",
+ "sha2",
+ "substrate-oracle",
+ "target_abi",
+]
+
+[[package]]
+name = "rusqlite"
+version = "0.40.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323"
+dependencies = [
+ "bitflags 2.11.1",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
+ "sqlite-wasm-rs",
 ]
 
 [[package]]
@@ -1404,11 +1523,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "semantic_core"
+name = "semantic-oracle"
 version = "0.1.0"
 dependencies = [
- "contract_core",
+ "contract-oracle",
  "target_abi",
+]
+
+[[package]]
+name = "semantic_core"
+version = "0.2.0"
+dependencies = [
+ "contract_core",
 ]
 
 [[package]]
@@ -1416,6 +1542,10 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "serde"
@@ -1526,16 +1656,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlite-wasm-rs"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
+dependencies = [
+ "cc",
+ "js-sys",
+ "rsqlite-vfs",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
-name = "substrate_api"
+name = "substrate-oracle"
 version = "0.1.0"
 dependencies = [
- "visa_profile",
+ "profile-oracle",
+]
+
+[[package]]
+name = "substrate_api"
+version = "0.2.0"
+dependencies = [
+ "contract_core",
+]
+
+[[package]]
+name = "substrate_host"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "substrate_api",
 ]
 
 [[package]]
@@ -1543,7 +1704,7 @@ name = "substrate_virtio"
 version = "0.1.0"
 dependencies = [
  "libc",
- "substrate_api",
+ "substrate-oracle",
 ]
 
 [[package]]
@@ -1571,8 +1732,8 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "target_abi"
 version = "0.1.0"
 dependencies = [
+ "profile-oracle",
  "sha2",
- "visa_profile",
 ]
 
 [[package]]
@@ -1580,23 +1741,23 @@ name = "target_executor"
 version = "0.1.0"
 dependencies = [
  "artifact_manifest",
- "contract_core",
+ "contract-oracle",
  "contract_validate",
  "fs_adapter",
  "hex",
  "net_stack_adapter",
- "semantic_core",
+ "profile-oracle",
+ "runtime-oracle",
+ "semantic-oracle",
  "serde_json",
  "service_core",
  "sha2",
- "substrate_api",
+ "substrate-oracle",
  "substrate_virtio",
  "supervisor_catalog",
  "target_abi",
- "visa_profile",
- "visa_runtime",
- "visa_wasmtime",
  "wasmtime",
+ "wasmtime-oracle",
  "wat",
 ]
 
@@ -1699,6 +1860,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1716,24 +1883,42 @@ name = "visa-bench"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "semantic_core",
+ "profile-oracle",
+ "runtime-oracle",
+ "semantic-oracle",
  "sha2",
- "substrate_api",
+ "substrate-oracle",
  "target_abi",
- "visa_profile",
- "visa_runtime",
 ]
 
 [[package]]
 name = "visa-conformance"
+version = "0.2.0"
+dependencies = [
+ "contract_core",
+ "semantic_core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "visa_profile",
+]
+
+[[package]]
+name = "visa-system"
 version = "0.1.0"
 dependencies = [
  "contract_core",
+ "handoff-component",
  "serde",
  "serde_json",
  "sha2",
  "substrate_api",
+ "substrate_host",
+ "visa-conformance",
  "visa_profile",
+ "visa_runtime",
+ "visa_wasmtime",
+ "wit-component",
 ]
 
 [[package]]
@@ -1742,35 +1927,31 @@ version = "0.1.0"
 
 [[package]]
 name = "visa_profile"
-version = "0.1.0"
+version = "0.2.0"
+dependencies = [
+ "contract_core",
+ "serde",
+]
 
 [[package]]
 name = "visa_runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "contract_core",
  "semantic_core",
- "sha2",
  "substrate_api",
- "target_abi",
- "visa-conformance",
- "visa_profile",
 ]
 
 [[package]]
 name = "visa_wasmtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "contract_core",
- "semantic_core",
  "sha2",
  "substrate_api",
- "target_abi",
- "visa-conformance",
  "visa_profile",
  "visa_runtime",
  "wasmtime",
- "wat",
 ]
 
 [[package]]
@@ -1960,6 +2141,7 @@ dependencies = [
  "bumpalo",
  "cc",
  "cfg-if",
+ "encoding_rs",
  "libc",
  "log",
  "mach2",
@@ -1969,12 +2151,15 @@ dependencies = [
  "postcard",
  "pulley-interpreter",
  "rustix",
+ "semver",
  "serde",
  "serde_derive",
  "smallvec",
  "target-lexicon",
  "wasmparser 0.245.1",
  "wasmtime-environ",
+ "wasmtime-internal-component-macro",
+ "wasmtime-internal-component-util",
  "wasmtime-internal-core",
  "wasmtime-internal-cranelift",
  "wasmtime-internal-fiber",
@@ -1982,6 +2167,7 @@ dependencies = [
  "wasmtime-internal-jit-icache-coherence",
  "wasmtime-internal-unwinder",
  "wasmtime-internal-versioned-export-macros",
+ "wasmtime-internal-winch",
  "windows-sys",
 ]
 
@@ -2001,6 +2187,7 @@ dependencies = [
  "log",
  "object",
  "postcard",
+ "semver",
  "serde",
  "serde_derive",
  "sha2",
@@ -2009,8 +2196,30 @@ dependencies = [
  "wasm-encoder 0.245.1",
  "wasmparser 0.245.1",
  "wasmprinter",
+ "wasmtime-internal-component-util",
  "wasmtime-internal-core",
 ]
+
+[[package]]
+name = "wasmtime-internal-component-macro"
+version = "43.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae5ec9fff073ff13b81732d56a9515d761c245750bcda09093827f84130ebc25"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "wasmtime-internal-component-util",
+ "wasmtime-internal-wit-bindgen",
+ "wit-parser 0.245.1",
+]
+
+[[package]]
+name = "wasmtime-internal-component-util"
+version = "43.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "935d9ab293ba27d1ec9aa7bc1b3a43993dbe961af2a8f23f90a11e1331b4c13f"
 
 [[package]]
 name = "wasmtime-internal-core"
@@ -2112,6 +2321,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmtime-internal-winch"
+version = "43.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f599b79545e3bba0b7913406055ebede5bb0dabee9ba2015ef25a9f4c9f47807"
+dependencies = [
+ "cranelift-codegen",
+ "gimli",
+ "log",
+ "object",
+ "target-lexicon",
+ "wasmparser 0.245.1",
+ "wasmtime-environ",
+ "wasmtime-internal-cranelift",
+ "winch-codegen",
+]
+
+[[package]]
+name = "wasmtime-internal-wit-bindgen"
+version = "43.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2192a77a00b9a67800c2b4e1c70fb6abca79d6b529e53a2ef9dcdcc36090330d"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.1",
+ "heck",
+ "indexmap",
+ "wit-parser 0.245.1",
+]
+
+[[package]]
+name = "wasmtime-oracle"
+version = "0.1.0"
+dependencies = [
+ "conformance-oracle",
+ "contract-oracle",
+ "profile-oracle",
+ "runtime-oracle",
+ "semantic-oracle",
+ "sha2",
+ "substrate-oracle",
+ "target_abi",
+ "wasmtime",
+ "wat",
+]
+
+[[package]]
 name = "wast"
 version = "248.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,6 +2405,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys",
+]
+
+[[package]]
+name = "winch-codegen"
+version = "43.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52dbb0cf07b0dfe7b7a1ca8efb8f94ba98bd0fb144c411ea1665c78f0449e958"
+dependencies = [
+ "cranelift-assembler-x64",
+ "cranelift-codegen",
+ "gimli",
+ "regalloc2",
+ "smallvec",
+ "target-lexicon",
+ "thiserror",
+ "wasmparser 0.245.1",
+ "wasmtime-environ",
+ "wasmtime-internal-core",
+ "wasmtime-internal-cranelift",
 ]
 
 [[package]]
@@ -2243,7 +2517,7 @@ checksum = "ea61de684c3ea68cb082b7a88508a8b27fcc8b797d738bfc99a82facf1d752dc"
 dependencies = [
  "anyhow",
  "heck",
- "wit-parser",
+ "wit-parser 0.244.0",
 ]
 
 [[package]]
@@ -2293,7 +2567,7 @@ dependencies = [
  "wasm-encoder 0.244.0",
  "wasm-metadata",
  "wasmparser 0.244.0",
- "wit-parser",
+ "wit-parser 0.244.0",
 ]
 
 [[package]]
@@ -2312,6 +2586,25 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser 0.244.0",
+]
+
+[[package]]
+name = "wit-parser"
+version = "0.245.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330698718e82983499419494dd1e3d7811a457a9bf9f69734e8c5f07a2547929"
+dependencies = [
+ "anyhow",
+ "hashbrown 0.16.1",
+ "id-arena",
+ "indexmap",
+ "log",
+ "semver",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "unicode-xid",
+ "wasmparser 0.245.1",
 ]
 
 [[package]]

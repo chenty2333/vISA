@@ -6,10 +6,10 @@ edition = "2024"
 
 [dependencies]
 artifact_manifest.workspace = true
-contract_core.workspace = true
+contract_core = { package = "contract-oracle", path = "../../oracle/contract_core" }
 contract_validate.workspace = true
-semantic_core.workspace = true
+semantic_core = { package = "semantic-oracle", path = "../../oracle/semantic_core" }
 serde_json.workspace = true
 service_core.workspace = true
 supervisor_catalog.workspace = true
-visa_profile.workspace = true
+visa_profile = { package = "profile-oracle", path = "../../oracle/visa_profile" }

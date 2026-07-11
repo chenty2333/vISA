@@ -47,11 +47,11 @@ harness = false
 
 [dependencies]
 sha2.workspace = true
-semantic_core.workspace = true
-substrate_api.workspace = true
+semantic_core = { package = "semantic-oracle", path = "../../oracle/semantic_core" }
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api" }
 target_abi = { workspace = true, features = ["hash"] }
-visa_profile.workspace = true
-visa_runtime.workspace = true
+visa_profile = { package = "profile-oracle", path = "../../oracle/visa_profile" }
+visa_runtime = { package = "runtime-oracle", path = "../../oracle/visa_runtime" }
 
 [dev-dependencies]
 criterion = "0.5"

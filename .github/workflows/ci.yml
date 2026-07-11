@@ -69,3 +69,18 @@ jobs:
 
       - name: Full repository gate
         run: $COMPOSE run --rm -T dev scripts/ci-gate.sh full
+
+      - name: Clear prior Stage 1 evidence
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Stage 1 system gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system
+
+      - name: Upload Stage 1 system evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-system-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: warn
+          retention-days: 14

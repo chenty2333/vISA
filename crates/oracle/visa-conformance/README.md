@@ -28,13 +28,13 @@ artifact gate validated it.
 Run the crate tests:
 
 ```sh
-cargo test -p visa-conformance
+cargo test -p conformance-oracle
 ```
 
 Validate catalog wiring and sample report shapes:
 
 ```sh
-cargo run -p visa-conformance -- validate-sample
+cargo run -p conformance-oracle -- validate-sample
 ```
 
 This is a structural fixture check. It is not executable evidence of runtime,
@@ -43,7 +43,7 @@ substrate, migration, Linux, or performance behavior.
 Validate a report and its linked local artifacts:
 
 ```sh
-cargo run -p visa-conformance -- \
+cargo run -p conformance-oracle -- \
   validate-report-with-artifacts <report.json> <artifact-root>
 ```
 

@@ -61,10 +61,11 @@ The contract schema is the only public vocabulary for portable identity,
 generation, authority, operations, results, waits, cancellation, failure,
 cleanup, traps, snapshots, compatibility, and evidence references.
 
-The current migration target is `contract_core`, but logical responsibility is
-more stable than the crate name. The schema must remain small, versioned,
-`no_std`-compatible where practical, and independent of runtime engines,
-personality breadth, providers, benchmarks, and project planning metadata.
+The Stage 1 reference path implements this responsibility in `contract_core`,
+but the logical responsibility is more stable than the crate name. The schema
+must remain small, versioned, `no_std`-compatible where practical, and
+independent of runtime engines, personality breadth, providers, benchmarks, and
+project planning metadata.
 
 ### Canonical reducer
 
@@ -72,8 +73,10 @@ The reducer is the only state-transition authority. It consumes contract
 commands, validates preconditions and authority, and produces a deterministic
 decision describing the proposed effects and state transition.
 
-The current migration target is `semantic_core`. It must not retain a second
-public object, command, event, or tombstone schema after migration.
+The Stage 1 reference path implements this responsibility in `semantic_core`.
+The active production spine does not retain a second public object, command,
+event, or tombstone schema; broader comparison models remain isolated under
+`crates/oracle/`.
 
 Rejected preflight must leave canonical state unchanged. Applied transitions
 must be replayable from the committed journal under the contract's defined
@@ -82,7 +85,7 @@ nondeterminism rules.
 ### Runtime coordinator
 
 The runtime coordinator owns transaction sequencing across the reducer and
-substrate ports. The current migration target is `visa_runtime`.
+substrate ports. The Stage 1 reference path implements it in `visa_runtime`.
 
 For each operation it must:
 
@@ -316,9 +319,10 @@ core validation must not depend on reference services, catalogs, benchmarks,
 or host tools. Adapters may translate native facts into canonical effects; core
 code must not import adapter-specific representations.
 
-## Migration of the current repository
+## Evolution of the current repository
 
-During convergence:
+Stage 1 has completed this migration for its named reference path. As the
+broader repository evolves:
 
 - do not expand legacy universal object, command, event, or snapshot schemas;
 - migrate one complete lifecycle slice at a time and delete the replaced model
@@ -336,8 +340,9 @@ cache design, and performance optimizations remain reversible implementation
 decisions. The boundary, dependency direction, invariants, compatibility rules,
 and claim semantics are durable architectural commitments.
 
-The following also remain provisional until exercised by an architecture-
-complete slice: the final continuity unit, exact snapshot fields and encoding,
-journal persistence and crash-consistency mechanism, handoff transport and
-lease service, first supported runtime/ISA/resource matrix, compatibility
-window, and performance targets.
+Stage 1 fixes one reference continuity unit and profile, snapshot encoding,
+SQLite journal/lease mechanism, and Wasmtime/x86-64 Linux/resource matrix cell.
+Beyond that cell, the final general continuity unit, cross-host handoff
+transport, alternative persistence and lease services, compatibility window,
+additional runtime/ISA/resource matrices, and performance targets remain
+provisional until exercised.

@@ -1,12 +1,11 @@
 [package]
 name = "substrate_api"
-version = "0.1.0"
+version = "0.2.0"
 publish = false
 edition = "2024"
 
-[features]
-default = []
-conformance = []
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
-visa_profile.workspace = true
+contract_core = { path = "../../core/contract_core" }

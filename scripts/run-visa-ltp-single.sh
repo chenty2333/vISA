@@ -60,9 +60,9 @@ set -e
 
 raw_uri="$(basename "$raw_log")"
 serial_uri="$(basename "$serial_log")"
-cargo run --quiet -p visa-conformance -- \
+cargo run --quiet -p conformance-oracle -- \
     ltp-raw-log-from-serial "$case_id" "$serial_log" "$run_status" >"$raw_log"
-cargo run --quiet -p visa-conformance -- \
+cargo run --quiet -p conformance-oracle -- \
     ltp-visa-trace-from-serial "$spec_id" "$case_id" "$test_elf" "$raw_uri" "$serial_uri" \
     "$serial_log" "$run_status" >"$trace_log"
 

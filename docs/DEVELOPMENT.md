@@ -55,8 +55,8 @@ volumes by default.
 
 ## Repository gates
 
-The repository exposes two implemented, cumulative validation tiers. Run the
-ordinary edit-loop gate with:
+The repository exposes two implemented, cumulative repository tiers and one
+standalone system tier. Run the ordinary edit-loop gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh fast
@@ -68,34 +68,43 @@ Run the pull-request gate with:
 scripts/run-docker-ci-gate.sh full
 ```
 
+Run the Stage 1 reference system gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system
+```
+
 With no tier argument the wrapper runs `full`. It validates the Compose
 configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
 implementation used by CI. `--skip-build` reuses an existing image.
 `--ci-cache` overlays `compose.ci.yaml` and uses the bind-mounted `.ci-cache/`
 layout used by GitHub Actions.
 
-`fast` checks locked metadata, formatting, active-spine dependency direction,
-strict Clippy for active-spine targets, and active-spine tests. `full` includes
-`fast`, then adds shell parsing, default-feature workspace tests, every current
-opt-in feature, active no-std compilation, selected Wasm packages, the kernel
-target, benchmark compilation, and report/artifact fixture gates. See
-[VALIDATION.md](VALIDATION.md) for the exact proof boundary.
+`fast` checks locked metadata, formatting, strict active-spine dependency
+direction, the Stage 1 legacy-deletion/oracle boundary, strict Clippy for
+active-spine targets, and active-spine tests. `full` includes `fast`, then adds
+shell parsing, default-feature workspace tests, every current opt-in feature,
+active no-std compilation, selected Wasm packages, the kernel target, benchmark
+compilation, and report/artifact fixture gates. `system` is standalone: it does
+not repeat `fast` or `full`. See [VALIDATION.md](VALIDATION.md) for the exact
+proof boundary.
 
-The dependency checker currently runs in an explicit migration mode. It allows
-only a shrinking, named set of pre-reset direction violations and rejects any
-new violation. Inspect the final target at any time with:
+Run the dependency-direction check directly with:
 
 ```sh
-python3 scripts/check-dependency-direction.py --strict
+python3 scripts/check-dependency-direction.py
 ```
 
-Strict mode is intentionally red until the four listed production edges are removed.
-Once none remain, change the fast gate to use `--strict` and delete the migration
-debt set rather than retaining compatibility exceptions.
+It rejects dependencies that point against the accepted contract -> reducer ->
+coordinator -> adapter/tool direction. Oracle packages remain buildable under
+`full`, but they cannot enter the protected production spine.
 
-There is no `system` command yet. A schema-valid fixture or a placeholder runner
-would not satisfy the Stage 1 system contract, so that tier will be added only
-with the real isolated source/destination handoff runner.
+The implemented `system` tier creates a private artifact root below
+`target/visa-system/`, runs all 31 Stage 1 registry cases through isolated
+source and destination worker processes, writes an execution evidence bundle,
+then invokes the independent `visa-conformance stage1` validator. The command
+prints the retained artifact root and bundle path on success and preserves them
+on failure for diagnosis.
 
 ## Host Cargo commands
 
@@ -124,21 +133,24 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` implements the cumulative `fast` and `full` tiers inside the
-   development environment.
-2. **Report checks:** `run-report-gates.sh` and
+   `ci-gate.sh` implements the cumulative `fast` and `full` tiers and the
+   standalone `system` tier inside the development environment.
+2. **Stage 1 system:** `ci-gate.sh system` orchestrates the real runner and the
+   independent verifier. Invoke the underlying binaries directly only when
+   investigating a retained artifact root.
+3. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
    Criterion and gates the produced performance bundle.
-3. **vISA-backed LTP:** `build-visa-ltp-static-syscalls.sh` prepares static
+4. **vISA-backed LTP:** `build-visa-ltp-static-syscalls.sh` prepares static
    binaries; `run-visa-ltp-conformance.sh` is the strict selected-suite entry;
    `run-visa-ltp-single.sh` is its per-case worker. The manifest runner is for
    larger exploratory runs and is not the stable strict gate.
-4. **Reference-only LTP:** `run-host-ltp-log-adapter.sh` preserves logs from an
+5. **Reference-only LTP:** `run-host-ltp-log-adapter.sh` preserves logs from an
    external host `runltp`. Those logs do not prove execution through vISA.
    `run-ltp-conformance.sh` is a deprecated compatibility alias and must not be
    used for new automation or evidence claims.
-5. **Structural maintenance:** `check-file-size.sh` reports oversized Rust
+6. **Structural maintenance:** `check-file-size.sh` reports oversized Rust
    files. It is not currently part of the main CI gate.
 
 Read each script's usage text, using `--help` where supported. Keep specialist
@@ -182,9 +194,10 @@ Choose validation based on the claim affected by the change:
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
-## Next validation tier
+## Next validation expansion
 
-The next command-surface addition is `system`, backed by the Stage 1 cooperative
-handoff runner and evidence validator. Release and claim gates follow only when
-their runtime/ISA/substrate matrix and provenance inputs exist. Until then,
-`fast` and `full` are the complete implemented root interface.
+`fast`, `full`, and standalone `system` are the implemented root interface.
+The next validation expansions are release and claim gates for additional
+declared runtime/ISA/substrate cells, beginning with the independent runtime
+work in Stage 2. Those claims remain unavailable until their exact matrix cells
+and provenance inputs execute.

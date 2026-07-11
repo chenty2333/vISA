@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use contract_core::EvidenceBoundaryLevel;
 use serde::{Deserialize, Serialize};
 
 pub const REPORT_SCHEMA_VERSION: &str = "visa-conformance-report-v0.1";
+pub const CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION: &str = "contract-graph-snapshot-v0.1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,13 +46,13 @@ impl Boundary {
         }
     }
 
-    pub const fn level(self) -> EvidenceBoundaryLevel {
+    const fn rank(self) -> u8 {
         match self {
-            Self::SemanticModel => EvidenceBoundaryLevel::SemanticModel,
-            Self::ReferenceService => EvidenceBoundaryLevel::ReferenceService,
-            Self::ReferenceAotHarness => EvidenceBoundaryLevel::ReferenceAotHarness,
-            Self::PortableArtifactExecution => EvidenceBoundaryLevel::PortableArtifactExecution,
-            Self::RealTargetSubstrate => EvidenceBoundaryLevel::RealTargetSubstrate,
+            Self::SemanticModel => 0,
+            Self::ReferenceService => 1,
+            Self::ReferenceAotHarness => 2,
+            Self::PortableArtifactExecution => 3,
+            Self::RealTargetSubstrate => 4,
         }
     }
 
@@ -67,8 +67,8 @@ impl Boundary {
         }
     }
 
-    pub fn can_claim(self, claimed: Self) -> bool {
-        self.level().can_claim(claimed.level())
+    pub const fn can_claim(self, claimed: Self) -> bool {
+        self.rank() >= claimed.rank()
     }
 }
 

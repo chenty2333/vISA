@@ -4,15 +4,14 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use contract_core::CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION;
 use visa_profile::{AuthorityFamily, SubstrateProfile, capabilities_for_reported_profile};
 
 use crate::{
     hash::sha256_hex,
     ltp::parse_ltp_results,
     types::{
-        Boundary, ConformanceReport, EvidenceArtifact, EvidenceArtifactKind, TestResult,
-        ValidationFinding, ValidationReport,
+        Boundary, CONTRACT_GRAPH_SNAPSHOT_ARTIFACT_SCHEMA_VERSION, ConformanceReport,
+        EvidenceArtifact, EvidenceArtifactKind, TestResult, ValidationFinding, ValidationReport,
     },
 };
 

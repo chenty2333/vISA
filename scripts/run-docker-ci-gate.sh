@@ -3,10 +3,12 @@ set -Eeuo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] [fast|full]
+usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] [fast|full|system]
 
 Validates the Compose configuration, builds or reuses the vISA development
 image, and runs the selected validation tier. With no tier, runs full.
+The system tier is standalone and preserves its Stage 1 artifacts under the
+container's /workspace/target/visa-system directory.
 
 Options:
   --ci-cache   Use compose.ci.yaml bind-mounted cache directories.
@@ -32,7 +34,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full)
+        fast|full|system)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage

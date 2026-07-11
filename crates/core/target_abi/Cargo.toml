@@ -13,4 +13,4 @@ hash = ["dep:sha2"]
 
 [dependencies]
 sha2 = { version = "0.10", default-features = false, optional = true }
-visa_profile.workspace = true
+visa_profile = { package = "profile-oracle", path = "../../oracle/visa_profile" }

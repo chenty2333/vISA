@@ -10,5 +10,5 @@ rustflags = [
 [alias]
 kernel = "build -p kernel --target x86_64-unknown-none"
 run-vm = "run -p runner --"
-check-wasm = "check -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p replay_snapshot -p vfs_service -p wasm_app --target wasm32-unknown-unknown"
-wasm = "build -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p replay_snapshot -p vfs_service -p wasm_app --target wasm32-unknown-unknown"
+check-wasm = "check -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p handoff-component -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p vfs_service --target wasm32-unknown-unknown"
+wasm = "build -p console_service -p devfs_service -p driver_virtio_net -p epoll_service -p futex_service -p handoff-component -p linux_socket_service -p linux_syscall -p net_core -p procfs_service -p vfs_service --target wasm32-unknown-unknown"

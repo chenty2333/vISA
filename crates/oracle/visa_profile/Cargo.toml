@@ -1,13 +1,13 @@
 [package]
-name = "wasm_app"
+name = "profile-oracle"
 version = "0.1.0"
 publish = false
 edition = "2024"
 
+[package.metadata.visa]
+role = "comparison-oracle"
+
 [lib]
-crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-visa_abi.workspace = true
-

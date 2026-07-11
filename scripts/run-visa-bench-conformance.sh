@@ -26,7 +26,7 @@ criterion_dir=${4:-target/criterion}
 mkdir -p "$output_dir"
 
 run_conformance() {
-    cargo run --quiet -p visa-conformance -- "$@"
+    cargo run --quiet -p conformance-oracle -- "$@"
 }
 
 if [[ "${VISA_SKIP_BENCH_RUN:-0}" != "1" ]]; then

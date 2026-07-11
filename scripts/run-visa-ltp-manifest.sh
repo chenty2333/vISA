@@ -77,7 +77,7 @@ cleanup() {
 trap cleanup EXIT
 
 run_conformance() {
-    cargo run --quiet -p visa-conformance -- "$@"
+    cargo run --quiet -p conformance-oracle -- "$@"
 }
 
 logs_dir="$output_dir/logs"

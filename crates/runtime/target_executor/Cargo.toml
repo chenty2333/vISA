@@ -14,23 +14,23 @@ path = "src/main.rs"
 
 [dependencies]
 artifact_manifest.workspace = true
-contract_core.workspace = true
+contract_core = { package = "contract-oracle", path = "../../oracle/contract_core" }
 contract_validate.workspace = true
 fs_adapter.workspace = true
 hex.workspace = true
 net_stack_adapter.workspace = true
-semantic_core.workspace = true
+semantic_core = { package = "semantic-oracle", path = "../../oracle/semantic_core" }
 serde_json.workspace = true
 service_core.workspace = true
 sha2.workspace = true
-substrate_api.workspace = true
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api" }
 substrate_virtio.workspace = true
 supervisor_catalog.workspace = true
 target_abi = { workspace = true, features = ["hash"] }
-visa_profile.workspace = true
-visa_runtime.workspace = true
+visa_profile = { package = "profile-oracle", path = "../../oracle/visa_profile" }
+visa_runtime = { package = "runtime-oracle", path = "../../oracle/visa_runtime" }
 wasmtime = { workspace = true, features = ["runtime", "std"] }
 
 [dev-dependencies]
-visa_wasmtime.workspace = true
+visa_wasmtime = { package = "wasmtime-oracle", path = "../../oracle/visa_wasmtime" }
 wat = "1"

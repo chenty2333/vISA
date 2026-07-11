@@ -299,7 +299,7 @@ pub extern "C" fn encode_uname(release_ptr: u32, release_len: u32) -> i32 {
     };
 
     let uts = GuestUtsName {
-        sysname: c_field(b"VmOS"),
+        sysname: c_field(b"vISA"),
         nodename: c_field(b"prototype2"),
         release: c_field(release),
         version: c_field(b"supervisor-world"),

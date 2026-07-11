@@ -1,0 +1,13 @@
+[package]
+name = "contract-oracle"
+version = "0.2.0"
+publish = false
+edition = "2024"
+
+[package.metadata.visa]
+role = "comparison-oracle"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

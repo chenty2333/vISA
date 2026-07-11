@@ -10,7 +10,7 @@ host-tap = ["dep:libc"]
 
 [dependencies]
 libc = { version = "0.2", optional = true }
-substrate_api.workspace = true
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api" }
 
 [dev-dependencies]
-substrate_api = { workspace = true, features = ["conformance"] }
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api", features = ["conformance"] }

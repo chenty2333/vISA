@@ -1,0 +1,15 @@
+[package]
+name = "substrate-oracle"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata.visa]
+role = "comparison-oracle"
+
+[features]
+default = []
+conformance = []
+
+[dependencies]
+visa_profile = { package = "profile-oracle", path = "../visa_profile" }

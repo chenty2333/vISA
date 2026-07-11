@@ -14,10 +14,10 @@ bootloader_api.workspace = true
 linked_list_allocator.workspace = true
 net_stack_adapter.workspace = true
 pic8259.workspace = true
-semantic_core.workspace = true
+semantic_core = { package = "semantic-oracle", path = "../../oracle/semantic_core" }
 service_core = { workspace = true, features = ["seccomp-filter"] }
 spin.workspace = true
-substrate_api.workspace = true
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api" }
 substrate_virtio.workspace = true
 supervisor_catalog.workspace = true
 uart_16550.workspace = true

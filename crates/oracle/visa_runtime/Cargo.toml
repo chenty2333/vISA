@@ -1,0 +1,22 @@
+[package]
+name = "runtime-oracle"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata.visa]
+role = "comparison-oracle"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+contract_core = { package = "contract-oracle", path = "../contract_core" }
+semantic_core = { package = "semantic-oracle", path = "../semantic_core" }
+substrate_api = { package = "substrate-oracle", path = "../substrate_api" }
+target_abi = { workspace = true, features = ["hash"] }
+visa_profile = { package = "profile-oracle", path = "../visa_profile" }
+
+[dev-dependencies]
+sha2.workspace = true
+visa-conformance = { package = "conformance-oracle", path = "../visa-conformance" }

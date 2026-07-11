@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -14,9 +13,11 @@ import sys
 # dependencies are excluded because they cannot enter a production artifact.
 ALLOWED_WORKSPACE_DEPENDENCIES = {
     "contract_core": frozenset(),
+    "handoff-component": frozenset(),
     "visa_profile": frozenset({"contract_core"}),
     "semantic_core": frozenset({"contract_core", "visa_profile"}),
     "substrate_api": frozenset({"contract_core", "visa_profile"}),
+    "substrate_host": frozenset({"contract_core", "substrate_api"}),
     "visa_runtime": frozenset(
         {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
     ),
@@ -24,38 +25,21 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
         {"contract_core", "substrate_api", "visa_profile", "visa_runtime"}
     ),
     "visa-conformance": frozenset(
-        {"contract_core", "substrate_api", "visa_profile"}
+        {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
+    ),
+    "visa-system": frozenset(
+        {
+            "contract_core",
+            "handoff-component",
+            "substrate_api",
+            "substrate_host",
+            "visa-conformance",
+            "visa_profile",
+            "visa_runtime",
+            "visa_wasmtime",
+        }
     ),
 }
-
-# Temporary reset debt. Migration mode permits only a shrinking subset of this
-# set; a new or changed violation still fails. Delete the set and switch fast to
-# --strict when these edges have been removed.
-MIGRATION_DEBT = frozenset(
-    {
-        ("semantic_core", "target_abi", "normal"),
-        ("visa_runtime", "target_abi", "normal"),
-        ("visa_wasmtime", "semantic_core", "normal"),
-        ("visa_wasmtime", "target_abi", "normal"),
-    }
-)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="check active-spine workspace dependency direction"
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--migration",
-        action="store_true",
-        help="allow only the documented shrinking migration-debt set (default)",
-    )
-    mode.add_argument(
-        "--strict", action="store_true", help="reject every direction violation"
-    )
-    return parser.parse_args()
-
 
 def cargo_metadata() -> dict:
     result = subprocess.run(
@@ -109,35 +93,16 @@ def print_edges(label: str, edges: set[tuple[str, str, str]]) -> None:
 
 
 def main() -> int:
-    args = parse_args()
     try:
         violations = dependency_violations(cargo_metadata())
     except (OSError, subprocess.CalledProcessError, ValueError, json.JSONDecodeError) as error:
         print(f"dependency-direction check could not run: {error}", file=sys.stderr)
         return 2
 
-    if args.strict:
-        if violations:
-            print_edges("dependency-direction violations:", violations)
-            return 1
-        print("dependency-direction check passed in strict mode")
-        return 0
-
-    new_violations = violations - MIGRATION_DEBT
-    if new_violations:
-        print_edges("new dependency-direction violations:", new_violations)
-        print_edges("remaining documented migration debt:", violations & MIGRATION_DEBT)
+    if violations:
+        print_edges("dependency-direction violations:", violations)
         return 1
-
-    remaining_debt = violations & MIGRATION_DEBT
-    if remaining_debt:
-        print_edges("warning: remaining dependency-direction migration debt:", remaining_debt)
-        print(
-            "migration guard passed; strict mode will fail until these edges are removed",
-            file=sys.stderr,
-        )
-    else:
-        print("dependency-direction migration debt is clear; enable --strict")
+    print("dependency-direction check passed in strict mode")
     return 0
 
 

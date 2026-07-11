@@ -2,8 +2,9 @@
 
 Status: current validation truth and target validation contract.
 
-Implementation status: the current automation covers only a subset of this
-contract.
+Implementation status: `fast`, `full`, and the named Stage 1 `system` cell are
+automated. Release, cross-runtime, cross-ISA, and production validation remain
+outside the implemented boundary.
 
 Last reviewed: 2026-07-11.
 
@@ -26,22 +27,26 @@ providers, hand-written reports, or direct canonical-state mutation.
 
 ## Current automated gates
 
-GitHub Actions currently runs one Docker-based `full` job on pushes and pull
-requests. It validates the Compose configuration, builds the development image,
-and invokes the same tier implementation exposed locally by
-`scripts/run-docker-ci-gate.sh`.
+GitHub Actions runs one Docker-based job on pushes and pull requests. It
+validates the Compose configuration, builds the development image, then runs
+the same `full` and standalone `system` tier implementations exposed locally by
+`scripts/run-docker-ci-gate.sh`. The workflow uploads the current Stage 1 system
+artifact directory even when the system step fails, when any artifacts exist.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
-| `fast` | Locked metadata, formatting, active-spine dependency migration guard, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, Wasmtime adapter, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
+| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, Wasmtime adapter, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
 | `full` | Everything in `fast`, shell parsing, default-feature workspace tests, current opt-in feature tests, active no-std check, selected Wasm check, kernel target check, benchmark compilation, and report/artifact fixture gates | The checked repository builds and tests across its declared compile targets and current fixture contracts. It does not prove a live handoff. |
+| `system` | All 31 registered Stage 1 lifecycle and fault cases through isolated source/destination workers, followed by independent validation of the produced execution bundle | The named single-runtime reference cell satisfies the Stage 1 workload, resource, authority, recovery, fencing, and evidence contract. It does not repeat `full` or prove another runtime or ISA. |
 
-The dependency migration guard is not the final architecture check. It protects
-only the Stage 1 production spine, permits a shrinking set of four named
-pre-reset edges, and fails on any new violation. Comparison-oracle packages such
-as `contract_validate` remain compiled by `full` but are not production-spine
-truth. `python3 scripts/check-dependency-direction.py --strict` rejects all four;
-strict mode becomes the fast gate as soon as those edges have been removed.
+The named reference cell uses the vISA Wasmtime adapter for both isolated
+runtime processes on x86-64 Linux, host-process isolation, and a durable,
+non-mock SQLite timer/KV provider. A `system` pass establishes only that cell.
+
+The strict dependency check protects the Stage 1 production spine and rejects
+dependencies that point against the accepted architecture. Comparison-oracle
+packages such as `contract_validate` and the pre-reset models remain compiled by
+`full`, but they are not production-spine truth and cannot enter that graph.
 
 ### Current limitations
 
@@ -50,33 +55,28 @@ The standard CI job does not currently run:
 - workspace-wide Clippy outside the Stage 1 active spine;
 - `cargo deny`; the tool is not installed in the development image and the
   existing multiple-version policy has not been reconciled with the lockfile;
-- an end-to-end handoff with real timer/KV adapters, destination
-  reauthorization, source fencing, and lifecycle fault injection;
-- the target multi-dimensional claim/evidence matrix: the current conformance
-  report reduces execution strength to one ordered `Boundary`, so it cannot yet
-  independently enforce runtime, ISA, substrate, resource, authority, fault,
-  and provenance coverage;
 - QEMU boot/runtime behavior beyond compiling the kernel target;
 - two independent WebAssembly runtime implementations;
 - a cross-ISA execution matrix;
 - release provenance/performance gates or long-running concurrency, recovery,
   and security testing.
 
-A green CI result means only that these repository checks passed. It does not
-establish continuity, migration, heterogeneity, or production safety.
+A green CI result establishes the repository checks and the named Stage 1
+reference cell above. It does not establish transparent migration,
+heterogeneity, another runtime/ISA/resource cell, or production safety.
 
 ## Validation tiers
 
-`fast` and `full` are implemented shell commands. `system`, `release`, and claim
-gates below remain acceptance contracts until their executable runners exist.
+`fast`, `full`, and standalone `system` are implemented shell commands.
+`release` and claim gates below remain acceptance contracts until their exact
+matrix runners exist.
 
 ### Fast
 
 The fast tier is the ordinary edit loop: formatting, locked metadata, strict
-linting and focused tests for the active spine, plus the dependency migration
-guard. It proves local logic and guarded structural direction, not adapter or
-continuity behavior. While migration mode remains enabled, a fast pass does not
-mean the final dependency graph is already clean.
+linting and focused tests for the active spine, plus strict dependency direction.
+It proves local logic and structural direction, not adapter or continuity
+behavior.
 
 ### Full
 
@@ -90,10 +90,13 @@ heterogeneous claim.
 ### System
 
 The system tier executes public component/runtime/coordinator/provider paths
-using isolated source and destination instances, fresh bindings, real resource
-adapters, lifecycle faults, and durable evidence. Runtime behavior on QEMU or
-another reference substrate belongs here. This is the minimum basis for a
-state-continuity claim.
+using isolated source and destination worker processes, fresh bindings, real
+timer/KV adapters, destination reauthorization, source fencing, and lifecycle
+faults. It runs all 31 registered cases, retains the raw artifacts and execution
+bundle, then invokes an independent verifier over their identities, digests,
+typed traces, receipts, faults, authority evidence, and provenance. It is
+standalone and does not repeat `full`. This is the basis for the named
+single-runtime reference-cell claim, not a broader continuity claim.
 
 ### Release
 
@@ -165,6 +168,10 @@ upgrades a fixture into proof of the underlying execution.
 
 The first slice is **Cooperative Stateful Component Handoff** using one logical
 timer and one durable key-value namespace.
+
+Implementation status: complete for the named reference cell above. All 31
+registered cases executed and the resulting evidence bundle passed independent
+validation.
 
 It is called a slice because it takes one narrow workload vertically through
 the intended complete architecture: component request, canonical reducer,
@@ -251,10 +258,10 @@ commit only a contract-defined diagnostic; independently completed operations
 remain valid. No destination may be active after a pre-commit failure. After a
 post-commit fault, the old source epoch must remain unusable.
 
-The slice is complete only when these cases are automated, produce verifiable
-artifacts, and run through one canonical model and one coordinator path. Code
-coverage, scenario count, or a manually assembled report cannot substitute for
-the matrix.
+The named reference cell meets this completion rule: these cases are automated,
+produce verifiable execution artifacts, and run through one canonical model and
+one coordinator path. Code coverage, scenario count, or a manually assembled
+report cannot substitute for the matrix in any additional claimed cell.
 
 ## Claims this slice does not prove
 

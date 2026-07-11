@@ -1,22 +1,19 @@
 [package]
 name = "visa_wasmtime"
-version = "0.1.0"
-edition = "2024"
+version = "0.2.0"
 publish = false
+edition = "2024"
 
 [lib]
 path = "src/lib.rs"
 
-[dependencies]
-contract_core.workspace = true
-semantic_core.workspace = true
-substrate_api.workspace = true
-target_abi = { workspace = true, features = ["hash"] }
-visa_profile.workspace = true
-visa_runtime.workspace = true
-wasmtime = { workspace = true, features = ["cranelift", "runtime", "std"] }
+[features]
+test-control = []
 
-[dev-dependencies]
-wat = "1"
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
 sha2.workspace = true
-visa-conformance = { path = "../../testing/visa-conformance" }
+substrate_api = { path = "../../backend/substrate_api" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../visa_runtime" }
+wasmtime = { workspace = true, features = ["component-model", "cranelift", "runtime", "std"] }

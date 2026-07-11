@@ -23,7 +23,7 @@ fi
 output_dir="${1:-target/visa-report-gates}"
 mkdir -p "$output_dir"
 
-cargo test -p visa-conformance >"$output_dir/visa-conformance-tests.log" 2>&1
+cargo test --locked -p conformance-oracle >"$output_dir/visa-conformance-tests.log" 2>&1
 scripts/check-conformance-report.sh >"$output_dir/check-conformance-report.log" 2>&1
 
 echo "Report gates passed. Logs written to $output_dir"

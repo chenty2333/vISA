@@ -62,10 +62,10 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                 evidence_boundary: Boundary::SemanticModel,
                 report_suite: "visa-layered-conformance".to_string(),
                 report_gate:
-                    "cargo run -p visa-conformance -- validate-report <report.json>"
+                    "cargo run -p conformance-oracle -- validate-report <report.json>"
                         .to_string(),
                 artifact_gate:
-                    "cargo run -p visa-conformance -- validate-artifacts <report.json> <artifact-root>"
+                    "cargo run -p conformance-oracle -- validate-artifacts <report.json> <artifact-root>"
                         .to_string(),
                 required_artifacts: vec![EvidenceArtifactKind::ContractGraphSnapshot],
                 profile_rule:
@@ -88,10 +88,10 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                 evidence_boundary: Boundary::PortableArtifactExecution,
                 report_suite: "visa-layered-conformance".to_string(),
                 report_gate:
-                    "cargo run -p visa-conformance -- validate-report <report.json>"
+                    "cargo run -p conformance-oracle -- validate-report <report.json>"
                         .to_string(),
                 artifact_gate:
-                    "cargo run -p visa-conformance -- validate-report-with-artifacts <report.json> <artifact-root>"
+                    "cargo run -p conformance-oracle -- validate-report-with-artifacts <report.json> <artifact-root>"
                         .to_string(),
                 required_artifacts: vec![EvidenceArtifactKind::ContractGraphSnapshot],
                 profile_rule:
@@ -117,10 +117,10 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                 evidence_boundary: Boundary::RealTargetSubstrate,
                 report_suite: "visa-substrate-profile-conformance".to_string(),
                 report_gate:
-                    "cargo run -p visa-conformance -- validate-report <report.json>"
+                    "cargo run -p conformance-oracle -- validate-report <report.json>"
                         .to_string(),
                 artifact_gate:
-                    "cargo run -p visa-conformance -- validate-report-with-artifacts <report.json> <artifact-root>"
+                    "cargo run -p conformance-oracle -- validate-report-with-artifacts <report.json> <artifact-root>"
                         .to_string(),
                 required_artifacts: vec![
                     EvidenceArtifactKind::SubstrateExtractionTrace,
@@ -134,7 +134,7 @@ pub fn minimum_mature_evidence_matrix() -> EvidenceMatrix {
                 proving_tests: vec![
                     "real target or QEMU substrate runner emits visa-substrate-profile-conformance with observed_boundary=real-target-substrate"
                         .to_string(),
-                    "cargo run -p visa-conformance -- validate-report-with-artifacts <report.json> <artifact-root>"
+                    "cargo run -p conformance-oracle -- validate-report-with-artifacts <report.json> <artifact-root>"
                         .to_string(),
                     "local guard tests: substrate_bridge_does_not_overclaim_real_target_without_context, artifact_gate_validates_real_target_extraction_trace_files, artifact_gate_validates_real_target_device_trace_context"
                         .to_string(),

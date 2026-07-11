@@ -7,5 +7,5 @@ edition = "2024"
 [dependencies]
 service_core.workspace = true
 smoltcp.workspace = true
-substrate_api.workspace = true
+substrate_api = { package = "substrate-oracle", path = "../../oracle/substrate_api" }
 visa_abi.workspace = true

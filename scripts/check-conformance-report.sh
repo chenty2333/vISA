@@ -6,7 +6,7 @@ set -euo pipefail
 # owned by the corresponding runner.
 
 run_conformance() {
-    cargo run --quiet -p visa-conformance -- "$@"
+    cargo run --locked --quiet -p conformance-oracle -- "$@"
 }
 
 tmp_root=$(mktemp -d)

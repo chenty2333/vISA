@@ -56,7 +56,13 @@ new runtime-continuity claim is implied.
 
 ## Stage 1: Cooperative Stateful Component Handoff
 
-This is the first architecture-complete capability.
+Status: complete for the named reference cell using isolated vISA Wasmtime
+adapter processes on x86-64 Linux, host-process isolation, and the durable
+SQLite timer/KV provider. All 31 registered cases executed and their evidence
+bundle passed independent validation.
+
+This is the first architecture-complete capability. Its completed baseline does
+not expand any of the exclusions below.
 
 ### User-visible capability
 
@@ -137,7 +143,7 @@ The same public path must cover:
 - state digest equality after journal replay;
 - portable snapshot round-trip and destination binding receipts;
 - authority root and fencing epoch evidence before and after handoff;
-- fault injection at every lifecycle transition;
+- the complete named Stage 1 lifecycle and fault matrix;
 - a machine-readable report tied to raw runner evidence; and
 - documented steady-state cost, snapshot size, and handoff interruption, without
   setting a performance claim before measurement.
@@ -157,6 +163,8 @@ universal exactly-once effects, real kernel/device enforcement, production
 availability, or a validated commercial market.
 
 ## Stage 2: Independent runtime portability
+
+Status: next capability; not yet validated.
 
 Goal: restore the same Stage 1 envelope through a genuinely independent
 WebAssembly execution adapter, with no destination-specific component code or

@@ -1,0 +1,22 @@
+[package]
+name = "conformance-oracle"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata.visa]
+role = "comparison-oracle"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "visa-conformance"
+path = "src/bin/visa-conformance.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+substrate_api = { package = "substrate-oracle", path = "../substrate_api", features = ["conformance"] }
+visa_profile = { package = "profile-oracle", path = "../visa_profile" }

@@ -9,9 +9,9 @@ path = "src/lib.rs"
 
 [dependencies]
 artifact_manifest.workspace = true
-contract_core.workspace = true
+contract_core = { package = "contract-oracle", path = "../../oracle/contract_core" }
 hex.workspace = true
 service_core.workspace = true
 sha2.workspace = true
 supervisor_catalog.workspace = true
-visa_profile.workspace = true
+visa_profile = { package = "profile-oracle", path = "../../oracle/visa_profile" }
