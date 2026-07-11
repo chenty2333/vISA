@@ -1,8 +1,6 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use std::path::Path;
 
 use contract_core::{
     BindingReceipt, CanonicalState, Digest, EffectFailure, EffectOutcome, EffectRequest,
@@ -16,8 +14,8 @@ pub use crate::stage2::{
     ProtocolCommandKind as Stage2WorkerCommandKind, ProtocolResultKind as Stage2WorkerResultKind,
 };
 use crate::{
-    Stage1CaseEvidence, Stage1FaultSchedule, Stage1PerformanceMetric, Stage1ResourceKind,
-    Stage1SemanticTraceArtifact, Stage1TraceRole,
+    Stage1ArtifactReference, Stage1CaseEvidence, Stage1FaultSchedule, Stage1PerformanceMetric,
+    Stage1ResourceKind, Stage1SemanticTraceArtifact, Stage1TraceRole, VerifiedStage1Artifacts,
     stage2::{
         ProtocolRequestProjection, ProtocolResponseProjection, project_request_command,
         project_response,
@@ -207,11 +205,11 @@ impl std::error::Error for Stage2NormalizationError {}
 
 pub(crate) fn normalize_stage2_cell(
     bundle: &crate::Stage1EvidenceBundle,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Result<Stage2NormalizedCellV1, Stage2NormalizationError> {
     let mut cases = Vec::with_capacity(bundle.cases.len());
     for case in &bundle.cases {
-        cases.push(normalize_stage2_case(bundle, case, artifact_root)?);
+        cases.push(normalize_stage2_case(bundle, case, artifacts)?);
     }
     Ok(Stage2NormalizedCellV1 {
         schema_version: STAGE2_NORMALIZED_TRACE_SCHEMA_VERSION.to_owned(),
@@ -225,28 +223,28 @@ pub(crate) fn normalize_stage2_cell(
 fn normalize_stage2_case(
     bundle: &crate::Stage1EvidenceBundle,
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Result<Stage2NormalizedCaseV1, Stage2NormalizationError> {
     validate_canonical_raw_artifacts(case)?;
     let snapshot = case
         .artifacts
         .snapshot
         .as_ref()
-        .map(|reference| read_typed_artifact::<SnapshotEnvelope>(artifact_root, &reference.uri))
+        .map(|reference| read_captured_typed_artifact::<SnapshotEnvelope>(artifacts, reference))
         .transpose()?
         .map(normalize_snapshot);
 
     let mut semantic_traces = Vec::with_capacity(case.artifacts.semantic_traces.len());
     for reference in &case.artifacts.semantic_traces {
         let trace =
-            read_typed_artifact::<Stage1SemanticTraceArtifact>(artifact_root, &reference.uri)?;
+            read_captured_typed_artifact::<Stage1SemanticTraceArtifact>(artifacts, reference)?;
         semantic_traces.push(normalize_trace(trace));
     }
 
     let mut binding_receipts = Vec::with_capacity(case.artifacts.binding_receipts.len());
     for reference in &case.artifacts.binding_receipts {
         let receipt =
-            read_typed_artifact::<BindingReceipt>(artifact_root, &reference.artifact.uri)?;
+            read_captured_typed_artifact::<BindingReceipt>(artifacts, &reference.artifact)?;
         binding_receipts.push(Stage2NormalizedBindingReceipt {
             resource: reference.resource,
             receipt_id: reference.receipt_id.clone(),
@@ -254,9 +252,9 @@ fn normalize_stage2_case(
         });
     }
 
-    let assertion_names = read_assertion_names(case, artifact_root)?;
-    let worker_protocol_observations = read_worker_protocol_observations(case, artifact_root)?;
-    let worker_errors = read_worker_errors(case, artifact_root)?;
+    let assertion_names = read_assertion_names(case, artifacts)?;
+    let worker_protocol_observations = read_worker_protocol_observations(case, artifacts)?;
+    let worker_errors = read_worker_errors(case, artifacts)?;
     let semantic_trace_sha256s =
         semantic_traces.iter().map(canonical_stage2_sha256).collect::<Result<Vec<_>, _>>()?;
     let snapshot_bytes = snapshot.as_ref().map(canonical_stage2_json_bytes).transpose()?;
@@ -342,7 +340,7 @@ struct PendingWorkerProtocolObservation {
 
 pub(crate) fn read_worker_protocol_observations(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Result<Vec<Stage2NormalizedWorkerProtocolObservation>, Stage2NormalizationError> {
     validate_canonical_raw_artifacts(case)?;
     let mut observations = Vec::new();
@@ -360,12 +358,12 @@ pub(crate) fn read_worker_protocol_observations(
                     )
                 },
             )?;
-        let bytes = read_artifact_bytes(artifact_root, &reference.uri)?;
+        let bytes = read_artifact_bytes(artifacts, reference)?;
         observations.extend(project_worker_protocol_observations(
             &case.case_id,
             file_name,
             role,
-            &bytes,
+            bytes,
         )?);
     }
     Ok(observations)
@@ -555,7 +553,7 @@ fn checked_increment(
 
 pub(crate) fn read_worker_errors(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Result<Vec<Stage2NormalizedWorkerError>, Stage2NormalizationError> {
     validate_canonical_raw_artifacts(case)?;
     let mut errors = Vec::new();
@@ -574,7 +572,7 @@ pub(crate) fn read_worker_errors(
                     format!("{} has no {file_name}", case.case_id),
                 )
             })?;
-        let bytes = read_artifact_bytes(artifact_root, &reference.uri)?;
+        let bytes = read_artifact_bytes(artifacts, reference)?;
         let mut observation_index = 0_u64;
         for (line_index, line) in
             bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).enumerate()
@@ -664,7 +662,7 @@ fn select_final_trace<'a>(
 
 fn read_assertion_names(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Result<Vec<String>, Stage2NormalizationError> {
     validate_canonical_raw_artifacts(case)?;
     let expected = canonical_raw_uri(&case.case_id, "assertions.jsonl");
@@ -679,7 +677,7 @@ fn read_assertion_names(
                 format!("{} has no assertions.jsonl", case.case_id),
             )
         })?;
-    let bytes = read_artifact_bytes(artifact_root, &reference.uri)?;
+    let bytes = read_artifact_bytes(artifacts, reference)?;
     let mut seen = BTreeSet::new();
     let mut names = Vec::new();
     for (index, line) in
@@ -744,6 +742,18 @@ fn canonical_raw_uri(case_id: &str, file_name: &str) -> String {
     format!("cases/{case_id}/raw/{file_name}")
 }
 
+fn read_captured_typed_artifact<T>(
+    artifacts: &VerifiedStage1Artifacts,
+    reference: &Stage1ArtifactReference,
+) -> Result<T, Stage2NormalizationError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let bytes = read_artifact_bytes(artifacts, reference)?;
+    decode_typed_artifact(bytes, &reference.uri)
+}
+
+#[cfg(test)]
 pub(crate) fn read_typed_artifact<T>(
     artifact_root: &Path,
     uri: &str,
@@ -751,8 +761,19 @@ pub(crate) fn read_typed_artifact<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let bytes = read_artifact_bytes(artifact_root, uri)?;
-    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+    let root = crate::artifact_io::SecureArtifactRoot::open(artifact_root)
+        .map_err(|source| error("invalid-stage2-normalizer-artifact-root", source.to_string()))?;
+    let bytes = root
+        .read_regular(uri)
+        .map_err(|source| error("unreadable-stage2-normalizer-artifact", source.to_string()))?;
+    decode_typed_artifact(&bytes, uri)
+}
+
+fn decode_typed_artifact<T>(bytes: &[u8], uri: &str) -> Result<T, Stage2NormalizationError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let mut ignored = Vec::new();
     let value = serde_ignored::deserialize(&mut deserializer, |path| {
         ignored.push(path.to_string());
@@ -778,53 +799,15 @@ where
     Ok(value)
 }
 
-fn read_artifact_bytes(
-    artifact_root: &Path,
-    uri: &str,
-) -> Result<Vec<u8>, Stage2NormalizationError> {
-    let relative = Path::new(uri);
-    if uri.is_empty()
-        || relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(error(
-            "invalid-stage2-normalizer-artifact-uri",
-            format!("unsafe artifact URI {uri}"),
-        ));
-    }
-    let root = artifact_root.canonicalize().map_err(|source| {
+fn read_artifact_bytes<'a>(
+    artifacts: &'a VerifiedStage1Artifacts,
+    reference: &Stage1ArtifactReference,
+) -> Result<&'a [u8], Stage2NormalizationError> {
+    artifacts.bytes(&reference.uri).ok_or_else(|| {
         error(
-            "invalid-stage2-normalizer-artifact-root",
-            format!("cannot resolve {}: {source}", artifact_root.display()),
+            "missing-stage2-captured-artifact",
+            format!("artifact {} was not retained in the stable Stage 1 view", reference.uri),
         )
-    })?;
-    let mut prefix = root.clone();
-    for component in relative.components() {
-        let std::path::Component::Normal(component) = component else { unreachable!() };
-        prefix.push(component);
-        let metadata = fs::symlink_metadata(&prefix).map_err(|source| {
-            error("missing-stage2-normalizer-artifact", format!("cannot inspect {uri}: {source}"))
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(error(
-                "stage2-normalizer-artifact-symlink-rejected",
-                format!("artifact {uri} contains symlink component {}", prefix.display()),
-            ));
-        }
-    }
-    let resolved = root.join(relative).canonicalize().map_err(|source| {
-        error("missing-stage2-normalizer-artifact", format!("cannot resolve {uri}: {source}"))
-    })?;
-    if !resolved.starts_with(&root) || !resolved.is_file() {
-        return Err(error(
-            "stage2-normalizer-artifact-path-escape",
-            format!("artifact {uri} is not a contained regular file"),
-        ));
-    }
-    fs::read(&resolved).map_err(|source| {
-        error("unreadable-stage2-normalizer-artifact", format!("cannot read {uri}: {source}"))
     })
 }
 

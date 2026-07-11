@@ -10,7 +10,7 @@ portability remains open because Jco's translator lineage includes
 `wasmtime-environ`. File/network profiles, cross-ISA cells, confidential
 continuity, and production readiness are not implemented.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-12.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -321,6 +321,18 @@ For example, a real hardware run does not by itself prove cross-runtime
 portability, and a portable artifact harness does not prove real device
 authority. Every public claim must point to the executable matrix cell that
 supports it.
+
+Evidence validation uses a stable artifact view rather than ambient pathnames.
+The Linux implementation anchors a root directory descriptor, opens contained
+regular files with kernel-enforced `openat2` resolution, and binds each
+reference digest and semantic parser to the same captured bytes. Stage 2 inner
+audits and normalization reuse the verified Stage 1 view instead of reopening
+the tree. Concurrent replacement cannot escape the anchored root or make the
+digest and semantic parser observe different path targets. A contained regular
+file that wins the race before `open` is accepted only when its captured bytes
+satisfy both the declared digest and semantic checks. This does not turn the
+verifier process, publisher topology, or runtime load carrier into a
+hostile-same-UID security boundary.
 
 ## Dependency direction
 

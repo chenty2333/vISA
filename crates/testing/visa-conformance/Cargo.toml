@@ -15,3 +15,6 @@ serde_ignored.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 visa_profile = { path = "../../core/visa_profile" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }

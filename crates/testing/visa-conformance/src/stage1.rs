@@ -1,15 +1,15 @@
 use std::{
-    collections::BTreeSet,
-    fs::{self, File},
-    io::{self, Read},
-    path::{Component, Path, PathBuf},
+    collections::{BTreeMap, BTreeSet},
+    path::{Component, Path},
 };
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+
+use crate::artifact_io::{SecureArtifactError, SecureArtifactErrorKind, SecureArtifactRoot};
 
 pub const STAGE1_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage1-evidence-v0.2";
 pub const STAGE1_CAPABILITY_ID: &str = "cooperative-stateful-component-handoff";
+const MAX_STAGE1_RETAINED_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -613,20 +613,109 @@ pub fn gate_stage1_evidence_bundle_json(bytes: &[u8]) -> Stage1EvidenceGateResul
     }
 }
 
+pub(crate) struct VerifiedStage1Artifact {
+    sha256: String,
+    bytes: Option<Vec<u8>>,
+}
+
+pub(crate) struct VerifiedStage1Artifacts {
+    artifacts: BTreeMap<String, VerifiedStage1Artifact>,
+    #[cfg(all(test, target_os = "linux"))]
+    successful_regular_open_counts: BTreeMap<String, usize>,
+}
+
+impl VerifiedStage1Artifacts {
+    pub(crate) fn bytes(&self, uri: &str) -> Option<&[u8]> {
+        self.artifacts.get(uri)?.bytes.as_deref()
+    }
+
+    pub(crate) fn sha256(&self, uri: &str) -> Option<&str> {
+        Some(self.artifacts.get(uri)?.sha256.as_str())
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn artifact_uris(&self) -> impl Iterator<Item = &str> {
+        self.artifacts.keys().map(String::as_str)
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn successful_regular_open_counts(&self) -> &BTreeMap<String, usize> {
+        &self.successful_regular_open_counts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capture_for_test<'a>(
+        artifact_root: &Path,
+        uris: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        let root = SecureArtifactRoot::open(artifact_root).expect("open test artifact root");
+        let artifacts = uris
+            .into_iter()
+            .map(|uri| {
+                let bytes = root.read_regular(uri).expect("capture test artifact");
+                (
+                    uri.to_owned(),
+                    VerifiedStage1Artifact {
+                        sha256: crate::sha256_hex(&bytes),
+                        bytes: Some(bytes),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            artifacts,
+            #[cfg(target_os = "linux")]
+            successful_regular_open_counts: root.successful_regular_open_counts(),
+        }
+    }
+}
+
 pub fn validate_stage1_evidence_artifacts(
     bundle: &Stage1EvidenceBundle,
     artifact_root: impl AsRef<Path>,
 ) -> Stage1ValidationReport {
+    validate_stage1_evidence_artifacts_with_snapshot(bundle, artifact_root).0
+}
+
+pub(crate) fn validate_stage1_evidence_artifacts_with_snapshot(
+    bundle: &Stage1EvidenceBundle,
+    artifact_root: impl AsRef<Path>,
+) -> (Stage1ValidationReport, Option<VerifiedStage1Artifacts>) {
+    validate_stage1_evidence_artifacts_with_snapshot_impl(bundle, artifact_root, || {})
+}
+
+#[cfg(test)]
+pub(crate) fn validate_stage1_evidence_artifacts_with_snapshot_after_capture(
+    bundle: &Stage1EvidenceBundle,
+    artifact_root: impl AsRef<Path>,
+    after_capture: impl FnOnce(),
+) -> (Stage1ValidationReport, Option<VerifiedStage1Artifacts>) {
+    validate_stage1_evidence_artifacts_with_snapshot_impl(bundle, artifact_root, after_capture)
+}
+
+fn validate_stage1_evidence_artifacts_with_snapshot_impl(
+    bundle: &Stage1EvidenceBundle,
+    artifact_root: impl AsRef<Path>,
+    after_capture: impl FnOnce(),
+) -> (Stage1ValidationReport, Option<VerifiedStage1Artifacts>) {
+    let (mut findings, snapshot) = capture_stage1_evidence_artifacts(bundle, artifact_root);
+    after_capture();
+    if let Some(snapshot) = snapshot.as_ref() {
+        findings.extend(crate::stage1_artifacts::validate_artifact_contents(bundle, snapshot));
+    }
+    (Stage1ValidationReport::new(findings), snapshot)
+}
+
+pub(crate) fn capture_stage1_evidence_artifacts(
+    bundle: &Stage1EvidenceBundle,
+    artifact_root: impl AsRef<Path>,
+) -> (Vec<Stage1ValidationFinding>, Option<VerifiedStage1Artifacts>) {
     let mut findings = Vec::new();
-    let artifact_root = match artifact_root.as_ref().canonicalize() {
+    let artifact_root = match SecureArtifactRoot::open(artifact_root.as_ref()) {
         Ok(root) => root,
         Err(error) => {
-            push_finding(
-                &mut findings,
-                "invalid-stage1-artifact-root",
-                format!("cannot resolve artifact root: {error}"),
-            );
-            return Stage1ValidationReport::new(findings);
+            push_stage1_artifact_error(&mut findings, None, error);
+            return (findings, None);
         }
     };
 
@@ -643,13 +732,24 @@ pub fn validate_stage1_evidence_artifacts(
     ];
     let artifacts = provenance
         .into_iter()
-        .map(|artifact| (artifact.uri.as_str(), artifact.sha256.as_str()))
+        .map(|artifact| {
+            (
+                artifact.uri.as_str(),
+                artifact.sha256.as_str(),
+                artifact.uri != bundle.provenance.artifacts.component.uri
+                    && artifact.uri != bundle.provenance.artifacts.toolchain.uri
+                    && artifact.uri != bundle.provenance.artifacts.build_toolchain.uri
+                    && artifact.uri != bundle.provenance.artifacts.executable.uri,
+            )
+        })
         .chain(
             stage1_artifact_references(bundle)
                 .into_iter()
-                .map(|artifact| (artifact.uri.as_str(), artifact.sha256.as_str())),
+                .map(|artifact| (artifact.uri.as_str(), artifact.sha256.as_str(), true)),
         );
-    for (uri, expected_sha256) in artifacts {
+    let mut captured = BTreeMap::new();
+    let mut retained_bytes = 0_u64;
+    for (uri, expected_sha256, retain_bytes) in artifacts {
         if !artifact_uri_is_relative(uri) {
             push_finding(
                 &mut findings,
@@ -667,68 +767,57 @@ pub fn validate_stage1_evidence_artifacts(
             continue;
         }
 
-        let resolved = match resolve_stage1_artifact_path(&artifact_root, uri) {
-            Ok(path) => path,
-            Err(Stage1ArtifactPathError::Unsafe) => {
-                push_finding(
-                    &mut findings,
-                    "invalid-stage1-artifact-uri",
-                    format!("unsafe artifact URI {uri}"),
-                );
-                continue;
-            }
-            Err(Stage1ArtifactPathError::Missing(error)) => {
-                push_finding(
-                    &mut findings,
-                    "missing-stage1-artifact-file",
-                    format!("cannot resolve {uri}: {error}"),
-                );
-                continue;
-            }
-            Err(Stage1ArtifactPathError::Escape) => {
-                push_finding(
-                    &mut findings,
-                    "stage1-artifact-path-escape",
-                    format!("artifact {uri} resolves outside the artifact root"),
-                );
-                continue;
-            }
-            Err(Stage1ArtifactPathError::Symlink(path)) => {
-                push_finding(
-                    &mut findings,
-                    "stage1-artifact-symlink-rejected",
-                    format!("artifact {uri} contains symlink component {}", path.display()),
-                );
-                continue;
-            }
-            Err(Stage1ArtifactPathError::InvalidFile) => {
-                push_finding(
-                    &mut findings,
-                    "invalid-stage1-artifact-file",
-                    format!("artifact {uri} is not a regular file"),
-                );
+        let captured_artifact = if retain_bytes {
+            artifact_root.read_regular(uri).map(|bytes| VerifiedStage1Artifact {
+                sha256: crate::sha256_hex(&bytes),
+                bytes: Some(bytes),
+            })
+        } else {
+            artifact_root
+                .sha256_regular(uri)
+                .map(|sha256| VerifiedStage1Artifact { sha256, bytes: None })
+        };
+        let captured_artifact = match captured_artifact {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                push_stage1_artifact_error(&mut findings, Some(uri), error);
                 continue;
             }
         };
-
-        match sha256_file(&resolved) {
-            Ok(observed) if observed == expected_sha256 => {}
-            Ok(observed) => push_finding(
+        if let Some(bytes) = captured_artifact.bytes.as_ref() {
+            retained_bytes =
+                retained_bytes.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            if retained_bytes > MAX_STAGE1_RETAINED_ARTIFACT_BYTES {
+                push_finding(
+                    &mut findings,
+                    "stage1-artifact-set-too-large",
+                    format!(
+                        "retained Stage 1 artifacts exceed the \
+                         {MAX_STAGE1_RETAINED_ARTIFACT_BYTES}-byte limit"
+                    ),
+                );
+                continue;
+            }
+        }
+        if captured_artifact.sha256 != expected_sha256 {
+            push_finding(
                 &mut findings,
                 "stage1-artifact-digest-mismatch",
-                format!("artifact {uri} digest is {observed}, expected {expected_sha256}"),
-            ),
-            Err(error) => push_finding(
-                &mut findings,
-                "unreadable-stage1-artifact-file",
-                format!("cannot read {uri}: {error}"),
-            ),
+                format!(
+                    "artifact {uri} digest is {}, expected {expected_sha256}",
+                    captured_artifact.sha256
+                ),
+            );
         }
+        captured.insert(uri.to_owned(), captured_artifact);
     }
 
-    findings.extend(crate::stage1_artifacts::validate_artifact_contents(bundle, &artifact_root));
-
-    Stage1ValidationReport::new(findings)
+    let snapshot = (captured.len() == uris.len()).then_some(VerifiedStage1Artifacts {
+        artifacts: captured,
+        #[cfg(all(test, target_os = "linux"))]
+        successful_regular_open_counts: artifact_root.successful_regular_open_counts(),
+    });
+    (findings, snapshot)
 }
 
 pub fn gate_stage1_evidence_bundle_json_with_artifacts(
@@ -737,10 +826,8 @@ pub fn gate_stage1_evidence_bundle_json_with_artifacts(
 ) -> Stage1EvidenceGateResult {
     match parse_stage1_evidence_bundle_json(bytes) {
         Ok(bundle) => {
-            let mut validation = validate_stage1_evidence_bundle(&bundle);
-            let artifact_validation = validate_stage1_evidence_artifacts(&bundle, artifact_root);
-            validation.findings.extend(artifact_validation.findings);
-            validation.ok = validation.findings.is_empty();
+            let (validation, _) =
+                validate_stage1_evidence_bundle_with_artifact_snapshot(&bundle, artifact_root);
             Stage1EvidenceGateResult {
                 ok: validation.ok,
                 load_error: None,
@@ -751,6 +838,19 @@ pub fn gate_stage1_evidence_bundle_json_with_artifacts(
             Stage1EvidenceGateResult { ok: false, load_error: Some(error), validation: None }
         }
     }
+}
+
+pub(crate) fn validate_stage1_evidence_bundle_with_artifact_snapshot(
+    bundle: &Stage1EvidenceBundle,
+    artifact_root: impl AsRef<Path>,
+) -> (Stage1ValidationReport, Option<VerifiedStage1Artifacts>) {
+    let mut validation = validate_stage1_evidence_bundle(bundle);
+    let (artifact_validation, snapshot) =
+        validate_stage1_evidence_artifacts_with_snapshot(bundle, artifact_root);
+    validation.findings.extend(artifact_validation.findings);
+    validation.ok = validation.findings.is_empty();
+    let snapshot = validation.ok.then_some(snapshot).flatten();
+    (validation, snapshot)
 }
 
 fn stage1_artifact_references(bundle: &Stage1EvidenceBundle) -> Vec<&Stage1ArtifactReference> {
@@ -764,20 +864,6 @@ fn stage1_artifact_references(bundle: &Stage1EvidenceBundle) -> Vec<&Stage1Artif
         artifacts.extend(&case.artifacts.raw_execution);
     }
     artifacts
-}
-
-fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn validate_claims(claims: &[Stage1Claim], findings: &mut Vec<Stage1ValidationFinding>) {
@@ -1587,50 +1673,33 @@ fn artifact_uri_is_relative(uri: &str) -> bool {
         && path.components().all(|component| matches!(component, Component::Normal(_)))
 }
 
-pub(crate) enum Stage1ArtifactPathError {
-    Unsafe,
-    Missing(io::Error),
-    Escape,
-    Symlink(PathBuf),
-    InvalidFile,
-}
-
-/// Resolve a safe relative Stage 1 artifact without following any symlink
-/// component. The caller owns the public finding code/detail so existing Stage
-/// 1 validation diagnostics remain stable.
-pub(crate) fn resolve_stage1_artifact_path(
-    artifact_root: &Path,
-    uri: &str,
-) -> Result<PathBuf, Stage1ArtifactPathError> {
-    if !artifact_uri_is_relative(uri) {
-        return Err(Stage1ArtifactPathError::Unsafe);
+fn push_stage1_artifact_error(
+    findings: &mut Vec<Stage1ValidationFinding>,
+    uri: Option<&str>,
+    error: SecureArtifactError,
+) {
+    if uri.is_none() {
+        let code = if error.kind == SecureArtifactErrorKind::Unsupported {
+            "stage1-secure-artifact-reader-unavailable"
+        } else {
+            "invalid-stage1-artifact-root"
+        };
+        push_finding(findings, code, error.detail);
+        return;
     }
-
-    let candidate = artifact_root.join(uri);
-    let mut prefix = artifact_root.to_path_buf();
-    for component in Path::new(uri).components() {
-        let Component::Normal(component) = component else { unreachable!() };
-        prefix.push(component);
-        let metadata = fs::symlink_metadata(&prefix).map_err(Stage1ArtifactPathError::Missing)?;
-        if metadata.file_type().is_symlink() {
-            return match candidate.canonicalize() {
-                Ok(resolved) if !resolved.starts_with(artifact_root) => {
-                    Err(Stage1ArtifactPathError::Escape)
-                }
-                Ok(_) => Err(Stage1ArtifactPathError::Symlink(prefix)),
-                Err(error) => Err(Stage1ArtifactPathError::Missing(error)),
-            };
-        }
-    }
-
-    let resolved = candidate.canonicalize().map_err(Stage1ArtifactPathError::Missing)?;
-    if !resolved.starts_with(artifact_root) {
-        return Err(Stage1ArtifactPathError::Escape);
-    }
-    if !resolved.is_file() {
-        return Err(Stage1ArtifactPathError::InvalidFile);
-    }
-    Ok(resolved)
+    let code = match error.kind {
+        SecureArtifactErrorKind::UnsafeUri => "invalid-stage1-artifact-uri",
+        SecureArtifactErrorKind::Missing => "missing-stage1-artifact-file",
+        SecureArtifactErrorKind::Symlink => "stage1-artifact-symlink-rejected",
+        SecureArtifactErrorKind::Escape => "stage1-artifact-path-escape",
+        SecureArtifactErrorKind::NotRegular => "invalid-stage1-artifact-file",
+        SecureArtifactErrorKind::TooLarge => "stage1-artifact-too-large",
+        SecureArtifactErrorKind::ResourceExhausted => "unreadable-stage1-artifact-file",
+        SecureArtifactErrorKind::ConcurrentMutation => "stage1-artifact-concurrent-mutation",
+        SecureArtifactErrorKind::Unsupported => "stage1-secure-artifact-reader-unavailable",
+        SecureArtifactErrorKind::Io => "unreadable-stage1-artifact-file",
+    };
+    push_finding(findings, code, error.detail);
 }
 
 fn push_finding(

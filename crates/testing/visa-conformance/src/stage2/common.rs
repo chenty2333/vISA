@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::{
-    artifacts::{finding, is_sha256, read_and_hash, read_contained},
+    artifacts::{finding, is_sha256, read_and_hash},
     model::{
         STAGE2_ACCEPTED_REGISTRY_SHA256, STAGE2_AUTHORITY_POLICY_CANONICAL_ENCODING,
         STAGE2_AUTHORITY_POLICY_INPUT_SCHEMA_VERSION, STAGE2_COMMON_INPUT_FILE,
@@ -375,12 +375,13 @@ fn validate_common_input_identity_binding(
         );
         return;
     };
-    let bytes = match read_contained(&cell.artifact_root, &reference.uri) {
-        Ok(bytes) => bytes,
-        Err(source) => {
-            findings.push(source);
-            return;
-        }
+    let Some(bytes) = cell.artifacts.bytes(&reference.uri) else {
+        finding(
+            findings,
+            "missing-stage2-captured-common-input-assertion",
+            format!("{} {} was not retained", cell.id.as_str(), reference.uri),
+        );
+        return;
     };
     let mut observed = Vec::new();
     for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {

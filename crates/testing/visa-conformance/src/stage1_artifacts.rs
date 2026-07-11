@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Component, Path},
 };
 
@@ -13,20 +12,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::stage1::{
-    STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactPathError, Stage1ArtifactReference,
-    Stage1BindingReceiptReference, Stage1CaseEvidence, Stage1EvidenceBundle,
-    Stage1ExpectedOwnership, Stage1ResourceKind, Stage1SemanticTraceArtifact, Stage1TraceRole,
-    Stage1ValidationFinding, resolve_stage1_artifact_path, stage1_expected_ownership,
+    STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactReference, Stage1BindingReceiptReference,
+    Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, Stage1ResourceKind,
+    Stage1SemanticTraceArtifact, Stage1TraceRole, Stage1ValidationFinding, VerifiedStage1Artifacts,
+    stage1_expected_ownership,
 };
 
 pub(crate) fn validate_artifact_contents(
     bundle: &Stage1EvidenceBundle,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
 ) -> Vec<Stage1ValidationFinding> {
     let mut findings = Vec::new();
-    let matrix = validate_provenance_contents(bundle, artifact_root, &mut findings);
+    let matrix = validate_provenance_contents(bundle, artifacts, &mut findings);
     for case in &bundle.cases {
-        validate_case_contents(bundle, case, matrix.as_ref(), artifact_root, &mut findings);
+        validate_case_contents(bundle, case, matrix.as_ref(), artifacts, &mut findings);
     }
     findings
 }
@@ -39,66 +38,19 @@ fn finding(
     findings.push(Stage1ValidationFinding { code: code.to_owned(), detail: detail.into() });
 }
 
-fn read_artifact(
-    artifact_root: &Path,
+fn read_artifact<'a>(
+    artifacts: &'a VerifiedStage1Artifacts,
     uri: &str,
     label: &str,
     findings: &mut Vec<Stage1ValidationFinding>,
-) -> Option<Vec<u8>> {
-    let relative = Path::new(uri);
-    if uri.is_empty()
-        || relative.is_absolute()
-        || relative.components().any(|component| !matches!(component, Component::Normal(_)))
-    {
-        finding(
-            findings,
-            "invalid-stage1-artifact-uri",
-            format!("{label} uses unsafe artifact URI {uri}"),
-        );
-        return None;
-    }
-    let resolved = match resolve_stage1_artifact_path(artifact_root, uri) {
-        Ok(path) => path,
-        Err(Stage1ArtifactPathError::Unsafe) => {
+) -> Option<&'a [u8]> {
+    match artifacts.bytes(uri) {
+        Some(bytes) => Some(bytes),
+        None => {
             finding(
                 findings,
-                "invalid-stage1-artifact-uri",
-                format!("{label} uses unsafe artifact URI {uri}"),
-            );
-            return None;
-        }
-        Err(Stage1ArtifactPathError::Missing(error)) => {
-            finding(
-                findings,
-                "missing-stage1-artifact-file",
-                format!("cannot resolve {label} {uri}: {error}"),
-            );
-            return None;
-        }
-        Err(Stage1ArtifactPathError::Symlink(path)) => {
-            finding(
-                findings,
-                "stage1-artifact-symlink-rejected",
-                format!("{label} {uri} contains symlink component {}", path.display()),
-            );
-            return None;
-        }
-        Err(Stage1ArtifactPathError::Escape | Stage1ArtifactPathError::InvalidFile) => {
-            finding(
-                findings,
-                "invalid-stage1-artifact-file",
-                format!("{label} is not a regular file under the artifact root: {uri}"),
-            );
-            return None;
-        }
-    };
-    match fs::read(&resolved) {
-        Ok(bytes) => Some(bytes),
-        Err(error) => {
-            finding(
-                findings,
-                "unreadable-stage1-artifact-file",
-                format!("cannot read {label} {uri}: {error}"),
+                "missing-stage1-captured-artifact",
+                format!("{label} {uri} was not retained in the stable artifact view"),
             );
             None
         }
@@ -208,13 +160,12 @@ struct FaultCoverageEntry {
 
 fn validate_provenance_contents(
     bundle: &Stage1EvidenceBundle,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Option<MatrixManifest> {
     let component_reference = &bundle.provenance.artifacts.component;
-    if let Some(bytes) =
-        read_artifact(artifact_root, &component_reference.uri, "Stage 1 component", findings)
-        && sha256_hex(&bytes) != bundle.provenance.component_sha256
+    if artifacts.sha256(&component_reference.uri)
+        != Some(bundle.provenance.component_sha256.as_str())
     {
         finding(
             findings,
@@ -225,9 +176,9 @@ fn validate_provenance_contents(
 
     let profile_reference = &bundle.provenance.artifacts.profile;
     if let Some(bytes) =
-        read_artifact(artifact_root, &profile_reference.uri, "Stage 1 profile", findings)
+        read_artifact(artifacts, &profile_reference.uri, "Stage 1 profile", findings)
     {
-        match serde_json::from_slice::<visa_profile::CooperativeHandoffProfile>(&bytes) {
+        match serde_json::from_slice::<visa_profile::CooperativeHandoffProfile>(bytes) {
             Ok(profile) => match canonical_digest(&profile) {
                 Ok(digest) if contract_digest_hex(digest) == bundle.provenance.profile_sha256 => {}
                 _ => finding(
@@ -246,9 +197,9 @@ fn validate_provenance_contents(
 
     let source_reference = &bundle.provenance.artifacts.source_manifest;
     if let Some(bytes) =
-        read_artifact(artifact_root, &source_reference.uri, "source provenance manifest", findings)
+        read_artifact(artifacts, &source_reference.uri, "source provenance manifest", findings)
     {
-        match serde_json::from_slice::<SourceManifest>(&bytes) {
+        match serde_json::from_slice::<SourceManifest>(bytes) {
             Ok(manifest) => validate_source_manifest(bundle, &manifest, findings),
             Err(error) => finding(
                 findings,
@@ -260,12 +211,12 @@ fn validate_provenance_contents(
 
     let build_source_reference = &bundle.provenance.artifacts.build_source_manifest;
     if let Some(bytes) = read_artifact(
-        artifact_root,
+        artifacts,
         &build_source_reference.uri,
         "build source provenance manifest",
         findings,
     ) {
-        match serde_json::from_slice::<SourceManifest>(&bytes) {
+        match serde_json::from_slice::<SourceManifest>(bytes) {
             Ok(manifest) => validate_source_manifest(bundle, &manifest, findings),
             Err(error) => finding(
                 findings,
@@ -276,9 +227,8 @@ fn validate_provenance_contents(
     }
 
     let toolchain_reference = &bundle.provenance.artifacts.toolchain;
-    if let Some(bytes) =
-        read_artifact(artifact_root, &toolchain_reference.uri, "toolchain provenance", findings)
-        && sha256_hex(&bytes) != bundle.provenance.toolchain_sha256
+    if artifacts.sha256(&toolchain_reference.uri)
+        != Some(bundle.provenance.toolchain_sha256.as_str())
     {
         finding(
             findings,
@@ -288,12 +238,8 @@ fn validate_provenance_contents(
     }
 
     let build_toolchain_reference = &bundle.provenance.artifacts.build_toolchain;
-    if let Some(bytes) = read_artifact(
-        artifact_root,
-        &build_toolchain_reference.uri,
-        "build toolchain provenance",
-        findings,
-    ) && sha256_hex(&bytes) != bundle.provenance.toolchain_sha256
+    if artifacts.sha256(&build_toolchain_reference.uri)
+        != Some(bundle.provenance.toolchain_sha256.as_str())
     {
         finding(
             findings,
@@ -303,9 +249,8 @@ fn validate_provenance_contents(
     }
 
     let executable_reference = &bundle.provenance.artifacts.executable;
-    if let Some(bytes) =
-        read_artifact(artifact_root, &executable_reference.uri, "executed Stage 1 binary", findings)
-        && sha256_hex(&bytes) != bundle.provenance.executable_sha256
+    if artifacts.sha256(&executable_reference.uri)
+        != Some(bundle.provenance.executable_sha256.as_str())
     {
         finding(
             findings,
@@ -315,13 +260,9 @@ fn validate_provenance_contents(
     }
 
     let matrix_reference = &bundle.provenance.artifacts.matrix_manifest;
-    let bytes = read_artifact(
-        artifact_root,
-        &matrix_reference.uri,
-        "matrix provenance manifest",
-        findings,
-    )?;
-    match serde_json::from_slice::<MatrixManifest>(&bytes) {
+    let bytes =
+        read_artifact(artifacts, &matrix_reference.uri, "matrix provenance manifest", findings)?;
+    match serde_json::from_slice::<MatrixManifest>(bytes) {
         Ok(matrix) => {
             validate_matrix_manifest(bundle, &matrix, findings);
             Some(matrix)
@@ -498,13 +439,13 @@ fn validate_case_contents(
     bundle: &Stage1EvidenceBundle,
     case: &Stage1CaseEvidence,
     _matrix: Option<&MatrixManifest>,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
-    let snapshot = parse_snapshot(case, artifact_root, findings);
-    let traces = parse_traces(case, artifact_root, findings);
-    let receipts = parse_receipts(case, artifact_root, findings);
-    let raw = validate_raw_artifacts(case, artifact_root, findings);
+    let snapshot = parse_snapshot(case, artifacts, findings);
+    let traces = parse_traces(case, artifacts, findings);
+    let receipts = parse_receipts(case, artifacts, findings);
+    let raw = validate_raw_artifacts(case, artifacts, findings);
 
     validate_snapshot(bundle, case, snapshot.as_ref(), &traces, findings);
     validate_traces(bundle, case, snapshot.as_ref(), &traces, &raw, findings);
@@ -553,12 +494,12 @@ struct ReportRegenerationDetail {
 
 fn parse_snapshot(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Option<SnapshotEnvelope> {
     let reference = case.artifacts.snapshot.as_ref()?;
-    let bytes = read_case_artifact(case, reference, "snapshot", artifact_root, findings)?;
-    match serde_json::from_slice(&bytes) {
+    let bytes = read_case_artifact(case, reference, "snapshot", artifacts, findings)?;
+    match serde_json::from_slice(bytes) {
         Ok(snapshot) => Some(snapshot),
         Err(error) => {
             finding(
@@ -573,17 +514,17 @@ fn parse_snapshot(
 
 fn parse_traces(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Vec<ParsedTrace> {
     let mut traces = Vec::new();
     for reference in &case.artifacts.semantic_traces {
         let Some(bytes) =
-            read_case_artifact(case, reference, "semantic trace", artifact_root, findings)
+            read_case_artifact(case, reference, "semantic trace", artifacts, findings)
         else {
             continue;
         };
-        let trace = match serde_json::from_slice::<Stage1SemanticTraceArtifact>(&bytes) {
+        let trace = match serde_json::from_slice::<Stage1SemanticTraceArtifact>(bytes) {
             Ok(trace) => trace,
             Err(error) => {
                 finding(
@@ -675,25 +616,25 @@ const fn role_of(role: ActivationRole) -> Stage1TraceRole {
 
 fn parse_receipts(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Vec<ParsedReceipt> {
     case.artifacts
         .binding_receipts
         .iter()
-        .filter_map(|reference| parse_receipt(case, reference, artifact_root, findings))
+        .filter_map(|reference| parse_receipt(case, reference, artifacts, findings))
         .collect()
 }
 
 fn parse_receipt(
     case: &Stage1CaseEvidence,
     reference: &Stage1BindingReceiptReference,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Option<ParsedReceipt> {
     let bytes =
-        read_case_artifact(case, &reference.artifact, "binding receipt", artifact_root, findings)?;
-    match serde_json::from_slice::<BindingReceipt>(&bytes) {
+        read_case_artifact(case, &reference.artifact, "binding receipt", artifacts, findings)?;
+    match serde_json::from_slice::<BindingReceipt>(bytes) {
         Ok(receipt) => Some(ParsedReceipt {
             resource: reference.resource,
             claimed_identity: reference.receipt_id.clone(),
@@ -710,14 +651,14 @@ fn parse_receipt(
     }
 }
 
-fn read_case_artifact(
+fn read_case_artifact<'a>(
     case: &Stage1CaseEvidence,
     reference: &Stage1ArtifactReference,
     label: &str,
-    artifact_root: &Path,
+    artifacts: &'a VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
-) -> Option<Vec<u8>> {
-    read_artifact(artifact_root, &reference.uri, &format!("{} {label}", case.case_id), findings)
+) -> Option<&'a [u8]> {
+    read_artifact(artifacts, &reference.uri, &format!("{} {label}", case.case_id), findings)
 }
 
 fn validate_snapshot(
@@ -1199,13 +1140,12 @@ struct RawDumpResult {
 
 fn validate_raw_artifacts(
     case: &Stage1CaseEvidence,
-    artifact_root: &Path,
+    artifacts: &VerifiedStage1Artifacts,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> RawEvidence {
     let mut evidence = RawEvidence::default();
     for reference in &case.artifacts.raw_execution {
-        let Some(bytes) =
-            read_case_artifact(case, reference, "raw execution", artifact_root, findings)
+        let Some(bytes) = read_case_artifact(case, reference, "raw execution", artifacts, findings)
         else {
             continue;
         };
@@ -1215,17 +1155,17 @@ fn validate_raw_artifacts(
             .unwrap_or_default();
         match file_name {
             "source.jsonl" => {
-                validate_transcript(case, Stage1TraceRole::Source, &bytes, &mut evidence, findings)
+                validate_transcript(case, Stage1TraceRole::Source, bytes, &mut evidence, findings)
             }
             "destination.jsonl" => validate_transcript(
                 case,
                 Stage1TraceRole::Destination,
-                &bytes,
+                bytes,
                 &mut evidence,
                 findings,
             ),
-            "assertions.jsonl" => validate_assertions(case, &bytes, &mut evidence, findings),
-            "performance.json" => validate_performance_raw(case, &bytes, findings),
+            "assertions.jsonl" => validate_assertions(case, bytes, &mut evidence, findings),
+            "performance.json" => validate_performance_raw(case, bytes, findings),
             _ => finding(
                 findings,
                 "unknown-stage1-raw-artifact",

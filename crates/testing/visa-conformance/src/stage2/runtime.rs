@@ -17,7 +17,7 @@ use super::{
 };
 use crate::{
     STAGE1_CASE_DEFINITIONS, Stage1Claim, Stage1EvidenceBundle, Stage1EvidenceKind,
-    Stage1VersionedIdentity,
+    Stage1VersionedIdentity, VerifiedStage1Artifacts,
 };
 
 pub(super) fn translation_presence_matches(
@@ -51,10 +51,11 @@ pub(super) fn validate_inner_cell(
     id: Stage2CellId,
     manifest: &Stage2CellManifest,
     bundle: &Stage1EvidenceBundle,
+    artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
-    let observed = validate_inner_cell_without_manifest(id, bundle, cell_root, findings);
+    let observed = validate_inner_cell_without_manifest(id, bundle, artifacts, cell_root, findings);
     if manifest.observed_source != bundle.environment.source_runtime
         || manifest.observed_destination != bundle.environment.destination_runtime
         || manifest.case_count != bundle.cases.len()
@@ -84,6 +85,7 @@ pub(super) fn validate_inner_cell(
 pub(super) fn validate_inner_cell_without_manifest(
     id: Stage2CellId,
     bundle: &Stage1EvidenceBundle,
+    artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
@@ -114,7 +116,7 @@ pub(super) fn validate_inner_cell_without_manifest(
             finding(findings, source.code, format!("{}: {}", id.as_str(), source.detail));
         }
     }
-    audit_runtime_transcripts(id, bundle, cell_root, findings)
+    audit_runtime_transcripts(id, bundle, artifacts, cell_root, findings)
 }
 
 pub(crate) fn runtime_identity_matches(

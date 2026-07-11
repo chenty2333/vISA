@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-12.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -125,6 +125,16 @@ source and destination worker processes, writes an execution evidence bundle,
 then invokes the independent `visa-conformance stage1` validator. The command
 prints the retained artifact root and bundle path on success and preserves them
 on failure for diagnosis.
+
+On Linux, the verifier requires race-safe descriptor-relative artifact opens;
+it never falls back to `canonicalize` followed by an ambient pathname read.
+Digest and semantic validation share one captured byte view, and Stage 2 reuses
+that view for its inner audits and normalization. Secure artifact inputs are
+limited to 256 MiB per file and 128 MiB of retained Stage 1 bytes per cell;
+digest-only executable provenance is streamed. An unavailable `openat2`, a
+kernel-reported unstable resolution after bounded retries, a
+symlink/magic-link/mount escape, a non-regular file, or an exceeded limit is a
+gate failure.
 
 `system-jco-node` applies the same 31-case and independent Stage 1 verification
 flow to an explicitly selected JcoNode-to-JcoNode pair. `system-stage2` creates

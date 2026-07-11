@@ -2065,6 +2065,7 @@ name = "visa-conformance"
 version = "0.2.0"
 dependencies = [
  "contract_core",
+ "rustix",
  "semantic_core",
  "serde",
  "serde_ignored",

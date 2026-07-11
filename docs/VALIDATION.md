@@ -8,7 +8,7 @@ cells use x86-64/amd64 and the timer/KV profile. Strict independent Component
 Model runtime, file/network, cross-ISA, confidential, release, and production
 validation remain outside the implemented boundary.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-12.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice and the Stage 2 execution-path matrix.
@@ -122,6 +122,35 @@ mixed directions from one common input, then independently verifies all four
 inner bundles and the normalized outer evidence. Both are standalone gates;
 the matrix does not substitute for `full`, and neither result is cross-ISA or
 strict independent-Component-Model evidence.
+
+### Stable artifact verification boundary
+
+The Linux verifier opens each Stage 1 artifact root once as a directory
+capability. Referenced files are opened relative to that descriptor with
+`openat2`, `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`,
+`RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV`; the opened descriptor must be a
+regular file. FIFO, socket, device, symlinked, magic-linked, escaping,
+mount-crossing, oversized, and concurrently unresolvable inputs fail closed.
+Platforms without this secure reader do not fall back to pathname prechecks.
+
+Each unique referenced artifact is opened and consumed once during capture.
+Its reference digest and typed/semantic validation consume the same captured
+bytes, and Stage 2 inner transcript, normalization, and cross-cell checks reuse
+that stable Stage 1 view. Large digest-only provenance such as the executed
+binary is streamed once instead of being retained. This closes the verifier's
+pathname check/open and hash/semantic split-view windows. A contained regular
+file replacement that
+wins before `open` is accepted only when the same captured bytes satisfy the
+declared digest and semantic checks; replacement cannot redirect resolution
+outside the root or make a passing result bind one digest to different
+semantic bytes.
+
+This is an artifact-content guarantee, not a complete hostile-co-tenant
+boundary. A same-UID process may still attempt denial of service or, where OS
+policy permits, attack verifier memory/process state. Stage 2 publication-marker
+and directory-topology checks remain part of the controlled single-publisher
+workflow. The separate JcoNode final manifest-check-to-Node-load window also
+still requires a sealed execution carrier or stronger process/mount isolation.
 
 ### Release
 

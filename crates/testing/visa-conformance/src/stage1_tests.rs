@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -710,7 +711,10 @@ fn artifact_gate_rejects_symlink_escape_from_bundle_root() {
     fs::write(&outside_file, b"outside").unwrap();
     symlink(&outside_file, &path).unwrap();
 
-    assert_code(&validate_stage1_evidence_artifacts(&bundle, &root), "stage1-artifact-path-escape");
+    assert_code(
+        &validate_stage1_evidence_artifacts(&bundle, &root),
+        "stage1-artifact-symlink-rejected",
+    );
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(outside).unwrap();
 }
@@ -737,9 +741,90 @@ fn artifact_gate_rejects_contained_symlink_in_hash_and_content_paths() {
         .filter(|finding| finding.code == "stage1-artifact-symlink-rejected")
         .count();
     assert_eq!(
-        symlink_findings, 2,
-        "both the reference hash gate and typed content reader must reject the symlink: {:#?}",
+        symlink_findings, 1,
+        "the stable artifact capture must reject the symlink exactly once: {:#?}",
         report.findings
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn artifact_capture_binds_digest_and_semantics_to_the_same_bytes() {
+    let root = temp_dir("artifact-stable-view");
+    let mut bundle = complete_bundle();
+    materialize_artifacts(&mut bundle, &root);
+    let profile_reference = bundle.provenance.artifacts.profile.clone();
+    let profile_path = root.join(&profile_reference.uri);
+    let original = fs::read(&profile_path).unwrap();
+    let mut changed = serde_json::from_slice::<serde_json::Value>(&original).unwrap();
+    changed["timer"]["cancellation_required"] = serde_json::json!(false);
+    let changed = serde_json::to_vec_pretty(&changed).unwrap();
+    fs::write(&profile_path, &changed).unwrap();
+    bundle.provenance.artifacts.profile.sha256 = sha256(&changed);
+    let structural = validate_stage1_evidence_bundle(&bundle);
+    assert!(structural.ok, "{:#?}", structural.findings);
+
+    let (report, snapshot) =
+        validate_stage1_evidence_artifacts_with_snapshot_after_capture(&bundle, &root, || {
+            fs::write(&profile_path, original).unwrap()
+        });
+    let snapshot = snapshot.expect("complete stable artifact view");
+    assert!(!report.ok, "split artifact view unexpectedly passed");
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "inconsistent-stage1-profile-provenance"),
+        "semantic validation followed the replacement pathname instead of captured bytes: \
+         {:#?}",
+        report.findings
+    );
+    assert!(
+        report.findings.iter().all(|finding| finding.code != "stage1-artifact-digest-mismatch"),
+        "the captured profile bytes did not match their reference digest: {:#?}",
+        report.findings
+    );
+    assert_eq!(snapshot.bytes(&profile_reference.uri), Some(changed.as_slice()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn artifact_semantics_never_reopen_the_captured_file_tree() {
+    let root = temp_dir("artifact-no-reopen");
+    let mut bundle = complete_bundle();
+    materialize_artifacts(&mut bundle, &root);
+    let structural = validate_stage1_evidence_bundle(&bundle);
+    assert!(structural.ok, "{:#?}", structural.findings);
+
+    let (report, snapshot) =
+        validate_stage1_evidence_artifacts_with_snapshot_after_capture(&bundle, &root, || {
+            fs::remove_dir_all(&root).unwrap()
+        });
+    assert!(snapshot.is_some(), "complete stable artifact view was not retained");
+    assert!(report.ok, "{:#?}", report.findings);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn artifact_capture_opens_every_unique_reference_once() {
+    let root = temp_dir("artifact-open-count");
+    let mut bundle = complete_bundle();
+    materialize_artifacts(&mut bundle, &root);
+
+    let (report, snapshot) = validate_stage1_evidence_artifacts_with_snapshot(&bundle, &root);
+    assert!(report.ok, "{:#?}", report.findings);
+    let snapshot = snapshot.expect("complete stable artifact view");
+    let captured = snapshot.artifact_uris().collect::<BTreeSet<_>>();
+    let opened = snapshot
+        .successful_regular_open_counts()
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(opened, captured, "the successful open set must equal the captured URI set");
+    assert!(
+        snapshot.successful_regular_open_counts().values().all(|count| *count == 1),
+        "every unique URI must be opened exactly once: {:#?}",
+        snapshot.successful_regular_open_counts()
     );
     fs::remove_dir_all(root).unwrap();
 }

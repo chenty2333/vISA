@@ -76,8 +76,8 @@ gates, both Stage 1 system gates, and independent bundle verification:
 
 | Environment | Root | Bundle ID | Evidence SHA-256 | Result |
 | --- | --- | --- | --- | --- |
-| Host | `target/visa-system/stage1-pVx1kC` | `stage1-1783800561117-06da27e97f68c1d4` | `cbfca6e2fca0b73f4666c5bdd016e0ce13408b2c5a89913c1e2d84ff4b62c0e7` | 31/31; verifier passed |
-| Docker linux/amd64 | `/workspace/target/visa-system/stage1-V3WnAk` | `stage1-1783803040332-06da27e97f68c1d4` | `aa9b499766a13761e135f411ecb5c1e73e7df0b51b38b3dbdc3c0a7fbf67257a` | 31/31; verifier passed |
+| Host | `target/visa-system/stage1-ucuQ5F` | `stage1-1783809874190-06da27e97f68c1d4` | `2fe60ff14bb03443602001c50a29877559611e1c55217650e455dacb39c9491a` | 31/31; verifier passed |
+| Docker linux/amd64 | `/workspace/target/visa-system/stage1-8erIDc` | `stage1-1783810633729-06da27e97f68c1d4` | `1bd2eb711c5292d2b996936d1cec55a04ef62d45cfeb3596588ac7a411aad902` | 31/31; verifier passed |
 
 The Docker root is retained in the default Compose named volume and is valid
 only through the container's `/workspace` view. The final bundles were
@@ -85,16 +85,16 @@ reverified without substituting a host pathname:
 
 ```sh
 target/debug/visa-conformance stage1 \
-  target/visa-system/stage1-pVx1kC/stage1-evidence.json \
-  target/visa-system/stage1-pVx1kC
+  target/visa-system/stage1-ucuQ5F/stage1-evidence.json \
+  target/visa-system/stage1-ucuQ5F
 docker compose -f compose.yaml run --rm -T dev \
   /workspace/target/debug/visa-conformance stage1 \
-  /workspace/target/visa-system/stage1-V3WnAk/stage1-evidence.json \
-  /workspace/target/visa-system/stage1-V3WnAk
+  /workspace/target/visa-system/stage1-8erIDc/stage1-evidence.json \
+  /workspace/target/visa-system/stage1-8erIDc
 ```
 
 Both bundles bind source digest
-`23a65724d16edf0474a23e0266931272ff82834cac8e59fab70863eb675246fd`,
+`c1fe1818a110d6dcf858e4072b7ff58427324da56490d005f2339763fcf3f656`,
 toolchain digest
 `33bd760b0d42eee90cf79af2bd3a30df1de6535fb53d34ebbb2542625adc9bf3`,
 profile digest

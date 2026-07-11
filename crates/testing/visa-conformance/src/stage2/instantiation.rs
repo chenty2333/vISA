@@ -6,7 +6,7 @@ use std::{
 use serde::Deserialize;
 
 use super::{
-    artifacts::{finding, read_contained},
+    artifacts::finding,
     model::{
         STAGE2_INSTANTIATION_OBSERVATIONS_SCHEMA_VERSION, Stage2CaseInstantiationObservation,
         Stage2CellId, Stage2InstantiationObservation, Stage2InstantiationObservations,
@@ -21,7 +21,8 @@ use super::{
     runtime::{ObservedCellTranslationProvenance, validate_observed_runtime},
 };
 use crate::{
-    Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, stage1_expected_ownership,
+    Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, VerifiedStage1Artifacts,
+    stage1_expected_ownership,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +52,7 @@ enum TranscriptStream {
 pub(super) fn audit_runtime_transcripts(
     id: Stage2CellId,
     bundle: &Stage1EvidenceBundle,
+    artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
@@ -63,6 +65,7 @@ pub(super) fn audit_runtime_transcripts(
             "source.jsonl",
             id.source_runtime(),
             &format!("{}-source", case.case_id),
+            artifacts,
             cell_root,
             &mut translation_provenance,
             findings,
@@ -73,6 +76,7 @@ pub(super) fn audit_runtime_transcripts(
             "destination.jsonl",
             id.destination_runtime(),
             &format!("{}-destination", case.case_id),
+            artifacts,
             cell_root,
             &mut translation_provenance,
             findings,
@@ -101,6 +105,7 @@ fn audit_role_transcript(
     role_name: &str,
     expected_runtime: Stage2Runtime,
     primary_worker: &str,
+    artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     translation_provenance: &mut ObservedCellTranslationProvenance,
     findings: &mut Vec<Stage2ValidationFinding>,
@@ -116,12 +121,13 @@ fn audit_role_transcript(
         );
         return None;
     };
-    let bytes = match read_contained(cell_root, &reference.uri) {
-        Ok(bytes) => bytes,
-        Err(source) => {
-            findings.push(source);
-            return None;
-        }
+    let Some(bytes) = artifacts.bytes(&reference.uri) else {
+        finding(
+            findings,
+            "missing-stage2-captured-runtime-transcript",
+            format!("{} {} was not retained", id.as_str(), reference.uri),
+        );
+        return None;
     };
     audit_runtime_transcript(
         RuntimeTranscriptContext {
@@ -132,7 +138,7 @@ fn audit_role_transcript(
             primary_worker,
             provider_cell_root: Some(cell_root),
         },
-        &bytes,
+        bytes,
         translation_provenance,
         findings,
     )

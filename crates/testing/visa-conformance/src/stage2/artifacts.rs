@@ -10,7 +10,10 @@ use super::{
     STAGE2_INCOMPLETE_MARKER_FILE, Stage2ArtifactReference, Stage2CellId, Stage2ValidationFinding,
     Stage2WriteError,
 };
-use crate::sha256_hex;
+use crate::{
+    artifact_io::{SecureArtifactErrorKind, SecureArtifactRoot},
+    sha256_hex,
+};
 
 static NEXT_STAGE2_TEMP_FILE: AtomicU64 = AtomicU64::new(1);
 
@@ -177,38 +180,28 @@ pub(crate) fn read_contained(root: &Path, uri: &str) -> Result<Vec<u8>, Stage2Va
             format!("unsafe artifact URI {uri}"),
         ));
     }
-    let root = root.canonicalize().map_err(|source| {
-        single_finding(
-            "invalid-stage2-artifact-root",
-            format!("cannot resolve {}: {source}", root.display()),
-        )
+    let secure = SecureArtifactRoot::open(root).map_err(|source| {
+        let code = if source.kind == SecureArtifactErrorKind::Unsupported {
+            "stage2-secure-artifact-reader-unavailable"
+        } else {
+            "invalid-stage2-artifact-root"
+        };
+        single_finding(code, source.detail)
     })?;
-    let candidate = root.join(uri);
-    let mut prefix = root.to_path_buf();
-    for component in Path::new(uri).components() {
-        let Component::Normal(component) = component else { unreachable!() };
-        prefix.push(component);
-        let metadata = fs::symlink_metadata(&prefix).map_err(|source| {
-            single_finding("missing-stage2-artifact", format!("cannot inspect {uri}: {source}"))
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(single_finding(
-                "stage2-artifact-symlink-rejected",
-                format!("{uri} contains symlink component {}", prefix.display()),
-            ));
-        }
-    }
-    let resolved = candidate.canonicalize().map_err(|source| {
-        single_finding("missing-stage2-artifact", format!("cannot resolve {uri}: {source}"))
-    })?;
-    if !resolved.starts_with(&root) || !resolved.is_file() {
-        return Err(single_finding(
-            "stage2-artifact-path-escape",
-            format!("{uri} is not a contained regular file"),
-        ));
-    }
-    fs::read(&resolved).map_err(|source| {
-        single_finding("unreadable-stage2-artifact", format!("cannot read {uri}: {source}"))
+    secure.read_regular(uri).map_err(|source| {
+        let code = match source.kind {
+            SecureArtifactErrorKind::UnsafeUri => "invalid-stage2-artifact-uri",
+            SecureArtifactErrorKind::Missing => "missing-stage2-artifact",
+            SecureArtifactErrorKind::Symlink => "stage2-artifact-symlink-rejected",
+            SecureArtifactErrorKind::Escape => "stage2-artifact-path-escape",
+            SecureArtifactErrorKind::NotRegular => "invalid-stage2-artifact-type",
+            SecureArtifactErrorKind::TooLarge => "stage2-artifact-too-large",
+            SecureArtifactErrorKind::ResourceExhausted => "unreadable-stage2-artifact",
+            SecureArtifactErrorKind::ConcurrentMutation => "stage2-artifact-concurrent-mutation",
+            SecureArtifactErrorKind::Unsupported => "stage2-secure-artifact-reader-unavailable",
+            SecureArtifactErrorKind::Io => "unreadable-stage2-artifact",
+        };
+        single_finding(code, source.detail)
     })
 }
 

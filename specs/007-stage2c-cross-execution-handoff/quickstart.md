@@ -324,10 +324,10 @@ All final host and Docker gates passed with the pinned
 `nightly-2026-06-07` toolchain. The host `system-stage2` result is:
 
 ```text
-root: target/visa-system/stage2-4rGQM7
-outer bundle id: stage2-e98ff9f9ecd3b2e19b0be8c4
-outer evidence sha256: bb00ae19b388a83856aca3be1cb123b7ded466082c80646c8eabc26f16b0c22d
-matrix manifest sha256: e98ff9f9ecd3b2e19b0be8c403b8f0341ac62a56d3cfc3edea79bb4a1b8b8bf3
+root: target/visa-system/stage2-w3glkT
+outer bundle id: stage2-8c0190bcaad94084610a5f82
+outer evidence sha256: 570394604edfcb3b37081778d65121e10b0f9aaba73beb8488a7ee57ba71eb0f
+matrix manifest sha256: 8c0190bcaad94084610a5f82b15084d4974b7a6f9cc343ff88d431229ab63ad5
 common-input sha256: e80ee1692844d19d55b63063afcdeed30605ce68f3b81a1a049f877ba245ee0b
 normalized aggregate sha256: 1622eff949794d559be2620df0730a2e6095d67f594aa71acba484bd159e786c
 derived comparison-set sha256: 5d38daca7009238496a03efa12ae5d45613f30dd56709d64966a808ea40bbca7
@@ -341,18 +341,18 @@ Host inner bundles:
 
 | Cell | Bundle ID | Evidence SHA-256 |
 | --- | --- | --- |
-| Wasmtime to Wasmtime | `stage1-1783801348399-06da27e97f68c1d4` | `d4a6fec4d5ea2afe17df96b9963750084447da519b8a29ca8b8ddd809888bd64` |
-| JcoNode to JcoNode | `stage1-1783801445973-06da27e97f68c1d4` | `ed248dfe1957749622a7e037e9e7541c5512d914fd192cd60719bccd07035ce9` |
-| Wasmtime to JcoNode | `stage1-1783802095888-06da27e97f68c1d4` | `9ae05af5fc89844abf36207abf4b30e4250e306ca464b916f049eb4bd74af1bb` |
-| JcoNode to Wasmtime | `stage1-1783802461997-06da27e97f68c1d4` | `87c60bba645f20b61524d23aab0fd8f6bed38c0d115d2d773460b7a1f6d2fbd8` |
+| Wasmtime to Wasmtime | `stage1-1783810626022-06da27e97f68c1d4` | `ec1f37eed52835d1de1f6a88005bd6950de25d59f512f70796d9a5a762afb57e` |
+| JcoNode to JcoNode | `stage1-1783810722204-06da27e97f68c1d4` | `1678ad1b3cbf03d52bc2091e9396669d60a601b3d492b689fc3fbfa94f520440` |
+| Wasmtime to JcoNode | `stage1-1783811372413-06da27e97f68c1d4` | `061cc43bc1977ebfea115120a903ff0d97908beb81bf3f999af7d2cb1f8bc3ea` |
+| JcoNode to Wasmtime | `stage1-1783811735806-06da27e97f68c1d4` | `01a421453ba8bae24b4a2edbf0678b65868c81cf9d64756eab5e0ea0a7ce0077` |
 
 The Docker `system-stage2` result is:
 
 ```text
-root: /workspace/target/visa-system/stage2-62XwXC
-outer bundle id: stage2-6af5eddfd94691256c91c834
-outer evidence sha256: 73ea4de99fe139a735891654c52c188df5171d50ffec13d15e7cfd4ba2d1a995
-matrix manifest sha256: 6af5eddfd94691256c91c834e0c4f55dc254162fee3f40e9ea58c7f790e03c90
+root: /workspace/target/visa-system/stage2-2JUfEQ
+outer bundle id: stage2-5829874cf4652b813257fa5d
+outer evidence sha256: c3158af881d61c61c567bd7ec8b41b47ecbf1a914ff58373c2ce0a827da83637
+matrix manifest sha256: 5829874cf4652b813257fa5d48ac9a6f7910845ece2201500e04d7d1bfa49773
 common-input sha256: b83e0ecf80858631a6207d5ed4ed7f6091ac123461b522a056b58ce918d3e109
 normalized aggregate sha256: 96e2f1f01453154c1d6816490972305eb8283730a30f9e0681f0b8bf2b0bec03
 derived comparison-set sha256: 9b387f2e37aebafe4c519dc4d3435af3472dfbd1038df5e4d66a621d6a080812
@@ -366,10 +366,10 @@ Docker inner bundles:
 
 | Cell | Bundle ID | Evidence SHA-256 |
 | --- | --- | --- |
-| Wasmtime to Wasmtime | `stage1-1783803822002-06da27e97f68c1d4` | `1c0eb199261440b1d9d758549f9a705706f9e35eeabd1bfe0ab0ce442879f169` |
-| JcoNode to JcoNode | `stage1-1783803919684-06da27e97f68c1d4` | `936bb6ca8826ea62e333067e72991be18986d14ad761acec82570961655fcecb` |
-| Wasmtime to JcoNode | `stage1-1783804568231-06da27e97f68c1d4` | `d79c3b65fe39ab7c888605dfa915b694a63c1c8d159b7059e0c816698397289f` |
-| JcoNode to Wasmtime | `stage1-1783804931418-06da27e97f68c1d4` | `24c8fa5c72cd6733e520765aab2a887e56434dc9c245b0922ed9bc3f401060eb` |
+| Wasmtime to Wasmtime | `stage1-1783811317859-06da27e97f68c1d4` | `7c10301af3ad9cd6389a78ac8c2f4502f930060ebd06003592012d7da99c85fb` |
+| JcoNode to JcoNode | `stage1-1783811412315-06da27e97f68c1d4` | `fdc2fa93da40a97501cb79cede6065041487a9f7354e6e53d5369a266ab6533e` |
+| Wasmtime to JcoNode | `stage1-1783812062319-06da27e97f68c1d4` | `54be5f55a3a0b87c120514e416c080945be8f0570d8bc853333923e338b04ad2` |
+| JcoNode to Wasmtime | `stage1-1783812418742-06da27e97f68c1d4` | `d46de7c466050db2da0345f14b2483d2b8f0a6094f978182512f485c0d08375e` |
 
 The Docker root is retained in the default Compose named volume. Raw provider
 isolation observations bind the execution path, so the evidence is reverified
@@ -379,12 +379,12 @@ The final outer bundles were independently rechecked with:
 
 ```sh
 target/debug/visa-conformance stage2 \
-  target/visa-system/stage2-4rGQM7/stage2-evidence.json \
-  target/visa-system/stage2-4rGQM7
+  target/visa-system/stage2-w3glkT/stage2-evidence.json \
+  target/visa-system/stage2-w3glkT
 docker compose -f compose.yaml run --rm -T dev \
   /workspace/target/debug/visa-conformance stage2 \
-  /workspace/target/visa-system/stage2-62XwXC/stage2-evidence.json \
-  /workspace/target/visa-system/stage2-62XwXC
+  /workspace/target/visa-system/stage2-2JUfEQ/stage2-evidence.json \
+  /workspace/target/visa-system/stage2-2JUfEQ
 ```
 
 The derived comparison-set hashes above are reproducible reporting digests,
@@ -413,7 +413,7 @@ Jco / bindgen / translator: 1.25.2 / 2.0.11 / wasmtime-environ 45.0.1
 Jco adapter-private RPC protocol: 3
 Node / V8: 24.15.0 / 13.6.233.17-node.48
 Rust: 1.98.0-nightly, commit 61d7280f3c4c63fa24c56bdaa9a446151b5a30dc
-source sha256: 23a65724d16edf0474a23e0266931272ff82834cac8e59fab70863eb675246fd
+source sha256: c1fe1818a110d6dcf858e4072b7ff58427324da56490d005f2339763fcf3f656
 toolchain sha256: 33bd760b0d42eee90cf79af2bd3a30df1de6535fb53d34ebbb2542625adc9bf3
 preflight.mjs: 235 bytes / sha256:171a57d9b2f036159c439c8f71760cb3ace41c6e519af1d12f7c8d1fd0f485be
 Docker image: sha256:ca7c91e726c7fbce36cb152fcf56b8bc89d7c773ef7d4e3817cd8ad5051bfce0

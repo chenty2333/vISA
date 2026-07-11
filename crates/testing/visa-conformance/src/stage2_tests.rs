@@ -147,13 +147,13 @@ fn fr016_pid_and_human_worker_message_are_excluded_but_worker_code_retryable_pro
     let baseline_error = WorkerErrorFixture::baseline("engine-specific diagnostic A");
 
     write_worker_error_transcripts(&root, &[baseline_error], &[], 10, 11);
-    let baseline = read_worker_errors(&case, &root).unwrap();
+    let baseline = read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap();
     assert_eq!(baseline.len(), 1);
 
     let mut excluded = baseline_error;
     excluded.message = "different human diagnostic B";
     write_worker_error_transcripts(&root, &[excluded], &[], 999, 11);
-    assert_eq!(baseline, read_worker_errors(&case, &root).unwrap());
+    assert_eq!(baseline, read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap());
 
     for mutation in [
         WorkerErrorFixture { code: "runtime", ..baseline_error },
@@ -163,22 +163,25 @@ fn fr016_pid_and_human_worker_message_are_excluded_but_worker_code_retryable_pro
         WorkerErrorFixture { workload_kind: Some("wrong_timer"), ..baseline_error },
     ] {
         write_worker_error_transcripts(&root, &[mutation], &[], 10, 11);
-        assert_ne!(baseline, read_worker_errors(&case, &root).unwrap());
+        assert_ne!(
+            baseline,
+            read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap()
+        );
     }
 
     write_worker_error_transcripts(&root, &[], &[baseline_error], 10, 11);
-    assert_ne!(baseline, read_worker_errors(&case, &root).unwrap());
+    assert_ne!(baseline, read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap());
 
     let second = WorkerErrorFixture { workload_kind: Some("wrong_timer"), ..baseline_error };
     write_worker_error_transcripts(&root, &[baseline_error, second], &[], 10, 11);
-    let ordered = read_worker_errors(&case, &root).unwrap();
+    let ordered = read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap();
     write_worker_error_transcripts(&root, &[second, baseline_error], &[], 10, 11);
-    assert_ne!(ordered, read_worker_errors(&case, &root).unwrap());
+    assert_ne!(ordered, read_worker_errors(&case, &capture_case_artifacts(&case, &root)).unwrap());
 
     let unknown =
         WorkerErrorFixture { provider_kind: Some("FutureProviderKind"), ..baseline_error };
     write_worker_error_transcripts(&root, &[unknown], &[], 10, 11);
-    assert!(read_worker_errors(&case, &root).is_err());
+    assert!(read_worker_errors(&case, &capture_case_artifacts(&case, &root)).is_err());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1852,7 +1855,8 @@ fn normalize_fr016_projection(
     };
     let bundle =
         fr016_bundle(case, config, raw_snapshot_size_bytes, sha256_hex(&performance_bytes));
-    let normalized = normalize_stage2_cell(&bundle, root).unwrap();
+    let artifacts = capture_case_artifacts(&bundle.cases[0], root);
+    let normalized = normalize_stage2_cell(&bundle, &artifacts).unwrap();
     Fr016ProjectionOutput { normalized, raw_snapshot_size_bytes }
 }
 
@@ -2265,6 +2269,22 @@ fn worker_error_case() -> Stage1CaseEvidence {
             trace_sha256s: Vec::new(),
         },
     }
+}
+
+fn capture_case_artifacts(
+    case: &Stage1CaseEvidence,
+    root: &std::path::Path,
+) -> crate::VerifiedStage1Artifacts {
+    let mut uris = Vec::new();
+    if let Some(snapshot) = &case.artifacts.snapshot {
+        uris.push(snapshot.uri.as_str());
+    }
+    uris.extend(case.artifacts.semantic_traces.iter().map(|reference| reference.uri.as_str()));
+    uris.extend(
+        case.artifacts.binding_receipts.iter().map(|reference| reference.artifact.uri.as_str()),
+    );
+    uris.extend(case.artifacts.raw_execution.iter().map(|reference| reference.uri.as_str()));
+    crate::VerifiedStage1Artifacts::capture_for_test(root, uris)
 }
 
 fn raw_artifact_reference(uri: &str) -> Stage1ArtifactReference {

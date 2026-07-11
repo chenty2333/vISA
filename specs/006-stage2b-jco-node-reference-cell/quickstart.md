@@ -175,12 +175,12 @@ generic independent Stage 1 artifact verifier:
 
 | Environment | Root | Bundle ID | Evidence SHA-256 | Result |
 | --- | --- | --- | --- | --- |
-| Host | `target/visa-system/jco-node-sLocne` | `stage1-1783800674525-06da27e97f68c1d4` | `238c5312efe0fc2108da993a2ac61bc7ec55abd18506adae1c408d50b21afdbb` | 31/31; generic Stage 1 verifier passed |
-| Docker linux/amd64 | `/workspace/target/visa-system/jco-node-Kg5Jd8` | `stage1-1783803151924-06da27e97f68c1d4` | `7b04291e1df69969079b540af97c05402fd097a8538dc66c58168781be3f3922` | 31/31; generic Stage 1 verifier passed |
+| Host | `target/visa-system/jco-node-zPFIRg` | `stage1-1783809975021-06da27e97f68c1d4` | `2696a869fb12dc41e5302fddb3ed41f4a4db1c073f5c64a840982eee8be708da` | 31/31; generic Stage 1 verifier passed |
+| Docker linux/amd64 | `/workspace/target/visa-system/jco-node-MhDDS6` | `stage1-1783810642577-06da27e97f68c1d4` | `684dafb523c50d8eefb431cc64efc9ec375666d1cbb117f9bc867b4cccc52a24` | 31/31; generic Stage 1 verifier passed |
 
 The final Wasmtime regression bundles are the host
-`target/visa-system/stage1-pVx1kC` and Docker
-`/workspace/target/visa-system/stage1-V3WnAk` records in the Stage 2a
+`target/visa-system/stage1-ucuQ5F` and Docker
+`/workspace/target/visa-system/stage1-8erIDc` records in the Stage 2a
 quickstart; both are 31/31 and independently verified.
 
 Stage 2b acceptance is deliberately composed. The generic Stage 1 verifier
@@ -195,12 +195,12 @@ The two generic bundles were independently rechecked at their native paths:
 
 ```sh
 target/debug/visa-conformance stage1 \
-  target/visa-system/jco-node-sLocne/stage1-evidence.json \
-  target/visa-system/jco-node-sLocne
+  target/visa-system/jco-node-zPFIRg/stage1-evidence.json \
+  target/visa-system/jco-node-zPFIRg
 docker compose -f compose.yaml run --rm -T dev \
   /workspace/target/debug/visa-conformance stage1 \
-  /workspace/target/visa-system/jco-node-Kg5Jd8/stage1-evidence.json \
-  /workspace/target/visa-system/jco-node-Kg5Jd8
+  /workspace/target/visa-system/jco-node-MhDDS6/stage1-evidence.json \
+  /workspace/target/visa-system/jco-node-MhDDS6
 ```
 
 The accepted execution identity is:
@@ -245,7 +245,7 @@ every file within each run; no cross-environment generated-byte identity is
 claimed.
 
 The retained bundles share source digest
-`23a65724d16edf0474a23e0266931272ff82834cac8e59fab70863eb675246fd`,
+`c1fe1818a110d6dcf858e4072b7ff58427324da56490d005f2339763fcf3f656`,
 toolchain digest
 `33bd760b0d42eee90cf79af2bd3a30df1de6535fb53d34ebbb2542625adc9bf3`,
 profile digest

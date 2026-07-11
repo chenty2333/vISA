@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use super::{
@@ -16,17 +16,18 @@ use super::{
     },
 };
 use crate::{
-    STAGE1_CASE_DEFINITIONS, Stage1EvidenceBundle, canonical_stage2_json_bytes,
-    canonical_stage2_sha256, gate_stage1_evidence_bundle_json_with_artifacts,
-    parse_stage1_evidence_bundle_json, sha256_hex,
+    STAGE1_CASE_DEFINITIONS, Stage1EvidenceBundle, VerifiedStage1Artifacts,
+    canonical_stage2_json_bytes, canonical_stage2_sha256, parse_stage1_evidence_bundle_json,
+    sha256_hex,
     stage2_normalize::{Stage2NormalizedCellV1, normalize_stage2_cell},
+    validate_stage1_evidence_bundle_with_artifact_snapshot,
 };
 
 pub(super) struct VerifiedCell {
     pub(super) id: Stage2CellId,
-    pub(super) artifact_root: PathBuf,
     pub(super) bundle: Stage1EvidenceBundle,
     pub(super) bundle_bytes: Vec<u8>,
+    pub(super) artifacts: VerifiedStage1Artifacts,
     pub(super) normalized: Stage2NormalizedCellV1,
     pub(super) source_translation_provenance: Option<Stage2TranslationProvenance>,
     pub(super) destination_translation_provenance: Option<Stage2TranslationProvenance>,
@@ -214,8 +215,20 @@ fn validate_stage2_evidence_artifacts_impl(
             Some(bytes) => bytes,
             None => continue,
         };
+        let bundle = match parse_stage1_evidence_bundle_json(&bundle_bytes) {
+            Ok(bundle) => bundle,
+            Err(source) => {
+                finding(
+                    &mut findings,
+                    "stage2-inner-stage1-parse-failed",
+                    format!("{}: {}", cell_id.as_str(), source.detail),
+                );
+                continue;
+            }
+        };
         let cell_root = cell_id.cell_root(&root);
-        let inner = gate_stage1_evidence_bundle_json_with_artifacts(&bundle_bytes, &cell_root);
+        let (inner, artifacts) =
+            validate_stage1_evidence_bundle_with_artifact_snapshot(&bundle, &cell_root);
         if !inner.ok {
             finding(
                 &mut findings,
@@ -228,20 +241,23 @@ fn validate_stage2_evidence_artifacts_impl(
             );
             continue;
         }
-        let bundle = match parse_stage1_evidence_bundle_json(&bundle_bytes) {
-            Ok(bundle) => bundle,
-            Err(source) => {
-                finding(
-                    &mut findings,
-                    "stage2-inner-stage1-parse-failed",
-                    format!("{}: {}", cell_id.as_str(), source.detail),
-                );
-                continue;
-            }
+        let Some(artifacts) = artifacts else {
+            finding(
+                &mut findings,
+                "stage2-inner-stage1-artifact-snapshot-missing",
+                format!("{} passed without a stable artifact snapshot", cell_id.as_str()),
+            );
+            continue;
         };
-        let observed_transcript =
-            validate_inner_cell(cell_id, cell_manifest, &bundle, &cell_root, &mut findings);
-        let normalized = match normalize_stage2_cell(&bundle, &cell_root) {
+        let observed_transcript = validate_inner_cell(
+            cell_id,
+            cell_manifest,
+            &bundle,
+            &artifacts,
+            &cell_root,
+            &mut findings,
+        );
+        let normalized = match normalize_stage2_cell(&bundle, &artifacts) {
             Ok(normalized) => normalized,
             Err(source) => {
                 finding(
@@ -255,9 +271,9 @@ fn validate_stage2_evidence_artifacts_impl(
         validate_normalized_cache(&root, cell_manifest, &normalized, &mut findings);
         verified.push(VerifiedCell {
             id: cell_id,
-            artifact_root: cell_root,
             bundle,
             bundle_bytes,
+            artifacts,
             normalized,
             source_translation_provenance: observed_transcript.translation_provenance.source,
             destination_translation_provenance: observed_transcript
@@ -297,34 +313,41 @@ pub(super) fn load_verified_cell(
 ) -> Result<VerifiedCell, Stage2ValidationFinding> {
     let uri = id.stage1_bundle_uri();
     let bundle_bytes = read_contained(root, &uri)?;
-    let cell_root = id.cell_root(root);
-    let result = gate_stage1_evidence_bundle_json_with_artifacts(&bundle_bytes, &cell_root);
-    if !result.ok {
-        return Err(single_finding(
-            "stage2-inner-stage1-verification-failed",
-            format!("{}: {}", id.as_str(), serde_json::to_string(&result).unwrap_or_default()),
-        ));
-    }
     let bundle = parse_stage1_evidence_bundle_json(&bundle_bytes).map_err(|source| {
         single_finding(
             "stage2-inner-stage1-parse-failed",
             format!("{}: {}", id.as_str(), source.detail),
         )
     })?;
+    let cell_root = id.cell_root(root);
+    let (result, artifacts) =
+        validate_stage1_evidence_bundle_with_artifact_snapshot(&bundle, &cell_root);
+    if !result.ok {
+        return Err(single_finding(
+            "stage2-inner-stage1-verification-failed",
+            format!("{}: {}", id.as_str(), serde_json::to_string(&result).unwrap_or_default()),
+        ));
+    }
+    let artifacts = artifacts.ok_or_else(|| {
+        single_finding(
+            "stage2-inner-stage1-artifact-snapshot-missing",
+            format!("{} passed without a stable artifact snapshot", id.as_str()),
+        )
+    })?;
     let mut findings = Vec::new();
     let observed_transcript =
-        validate_inner_cell_without_manifest(id, &bundle, &cell_root, &mut findings);
+        validate_inner_cell_without_manifest(id, &bundle, &artifacts, &cell_root, &mut findings);
     if !findings.is_empty() {
         return Err(single_finding("invalid-stage2-inner-cell", render_findings(&findings)));
     }
-    let normalized = normalize_stage2_cell(&bundle, &cell_root).map_err(|source| {
+    let normalized = normalize_stage2_cell(&bundle, &artifacts).map_err(|source| {
         single_finding("stage2-normalization-failed", format!("{}: {source}", id.as_str()))
     })?;
     Ok(VerifiedCell {
         id,
-        artifact_root: cell_root,
         bundle,
         bundle_bytes,
+        artifacts,
         normalized,
         source_translation_provenance: observed_transcript.translation_provenance.source,
         destination_translation_provenance: observed_transcript.translation_provenance.destination,

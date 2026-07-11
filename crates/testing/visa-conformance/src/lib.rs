@@ -1,3 +1,4 @@
+mod artifact_io;
 mod stage1;
 mod stage1_artifacts;
 mod stage2;

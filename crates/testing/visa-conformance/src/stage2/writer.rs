@@ -20,9 +20,9 @@ use super::{
     },
 };
 use crate::{
-    canonical_stage2_json_bytes, gate_stage1_evidence_bundle_json_with_artifacts,
-    parse_stage1_evidence_bundle_json, sha256_hex,
+    canonical_stage2_json_bytes, parse_stage1_evidence_bundle_json, sha256_hex,
     stage2_normalize::{Stage2NormalizedCellV1, normalize_stage2_cell},
+    validate_stage1_evidence_bundle_with_artifact_snapshot,
 };
 
 pub fn normalize_verified_stage1_bundle_for_stage2(
@@ -30,16 +30,23 @@ pub fn normalize_verified_stage1_bundle_for_stage2(
     artifact_root: impl AsRef<Path>,
 ) -> Result<Stage2NormalizedCellV1, Stage2WriteError> {
     let artifact_root = artifact_root.as_ref();
-    let gate = gate_stage1_evidence_bundle_json_with_artifacts(bundle_bytes, artifact_root);
+    let bundle = parse_stage1_evidence_bundle_json(bundle_bytes)
+        .map_err(|source| write_error("stage2-inner-stage1-parse-failed", source.detail))?;
+    let (gate, artifacts) =
+        validate_stage1_evidence_bundle_with_artifact_snapshot(&bundle, artifact_root);
     if !gate.ok {
         return Err(write_error(
             "stage2-inner-stage1-verification-failed",
             serde_json::to_string(&gate).unwrap_or_default(),
         ));
     }
-    let bundle = parse_stage1_evidence_bundle_json(bundle_bytes)
-        .map_err(|source| write_error("stage2-inner-stage1-parse-failed", source.detail))?;
-    normalize_stage2_cell(&bundle, artifact_root)
+    let artifacts = artifacts.ok_or_else(|| {
+        write_error(
+            "stage2-inner-stage1-artifact-snapshot-missing",
+            "Stage 1 passed without a stable artifact snapshot",
+        )
+    })?;
+    normalize_stage2_cell(&bundle, &artifacts)
         .map_err(|source| write_error(source.code, source.detail))
 }
 
