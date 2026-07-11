@@ -19,15 +19,14 @@ use visa_system::{
         EvidenceWriter,
     },
     fixture::FixtureSpec,
-    runner::run_stage1,
+    protocol::{RuntimeIdentityView, RuntimeImplementation},
+    runner::{run_stage1, run_stage1_with_runtimes, run_stage2_matrix},
     worker::{RunExit, run_stdio},
 };
 
 const EXPECTED_STAGE1_CASES: usize = 31;
 const BASELINE_CASE_ID: &str = "evidence-verification";
 const REPORT_FAILURE_CASE_ID: &str = "report-generation-fails-after-commit";
-const VISA_WASMTIME_VERSION: &str = "0.2.0";
-const WASMTIME_VERSION: &str = "43.0.2";
 const SUBSTRATE_HOST_VERSION: &str = "0.1.0";
 const RUSQLITE_VERSION: &str = "0.40.1";
 const WIT_COMPONENT_VERSION: &str = "0.244.0";
@@ -64,6 +63,10 @@ fn run() -> Result<ExitCode, (u8, String)> {
             Err(error) => Err((2, format!("worker I/O failed: {error}"))),
         },
         Mode::Stage1(artifact_root) => run_stage1_command(&artifact_root),
+        Mode::Stage2(artifact_root) => run_stage2_command(&artifact_root),
+        Mode::Cell { source, destination, artifact_root } => {
+            run_cell_command(&artifact_root, source, destination)
+        }
     }
 }
 
@@ -71,6 +74,12 @@ fn run() -> Result<ExitCode, (u8, String)> {
 enum Mode {
     Worker,
     Stage1(PathBuf),
+    Stage2(PathBuf),
+    Cell {
+        source: RuntimeImplementation,
+        destination: RuntimeImplementation,
+        artifact_root: PathBuf,
+    },
 }
 
 fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, String)> {
@@ -81,24 +90,105 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
         {
             Ok(Mode::Stage1(PathBuf::from(artifact_root)))
         }
+        [command, artifact_root]
+            if command == "stage2" && !artifact_root.as_os_str().is_empty() =>
+        {
+            Ok(Mode::Stage2(PathBuf::from(artifact_root)))
+        }
+        [command, source, destination, artifact_root]
+            if command == "cell" && !artifact_root.as_os_str().is_empty() =>
+        {
+            Ok(Mode::Cell {
+                source: parse_runtime(source)?,
+                destination: parse_runtime(destination)?,
+                artifact_root: PathBuf::from(artifact_root),
+            })
+        }
         _ => Err((64, usage(program))),
     }
 }
 
 fn usage(program: &OsStr) -> String {
     format!(
-        "usage: {} worker\n       {} stage1 <artifact-root>",
+        "usage: {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} cell <wasmtime|jco-node> <wasmtime|jco-node> <artifact-root>",
+        PathBuf::from(program).display(),
+        PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display()
     )
 }
 
+fn parse_runtime(value: &OsStr) -> Result<RuntimeImplementation, (u8, String)> {
+    match value.to_str() {
+        Some("wasmtime") => Ok(RuntimeImplementation::Wasmtime),
+        Some("jco-node") => Ok(RuntimeImplementation::JcoNode),
+        _ => Err((64, format!("unknown runtime implementation: {}", value.to_string_lossy()))),
+    }
+}
+
 fn run_stage1_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
+    let executable = current_executable()?;
+    run_evidence_cell(
+        artifact_root,
+        &executable,
+        RuntimeImplementation::Wasmtime,
+        RuntimeImplementation::Wasmtime,
+        true,
+        None,
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_stage2_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
     let artifact_root = usable_artifact_root(artifact_root)?;
-    let executable = env::current_exe()
-        .map_err(|error| (2, format!("cannot resolve current visa-system executable: {error}")))?;
-    let output = run_stage1(&executable, &artifact_root)
-        .map_err(|error| (1, format!("Stage 1 runner failed: {error}")))?;
+    let executable = current_executable()?;
+    let output = run_stage2_matrix(&artifact_root, |plan| {
+        run_evidence_cell(
+            &plan.artifact_root,
+            &executable,
+            plan.source_runtime,
+            plan.destination_runtime,
+            false,
+            Some(&plan.common_input_sha256),
+        )
+        .map_err(|(_, message)| message)
+    })
+    .map_err(|error| (1, format!("Stage 2 runner failed: {error}")))?;
+
+    println!("Stage 2 evidence bundle: {}", output.evidence_path.display());
+    println!("Stage 2 matrix manifest: {}", output.matrix_manifest_path.display());
+    println!("Stage 2 artifact root: {}", output.artifact_root.display());
+    println!("Stage 2 bundle id: {}", output.bundle_id);
+    println!("Stage 2 bundle sha256: {}", output.bundle_sha256);
+    println!("Stage 2 cases: 124/124 (31 cases x 4 cells)");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_cell_command(
+    artifact_root: &Path,
+    source: RuntimeImplementation,
+    destination: RuntimeImplementation,
+) -> Result<ExitCode, (u8, String)> {
+    let executable = current_executable()?;
+    run_evidence_cell(artifact_root, &executable, source, destination, false, None)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_evidence_cell(
+    artifact_root: &Path,
+    executable: &Path,
+    source: RuntimeImplementation,
+    destination: RuntimeImplementation,
+    stage1_default: bool,
+    stage2_common_input_sha256: Option<&str>,
+) -> Result<(), (u8, String)> {
+    let artifact_root = usable_artifact_root(artifact_root)?;
+    let output = if stage1_default {
+        run_stage1(executable, &artifact_root)
+    } else {
+        run_stage1_with_runtimes(executable, &artifact_root, source, destination)
+    }
+    .map_err(|error| (1, format!("Stage 1 runner failed: {error}")))?;
 
     if STAGE1_CASE_DEFINITIONS.len() != EXPECTED_STAGE1_CASES {
         return Err((
@@ -122,7 +212,7 @@ fn run_stage1_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
     let baseline = FixtureSpec::new(BASELINE_CASE_ID)
         .map_err(|error| (1, format!("cannot construct Stage 1 baseline profile: {error}")))?;
     let provenance_files =
-        prepare_provenance_files(&artifact_root, &executable, &baseline, &output)?;
+        prepare_provenance_files(&artifact_root, executable, &baseline, &output)?;
     let timer_profile_digest = canonical_digest(&baseline.profile.timer)
         .map_err(|_| (1, "cannot digest Stage 1 timer profile".to_owned()))?;
     let key_value_profile_digest = canonical_digest(&baseline.profile.key_value)
@@ -134,6 +224,8 @@ fn run_stage1_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
         timer_profile_digest,
         key_value_profile_digest,
         output.policy_digest,
+        &output.source_runtime,
+        &output.destination_runtime,
     );
     let bundle_id =
         format!("stage1-{}-{}", output.started_at_unix_ms, &digest_hex(output.config_digest)[..16]);
@@ -220,6 +312,20 @@ fn run_stage1_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
         .map_err(|error| {
             (1, format!("cannot append report-failure execution observation: {error}"))
         })?;
+    if let Some(common_input_sha256) = stage2_common_input_sha256 {
+        writer
+            .append_case_assertion(
+                BASELINE_CASE_ID,
+                "stage2-common-input-identity-bound",
+                serde_json::json!({
+                    "uri": visa_conformance::STAGE2_COMMON_INPUT_FILE,
+                    "sha256": common_input_sha256,
+                }),
+            )
+            .map_err(|error| {
+                (1, format!("cannot append Stage 2 common-input observation: {error}"))
+            })?;
+    }
     let bundle = writer
         .regenerate(&context)
         .map_err(|error| (1, format!("final Stage 1 evidence publication failed: {error}")))?;
@@ -245,7 +351,12 @@ fn run_stage1_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
     println!("Stage 1 evidence bundle: {}", writer.bundle_path().display());
     println!("Stage 1 artifact root: {}", artifact_root.display());
     println!("Stage 1 cases: {EXPECTED_STAGE1_CASES}/{EXPECTED_STAGE1_CASES}");
-    Ok(ExitCode::SUCCESS)
+    Ok(())
+}
+
+fn current_executable() -> Result<PathBuf, (u8, String)> {
+    env::current_exe()
+        .map_err(|error| (2, format!("cannot resolve current visa-system executable: {error}")))
 }
 
 fn prepare_provenance_files(
@@ -446,19 +557,17 @@ fn execution_environment(
     timer_profile_digest: contract_core::Digest,
     key_value_profile_digest: contract_core::Digest,
     policy_digest: contract_core::Digest,
+    source_runtime: &RuntimeIdentityView,
+    destination_runtime: &RuntimeIdentityView,
 ) -> Stage1ExecutionEnvironment {
-    let runtime = versioned(
-        "visa_wasmtime adapter with Wasmtime",
-        &format!("{VISA_WASMTIME_VERSION}+wasmtime.{WASMTIME_VERSION}"),
-    );
     let isa = Stage1IsaIdentity {
         architecture: env::consts::ARCH.to_owned(),
         abi: format!("{}-{TARGET_ENV}", env::consts::OS),
     };
     Stage1ExecutionEnvironment {
         carrier: versioned("wit-component ComponentEncoder", WIT_COMPONENT_VERSION),
-        source_runtime: runtime.clone(),
-        destination_runtime: runtime,
+        source_runtime: runtime_versioned(source_runtime),
+        destination_runtime: runtime_versioned(destination_runtime),
         source_isa: isa.clone(),
         destination_isa: isa,
         substrate: versioned("host-process-isolation", env!("CARGO_PKG_VERSION")),
@@ -494,6 +603,16 @@ fn execution_environment(
     }
 }
 
+fn runtime_versioned(runtime: &RuntimeIdentityView) -> Stage1VersionedIdentity {
+    versioned(
+        &format!("{} adapter with {}", runtime.implementation, runtime.engine),
+        &format!(
+            "{}+{}.{}",
+            runtime.implementation_version, runtime.engine, runtime.engine_version
+        ),
+    )
+}
+
 fn versioned(name: &str, version: &str) -> Stage1VersionedIdentity {
     Stage1VersionedIdentity { name: name.to_owned(), version: version.to_owned() }
 }
@@ -526,12 +645,40 @@ mod tests {
             parse_mode(program, &[OsString::from("stage1"), OsString::from("target/evidence")]),
             Ok(Mode::Stage1(PathBuf::from("target/evidence")))
         );
+        assert_eq!(
+            parse_mode(program, &[OsString::from("stage2"), OsString::from("target/matrix")]),
+            Ok(Mode::Stage2(PathBuf::from("target/matrix")))
+        );
+        assert_eq!(
+            parse_mode(
+                program,
+                &[
+                    OsString::from("cell"),
+                    OsString::from("jco-node"),
+                    OsString::from("wasmtime"),
+                    OsString::from("target/cell"),
+                ],
+            ),
+            Ok(Mode::Cell {
+                source: RuntimeImplementation::JcoNode,
+                destination: RuntimeImplementation::Wasmtime,
+                artifact_root: PathBuf::from("target/cell"),
+            })
+        );
         for invalid in [
             Vec::new(),
             vec![OsString::from("stage1")],
             vec![OsString::from("stage1"), OsString::new()],
+            vec![OsString::from("stage2")],
+            vec![OsString::from("stage2"), OsString::new()],
             vec![OsString::from("worker"), OsString::from("extra")],
             vec![OsString::from("stage1"), OsString::from("root"), OsString::from("extra")],
+            vec![
+                OsString::from("cell"),
+                OsString::from("unknown"),
+                OsString::from("wasmtime"),
+                OsString::from("root"),
+            ],
         ] {
             assert_eq!(parse_mode(program, &invalid).unwrap_err().0, 64);
         }

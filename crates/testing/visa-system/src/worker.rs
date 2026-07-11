@@ -6,23 +6,26 @@ use contract_core::{
 };
 use substrate_api::{JournalPort, KvPort, LeasePort};
 use substrate_host::SqliteProvider;
+use visa_jco_node::{JcoNodeAdapter, JcoTranslationProvenance, PreparedJcoComponent};
 use visa_profile::ProviderSupport;
 use visa_runtime::{
     CommandReceipt, Coordinator, RuntimeError, SafePointTimer, SnapshotExpectations, TimerPoll,
     canonical_digest, validate_snapshot,
 };
 use visa_wasmtime::{
-    AdapterError, ComponentAdapter, ComponentStatus, PortableComponentState, WorkloadPhase,
+    AdapterError, AdapterFailureKind, ComponentAdapter, ComponentStatus, PortableComponentState,
+    PreflightExpectations, PreparedComponent, RuntimeIdentity, WorkloadFailureKind, WorkloadPhase,
 };
 
 use crate::{
     fixture::{FixtureError, FixtureSpec, OpenProviders, derive_identity},
     protocol::{
-        ComponentStatusView, CrashMode, DestinationSupportMode, FaultObservationView,
-        INVALID_REQUEST_ID, LeaseRecordView, PROTOCOL_VERSION, RequestEnvelope, RequiredAuthority,
-        ResponseEnvelope, SafePointTimerView, SnapshotExpectationOverrides, StateView,
-        TimerPollView, WorkerCommand, WorkerError, WorkerErrorCode, WorkerResult, WorkerRole,
-        WorkloadPhaseView,
+        AdapterFailureKindView, ComponentStatusView, CrashMode, DestinationSupportMode,
+        FaultObservationView, INVALID_REQUEST_ID, LeaseRecordView, PROTOCOL_VERSION,
+        RequestEnvelope, RequiredAuthority, ResponseEnvelope, RuntimeIdentityView,
+        RuntimeImplementation, SafePointTimerView, SnapshotExpectationOverrides, StateView,
+        TimerPollView, TranslationProvenanceView, WorkerCommand, WorkerError, WorkerErrorCode,
+        WorkerResult, WorkerRole, WorkloadFailureKindView, WorkloadPhaseView,
     },
 };
 
@@ -40,7 +43,131 @@ pub struct WorkerTurn {
     pub exit: Option<i32>,
 }
 
-type Adapter = ComponentAdapter<SqliteProvider>;
+enum Adapter {
+    Wasmtime(ComponentAdapter<SqliteProvider>),
+    JcoNode(Box<JcoNodeAdapter<SqliteProvider>>),
+}
+
+enum PreparedAdapter {
+    Wasmtime(Box<PreparedComponent<SqliteProvider>>),
+    JcoNode(Box<PreparedJcoComponent>),
+}
+
+impl PreparedAdapter {
+    fn runtime_identity(&self) -> RuntimeIdentity {
+        match self {
+            Self::Wasmtime(prepared) => prepared.runtime_identity(),
+            Self::JcoNode(prepared) => prepared.runtime_identity().clone(),
+        }
+    }
+
+    fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
+        match self {
+            Self::Wasmtime(_) => None,
+            Self::JcoNode(prepared) => Some(prepared.translation_provenance()),
+        }
+    }
+}
+
+impl Adapter {
+    fn runtime_identity(&self) -> RuntimeIdentity {
+        match self {
+            Self::Wasmtime(adapter) => adapter.runtime_identity(),
+            Self::JcoNode(adapter) => adapter.runtime_identity(),
+        }
+    }
+
+    fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
+        match self {
+            Self::Wasmtime(_) => None,
+            Self::JcoNode(adapter) => Some(adapter.translation_provenance().clone()),
+        }
+    }
+
+    fn coordinator(&self) -> &Coordinator<SqliteProvider> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.coordinator(),
+            Self::JcoNode(adapter) => adapter.coordinator(),
+        }
+    }
+
+    fn coordinator_mut(&mut self) -> &mut Coordinator<SqliteProvider> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.coordinator_mut(),
+            Self::JcoNode(adapter) => adapter.coordinator_mut(),
+        }
+    }
+
+    fn activate(&mut self, request: &visa_wasmtime::ActivationRequest) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.activate(request),
+            Self::JcoNode(adapter) => adapter.activate(request),
+        }
+    }
+
+    fn safe_point(
+        &mut self,
+        command: Identity,
+    ) -> Result<visa_wasmtime::ComponentSafePoint, AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.safe_point(command),
+            Self::JcoNode(adapter) => adapter.safe_point(command),
+        }
+    }
+
+    fn restore(
+        &mut self,
+        state: &PortableComponentState,
+        remaining_duration_ns: u64,
+    ) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.restore(state, remaining_duration_ns),
+            Self::JcoNode(adapter) => adapter.restore(state, remaining_duration_ns),
+        }
+    }
+
+    fn thaw(&mut self, state: &PortableComponentState) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.thaw(state),
+            Self::JcoNode(adapter) => adapter.thaw(state),
+        }
+    }
+
+    fn timer_fired(&mut self, operation: Identity) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.timer_fired(operation),
+            Self::JcoNode(adapter) => adapter.timer_fired(operation),
+        }
+    }
+
+    fn cancel_pending(&mut self) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.cancel_pending(),
+            Self::JcoNode(adapter) => adapter.cancel_pending(),
+        }
+    }
+
+    fn status(&mut self) -> Result<Option<ComponentStatus>, AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.status(),
+            Self::JcoNode(adapter) => adapter.status(),
+        }
+    }
+
+    fn inject_unsupported_live_resource(&mut self) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.inject_unsupported_live_resource(),
+            Self::JcoNode(adapter) => adapter.inject_unsupported_live_resource(),
+        }
+    }
+
+    fn clear_unsupported_live_resource(&mut self) -> Result<(), AdapterError> {
+        match self {
+            Self::Wasmtime(adapter) => adapter.clear_unsupported_live_resource(),
+            Self::JcoNode(adapter) => adapter.clear_unsupported_live_resource(),
+        }
+    }
+}
 
 struct SourceWorker {
     adapter: Adapter,
@@ -49,6 +176,8 @@ struct SourceWorker {
 
 struct DestinationPending {
     provider: Option<SqliteProvider>,
+    prepared: Option<PreparedAdapter>,
+    runtime: RuntimeImplementation,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +189,8 @@ struct PendingTimerDelivery {
 struct DestinationWorker {
     coordinator: Option<Coordinator<SqliteProvider>>,
     adapter: Option<Adapter>,
+    prepared: Option<PreparedAdapter>,
+    runtime: RuntimeImplementation,
     portable_state: PortableComponentState,
     remaining_duration_ns: u64,
     pending_timer_delivery: Option<PendingTimerDelivery>,
@@ -99,8 +230,8 @@ impl DestinationWorker {
 
 enum WorkerState {
     Uninitialized,
-    Source(SourceWorker),
-    DestinationPending(DestinationPending),
+    Source(Box<SourceWorker>),
+    DestinationPending(Box<DestinationPending>),
     Destination(Box<DestinationWorker>),
 }
 
@@ -149,8 +280,8 @@ impl Worker {
 
     fn execute(&mut self, command: WorkerCommand) -> Result<WorkerResult, WorkerError> {
         match command {
-            WorkerCommand::Initialize { role, database_path, options, fault } => {
-                self.initialize(role, &database_path, options, fault)
+            WorkerCommand::Initialize { role, runtime, database_path, options, fault } => {
+                self.initialize(role, runtime, &database_path, options, fault)
             }
             WorkerCommand::BootstrapSource => self.bootstrap_source(),
             WorkerCommand::Read => self.state_result(),
@@ -187,6 +318,7 @@ impl Worker {
     fn initialize(
         &mut self,
         role: WorkerRole,
+        runtime: RuntimeImplementation,
         database_path: &str,
         options: crate::fixture::FixtureOptions,
         fault: Option<crate::protocol::FaultPointSpec>,
@@ -227,21 +359,53 @@ impl Worker {
                         })?,
                     )
                 };
-                let adapter = instantiate_adapter(&fixture, coordinator)?;
-                WorkerState::Source(SourceWorker { adapter, portable_state })
+                let adapter = instantiate_adapter(runtime, &fixture, coordinator)?;
+                WorkerState::Source(Box::new(SourceWorker { adapter, portable_state }))
             }
             WorkerRole::Destination => {
                 if let Some(fault) = fault {
                     destination.inject_failure_once(fault);
                 }
-                WorkerState::DestinationPending(DestinationPending { provider: Some(destination) })
+                let prepared = preflight_adapter(
+                    runtime,
+                    &fixture,
+                    &provider_support(&fixture, DestinationSupportMode::Compatible),
+                    PreflightExpectations {
+                        component_digest: fixture.component_digest,
+                        profile_digest: fixture.profile_digest,
+                    },
+                )?;
+                WorkerState::DestinationPending(Box::new(DestinationPending {
+                    provider: Some(destination),
+                    prepared: Some(prepared),
+                    runtime,
+                }))
+            }
+        };
+        let (observed_runtime, translation_provenance) = match &state {
+            WorkerState::Source(source) => {
+                (source.adapter.runtime_identity(), source.adapter.translation_provenance())
+            }
+            WorkerState::DestinationPending(destination) => {
+                let prepared = destination
+                    .prepared
+                    .as_ref()
+                    .expect("destination initialization always prepares its runtime");
+                (prepared.runtime_identity(), prepared.translation_provenance())
+            }
+            WorkerState::Uninitialized | WorkerState::Destination(_) => {
+                unreachable!("initialization constructed an impossible worker state")
             }
         };
         let case_id = fixture.options.case_id.clone();
         self.fixture = Some(fixture);
         self.database_path = Some(database_path.to_owned());
         self.state = state;
-        Ok(WorkerResult::Initialized { role, case_id })
+        Ok(WorkerResult::Initialized {
+            role,
+            case_id,
+            runtime: runtime_identity_view(observed_runtime, translation_provenance),
+        })
     }
 
     fn bootstrap_source(&mut self) -> Result<WorkerResult, WorkerError> {
@@ -572,20 +736,32 @@ impl Worker {
     }
 
     fn validate_destination(
-        &self,
+        &mut self,
         envelope: &contract_core::SnapshotEnvelope,
         overrides: &SnapshotExpectationOverrides,
         support_mode: DestinationSupportMode,
     ) -> Result<WorkerResult, WorkerError> {
-        let fixture = self.fixture()?;
-        fixture.profile.validate(&provider_support(fixture, support_mode)).map_err(|error| {
-            WorkerError::new(
-                WorkerErrorCode::Adapter,
-                format!("destination profile is incompatible: {error:?}"),
-            )
-        })?;
-        validate_snapshot(envelope, &snapshot_expectations(fixture, overrides))
-            .map_err(runtime_error)?;
+        let fixture = self.fixture()?.clone();
+        let expectations = snapshot_expectations(&fixture, overrides);
+        let (runtime, slot) = match &mut self.state {
+            WorkerState::DestinationPending(destination) => {
+                destination.prepared = None;
+                (destination.runtime, &mut destination.prepared)
+            }
+            _ => return Err(invalid_state("worker is not waiting for destination validation")),
+        };
+        validate_snapshot(envelope, &expectations).map_err(runtime_error)?;
+        let support = provider_support(&fixture, support_mode);
+        let prepared = preflight_adapter(
+            runtime,
+            &fixture,
+            &support,
+            PreflightExpectations {
+                component_digest: expectations.component_digest,
+                profile_digest: expectations.profile_digest,
+            },
+        )?;
+        *slot = Some(prepared);
         Ok(WorkerResult::Ack)
     }
 
@@ -611,11 +787,20 @@ impl Worker {
         let expectations =
             snapshot_expectations(&fixture, &SnapshotExpectationOverrides::default());
         let validated = validate_snapshot(&envelope, &expectations).map_err(runtime_error)?;
-        let provider = match &mut self.state {
-            WorkerState::DestinationPending(destination) => destination
-                .provider
-                .take()
-                .ok_or_else(|| invalid_state("destination provider is unavailable"))?,
+        let (provider, prepared, runtime) = match &mut self.state {
+            WorkerState::DestinationPending(destination) => {
+                if destination.provider.is_none() {
+                    return Err(invalid_state("destination provider is unavailable"));
+                }
+                if destination.prepared.is_none() {
+                    return Err(invalid_state("destination runtime preflight is unavailable"));
+                }
+                (
+                    destination.provider.take().expect("provider presence was checked"),
+                    destination.prepared.take().expect("preflight presence was checked"),
+                    destination.runtime,
+                )
+            }
             _ => return Err(invalid_state("worker is not waiting for a destination snapshot")),
         };
         let coordinator = Coordinator::restore(validated, provider).map_err(runtime_error)?;
@@ -626,6 +811,8 @@ impl Worker {
         self.state = WorkerState::Destination(Box::new(DestinationWorker {
             coordinator: Some(coordinator),
             adapter: None,
+            prepared: Some(prepared),
+            runtime,
             portable_state: portable,
             remaining_duration_ns,
             pending_timer_delivery: None,
@@ -678,12 +865,11 @@ impl Worker {
                 .coordinator
                 .take()
                 .ok_or_else(|| invalid_state("destination coordinator is unavailable"))?;
-            match ComponentAdapter::instantiate_recoverable(
-                crate::component::bytes(),
-                &fixture.profile,
-                &provider_support(&fixture, DestinationSupportMode::Compatible),
-                coordinator,
-            ) {
+            let prepared = destination
+                .prepared
+                .take()
+                .ok_or_else(|| invalid_state("destination runtime preflight is unavailable"))?;
+            match instantiate_prepared_adapter(destination.runtime, prepared, coordinator) {
                 Ok(adapter) => destination.adapter = Some(adapter),
                 Err(failure) => {
                     let (error, coordinator) = *failure;
@@ -971,16 +1157,124 @@ fn request_id_from_bytes(line: &[u8]) -> String {
 }
 
 fn instantiate_adapter(
+    runtime: RuntimeImplementation,
     fixture: &FixtureSpec,
     coordinator: Coordinator<SqliteProvider>,
 ) -> Result<Adapter, WorkerError> {
-    ComponentAdapter::instantiate(
-        crate::component::bytes(),
-        &fixture.profile,
-        &provider_support(fixture, DestinationSupportMode::Compatible),
-        coordinator,
-    )
-    .map_err(adapter_error)
+    match runtime {
+        RuntimeImplementation::Wasmtime => ComponentAdapter::instantiate(
+            crate::component::bytes(),
+            &fixture.profile,
+            &provider_support(fixture, DestinationSupportMode::Compatible),
+            coordinator,
+        )
+        .map(Adapter::Wasmtime)
+        .map_err(adapter_error),
+        RuntimeImplementation::JcoNode => JcoNodeAdapter::instantiate(
+            crate::component::bytes(),
+            &fixture.profile,
+            &provider_support(fixture, DestinationSupportMode::Compatible),
+            coordinator,
+        )
+        .map(|adapter| Adapter::JcoNode(Box::new(adapter)))
+        .map_err(adapter_error),
+    }
+}
+
+fn preflight_adapter(
+    runtime: RuntimeImplementation,
+    fixture: &FixtureSpec,
+    support: &ProviderSupport,
+    expectations: PreflightExpectations,
+) -> Result<PreparedAdapter, WorkerError> {
+    match runtime {
+        RuntimeImplementation::Wasmtime => ComponentAdapter::preflight(
+            crate::component::bytes(),
+            &fixture.profile,
+            support,
+            expectations,
+        )
+        .map(|prepared| PreparedAdapter::Wasmtime(Box::new(prepared)))
+        .map_err(adapter_error),
+        RuntimeImplementation::JcoNode => JcoNodeAdapter::<SqliteProvider>::preflight(
+            crate::component::bytes(),
+            &fixture.profile,
+            support,
+            expectations,
+        )
+        .map(|prepared| PreparedAdapter::JcoNode(Box::new(prepared)))
+        .map_err(adapter_error),
+    }
+}
+
+fn instantiate_prepared_adapter(
+    runtime: RuntimeImplementation,
+    prepared: PreparedAdapter,
+    coordinator: Coordinator<SqliteProvider>,
+) -> Result<Adapter, Box<(AdapterError, Coordinator<SqliteProvider>)>> {
+    match runtime {
+        RuntimeImplementation::Wasmtime => match prepared {
+            PreparedAdapter::Wasmtime(prepared) => {
+                ComponentAdapter::instantiate_prepared_recoverable(*prepared, coordinator)
+                    .map(Adapter::Wasmtime)
+            }
+            PreparedAdapter::JcoNode(_) => Err(Box::new((
+                AdapterError::UnsupportedRuntimeFeature(
+                    "prepared Jco/Node artifact cannot instantiate as Wasmtime".into(),
+                ),
+                coordinator,
+            ))),
+        },
+        RuntimeImplementation::JcoNode => match prepared {
+            PreparedAdapter::JcoNode(prepared) => {
+                JcoNodeAdapter::instantiate_prepared_recoverable(*prepared, coordinator)
+                    .map(|adapter| Adapter::JcoNode(Box::new(adapter)))
+            }
+            PreparedAdapter::Wasmtime(_) => Err(Box::new((
+                AdapterError::UnsupportedRuntimeFeature(
+                    "prepared Wasmtime artifact cannot instantiate as Jco/Node".into(),
+                ),
+                coordinator,
+            ))),
+        },
+    }
+}
+
+fn runtime_identity_view(
+    identity: RuntimeIdentity,
+    translation_provenance: Option<JcoTranslationProvenance>,
+) -> RuntimeIdentityView {
+    RuntimeIdentityView {
+        implementation: identity.implementation,
+        implementation_version: identity.implementation_version,
+        engine: identity.engine,
+        engine_version: identity.engine_version,
+        translation_provenance: translation_provenance.map(|provenance| {
+            TranslationProvenanceView {
+                jco_version: provenance.runtime.jco_version,
+                js_component_bindgen_version: provenance.runtime.js_component_bindgen_version,
+                translator: provenance.runtime.translator,
+                translator_version: provenance.runtime.translator_version,
+                translation_options: provenance.runtime.translation_options,
+                node_executable_path: provenance.runtime.node_executable_path,
+                node_executable_sha256: digest_hex(provenance.runtime.node_executable_digest),
+                node_version: provenance.runtime.node_version,
+                v8_version: provenance.runtime.v8_version,
+                rpc_protocol_version: provenance.runtime.rpc_protocol_version,
+                generated_sha256: digest_hex(provenance.generated_digest),
+                driver_sha256: digest_hex(provenance.driver_digest),
+                core_module_sha256s: provenance
+                    .core_module_digests
+                    .into_iter()
+                    .map(digest_hex)
+                    .collect(),
+            }
+        }),
+    }
+}
+
+fn digest_hex(digest: contract_core::Digest) -> String {
+    digest.0.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn snapshot_expectations(
@@ -1123,9 +1417,75 @@ fn runtime_error(error: RuntimeError) -> WorkerError {
 }
 
 fn adapter_error(error: AdapterError) -> WorkerError {
+    let adapter_kind = Some(adapter_failure_kind_view(error.kind()));
+    let workload_kind = error.workload_kind().map(workload_failure_kind_view);
     match error {
-        AdapterError::Coordinator(runtime) => runtime_error(runtime),
-        other => WorkerError::new(WorkerErrorCode::Adapter, other.to_string()),
+        AdapterError::Coordinator(runtime) => {
+            let mut error = runtime_error(runtime);
+            error.adapter_kind = adapter_kind;
+            error.workload_kind = workload_kind;
+            error
+        }
+        other => {
+            let mut error = WorkerError::new(WorkerErrorCode::Adapter, other.to_string());
+            error.adapter_kind = adapter_kind;
+            error.workload_kind = workload_kind;
+            error
+        }
+    }
+}
+
+const fn adapter_failure_kind_view(kind: AdapterFailureKind) -> AdapterFailureKindView {
+    match kind {
+        AdapterFailureKind::IncompatibleProfile => AdapterFailureKindView::IncompatibleProfile,
+        AdapterFailureKind::ProfileEncoding => AdapterFailureKindView::ProfileEncoding,
+        AdapterFailureKind::ProfileDigestMismatch => AdapterFailureKindView::ProfileDigestMismatch,
+        AdapterFailureKind::ComponentDigestMismatch => {
+            AdapterFailureKindView::ComponentDigestMismatch
+        }
+        AdapterFailureKind::Engine => AdapterFailureKindView::Engine,
+        AdapterFailureKind::InvalidComponent => AdapterFailureKindView::InvalidComponent,
+        AdapterFailureKind::Link => AdapterFailureKindView::Link,
+        AdapterFailureKind::UnsupportedRuntimeFeature => {
+            AdapterFailureKindView::UnsupportedRuntimeFeature
+        }
+        AdapterFailureKind::Instantiation => AdapterFailureKindView::Instantiation,
+        AdapterFailureKind::GuestTrap => AdapterFailureKindView::GuestTrap,
+        AdapterFailureKind::Workload => AdapterFailureKindView::Workload,
+        AdapterFailureKind::ResourceBinding => AdapterFailureKindView::ResourceBinding,
+        AdapterFailureKind::LiveResourcesAtSafePoint => {
+            AdapterFailureKindView::LiveResourcesAtSafePoint
+        }
+        AdapterFailureKind::SafePointStateMismatch => {
+            AdapterFailureKindView::SafePointStateMismatch
+        }
+        AdapterFailureKind::PortableStateMismatch => AdapterFailureKindView::PortableStateMismatch,
+        AdapterFailureKind::PortableState => AdapterFailureKindView::PortableState,
+        AdapterFailureKind::Coordinator => AdapterFailureKindView::Coordinator,
+        AdapterFailureKind::SafePointRollback => AdapterFailureKindView::SafePointRollback,
+        AdapterFailureKind::SafePointGuestRollback => {
+            AdapterFailureKindView::SafePointGuestRollback
+        }
+    }
+}
+
+const fn workload_failure_kind_view(kind: WorkloadFailureKind) -> WorkloadFailureKindView {
+    match kind {
+        WorkloadFailureKind::AlreadyActive => WorkloadFailureKindView::AlreadyActive,
+        WorkloadFailureKind::InvalidState => WorkloadFailureKindView::InvalidState,
+        WorkloadFailureKind::WrongTimer => WorkloadFailureKindView::WrongTimer,
+        WorkloadFailureKind::SafePointUnavailable => WorkloadFailureKindView::SafePointUnavailable,
+        WorkloadFailureKind::KeyValueDenied => WorkloadFailureKindView::KeyValueDenied,
+        WorkloadFailureKind::KeyValueConflict => WorkloadFailureKindView::KeyValueConflict,
+        WorkloadFailureKind::KeyValueStaleBinding => WorkloadFailureKindView::KeyValueStaleBinding,
+        WorkloadFailureKind::KeyValueIndeterminate => {
+            WorkloadFailureKindView::KeyValueIndeterminate
+        }
+        WorkloadFailureKind::KeyValueUnavailable => WorkloadFailureKindView::KeyValueUnavailable,
+        WorkloadFailureKind::TimerDenied => WorkloadFailureKindView::TimerDenied,
+        WorkloadFailureKind::TimerStaleBinding => WorkloadFailureKindView::TimerStaleBinding,
+        WorkloadFailureKind::TimerNotPending => WorkloadFailureKindView::TimerNotPending,
+        WorkloadFailureKind::TimerUnavailable => WorkloadFailureKindView::TimerUnavailable,
     }
 }
 
@@ -1195,6 +1555,88 @@ mod tests {
             RunExit::Requested(23)
         );
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn wasmtime_preflight_is_repeatable_and_rejects_invalid_artifacts_structurally() {
+        let fixture = FixtureSpec::new("wasmtime-preflight").unwrap();
+        let support = provider_support(&fixture, DestinationSupportMode::Compatible);
+        let expectations = PreflightExpectations {
+            component_digest: fixture.component_digest,
+            profile_digest: fixture.profile_digest,
+        };
+        let first = ComponentAdapter::<SqliteProvider>::preflight(
+            crate::component::bytes(),
+            &fixture.profile,
+            &support,
+            expectations,
+        )
+        .unwrap();
+        let second = ComponentAdapter::<SqliteProvider>::preflight(
+            crate::component::bytes(),
+            &fixture.profile,
+            &support,
+            expectations,
+        )
+        .unwrap();
+        drop((first, second));
+
+        let invalid = ComponentAdapter::<SqliteProvider>::preflight(
+            b"not-a-component",
+            &fixture.profile,
+            &support,
+            PreflightExpectations {
+                component_digest: visa_wasmtime::component_digest(b"not-a-component"),
+                profile_digest: fixture.profile_digest,
+            },
+        )
+        .expect_err("invalid Component Model bytes must fail before instantiation");
+        assert_eq!(invalid.kind(), AdapterFailureKind::InvalidComponent);
+
+        let digest_mismatch = ComponentAdapter::<SqliteProvider>::preflight(
+            crate::component::bytes(),
+            &fixture.profile,
+            &support,
+            PreflightExpectations {
+                component_digest: contract_core::Digest::ZERO,
+                profile_digest: fixture.profile_digest,
+            },
+        )
+        .expect_err("a stale prepared-artifact identity must be rejected");
+        assert_eq!(digest_mismatch.kind(), AdapterFailureKind::ComponentDigestMismatch);
+    }
+
+    #[test]
+    fn destination_load_requires_the_non_executing_preflight_token() {
+        let database = TestDatabase::new("missing-preflight");
+        let options = FixtureOptions::new("missing-preflight");
+        let mut source = Worker::new();
+        initialize(&mut source, WorkerRole::Source, database.path(), options.clone());
+        invoke(&mut source, WorkerCommand::BootstrapSource).unwrap();
+        invoke(&mut source, WorkerCommand::BeginQuiesce).unwrap();
+        invoke(&mut source, WorkerCommand::FreezeSource).unwrap();
+        let (envelope, component_state) =
+            match invoke(&mut source, WorkerCommand::ExportSourceSnapshot).unwrap() {
+                WorkerResult::Snapshot { envelope, component_state, .. } => {
+                    (*envelope, component_state)
+                }
+                other => panic!("expected source snapshot, got {other:?}"),
+            };
+
+        let mut destination = Worker::new();
+        initialize(&mut destination, WorkerRole::Destination, database.path(), options);
+        let WorkerState::DestinationPending(pending) = &mut destination.state else {
+            panic!("destination must still be pending")
+        };
+        pending.prepared = None;
+        let rejection =
+            invoke(&mut destination, WorkerCommand::LoadDestination { envelope, component_state })
+                .expect_err("destination load cannot bypass runtime preflight");
+        assert_eq!(rejection.code, WorkerErrorCode::InvalidState);
+        let WorkerState::DestinationPending(pending) = &destination.state else {
+            panic!("rejected load must leave the destination pending")
+        };
+        assert!(pending.provider.is_some());
     }
 
     #[test]
@@ -1427,6 +1869,99 @@ mod tests {
     }
 
     #[test]
+    fn jco_node_workers_execute_the_same_component_handoff_path() {
+        let database = TestDatabase::new("jco-node-worker-handoff");
+        let options = FixtureOptions::new("jco-node-worker-handoff");
+        let mut source = Worker::new();
+        let source_runtime = initialize_with_runtime(
+            &mut source,
+            WorkerRole::Source,
+            RuntimeImplementation::JcoNode,
+            database.path(),
+            options.clone(),
+        );
+        let source_translation = source_runtime
+            .translation_provenance
+            .as_ref()
+            .expect("Jco source initialization reports translation provenance");
+        assert_eq!(source_translation.jco_version, visa_jco_node::JCO_VERSION);
+        assert_eq!(source_translation.translator_version, visa_jco_node::WASMTIME_ENVIRON_VERSION);
+        assert_eq!(source_translation.node_version, visa_jco_node::NODE_VERSION);
+        assert_eq!(source_translation.v8_version, visa_jco_node::V8_VERSION);
+        assert_eq!(source_translation.generated_sha256.len(), 64);
+        assert_eq!(source_translation.driver_sha256.len(), 64);
+        assert!(!source_translation.core_module_sha256s.is_empty());
+        invoke(&mut source, WorkerCommand::BootstrapSource).unwrap();
+        invoke(&mut source, WorkerCommand::BeginQuiesce).unwrap();
+        let safe_point = invoke(&mut source, WorkerCommand::FreezeSource).unwrap();
+        assert!(matches!(
+            safe_point,
+            WorkerResult::SafePoint { timer: SafePointTimerView::Pending { .. }, .. }
+        ));
+        let (envelope, component_state) =
+            match invoke(&mut source, WorkerCommand::ExportSourceSnapshot).unwrap() {
+                WorkerResult::Snapshot { envelope, component_state, .. } => {
+                    (*envelope, component_state)
+                }
+                other => panic!("expected Jco/Node source snapshot, got {other:?}"),
+            };
+
+        let mut destination = Worker::new();
+        let destination_runtime = initialize_with_runtime(
+            &mut destination,
+            WorkerRole::Destination,
+            RuntimeImplementation::JcoNode,
+            database.path(),
+            options,
+        );
+        assert_eq!(source_runtime, destination_runtime);
+        invoke(
+            &mut destination,
+            WorkerCommand::ValidateDestination {
+                envelope: envelope.clone(),
+                expectations: SnapshotExpectationOverrides::default(),
+                support: DestinationSupportMode::Compatible,
+            },
+        )
+        .unwrap();
+        invoke(&mut destination, WorkerCommand::LoadDestination { envelope, component_state })
+            .unwrap();
+        invoke(&mut destination, WorkerCommand::PrepareDestination).unwrap();
+        invoke(&mut destination, WorkerCommand::CommitDestination).unwrap();
+        let resumed = invoke(&mut destination, WorkerCommand::ResumeDestination).unwrap();
+        assert!(matches!(
+            resumed,
+            WorkerResult::State {
+                view: StateView {
+                    canonical_phase: HandoffPhase::Running,
+                    component: Some(ComponentStatusView {
+                        phase: WorkloadPhaseView::Armed,
+                        expected_version: 1,
+                        ..
+                    }),
+                    ..
+                }
+            }
+        ));
+        let completed = poll_until_delivered(&mut destination);
+        assert!(matches!(
+            completed,
+            WorkerResult::Timer {
+                delivered: true,
+                view: StateView {
+                    component: Some(ComponentStatusView {
+                        phase: WorkloadPhaseView::Completed,
+                        expected_version: 2,
+                        ..
+                    }),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn real_guest_safe_point_rejection_rolls_back_and_source_continues() {
         let database = TestDatabase::new("safe-point-rejection");
         let options = FixtureOptions::new("safe-point-unreachable");
@@ -1438,7 +1973,8 @@ mod tests {
         let rejection = invoke(&mut source, WorkerCommand::FreezeSource)
             .expect_err("the real guest must explicitly reject its safe point");
         assert_eq!(rejection.code, WorkerErrorCode::Adapter);
-        assert!(rejection.message.contains("SafePointUnavailable"));
+        assert_eq!(rejection.adapter_kind, Some(AdapterFailureKindView::Workload));
+        assert_eq!(rejection.workload_kind, Some(WorkloadFailureKindView::SafePointUnavailable));
         assert!(matches!(
             invoke(&mut source, WorkerCommand::Read).unwrap(),
             WorkerResult::State {
@@ -1485,8 +2021,7 @@ mod tests {
         let rejection = invoke(&mut source, WorkerCommand::FreezeSource)
             .expect_err("a live unsupported handle must reject the safe point");
         assert_eq!(rejection.code, WorkerErrorCode::Adapter);
-        assert!(rejection.message.contains("live resource handles"));
-        assert!(!rejection.message.contains("rollback failed"));
+        assert_eq!(rejection.adapter_kind, Some(AdapterFailureKindView::LiveResourcesAtSafePoint));
         assert!(matches!(
             invoke(&mut source, WorkerCommand::Read).unwrap(),
             WorkerResult::State {
@@ -1539,17 +2074,31 @@ mod tests {
     }
 
     fn initialize(worker: &mut Worker, role: WorkerRole, path: &Path, options: FixtureOptions) {
+        initialize_with_runtime(worker, role, RuntimeImplementation::Wasmtime, path, options);
+    }
+
+    fn initialize_with_runtime(
+        worker: &mut Worker,
+        role: WorkerRole,
+        runtime: RuntimeImplementation,
+        path: &Path,
+        options: FixtureOptions,
+    ) -> RuntimeIdentityView {
         let result = invoke(
             worker,
             WorkerCommand::Initialize {
                 role,
+                runtime,
                 database_path: path.to_string_lossy().into_owned(),
                 options,
                 fault: None,
             },
         )
         .unwrap();
-        assert!(matches!(result, WorkerResult::Initialized { role: actual, .. } if actual == role));
+        match result {
+            WorkerResult::Initialized { role: actual, runtime, .. } if actual == role => runtime,
+            other => panic!("expected initialized {role:?}, got {other:?}"),
+        }
     }
 
     fn expect_state(result: WorkerResult, phase: HandoffPhase) {

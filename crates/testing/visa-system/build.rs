@@ -28,6 +28,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("cargo:rerun-if-env-changed=CARGO_CDYLIB_FILE_HANDOFF_COMPONENT_handoff_component");
     println!("cargo:rerun-if-changed=../../../wit/cooperative-handoff/world.wit");
+    // Individual paths make ordinary edits precise. Directory roots ensure a
+    // newly added provenance input also invalidates this build script.
+    for source_root in build_provenance::SOURCE_ROOTS {
+        let source_root = workspace_root.join(source_root);
+        if source_root.is_dir() {
+            println!("cargo:rerun-if-changed={}", source_root.display());
+        }
+    }
     for source in provenance.source_paths {
         println!("cargo:rerun-if-changed={}", source.display());
     }

@@ -14,16 +14,22 @@ before changing scope, contracts, dependency direction, or evidence claims.
 The supported development environment and current CI parity boundary is the
 `dev` service in `compose.yaml`. Its image contains:
 
-- the floating nightly installed by `Dockerfile`, currently matching the
-  channel declared in `rust-toolchain.toml`;
+- the `nightly-2026-06-07` Rust toolchain declared by both `Dockerfile` and
+  `rust-toolchain.toml`;
 - `rust-src`, `rustfmt`, `clippy`, and `llvm-tools-preview`;
 - the `wasm32-unknown-unknown` and `x86_64-unknown-none` targets;
+- Node 24.15.0 with V8 13.6.233.17-node.48, installed from the official
+  architecture-specific archive after SHA-256 verification;
 - QEMU and OVMF for the current x86_64 kernel runner; and
 - the C, autotools, and Linux packages used by the LTP helpers.
 
-The current `nightly` toolchain and `debian:stable-slim` base image are not
-digest-pinned. This environment provides current local/CI parity, not a
-bit-reproducible release toolchain. Release claims require pinned inputs.
+The Node x64 and arm64 archive digests are copied from the official
+[`v24.15.0` checksum list](https://nodejs.org/dist/v24.15.0/SHASUMS256.txt).
+The Rust toolchain is date-pinned because later nightly compiler changes can
+break the bootloader dependency independently of vISA source. The
+`debian:stable-slim` base image is not digest-pinned, so this environment still
+provides local/CI parity rather than a bit-reproducible release toolchain.
+Release claims require all inputs pinned.
 
 Host-native Cargo commands are useful for short edit cycles, but the host is
 not the CI parity boundary. A host workflow must independently provide
@@ -55,8 +61,8 @@ volumes by default.
 
 ## Repository gates
 
-The repository exposes two implemented, cumulative repository tiers and one
-standalone system tier. Run the ordinary edit-loop gate with:
+The repository exposes two cumulative repository tiers and three standalone
+system tiers. Run the ordinary edit-loop gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh fast
@@ -74,6 +80,18 @@ Run the Stage 1 reference system gate with:
 scripts/run-docker-ci-gate.sh system
 ```
 
+Run the Stage 2b JcoNode reference cell with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-jco-node
+```
+
+Run the complete four-direction Stage 2c matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage2
+```
+
 With no tier argument the wrapper runs `full`. It validates the Compose
 configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
 implementation used by CI. `--skip-build` reuses an existing image.
@@ -81,11 +99,13 @@ implementation used by CI. `--skip-build` reuses an existing image.
 layout used by GitHub Actions.
 
 `fast` checks locked metadata, formatting, strict active-spine dependency
-direction, the Stage 1 legacy-deletion/oracle boundary, strict Clippy for
-active-spine targets, and active-spine tests. `full` includes `fast`, then adds
-shell parsing, default-feature workspace tests, every current opt-in feature,
-active no-std compilation, selected Wasm packages, the kernel target, benchmark
-compilation, and report/artifact fixture gates. `system` is standalone: it does
+direction, the Stage 1 legacy-deletion/oracle boundary, first-party Rust file
+sizes (including not-yet-added files), the locked JcoNode Cargo/source/Node/V8
+identity, strict Clippy for active-spine targets, and active-spine tests. `full`
+includes `fast`, then adds shell parsing,
+default-feature workspace tests, every current opt-in feature, active no-std
+compilation, selected Wasm packages, the kernel target, benchmark compilation,
+and report/artifact fixture gates. Every `system*` tier is standalone and does
 not repeat `fast` or `full`. See [VALIDATION.md](VALIDATION.md) for the exact
 proof boundary.
 
@@ -105,6 +125,12 @@ source and destination worker processes, writes an execution evidence bundle,
 then invokes the independent `visa-conformance stage1` validator. The command
 prints the retained artifact root and bundle path on success and preserves them
 on failure for diagnosis.
+
+`system-jco-node` applies the same 31-case and independent Stage 1 verification
+flow to an explicitly selected JcoNode-to-JcoNode pair. `system-stage2` creates
+one root containing all four Wasmtime/JcoNode source-destination cells, runs
+124 cases, then invokes the independent Stage 2 verifier over the outer bundle.
+The latter is intentionally expensive and is not part of `full`.
 
 ## Host Cargo commands
 
@@ -133,11 +159,12 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` implements the cumulative `fast` and `full` tiers and the
-   standalone `system` tier inside the development environment.
-2. **Stage 1 system:** `ci-gate.sh system` orchestrates the real runner and the
-   independent verifier. Invoke the underlying binaries directly only when
-   investigating a retained artifact root.
+   `ci-gate.sh` implements cumulative `fast`/`full` and the three standalone
+   system tiers inside the development environment.
+2. **System evidence:** `ci-gate.sh system`, `system-jco-node`, and
+   `system-stage2` orchestrate real runners followed by independent verifier
+   processes. Invoke the binaries directly only when investigating a retained
+   artifact root.
 3. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
@@ -150,8 +177,10 @@ public API. Use them according to their current role:
    external host `runltp`. Those logs do not prove execution through vISA.
    `run-ltp-conformance.sh` is a deprecated compatibility alias and must not be
    used for new automation or evidence claims.
-6. **Structural maintenance:** `check-file-size.sh` reports oversized Rust
-   files. It is not currently part of the main CI gate.
+6. **Structural maintenance:** `check-file-size.sh` scans tracked and
+   not-yet-added first-party Rust sources and runs as part of `fast`. Hard-limit
+   violations in active-spine sources fail the gate; oracle/reference and other
+   out-of-spine findings remain informational.
 
 Read each script's usage text, using `--help` where supported. Keep specialist
 runners behind a small developer-facing surface.
@@ -196,8 +225,8 @@ gate must not be generalized beyond the proof boundary listed above.
 
 ## Next validation expansion
 
-`fast`, `full`, and standalone `system` are the implemented root interface.
-The next validation expansions are release and claim gates for additional
-declared runtime/ISA/substrate cells, beginning with the independent runtime
-work in Stage 2. Those claims remain unavailable until their exact matrix cells
-and provenance inputs execute.
+`fast`, `full`, and the three standalone system tiers are the implemented root
+interface. The JcoNode matrix proves a second translated execution path, not a
+fully independent Component Model implementation. Release, strict independent
+runtime, file/network, cross-ISA, confidential, and production claims remain
+unavailable until their exact cells and provenance inputs execute.

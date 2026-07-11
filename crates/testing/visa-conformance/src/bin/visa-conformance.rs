@@ -1,6 +1,9 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use visa_conformance::gate_stage1_evidence_bundle_json_with_artifacts;
+use visa_conformance::{
+    gate_stage1_evidence_bundle_json_with_artifacts,
+    gate_stage2_evidence_bundle_json_with_artifacts,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -18,7 +21,8 @@ fn run() -> Result<(), (u8, String)> {
     let command = arguments.next();
     let bundle = arguments.next();
     let artifact_root = arguments.next();
-    if command.as_deref() != Some(std::ffi::OsStr::new("stage1"))
+    let command = command.as_deref().and_then(std::ffi::OsStr::to_str);
+    if !matches!(command, Some("stage1" | "stage2"))
         || bundle.is_none()
         || artifact_root.is_none()
         || arguments.next().is_some()
@@ -26,7 +30,7 @@ fn run() -> Result<(), (u8, String)> {
         return Err((
             64,
             format!(
-                "usage: {} stage1 <bundle.json> <artifact-root>",
+                "usage: {} <stage1|stage2> <bundle.json> <artifact-root>",
                 PathBuf::from(program).display()
             ),
         ));
@@ -36,9 +40,27 @@ fn run() -> Result<(), (u8, String)> {
     let artifact_root = PathBuf::from(artifact_root.unwrap());
     let bytes = fs::read(&bundle)
         .map_err(|error| (2, format!("cannot read {}: {error}", bundle.display())))?;
-    let result = gate_stage1_evidence_bundle_json_with_artifacts(&bytes, &artifact_root);
-    if result.ok {
-        println!("Stage 1 evidence verified: {}", bundle.display());
+    let (label, result) = match command {
+        Some("stage1") => (
+            "Stage 1",
+            serde_json::to_value(gate_stage1_evidence_bundle_json_with_artifacts(
+                &bytes,
+                &artifact_root,
+            )),
+        ),
+        Some("stage2") => (
+            "Stage 2",
+            serde_json::to_value(gate_stage2_evidence_bundle_json_with_artifacts(
+                &bytes,
+                &artifact_root,
+            )),
+        ),
+        _ => unreachable!(),
+    };
+    let result =
+        result.map_err(|error| (2, format!("cannot render validation result: {error}")))?;
+    if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        println!("{label} evidence verified: {}", bundle.display());
         return Ok(());
     }
 

@@ -1083,7 +1083,9 @@ fn digest_from_hex(value: &str) -> Result<Digest, EvidenceError> {
         return Err(EvidenceError::invalid("digest is not 64 hexadecimal characters"));
     }
     let mut bytes = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    let (pairs, remainder) = value.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    for (index, pair) in pairs.iter().enumerate() {
         bytes[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
     }
     Ok(Digest::from_bytes(bytes))

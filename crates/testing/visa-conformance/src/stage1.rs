@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeSet,
-    fs::File,
-    io::Read,
-    path::{Component, Path},
+    fs::{self, File},
+    io::{self, Read},
+    path::{Component, Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
@@ -255,18 +255,21 @@ pub enum Stage1Claim {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1VersionedIdentity {
     pub name: String,
     pub version: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1IsaIdentity {
     pub architecture: String,
     pub abi: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1ProviderIdentity {
     pub implementation: Stage1VersionedIdentity,
     pub durable: bool,
@@ -274,6 +277,7 @@ pub struct Stage1ProviderIdentity {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1AuthorityEnforcementIdentity {
     pub implementation: Stage1VersionedIdentity,
     pub policy_sha256: String,
@@ -287,6 +291,7 @@ pub enum Stage1ResourceKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1ResourceProfile {
     pub resource: Stage1ResourceKind,
     pub profile_id: String,
@@ -295,6 +300,7 @@ pub struct Stage1ResourceProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1ExecutionEnvironment {
     pub carrier: Stage1VersionedIdentity,
     pub source_runtime: Stage1VersionedIdentity,
@@ -308,6 +314,7 @@ pub struct Stage1ExecutionEnvironment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1Provenance {
     pub component_sha256: String,
     pub profile_sha256: String,
@@ -347,6 +354,7 @@ pub enum Stage1OwnershipStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1AuthorityEvidence {
     pub enforcement_policy_sha256: String,
     pub source_authority_root_sha256: String,
@@ -359,18 +367,21 @@ pub struct Stage1AuthorityEvidence {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1FaultInjection {
     pub transition: String,
     pub action: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1FaultSchedule {
     pub schedule_id: String,
     pub injections: Vec<Stage1FaultInjection>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1ArtifactReference {
     pub uri: String,
     pub sha256: String,
@@ -384,6 +395,7 @@ pub struct Stage1ArtifactReference {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1BindingReceiptReference {
     pub resource: Stage1ResourceKind,
     pub receipt_id: String,
@@ -420,6 +432,7 @@ pub struct Stage1SemanticTraceArtifact {
 pub const STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION: &str = "visa-stage1-semantic-trace-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1CaseArtifacts {
     pub snapshot: Option<Stage1ArtifactReference>,
     pub semantic_traces: Vec<Stage1ArtifactReference>,
@@ -428,6 +441,7 @@ pub struct Stage1CaseArtifacts {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1StateEvidence {
     pub state_sha256: String,
     pub replay_state_sha256: String,
@@ -436,6 +450,7 @@ pub struct Stage1StateEvidence {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1CaseEvidence {
     pub case_id: String,
     pub execution_id: String,
@@ -467,6 +482,7 @@ pub enum Stage1PerformanceUnit {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1PerformanceObservation {
     pub metric: Stage1PerformanceMetric,
     pub unit: Stage1PerformanceUnit,
@@ -476,6 +492,7 @@ pub struct Stage1PerformanceObservation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage1EvidenceBundle {
     pub schema_version: String,
     pub capability_id: String,
@@ -650,10 +667,17 @@ pub fn validate_stage1_evidence_artifacts(
             continue;
         }
 
-        let candidate = artifact_root.join(uri);
-        let resolved = match candidate.canonicalize() {
+        let resolved = match resolve_stage1_artifact_path(&artifact_root, uri) {
             Ok(path) => path,
-            Err(error) => {
+            Err(Stage1ArtifactPathError::Unsafe) => {
+                push_finding(
+                    &mut findings,
+                    "invalid-stage1-artifact-uri",
+                    format!("unsafe artifact URI {uri}"),
+                );
+                continue;
+            }
+            Err(Stage1ArtifactPathError::Missing(error)) => {
                 push_finding(
                     &mut findings,
                     "missing-stage1-artifact-file",
@@ -661,23 +685,31 @@ pub fn validate_stage1_evidence_artifacts(
                 );
                 continue;
             }
+            Err(Stage1ArtifactPathError::Escape) => {
+                push_finding(
+                    &mut findings,
+                    "stage1-artifact-path-escape",
+                    format!("artifact {uri} resolves outside the artifact root"),
+                );
+                continue;
+            }
+            Err(Stage1ArtifactPathError::Symlink(path)) => {
+                push_finding(
+                    &mut findings,
+                    "stage1-artifact-symlink-rejected",
+                    format!("artifact {uri} contains symlink component {}", path.display()),
+                );
+                continue;
+            }
+            Err(Stage1ArtifactPathError::InvalidFile) => {
+                push_finding(
+                    &mut findings,
+                    "invalid-stage1-artifact-file",
+                    format!("artifact {uri} is not a regular file"),
+                );
+                continue;
+            }
         };
-        if !resolved.starts_with(&artifact_root) {
-            push_finding(
-                &mut findings,
-                "stage1-artifact-path-escape",
-                format!("artifact {uri} resolves outside the artifact root"),
-            );
-            continue;
-        }
-        if !resolved.is_file() {
-            push_finding(
-                &mut findings,
-                "invalid-stage1-artifact-file",
-                format!("artifact {uri} is not a regular file"),
-            );
-            continue;
-        }
 
         match sha256_file(&resolved) {
             Ok(observed) if observed == expected_sha256 => {}
@@ -1553,6 +1585,52 @@ fn artifact_uri_is_relative(uri: &str) -> bool {
     !uri.trim().is_empty()
         && !path.is_absolute()
         && path.components().all(|component| matches!(component, Component::Normal(_)))
+}
+
+pub(crate) enum Stage1ArtifactPathError {
+    Unsafe,
+    Missing(io::Error),
+    Escape,
+    Symlink(PathBuf),
+    InvalidFile,
+}
+
+/// Resolve a safe relative Stage 1 artifact without following any symlink
+/// component. The caller owns the public finding code/detail so existing Stage
+/// 1 validation diagnostics remain stable.
+pub(crate) fn resolve_stage1_artifact_path(
+    artifact_root: &Path,
+    uri: &str,
+) -> Result<PathBuf, Stage1ArtifactPathError> {
+    if !artifact_uri_is_relative(uri) {
+        return Err(Stage1ArtifactPathError::Unsafe);
+    }
+
+    let candidate = artifact_root.join(uri);
+    let mut prefix = artifact_root.to_path_buf();
+    for component in Path::new(uri).components() {
+        let Component::Normal(component) = component else { unreachable!() };
+        prefix.push(component);
+        let metadata = fs::symlink_metadata(&prefix).map_err(Stage1ArtifactPathError::Missing)?;
+        if metadata.file_type().is_symlink() {
+            return match candidate.canonicalize() {
+                Ok(resolved) if !resolved.starts_with(artifact_root) => {
+                    Err(Stage1ArtifactPathError::Escape)
+                }
+                Ok(_) => Err(Stage1ArtifactPathError::Symlink(prefix)),
+                Err(error) => Err(Stage1ArtifactPathError::Missing(error)),
+            };
+        }
+    }
+
+    let resolved = candidate.canonicalize().map_err(Stage1ArtifactPathError::Missing)?;
+    if !resolved.starts_with(artifact_root) {
+        return Err(Stage1ArtifactPathError::Escape);
+    }
+    if !resolved.is_file() {
+        return Err(Stage1ArtifactPathError::InvalidFile);
+    }
+    Ok(resolved)
 }
 
 fn push_finding(

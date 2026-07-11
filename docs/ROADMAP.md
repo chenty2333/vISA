@@ -164,7 +164,10 @@ availability, or a validated commercial market.
 
 ## Stage 2: Independent runtime portability
 
-Status: next capability; not yet validated.
+Status: in progress. The runtime-neutral adapter contract, Jco-translated
+Node/V8 reference cell, and four-direction cross-execution-path harness are
+implemented. The strict exit criterion below remains open because Jco's
+Component translation lineage includes `wasmtime-environ`.
 
 Goal: restore the same Stage 1 envelope through a genuinely independent
 WebAssembly execution adapter, with no destination-specific component code or
@@ -172,6 +175,22 @@ bypass path.
 
 Entry condition: Stage 1 is complete and its adapter contract is public inside
 the repository.
+
+Engineering substages:
+
+1. **Stage 2a -- runtime adapter contract (complete):** one engine-neutral
+   lifecycle, portable component-state, host bridge, and structured failure
+   contract.
+2. **Stage 2b -- second execution cell (complete):** the unchanged Component
+   translated by the pinned Jco toolchain and executed in isolated Node/V8
+   processes, without a Wasmtime execution fallback.
+3. **Stage 2c -- bidirectional matrix (complete):** all four Wasmtime/JcoNode
+   source and destination pairs over the unchanged 31-case registry, with four
+   inner Stage 1 verifications and one normalized outer verifier.
+
+Completing these substages earns only the named
+`cross-execution-path-portability` result. It does not silently weaken the
+independent-implementation exit criterion.
 
 Exit conditions:
 
@@ -187,6 +206,9 @@ two named runtime implementations. No broader runtime or ISA claim follows.
 
 ## Stage 3: Rich external resources
 
+Status: not started. The current timer/KV profile does not implement file or
+network continuity.
+
 Goal: validate the continuity-policy extension model with resources whose
 correct result is not always direct reconstruction.
 
@@ -201,6 +223,9 @@ Claim on exit: only the named resource dispositions and adapters are supported.
 
 ## Stage 4: Real target and ISA matrix
 
+Status: not started. All current system and Stage 2 matrix executions use
+x86-64/amd64.
+
 Goal: exercise the same semantic contract through a no-std/reference kernel or
 other real target adapter and on each ISA named in a published matrix.
 
@@ -212,6 +237,9 @@ Exit condition: every advertised matrix cell has an executable runner,
 identified artifacts, raw evidence, and explicit not-supported/not-run states.
 
 ## Stage 5: Confidential continuity profile
+
+Status: not started. No TEE, attestation, KMS, or confidential-continuity cell
+has executed.
 
 Goal: integrate fresh destination attestation and external policy/KMS decisions
 without making vISA an attestation or secret-management service.

@@ -12,8 +12,8 @@ test-control = []
 
 [dependencies]
 contract_core = { path = "../../core/contract_core" }
-sha2.workspace = true
 substrate_api = { path = "../../backend/substrate_api" }
+visa_component_adapter = { path = "../visa_component_adapter" }
 visa_profile = { path = "../../core/visa_profile" }
 visa_runtime = { path = "../visa_runtime" }
 wasmtime = { workspace = true, features = ["component-model", "cranelift", "runtime", "std"] }

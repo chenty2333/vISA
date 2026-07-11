@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::stage1::{
-    STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactReference, Stage1BindingReceiptReference,
-    Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, Stage1ResourceKind,
-    Stage1SemanticTraceArtifact, Stage1TraceRole, Stage1ValidationFinding,
-    stage1_expected_ownership,
+    STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactPathError, Stage1ArtifactReference,
+    Stage1BindingReceiptReference, Stage1CaseEvidence, Stage1EvidenceBundle,
+    Stage1ExpectedOwnership, Stage1ResourceKind, Stage1SemanticTraceArtifact, Stage1TraceRole,
+    Stage1ValidationFinding, resolve_stage1_artifact_path, stage1_expected_ownership,
 };
 
 pub(crate) fn validate_artifact_contents(
@@ -57,22 +57,37 @@ fn read_artifact(
         );
         return None;
     }
-    let candidate = artifact_root.join(relative);
-    let resolved = match candidate.canonicalize() {
-        Ok(path) if path.starts_with(artifact_root) && path.is_file() => path,
-        Ok(_) => {
+    let resolved = match resolve_stage1_artifact_path(artifact_root, uri) {
+        Ok(path) => path,
+        Err(Stage1ArtifactPathError::Unsafe) => {
             finding(
                 findings,
-                "invalid-stage1-artifact-file",
-                format!("{label} is not a regular file under the artifact root: {uri}"),
+                "invalid-stage1-artifact-uri",
+                format!("{label} uses unsafe artifact URI {uri}"),
             );
             return None;
         }
-        Err(error) => {
+        Err(Stage1ArtifactPathError::Missing(error)) => {
             finding(
                 findings,
                 "missing-stage1-artifact-file",
                 format!("cannot resolve {label} {uri}: {error}"),
+            );
+            return None;
+        }
+        Err(Stage1ArtifactPathError::Symlink(path)) => {
+            finding(
+                findings,
+                "stage1-artifact-symlink-rejected",
+                format!("{label} {uri} contains symlink component {}", path.display()),
+            );
+            return None;
+        }
+        Err(Stage1ArtifactPathError::Escape | Stage1ArtifactPathError::InvalidFile) => {
+            finding(
+                findings,
+                "invalid-stage1-artifact-file",
+                format!("{label} is not a regular file under the artifact root: {uri}"),
             );
             return None;
         }

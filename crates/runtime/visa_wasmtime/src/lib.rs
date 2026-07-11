@@ -10,10 +10,14 @@ mod error;
 mod host;
 mod state;
 
-pub use adapter::{ActivationRequest, ComponentAdapter, ComponentSafePoint, component_digest};
-pub use error::{AdapterError, KvFailure, ResourceBindingError, TimerFailure, WorkloadFailure};
-pub use host::{AdapterProvider, KvBinding, StoreState, TimerBinding};
-pub use state::{
-    COMPONENT_STATE_ENCODING, ComponentStatus, PortableComponentState, StateCodecError,
-    WorkloadPhase,
+pub use adapter::{
+    ComponentAdapter, PreparedComponent, VISA_WASMTIME_VERSION, WASMTIME_VERSION, WasmtimeRuntime,
+};
+pub use host::StoreState;
+pub use visa_component_adapter::{
+    ActivationRequest, AdapterError, AdapterFailureKind, AdapterProvider, COMPONENT_STATE_ENCODING,
+    ComponentSafePoint, ComponentState, ComponentStatus, KvBinding, KvFailure,
+    PortableComponentState, PreflightExpectations, ResourceBindingError, RuntimeIdentity,
+    StateCodecError, TimerBinding, TimerFailure, WorkloadFailure, WorkloadFailureKind,
+    WorkloadPhase, component_digest,
 };

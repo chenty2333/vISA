@@ -19,6 +19,41 @@ pub enum WorkerRole {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RuntimeImplementation {
+    Wasmtime,
+    JcoNode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeIdentityView {
+    pub implementation: String,
+    pub implementation_version: String,
+    pub engine: String,
+    pub engine_version: String,
+    pub translation_provenance: Option<TranslationProvenanceView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranslationProvenanceView {
+    pub jco_version: String,
+    pub js_component_bindgen_version: String,
+    pub translator: String,
+    pub translator_version: String,
+    pub translation_options: String,
+    pub node_executable_path: String,
+    pub node_executable_sha256: String,
+    pub node_version: String,
+    pub v8_version: String,
+    pub rpc_protocol_version: u32,
+    pub generated_sha256: String,
+    pub driver_sha256: String,
+    pub core_module_sha256s: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FaultPointSpec {
     BeforeJournalWrite,
     AfterJournalWrite,
@@ -124,6 +159,7 @@ impl RequestEnvelope {
 pub enum WorkerCommand {
     Initialize {
         role: WorkerRole,
+        runtime: RuntimeImplementation,
         database_path: String,
         options: FixtureOptions,
         fault: Option<FaultPointSpec>,
@@ -203,6 +239,7 @@ pub enum WorkerResult {
     Initialized {
         role: WorkerRole,
         case_id: String,
+        runtime: RuntimeIdentityView,
     },
     State {
         view: StateView,
@@ -312,6 +349,48 @@ pub enum WorkerErrorCode {
     Io,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterFailureKindView {
+    IncompatibleProfile,
+    ProfileEncoding,
+    ProfileDigestMismatch,
+    ComponentDigestMismatch,
+    Engine,
+    InvalidComponent,
+    Link,
+    UnsupportedRuntimeFeature,
+    Instantiation,
+    GuestTrap,
+    Workload,
+    ResourceBinding,
+    LiveResourcesAtSafePoint,
+    SafePointStateMismatch,
+    PortableStateMismatch,
+    PortableState,
+    Coordinator,
+    SafePointRollback,
+    SafePointGuestRollback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkloadFailureKindView {
+    AlreadyActive,
+    InvalidState,
+    WrongTimer,
+    SafePointUnavailable,
+    KeyValueDenied,
+    KeyValueConflict,
+    KeyValueStaleBinding,
+    KeyValueIndeterminate,
+    KeyValueUnavailable,
+    TimerDenied,
+    TimerStaleBinding,
+    TimerNotPending,
+    TimerUnavailable,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerError {
@@ -319,11 +398,20 @@ pub struct WorkerError {
     pub message: String,
     pub retryable: Option<bool>,
     pub provider_kind: Option<String>,
+    pub adapter_kind: Option<AdapterFailureKindView>,
+    pub workload_kind: Option<WorkloadFailureKindView>,
 }
 
 impl WorkerError {
     pub fn new(code: WorkerErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), retryable: None, provider_kind: None }
+        Self {
+            code,
+            message: message.into(),
+            retryable: None,
+            provider_kind: None,
+            adapter_kind: None,
+            workload_kind: None,
+        }
     }
 
     pub fn provider(message: impl Into<String>, error: substrate_api::ProviderError) -> Self {
@@ -332,6 +420,8 @@ impl WorkerError {
             message: message.into(),
             retryable: Some(error.retryable),
             provider_kind: Some(format!("{:?}", error.kind)),
+            adapter_kind: None,
+            workload_kind: None,
         }
     }
 }
@@ -346,6 +436,7 @@ mod tests {
             "initialize-1",
             WorkerCommand::Initialize {
                 role: WorkerRole::Source,
+                runtime: RuntimeImplementation::Wasmtime,
                 database_path: "/tmp/visa-system-protocol.sqlite3".to_owned(),
                 options: FixtureOptions::new("protocol-round-trip"),
                 fault: Some(FaultPointSpec::AfterActivationBundle),
@@ -373,6 +464,22 @@ mod tests {
                 "kind": "poll_timer",
                 "deliver": true,
                 "unexpected": true
+            }
+        });
+        assert!(serde_json::from_value::<RequestEnvelope>(encoded).is_err());
+    }
+
+    #[test]
+    fn initialize_requires_an_explicit_runtime_selector() {
+        let encoded = serde_json::json!({
+            "version": PROTOCOL_VERSION,
+            "id": "missing-runtime",
+            "command": {
+                "kind": "initialize",
+                "role": "source",
+                "database_path": "/tmp/visa-system-missing-runtime.sqlite3",
+                "options": FixtureOptions::new("missing-runtime"),
+                "fault": null
             }
         });
         assert!(serde_json::from_value::<RequestEnvelope>(encoded).is_err());

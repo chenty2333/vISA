@@ -1,0 +1,15 @@
+[package]
+name = "visa_component_adapter"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+sha2.workspace = true
+substrate_api = { path = "../../backend/substrate_api" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../visa_runtime" }

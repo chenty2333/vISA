@@ -8,25 +8,7 @@ use std::{
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
-const SOURCE_ROOTS: &[&str] = &[
-    "Cargo.toml",
-    "Cargo.lock",
-    "wit/cooperative-handoff",
-    "crates/core/contract_core",
-    "crates/core/semantic_core",
-    "crates/core/visa_profile",
-    "crates/backend/substrate_api",
-    "crates/backend/substrate_host",
-    "crates/runtime/visa_runtime",
-    "crates/runtime/visa_wasmtime",
-    "crates/testing/handoff-component",
-    "crates/testing/visa-conformance",
-    "crates/testing/visa-system",
-    "scripts/check-dependency-direction.py",
-    "scripts/ci-gate.sh",
-    "scripts/run-report-gates.sh",
-    "scripts/check-conformance-report.sh",
-];
+include!("source_roots.rs");
 
 #[derive(Serialize)]
 struct SourceManifest {

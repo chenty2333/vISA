@@ -2,7 +2,13 @@
 
 Status: accepted target architecture.
 
-Implementation status: transitional and incomplete.
+Implementation status: the Stage 1 reference path, Stage 2a runtime-neutral
+adapter boundary, Stage 2b Jco-translated Node/V8 cell, and Stage 2c
+four-direction matrix are implemented. They establish only
+`cross-execution-path-portability`. Strict independent Component Model runtime
+portability remains open because Jco's translator lineage includes
+`wasmtime-environ`. File/network profiles, cross-ISA cells, confidential
+continuity, and production readiness are not implemented.
 
 Last reviewed: 2026-07-11.
 
@@ -110,6 +116,13 @@ personalities, Virtio devices, filesystems, and network stacks implement
 adapters around these ports. Adapter-private handles, page tables, descriptors,
 queues, runtime objects, and register frames are non-portable bindings.
 
+`visa_component_adapter` owns the engine-neutral cooperative component
+lifecycle, portable component-state codec, structured adapter/workload
+failures, and host-call bridge. Concrete adapters such as `visa_wasmtime` and
+`visa_jco_node` own engine preparation, WIT lifting/lowering, process/RPC
+transport, and native resource tables. Neither concrete adapter may redefine
+the reducer, coordinator, authority model, effect identity, or snapshot truth.
+
 ### Snapshot and rebinding
 
 A portable snapshot is a versioned projection of committed canonical state. It
@@ -129,6 +142,13 @@ and identified execution environments.
 A sample or schema fixture proves only that a format is self-consistent. It
 does not prove runtime behavior, portable restoration, real substrate
 enforcement, or cross-ISA equivalence.
+
+The Stage 2c outer verifier composes four complete Stage 1 bundles, validates
+their common input and exact execution identities, then compares a versioned
+normalized observable projection. JcoNode executes the translated core Wasm in
+Node/V8, but its translator uses disclosed `wasmtime-environ` lineage; this is
+cross-execution-path evidence, not proof of two independent Component Model
+implementations.
 
 ## Canonical state versus native binding
 
@@ -321,8 +341,11 @@ code must not import adapter-specific representations.
 
 ## Evolution of the current repository
 
-Stage 1 has completed this migration for its named reference path. As the
-broader repository evolves:
+Stage 1 completed this migration for its named reference path. Stage 2a
+extracted the one runtime-neutral component adapter contract; Stage 2b added
+the JcoNode reference execution cell; Stage 2c now exercises all four
+directions without adding a second semantic implementation. As the broader
+repository evolves:
 
 - do not expand legacy universal object, command, event, or snapshot schemas;
 - migrate one complete lifecycle slice at a time and delete the replaced model
@@ -342,7 +365,11 @@ and claim semantics are durable architectural commitments.
 
 Stage 1 fixes one reference continuity unit and profile, snapshot encoding,
 SQLite journal/lease mechanism, and Wasmtime/x86-64 Linux/resource matrix cell.
-Beyond that cell, the final general continuity unit, cross-host handoff
-transport, alternative persistence and lease services, compatibility window,
-additional runtime/ISA/resource matrices, and performance targets remain
-provisional until exercised.
+The completed Stage 2a, 2b, and 2c engineering substages add a shared adapter
+contract plus a Jco-translated Node/V8 execution path on the same x86-64 host
+ISA and timer/KV profile. Strict Roadmap Stage 2 remains in progress because a
+genuinely independent Component Model implementation has not executed.
+Cross-host transport, alternative persistence and lease services,
+compatibility windows, file/network resources, cross-ISA matrices,
+confidential continuity, performance targets, and production readiness remain
+unimplemented.

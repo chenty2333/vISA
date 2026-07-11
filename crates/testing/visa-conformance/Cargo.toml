@@ -11,6 +11,7 @@ path = "src/lib.rs"
 contract_core = { path = "../../core/contract_core" }
 semantic_core = { path = "../../core/semantic_core" }
 serde.workspace = true
+serde_ignored.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 visa_profile = { path = "../../core/visa_profile" }

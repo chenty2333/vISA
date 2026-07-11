@@ -21,6 +21,8 @@ ACTIVE_PACKAGES = {
     "substrate_api": "crates/backend/substrate_api/Cargo.toml",
     "substrate_host": "crates/backend/substrate_host/Cargo.toml",
     "visa_runtime": "crates/runtime/visa_runtime/Cargo.toml",
+    "visa_component_adapter": "crates/runtime/visa_component_adapter/Cargo.toml",
+    "visa_jco_node": "crates/runtime/visa_jco_node/Cargo.toml",
     "visa_wasmtime": "crates/runtime/visa_wasmtime/Cargo.toml",
     "visa-conformance": "crates/testing/visa-conformance/Cargo.toml",
     "handoff-component": "crates/testing/handoff-component/Cargo.toml",
@@ -33,6 +35,8 @@ ACTIVE_WORKSPACE_ALIASES = {
     "substrate_api": "crates/backend/substrate_api",
     "visa_profile": "crates/core/visa_profile",
     "visa_runtime": "crates/runtime/visa_runtime",
+    "visa_component_adapter": "crates/runtime/visa_component_adapter",
+    "visa_jco_node": "crates/runtime/visa_jco_node",
     "visa_wasmtime": "crates/runtime/visa_wasmtime",
 }
 

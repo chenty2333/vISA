@@ -1,0 +1,29 @@
+[package]
+name = "visa_jco_node"
+version = "0.2.0"
+publish = false
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+test-control = []
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+js-component-bindgen = "=2.0.11"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+rustix = { version = "=1.1.4", features = ["event"] }
+tempfile = "3.23.0"
+visa_component_adapter = { path = "../visa_component_adapter" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../visa_runtime" }
+wasmtime-environ = "=45.0.1"
+wit-component = "=0.251.0"
+wit-parser = "=0.251.0"
+
+[dev-dependencies]
+wit-component = { version = "=0.251.0", features = ["dummy-module"] }

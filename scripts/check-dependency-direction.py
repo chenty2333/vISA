@@ -21,8 +21,25 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "visa_runtime": frozenset(
         {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
     ),
-    "visa_wasmtime": frozenset(
+    "visa_component_adapter": frozenset(
         {"contract_core", "substrate_api", "visa_profile", "visa_runtime"}
+    ),
+    "visa_jco_node": frozenset(
+        {
+            "contract_core",
+            "visa_component_adapter",
+            "visa_profile",
+            "visa_runtime",
+        }
+    ),
+    "visa_wasmtime": frozenset(
+        {
+            "contract_core",
+            "substrate_api",
+            "visa_component_adapter",
+            "visa_profile",
+            "visa_runtime",
+        }
     ),
     "visa-conformance": frozenset(
         {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
@@ -34,6 +51,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "substrate_api",
             "substrate_host",
             "visa-conformance",
+            "visa_jco_node",
             "visa_profile",
             "visa_runtime",
             "visa_wasmtime",

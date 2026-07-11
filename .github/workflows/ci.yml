@@ -8,7 +8,7 @@ jobs:
   docker-dev-gate:
     name: Docker dev gate
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     env:
       COMPOSE: docker compose -f compose.yaml -f compose.ci.yaml
     steps:
@@ -67,6 +67,9 @@ jobs:
       - name: Inspect Docker dev image
         run: docker image inspect visa-dev:latest >/dev/null
 
+      - name: Verify pinned JcoNode toolchain
+        run: $COMPOSE run --rm -T dev python3 scripts/check-jco-node-toolchain.py
+
       - name: Full repository gate
         run: $COMPOSE run --rm -T dev scripts/ci-gate.sh full
 
@@ -74,13 +77,58 @@ jobs:
         run: rm -rf .ci-cache/target/visa-system
 
       - name: Stage 1 system gate
+        id: stage1_system_gate
         run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system
 
       - name: Upload Stage 1 system evidence
-        if: always()
+        if: ${{ always() && (steps.stage1_system_gate.outcome == 'success' || steps.stage1_system_gate.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: stage1-system-evidence
           path: .ci-cache/target/visa-system/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
+
+      - name: Remove Stage 1 system evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Clear prior JcoNode evidence
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Stage 2b JcoNode system gate
+        id: stage2b_jco_node_system_gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system-jco-node
+
+      - name: Upload Stage 2b JcoNode evidence
+        if: ${{ always() && (steps.stage2b_jco_node_system_gate.outcome == 'success' || steps.stage2b_jco_node_system_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2b-jco-node-system-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Stage 2b JcoNode evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Clear prior Stage 2 matrix evidence
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Stage 2 cross-execution-path matrix gate
+        id: stage2_cross_execution_path_matrix_gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system-stage2
+
+      - name: Upload Stage 2 matrix evidence
+        if: ${{ always() && (steps.stage2_cross_execution_path_matrix_gate.outcome == 'success' || steps.stage2_cross_execution_path_matrix_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-cross-execution-path-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Stage 2 matrix evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system

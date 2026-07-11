@@ -9,13 +9,17 @@ capability lets a stateful component stop at an explicit safe point, carry
 portable semantic state instead of native handles, reacquire authority, rebuild
 resource bindings, resume, and produce executable evidence about what happened.
 
-> **Project status:** research prototype. The Stage 1 named reference cell is
-> implemented and has passed all 31 registered lifecycle and fault cases plus
-> independent evidence-bundle validation. That cell uses isolated source and
-> destination processes through the vISA Wasmtime adapter on x86-64 Linux, with
-> host-process isolation and a durable SQLite timer/KV provider. This is not a
-> stable public API or proof of cross-runtime, cross-ISA, or production
-> continuity.
+> **Project status:** research prototype. The Stage 1 named Wasmtime reference
+> cell is complete for all 31 registered lifecycle and fault cases. The Stage
+> 2a runtime-neutral adapter contract, Stage 2b Jco-translated Node/V8 execution
+> cell, and Stage 2c four-direction matrix are also complete; the matrix runs
+> the unchanged registry in all four Wasmtime/JcoNode source/destination pairs,
+> for 124 executions. This earns only the named
+> `cross-execution-path-portability` result. Every current cell uses
+> x86-64/amd64 Linux and the timer/KV profile. Because Jco's translator lineage
+> includes `wasmtime-environ`, strict Roadmap Stage 2 remains in progress.
+> Independent Component Model runtime, cross-ISA, file/network, confidential,
+> stable API, and production claims remain unearned.
 
 ## The problem
 
@@ -88,9 +92,11 @@ capability.
 
 ## Current repository
 
-The active Stage 1 spine is protected by strict dependency-direction and legacy
-deletion checks. Broader pre-reset models and target experiments remain isolated
-as oracle, reference, or compile-only paths; they do not define Stage 1 semantic
+The active production spine covers the Stage 1 continuity path and the Stage
+2a, 2b, and 2c adapter, execution-cell, and matrix paths. Strict
+dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
+protect it. Broader pre-reset models and target experiments remain isolated as
+oracle, reference, or compile-only paths; they do not define portable semantic
 truth.
 
 Current documentation:
@@ -144,6 +150,24 @@ scripts/run-docker-ci-gate.sh system
 artifacts, and independently validates the resulting evidence bundle. It does
 not repeat `full`; run both tiers when validating the repository and the named
 Stage 1 reference cell together.
+
+Run the Stage 2b JcoNode same-path cell with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-jco-node
+```
+
+Run the complete Stage 2c four-direction matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage2
+```
+
+`system-jco-node` runs the same 31 cases through isolated Jco-translated
+Node/V8 workers. `system-stage2` runs all four Wasmtime/JcoNode pairs, for 124
+executions, and independently verifies the normalized outer bundle. Both are
+standalone system tiers and neither proves strict runtime independence or
+cross-ISA portability.
 
 ## Engineering principles
 

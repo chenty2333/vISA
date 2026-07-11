@@ -2,14 +2,17 @@
 
 Status: current validation truth and target validation contract.
 
-Implementation status: `fast`, `full`, and the named Stage 1 `system` cell are
-automated. Release, cross-runtime, cross-ISA, and production validation remain
-outside the implemented boundary.
+Implementation status: `fast`, `full`, the two same-path system cells, and the
+four-cell Stage 2 cross-execution-path matrix are automated. All current system
+cells use x86-64/amd64 and the timer/KV profile. Strict independent Component
+Model runtime, file/network, cross-ISA, confidential, release, and production
+validation remain outside the implemented boundary.
 
 Last reviewed: 2026-07-11.
 
-This document defines what each result proves and the acceptance boundary for
-the first architecture-complete slice. Update it when executable gates change.
+This document defines what each result proves and the acceptance boundaries for
+the first architecture-complete slice and the Stage 2 execution-path matrix.
+Update it when executable gates change.
 
 ## Validation principle
 
@@ -29,21 +32,28 @@ providers, hand-written reports, or direct canonical-state mutation.
 
 GitHub Actions runs one Docker-based job on pushes and pull requests. It
 validates the Compose configuration, builds the development image, then runs
-the same `full` and standalone `system` tier implementations exposed locally by
-`scripts/run-docker-ci-gate.sh`. The workflow uploads the current Stage 1 system
-artifact directory even when the system step fails, when any artifacts exist.
+the same `full`, `system`, `system-jco-node`, and `system-stage2` tier
+implementations exposed locally by `scripts/run-docker-ci-gate.sh`. Each system
+step uploads its retained artifact directory, including partial artifacts after
+a failure when any exist.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
-| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, Wasmtime adapter, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
+| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, first-party Rust file-size maintenance, locked JcoNode Cargo/source/Node/V8 identity, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, adapters, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
 | `full` | Everything in `fast`, shell parsing, default-feature workspace tests, current opt-in feature tests, active no-std check, selected Wasm check, kernel target check, benchmark compilation, and report/artifact fixture gates | The checked repository builds and tests across its declared compile targets and current fixture contracts. It does not prove a live handoff. |
 | `system` | All 31 registered Stage 1 lifecycle and fault cases through isolated source/destination workers, followed by independent validation of the produced execution bundle | The named single-runtime reference cell satisfies the Stage 1 workload, resource, authority, recovery, fencing, and evidence contract. It does not repeat `full` or prove another runtime or ISA. |
+| `system-jco-node` | The same 31 registered cases with JcoNode explicitly selected at source and destination, followed by independent Stage 1 validation | The pinned Jco/Node/V8 translated execution cell satisfies the Stage 1 contract without a Wasmtime execution fallback. It does not prove a fully independent Component Model implementation. |
+| `system-stage2` | All four Wasmtime/JcoNode source-destination pairs, 31 cases per pair, four inner Stage 1 validations, and independent outer Stage 2 validation | The same portable state and normalized observable behavior pass in all four declared execution-path cells (124 executions). It does not prove strict runtime independence or cross-ISA portability. |
 
-The named reference cell uses the vISA Wasmtime adapter for both isolated
+The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
 runtime processes on x86-64 Linux, host-process isolation, and a durable,
 non-mock SQLite timer/KV provider. A `system` pass establishes only that cell.
+The JcoNode cells run generated core WebAssembly in Node 24.15.0/V8
+13.6.233.17-node.48 while disclosing the shared `wasmtime-environ` translator
+lineage. This is why the Stage 2 gate is named cross-execution-path rather than
+strict cross-runtime evidence.
 
-The strict dependency check protects the Stage 1 production spine and rejects
+The strict dependency check protects the active production spine and rejects
 dependencies that point against the accepted architecture. Comparison-oracle
 packages such as `contract_validate` and the pre-reset models remain compiled by
 `full`, but they are not production-spine truth and cannot enter that graph.
@@ -52,24 +62,29 @@ packages such as `contract_validate` and the pre-reset models remain compiled by
 
 The standard CI job does not currently run:
 
-- workspace-wide Clippy outside the Stage 1 active spine;
+- workspace-wide Clippy outside the protected active spine;
 - `cargo deny`; the tool is not installed in the development image and the
   existing multiple-version policy has not been reconciled with the lockfile;
 - QEMU boot/runtime behavior beyond compiling the kernel target;
 - two independent WebAssembly runtime implementations;
+- file or network continuity profiles;
 - a cross-ISA execution matrix;
+- TEE, attestation, KMS, or confidential-continuity integration;
 - release provenance/performance gates or long-running concurrency, recovery,
   and security testing.
 
-A green CI result establishes the repository checks and the named Stage 1
-reference cell above. It does not establish transparent migration,
-heterogeneity, another runtime/ISA/resource cell, or production safety.
+A green CI result establishes the repository checks, both named same-path
+cells, and normalized behavior across the four declared Wasmtime/JcoNode
+directions. It establishes only `cross-execution-path-portability` on the
+x86-64/amd64 timer/KV profile. It does not establish strict runtime
+independence, cross-ISA or additional resource continuity, confidential
+continuity, transparent migration, or production safety.
 
 ## Validation tiers
 
-`fast`, `full`, and standalone `system` are implemented shell commands.
-`release` and claim gates below remain acceptance contracts until their exact
-matrix runners exist.
+`fast`, `full`, `system`, `system-jco-node`, and `system-stage2` are implemented
+shell commands. `release` and later claim gates below remain acceptance
+contracts until their exact matrix runners exist.
 
 ### Fast
 
@@ -97,6 +112,16 @@ bundle, then invokes an independent verifier over their identities, digests,
 typed traces, receipts, faults, authority evidence, and provenance. It is
 standalone and does not repeat `full`. This is the basis for the named
 single-runtime reference-cell claim, not a broader continuity claim.
+
+### Stage 2 system cells
+
+`system-jco-node` executes the unchanged Stage 1 registry with JcoNode selected
+for both workers and validates its ordinary Stage 1 bundle in a separate
+process. `system-stage2` runs Wasmtime-to-Wasmtime, JcoNode-to-JcoNode, and both
+mixed directions from one common input, then independently verifies all four
+inner bundles and the normalized outer evidence. Both are standalone gates;
+the matrix does not substitute for `full`, and neither result is cross-ISA or
+strict independent-Component-Model evidence.
 
 ### Release
 
@@ -138,7 +163,8 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | Report/schema validity | Parser/validator tests plus artifact digests | Runtime execution or real enforcement |
 | Canonical transition correctness | Reducer model/property tests, rejection state digests, and journal replay | Substrate effect correctness |
 | Single-runtime handoff | Isolated source/destination processes, fresh bindings, real profiled providers, reauthorization, commit/fencing, and lifecycle faults | A second runtime or ISA |
-| Cross-runtime continuity | The same accepted workload and normalized semantic trace on each named runtime path, including a handoff between them | Cross-ISA behavior |
+| Cross-execution-path portability | The unchanged input and 31-case registry in all four Wasmtime/JcoNode directions, four complete inner validations, one normalized outer comparison, disclosed translator lineage, and no execution fallback | Independent Component Model implementations or cross-ISA behavior |
+| Strict cross-runtime continuity | The same accepted workload and normalized semantic trace on two independently implemented runtime paths, including a handoff between them | Cross-ISA behavior |
 | Cross-ISA continuity | The same accepted workload across each named source/destination ISA pair with identified carrier and providers | Other runtimes or resources |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |
 | Crash-safe handoff | Durable journal/commit records and faults at every lifecycle transition | Arbitrary external-effect atomicity |
@@ -195,9 +221,11 @@ an idempotency key, and a fencing epoch protect the effect; universal
 exactly-once is not claimed. This profile does not preserve a wall-clock
 deadline.
 
-The system test uses two isolated runtime instances, fresh bindings, and real
-timer/KV provider behavior. Fakes are allowed in unit tests but cannot satisfy
-this claim. Other runtimes and ISAs require additional matrix cells.
+The Stage 1 system test uses two isolated runtime instances, fresh bindings,
+and real timer/KV provider behavior. Fakes are allowed in unit tests but cannot
+satisfy this claim. Stage 2c separately adds the Jco-translated execution path;
+a genuinely independent Component Model runtime and every additional ISA still
+require their own matrix cells.
 
 ### Required successful path
 
@@ -270,11 +298,14 @@ Even after the baseline slice passes, it does not prove:
 - transparent migration of arbitrary native processes or unmodified Wasm;
 - arbitrary descriptor, socket, device, or non-idempotent-effect preservation;
 - universal exactly-once delivery or physical atomicity with external systems;
-- cross-runtime or cross-ISA continuity until those exact cells execute;
+- strict cross-runtime or any cross-ISA continuity; Stage 2c separately earns
+  only `cross-execution-path-portability`;
 - correctness of a complete Linux personality, kernel, Virtio, filesystem, or
   network stack;
 - TEE attestation, KMS correctness, or general confidential-computing safety;
 - production availability, security, scalability, or performance;
+- protection against a hostile same-UID process modifying a reference cell's
+  derived execution files during its final load-time window;
 - compatibility with unspecified future schema/profile versions; or
 - validated product demand.
 

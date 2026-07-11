@@ -3,24 +3,29 @@ set -Eeuo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-gate.sh [fast|full|system]
+usage: scripts/ci-gate.sh [fast|full|system|system-jco-node|system-stage2]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
 The system tier independently runs and validates the real Stage 1 lifecycle;
-it does not repeat the full tier.
+system-jco-node does the same for the JcoNode reference cell. system-stage2
+runs and independently validates the complete four-cell Stage 2 matrix.
+System tiers do not repeat the full tier.
 EOF
 }
 
 system_artifact_root=""
 system_bundle_path=""
+system_artifact_kind="system"
 
 on_error() {
     local status=$?
     trap - ERR
     if [[ -n "$system_artifact_root" ]]; then
-        printf 'Stage 1 artifact root retained after failure: %s\n' "$system_artifact_root" >&2
-        printf 'Stage 1 evidence bundle path: %s\n' "$system_bundle_path" >&2
+        printf '%s artifact root retained after failure: %s\n' \
+            "$system_artifact_kind" "$system_artifact_root" >&2
+        printf '%s evidence bundle path: %s\n' \
+            "$system_artifact_kind" "$system_bundle_path" >&2
     fi
     exit "$status"
 }
@@ -80,6 +85,8 @@ active_spine_packages=(
     substrate_api
     substrate_host
     visa_runtime
+    visa_component_adapter
+    visa_jco_node
     visa_wasmtime
     visa-conformance
     visa-system
@@ -106,6 +113,15 @@ gate_dependency_direction() {
 gate_stage1_deletions() {
     run_gate "deletions: Stage 1 legacy and oracle boundary" \
         python3 scripts/check-stage1-deletions.py
+}
+
+gate_file_size() {
+    run_gate "maintenance: first-party Rust file sizes" scripts/check-file-size.sh
+}
+
+gate_jco_node_toolchain() {
+    run_gate "toolchain: locked JcoNode translation and Node/V8 execution" \
+        python3 scripts/check-jco-node-toolchain.py
 }
 
 gate_active_clippy() {
@@ -171,6 +187,8 @@ gate_fast() {
     gate_fmt
     gate_dependency_direction
     gate_stage1_deletions
+    gate_file_size
+    gate_jco_node_toolchain
     gate_active_clippy
     gate_active_tests
 }
@@ -190,6 +208,7 @@ gate_full() {
 gate_system() {
     local system_parent="$PWD/target/visa-system"
     mkdir -p "$system_parent"
+    system_artifact_kind="Stage 1 Wasmtime"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage1-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage1-evidence.json"
 
@@ -204,6 +223,44 @@ gate_system() {
     printf 'Stage 1 evidence bundle: %s\n' "$system_bundle_path"
 }
 
+gate_system_jco_node() {
+    local system_parent="$PWD/target/visa-system"
+    mkdir -p "$system_parent"
+    system_artifact_kind="Stage 2b JcoNode"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/jco-node-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage1-evidence.json"
+
+    gate_jco_node_toolchain
+    run_gate "system-jco-node: real 31-case JcoNode lifecycle" \
+        cargo run --locked -p visa-system --bin visa-system -- \
+            cell jco-node jco-node "$system_artifact_root"
+    run_gate "system-jco-node: independent Stage 1 evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage1 "$system_bundle_path" "$system_artifact_root"
+
+    printf 'JcoNode artifact root: %s\n' "$system_artifact_root"
+    printf 'JcoNode evidence bundle: %s\n' "$system_bundle_path"
+}
+
+gate_system_stage2() {
+    local system_parent="$PWD/target/visa-system"
+    mkdir -p "$system_parent"
+    system_artifact_kind="Stage 2 matrix"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage2-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage2-evidence.json"
+
+    gate_jco_node_toolchain
+    run_gate "system-stage2: real four-cell 124-case matrix" \
+        cargo run --locked -p visa-system --bin visa-system -- \
+            stage2 "$system_artifact_root"
+    run_gate "system-stage2: independent Stage 2 evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage2 "$system_bundle_path" "$system_artifact_root"
+
+    printf 'Stage 2 artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 2 evidence bundle: %s\n' "$system_bundle_path"
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -214,6 +271,8 @@ case "$tier" in
     fast) gate_fast ;;
     full) gate_full ;;
     system) gate_system ;;
+    system-jco-node) gate_system_jco_node ;;
+    system-stage2) gate_system_stage2 ;;
     -h|--help|help)
         usage
         ;;

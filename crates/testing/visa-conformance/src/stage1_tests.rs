@@ -715,6 +715,35 @@ fn artifact_gate_rejects_symlink_escape_from_bundle_root() {
     fs::remove_dir_all(outside).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn artifact_gate_rejects_contained_symlink_in_hash_and_content_paths() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_dir("artifact-contained-symlink");
+    let mut bundle = complete_bundle();
+    materialize_artifacts(&mut bundle, &root);
+    let artifact = &bundle.provenance.artifacts.component;
+    let path = root.join(&artifact.uri);
+    let target = path.with_file_name("component-copy.wasm");
+    fs::copy(&path, &target).unwrap();
+    fs::remove_file(&path).unwrap();
+    symlink(&target, &path).unwrap();
+
+    let report = validate_stage1_evidence_artifacts(&bundle, &root);
+    let symlink_findings = report
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "stage1-artifact-symlink-rejected")
+        .count();
+    assert_eq!(
+        symlink_findings, 2,
+        "both the reference hash gate and typed content reader must reject the symlink: {:#?}",
+        report.findings
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn json_gate_rejects_missing_typed_dimension_before_validation() {
     let mut value = serde_json::to_value(complete_bundle()).unwrap();
