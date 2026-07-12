@@ -25,6 +25,7 @@ use visa_system::{
 use visa_wasmtime::{ComponentAdapter, WorkloadPhase};
 
 static NEXT_DATABASE: AtomicU64 = AtomicU64::new(1);
+const LIVE_HANDOFF_DELAY_NS: u64 = 5_000_000_000;
 
 #[test]
 fn live_handoff_preserves_component_state_effects_and_fencing() {
@@ -51,9 +52,13 @@ fn live_handoff_preserves_component_state_effects_and_fencing() {
         source_coordinator,
     )
     .expect("source component instantiates");
-    source
-        .activate(&fixture.activation.to_wasmtime())
-        .expect("guest writes, reads back, and arms its source timer");
+    // This test must exercise the pending-timer handoff path. A cold runtime or
+    // a contended CI runner may spend well over the 50 ms scenario delay
+    // between the guest arm and the safe point, so give this real-clock
+    // integration test an explicit deadline budget.
+    let mut activation = fixture.activation.to_wasmtime();
+    activation.delay_ns = LIVE_HANDOFF_DELAY_NS;
+    source.activate(&activation).expect("guest writes, reads back, and arms its source timer");
 
     let active = source.status().expect("source status call succeeds").expect("source is active");
     assert_eq!(active.phase, WorkloadPhase::Armed);
@@ -72,7 +77,7 @@ fn live_handoff_preserves_component_state_effects_and_fencing() {
         other => panic!("expected a suspended pending timer, got {other:?}"),
     };
     assert!(remaining.0 > 0);
-    assert!(remaining.0 <= fixture.activation.delay_ns);
+    assert!(remaining.0 <= LIVE_HANDOFF_DELAY_NS);
     assert!(source.resource_table_is_empty());
     assert_eq!(source.coordinator().state().phase, HandoffPhase::Frozen);
     assert_eq!(
