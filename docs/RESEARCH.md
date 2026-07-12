@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-12.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -117,6 +117,45 @@ rather than inventing an isolated security-attestation claim.
 vISA is intended to occupy the layer between application-level workflow replay
 and machine-level snapshots: component runtime semantics plus external resource
 continuity. It is not intended to become another workflow engine.
+
+### Independent Component Model runtime availability
+
+A 2026-07-12 executable qualification advanced three pinned candidate runtimes,
+WACS, WasmEdge, and wacogo, against the unchanged Stage 1 Component and WIT
+world; none passed. This is a result for those recorded candidates, not an
+exhaustive claim about every released runtime or source snapshot. WACS
+0.16.14 with WACS.ComponentModel 0.10.3 has an independent pure-C#
+implementation and parses the three-module Component, its interface-instance
+export, and all six timer/KV method and resource-drop imports. Its 0.27.2 typed
+harness rejects the unchanged nested error variant before a callable surface is
+emitted.
+
+The released WACS.Cli 1.10.1 / Transpiler.Lib 0.12.12 paths were also executed,
+not inferred from API names. With the unchanged WIT directory, component build
+and NativeAOT reject the two interface-reference imports because their v0
+contract validator cannot compare those shapes. Without that contract, build
+emits only raw core imports and Canonical-ABI exports: `activate` is a single
+`i32` indirect-area pointer and there is no typed workload surface. vISA will
+not hand-write that ABI as an adapter bypass. WasmEdge 0.17.1 rejects the same
+Component during resource validation. These are explicit no-go qualifications,
+not adapters or support claims. Other runtimes listed in the machine record are
+only preliminary discovery screens and do not support this decision.
+
+wacogo pseudo-version `v0.0.0-20260617023329-3de16a61796c` has an independent
+Go Component parser, validator, linker, Canonical ABI, and resource
+implementation over wazero. It loads and compiles the exact Component, and its
+generator builds real key-value and timer host instances from the unchanged
+WIT. Real Component instantiation nevertheless fails before workload execution:
+the nested `import-type-kv-error` argument references unresolved type 24. This
+is a scoped executable no-go, not a claim that wazero itself implements the
+Component Model. The source-only Airbus WAMR Component Model fork remains a
+future retest candidate and supplies no vISA execution evidence here.
+
+Strict Stage 2 therefore remains open. A candidate must execute the byte-identical
+world through public, supportable APIs, including owned-resource transfer and
+the full lifecycle, before vISA adds a runtime selector or evidence cell. The
+active qualification record pins packages, hashes, fail-closed input checks,
+commands, failures, and the upstream conditions for retesting.
 
 ## Claims vISA must not make without new evidence
 

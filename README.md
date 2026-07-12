@@ -183,3 +183,7 @@ cross-ISA portability.
   ISA, substrate, resource profile, and fault boundary.
 - Keep durable documentation short; use code and tests as the final proof of
   implemented behavior.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

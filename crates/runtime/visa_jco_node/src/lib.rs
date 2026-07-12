@@ -5,6 +5,7 @@
 //! authority/effect decision remain in Rust.
 
 mod adapter;
+mod carrier;
 mod error;
 mod node;
 mod preflight;
@@ -13,10 +14,10 @@ mod protocol;
 
 pub use adapter::{JcoNodeAdapter, JcoNodeRuntime};
 pub use preflight::{
-    JCO_NODE_RPC_PROTOCOL_VERSION, JCO_VERSION, JS_COMPONENT_BINDGEN_VERSION,
-    JcoTranslationProvenance, NODE_VERSION, NodeRuntimeProvenance, PreparedArtifactKind,
-    PreparedArtifactManifestEntry, PreparedJcoComponent, V8_VERSION, VISA_JCO_NODE_VERSION,
-    WASMTIME_ENVIRON_VERSION,
+    JCO_NODE_EXECUTION_CARRIER, JCO_NODE_RPC_PROTOCOL_VERSION, JCO_VERSION,
+    JS_COMPONENT_BINDGEN_VERSION, JcoTranslationProvenance, NODE_VERSION, NodeRuntimeProvenance,
+    PreparedArtifactKind, PreparedArtifactManifestEntry, PreparedJcoComponent, V8_VERSION,
+    VISA_JCO_NODE_VERSION, WASMTIME_ENVIRON_VERSION,
 };
 pub use visa_component_adapter::{
     ActivationRequest, AdapterError, AdapterFailureKind, AdapterProvider, COMPONENT_STATE_ENCODING,

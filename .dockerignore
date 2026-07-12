@@ -5,6 +5,10 @@
 /target/
 /.ci-cache/
 
+# Feature-qualification tool outputs
+/specs/*/qualification/**/bin/
+/specs/*/qualification/**/obj/
+
 # Root-local environment files; templates remain visible
 /.env*
 !/.env.example

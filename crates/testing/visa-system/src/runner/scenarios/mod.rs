@@ -70,7 +70,10 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
             Ok(RestoredWithNarrowerAuthority)
         }
         CaseKind::KvDuplicate => {
-            run_pending_handoff(harness, false)?;
+            // This case proves operation replay, not timer-pending behavior.
+            // Complete the timer before freeze so slow or descheduled CI hosts
+            // cannot change the case's semantic branch between matrix cells.
+            run_completed_timer_handoff(harness)?;
             assert_duplicate_kv_replay(harness)?;
             Ok(DuplicateKvAppliedOnce)
         }

@@ -51,6 +51,9 @@ members = [
     "crates/benchmarks/visa-bench",
 ]
 
+[workspace.package]
+license = "Apache-2.0"
+
 [workspace.dependencies]
 artifact_manifest = { path = "crates/core/artifact_manifest" }
 bootloader_api = "0.11.15"

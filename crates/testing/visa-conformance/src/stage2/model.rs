@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{Stage1CaseClass, Stage1CaseOutcome, Stage1FaultSchedule, Stage1VersionedIdentity};
 
 pub const STAGE2_COMMON_INPUT_SCHEMA_VERSION: &str = "visa-stage2-common-input-v1";
-pub const STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION: &str = "visa-stage2-matrix-manifest-v1";
-pub const STAGE2_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage2-evidence-v1";
+pub const STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION: &str = "visa-stage2-matrix-manifest-v2";
+pub const STAGE2_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage2-evidence-v2";
 pub const STAGE2_CLAIM_ID: &str = "cross-execution-path-portability";
 pub const STAGE2_COMMON_INPUT_FILE: &str = "stage2-common-input.json";
 pub const STAGE2_MATRIX_MANIFEST_FILE: &str = "stage2-matrix-manifest.json";
@@ -36,6 +36,7 @@ pub const STAGE2_JCO_TRANSLATION_OPTIONS: &str = concat!(
 pub const STAGE2_NODE_VERSION: &str = "24.15.0";
 pub const STAGE2_V8_VERSION: &str = "13.6.233.17-node.48";
 pub const STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION: u32 = 3;
+pub const STAGE2_JCO_NODE_EXECUTION_CARRIER: &str = crate::JCO_NODE_EXECUTION_CARRIER;
 pub const STAGE2_ACCEPTED_REGISTRY_SHA256: &str =
     "95e05af67ff122ca4be0a94823340bcf5ad368f05be8946ca0a26a47816ecfd9";
 pub const STAGE2_WIT_WORLD_NAME: &str = "visa:continuity/cooperative-handoff@0.1.0";
@@ -269,6 +270,7 @@ pub struct Stage2TranslationProvenance {
     pub node_version: String,
     pub v8_version: String,
     pub rpc_protocol_version: u32,
+    pub execution_carrier: String,
     pub generated_sha256: String,
     pub driver_sha256: String,
     pub core_module_sha256s: Vec<String>,

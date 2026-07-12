@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "target_executor"
 version = "0.1.0"
 publish = false

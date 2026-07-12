@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-12.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -37,15 +37,21 @@ platform matrix without replacing the architecture.
 
 ## Stage 0: Architecture and repository reset
 
+Status: complete. Durable project truth is concentrated in the README and six
+canonical documents; active feature specifications remain temporary execution
+plans and are removed after their accepted decisions are extracted.
+
 Goal: establish one current project boundary and an honest development and
 validation surface before expanding behavior.
 
 Exit conditions:
 
 - README, vision, architecture, development, validation, research, and this
-  roadmap are the only project-level documentation sources;
-- historical workflow/specification material is removed from the active tree
-  and preserved by the `pre-architecture-reset-2026-07-11` tag;
+  roadmap are the only durable, canonical project-level documentation sources;
+- completed feature specifications are extracted into those durable truth
+  sources, removed from the active tree, and retained in Git history; older
+  pre-reset workflow and specification material is additionally preserved by
+  the `pre-architecture-reset-2026-07-11` tag;
 - local and CI commands refer to the same gate implementation;
 - current test coverage and claim limitations are documented; and
 - the next implementation work is the capability below, not another broad

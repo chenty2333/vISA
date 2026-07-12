@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixture::FixtureOptions;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u64 = visa_conformance::STAGE1_WORKER_PROTOCOL_VERSION;
 pub const INVALID_REQUEST_ID: &str = "<invalid>";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +47,7 @@ pub struct TranslationProvenanceView {
     pub node_version: String,
     pub v8_version: String,
     pub rpc_protocol_version: u32,
+    pub execution_carrier: String,
     pub generated_sha256: String,
     pub driver_sha256: String,
     pub core_module_sha256s: Vec<String>,
@@ -143,7 +144,7 @@ pub struct LeaseRecordView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestEnvelope {
-    pub version: u16,
+    pub version: u64,
     pub id: String,
     pub command: WorkerCommand,
 }
@@ -206,7 +207,7 @@ pub enum WorkerCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResponseEnvelope {
-    pub version: u16,
+    pub version: u64,
     pub id: String,
     pub outcome: ResponseOutcome,
 }

@@ -123,6 +123,16 @@ failures, and host-call bridge. Concrete adapters such as `visa_wasmtime` and
 transport, and native resource tables. Neither concrete adapter may redefine
 the reducer, coordinator, authority model, effect identity, or snapshot truth.
 
+Destination runtime preparation is a non-executing preflight and must finish
+before Coordinator restore, binding preparation, or handoff commit. Its result
+is an opaque runtime-local carrier bound to the runtime identity, component,
+profile, accepted world, and prepared artifacts. It is neither portable nor
+serializable, and destination activation may not replace it with a different
+component or re-run preparation against different bytes. Guest instantiation
+occurs only after commit. Adapter and workload failures cross the shared
+boundary as structured values; engine or process text remains diagnostic and
+cannot define portable semantics.
+
 ### Snapshot and rebinding
 
 A portable snapshot is a versioned projection of committed canonical state. It
@@ -331,8 +341,20 @@ the tree. Concurrent replacement cannot escape the anchored root or make the
 digest and semantic parser observe different path targets. A contained regular
 file that wins the race before `open` is accepted only when its captured bytes
 satisfy both the declared digest and semantic checks. This does not turn the
-verifier process, publisher topology, or runtime load carrier into a
-hostile-same-UID security boundary.
+verifier process or publication topology into a general hostile-same-UID
+security boundary.
+
+Runtime load carriers declare their own narrower boundary. JcoNode captures the
+accepted generated JavaScript and core-Wasm graph as owned bytes, binds its
+manifest and generated-graph digest to those bytes, and sends a versioned,
+bounded startup frame to a compiled-in Node driver. The driver verifies the
+frame before importing the JavaScript from a data URL or compiling core modules
+from memory. The publisher's former pathname tree is therefore absent from the
+final execution path. This protects against post-capture file, directory,
+symlink, and publication-root replacement; it does not protect a compromised
+Node execution environment or toolchain, including its loader and shared
+libraries, ptrace or process-memory modification, process takeover, or denial
+of service.
 
 ## Dependency direction
 

@@ -20,9 +20,12 @@ LOCKFILE = ROOT / "Cargo.lock"
 PREFLIGHT = ROOT / "crates/runtime/visa_jco_node/src/preflight.rs"
 PROTOCOL = ROOT / "crates/runtime/visa_jco_node/src/protocol.rs"
 DRIVER = ROOT / "crates/runtime/visa_jco_node/src/driver.mjs"
+CARRIER = ROOT / "crates/runtime/visa_jco_node/src/carrier.rs"
+PROCESS = ROOT / "crates/runtime/visa_jco_node/src/process.rs"
 DOCKERFILE = ROOT / "Dockerfile"
 
 EXPECTED_RPC_PROTOCOL_VERSION = 3
+EXPECTED_EXECUTION_CARRIER = "owned-bytes-stdin-frame-v1"
 
 EXPECTED_CONSTANTS = {
     "JCO_VERSION": "1.25.2",
@@ -168,6 +171,54 @@ def check_source_constants() -> None:
     )
     if PREFLIGHT.read_text(encoding="utf-8").count(provenance_lock) != 1:
         fail("JcoNode provenance must bind the exact RPC protocol version")
+
+    carrier = CARRIER.read_text(encoding="utf-8")
+    carrier_lock = (
+        f'pub(crate) const EXECUTION_CARRIER: &str = "{EXPECTED_EXECUTION_CARRIER}";'
+    )
+    if carrier.count(carrier_lock) != 1:
+        fail("JcoNode must lock the path-free execution carrier identity")
+
+    process = PROCESS.read_text(encoding="utf-8")
+    required_path_free_fragments = {
+        CARRIER: (
+            'const FRAME_MAGIC: &[u8; 8] = b"VISAJCO1";',
+            "generated_graph_digest(&self.files)",
+            "writer.write_all(&file.bytes)?;",
+        ),
+        PROCESS: (
+            'include_str!("driver.mjs")',
+            "graph.generated_digest_hex()",
+            "graph.write_frame(&mut stdin)",
+        ),
+        PREFLIGHT: (
+            'args(["--input-type=module", "--check", "-"])',
+            'include_str!("preflight.mjs")',
+            "PreparedExecutionGraph::new",
+        ),
+        DRIVER: (
+            "readStartupGraph(process.argv[1])",
+            "data:text/javascript;base64",
+            "new WebAssembly.Module(bytes)",
+        ),
+    }
+    for path, fragments in required_path_free_fragments.items():
+        text = path.read_text(encoding="utf-8")
+        for fragment in fragments:
+            if fragment not in text:
+                fail(
+                    f"{path.relative_to(ROOT)} is missing path-free carrier fragment: "
+                    f"{fragment}"
+                )
+
+    forbidden_path_loads = (
+        "pathToFileURL(entrypoint)",
+        "readFileSync(resolve(dirname(entrypoint), name))",
+    )
+    combined = driver + "\n" + process
+    for fragment in forbidden_path_loads:
+        if fragment in combined:
+            fail(f"JcoNode still contains a mutable pathname load: {fragment}")
 
 
 def check_docker_pin() -> None:

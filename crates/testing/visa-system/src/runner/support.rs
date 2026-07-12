@@ -101,7 +101,9 @@ fn runtime_identity_matches(
         RuntimeImplementation::JcoNode => {
             observed.implementation.starts_with("visa_jco_node+")
                 && observed.engine == "node+v8"
-                && observed.translation_provenance.is_some()
+                && observed.translation_provenance.as_ref().is_some_and(|provenance| {
+                    provenance.execution_carrier == visa_jco_node::JCO_NODE_EXECUTION_CARRIER
+                })
         }
     }
 }

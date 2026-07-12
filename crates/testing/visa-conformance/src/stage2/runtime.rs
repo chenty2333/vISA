@@ -7,12 +7,13 @@ use super::{
     instantiation::{ObservedCellTranscriptEvidence, audit_runtime_transcripts},
     model::{
         STAGE2_COMPONENT_TRANSLATOR_VERSION, STAGE2_JCO_NODE_ENVIRONMENT_NAME,
-        STAGE2_JCO_NODE_ENVIRONMENT_VERSION, STAGE2_JCO_NODE_IMPLEMENTATION_VERSION,
-        STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION, STAGE2_JCO_TRANSLATION_OPTIONS, STAGE2_JCO_VERSION,
-        STAGE2_JS_COMPONENT_BINDGEN_VERSION, STAGE2_NODE_VERSION, STAGE2_V8_VERSION,
-        STAGE2_WASMTIME_ENGINE_VERSION, STAGE2_WASMTIME_ENVIRONMENT_NAME,
-        STAGE2_WASMTIME_ENVIRONMENT_VERSION, STAGE2_WASMTIME_IMPLEMENTATION_VERSION, Stage2CellId,
-        Stage2CellManifest, Stage2Runtime, Stage2TranslationProvenance, Stage2ValidationFinding,
+        STAGE2_JCO_NODE_ENVIRONMENT_VERSION, STAGE2_JCO_NODE_EXECUTION_CARRIER,
+        STAGE2_JCO_NODE_IMPLEMENTATION_VERSION, STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION,
+        STAGE2_JCO_TRANSLATION_OPTIONS, STAGE2_JCO_VERSION, STAGE2_JS_COMPONENT_BINDGEN_VERSION,
+        STAGE2_NODE_VERSION, STAGE2_V8_VERSION, STAGE2_WASMTIME_ENGINE_VERSION,
+        STAGE2_WASMTIME_ENVIRONMENT_NAME, STAGE2_WASMTIME_ENVIRONMENT_VERSION,
+        STAGE2_WASMTIME_IMPLEMENTATION_VERSION, Stage2CellId, Stage2CellManifest, Stage2Runtime,
+        Stage2TranslationProvenance, Stage2ValidationFinding,
     },
 };
 use crate::{
@@ -38,6 +39,7 @@ pub(super) fn translation_presence_matches(
                 && provenance.node_version == STAGE2_NODE_VERSION
                 && provenance.v8_version == STAGE2_V8_VERSION
                 && provenance.rpc_protocol_version == STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION
+                && provenance.execution_carrier == STAGE2_JCO_NODE_EXECUTION_CARRIER
                 && is_sha256(&provenance.generated_sha256)
                 && is_sha256(&provenance.driver_sha256)
                 && !provenance.core_module_sha256s.is_empty()
@@ -135,7 +137,7 @@ pub(crate) fn runtime_identity_matches(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObservedRuntimeIdentity {
     pub(crate) implementation: String,
@@ -215,7 +217,7 @@ pub(crate) fn observed_runtime_matches(
     }
 }
 
-fn translation_provenance_matches(
+pub(crate) fn translation_provenance_matches(
     runtime: Stage2Runtime,
     observed: &ObservedRuntimeIdentity,
 ) -> bool {
@@ -233,6 +235,7 @@ fn translation_provenance_matches(
                 && provenance.node_version == STAGE2_NODE_VERSION
                 && provenance.v8_version == STAGE2_V8_VERSION
                 && provenance.rpc_protocol_version == STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION
+                && provenance.execution_carrier == STAGE2_JCO_NODE_EXECUTION_CARRIER
                 && is_sha256(&provenance.generated_sha256)
                 && is_sha256(&provenance.driver_sha256)
                 && !provenance.core_module_sha256s.is_empty()

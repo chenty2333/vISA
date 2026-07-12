@@ -53,7 +53,7 @@ ORACLE_SERVICE_PACKAGES = {
 ACTIVE_TEXT_ROOTS = (".cargo", "scripts", ".github")
 LEGACY_NAME = re.compile(r"\b(?:vmos|semantic os)\b", re.IGNORECASE)
 REPLACED_PACKAGE_NAME = re.compile(r"\b(?:replay_snapshot|wasm_app)\b")
-LEGACY_ALLOWED_PREFIXES = ("crates/oracle/", "docs/archive/")
+LEGACY_ALLOWED_PREFIXES = ("crates/oracle/",)
 TEXT_SUFFIXES = {
     ".json",
     ".md",
@@ -253,7 +253,7 @@ def check_legacy_names() -> list[str]:
             continue
         for line_number, line in enumerate(text.splitlines(), 1):
             if LEGACY_NAME.search(line):
-                violations.append(f"legacy name outside oracle/archive: {name}:{line_number}")
+                violations.append(f"legacy name outside oracle: {name}:{line_number}")
     return violations
 
 

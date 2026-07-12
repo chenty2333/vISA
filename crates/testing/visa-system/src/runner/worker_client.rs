@@ -591,7 +591,7 @@ mod tests {
     const RESPONSE_SCRIPT: &str = r#"
 IFS= read -r line
 id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-printf '{"version":1,"id":"%s","outcome":{"status":"success","result":{"kind":"ack"}}}\n' "$id"
+printf '{"version":2,"id":"%s","outcome":{"status":"success","result":{"kind":"ack"}}}\n' "$id"
 "#;
 
     #[test]
@@ -615,7 +615,7 @@ printf '{"version":1,"id":"%s","outcome":{"status":"success","result":{"kind":"a
     fn worker_client_rejects_a_mismatched_response_id() {
         let script = r#"
 IFS= read -r line
-printf '{"version":1,"id":"wrong","outcome":{"status":"success","result":{"kind":"ack"}}}\n'
+printf '{"version":2,"id":"wrong","outcome":{"status":"success","result":{"kind":"ack"}}}\n'
 "#;
         let mut client = shell_client(script, Duration::from_secs(1));
         assert!(matches!(

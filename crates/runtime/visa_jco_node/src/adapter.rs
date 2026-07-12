@@ -29,7 +29,6 @@ pub struct JcoNodeRuntime;
 pub struct JcoNodeAdapter<P: 'static> {
     process: NodeProcess,
     host: HostState<P>,
-    artifacts: tempfile::TempDir,
     component_digest: Digest,
     identity: RuntimeIdentity,
     translation_provenance: JcoTranslationProvenance,
@@ -109,12 +108,7 @@ where
                 coordinator,
             )));
         }
-        let process = match NodeProcess::spawn(
-            &prepared.node_bin,
-            &prepared.driver,
-            &prepared.entrypoint,
-            prepared.artifacts.path(),
-        ) {
+        let process = match NodeProcess::spawn(&prepared.node_bin, &prepared.graph) {
             Ok(process) => process,
             Err(error) => return Err(Box::new((error, coordinator))),
         };
@@ -122,7 +116,6 @@ where
         Ok(Self {
             process,
             host: HostState::new(coordinator),
-            artifacts: prepared.artifacts,
             component_digest: prepared.component_digest,
             identity: prepared.identity,
             translation_provenance,
@@ -165,9 +158,8 @@ where
     }
 
     pub fn into_coordinator(self) -> Coordinator<P> {
-        let Self { process, host, artifacts, .. } = self;
+        let Self { process, host, .. } = self;
         drop(process);
-        drop(artifacts);
         host.coordinator
     }
 

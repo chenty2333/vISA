@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "visa_abi"
 version = "0.1.0"
 publish = false
@@ -6,4 +7,3 @@ edition = "2024"
 
 [lib]
 path = "src/lib.rs"
-

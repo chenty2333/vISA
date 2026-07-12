@@ -1,11 +1,18 @@
-import { readFileSync, readSync, writeSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { readSync, writeSync } from 'node:fs';
 
 const PROTOCOL = 3;
 const MAX_JSONL_MESSAGE_BYTES = 1024 * 1024;
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 const MAX_U64 = 18446744073709551615n;
+const CARRIER_MAGIC = Buffer.from('VISAJCO1', 'ascii');
+const CARRIER_ENTRYPOINT_KIND = 1;
+const CARRIER_CORE_MODULE_KIND = 2;
+const MAX_CARRIER_FILES = 64;
+const MAX_CARRIER_NAME_BYTES = 1024;
+const MAX_CARRIER_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_CARRIER_TOTAL_BYTES = 256 * 1024 * 1024;
+const EXPECTED_ENTRYPOINT = 'handoff-component.component.js';
 const dispose = Symbol.dispose || Symbol.for('dispose');
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 let input = Buffer.alloc(0);
@@ -16,6 +23,124 @@ const liveResources = new Set();
 const testResources = new Set();
 
 class ProtocolViolation extends Error {}
+
+function readExact(length, label) {
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new ProtocolViolation(`invalid ${label} length`);
+  }
+  const bytes = Buffer.allocUnsafe(length);
+  let offset = 0;
+  while (offset < length) {
+    const count = readSync(0, bytes, offset, length - offset, null);
+    if (count === 0) {
+      throw new ProtocolViolation(`startup carrier ended while reading ${label}`);
+    }
+    offset += count;
+  }
+  return bytes;
+}
+
+function carrierU64(value) {
+  const bytes = Buffer.allocUnsafe(8);
+  bytes.writeBigUInt64BE(BigInt(value));
+  return bytes;
+}
+
+function carrierLength(bytes, offset, label) {
+  const value = bytes.readBigUInt64BE(offset);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ProtocolViolation(`${label} exceeds the safe integer range`);
+  }
+  return Number(value);
+}
+
+function validCarrierName(name) {
+  return name.length > 0
+    && !name.startsWith('/')
+    && name.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..');
+}
+
+function readStartupGraph(expectedDigest) {
+  if (!/^[0-9a-f]{64}$/.test(expectedDigest || '')) {
+    throw new ProtocolViolation('missing or invalid expected generated graph digest');
+  }
+  if (!readExact(CARRIER_MAGIC.length, 'magic').equals(CARRIER_MAGIC)) {
+    throw new ProtocolViolation('unsupported startup carrier magic/version');
+  }
+  const fileCount = readExact(4, 'artifact count').readUInt32BE();
+  if (fileCount < 2 || fileCount > MAX_CARRIER_FILES) {
+    throw new ProtocolViolation('invalid startup carrier artifact count');
+  }
+
+  const descriptors = [];
+  let previous = null;
+  let totalBytes = 0;
+  for (let index = 0; index < fileCount; index += 1) {
+    const header = readExact(45, `artifact ${index} header`);
+    const kind = header.readUInt8(0);
+    const nameLength = header.readUInt32BE(1);
+    const byteLength = carrierLength(header, 5, `artifact ${index}`);
+    const digest = header.subarray(13, 45).toString('hex');
+    if (kind !== CARRIER_ENTRYPOINT_KIND && kind !== CARRIER_CORE_MODULE_KIND) {
+      throw new ProtocolViolation(`artifact ${index} has an unknown kind`);
+    }
+    if (nameLength === 0 || nameLength > MAX_CARRIER_NAME_BYTES) {
+      throw new ProtocolViolation(`artifact ${index} has an invalid name length`);
+    }
+    if (byteLength > MAX_CARRIER_FILE_BYTES) {
+      throw new ProtocolViolation(`artifact ${index} exceeds the per-file carrier limit`);
+    }
+    totalBytes += byteLength;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_CARRIER_TOTAL_BYTES) {
+      throw new ProtocolViolation('startup carrier exceeds the total byte limit');
+    }
+    const nameBytes = readExact(nameLength, `artifact ${index} name`);
+    const name = utf8.decode(nameBytes);
+    if (!validCarrierName(name) || Buffer.byteLength(name, 'utf8') !== nameLength) {
+      throw new ProtocolViolation(`artifact ${index} has a non-canonical name`);
+    }
+    if (previous !== null && previous >= name) {
+      throw new ProtocolViolation('startup carrier artifact names are not strictly sorted');
+    }
+    previous = name;
+    descriptors.push({ kind, name, nameBytes, byteLength, digest });
+  }
+
+  const graphDigest = createHash('sha256');
+  let entrypoint = null;
+  const coreModuleBytes = new Map();
+  for (const descriptor of descriptors) {
+    const bytes = readExact(descriptor.byteLength, descriptor.name);
+    if (createHash('sha256').update(bytes).digest('hex') !== descriptor.digest) {
+      throw new ProtocolViolation(`carrier artifact digest mismatch for ${descriptor.name}`);
+    }
+    graphDigest.update(carrierU64(descriptor.nameBytes.length));
+    graphDigest.update(descriptor.nameBytes);
+    graphDigest.update(carrierU64(bytes.length));
+    graphDigest.update(bytes);
+    if (descriptor.kind === CARRIER_ENTRYPOINT_KIND) {
+      if (entrypoint !== null || descriptor.name !== EXPECTED_ENTRYPOINT) {
+        throw new ProtocolViolation('carrier must contain exactly the expected JS entrypoint');
+      }
+      entrypoint = bytes;
+    } else {
+      if (!descriptor.name.endsWith('.wasm') || coreModuleBytes.has(descriptor.name)) {
+        throw new ProtocolViolation(`invalid core module name ${descriptor.name}`);
+      }
+      coreModuleBytes.set(descriptor.name, bytes);
+    }
+  }
+  if (entrypoint === null || coreModuleBytes.size === 0) {
+    throw new ProtocolViolation('carrier requires one entrypoint and at least one core module');
+  }
+  if (graphDigest.digest('hex') !== expectedDigest) {
+    throw new ProtocolViolation('startup carrier does not match the expected graph digest');
+  }
+  const coreModules = new Map(
+    [...coreModuleBytes].map(([name, bytes]) => [name, new WebAssembly.Module(bytes)]),
+  );
+  return { entrypoint, coreModules };
+}
 
 function writeMessage(message) {
   const json = JSON.stringify(message);
@@ -376,8 +501,10 @@ function invoke(workload, op, args) {
 }
 
 async function main() {
-  const entrypoint = resolve(process.argv[2]);
-  const generated = await import(pathToFileURL(entrypoint).href);
+  const { entrypoint, coreModules } = readStartupGraph(process.argv[1]);
+  const generated = await import(
+    `data:text/javascript;base64,${entrypoint.toString('base64')}`
+  );
   if (typeof generated.instantiate !== 'function') {
     throw new Error('Jco output does not export instantiate');
   }
@@ -387,11 +514,17 @@ async function main() {
     'visa:continuity/timers': { TimerBinding },
     'visa:continuity/timers@0.1.0': { TimerBinding },
   };
-  const root = generated.instantiate(
-    (name) => new WebAssembly.Module(readFileSync(resolve(dirname(entrypoint), name))),
-    imports,
-  );
+  const unusedCoreModules = new Set(coreModules.keys());
+  const root = generated.instantiate((name) => {
+    if (!unusedCoreModules.delete(name)) {
+      throw new Error(`Jco requested an unknown or repeated core module ${name}`);
+    }
+    return coreModules.get(name);
+  }, imports);
   if (root instanceof Promise) throw new Error('Jco emitted an asynchronous instantiation path');
+  if (unusedCoreModules.size !== 0) {
+    throw new Error(`Jco did not instantiate core modules: ${[...unusedCoreModules].join(', ')}`);
+  }
   const workload = root.workload || root['visa:continuity/workload@0.1.0'];
   if (!workload) throw new Error('component did not expose the workload interface');
 

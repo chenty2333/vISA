@@ -1261,6 +1261,7 @@ fn runtime_identity_view(
                 node_version: provenance.runtime.node_version,
                 v8_version: provenance.runtime.v8_version,
                 rpc_protocol_version: provenance.runtime.rpc_protocol_version,
+                execution_carrier: provenance.runtime.execution_carrier,
                 generated_sha256: digest_hex(provenance.generated_digest),
                 driver_sha256: digest_hex(provenance.driver_digest),
                 core_module_sha256s: provenance
@@ -1888,6 +1889,7 @@ mod tests {
         assert_eq!(source_translation.translator_version, visa_jco_node::WASMTIME_ENVIRON_VERSION);
         assert_eq!(source_translation.node_version, visa_jco_node::NODE_VERSION);
         assert_eq!(source_translation.v8_version, visa_jco_node::V8_VERSION);
+        assert_eq!(source_translation.execution_carrier, visa_jco_node::JCO_NODE_EXECUTION_CARRIER);
         assert_eq!(source_translation.generated_sha256.len(), 64);
         assert_eq!(source_translation.driver_sha256.len(), 64);
         assert!(!source_translation.core_module_sha256s.is_empty());

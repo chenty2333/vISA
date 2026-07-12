@@ -14,9 +14,9 @@ use crate::{
     STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, STAGE2_ACCEPTED_REGISTRY_SHA256,
     STAGE2_EVIDENCE_SCHEMA_VERSION, STAGE2_INCOMPLETE_MARKER_FILE,
     STAGE2_INSTANTIATION_OBSERVATIONS_SCHEMA_VERSION, STAGE2_JCO_NODE_ENVIRONMENT_NAME,
-    STAGE2_JCO_NODE_ENVIRONMENT_VERSION, STAGE2_JCO_NODE_IMPLEMENTATION_VERSION,
-    STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION, STAGE2_JCO_TRANSLATION_OPTIONS,
-    STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION, STAGE2_NODE_VERSION,
+    STAGE2_JCO_NODE_ENVIRONMENT_VERSION, STAGE2_JCO_NODE_EXECUTION_CARRIER,
+    STAGE2_JCO_NODE_IMPLEMENTATION_VERSION, STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION,
+    STAGE2_JCO_TRANSLATION_OPTIONS, STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION, STAGE2_NODE_VERSION,
     STAGE2_NORMALIZED_TRACE_SCHEMA_VERSION, STAGE2_V8_VERSION, STAGE2_WASMTIME_ENGINE_VERSION,
     STAGE2_WASMTIME_ENVIRONMENT_NAME, STAGE2_WASMTIME_ENVIRONMENT_VERSION,
     STAGE2_WASMTIME_IMPLEMENTATION_VERSION, STAGE2_WIT_WORLD_NAME, STAGE2_WIT_WORLD_SHA256,
@@ -39,9 +39,9 @@ use crate::{
     stage2::{
         ObservedRuntimeIdentity, audit_runtime_transcript_for_test,
         audit_runtime_transcript_observation_for_test, observed_runtime_matches, publish_atomic,
-        read_contained, runtime_identity_matches, validate_common_input, validate_evidence_shape,
-        validate_manifest_shape, validate_normalized_cache,
-        validate_stage2_evidence_artifacts_for_publication,
+        read_contained, runtime_identity_matches, translation_provenance_matches,
+        validate_common_input, validate_evidence_shape, validate_manifest_shape,
+        validate_normalized_cache, validate_stage2_evidence_artifacts_for_publication,
     },
     stage2_normalize::{
         Stage2DerivedIntegrityEquivalenceProfile, Stage2NormalizedCellV1,
@@ -278,7 +278,7 @@ fn outer_shape_rejects_overclaims_guards_cells_pairs_and_counts() {
     validate_manifest_shape(&missing_jco, &evidence, &mut findings);
     assert_has_code(&findings, "invalid-stage2-cell-manifest");
 
-    let provenance_mutations: [fn(&mut Stage2TranslationProvenance); 4] = [
+    let provenance_mutations: [fn(&mut Stage2TranslationProvenance); 5] = [
         |provenance: &mut Stage2TranslationProvenance| {
             provenance.translation_options.push_str("-changed");
         },
@@ -290,6 +290,9 @@ fn outer_shape_rejects_overclaims_guards_cells_pairs_and_counts() {
         },
         |provenance: &mut Stage2TranslationProvenance| {
             provenance.rpc_protocol_version += 1;
+        },
+        |provenance: &mut Stage2TranslationProvenance| {
+            provenance.execution_carrier.push_str("-changed");
         },
     ];
     for mutate in provenance_mutations {
@@ -308,6 +311,19 @@ fn outer_shape_rejects_overclaims_guards_cells_pairs_and_counts() {
     let mut findings = Vec::new();
     validate_manifest_shape(&false_wasmtime, &evidence, &mut findings);
     assert_has_code(&findings, "invalid-stage2-cell-manifest");
+}
+
+#[test]
+fn translation_provenance_requires_the_sealed_execution_carrier_field() {
+    let provenance = test_translation_provenance(Stage2Runtime::JcoNode)
+        .expect("Jco fixture has translation provenance");
+    let mut encoded = serde_json::to_value(provenance).unwrap();
+    encoded
+        .as_object_mut()
+        .expect("translation provenance encodes as an object")
+        .remove("execution_carrier");
+
+    assert!(serde_json::from_value::<Stage2TranslationProvenance>(encoded).is_err());
 }
 
 #[test]
@@ -471,6 +487,18 @@ fn observed_runtime_identity_requires_every_exact_pin() {
     );
     assert!(observed_runtime_matches(Stage2Runtime::JcoNode, &jco));
     assert_observed_field_mutations_are_rejected(Stage2Runtime::JcoNode, &jco);
+
+    let mut jco_with_provenance = jco.clone();
+    jco_with_provenance.translation_provenance =
+        test_translation_provenance(Stage2Runtime::JcoNode);
+    assert!(translation_provenance_matches(Stage2Runtime::JcoNode, &jco_with_provenance));
+    jco_with_provenance
+        .translation_provenance
+        .as_mut()
+        .expect("Jco provenance")
+        .execution_carrier
+        .push_str("-changed");
+    assert!(!translation_provenance_matches(Stage2Runtime::JcoNode, &jco_with_provenance));
 
     for changed_version in [
         STAGE2_JCO_NODE_IMPLEMENTATION_VERSION.replace("jco-1.25.2", "jco-1.25.3"),
@@ -801,6 +829,100 @@ fn transcript_protocol_rejects_unknown_status_and_wrong_initialize_identity() {
 }
 
 #[test]
+fn transcript_protocol_rejects_malformed_no_response_crash_and_impossible_success_result() {
+    let committed = worker_error_case();
+
+    let source_worker = format!("{}-source", committed.case_id);
+    let mut malformed_crash = wasmtime_transcript(&source_worker, &[("bootstrap_source", true)]);
+    append_transcript_line(
+        &mut malformed_crash,
+        &source_worker,
+        5,
+        "parent_request",
+        serde_json::json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": "malformed-immediate-crash",
+            "command": {
+                "kind": "crash",
+                "mode": "immediate"
+            }
+        }),
+    );
+    assert_has_code(
+        &audit_runtime_transcript_for_test(
+            Stage2CellId::WasmtimeToWasmtime,
+            &committed,
+            "source.jsonl",
+            &malformed_crash,
+        ),
+        "invalid-stage2-runtime-protocol-request-envelope",
+    );
+
+    let mut forbidden_crash_response =
+        wasmtime_transcript(&source_worker, &[("bootstrap_source", true)]);
+    append_transcript_line(
+        &mut forbidden_crash_response,
+        &source_worker,
+        5,
+        "parent_request",
+        serde_json::json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": "immediate-crash",
+            "command": {
+                "kind": "crash",
+                "mode": "immediate",
+                "exit_code": 86
+            }
+        }),
+    );
+    append_transcript_line(
+        &mut forbidden_crash_response,
+        &source_worker,
+        6,
+        "worker_response",
+        serde_json::json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": "immediate-crash",
+            "outcome": {
+                "status": "success",
+                "result": { "kind": "ack" }
+            }
+        }),
+    );
+    assert_has_code(
+        &audit_runtime_transcript_for_test(
+            Stage2CellId::WasmtimeToWasmtime,
+            &committed,
+            "source.jsonl",
+            &forbidden_crash_response,
+        ),
+        "forbidden-stage2-runtime-response",
+    );
+
+    let destination_worker = format!("{}-destination", committed.case_id);
+    let baseline = wasmtime_transcript(
+        &destination_worker,
+        &[("commit_destination", false), ("resume_destination", true)],
+    );
+    let impossible_success = mutate_transcript_protocol(&baseline, |stream, protocol| {
+        if stream == "worker_response"
+            && protocol.get("id").and_then(serde_json::Value::as_str) == Some("command-0")
+        {
+            protocol["outcome"]["result"] = serde_json::json!({ "kind": "ack" });
+        }
+    });
+    assert_has_code(
+        &audit_runtime_transcript_for_test(
+            Stage2CellId::WasmtimeToWasmtime,
+            &committed,
+            "destination.jsonl",
+            &impossible_success,
+        ),
+        "incompatible-stage2-runtime-protocol-result",
+    );
+}
+
+#[test]
 fn canonical_state_protocol_rejects_wrong_role_phase_and_minimal_view() {
     let committed = worker_error_case();
     let worker = format!("{}-source", committed.case_id);
@@ -857,6 +979,45 @@ fn primary_lifecycle_command_before_initialize_is_rejected() {
             &reordered,
         ),
         "stage2-runtime-command-before-initialize",
+    );
+}
+
+#[test]
+fn live_transcript_requires_contiguous_per_worker_sequences() {
+    let mut committed = worker_error_case();
+    committed.outcome = Stage1CaseOutcome::TimerRecreatedSingleExpiry;
+    let worker = format!("{}-source", committed.case_id);
+    let baseline =
+        wasmtime_transcript(&worker, &[("bootstrap_source", true), ("poll_timer", true)]);
+
+    let starts_at_two = rewrite_transcript_envelopes(&baseline, |envelope| {
+        let sequence = envelope["sequence"].as_u64().expect("numeric transcript sequence");
+        envelope["sequence"] = serde_json::json!(sequence + 1);
+        true
+    });
+    assert_has_code(
+        &audit_runtime_transcript_for_test(
+            Stage2CellId::WasmtimeToWasmtime,
+            &committed,
+            "source.jsonl",
+            &starts_at_two,
+        ),
+        "invalid-stage2-runtime-transcript-order",
+    );
+
+    let missing_middle_pair = rewrite_transcript_envelopes(&baseline, |envelope| {
+        let protocol: serde_json::Value =
+            serde_json::from_str(envelope["line"].as_str().expect("protocol JSON text")).unwrap();
+        protocol.get("id").and_then(serde_json::Value::as_str) != Some("command-0")
+    });
+    assert_has_code(
+        &audit_runtime_transcript_for_test(
+            Stage2CellId::WasmtimeToWasmtime,
+            &committed,
+            "source.jsonl",
+            &missing_middle_pair,
+        ),
+        "invalid-stage2-runtime-transcript-order",
     );
 }
 
@@ -1595,6 +1756,7 @@ fn test_translation_provenance(runtime: Stage2Runtime) -> Option<Stage2Translati
         node_version: "24.15.0".to_owned(),
         v8_version: "13.6.233.17-node.48".to_owned(),
         rpc_protocol_version: STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION,
+        execution_carrier: STAGE2_JCO_NODE_EXECUTION_CARRIER.to_owned(),
         generated_sha256: "a".repeat(64),
         driver_sha256: "b".repeat(64),
         core_module_sha256s: vec!["c".repeat(64)],
@@ -2070,14 +2232,18 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
         sequence,
         "parent_request",
         serde_json::json!({
-            "version": 1,
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
             "id": "initialize-1",
             "command": {
                 "kind": "initialize",
                 "role": role,
                 "runtime": "wasmtime",
                 "database_path": "/tmp/visa-stage2-test.sqlite3",
-                "options": { "case_id": case_id },
+                "options": {
+                    "case_id": case_id,
+                    "namespace_availability": "correct",
+                    "authority_policy": "sufficient"
+                },
                 "fault": null
             }
         }),
@@ -2089,7 +2255,7 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
         sequence,
         "worker_response",
         serde_json::json!({
-            "version": 1,
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
             "id": "initialize-1",
             "outcome": {
                 "status": "success",
@@ -2124,6 +2290,30 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
                 "phase": "armed"
             })
         });
+        let request_command = if *command == "poll_timer" {
+            serde_json::json!({ "kind": command, "deliver": true })
+        } else {
+            serde_json::json!({ "kind": command })
+        };
+        let state_view = serde_json::json!({
+            "role": role,
+            "canonical_phase": canonical_phase,
+            "journal_position": 1,
+            "state_digest": [0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0],
+            "component_instantiated": component_instantiated,
+            "component": component
+        });
+        let result = match *command {
+            "poll_timer" => serde_json::json!({ "kind": "timer", "view": state_view }),
+            "dump" => serde_json::json!({
+                "kind": "dump",
+                "component_instantiated": component_instantiated
+            }),
+            _ => serde_json::json!({ "kind": "state", "view": state_view }),
+        };
         sequence += 1;
         append_transcript_line(
             &mut bytes,
@@ -2131,9 +2321,9 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
             sequence,
             "parent_request",
             serde_json::json!({
-                "version": 1,
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
-                "command": { "kind": command }
+                "command": request_command
             }),
         );
         sequence += 1;
@@ -2143,24 +2333,11 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
             sequence,
             "worker_response",
             serde_json::json!({
-                "version": 1,
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
                 "outcome": {
                     "status": "success",
-                    "result": {
-                        "kind": "state",
-                        "view": {
-                            "role": role,
-                            "canonical_phase": canonical_phase,
-                            "journal_position": 1,
-                            "state_digest": [0, 0, 0, 0, 0, 0, 0, 0,
-                                             0, 0, 0, 0, 0, 0, 0, 0,
-                                             0, 0, 0, 0, 0, 0, 0, 0,
-                                             0, 0, 0, 0, 0, 0, 0, 0],
-                            "component_instantiated": component_instantiated,
-                            "component": component
-                        }
-                    }
+                    "result": result
                 }
             }),
         );
@@ -2198,6 +2375,22 @@ fn mutate_transcript_protocol(
             serde_json::from_str(envelope["line"].as_str().unwrap()).unwrap();
         mutate(&stream, &mut protocol);
         envelope["line"] = serde_json::json!(serde_json::to_string(&protocol).unwrap());
+        changed.extend_from_slice(&serde_json::to_vec(&envelope).unwrap());
+        changed.push(b'\n');
+    }
+    changed
+}
+
+fn rewrite_transcript_envelopes(
+    bytes: &[u8],
+    mut rewrite: impl FnMut(&mut serde_json::Value) -> bool,
+) -> Vec<u8> {
+    let mut changed = Vec::new();
+    for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let mut envelope: serde_json::Value = serde_json::from_slice(line).unwrap();
+        if !rewrite(&mut envelope) {
+            continue;
+        }
         changed.extend_from_slice(&serde_json::to_vec(&envelope).unwrap());
         changed.push(b'\n');
     }
@@ -2329,12 +2522,12 @@ fn worker_error_transcript(worker: &str, pid: u32, errors: &[WorkerErrorFixture]
     for (index, error) in errors.iter().enumerate() {
         let request_id = format!("request-{index}");
         let request = serde_json::json!({
-            "version": 1,
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
             "id": request_id,
             "command": { "kind": "read" },
         });
         let response = serde_json::json!({
-            "version": 1,
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
             "id": request_id,
             "outcome": {
                 "status": "error",

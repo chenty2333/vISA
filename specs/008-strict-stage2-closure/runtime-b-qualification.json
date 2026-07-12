@@ -1,0 +1,390 @@
+{
+  "schema": "visa-runtime-b-qualification-v1",
+  "recorded_at": "2026-07-12",
+  "host": {
+    "os": "Fedora Linux 44",
+    "architecture": "x86_64"
+  },
+  "decision": "no-go",
+  "decision_scope": "None of the three executable candidates recorded here, WACS, WasmEdge, or wacogo, passed. This is not a universal claim about every released runtime or source snapshot.",
+  "selected_runtime": null,
+  "production_adapter_created": false,
+  "runtime_selector_created": false,
+  "matrix_cells_created": false,
+  "input": {
+    "unchanged": true,
+    "component": {
+      "build_recipe": "cargo build --locked -p visa-system",
+      "resolver": "specs/008-strict-stage2-closure/qualification/resolve-component.sh",
+      "byte_length": 146486,
+      "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b"
+    },
+    "wit_world": {
+      "path": "wit/cooperative-handoff/world.wit",
+      "world": "visa:continuity/cooperative-handoff@0.1.0",
+      "sha256": "709eb08784d446068bbaed47dbfb1dddd637f957cf5de1f3713d5be0aa7d5920"
+    },
+    "profile": "Stage 1 paused-duration timer and durable versioned KV profile"
+  },
+  "candidates": [
+    {
+      "runtime": "WACS",
+      "decision": "no-go",
+      "license": "Apache-2.0",
+      "source": {
+        "repository": "https://github.com/kelnishi/WACS",
+        "component_model_release_commit": "e6e76340b9d38ec3846d39833136eac8846f9f81",
+        "cli_transpiler_release_commit": "e6e76340b9d38ec3846d39833136eac8846f9f81",
+        "harness_release_commit": "cad6530f5d5765f5de79ca77ed166b99802372ea"
+      },
+      "host_requirements": {
+        "decode_probe": ".NET SDK 8.0.419, Microsoft.NETCore.App 8.0.25",
+        "typed_harness_probe": ".NET SDK 9.0.301, Microsoft.NETCore.App 9.0.6",
+        "cli_transpiler_aot_probe": ".NET SDK 9.0.301, Microsoft.NETCore.App 9.0.6, x86_64 Linux"
+      },
+      "packages": [
+        {
+          "id": "WACS",
+          "version": "0.16.14",
+          "sha256": "c19d97e3ebf6f8634baf64b272c6efb77427c4f7947c9e439df9f0342518c29a"
+        },
+        {
+          "id": "WACS.ComponentModel",
+          "version": "0.10.3",
+          "sha256": "2896f10b71859be40a4aa7e7df74a4318c3f961022e81dec0d86fd5c6cd526d0"
+        },
+        {
+          "id": "WACS.ComponentModel.Parser",
+          "version": "0.2.1",
+          "sha256": "e5c6d78b599027c220db42cfd5241186149d752c7bd130535ee2a667c4d83efd"
+        },
+        {
+          "id": "WACS.ComponentModel.Harness.Lib",
+          "version": "0.27.2",
+          "sha256": "283b651a8085e1b7e60d5130836b77e33e37e5c0e0b7d59e3512ef9ad0fc95df"
+        },
+        {
+          "id": "WACS.ComponentModel.Harness.Runtime",
+          "version": "0.7.5",
+          "sha256": "cff5881b30b19ad7d0acf7262cbca00fa5d841bf289d86b82c0271f4420339ba"
+        },
+        {
+          "id": "WACS.ComponentModel.Parser",
+          "version": "0.2.2",
+          "sha256": "05ff2603ab4b15facb94737bf682fe464be54ac7ef209e508ea3697984d1a1de"
+        },
+        {
+          "id": "WACS.Cli",
+          "version": "1.10.1",
+          "sha256": "35dbe748e139888181ea91c5c1e0188a95f7fcdaac6b7ec1a8723e1494fa5ae3",
+          "bundled_transpiler": "WACS.Transpiler.Lib 0.12.12",
+          "bundled_transpiler_assembly_sha256": "dca42e3c60af3892f7acb57646a2509087892531ea7c57c736c00dcb3d5a4396"
+        }
+      ],
+      "lineage": {
+        "result": "pass",
+        "component_parser": "WACS.ComponentModel",
+        "canonical_abi": "WACS.ComponentModel",
+        "core_execution": "WACS pure C# interpreter and WACS.Transpiler .NET IL path",
+        "public_surfaces_probed": [
+          "WACS.ComponentModel parser",
+          "WACS.ComponentModel.Harness.Lib typed harness",
+          "WACS.Cli component build/run",
+          "WACS.Cli NativeAOT"
+        ],
+        "key_dependency_packages": [
+          "WACS",
+          "WACS.Cli",
+          "WACS.ComponentModel",
+          "WACS.ComponentModel.Bindgen.Lib",
+          "WACS.ComponentModel.Parser",
+          "WACS.ComponentModel.Harness.Lib",
+          "WACS.ComponentModel.Harness.Runtime",
+          "WACS.Transpiler.Lib",
+          "FluentValidation",
+          "Microsoft.Extensions.ObjectPool",
+          "System.Threading.Channels"
+        ],
+        "closure_records": [
+          "qualification/wacs-decode/packages.lock.json",
+          "qualification/wacs-harness/packages.lock.json",
+          "Wacs.Console.deps.json inside the SHA-256-pinned WACS.Cli package"
+        ],
+        "wasmtime_or_wasmtime_environ_dependency": false
+      },
+      "qualification_gate": {
+        "pinned_identity_license_recipe": "pass",
+        "independent_lineage": "pass",
+        "unchanged_component_and_world": "fail",
+        "real_exports_imports_and_host_bridge": "not-reached",
+        "structured_unsupported_no_fallback": "not-reached",
+        "complete_lifecycle_mapping": "not-reached",
+        "executable_go_no_go_decision": "pass"
+      },
+      "observations": {
+        "decode_probe": {
+          "command": "COMPONENT=$(specs/008-strict-stage2-closure/qualification/resolve-component.sh) && dotnet run --project specs/008-strict-stage2-closure/qualification/wacs-decode/wacs-decode.csproj -c Release --no-restore -- \"$COMPONENT\" wit/cooperative-handoff/world.wit",
+          "exit_code": 0,
+          "facts": [
+            "component and world.wit SHA-256 identities were checked before parsing",
+            "component-bytes=146486",
+            "core-modules=3 nested=1",
+            "core[0] imports=6 exports=17",
+            "timer arm/cancel/drop and KV read/conditional-put/drop imports were identified",
+            "export visa:continuity/workload@0.1.0 has sort Instance and index 2"
+          ]
+        },
+        "typed_harness_probe": {
+          "command": "COMPONENT=$(specs/008-strict-stage2-closure/qualification/resolve-component.sh) && DOTNET=dotnet specs/008-strict-stage2-closure/qualification/run-wacs-harness-probe.sh \"$COMPONENT\"",
+          "probe": "qualification/run-wacs-harness-probe.sh",
+          "exit_code": 0,
+          "underlying_exit_code": 1,
+          "failure_type": "System.NotSupportedException",
+          "failure": "Anonymous variant types not supported in v0.2 (case 'kv' of variant 'workload-error').",
+          "failure_stage": "Wacs.ComponentModel.Harness.Lib.WitTypeEmit.MapClrType while emitting the unchanged world's nested workload-error variant",
+          "fallback_observed": false
+        },
+        "cli_transpiler_aot_probe": {
+          "command": "COMPONENT=$(specs/008-strict-stage2-closure/qualification/resolve-component.sh) && DOTNET=dotnet specs/008-strict-stage2-closure/qualification/run-wacs-cli-aot-probe.sh \"$COMPONENT\"",
+          "exit_code": 0,
+          "tool_identity": "Wacs.Console 1.10.1+e6e76340b9d38ec3846d39833136eac8846f9f81",
+          "transpiler_version": "0.12.12",
+          "facts": [
+            "the installed WACS.Cli nupkg matched the recorded SHA-256 before execution",
+            "build with the unchanged WIT directory exited 1 because v0 contract validation cannot compare either interface import",
+            "build without the WIT contract exited 0 and produced a 311296-byte raw assembly",
+            "the raw assembly exposes exactly six core imports and seven raw workload exports",
+            "raw activate has a single i32 indirect-area parameter and no typed workload surface was emitted",
+            "raw transpiler status execution exited 128 without a structured result",
+            "NativeAOT with the unchanged WIT directory exited 1 at the same interface-import contract check"
+          ],
+          "failure_shape": "CLI diagnostic text and a raw process exit; no vISA structured runtime boundary was reached.",
+          "fallback_observed": false,
+          "result": "no-go"
+        }
+      },
+      "additional_source_confirmed_blockers": [
+        {
+          "id": "wit-contract-interface-import-validation",
+          "detail": "The released CLI contract validator reports every WIT interface-reference import as currently unvalidated and rejects this world before a typed build or NativeAOT surface is emitted.",
+          "source": "https://github.com/kelnishi/WACS/blob/e6e76340b9d38ec3846d39833136eac8846f9f81/Wacs.Transpiler/Wacs.Transpiler.Lib/AOT/Component/WitContractCompare.cs#L158-L165"
+        },
+        {
+          "id": "indirect-parameter-area",
+          "detail": "activate flattens past MAX_FLAT_PARAMS=16. The released typed harness rejects that mode, while the raw AOT assembly exposes only the resulting i32 pointer; the transpiler source calls the typed ptr-bundle fallback a follow-up.",
+          "sources": [
+            "https://github.com/kelnishi/WACS/blob/cad6530f5d5765f5de79ca77ed166b99802372ea/Wacs.ComponentModel/Wacs.ComponentModel.Harness.Lib/WorldHarnessEmit.cs#L793-L820",
+            "https://github.com/kelnishi/WACS/blob/e6e76340b9d38ec3846d39833136eac8846f9f81/Wacs.Transpiler/Wacs.Transpiler.Lib/AOT/Component/ComponentExportsEmit.cs#L2097-L2103"
+          ]
+        },
+        {
+          "id": "typed-harness-host-created-owned-resource",
+          "detail": "On the typed-harness path tested here, the generated resource wrapper constructor is internal and no public factory was reached for creating the two own<R> arguments. This finding is scoped to that public harness surface, not to every WACS host-package mechanism.",
+          "source": "https://github.com/kelnishi/WACS/blob/cad6530f5d5765f5de79ca77ed166b99802372ea/Wacs.ComponentModel/Wacs.ComponentModel.Harness.Lib/WitTypeEmit.cs#L170-L195"
+        },
+        {
+          "id": "componentinstance-direct-surface-is-not-an-alternative",
+          "detail": "The exact released ComponentInstance public path is not a semantic bypass around the typed-harness and CLI failures. Its multi-core mode deliberately instantiates only the primary core module and skips the component adapter and post-return shim, while Invoke accepts only top-level Func exports. The unchanged vISA Component exports workload as an Instance; reaching its raw core exports would require adapter-authored Canonical ABI and is prohibited.",
+          "sources": [
+            "https://github.com/kelnishi/WACS/blob/e6e76340b9d38ec3846d39833136eac8846f9f81/Wacs.ComponentModel/Wacs.ComponentModel/Runtime/ComponentInstance.cs#L454-L468",
+            "https://github.com/kelnishi/WACS/blob/e6e76340b9d38ec3846d39833136eac8846f9f81/Wacs.ComponentModel/Wacs.ComponentModel/Runtime/ComponentInstance.cs#L840-L868"
+          ]
+        }
+      ]
+    },
+    {
+      "runtime": "WasmEdge",
+      "version": "0.17.1",
+      "decision": "no-go",
+      "license": "Apache-2.0",
+      "source_revision": "0502c560d787d969c66f5676b9e11ac64bba3656",
+      "host_requirements": "x86_64 Linux with glibc 2.28 or newer and the release lib64 directory on LD_LIBRARY_PATH",
+      "artifact": {
+        "url": "https://github.com/WasmEdge/WasmEdge/releases/download/0.17.1/WasmEdge-0.17.1-manylinux_2_28_x86_64.tar.xz",
+        "sha256": "e88199f7c48fe27fc1a23b104f4049d2615cef1ebe70b588b0e082ca9eb5f6e5"
+      },
+      "lineage": {
+        "result": "partial-source-screen",
+        "wasmtime_or_wasmtime_environ_dependency": false
+      },
+      "qualification_gate": {
+        "pinned_identity_license_recipe": "pass",
+        "independent_lineage": "not-fully-audited",
+        "unchanged_component_and_world": "fail",
+        "real_exports_imports_and_host_bridge": "not-reached",
+        "structured_unsupported_no_fallback": "not-reached",
+        "complete_lifecycle_mapping": "not-reached",
+        "executable_go_no_go_decision": "pass"
+      },
+      "installation": [
+        "curl -fL https://github.com/WasmEdge/WasmEdge/releases/download/0.17.1/WasmEdge-0.17.1-manylinux_2_28_x86_64.tar.xz -o WasmEdge-0.17.1.tar.xz",
+        "printf '%s  %s\\n' e88199f7c48fe27fc1a23b104f4049d2615cef1ebe70b588b0e082ca9eb5f6e5 WasmEdge-0.17.1.tar.xz | sha256sum -c -",
+        "mkdir wasmedge-dist && tar -xJf WasmEdge-0.17.1.tar.xz -C wasmedge-dist"
+      ],
+      "observation": {
+        "command": "COMPONENT=$(specs/008-strict-stage2-closure/qualification/resolve-component.sh) && specs/008-strict-stage2-closure/qualification/run-wasmedge-probe.sh \"$COMPONENT\" WasmEdge-0.17.1.tar.xz",
+        "probe": "qualification/run-wasmedge-probe.sh",
+        "exit_code": 0,
+        "underlying_exit_code": 1,
+        "failure_stage": "component-validation/canonical-section",
+        "failure_shape": "CLI diagnostic text, not a vISA structured runtime failure",
+        "failure": "validation failed: invalid type reference; canon resource.drop: type index 10 does not reference a resource",
+        "fallback_observed": false
+      }
+    },
+    {
+      "runtime": "wacogo",
+      "version": "v0.0.0-20260617023329-3de16a61796c",
+      "decision": "no-go",
+      "license": "Apache-2.0",
+      "maturity": "Experimental source module published as a Go pseudo-version; no semantic release tag.",
+      "source": {
+        "repository": "https://github.com/partite-ai/wacogo",
+        "revision": "3de16a61796ce02d29795e4a074f37a33e6ebd87",
+        "committed_at": "2026-06-17T02:33:29Z"
+      },
+      "artifact": {
+        "module": "github.com/partite-ai/wacogo",
+        "proxy_version": "v0.0.0-20260617023329-3de16a61796c",
+        "zip_sha256": "ffc2004ea59076ef619d3043d4ae4400338cf3a8d2c67b294e582715ce5f26f4",
+        "module_sum": "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw=",
+        "closure_records": [
+          "qualification/wacogo-probe/go.mod",
+          "qualification/wacogo-probe/go.sum",
+          "qualification/run-wacogo-probe.sh"
+        ]
+      },
+      "host_requirements": "Go 1.25.5 or newer; the retained run used Go 1.26.5-X on x86_64 Linux.",
+      "module_closure": [
+        "github.com/coreos/go-semver v0.3.1",
+        "github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7",
+        "github.com/google/go-cmp v0.6.0",
+        "github.com/klauspost/compress v1.18.0",
+        "github.com/opencontainers/go-digest v1.0.0",
+        "github.com/partite-ai/wacogo v0.0.0-20260617023329-3de16a61796c",
+        "github.com/regclient/regclient v0.8.3",
+        "github.com/sergi/go-diff v1.3.1",
+        "github.com/sirupsen/logrus v1.9.3",
+        "github.com/tetratelabs/wazero v1.11.1-0.20260418165552-5cb4bb3ec0c1",
+        "github.com/ulikunitz/xz v0.5.12",
+        "github.com/urfave/cli/v3 v3.3.3",
+        "github.com/yuin/goldmark v1.4.13",
+        "go.bytecodealliance.org v0.7.0",
+        "go.bytecodealliance.org/cm v0.3.0",
+        "golang.org/x/mod v0.35.0",
+        "golang.org/x/net v0.53.0",
+        "golang.org/x/sync v0.20.0",
+        "golang.org/x/sys v0.43.0",
+        "golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa",
+        "golang.org/x/tools v0.44.0",
+        "gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405",
+        "gopkg.in/yaml.v3 v3.0.1"
+      ],
+      "lineage": {
+        "result": "pass",
+        "component_parser_validator": "wacogo/wasmparser pure Go implementation",
+        "component_linking_instantiation": "wacogo/internal/core",
+        "canonical_abi_resources": "wacogo/internal/canon",
+        "core_execution": "tetratelabs/wazero",
+        "wit_binding_generation_only": "go.bytecodealliance.org/wit plus its embedded wasm-tools helper; this path is not used to translate or instantiate the Component binary",
+        "executable_dependency_graph": [
+          "github.com/partite-ai/wacogo/internal/core",
+          "github.com/partite-ai/wacogo/internal/canon",
+          "github.com/partite-ai/wacogo/wasmparser",
+          "github.com/tetratelabs/wazero"
+        ],
+        "wasmtime_or_wasmtime_environ_dependency": false,
+        "sources": [
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/core/engine_load.go#L102-L207",
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/wasmparser/validating_parser.go#L21-L100",
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/witgen/load.go#L11-L21"
+        ]
+      },
+      "qualification_gate": {
+        "pinned_identity_license_recipe": "pass",
+        "independent_lineage": "pass",
+        "unchanged_component_load_and_surface": "pass",
+        "unchanged_world_instantiation": "fail",
+        "real_exports_imports_and_host_bridge": "not-reached",
+        "structured_unsupported_no_fallback": "not-reached",
+        "complete_lifecycle_mapping": "not-reached",
+        "executable_go_no_go_decision": "pass"
+      },
+      "observation": {
+        "command": "COMPONENT=$(specs/008-strict-stage2-closure/qualification/resolve-component.sh) && specs/008-strict-stage2-closure/qualification/run-wacogo-probe.sh \"$COMPONENT\"",
+        "exit_code": 0,
+        "facts": [
+          "the probe and generator rechecked the exact Component and world.wit SHA-256 identities",
+          "the Go proxy module zip matched its retained SHA-256 and module sum",
+          "the exact 23-dependency module graph and executable package lineage were checked fail closed",
+          "Engine.LoadComponent parsed, validated, and compiled the unchanged 146486-byte Component",
+          "both imports and the workload export were identified as interface instances",
+          "wacogo-witgen generated the key-value and timers host factories from the unchanged world.wit",
+          "both host factories and both host instances were built successfully",
+          "unchanged Component instantiation failed before any workload export could execute"
+        ],
+        "failure": "wacogo: instantiate component: arg \"import-type-kv-error\" references unresolved type 24",
+        "failure_shape": "Deterministic Go error while executing the real nested-component instantiation plan; no guest workload call or vISA structured runtime boundary was reached.",
+        "fallback_observed": false,
+        "result": "no-go"
+      },
+      "source_confirmed_blocker": {
+        "id": "nested-interface-imported-type-resolution",
+        "detail": "The pinned instantiation path receives a nil SortType argument for the nested component because the direct interface-imported kv-error type remains unresolved. The public host instances passed the outer subtype check; the failure occurs when the real instantiation plan resolves nested type arguments.",
+        "sources": [
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/core/engine_instantiate.go#L884-L943",
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/core/type_resolvers.go#L129-L151",
+          "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/core/type_resolvers.go#L242-L255"
+        ]
+      },
+      "later_public_surface_observation": {
+        "status": "not-reached and not used for the no-go decision",
+        "detail": "The current world-export call surface does not expose a typed public constructor for host-created ValOwnHandle values. CallRaw would require adapter-authored Canonical ABI and remains prohibited.",
+        "source": "https://github.com/partite-ai/wacogo/blob/3de16a61796ce02d29795e4a074f37a33e6ebd87/internal/canon/val.go#L389-L398"
+      }
+    }
+  ],
+  "preliminary_screening": {
+    "evidence_level": "discovery-only; versions and executable artifacts were not pinned",
+    "decision_use": "none; WACS, WasmEdge, and wacogo support the executable no-go decision in this record",
+    "entries": [
+      {
+        "runtime": "WAMR",
+        "reason": "The official release was not advanced to executable qualification in this record. The source-only Airbus dev/cm_wasip2_complete fork at 2815b698949edabfe15754781e1fa35c260a0d2f is retained only as a future retest candidate; it has no pinned release artifact or vISA executable evidence here."
+      },
+      {
+        "runtime": "Chicory",
+        "reason": "Not advanced to executable qualification in this record."
+      },
+      {
+        "runtime": "WasmKit",
+        "reason": "Not advanced to executable qualification in this record."
+      },
+      {
+        "runtime": "Firefox SpiderMonkey",
+        "reason": "Not advanced to executable qualification in this record."
+      },
+      {
+        "runtime": "wasm_component_layer and waclay",
+        "reason": "Preliminary lineage review found wasmtime-environ in the Component translation path; no executable qualification was claimed."
+      }
+    ]
+  },
+  "prohibited_bypasses": [
+    "modify or flatten the accepted WIT world",
+    "build a runtime-specific guest or relinked semantic variant",
+    "reflect into internal resource constructors",
+    "hand-write the Canonical ABI indirect parameter area in the vISA adapter",
+    "fall back to Wasmtime or a Wasmtime-derived translator",
+    "publish a placeholder adapter, selector, or matrix cell"
+  ],
+  "upstream_unblock_conditions": [
+    "The unchanged WIT world produces a typed callable surface.",
+    "Contract validation accepts the two unchanged interface-reference imports rather than treating them as unvalidated mismatches.",
+    "Canonical ABI indirect parameter-area lowering exposes typed activate without changing its signature or requiring adapter-authored ABI code.",
+    "wacogo resolves the unchanged nested component's direct interface-imported type arguments, including import-type-kv-error, during real instantiation.",
+    "The host can create, transfer, invalidate, and drop own<namespace> and own<timer-binding> values through a public API.",
+    "All six timer/KV method and resource-drop imports execute through a real host bridge.",
+    "activate, safe point, freeze, fresh-instance restore or thaw, status, cancellation, and cleanup execute without fallback."
+  ]
+}

@@ -14,6 +14,7 @@ use serde_json::Value;
 use visa_component_adapter::AdapterError;
 
 use crate::{
+    carrier::PreparedExecutionGraph,
     error::guest_error,
     node::locked_node_command,
     protocol::{
@@ -34,29 +35,61 @@ pub(crate) struct NodeProcess {
 const POISONED_PROCESS_ERROR: &str = "Node process was terminated after a previous adapter failure";
 
 impl NodeProcess {
-    pub(crate) fn spawn(
+    pub(crate) fn spawn(node: &Path, graph: &PreparedExecutionGraph) -> Result<Self, AdapterError> {
+        Self::spawn_with_expected_digest(node, graph, graph.generated_digest_hex())
+    }
+
+    fn spawn_with_expected_digest(
+        node: &Path,
+        graph: &PreparedExecutionGraph,
+        expected_digest: String,
+    ) -> Result<Self, AdapterError> {
+        let mut command = locked_node_command(node);
+        command
+            .args(["--input-type=module", "--eval", include_str!("driver.mjs"), "--"])
+            .arg(expected_digest);
+        Self::spawn_command(command, Some(graph))
+    }
+
+    #[cfg(test)]
+    fn spawn_test_driver(
         node: &Path,
         driver: &Path,
         entrypoint: &Path,
         artifact_directory: &Path,
     ) -> Result<Self, AdapterError> {
-        let mut child = locked_node_command(node)
-            .arg(driver)
-            .arg(entrypoint)
-            .current_dir(artifact_directory)
+        let mut command = locked_node_command(node);
+        command.arg(driver).arg(entrypoint).current_dir(artifact_directory);
+        Self::spawn_command(command, None)
+    }
+
+    fn spawn_command(
+        mut command: std::process::Command,
+        graph: Option<&PreparedExecutionGraph>,
+    ) -> Result<Self, AdapterError> {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(|error| AdapterError::Instantiation(format!("starting Node: {error}")))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| AdapterError::Instantiation("Node stdin was not available".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AdapterError::Instantiation("Node stdout was not available".into()))?;
+        let Some(mut stdin) = child.stdin.take() else {
+            kill_and_wait(&mut child);
+            return Err(AdapterError::Instantiation("Node stdin was not available".into()));
+        };
+        let Some(stdout) = child.stdout.take() else {
+            drop(stdin);
+            kill_and_wait(&mut child);
+            return Err(AdapterError::Instantiation("Node stdout was not available".into()));
+        };
+        if let Some(graph) = graph
+            && let Err(error) = graph.write_frame(&mut stdin)
+        {
+            kill_and_wait(&mut child);
+            return Err(AdapterError::Instantiation(format!(
+                "writing the path-free Node startup carrier: {error}"
+            )));
+        }
         let mut process = Self {
             child,
             stdin,
@@ -336,6 +369,11 @@ impl NodeProcess {
     }
 }
 
+fn kill_and_wait(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn encode_jsonl<T: Serialize>(value: &T) -> Result<Vec<u8>, AdapterError> {
     let mut output = BoundedJsonBuffer::new(MAX_JSONL_MESSAGE_BYTES - 1);
     serde_json::to_writer(&mut output, value)
@@ -461,6 +499,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::carrier::PreparedExecutionGraph;
 
     const READY_AND_WAIT: &str = r#"
 import { closeSync, readSync, writeSync } from 'node:fs';
@@ -1200,6 +1239,76 @@ closeSync(1);
     }
 
     #[test]
+    fn actual_driver_rejects_substituted_bytes_before_import() {
+        let original = ActualNodeDriver::new();
+        let expected = original.graph.generated_digest_hex();
+        let directory = tempfile::tempdir().expect("substituted carrier marker directory");
+        let marker = directory.path().join("substituted-entrypoint-executed");
+        let marker_json = serde_json::to_string(&marker.to_string_lossy()).unwrap();
+        let substituted_source = format!(
+            "import {{ writeFileSync }} from 'node:fs';\nwriteFileSync({marker_json}, 'bad');\n{ACTUAL_ENTRYPOINT}"
+        );
+        let substituted = PreparedExecutionGraph::new(
+            "handoff-component.component.js".into(),
+            substituted_source.into_bytes(),
+            vec![("handoff-component.component.core.wasm".into(), b"\0asm\x01\0\0\0".to_vec())],
+        )
+        .expect("well-formed substituted graph");
+
+        let error =
+            match NodeProcess::spawn_with_expected_digest(&node_path(), &substituted, expected) {
+                Ok(_) => panic!("a graph with a different captured digest did not fail closed"),
+                Err(error) => error,
+            };
+
+        assert_eq!(error.kind(), visa_component_adapter::AdapterFailureKind::Instantiation);
+        assert!(!marker.exists(), "substituted entrypoint executed before digest validation");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn actual_driver_ignores_replaced_publisher_files_directories_symlinks_and_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("hostile publisher fixture");
+        let published = directory.path().join("published");
+        let moved = directory.path().join("published-original");
+        let external_core = directory.path().join("external.core.wasm");
+        let marker = directory.path().join("replacement-entrypoint-executed");
+        fs::create_dir(&published).unwrap();
+        fs::write(published.join("handoff-component.component.js"), ACTUAL_ENTRYPOINT).unwrap();
+        fs::write(published.join("handoff-component.component.core.wasm"), b"\0asm\x01\0\0\0")
+            .unwrap();
+        let graph = PreparedExecutionGraph::new(
+            "handoff-component.component.js".into(),
+            fs::read(published.join("handoff-component.component.js")).unwrap(),
+            vec![(
+                "handoff-component.component.core.wasm".into(),
+                fs::read(published.join("handoff-component.component.core.wasm")).unwrap(),
+            )],
+        )
+        .expect("capture publisher bytes before replacement");
+
+        fs::rename(&published, &moved).unwrap();
+        fs::create_dir(&published).unwrap();
+        let marker_json = serde_json::to_string(&marker.to_string_lossy()).unwrap();
+        fs::write(
+            published.join("handoff-component.component.js"),
+            format!(
+                "import {{ writeFileSync }} from 'node:fs'; writeFileSync({marker_json}, 'bad');"
+            ),
+        )
+        .unwrap();
+        fs::write(&external_core, b"attacker core").unwrap();
+        symlink(&external_core, published.join("handoff-component.component.core.wasm")).unwrap();
+
+        let process = NodeProcess::spawn(&node_path(), &graph)
+            .expect("owned bytes remain executable after every publisher pathname is replaced");
+        drop(process);
+        assert!(!marker.exists(), "replacement publisher entrypoint unexpectedly executed");
+    }
+
+    #[test]
     fn locally_generated_ids_stop_at_the_javascript_safe_integer_limit() {
         let mut next = MAX_JS_SAFE_INTEGER;
         assert_eq!(
@@ -1253,7 +1362,12 @@ closeSync(1);
             let node = std::env::var_os("VISA_NODE_BIN")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("node"));
-            NodeProcess::spawn(&node, &self.driver, &self.entrypoint, self.directory.path())
+            NodeProcess::spawn_test_driver(
+                &node,
+                &self.driver,
+                &self.entrypoint,
+                self.directory.path(),
+            )
         }
 
         fn spawn_error(&self) -> AdapterError {
@@ -1264,19 +1378,9 @@ closeSync(1);
         }
     }
 
-    struct ActualNodeDriver {
-        directory: tempfile::TempDir,
-        entrypoint: PathBuf,
-    }
-
-    impl ActualNodeDriver {
-        fn new() -> Self {
-            let directory = tempfile::tempdir().expect("actual Node driver directory");
-            let entrypoint = directory.path().join("entrypoint.mjs");
-            fs::write(
-                &entrypoint,
-                r#"
-export function instantiate() {
+    const ACTUAL_ENTRYPOINT: &str = r#"
+export function instantiate(getCoreModule) {
+  getCoreModule('handoff-component.component.core.wasm');
   return {
     workload: {
       activate() {},
@@ -1289,18 +1393,31 @@ export function instantiate() {
     },
   };
 }
-"#,
+"#;
+
+    struct ActualNodeDriver {
+        graph: PreparedExecutionGraph,
+    }
+
+    impl ActualNodeDriver {
+        fn new() -> Self {
+            let graph = PreparedExecutionGraph::new(
+                "handoff-component.component.js".into(),
+                ACTUAL_ENTRYPOINT.as_bytes().to_vec(),
+                vec![("handoff-component.component.core.wasm".into(), b"\0asm\x01\0\0\0".to_vec())],
             )
-            .expect("write actual-driver entrypoint");
-            Self { directory, entrypoint }
+            .expect("actual-driver path-free graph");
+            Self { graph }
         }
 
         fn spawn(&self) -> Result<NodeProcess, AdapterError> {
-            let node = std::env::var_os("VISA_NODE_BIN")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("node"));
-            let driver = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/driver.mjs");
-            NodeProcess::spawn(&node, &driver, &self.entrypoint, self.directory.path())
+            NodeProcess::spawn(&node_path(), &self.graph)
         }
+    }
+
+    fn node_path() -> PathBuf {
+        std::env::var_os("VISA_NODE_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("node"))
     }
 }

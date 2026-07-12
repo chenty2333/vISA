@@ -76,18 +76,18 @@ fn v1_retains_response_class_and_result_kind() {
         json!({ "status": "success", "result": { "kind": "state" } }),
     ))
     .unwrap();
-    let success_ack = project(&single_pair(
+    let impossible_ack = project(&single_pair(
         json!({ "kind": "cleanup_pending_timer" }),
         json!({ "status": "success", "result": { "kind": "ack" } }),
     ))
-    .unwrap();
+    .unwrap_err();
     let error = project(&single_pair(
         json!({ "kind": "cleanup_pending_timer" }),
         json!({ "status": "error", "error": { "message": "runtime-local diagnostic" } }),
     ))
     .unwrap();
 
-    assert_ne!(success_state, success_ack);
+    assert_eq!(impossible_ack.code, "incompatible-stage2-worker-protocol-result");
     assert_ne!(success_state, error);
 }
 
@@ -140,6 +140,15 @@ fn crash_without_response_is_retained_as_no_response() {
     assert_eq!(observations[0].command, Stage2WorkerCommandKind::Crash);
     assert_eq!(observations[0].response, Stage2NormalizedWorkerResponse::NoResponse);
 
+    let immediate_with_response = single_pair(
+        json!({ "kind": "crash", "mode": "immediate", "exit_code": 42 }),
+        json!({ "status": "success", "result": { "kind": "ack" } }),
+    );
+    assert_eq!(
+        project(&immediate_with_response).unwrap_err().code,
+        "forbidden-stage2-worker-protocol-response"
+    );
+
     let after_response = request_only(
         WORKER,
         7,
@@ -149,6 +158,45 @@ fn crash_without_response_is_retained_as_no_response() {
     assert_eq!(
         project(&after_response).unwrap_err().code,
         "missing-stage2-worker-protocol-response"
+    );
+}
+
+#[test]
+fn worker_sequences_must_start_at_one_and_remain_contiguous() {
+    let mut starts_at_two = Vec::new();
+    append_pair(
+        &mut starts_at_two,
+        WORKER,
+        7,
+        2,
+        "request-1",
+        json!({ "kind": "read" }),
+        json!({ "status": "success", "result": { "kind": "state" } }),
+    );
+    assert_eq!(project(&starts_at_two).unwrap_err().code, "invalid-stage2-worker-transcript-order");
+
+    let mut missing_middle_pair = Vec::new();
+    append_pair(
+        &mut missing_middle_pair,
+        WORKER,
+        7,
+        1,
+        "request-1",
+        json!({ "kind": "read" }),
+        json!({ "status": "success", "result": { "kind": "state" } }),
+    );
+    append_pair(
+        &mut missing_middle_pair,
+        WORKER,
+        7,
+        5,
+        "request-3",
+        json!({ "kind": "read" }),
+        json!({ "status": "success", "result": { "kind": "state" } }),
+    );
+    assert_eq!(
+        project(&missing_middle_pair).unwrap_err().code,
+        "invalid-stage2-worker-transcript-order"
     );
 }
 
@@ -194,7 +242,11 @@ fn metadata_transcript(pid: u32, database_path: &str, engine: &str, message: &st
             "role": "source",
             "runtime": "wasmtime",
             "database_path": database_path,
-            "options": { "case_id": CASE_ID },
+            "options": {
+                "case_id": CASE_ID,
+                "namespace_availability": "correct",
+                "authority_policy": "sufficient"
+            },
             "fault": null,
         }),
         json!({
@@ -244,7 +296,11 @@ fn append_pair(
         pid,
         sequence,
         "parent_request",
-        json!({ "version": 1, "id": request_id, "command": command }),
+        json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": request_id,
+            "command": command
+        }),
     );
     append_outer(
         bytes,
@@ -252,7 +308,11 @@ fn append_pair(
         pid,
         sequence + 1,
         "worker_response",
-        json!({ "version": 1, "id": request_id, "outcome": outcome }),
+        json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": request_id,
+            "outcome": outcome
+        }),
     );
 }
 
@@ -264,7 +324,11 @@ fn request_only(worker: &str, pid: u32, request_id: &str, command: Value) -> Vec
         pid,
         1,
         "parent_request",
-        json!({ "version": 1, "id": request_id, "command": command }),
+        json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": request_id,
+            "command": command
+        }),
     );
     bytes
 }

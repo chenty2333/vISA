@@ -473,13 +473,29 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
                 .filter(|line| !line.is_empty())
                 .map(|line| serde_json::from_slice::<serde_json::Value>(line).unwrap())
                 .collect::<Vec<_>>();
+            let response_index = lines
+                .iter()
+                .position(|line| {
+                    line.get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                        .and_then(|line| {
+                            line.pointer("/outcome/result/kind")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .as_deref()
+                        == Some("dump")
+                })
+                .unwrap();
             let mut response = serde_json::from_str::<serde_json::Value>(
-                lines[1].get("line").and_then(serde_json::Value::as_str).unwrap(),
+                lines[response_index].get("line").and_then(serde_json::Value::as_str).unwrap(),
             )
             .unwrap();
             *response.pointer_mut("/outcome/result/portable_component_state").unwrap() =
                 serde_json::json!([0, 1, 2, 3]);
-            lines[1]["line"] = serde_json::Value::String(serde_json::to_string(&response).unwrap());
+            lines[response_index]["line"] =
+                serde_json::Value::String(serde_json::to_string(&response).unwrap());
 
             let reference = &mut bundle.cases[case_index].artifacts.raw_execution[raw_index];
             write_case_ref(root, reference, &json_lines(&lines));
@@ -581,6 +597,834 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
                     "case_policy_digest": policy_digest,
                 }));
             });
+        },
+    );
+}
+
+#[test]
+fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts() {
+    for (label, changed) in [("missing", false), ("changed", true)] {
+        assert_artifact_tamper_with_bundle(
+            &format!("jco-carrier-{label}"),
+            complete_jco_bundle(),
+            &["invalid-stage1-initialized-runtime"],
+            |bundle, root| {
+                let case_index = committed_case_index(bundle);
+                rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                    mutate_embedded_protocol(
+                        lines,
+                        |protocol| {
+                            protocol.pointer("/outcome/result/kind").and_then(|kind| kind.as_str())
+                                == Some("initialized")
+                        },
+                        |protocol| {
+                            let provenance = protocol
+                                .pointer_mut("/outcome/result/runtime/translation_provenance")
+                                .and_then(serde_json::Value::as_object_mut)
+                                .unwrap();
+                            if changed {
+                                provenance.insert(
+                                    "execution_carrier".into(),
+                                    serde_json::Value::String(
+                                        "owned-bytes-stdin-frame-v1-changed".into(),
+                                    ),
+                                );
+                            } else {
+                                provenance.remove("execution_carrier");
+                            }
+                        },
+                    );
+                });
+            },
+        );
+    }
+
+    assert_artifact_tamper_with_bundle(
+        "jco-runtime-selector",
+        complete_jco_bundle(),
+        &["invalid-stage1-initialized-runtime"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/command/kind").and_then(|kind| kind.as_str())
+                            == Some("initialize")
+                    },
+                    |protocol| {
+                        protocol["command"]["runtime"] =
+                            serde_json::Value::String("wasmtime".into());
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper_with_bundle(
+        "jco-primary-initialize",
+        complete_jco_bundle(),
+        &["missing-stage1-primary-initialization"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                lines.retain(|line| {
+                    let protocol = line
+                        .get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+                    protocol
+                        .as_ref()
+                        .and_then(|protocol| protocol.get("id"))
+                        .and_then(|id| id.as_str())
+                        != Some("evidence-verification-source-000001")
+                });
+            });
+        },
+    );
+
+    assert_artifact_tamper_with_bundle(
+        "jco-error-outcome-with-initialized-result",
+        complete_jco_bundle(),
+        &["invalid-stage1-worker-protocol-response"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(|kind| kind.as_str())
+                            == Some("initialized")
+                    },
+                    |protocol| {
+                        let result =
+                            protocol["outcome"].as_object_mut().unwrap().remove("result").unwrap();
+                        protocol["outcome"] = serde_json::json!({
+                            "status": "error",
+                            "error": {
+                                "code": "provider",
+                                "message": "forged initialization failure",
+                                "retryable": false,
+                                "provider_kind": "Denied",
+                            },
+                            "result": result,
+                        });
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper_with_bundle(
+        "jco-auxiliary-initialize-pair-removed",
+        complete_jco_bundle(),
+        &["stage1-worker-first-request-not-initialize"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let worker = format!("{case_id}-destination-audit");
+                let initialize_id = format!("{worker}-000001");
+                let read_id = format!("{worker}-000002");
+                let initialize_request = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": initialize_id,
+                    "command": test_initialize_command(
+                        &case_id,
+                        "destination",
+                        TestRuntime::JcoNode,
+                    ),
+                });
+                let initialize_response = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": initialize_id,
+                    "outcome": {
+                        "status": "success",
+                        "result": {
+                            "kind": "initialized",
+                            "role": "destination",
+                            "case_id": case_id,
+                            "runtime": test_runtime_observation(TestRuntime::JcoNode),
+                        },
+                    },
+                });
+                let read_request = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": read_id,
+                    "command": { "kind": "read" },
+                });
+                let read_response = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": read_id,
+                    "outcome": {
+                        "status": "success",
+                        "result": { "kind": "state" },
+                    },
+                });
+                for (sequence, stream, protocol) in [
+                    (1, "parent_request", initialize_request),
+                    (2, "worker_response", initialize_response),
+                    (3, "parent_request", read_request),
+                    (4, "worker_response", read_response),
+                ] {
+                    lines.push(serde_json::json!({
+                        "worker": worker,
+                        "pid": 101,
+                        "sequence": sequence,
+                        "stream": stream,
+                        "line": serde_json::to_string(&protocol).unwrap(),
+                    }));
+                }
+                lines.retain(|line| {
+                    line.get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                        .and_then(|protocol| protocol.get("id").cloned())
+                        .and_then(|id| id.as_str().map(str::to_owned))
+                        .as_deref()
+                        != Some(initialize_id.as_str())
+                });
+                for line in lines.iter_mut().filter(|line| {
+                    line.get("worker").and_then(serde_json::Value::as_str) == Some(worker.as_str())
+                }) {
+                    let sequence = line["sequence"].as_u64().unwrap();
+                    line["sequence"] = serde_json::json!(sequence - 2);
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper_with_bundle(
+        "jco-runtime-provenance-changes-across-cases",
+        complete_jco_bundle(),
+        &["inconsistent-stage1-runtime-identity"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(|kind| kind.as_str())
+                            == Some("initialized")
+                    },
+                    |protocol| {
+                        protocol["outcome"]["result"]["runtime"]["translation_provenance"]["node_executable_sha256"] =
+                            serde_json::Value::String(digest('9'));
+                    },
+                );
+            });
+        },
+    );
+}
+
+#[test]
+fn artifact_gate_enforces_per_worker_transcript_state() {
+    assert_artifact_tamper(
+        "worker-pid-splice",
+        &["invalid-stage1-worker-process"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let response_id = "evidence-verification-source-000001";
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                let response = lines
+                    .iter_mut()
+                    .find(|line| {
+                        line.get("stream").and_then(serde_json::Value::as_str)
+                            == Some("worker_response")
+                            && line
+                                .get("line")
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|line| {
+                                    serde_json::from_str::<serde_json::Value>(line).ok()
+                                })
+                                .and_then(|protocol| protocol.get("id").cloned())
+                                .and_then(|id| id.as_str().map(str::to_owned))
+                                .as_deref()
+                                == Some(response_id)
+                    })
+                    .expect("primary initialize response");
+                response["pid"] = serde_json::json!(101);
+            });
+        },
+    );
+
+    assert_artifact_tamper_with_bundle(
+        "failed-auxiliary-runtime-selector",
+        complete_jco_bundle(),
+        &["invalid-stage1-initialize-request"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| {
+                    case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection
+                })
+                .unwrap();
+            let case_id = bundle.cases[case_index].case_id.clone();
+            let initialize_id = format!("{case_id}-source-audit-000001");
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                assert!(lines.iter().any(|line| {
+                    line.get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                        .is_some_and(|protocol| {
+                            protocol.get("id").and_then(serde_json::Value::as_str)
+                                == Some(initialize_id.as_str())
+                                && protocol
+                                    .pointer("/outcome/status")
+                                    .and_then(serde_json::Value::as_str)
+                                    == Some("error")
+                        })
+                }));
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.get("id").and_then(serde_json::Value::as_str)
+                            == Some(initialize_id.as_str())
+                            && protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                                == Some("initialize")
+                    },
+                    |protocol| {
+                        protocol["command"]["runtime"] =
+                            serde_json::Value::String("wasmtime".into());
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "missing-non-crash-response",
+        &["missing-stage1-worker-response"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "safe-point-unreachable")
+                .unwrap();
+            let response_id = "safe-point-unreachable-destination-000002";
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let original_len = lines.len();
+                lines.retain(|line| {
+                    let is_response = line.get("stream").and_then(serde_json::Value::as_str)
+                        == Some("worker_response");
+                    let has_id = line
+                        .get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                        .and_then(|protocol| protocol.get("id").cloned())
+                        .and_then(|id| id.as_str().map(str::to_owned))
+                        .as_deref()
+                        == Some(response_id);
+                    !(is_response && has_id)
+                });
+                assert_eq!(lines.len() + 1, original_len);
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "missing-after-response-crash-response",
+        &["missing-stage1-worker-response"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "safe-point-unreachable")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let worker = "safe-point-unreachable-destination";
+                let crash = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": format!("{worker}-000003"),
+                    "command": {
+                        "kind": "crash",
+                        "mode": "after_response",
+                        "exit_code": 86,
+                    },
+                });
+                lines.push(serde_json::json!({
+                    "worker": worker,
+                    "pid": 200,
+                    "sequence": 5,
+                    "stream": "parent_request",
+                    "line": serde_json::to_string(&crash).unwrap(),
+                }));
+            });
+        },
+    );
+
+    let root = temp_dir("crash-without-response");
+    let mut bundle = complete_bundle();
+    materialize_artifacts(&mut bundle, &root);
+    let case_index =
+        bundle.cases.iter().position(|case| case.case_id == "safe-point-unreachable").unwrap();
+    rewrite_raw_transcript(&mut bundle, &root, case_index, "destination.jsonl", |lines| {
+        let worker = "safe-point-unreachable-destination";
+        let crash = serde_json::json!({
+            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+            "id": format!("{worker}-000003"),
+            "command": {
+                "kind": "crash",
+                "mode": "immediate",
+                "exit_code": 86,
+            },
+        });
+        lines.push(serde_json::json!({
+            "worker": worker,
+            "pid": 200,
+            "sequence": 5,
+            "stream": "parent_request",
+            "line": serde_json::to_string(&crash).unwrap(),
+        }));
+    });
+    let report = validate_stage1_evidence_artifacts(&bundle, &root);
+    assert!(report.ok, "immediate crash without response was rejected: {report:#?}");
+    fs::remove_dir_all(root).unwrap();
+
+    assert_artifact_tamper(
+        "immediate-crash-with-response",
+        &["unexpected-stage1-worker-response"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "safe-point-unreachable")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let worker = "safe-point-unreachable-destination";
+                let request_id = format!("{worker}-000003");
+                let crash = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": request_id.clone(),
+                    "command": {
+                        "kind": "crash",
+                        "mode": "immediate",
+                        "exit_code": 86,
+                    },
+                });
+                let response = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": request_id,
+                    "outcome": {
+                        "status": "success",
+                        "result": { "kind": "ack" },
+                    },
+                });
+                lines.extend([
+                    serde_json::json!({
+                        "worker": worker,
+                        "pid": 200,
+                        "sequence": 5,
+                        "stream": "parent_request",
+                        "line": serde_json::to_string(&crash).unwrap(),
+                    }),
+                    serde_json::json!({
+                        "worker": worker,
+                        "pid": 200,
+                        "sequence": 6,
+                        "stream": "worker_response",
+                        "line": serde_json::to_string(&response).unwrap(),
+                    }),
+                ]);
+            });
+        },
+    );
+}
+
+#[test]
+fn artifact_gate_binds_initialize_options_and_faults_to_the_matrix() {
+    for (label, mutate) in [
+        ("primary-namespace", ("namespace_availability", "missing")),
+        ("primary-authority", ("authority_policy", "broader")),
+    ] {
+        assert_artifact_tamper(label, &["invalid-stage1-initialize-request"], |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.get("id").and_then(serde_json::Value::as_str)
+                            == Some(format!("{case_id}-source-000001").as_str())
+                    },
+                    |protocol| {
+                        protocol["command"]["options"][mutate.0] =
+                            serde_json::Value::String(mutate.1.to_owned());
+                    },
+                );
+            });
+        });
+    }
+
+    assert_artifact_tamper(
+        "near-match-primary-worker-label",
+        &["invalid-stage1-initialize-request"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            let primary = format!("{case_id}-source");
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                for line in lines.iter_mut().filter(|line| {
+                    line.get("worker").and_then(serde_json::Value::as_str) == Some(primary.as_str())
+                }) {
+                    line["worker"] = serde_json::Value::String(format!("{primary}-near-match"));
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "primary-options-unknown-field",
+        &["invalid-stage1-worker-request"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                            == Some("initialize")
+                            && protocol
+                                .get("id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|id| id.ends_with("-source-000001"))
+                    },
+                    |protocol| {
+                        protocol["command"]["options"]["unexpected"] = serde_json::json!(true);
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "primary-legal-but-wrong-fault",
+        &["invalid-stage1-initialize-request"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|id| id.ends_with("-source-000001"))
+                    },
+                    |protocol| {
+                        protocol["command"]["fault"] =
+                            serde_json::Value::String("after_kv_commit".to_owned());
+                    },
+                );
+            });
+        },
+    );
+
+    for (label, worker_suffix, fault) in [
+        ("supplemental-initial-missing-fault", "supplemental-source", None),
+        (
+            "supplemental-retry-reuses-fault",
+            "supplemental-source-retry",
+            Some("before_journal_write"),
+        ),
+    ] {
+        assert_artifact_tamper(label, &["invalid-stage1-initialize-request"], |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|id| id.ends_with(&format!("-{worker_suffix}-000001")))
+                    },
+                    |protocol| {
+                        protocol["command"]["fault"] = fault
+                            .map_or(serde_json::Value::Null, |fault| {
+                                serde_json::Value::String(fault.to_owned())
+                            });
+                    },
+                );
+            });
+        });
+    }
+}
+
+#[test]
+fn artifact_gate_binds_provider_fault_coverage_roles_to_matrix_faults() {
+    for (label, role) in [
+        ("source-coverage-wrong-matrix-case", "source"),
+        ("destination-coverage-wrong-matrix-case", "destination"),
+    ] {
+        assert_artifact_tamper(
+            label,
+            &["incomplete-stage1-provider-fault-coverage"],
+            move |bundle, root| {
+                let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+                let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+                let coverage = matrix["provider_fault_coverage"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|coverage| coverage["role"].as_str() == Some(role))
+                    .unwrap();
+                coverage["case_id"] = serde_json::Value::String("evidence-verification".to_owned());
+                write_provenance_ref(
+                    root,
+                    &mut bundle.provenance.artifacts.matrix_manifest,
+                    &serde_json::to_vec_pretty(&matrix).unwrap(),
+                );
+            },
+        );
+    }
+
+    assert_artifact_tamper(
+        "provider-coverage-unknown-role",
+        &["incomplete-stage1-provider-fault-coverage"],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            matrix["provider_fault_coverage"][0]["role"] =
+                serde_json::Value::String("source-recovery".to_owned());
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
+        },
+    );
+
+    assert_artifact_tamper(
+        "provider-coverage-supplemental-role-for-non-supplemental-point",
+        &["incomplete-stage1-provider-fault-coverage"],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            let coverage = matrix["provider_fault_coverage"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|coverage| coverage["point"].as_str() == Some("after_kv_commit"))
+                .unwrap();
+            coverage["case_id"] = serde_json::Value::String("evidence-verification".to_owned());
+            coverage["role"] = serde_json::Value::String("supplemental-source".to_owned());
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
+        },
+    );
+}
+
+#[test]
+fn artifact_gate_rejects_protocol_deletion_and_impossible_wire_observations() {
+    assert_artifact_tamper(
+        "worker-transcript-first-line-deleted",
+        &["invalid-stage1-raw-transcript-sequence"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let worker = format!("{case_id}-destination");
+                lines.retain(|line| {
+                    line.get("worker").and_then(serde_json::Value::as_str) != Some(worker.as_str())
+                        || line.get("sequence").and_then(serde_json::Value::as_u64) != Some(1)
+                });
+            });
+        },
+    );
+
+    for (label, extra_field) in
+        [("immediate-crash-missing-exit", false), ("immediate-crash-extra-field", true)]
+    {
+        assert_artifact_tamper(
+            label,
+            &["invalid-stage1-worker-request", "missing-stage1-worker-response"],
+            |bundle, root| {
+                let case_index = committed_case_index(bundle);
+                let case_id = bundle.cases[case_index].case_id.clone();
+                rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                    let worker = format!("{case_id}-destination");
+                    let mut command = serde_json::json!({
+                        "kind": "crash",
+                        "mode": "immediate",
+                    });
+                    if extra_field {
+                        command["exit_code"] = serde_json::json!(86);
+                        command["unexpected"] = serde_json::json!(true);
+                    }
+                    let request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": format!("{worker}-000003"),
+                        "command": command,
+                    });
+                    lines.push(serde_json::json!({
+                        "worker": worker,
+                        "pid": 200,
+                        "sequence": 5,
+                        "stream": "parent_request",
+                        "line": serde_json::to_string(&request).unwrap(),
+                    }));
+                });
+            },
+        );
+    }
+
+    assert_artifact_tamper(
+        "middle-request-response-pair-deleted",
+        &["invalid-stage1-raw-transcript-sequence"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let worker = format!("{case_id}-destination");
+                let request_id = format!("{worker}-000003");
+                let request = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": request_id,
+                    "command": { "kind": "read" },
+                });
+                let response = serde_json::json!({
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                    "id": request_id,
+                    "outcome": { "status": "success", "result": { "kind": "state" } },
+                });
+                lines.extend([
+                    serde_json::json!({
+                        "worker": worker,
+                        "pid": 200,
+                        "sequence": 5,
+                        "stream": "parent_request",
+                        "line": serde_json::to_string(&request).unwrap(),
+                    }),
+                    serde_json::json!({
+                        "worker": worker,
+                        "pid": 200,
+                        "sequence": 6,
+                        "stream": "worker_response",
+                        "line": serde_json::to_string(&response).unwrap(),
+                    }),
+                ]);
+                lines.retain(|line| {
+                    line.get("worker").and_then(serde_json::Value::as_str) != Some(worker.as_str())
+                        || !matches!(
+                            line.get("sequence").and_then(serde_json::Value::as_u64),
+                            Some(3) | Some(4)
+                        )
+                });
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "primary-workers-share-pid",
+        &["non-independent-stage1-primary-workers"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                for line in lines.iter_mut().filter(|line| {
+                    line.get("worker").and_then(serde_json::Value::as_str)
+                        == Some(format!("{case_id}-source").as_str())
+                }) {
+                    line["pid"] = serde_json::json!(200);
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "dump-response-to-read-request",
+        &["incompatible-stage1-worker-result"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                    },
+                    |protocol| {
+                        protocol["command"]["kind"] = serde_json::Value::String("read".to_owned());
+                    },
+                );
+            });
+        },
+    );
+}
+
+#[test]
+fn artifact_gate_requires_the_exact_raw_and_matrix_registries() {
+    for file_name in ["source.jsonl", "destination.jsonl"] {
+        assert_artifact_tamper(
+            &format!("missing-{file_name}"),
+            &["invalid-stage1-raw-artifact-set"],
+            |bundle, _root| {
+                let case_index = committed_case_index(bundle);
+                bundle.cases[case_index]
+                    .artifacts
+                    .raw_execution
+                    .retain(|reference| !reference.uri.ends_with(file_name));
+            },
+        );
+    }
+
+    assert_artifact_tamper(
+        "raw-source-alternate-directory",
+        &["invalid-stage1-raw-artifact-set"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            let case_id = bundle.cases[case_index].case_id.clone();
+            let reference = bundle.cases[case_index]
+                .artifacts
+                .raw_execution
+                .iter_mut()
+                .find(|reference| reference.uri.ends_with("source.jsonl"))
+                .unwrap();
+            let original = root.join(&reference.uri);
+            let alternate_uri = format!("cases/{case_id}/alternate/source.jsonl");
+            let alternate = root.join(&alternate_uri);
+            fs::create_dir_all(alternate.parent().unwrap()).unwrap();
+            fs::copy(original, alternate).unwrap();
+            reference.uri = alternate_uri;
+        },
+    );
+
+    assert_artifact_tamper(
+        "matrix-options-unknown-field",
+        &["invalid-stage1-matrix-manifest"],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            matrix["entries"][0]["options"]["unexpected"] = serde_json::json!(true);
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
+        },
+    );
+
+    assert_artifact_tamper(
+        "matrix-extra-unexecuted-entry",
+        &["invalid-stage1-matrix-registry"],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            let mut extra = matrix["entries"][0].clone();
+            extra["case_id"] = serde_json::Value::String("unexecuted-extra-case".to_owned());
+            extra["options"]["case_id"] =
+                serde_json::Value::String("unexecuted-extra-case".to_owned());
+            matrix["entries"].as_array_mut().unwrap().push(extra);
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
         },
     );
 }
@@ -856,7 +1700,7 @@ fn complete_bundle() -> Stage1EvidenceBundle {
                 stage1_expected_ownership(outcome) != Stage1ExpectedOwnership::SourceRetained;
             let authority = authority_for(outcome, &policy_sha256);
             let reference = |name: &str, sha256: String| Stage1ArtifactReference {
-                uri: format!("{}/{name}", definition.id),
+                uri: format!("cases/{}/{name}", definition.id),
                 sha256,
                 bundle_id: bundle_id.to_string(),
                 case_id: definition.id.to_string(),
@@ -958,8 +1802,14 @@ fn complete_bundle() -> Stage1EvidenceBundle {
         finished_at_unix_ms: 2_000,
         environment: Stage1ExecutionEnvironment {
             carrier: versioned("wit-checkpoint-restore", "1"),
-            source_runtime: versioned("wasmtime", "43.0.2"),
-            destination_runtime: versioned("wasmtime", "43.0.2"),
+            source_runtime: versioned(
+                crate::STAGE2_WASMTIME_ENVIRONMENT_NAME,
+                crate::STAGE2_WASMTIME_ENVIRONMENT_VERSION,
+            ),
+            destination_runtime: versioned(
+                crate::STAGE2_WASMTIME_ENVIRONMENT_NAME,
+                crate::STAGE2_WASMTIME_ENVIRONMENT_VERSION,
+            ),
             source_isa: Stage1IsaIdentity {
                 architecture: "x86_64".to_string(),
                 abi: "linux-gnu".to_string(),
@@ -1041,6 +1891,16 @@ fn complete_bundle() -> Stage1EvidenceBundle {
     }
 }
 
+fn complete_jco_bundle() -> Stage1EvidenceBundle {
+    let mut bundle = complete_bundle();
+    bundle.environment.source_runtime = versioned(
+        crate::STAGE2_JCO_NODE_ENVIRONMENT_NAME,
+        crate::STAGE2_JCO_NODE_ENVIRONMENT_VERSION,
+    );
+    bundle.environment.destination_runtime = bundle.environment.source_runtime.clone();
+    bundle
+}
+
 fn authority_for(outcome: Stage1CaseOutcome, policy_sha256: &str) -> Stage1AuthorityEvidence {
     let (destination_lease_epoch, fencing_epoch, ownership, source_fenced) =
         match stage1_expected_ownership(outcome) {
@@ -1070,12 +1930,16 @@ fn materialize_artifacts(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     fs::create_dir_all(root).unwrap();
     materialize_provenance(bundle, root);
     let mut performance_raw = None;
+    let source_runtime = bundle.environment.source_runtime.clone();
+    let destination_runtime = bundle.environment.destination_runtime.clone();
     for case in &mut bundle.cases {
         materialize_case(
             case,
             root,
             bundle.provenance.component_sha256.as_str(),
             bundle.provenance.profile_sha256.as_str(),
+            &source_runtime,
+            &destination_runtime,
         );
         if case.case_id == "performance-observations" {
             performance_raw = case
@@ -1220,19 +2084,22 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     let entries = bundle
         .cases
         .iter()
-        .map(|case| TestMatrixEntry {
-            case_id: case.case_id.clone(),
-            options: TestMatrixOptions {
+        .map(|case| {
+            let (source_fault, destination_fault) = test_matrix_faults(&case.case_id);
+            TestMatrixEntry {
                 case_id: case.case_id.clone(),
-                namespace_availability: TestNamespaceAvailability::Correct,
-                authority_policy: TestAuthorityPolicyMode::Sufficient,
-            },
-            config_digest: digest_from_hex(&case.case_config_sha256),
-            policy_digest: digest_from_hex(&case.case_policy_sha256),
-            source_fault: None,
-            destination_fault: None,
-            destination_support: TestDestinationSupport::Compatible,
-            scenario: "typed-test-fixture".to_owned(),
+                options: TestMatrixOptions {
+                    case_id: case.case_id.clone(),
+                    namespace_availability: TestNamespaceAvailability::Correct,
+                    authority_policy: TestAuthorityPolicyMode::Sufficient,
+                },
+                config_digest: digest_from_hex(&case.case_config_sha256),
+                policy_digest: digest_from_hex(&case.case_policy_sha256),
+                source_fault,
+                destination_fault,
+                destination_support: TestDestinationSupport::Compatible,
+                scenario: "typed-test-fixture".to_owned(),
+            }
         })
         .collect::<Vec<_>>();
     let coverage = vec![
@@ -1290,12 +2157,32 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
 }
 
 fn fault(point: TestFaultPoint) -> TestFaultCoverage {
+    let (case_id, role) = match point {
+        TestFaultPoint::BeforeJournalWrite
+        | TestFaultPoint::AfterJournalWrite
+        | TestFaultPoint::BeforeActivationBundle
+        | TestFaultPoint::AfterActivationBundle => ("evidence-verification", "supplemental-source"),
+        TestFaultPoint::BeforeCommitBundle => {
+            ("durable-journal-or-commit-write-fails", "destination")
+        }
+        TestFaultPoint::AfterCommitBundle => ("commit-acknowledgement-lost", "destination"),
+        TestFaultPoint::AfterKvCommit => ("kv-unknown-outcome", "source"),
+    };
     TestFaultCoverage {
         point,
-        case_id: "evidence-verification".to_owned(),
-        role: "source".to_owned(),
+        case_id: case_id.to_owned(),
+        role: role.to_owned(),
         trigger: "typed test trigger".to_owned(),
         expected: "typed test outcome".to_owned(),
+    }
+}
+
+fn test_matrix_faults(case_id: &str) -> (Option<TestFaultPoint>, Option<TestFaultPoint>) {
+    match case_id {
+        "kv-unknown-outcome" => (Some(TestFaultPoint::AfterKvCommit), None),
+        "durable-journal-or-commit-write-fails" => (None, Some(TestFaultPoint::BeforeCommitBundle)),
+        "commit-acknowledgement-lost" => (None, Some(TestFaultPoint::AfterCommitBundle)),
+        _ => (None, None),
     }
 }
 
@@ -1316,6 +2203,8 @@ fn materialize_case(
     root: &Path,
     component_sha256: &str,
     profile_sha256: &str,
+    source_runtime: &Stage1VersionedIdentity,
+    destination_runtime: &Stage1VersionedIdentity,
 ) {
     let component_digest = digest_from_hex(component_sha256);
     let profile_digest = digest_from_hex(profile_sha256);
@@ -1384,7 +2273,15 @@ fn materialize_case(
         reference.receipt_id = identity_hex(receipt.binding.identity);
         write_case_ref(root, &mut reference.artifact, &serde_json::to_vec(&receipt).unwrap());
     }
-    materialize_raw(case, root, &source_raw_state, destination_raw_state.as_ref(), final_digest);
+    materialize_raw(
+        case,
+        root,
+        &source_raw_state,
+        destination_raw_state.as_ref(),
+        final_digest,
+        source_runtime,
+        destination_runtime,
+    );
 }
 
 fn source_state(
@@ -1781,21 +2678,49 @@ fn materialize_raw(
     source_state: &contract_core::CanonicalState,
     destination_state: Option<&contract_core::CanonicalState>,
     final_digest: contract_core::Digest,
+    source_runtime: &Stage1VersionedIdentity,
+    destination_runtime: &Stage1VersionedIdentity,
 ) {
     for reference in &mut case.artifacts.raw_execution {
         if reference.uri.ends_with("source.jsonl") || reference.uri.ends_with("destination.jsonl") {
             let role =
                 if reference.uri.ends_with("source.jsonl") { "source" } else { "destination" };
+            let primary_pid = if role == "source" { 100 } else { 200 };
             let worker = format!("{}-{role}", case.case_id);
-            let request_id = format!("{worker}-000001");
+            let runtime =
+                test_runtime(if role == "source" { source_runtime } else { destination_runtime });
+            let initialize_id = format!("{worker}-000001");
+            let (source_fault, destination_fault) = test_matrix_faults(&case.case_id);
+            let primary_fault = if role == "source" { source_fault } else { destination_fault };
+            let mut initialize_command = test_initialize_command(&case.case_id, role, runtime);
+            initialize_command["fault"] = serde_json::to_value(primary_fault).unwrap();
+            let initialize_request = serde_json::json!({
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                "id": initialize_id,
+                "command": initialize_command,
+            });
+            let initialize_response = serde_json::json!({
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                "id": initialize_id,
+                "outcome": {
+                    "status": "success",
+                    "result": {
+                        "kind": "initialized",
+                        "role": role,
+                        "case_id": case.case_id,
+                        "runtime": test_runtime_observation(runtime),
+                    },
+                }
+            });
+            let request_id = format!("{worker}-000002");
             let dump_state = if role == "source" { Some(source_state) } else { destination_state };
             let request = serde_json::json!({
-                "version": 1,
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
-                "command": { "kind": if dump_state.is_some() { "dump" } else { "validate_destination" } }
+                "command": { "kind": if dump_state.is_some() { "dump" } else { "read" } }
             });
             let result = dump_state.map_or_else(
-                || serde_json::json!({ "kind": "ack" }),
+                || serde_json::json!({ "kind": "state" }),
                 |state| {
                     serde_json::json!({
                         "kind": "dump",
@@ -1806,7 +2731,7 @@ fn materialize_raw(
                 },
             );
             let response = serde_json::json!({
-                "version": 1,
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
                 "outcome": {
                     "status": "success",
@@ -1816,30 +2741,106 @@ fn materialize_raw(
             let mut transcript = vec![
                 serde_json::json!({
                     "worker": worker.clone(),
-                    "pid": 100,
+                    "pid": primary_pid,
                     "sequence": 1,
+                    "stream": "parent_request",
+                    "line": serde_json::to_string(&initialize_request).unwrap(),
+                }),
+                serde_json::json!({
+                    "worker": worker.clone(),
+                    "pid": primary_pid,
+                    "sequence": 2,
+                    "stream": "worker_response",
+                    "line": serde_json::to_string(&initialize_response).unwrap(),
+                }),
+                serde_json::json!({
+                    "worker": worker.clone(),
+                    "pid": primary_pid,
+                    "sequence": 3,
                     "stream": "parent_request",
                     "line": serde_json::to_string(&request).unwrap(),
                 }),
                 serde_json::json!({
                     "worker": worker.clone(),
-                    "pid": 100,
-                    "sequence": 2,
+                    "pid": primary_pid,
+                    "sequence": 4,
                     "stream": "worker_response",
                     "line": serde_json::to_string(&response).unwrap(),
                 }),
             ];
+            if case.case_id == "evidence-verification" && role == "source" {
+                let supplemental_case = "evidence-verification-fault-before-journal-write";
+                let initial_worker = format!("{supplemental_case}-supplemental-source");
+                let retry_worker = format!("{initial_worker}-retry");
+                for (worker, pid, fault) in [
+                    (&initial_worker, 300, Some("before_journal_write")),
+                    (&retry_worker, 301, None),
+                ] {
+                    let request_id = format!("{worker}-000001");
+                    let mut command = test_initialize_command(supplemental_case, role, runtime);
+                    command["fault"] = fault.map_or(serde_json::Value::Null, |fault| {
+                        serde_json::Value::String(fault.to_owned())
+                    });
+                    let request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": request_id,
+                        "command": command,
+                    });
+                    let response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": request_id,
+                        "outcome": {
+                            "status": "success",
+                            "result": {
+                                "kind": "initialized",
+                                "role": role,
+                                "case_id": supplemental_case,
+                                "runtime": test_runtime_observation(runtime),
+                            },
+                        },
+                    });
+                    transcript.extend([
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": pid,
+                            "sequence": 1,
+                            "stream": "parent_request",
+                            "line": serde_json::to_string(&request).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": pid,
+                            "sequence": 2,
+                            "stream": "worker_response",
+                            "line": serde_json::to_string(&response).unwrap(),
+                        }),
+                    ]);
+                }
+            }
             if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
-                let revoked_id = format!("{worker}-000002");
+                let (revoked_worker, revoked_id, sequence, command) = if role == "source" {
+                    let revoked_worker = format!("{}-source-audit", case.case_id);
+                    (
+                        revoked_worker.clone(),
+                        format!("{revoked_worker}-000001"),
+                        1,
+                        test_initialize_command(&case.case_id, role, runtime),
+                    )
+                } else {
+                    (
+                        worker.clone(),
+                        format!("{worker}-000003"),
+                        5,
+                        serde_json::json!({ "kind": "prepare_destination" }),
+                    )
+                };
                 let revoked_request = serde_json::json!({
-                    "version": 1,
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                     "id": revoked_id,
-                    "command": {
-                        "kind": if role == "source" { "initialize" } else { "prepare_destination" }
-                    }
+                    "command": command,
                 });
                 let revoked_response = serde_json::json!({
-                    "version": 1,
+                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                     "id": revoked_id,
                     "outcome": {
                         "status": "error",
@@ -1853,16 +2854,16 @@ fn materialize_raw(
                 });
                 transcript.extend([
                     serde_json::json!({
-                        "worker": worker.clone(),
-                        "pid": 100,
-                        "sequence": 3,
+                        "worker": revoked_worker.clone(),
+                        "pid": if role == "source" { 101 } else { primary_pid },
+                        "sequence": sequence,
                         "stream": "parent_request",
                         "line": serde_json::to_string(&revoked_request).unwrap(),
                     }),
                     serde_json::json!({
-                        "worker": worker,
-                        "pid": 100,
-                        "sequence": 4,
+                        "worker": revoked_worker,
+                        "pid": if role == "source" { 101 } else { primary_pid },
+                        "sequence": sequence + 1,
                         "stream": "worker_response",
                         "line": serde_json::to_string(&revoked_response).unwrap(),
                     }),
@@ -1919,6 +2920,82 @@ fn materialize_raw(
             .unwrap();
             write_case_ref(root, reference, &bytes);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestRuntime {
+    Wasmtime,
+    JcoNode,
+}
+
+fn test_runtime(identity: &Stage1VersionedIdentity) -> TestRuntime {
+    if identity.name == crate::STAGE2_WASMTIME_ENVIRONMENT_NAME
+        && identity.version == crate::STAGE2_WASMTIME_ENVIRONMENT_VERSION
+    {
+        TestRuntime::Wasmtime
+    } else if identity.name == crate::STAGE2_JCO_NODE_ENVIRONMENT_NAME
+        && identity.version == crate::STAGE2_JCO_NODE_ENVIRONMENT_VERSION
+    {
+        TestRuntime::JcoNode
+    } else {
+        panic!("test fixture has unsupported runtime identity {identity:?}");
+    }
+}
+
+fn test_initialize_command(case_id: &str, role: &str, runtime: TestRuntime) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "initialize",
+        "role": role,
+        "runtime": match runtime {
+            TestRuntime::Wasmtime => "wasmtime",
+            TestRuntime::JcoNode => "jco_node",
+        },
+        "database_path": format!("/tmp/{case_id}.sqlite3"),
+        "options": {
+            "case_id": case_id,
+            "namespace_availability": "correct",
+            "authority_policy": "sufficient",
+        },
+        "fault": null,
+    })
+}
+
+fn test_runtime_observation(runtime: TestRuntime) -> serde_json::Value {
+    match runtime {
+        TestRuntime::Wasmtime => serde_json::json!({
+            "implementation": "visa_wasmtime",
+            "implementation_version": crate::STAGE2_WASMTIME_IMPLEMENTATION_VERSION,
+            "engine": "wasmtime",
+            "engine_version": crate::STAGE2_WASMTIME_ENGINE_VERSION,
+            "translation_provenance": null,
+        }),
+        TestRuntime::JcoNode => serde_json::json!({
+            "implementation": "visa_jco_node+jco+js-component-bindgen",
+            "implementation_version": crate::STAGE2_JCO_NODE_IMPLEMENTATION_VERSION,
+            "engine": "node+v8",
+            "engine_version": format!(
+                "{}/v8-{}",
+                crate::STAGE2_NODE_VERSION,
+                crate::STAGE2_V8_VERSION
+            ),
+            "translation_provenance": {
+                "jco_version": crate::STAGE2_JCO_VERSION,
+                "js_component_bindgen_version": crate::STAGE2_JS_COMPONENT_BINDGEN_VERSION,
+                "translator": "wasmtime-environ component translator (shared by js-component-bindgen)",
+                "translator_version": crate::STAGE2_COMPONENT_TRANSLATOR_VERSION,
+                "translation_options": crate::STAGE2_JCO_TRANSLATION_OPTIONS,
+                "node_executable_path": "/test/node",
+                "node_executable_sha256": digest('1'),
+                "node_version": crate::STAGE2_NODE_VERSION,
+                "v8_version": crate::STAGE2_V8_VERSION,
+                "rpc_protocol_version": crate::STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION,
+                "execution_carrier": crate::JCO_NODE_EXECUTION_CARRIER,
+                "generated_sha256": digest('2'),
+                "driver_sha256": digest('3'),
+                "core_module_sha256s": [digest('4')],
+            },
+        }),
     }
 }
 
@@ -1998,8 +3075,16 @@ fn assert_artifact_tamper(
     expected_codes: &[&str],
     tamper: impl FnOnce(&mut Stage1EvidenceBundle, &Path),
 ) {
+    assert_artifact_tamper_with_bundle(label, complete_bundle(), expected_codes, tamper);
+}
+
+fn assert_artifact_tamper_with_bundle(
+    label: &str,
+    mut bundle: Stage1EvidenceBundle,
+    expected_codes: &[&str],
+    tamper: impl FnOnce(&mut Stage1EvidenceBundle, &Path),
+) {
     let root = temp_dir(label);
-    let mut bundle = complete_bundle();
     materialize_artifacts(&mut bundle, &root);
     tamper(&mut bundle, &root);
 
@@ -2009,6 +3094,28 @@ fn assert_artifact_tamper(
         assert_code(&report, code);
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+fn mutate_embedded_protocol(
+    lines: &mut [serde_json::Value],
+    matches: impl Fn(&serde_json::Value) -> bool,
+    mutate: impl FnOnce(&mut serde_json::Value),
+) {
+    let index = lines
+        .iter()
+        .position(|line| {
+            line.get("line")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .is_some_and(|protocol| matches(&protocol))
+        })
+        .expect("matching embedded protocol line");
+    let mut protocol = serde_json::from_str::<serde_json::Value>(
+        lines[index].get("line").and_then(serde_json::Value::as_str).unwrap(),
+    )
+    .unwrap();
+    mutate(&mut protocol);
+    lines[index]["line"] = serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
 }
 
 fn committed_case_index(bundle: &Stage1EvidenceBundle) -> usize {

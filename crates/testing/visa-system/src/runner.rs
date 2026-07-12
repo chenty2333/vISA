@@ -7,8 +7,8 @@ use std::{
 use crate::{evidence::CaseExecutionRecord, protocol::RuntimeIdentityView};
 
 const WORKER_TIMEOUT: Duration = Duration::from_secs(10);
-// JcoNode initialization and destination activation include translation-tree
-// verification and, where applicable, Node/V8 startup. Keep their liveness
+// JcoNode initialization and destination activation include owned-graph and
+// carrier verification plus, where applicable, Node/V8 startup. Keep their liveness
 // budget distinct from steady-state worker command handling.
 const WORKER_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const TIMER_MARGIN: Duration = Duration::from_millis(20);

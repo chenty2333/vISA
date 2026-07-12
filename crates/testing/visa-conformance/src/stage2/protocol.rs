@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::model::Stage2Runtime;
-
-const PROTOCOL_VERSION: u64 = 1;
+use crate::STAGE1_WORKER_PROTOCOL_VERSION;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ProtocolResponseStatus {
@@ -73,6 +72,7 @@ pub(crate) enum ProtocolResponseProjection {
 pub(crate) struct ProtocolRequestProjection {
     pub(crate) kind: ProtocolCommandKind,
     pub(crate) permits_no_response: bool,
+    pub(crate) forbids_response: bool,
 }
 
 #[derive(Deserialize)]
@@ -119,9 +119,47 @@ struct InitializeCommandProjection {
     role: ProtocolWorkerRole,
     runtime: ProtocolRuntime,
     database_path: String,
-    options: Value,
+    options: InitializeOptionsProjection,
     #[serde(rename = "fault")]
-    _fault: Value,
+    _fault: Option<ProtocolFaultPoint>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitializeOptionsProjection {
+    case_id: String,
+    #[serde(rename = "namespace_availability")]
+    _namespace_availability: ProtocolNamespaceAvailability,
+    #[serde(rename = "authority_policy")]
+    _authority_policy: ProtocolAuthorityPolicyMode,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProtocolNamespaceAvailability {
+    Correct,
+    Missing,
+    Wrong,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProtocolAuthorityPolicyMode {
+    Sufficient,
+    Missing,
+    Broader,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProtocolFaultPoint {
+    BeforeJournalWrite,
+    AfterJournalWrite,
+    BeforeActivationBundle,
+    AfterActivationBundle,
+    BeforeCommitBundle,
+    AfterCommitBundle,
+    AfterKvCommit,
 }
 
 #[derive(Deserialize)]
@@ -186,8 +224,10 @@ enum WorkloadPhaseProjection {
 pub(super) fn validate_request_envelope(value: &Value) -> Result<(), String> {
     let envelope: RequestEnvelopeProjection =
         serde_json::from_value(value.clone()).map_err(|source| source.to_string())?;
-    if envelope.version != PROTOCOL_VERSION || envelope.id.is_empty() {
-        return Err("request must use protocol version 1 and a non-empty id".to_owned());
+    if envelope.version != STAGE1_WORKER_PROTOCOL_VERSION || envelope.id.is_empty() {
+        return Err(format!(
+            "request must use protocol version {STAGE1_WORKER_PROTOCOL_VERSION} and a non-empty id"
+        ));
     }
     if !envelope.command.is_object() {
         return Err("request command must be an object".to_owned());
@@ -198,8 +238,10 @@ pub(super) fn validate_request_envelope(value: &Value) -> Result<(), String> {
 pub(super) fn validate_response_envelope(value: &Value) -> Result<ProtocolResponseStatus, String> {
     let envelope: ResponseEnvelopeProjection =
         serde_json::from_value(value.clone()).map_err(|source| source.to_string())?;
-    if envelope.version != PROTOCOL_VERSION || envelope.id.is_empty() {
-        return Err("response must use protocol version 1 and a non-empty id".to_owned());
+    if envelope.version != STAGE1_WORKER_PROTOCOL_VERSION || envelope.id.is_empty() {
+        return Err(format!(
+            "response must use protocol version {STAGE1_WORKER_PROTOCOL_VERSION} and a non-empty id"
+        ));
     }
     match envelope.outcome {
         ResponseOutcomeProjection::Success { result } if result.is_object() => {
@@ -240,6 +282,7 @@ pub(crate) fn project_request_command(value: &Value) -> Result<ProtocolRequestPr
         .ok_or("request command must be an object")?;
     let kind = command.get("kind").and_then(Value::as_str).unwrap_or_default();
     let mut permits_no_response = false;
+    let mut forbids_response = false;
     let kind = match kind {
         "initialize" => {
             require_exact_fields(
@@ -267,6 +310,8 @@ pub(crate) fn project_request_command(value: &Value) -> Result<ProtocolRequestPr
             {
                 return Err("command field fault has an unknown value".to_owned());
             }
+            serde_json::from_value::<InitializeCommandProjection>(Value::Object(command.clone()))
+                .map_err(|source| format!("initialize command is not exact: {source}"))?;
             ProtocolCommandKind::Initialize
         }
         "revoke_required_authority" => {
@@ -298,6 +343,7 @@ pub(crate) fn project_request_command(value: &Value) -> Result<ProtocolRequestPr
             require_exact_fields(command, &["kind", "mode", "exit_code"])?;
             require_one_of(command, "mode", &["after_response", "immediate"])?;
             permits_no_response = command.get("mode").and_then(Value::as_str) == Some("immediate");
+            forbids_response = permits_no_response;
             let exit_code = command
                 .get("exit_code")
                 .and_then(Value::as_i64)
@@ -334,7 +380,7 @@ pub(crate) fn project_request_command(value: &Value) -> Result<ProtocolRequestPr
         "dump" => no_payload(command, ProtocolCommandKind::Dump)?,
         _ => return Err(format!("request has unknown command kind {kind:?}")),
     };
-    Ok(ProtocolRequestProjection { kind, permits_no_response })
+    Ok(ProtocolRequestProjection { kind, permits_no_response, forbids_response })
 }
 
 pub(crate) fn project_response(value: &Value) -> Result<ProtocolResponseProjection, String> {
@@ -356,6 +402,43 @@ pub(crate) fn project_response(value: &Value) -> Result<ProtocolResponseProjecti
             };
             Ok(ProtocolResponseProjection::Success(result))
         }
+    }
+}
+
+pub(crate) const fn success_result_matches(
+    command: ProtocolCommandKind,
+    result: ProtocolResultKind,
+) -> bool {
+    match command {
+        ProtocolCommandKind::Initialize => matches!(result, ProtocolResultKind::Initialized),
+        ProtocolCommandKind::BootstrapSource
+        | ProtocolCommandKind::Read
+        | ProtocolCommandKind::BeginQuiesce
+        | ProtocolCommandKind::AbortSource
+        | ProtocolCommandKind::ThawSource
+        | ProtocolCommandKind::CancelPending
+        | ProtocolCommandKind::CleanupPendingTimer
+        | ProtocolCommandKind::InjectUnsupportedLiveResource
+        | ProtocolCommandKind::ClearUnsupportedLiveResource
+        | ProtocolCommandKind::RevokeRequiredAuthority
+        | ProtocolCommandKind::StaleSourceKvProbe
+        | ProtocolCommandKind::LoadDestination
+        | ProtocolCommandKind::PrepareDestination
+        | ProtocolCommandKind::CommitDestination
+        | ProtocolCommandKind::ResumeDestination => matches!(result, ProtocolResultKind::State),
+        ProtocolCommandKind::FreezeSource => matches!(result, ProtocolResultKind::SafePoint),
+        ProtocolCommandKind::ExportSourceSnapshot => {
+            matches!(result, ProtocolResultKind::Snapshot)
+        }
+        ProtocolCommandKind::DuplicateCompletionKvProbe => {
+            matches!(result, ProtocolResultKind::EffectProbe)
+        }
+        ProtocolCommandKind::ValidateDestination | ProtocolCommandKind::Crash => {
+            matches!(result, ProtocolResultKind::Ack)
+        }
+        ProtocolCommandKind::PollTimer => matches!(result, ProtocolResultKind::Timer),
+        ProtocolCommandKind::Dump => matches!(result, ProtocolResultKind::Dump),
+        ProtocolCommandKind::AdversarialStaleKvWriteProbe => false,
     }
 }
 
@@ -453,11 +536,7 @@ pub(super) fn validate_initialize_request(
     )
     .map_err(|source| source.to_string())?;
     let expected_role = expected_role(role_name)?;
-    let initialized_case_id = command
-        .options
-        .pointer("/case_id")
-        .and_then(Value::as_str)
-        .ok_or("initialize options have no string case_id")?;
+    let initialized_case_id = command.options.case_id.as_str();
     let runtime_matches = matches!(
         (command.runtime, expected_runtime),
         (ProtocolRuntime::Wasmtime, Stage2Runtime::Wasmtime)
@@ -586,6 +665,15 @@ fn validate_initialize_worker(
     Err("supplemental initialize worker does not match its case and role".to_owned())
 }
 
+pub(crate) fn validate_initialize_worker_binding(
+    worker: &str,
+    role_name: &str,
+    top_case_id: &str,
+    initialized_case_id: &str,
+) -> Result<(), String> {
+    validate_initialize_worker(worker, expected_role(role_name)?, top_case_id, initialized_case_id)
+}
+
 fn is_canonical_case_suffix(suffix: &str) -> bool {
     suffix.split('-').all(|segment| {
         !segment.is_empty()
@@ -632,14 +720,18 @@ mod tests {
         };
         validate_initialize_request(
             &json!({
-                "version": 1,
+                "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": "initialize-1",
                 "command": {
                     "kind": "initialize",
                     "role": role,
                     "runtime": "wasmtime",
                     "database_path": database_path,
-                    "options": { "case_id": initialized_case },
+                    "options": {
+                        "case_id": initialized_case,
+                        "namespace_availability": "correct",
+                        "authority_policy": "sufficient"
+                    },
                     "fault": null
                 }
             }),

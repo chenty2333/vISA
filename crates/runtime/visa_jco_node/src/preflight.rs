@@ -1,23 +1,26 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     env,
     ffi::{OsStr, OsString},
     fmt, fs,
-    io::Read,
+    io::{Read, Write},
     path::{Component as PathComponent, Path, PathBuf},
+    process::Stdio,
 };
 
 use contract_core::Digest;
 use js_component_bindgen::{BindingsMode, ExportKind, InstantiationMode, TranspileOpts};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use tempfile::TempDir;
 use visa_component_adapter::{
     AdapterError, PreflightExpectations, RuntimeIdentity, validate_preflight_contract,
 };
 use visa_profile::{CooperativeHandoffProfile, ProviderSupport};
 
-use crate::node::locked_node_command;
+use crate::{
+    carrier::{GraphFileKind, PreparedExecutionGraph},
+    node::locked_node_command,
+};
 
 pub const VISA_JCO_NODE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const JCO_VERSION: &str = "1.25.2";
@@ -27,6 +30,7 @@ pub const NODE_VERSION: &str = "24.15.0";
 pub const V8_VERSION: &str = "13.6.233.17-node.48";
 pub const TRANSLATION_OPTIONS_SCHEMA: &str = "visa-jco-node-transpile-options-v1";
 pub const JCO_NODE_RPC_PROTOCOL_VERSION: u32 = crate::protocol::PROTOCOL_VERSION;
+pub const JCO_NODE_EXECUTION_CARRIER: &str = crate::carrier::EXECUTION_CARRIER;
 
 const COMPONENT_NAME: &str = "handoff-component.component";
 const DRIVER_NAME: &str = "visa-jco-node-driver.mjs";
@@ -49,6 +53,7 @@ pub struct NodeRuntimeProvenance {
     pub node_version: String,
     pub v8_version: String,
     pub rpc_protocol_version: u32,
+    pub execution_carrier: String,
 }
 
 /// Non-portable evidence describing one deterministic Jco translation graph.
@@ -63,7 +68,7 @@ pub struct JcoTranslationProvenance {
     pub runtime: NodeRuntimeProvenance,
 }
 
-/// Role of one file in the runtime-bound prepared artifact tree.
+/// Role of one byte object in the runtime-bound prepared execution graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreparedArtifactKind {
     GeneratedJavaScript,
@@ -73,7 +78,7 @@ pub enum PreparedArtifactKind {
     PreflightHelper,
 }
 
-/// One immutable file expected in a prepared Jco artifact tree.
+/// One immutable byte object expected in a prepared Jco execution carrier.
 ///
 /// This manifest is local runtime provenance. It is deliberately not serializable
 /// and must never enter canonical state, a snapshot, or a handoff profile.
@@ -87,9 +92,7 @@ pub struct PreparedArtifactManifestEntry {
 
 /// Runtime-bound, non-portable result of a non-executing Jco/Node preflight.
 pub struct PreparedJcoComponent {
-    pub(crate) artifacts: TempDir,
-    pub(crate) entrypoint: PathBuf,
-    pub(crate) driver: PathBuf,
+    pub(crate) graph: PreparedExecutionGraph,
     pub(crate) node_bin: PathBuf,
     pub(crate) node_bin_digest: Digest,
     pub(crate) component_digest: Digest,
@@ -160,18 +163,10 @@ impl PreparedJcoComponent {
         }
     }
 
-    #[cfg(test)]
-    fn artifact_directory(&self) -> &Path {
-        self.artifacts.path()
-    }
-
-    /// Revalidate the exact prepared tree immediately before instantiation.
-    ///
-    /// The check does not follow symbolic links and rejects missing files,
-    /// unexpected files or directories, non-canonical paths, size changes, and
-    /// content changes.
+    /// Revalidate the exact path-free graph immediately before instantiation.
     pub fn revalidate_for_instantiation(&self) -> Result<(), AdapterError> {
-        revalidate_artifact_tree(self.artifacts.path(), &self.artifact_manifest)?;
+        self.graph.validate()?;
+        revalidate_prepared_manifest(&self.graph, &self.artifact_manifest)?;
         revalidate_node_executable(&self.node_bin, self.node_bin_digest)
     }
 }
@@ -200,13 +195,9 @@ pub(crate) fn preflight(
         .map_err(|error| AdapterError::InvalidComponent(error.to_string()))?;
     validate_surface(&transpiled.imports, &transpiled.exports)?;
 
-    let artifacts = tempfile::tempdir()
-        .map_err(|error| AdapterError::Engine(format!("creating artifact directory: {error}")))?;
-    let mut generated_hasher = Sha256::new();
+    let expected_entrypoint = format!("{COMPONENT_NAME}.js");
     let mut entrypoint = None;
     let mut core_modules = Vec::new();
-    let mut core_module_digests = Vec::new();
-    let mut artifact_manifest = Vec::new();
     let mut generated_paths = BTreeSet::new();
     let mut files = transpiled.files;
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -222,64 +213,37 @@ pub(crate) fn preflight(
                 "Jco emitted duplicate artifact path {canonical_name}"
             )));
         }
-        let path = artifacts.path().join(&relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                AdapterError::Engine(format!("creating generated artifact directory: {error}"))
-            })?;
-        }
-        fs::write(&path, &bytes).map_err(|error| {
-            AdapterError::Engine(format!("writing generated artifact {name}: {error}"))
-        })?;
-        generated_hasher.update((canonical_name.len() as u64).to_be_bytes());
-        generated_hasher.update(canonical_name.as_bytes());
-        generated_hasher.update((bytes.len() as u64).to_be_bytes());
-        generated_hasher.update(&bytes);
-        let kind = generated_artifact_kind(&relative);
-        artifact_manifest.push(manifest_entry(canonical_name.clone(), &bytes, kind));
-        if canonical_name == format!("{COMPONENT_NAME}.js") {
-            entrypoint = Some(path.clone());
-        }
-        if kind == PreparedArtifactKind::GeneratedCoreWasm {
-            core_module_digests.push(hash(&bytes));
-            core_modules.push(path);
+        if canonical_name == expected_entrypoint {
+            if entrypoint.replace((canonical_name, bytes)).is_some() {
+                return Err(AdapterError::InvalidComponent(
+                    "Jco emitted the expected JS entrypoint more than once".into(),
+                ));
+            }
+        } else if relative.extension().and_then(|extension| extension.to_str()) == Some("wasm") {
+            core_modules.push((canonical_name, bytes));
+        } else {
+            return Err(AdapterError::InvalidComponent(format!(
+                "Jco emitted unsupported artifact {name}; the locked sync graph permits exactly one JS entrypoint and core Wasm modules"
+            )));
         }
     }
-    let entrypoint = entrypoint.ok_or_else(|| {
+    let (entrypoint_name, entrypoint_bytes) = entrypoint.ok_or_else(|| {
         AdapterError::InvalidComponent("Jco did not emit the expected JS entrypoint".into())
     })?;
-    if core_modules.is_empty() {
-        return Err(AdapterError::InvalidComponent(
-            "Jco did not emit any core WebAssembly modules".into(),
-        ));
-    }
+    let graph = PreparedExecutionGraph::new(entrypoint_name, entrypoint_bytes, core_modules)?;
+    let generated_digest = graph.generated_digest();
+    let core_module_digests = graph.core_module_digests();
 
-    let driver = artifacts.path().join(DRIVER_NAME);
-    let preflight_script = artifacts.path().join(PREFLIGHT_NAME);
     let driver_bytes = include_bytes!("driver.mjs");
     let preflight_bytes = include_bytes!("preflight.mjs");
-    fs::write(&driver, driver_bytes)
-        .map_err(|error| AdapterError::Engine(format!("writing Node driver: {error}")))?;
-    fs::write(&preflight_script, preflight_bytes)
-        .map_err(|error| AdapterError::Engine(format!("writing Node preflight: {error}")))?;
-    artifact_manifest.push(manifest_entry(
-        DRIVER_NAME.into(),
-        driver_bytes,
-        PreparedArtifactKind::Driver,
-    ));
-    artifact_manifest.push(manifest_entry(
-        PREFLIGHT_NAME.into(),
-        preflight_bytes,
-        PreparedArtifactKind::PreflightHelper,
-    ));
-    artifact_manifest.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    let artifact_manifest = expected_prepared_manifest(&graph);
 
     let node_bin = node_binary()?;
     let node_bin_digest = hash_file(&node_bin)?;
-    check_javascript(&node_bin, &entrypoint)?;
-    check_javascript(&node_bin, &driver)?;
-    check_javascript(&node_bin, &preflight_script)?;
-    let versions = compile_core_modules(&node_bin, &preflight_script, &core_modules)?;
+    check_javascript(&node_bin, graph.entrypoint().bytes(), "generated entrypoint")?;
+    check_javascript(&node_bin, driver_bytes, "Node driver")?;
+    check_javascript(&node_bin, preflight_bytes, "Node preflight helper")?;
+    let versions = compile_core_modules(&node_bin, &graph)?;
     if versions.node != NODE_VERSION || versions.v8 != V8_VERSION {
         return Err(AdapterError::UnsupportedRuntimeFeature(format!(
             "this reference cell requires Node {NODE_VERSION} / V8 {V8_VERSION}, found Node {} / V8 {}",
@@ -307,6 +271,7 @@ pub(crate) fn preflight(
         node_version: versions.node.clone(),
         v8_version: versions.v8.clone(),
         rpc_protocol_version: JCO_NODE_RPC_PROTOCOL_VERSION,
+        execution_carrier: JCO_NODE_EXECUTION_CARRIER.into(),
     };
     let identity = RuntimeIdentity::new(
         "visa_jco_node+jco+js-component-bindgen",
@@ -318,14 +283,12 @@ pub(crate) fn preflight(
     );
 
     let prepared = PreparedJcoComponent {
-        artifacts,
-        entrypoint,
-        driver,
+        graph,
         node_bin,
         node_bin_digest,
         component_digest,
         profile_digest: expectations.profile_digest,
-        generated_digest: Digest::from_bytes(generated_hasher.finalize().into()),
+        generated_digest,
         driver_digest: hash(driver_bytes),
         core_module_digests,
         artifact_manifest,
@@ -529,14 +492,6 @@ fn canonical_relative_path(path: &Path) -> Result<String, ()> {
     Ok(components.join("/"))
 }
 
-fn generated_artifact_kind(path: &Path) -> PreparedArtifactKind {
-    match path.extension().and_then(|extension| extension.to_str()) {
-        Some("js" | "mjs" | "cjs") => PreparedArtifactKind::GeneratedJavaScript,
-        Some("wasm") => PreparedArtifactKind::GeneratedCoreWasm,
-        _ => PreparedArtifactKind::GeneratedOther,
-    }
-}
-
 fn manifest_entry(
     relative_path: String,
     bytes: &[u8],
@@ -550,21 +505,41 @@ fn manifest_entry(
     }
 }
 
-fn revalidate_artifact_tree(
-    root: &Path,
+fn expected_prepared_manifest(
+    graph: &PreparedExecutionGraph,
+) -> Vec<PreparedArtifactManifestEntry> {
+    let mut manifest = graph
+        .files()
+        .iter()
+        .map(|file| PreparedArtifactManifestEntry {
+            relative_path: file.name().to_owned(),
+            byte_len: file.bytes().len() as u64,
+            digest: file.digest(),
+            kind: match file.kind() {
+                GraphFileKind::Entrypoint => PreparedArtifactKind::GeneratedJavaScript,
+                GraphFileKind::CoreModule => PreparedArtifactKind::GeneratedCoreWasm,
+            },
+        })
+        .collect::<Vec<_>>();
+    manifest.push(manifest_entry(
+        DRIVER_NAME.into(),
+        include_bytes!("driver.mjs"),
+        PreparedArtifactKind::Driver,
+    ));
+    manifest.push(manifest_entry(
+        PREFLIGHT_NAME.into(),
+        include_bytes!("preflight.mjs"),
+        PreparedArtifactKind::PreflightHelper,
+    ));
+    manifest.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    manifest
+}
+
+fn revalidate_prepared_manifest(
+    graph: &PreparedExecutionGraph,
     manifest: &[PreparedArtifactManifestEntry],
 ) -> Result<(), AdapterError> {
-    let root_metadata = fs::symlink_metadata(root).map_err(|error| {
-        invalid_artifact(format!("reading artifact directory {}: {error}", root.display()))
-    })?;
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(invalid_artifact("artifact root is not a real directory"));
-    }
-
-    let mut expected_files = BTreeMap::new();
-    let mut expected_directories = BTreeSet::new();
-    let mut previous = None;
-    for entry in manifest {
+    for (index, entry) in manifest.iter().enumerate() {
         let canonical = canonical_relative_path(Path::new(&entry.relative_path))
             .map_err(|()| invalid_artifact("manifest contains a non-canonical relative path"))?;
         if canonical != entry.relative_path {
@@ -573,87 +548,15 @@ fn revalidate_artifact_tree(
                 entry.relative_path
             )));
         }
-        if previous.is_some_and(|previous: &str| previous >= entry.relative_path.as_str()) {
+        if index > 0 && manifest[index - 1].relative_path >= entry.relative_path {
             return Err(invalid_artifact("artifact manifest is not strictly sorted"));
         }
-        previous = Some(entry.relative_path.as_str());
-        if expected_files.insert(entry.relative_path.clone(), entry).is_some() {
-            return Err(invalid_artifact(format!(
-                "artifact manifest repeats {}",
-                entry.relative_path
-            )));
-        }
-        let components = entry.relative_path.split('/').collect::<Vec<_>>();
-        for depth in 1..components.len() {
-            expected_directories.insert(components[..depth].join("/"));
-        }
     }
-
-    let mut actual_files = BTreeMap::new();
-    let mut actual_directories = BTreeSet::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        let entries = fs::read_dir(&directory).map_err(|error| {
-            invalid_artifact(format!("reading artifact directory {}: {error}", directory.display()))
-        })?;
-        for entry in entries {
-            let entry = entry
-                .map_err(|error| invalid_artifact(format!("reading artifact entry: {error}")))?;
-            let path = entry.path();
-            let relative = path.strip_prefix(root).map_err(|error| {
-                invalid_artifact(format!("artifact path escaped its root: {error}"))
-            })?;
-            let relative = canonical_relative_path(relative)
-                .map_err(|()| invalid_artifact("artifact tree contains a non-canonical path"))?;
-            let metadata = fs::symlink_metadata(&path).map_err(|error| {
-                invalid_artifact(format!("reading artifact metadata for {relative}: {error}"))
-            })?;
-            let file_type = metadata.file_type();
-            if file_type.is_symlink() {
-                return Err(invalid_artifact(format!(
-                    "artifact tree contains symbolic link {relative}"
-                )));
-            }
-            if file_type.is_dir() {
-                actual_directories.insert(relative);
-                pending.push(path);
-                continue;
-            }
-            if !file_type.is_file() {
-                return Err(invalid_artifact(format!(
-                    "artifact tree contains unsupported entry {relative}"
-                )));
-            }
-            actual_files.insert(relative, (path, metadata.len()));
-        }
-    }
-
-    let actual_file_names = actual_files.keys().cloned().collect::<BTreeSet<_>>();
-    let expected_file_names = expected_files.keys().cloned().collect::<BTreeSet<_>>();
-    if actual_file_names != expected_file_names {
-        return Err(invalid_artifact(format!(
-            "artifact files differ from manifest: expected {expected_file_names:?}, found {actual_file_names:?}"
-        )));
-    }
-    if actual_directories != expected_directories {
-        return Err(invalid_artifact(format!(
-            "artifact directories differ from manifest: expected {expected_directories:?}, found {actual_directories:?}"
-        )));
-    }
-
-    for (relative, expected) in expected_files {
-        let (path, byte_len) = &actual_files[&relative];
-        if *byte_len != expected.byte_len {
-            return Err(invalid_artifact(format!(
-                "artifact size changed for {relative}: expected {}, found {byte_len}",
-                expected.byte_len
-            )));
-        }
-        let bytes = fs::read(path)
-            .map_err(|error| invalid_artifact(format!("reading artifact {relative}: {error}")))?;
-        if hash(&bytes) != expected.digest {
-            return Err(invalid_artifact(format!("artifact content changed for {relative}")));
-        }
+    let expected = expected_prepared_manifest(graph);
+    if manifest != expected {
+        return Err(invalid_artifact(
+            "manifest does not describe the exact owned graph and embedded helpers",
+        ));
     }
     Ok(())
 }
@@ -754,19 +657,30 @@ fn revalidate_node_executable(path: &Path, expected: Digest) -> Result<(), Adapt
     Ok(())
 }
 
-fn check_javascript(node: &Path, script: &Path) -> Result<(), AdapterError> {
-    let output = locked_node_command(node)
-        .args([OsStr::new("--check"), script.as_os_str()])
-        .output()
+fn check_javascript(node: &Path, source: &[u8], label: &str) -> Result<(), AdapterError> {
+    let mut child = locked_node_command(node)
+        .args(["--input-type=module", "--check", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| AdapterError::Engine(format!("starting Node --check: {error}")))?;
-    if output.status.success() {
-        return Ok(());
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| AdapterError::Engine("Node --check stdin was unavailable".into()))?
+        .write_all(source);
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AdapterError::Engine(format!("waiting for Node --check: {error}")))?;
+    if !output.status.success() {
+        return Err(AdapterError::InvalidComponent(format!(
+            "Node --check rejected {label}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
     }
-    Err(AdapterError::InvalidComponent(format!(
-        "Node --check rejected {}: {}",
-        script.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
+    write_result
+        .map_err(|error| AdapterError::Engine(format!("writing {label} to Node --check: {error}")))
 }
 
 #[derive(Deserialize)]
@@ -777,20 +691,37 @@ struct NodeVersions {
 
 fn compile_core_modules(
     node: &Path,
-    script: &Path,
-    modules: &[PathBuf],
+    graph: &PreparedExecutionGraph,
 ) -> Result<NodeVersions, AdapterError> {
-    let mut command = locked_node_command(node);
-    command.arg(script).args(modules.iter().map(|path| path.as_os_str()));
-    let output = command
-        .output()
+    let mut child = locked_node_command(node)
+        .args([
+            "--input-type=module",
+            "--eval",
+            include_str!("preflight.mjs"),
+            "--",
+            graph.generated_digest_hex().as_str(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| AdapterError::Engine(format!("starting Node core preflight: {error}")))?;
+    let write_result =
+        graph.write_frame(&mut child.stdin.take().ok_or_else(|| {
+            AdapterError::Engine("Node core preflight stdin was unavailable".into())
+        })?);
+    let output = child.wait_with_output().map_err(|error| {
+        AdapterError::Engine(format!("waiting for Node core preflight: {error}"))
+    })?;
     if !output.status.success() {
         return Err(AdapterError::InvalidComponent(format!(
             "Node/V8 rejected transpiled core modules: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
+    write_result.map_err(|error| {
+        AdapterError::Engine(format!("writing the Node core preflight carrier: {error}"))
+    })?;
     serde_json::from_slice(&output.stdout)
         .map_err(|error| AdapterError::Engine(format!("decoding Node runtime provenance: {error}")))
 }
@@ -803,8 +734,8 @@ fn hash(bytes: &[u8]) -> Digest {
 mod tests {
     use super::*;
 
-    const FIXTURE_ENTRYPOINT: &str = "generated/entry.js";
-    const FIXTURE_CORE: &str = "generated/core.wasm";
+    const FIXTURE_ENTRYPOINT: &str = "handoff-component.component.js";
+    const FIXTURE_CORE: &str = "handoff-component.component.core.wasm";
 
     #[test]
     fn surface_check_accepts_only_the_version_normalized_stage1_world() {
@@ -836,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_artifact_paths_cannot_escape_the_preflight_directory() {
+    fn generated_artifact_names_must_be_safe_and_canonical() {
         assert_eq!(
             safe_relative_path("component.core.wasm").unwrap(),
             (PathBuf::from("component.core.wasm"), "component.core.wasm".into())
@@ -848,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_artifact_manifest_accepts_only_the_exact_unchanged_tree() {
+    fn prepared_artifact_manifest_accepts_only_the_exact_owned_graph() {
         let prepared = prepared_fixture();
         prepared.revalidate_for_instantiation().expect("the original fixture is valid");
         assert!(
@@ -860,61 +791,27 @@ mod tests {
     }
 
     #[test]
-    fn prepared_artifact_manifest_rejects_mutated_runtime_files() {
-        for (name, relative, replacement) in [
-            ("entrypoint", FIXTURE_ENTRYPOINT, b"other\n".as_slice()),
-            ("core-wasm", FIXTURE_CORE, b"\0asm\x01\0\0\x01".as_slice()),
-            ("driver", DRIVER_NAME, b"tamper\n".as_slice()),
-            ("preflight-helper", PREFLIGHT_NAME, b"change\n".as_slice()),
-        ] {
-            let prepared = prepared_fixture();
-            fs::write(prepared.artifact_directory().join(relative), replacement)
-                .expect("mutate prepared artifact");
+    fn prepared_artifact_manifest_rejects_any_identity_or_shape_change() {
+        for (name, mutate) in
+            [("digest", 0_u8), ("size", 1_u8), ("kind", 2_u8), ("missing", 3_u8), ("extra", 4_u8)]
+        {
+            let mut prepared = prepared_fixture();
+            match mutate {
+                0 => prepared.artifact_manifest[0].digest = Digest::ZERO,
+                1 => prepared.artifact_manifest[0].byte_len += 1,
+                2 => prepared.artifact_manifest[0].kind = PreparedArtifactKind::GeneratedOther,
+                3 => {
+                    prepared.artifact_manifest.pop();
+                }
+                4 => prepared.artifact_manifest.push(manifest_entry(
+                    "unexpected".into(),
+                    b"unexpected",
+                    PreparedArtifactKind::GeneratedOther,
+                )),
+                _ => unreachable!(),
+            }
             assert_invalid_artifact(prepared.revalidate_for_instantiation().expect_err(name), name);
         }
-    }
-
-    #[test]
-    fn prepared_artifact_manifest_rejects_missing_and_extra_entries() {
-        let prepared = prepared_fixture();
-        fs::remove_file(prepared.artifact_directory().join(FIXTURE_CORE))
-            .expect("remove prepared core module");
-        assert_invalid_artifact(
-            prepared.revalidate_for_instantiation().expect_err("missing file must fail"),
-            "missing-file",
-        );
-
-        let prepared = prepared_fixture();
-        fs::write(prepared.artifact_directory().join("unexpected.txt"), b"extra")
-            .expect("write extra artifact");
-        assert_invalid_artifact(
-            prepared.revalidate_for_instantiation().expect_err("extra file must fail"),
-            "extra-file",
-        );
-
-        let prepared = prepared_fixture();
-        fs::create_dir(prepared.artifact_directory().join("unexpected-directory"))
-            .expect("create extra artifact directory");
-        assert_invalid_artifact(
-            prepared.revalidate_for_instantiation().expect_err("extra directory must fail"),
-            "extra-directory",
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn prepared_artifact_manifest_rejects_a_symlink_outside_the_artifact_root() {
-        use std::os::unix::fs::symlink;
-
-        let prepared = prepared_fixture();
-        let external = tempfile::NamedTempFile::new().expect("external artifact target");
-        let core = prepared.artifact_directory().join(FIXTURE_CORE);
-        fs::remove_file(&core).expect("remove original core module");
-        symlink(external.path(), core).expect("replace core module with symlink");
-        assert_invalid_artifact(
-            prepared.revalidate_for_instantiation().expect_err("symlink must fail"),
-            "symlink",
-        );
     }
 
     #[test]
@@ -980,57 +877,34 @@ mod tests {
 
     #[test]
     fn pinned_node_cell_checks_js_and_compiles_core_wasm_without_instantiation() {
-        let directory = tempfile::tempdir().expect("temporary preflight directory");
-        let preflight_script = directory.path().join(PREFLIGHT_NAME);
-        let driver = directory.path().join(DRIVER_NAME);
-        let core = directory.path().join("minimal.core.wasm");
-        fs::write(&preflight_script, include_str!("preflight.mjs")).unwrap();
-        fs::write(&driver, include_str!("driver.mjs")).unwrap();
-        fs::write(&core, b"\0asm\x01\0\0\0").unwrap();
-
         let node = node_binary().expect("resolve pinned Node executable");
-        check_javascript(&node, &preflight_script).expect("preflight JS parses");
-        check_javascript(&node, &driver).expect("driver JS parses");
-        let versions = compile_core_modules(&node, &preflight_script, &[core])
+        check_javascript(&node, include_bytes!("preflight.mjs"), "preflight helper")
+            .expect("preflight JS parses");
+        check_javascript(&node, include_bytes!("driver.mjs"), "driver").expect("driver JS parses");
+        let graph = fixture_graph();
+        let versions = compile_core_modules(&node, &graph)
             .expect("Node/V8 compiles a core module without instantiating it");
         assert_eq!(versions.node, NODE_VERSION);
         assert_eq!(versions.v8, V8_VERSION);
     }
 
     fn prepared_fixture() -> PreparedJcoComponent {
-        let artifacts = tempfile::tempdir().expect("prepared artifact fixture");
-        let files = [
-            (FIXTURE_ENTRYPOINT, b"entry\n".as_slice(), PreparedArtifactKind::GeneratedJavaScript),
-            (FIXTURE_CORE, b"\0asm\x01\0\0\0".as_slice(), PreparedArtifactKind::GeneratedCoreWasm),
-            (DRIVER_NAME, b"driver\n".as_slice(), PreparedArtifactKind::Driver),
-            (PREFLIGHT_NAME, b"helper\n".as_slice(), PreparedArtifactKind::PreflightHelper),
-        ];
-        let mut artifact_manifest = Vec::new();
-        for (relative, bytes, kind) in files {
-            let path = artifacts.path().join(relative);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).expect("create fixture artifact directory");
-            }
-            fs::write(path, bytes).expect("write fixture artifact");
-            artifact_manifest.push(manifest_entry(relative.into(), bytes, kind));
-        }
-        artifact_manifest.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-
+        let graph = fixture_graph();
+        let artifact_manifest = expected_prepared_manifest(&graph);
         let node_bin = std::env::current_exe()
             .expect("current test executable")
             .canonicalize()
             .expect("canonical test executable");
         let node_bin_digest = hash_file(&node_bin).expect("hash test executable");
         PreparedJcoComponent {
-            entrypoint: artifacts.path().join(FIXTURE_ENTRYPOINT),
-            driver: artifacts.path().join(DRIVER_NAME),
+            generated_digest: graph.generated_digest(),
+            core_module_digests: graph.core_module_digests(),
+            graph,
             node_bin: node_bin.clone(),
             node_bin_digest,
             component_digest: Digest::ZERO,
             profile_digest: Digest::ZERO,
-            generated_digest: Digest::ZERO,
-            driver_digest: hash(b"driver\n"),
-            core_module_digests: vec![hash(b"\0asm\x01\0\0\0")],
+            driver_digest: hash(include_bytes!("driver.mjs")),
             artifact_manifest,
             identity: static_identity(),
             provenance: NodeRuntimeProvenance {
@@ -1045,9 +919,18 @@ mod tests {
                 node_version: NODE_VERSION.into(),
                 v8_version: V8_VERSION.into(),
                 rpc_protocol_version: JCO_NODE_RPC_PROTOCOL_VERSION,
+                execution_carrier: JCO_NODE_EXECUTION_CARRIER.into(),
             },
-            artifacts,
         }
+    }
+
+    fn fixture_graph() -> PreparedExecutionGraph {
+        PreparedExecutionGraph::new(
+            FIXTURE_ENTRYPOINT.into(),
+            b"export function instantiate() { return {}; }\n".to_vec(),
+            vec![(FIXTURE_CORE.into(), b"\0asm\x01\0\0\0".to_vec())],
+        )
+        .expect("valid path-free prepared graph")
     }
 
     fn assert_invalid_artifact(error: AdapterError, name: &str) {

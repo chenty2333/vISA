@@ -14,9 +14,11 @@ use super::{
         Stage2NotInstantiatedReason, Stage2Runtime, Stage2ValidationFinding,
     },
     protocol::{
-        CanonicalStateBoundary, ProtocolResponseStatus, observed_component_instantiated,
+        CanonicalStateBoundary, ProtocolCommandKind, ProtocolRequestProjection,
+        ProtocolResponseProjection, ProtocolResultKind, observed_component_instantiated,
+        project_request_command, project_response, success_result_matches,
         validate_canonical_state_response, validate_initialize_request,
-        validate_initialize_response, validate_request_envelope, validate_response_envelope,
+        validate_initialize_response,
     },
     runtime::{ObservedCellTranslationProvenance, validate_observed_runtime},
 };
@@ -170,9 +172,15 @@ struct PrimaryHandshakeFacts {
 
 struct RequestAuditState<'a> {
     handshake: &'a mut PrimaryHandshakeFacts,
-    requests: &'a mut BTreeMap<(String, String), String>,
+    requests: &'a mut BTreeMap<(String, String), RuntimeRequestFacts>,
     initialize_case_ids: &'a mut BTreeMap<(String, String), String>,
     findings: &'a mut Vec<Stage2ValidationFinding>,
+}
+
+struct RuntimeRequestFacts {
+    command: ProtocolCommandKind,
+    permits_no_response: bool,
+    forbids_response: bool,
 }
 
 fn audit_runtime_transcript(
@@ -184,7 +192,7 @@ fn audit_runtime_transcript(
     let RuntimeTranscriptContext { id, case, role_name, expected_runtime, primary_worker, .. } =
         context;
     let mut handshake = PrimaryHandshakeFacts::default();
-    let mut requests = BTreeMap::<(String, String), String>::new();
+    let mut requests = BTreeMap::<(String, String), RuntimeRequestFacts>::new();
     let mut initialize_case_ids = BTreeMap::<(String, String), String>::new();
     let mut responses = BTreeSet::<(String, String)>::new();
     let mut worker_processes = BTreeMap::<String, (u32, u64)>::new();
@@ -213,12 +221,12 @@ fn audit_runtime_transcript(
             continue;
         }
         if let Some((pid, last_sequence)) = worker_processes.get_mut(&transcript.worker) {
-            if *pid != transcript.pid || transcript.sequence <= *last_sequence {
+            if *pid != transcript.pid || last_sequence.checked_add(1) != Some(transcript.sequence) {
                 finding(
                     findings,
                     "invalid-stage2-runtime-transcript-order",
                     format!(
-                        "{} {} worker {} changed pid or repeated/reordered sequence",
+                        "{} {} worker {} changed pid or used a non-contiguous sequence",
                         id.as_str(),
                         case.case_id,
                         transcript.worker
@@ -228,6 +236,19 @@ fn audit_runtime_transcript(
             }
             *last_sequence = transcript.sequence;
         } else {
+            if transcript.sequence != 1 {
+                finding(
+                    findings,
+                    "invalid-stage2-runtime-transcript-order",
+                    format!(
+                        "{} {} worker {} did not start its transcript at sequence 1",
+                        id.as_str(),
+                        case.case_id,
+                        transcript.worker
+                    ),
+                );
+                continue;
+            }
             worker_processes
                 .insert(transcript.worker.clone(), (transcript.pid, transcript.sequence));
         }
@@ -247,7 +268,7 @@ fn audit_runtime_transcript(
         };
         let version = value.get("version").and_then(serde_json::Value::as_u64);
         let request_id = value.get("id").and_then(serde_json::Value::as_str).unwrap_or_default();
-        if version != Some(1) || request_id.is_empty() {
+        if version != Some(crate::STAGE1_WORKER_PROTOCOL_VERSION) || request_id.is_empty() {
             finding(
                 findings,
                 "invalid-stage2-runtime-protocol-envelope",
@@ -256,19 +277,23 @@ fn audit_runtime_transcript(
             continue;
         }
         if transcript.stream == TranscriptStream::ParentRequest {
-            if let Err(source) = validate_request_envelope(&value) {
-                finding(
-                    findings,
-                    "invalid-stage2-runtime-protocol-request-envelope",
-                    format!("{} {}: {source}", id.as_str(), case.case_id),
-                );
-                continue;
-            }
+            let projection = match project_request_command(&value) {
+                Ok(projection) => projection,
+                Err(source) => {
+                    finding(
+                        findings,
+                        "invalid-stage2-runtime-protocol-request-envelope",
+                        format!("{} {}: {source}", id.as_str(), case.case_id),
+                    );
+                    continue;
+                }
+            };
             audit_request(
                 context,
                 &transcript.worker,
                 request_id,
                 &value,
+                projection,
                 RequestAuditState {
                     handshake: &mut handshake,
                     requests: &mut requests,
@@ -288,7 +313,7 @@ fn audit_runtime_transcript(
             );
             continue;
         }
-        let Some(command) = requests.get(&request_key).map(String::as_str) else {
+        let Some(request) = requests.get(&request_key) else {
             finding(
                 findings,
                 "unmatched-stage2-runtime-response",
@@ -296,8 +321,21 @@ fn audit_runtime_transcript(
             );
             continue;
         };
-        let response_status = match validate_response_envelope(&value) {
-            Ok(status) => status,
+        if request.forbids_response {
+            finding(
+                findings,
+                "forbidden-stage2-runtime-response",
+                format!(
+                    "{} {} immediate crash request {request_id} unexpectedly has a response",
+                    id.as_str(),
+                    case.case_id
+                ),
+            );
+            continue;
+        }
+        let command = request.command;
+        let response_projection = match project_response(&value) {
+            Ok(projection) => projection,
             Err(source) => {
                 finding(
                     findings,
@@ -307,10 +345,23 @@ fn audit_runtime_transcript(
                 continue;
             }
         };
-        if response_status == ProtocolResponseStatus::Error {
+        let result_kind = match response_projection {
+            ProtocolResponseProjection::Error => continue,
+            ProtocolResponseProjection::Success(result_kind) => result_kind,
+        };
+        if !success_result_matches(command, result_kind) {
+            finding(
+                findings,
+                "incompatible-stage2-runtime-protocol-result",
+                format!(
+                    "{} {} result {result_kind:?} is impossible for {command:?}",
+                    id.as_str(),
+                    case.case_id
+                ),
+            );
             continue;
         }
-        if command == "initialize" {
+        if command == ProtocolCommandKind::Initialize {
             let initialized_case_id =
                 initialize_case_ids.get(&request_key).map(String::as_str).unwrap_or(&case.case_id);
             if let Err(source) =
@@ -338,13 +389,13 @@ fn audit_runtime_transcript(
         }
         let canonical_boundary = if transcript.worker == primary_worker {
             match (role_name, command) {
-                ("source.jsonl", "bootstrap_source") => {
+                ("source.jsonl", ProtocolCommandKind::BootstrapSource) => {
                     Some(CanonicalStateBoundary::SourceBootstrap)
                 }
-                ("destination.jsonl", "commit_destination") => {
+                ("destination.jsonl", ProtocolCommandKind::CommitDestination) => {
                     Some(CanonicalStateBoundary::DestinationCommit)
                 }
-                ("destination.jsonl", "resume_destination") => {
+                ("destination.jsonl", ProtocolCommandKind::ResumeDestination) => {
                     Some(CanonicalStateBoundary::DestinationResume)
                 }
                 _ => None,
@@ -377,22 +428,25 @@ fn audit_runtime_transcript(
             context,
             &transcript.worker,
             command,
-            &value,
+            result_kind,
             component_instantiated,
             &mut facts,
             findings,
         );
     }
 
-    for ((worker, request_id), command) in &requests {
-        if command != "crash" && !responses.contains(&(worker.clone(), request_id.clone())) {
+    for ((worker, request_id), request) in &requests {
+        if !request.permits_no_response
+            && !responses.contains(&(worker.clone(), request_id.clone()))
+        {
             finding(
                 findings,
                 "missing-stage2-runtime-response",
                 format!(
-                    "{} {} request {request_id} ({command}) has no response",
+                    "{} {} request {request_id} ({:?}) has no response",
                     id.as_str(),
-                    case.case_id
+                    case.case_id,
+                    request.command
                 ),
             );
         }
@@ -416,6 +470,7 @@ fn audit_request(
     worker: &str,
     request_id: &str,
     value: &serde_json::Value,
+    projection: ProtocolRequestProjection,
     state: RequestAuditState<'_>,
 ) {
     let RequestAuditState { handshake, requests, initialize_case_ids, findings } = state;
@@ -427,10 +482,14 @@ fn audit_request(
         primary_worker,
         provider_cell_root,
     } = context;
-    let command =
-        value.pointer("/command/kind").and_then(serde_json::Value::as_str).unwrap_or_default();
-    if command.is_empty()
-        || requests.insert((worker.to_owned(), request_id.to_owned()), command.to_owned()).is_some()
+    let ProtocolRequestProjection { kind: command, permits_no_response, forbids_response } =
+        projection;
+    if requests
+        .insert(
+            (worker.to_owned(), request_id.to_owned()),
+            RuntimeRequestFacts { command, permits_no_response, forbids_response },
+        )
+        .is_some()
     {
         finding(
             findings,
@@ -439,18 +498,21 @@ fn audit_request(
         );
         return;
     }
-    if worker == primary_worker && command != "initialize" && handshake.observed != 1 {
+    if worker == primary_worker
+        && command != ProtocolCommandKind::Initialize
+        && handshake.observed != 1
+    {
         finding(
             findings,
             "stage2-runtime-command-before-initialize",
             format!(
-                "{} {} primary worker requested {command} before its valid initialize response",
+                "{} {} primary worker requested {command:?} before its valid initialize response",
                 id.as_str(),
                 case.case_id
             ),
         );
     }
-    if command == "initialize" {
+    if command == ProtocolCommandKind::Initialize {
         let valid_initialize = match validate_initialize_request(
             value,
             role_name,
@@ -490,14 +552,13 @@ fn audit_request(
 fn audit_successful_instantiation_response(
     context: RuntimeTranscriptContext<'_>,
     worker: &str,
-    command: &str,
-    value: &serde_json::Value,
+    command: ProtocolCommandKind,
+    result_kind: ProtocolResultKind,
     component_instantiated: Option<bool>,
     facts: &mut InstantiationFacts,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) {
     let RuntimeTranscriptContext { id, case, role_name, primary_worker, .. } = context;
-    let result_kind = value.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str);
     let component_instantiated = component_instantiated == Some(true);
     let destination_role = role_name == "destination.jsonl";
     if component_instantiated && (worker == primary_worker || destination_role) {
@@ -506,12 +567,12 @@ fn audit_successful_instantiation_response(
 
     let canonical_live = if role_name == "source.jsonl" {
         worker == primary_worker
-            && command == "bootstrap_source"
-            && result_kind == Some("state")
+            && command == ProtocolCommandKind::BootstrapSource
+            && result_kind == ProtocolResultKind::State
             && component_instantiated
     } else {
-        if worker == primary_worker && command == "commit_destination" {
-            if result_kind == Some("state") {
+        if worker == primary_worker && command == ProtocolCommandKind::CommitDestination {
+            if result_kind == ProtocolResultKind::State {
                 facts.primary_commit_success_count += 1;
             } else {
                 finding(
@@ -522,9 +583,9 @@ fn audit_successful_instantiation_response(
             }
         }
         worker == primary_worker
-            && command == "resume_destination"
+            && command == ProtocolCommandKind::ResumeDestination
             && facts.primary_commit_success_count == 1
-            && result_kind == Some("state")
+            && result_kind == ProtocolResultKind::State
             && component_instantiated
     };
 
@@ -534,7 +595,7 @@ fn audit_successful_instantiation_response(
     }
     if role_name == "destination.jsonl"
         && worker == primary_worker
-        && command == "resume_destination"
+        && command == ProtocolCommandKind::ResumeDestination
     {
         finding(
             findings,

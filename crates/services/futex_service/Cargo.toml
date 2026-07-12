@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "futex_service"
 version = "0.1.0"
 publish = false

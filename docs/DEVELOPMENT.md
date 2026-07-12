@@ -185,8 +185,6 @@ public API. Use them according to their current role:
    larger exploratory runs and is not the stable strict gate.
 5. **Reference-only LTP:** `run-host-ltp-log-adapter.sh` preserves logs from an
    external host `runltp`. Those logs do not prove execution through vISA.
-   `run-ltp-conformance.sh` is a deprecated compatibility alias and must not be
-   used for new automation or evidence claims.
 6. **Structural maintenance:** `check-file-size.sh` scans tracked and
    not-yet-added first-party Rust sources and runs as part of `fast`. Hard-limit
    violations in active-spine sources fail the gate; oracle/reference and other

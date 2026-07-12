@@ -19,11 +19,11 @@ pub use model::*;
 pub use protocol::{ProtocolCommandKind, ProtocolResultKind};
 pub(crate) use protocol::{
     ProtocolRequestProjection, ProtocolResponseProjection, project_request_command,
-    project_response,
+    project_response, success_result_matches, validate_initialize_worker_binding,
 };
-#[cfg(test)]
 pub(crate) use runtime::{
     ObservedRuntimeIdentity, observed_runtime_matches, runtime_identity_matches,
+    translation_provenance_matches,
 };
 pub use verify::{
     gate_stage2_evidence_bundle_json_with_artifacts, parse_stage2_evidence_bundle_json,

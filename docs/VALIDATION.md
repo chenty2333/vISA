@@ -63,8 +63,8 @@ packages such as `contract_validate` and the pre-reset models remain compiled by
 The standard CI job does not currently run:
 
 - workspace-wide Clippy outside the protected active spine;
-- `cargo deny`; the tool is not installed in the development image and the
-  existing multiple-version policy has not been reconciled with the lockfile;
+- dependency-license, advisory, and duplicate-version policy; no supported
+  `cargo deny` gate or reconciled policy is currently installed;
 - QEMU boot/runtime behavior beyond compiling the kernel target;
 - two independent WebAssembly runtime implementations;
 - file or network continuity profiles;
@@ -123,6 +123,17 @@ inner bundles and the normalized outer evidence. Both are standalone gates;
 the matrix does not substitute for `full`, and neither result is cross-ISA or
 strict independent-Component-Model evidence.
 
+The common input is immutable for the whole matrix and binds the original
+Component, WIT world, profile, configuration, policy, case registry, fault
+schedules, and schema/codec identities. Every cell uses fresh workers, runtime
+instances, provider storage, and native handles. The outer verifier first
+completes the full Stage 1 validation of every inner bundle, then independently
+recomputes a versioned typed normalization and compares all 31 four-cell groups.
+Runtime identity, translation provenance, cell completeness, and no-fallback
+facts are checked exactly outside normalization. A normalization version may
+exclude only its declared non-portable observations; it cannot expand its
+exclusions to conceal a behavioral difference or malformed inner evidence.
+
 ### Stable artifact verification boundary
 
 The Linux verifier opens each Stage 1 artifact root once as a directory
@@ -149,8 +160,26 @@ This is an artifact-content guarantee, not a complete hostile-co-tenant
 boundary. A same-UID process may still attempt denial of service or, where OS
 policy permits, attack verifier memory/process state. Stage 2 publication-marker
 and directory-topology checks remain part of the controlled single-publisher
-workflow. The separate JcoNode final manifest-check-to-Node-load window also
-still requires a sealed execution carrier or stronger process/mount isolation.
+workflow.
+
+JcoNode separately closes its generated-artifact load window with the
+`owned-bytes-stdin-frame-v1` execution carrier. Preflight owns the exact
+generated JavaScript and core-Wasm bytes; the prepared manifest, graph digest,
+Node preflight, startup frame, and executed modules all derive from that one
+captured graph. The Node driver is compiled into the Rust adapter, receives the
+bounded versioned frame over stdin, verifies every file and the complete graph
+before import, loads JavaScript through a data URL, and compiles core modules
+from memory. It never reopens the publisher tree. Worker transcripts and Stage
+2 evidence name the exact carrier version, and the independent verifier rejects
+missing or different carrier provenance. Hostile replacement of the old files,
+directories, symlinks, or publication root therefore cannot substitute code;
+unsupported translator output fails closed. The trusted Node executable and
+its execution environment, loader, shared libraries, and toolchain remain
+trusted inputs. Ptrace, process-memory, takeover, and denial-of-service
+boundaries are likewise explicitly outside this claim. The required provenance
+changed the worker wire and claim contract, so current evidence uses worker
+protocol v2, Stage 1 evidence v0.3, and Stage 2 matrix/evidence v2; older bundles
+do not inherit this claim.
 
 ### Release
 
@@ -333,8 +362,9 @@ Even after the baseline slice passes, it does not prove:
   network stack;
 - TEE attestation, KMS correctness, or general confidential-computing safety;
 - production availability, security, scalability, or performance;
-- protection against a hostile same-UID process modifying a reference cell's
-  derived execution files during its final load-time window;
+- protection against a compromised runtime execution environment or toolchain,
+  ptrace or process-memory modification, process takeover, or denial of
+  service;
 - compatibility with unspecified future schema/profile versions; or
 - validated product demand.
 

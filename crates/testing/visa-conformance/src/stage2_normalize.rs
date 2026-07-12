@@ -18,7 +18,7 @@ use crate::{
     Stage1ResourceKind, Stage1SemanticTraceArtifact, Stage1TraceRole, VerifiedStage1Artifacts,
     stage2::{
         ProtocolRequestProjection, ProtocolResponseProjection, project_request_command,
-        project_response,
+        project_response, success_result_matches,
     },
 };
 
@@ -336,6 +336,7 @@ struct PendingWorkerProtocolObservation {
     observation: Stage2NormalizedWorkerProtocolObservation,
     response: Option<Stage2NormalizedWorkerResponse>,
     permits_no_response: bool,
+    forbids_response: bool,
 }
 
 pub(crate) fn read_worker_protocol_observations(
@@ -397,10 +398,14 @@ pub(crate) fn project_worker_protocol_observations(
         }
         let worker_facts =
             worker_processes.entry(worker_scope.clone()).or_insert((transcript.pid, 0, 0));
-        if worker_facts.0 != transcript.pid || transcript.sequence <= worker_facts.1 {
+        if worker_facts.0 != transcript.pid
+            || worker_facts.1.checked_add(1) != Some(transcript.sequence)
+        {
             return Err(error(
                 "invalid-stage2-worker-transcript-order",
-                format!("{case_id} {file_name} worker {worker_scope} changed pid or order"),
+                format!(
+                    "{case_id} {file_name} worker {worker_scope} changed pid or used a non-contiguous sequence"
+                ),
             ));
         }
         worker_facts.1 = transcript.sequence;
@@ -419,13 +424,16 @@ pub(crate) fn project_worker_protocol_observations(
         let key = (worker_scope.clone(), request_id);
         match transcript.stream {
             RawTranscriptStream::ParentRequest => {
-                let ProtocolRequestProjection { kind: command, permits_no_response } =
-                    project_request_command(&value).map_err(|detail| {
-                        error(
-                            "invalid-stage2-worker-protocol-request",
-                            format!("{case_id} {file_name}: {detail}"),
-                        )
-                    })?;
+                let ProtocolRequestProjection {
+                    kind: command,
+                    permits_no_response,
+                    forbids_response,
+                } = project_request_command(&value).map_err(|detail| {
+                    error(
+                        "invalid-stage2-worker-protocol-request",
+                        format!("{case_id} {file_name}: {detail}"),
+                    )
+                })?;
                 if requests.contains_key(&key) {
                     return Err(error(
                         "duplicate-stage2-worker-protocol-request",
@@ -468,15 +476,17 @@ pub(crate) fn project_worker_protocol_observations(
                     },
                     response: None,
                     permits_no_response,
+                    forbids_response,
                 });
             }
             RawTranscriptStream::WorkerResponse => {
-                let response = match project_response(&value).map_err(|detail| {
+                let response_projection = project_response(&value).map_err(|detail| {
                     error(
                         "invalid-stage2-worker-protocol-response",
                         format!("{case_id} {file_name}: {detail}"),
                     )
-                })? {
+                })?;
+                let response = match response_projection {
                     ProtocolResponseProjection::Success(result) => {
                         Stage2NormalizedWorkerResponse::Success { result }
                     }
@@ -489,6 +499,25 @@ pub(crate) fn project_worker_protocol_observations(
                     )
                 })?;
                 let observation = &mut pending[index];
+                if observation.forbids_response {
+                    return Err(error(
+                        "forbidden-stage2-worker-protocol-response",
+                        format!(
+                            "{case_id} {file_name} immediate crash request unexpectedly has a response"
+                        ),
+                    ));
+                }
+                if let ProtocolResponseProjection::Success(result) = response_projection
+                    && !success_result_matches(observation.observation.command, result)
+                {
+                    return Err(error(
+                        "incompatible-stage2-worker-protocol-result",
+                        format!(
+                            "{case_id} {file_name} result {result:?} is impossible for {:?}",
+                            observation.observation.command
+                        ),
+                    ));
+                }
                 if observation.response.replace(response).is_some() {
                     return Err(error(
                         "duplicate-stage2-worker-protocol-response",

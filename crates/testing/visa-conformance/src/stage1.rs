@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact_io::{SecureArtifactError, SecureArtifactErrorKind, SecureArtifactRoot};
 
-pub const STAGE1_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage1-evidence-v0.2";
+pub const STAGE1_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage1-evidence-v0.3";
+pub const STAGE1_WORKER_PROTOCOL_VERSION: u64 = 2;
 pub const STAGE1_CAPABILITY_ID: &str = "cooperative-stateful-component-handoff";
 const MAX_STAGE1_RETAINED_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
 

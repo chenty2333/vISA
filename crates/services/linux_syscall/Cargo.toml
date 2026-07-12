@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "linux_syscall"
 version = "0.1.0"
 publish = false
@@ -10,4 +11,3 @@ path = "src/lib.rs"
 
 [dependencies]
 visa_abi.workspace = true
-

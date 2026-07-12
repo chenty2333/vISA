@@ -11,11 +11,20 @@ use contract_core::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::stage1::{
-    STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactReference, Stage1BindingReceiptReference,
-    Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, Stage1ResourceKind,
-    Stage1SemanticTraceArtifact, Stage1TraceRole, Stage1ValidationFinding, VerifiedStage1Artifacts,
-    stage1_expected_ownership,
+use crate::{
+    stage1::{
+        STAGE1_CASE_DEFINITIONS, STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION, Stage1ArtifactReference,
+        Stage1BindingReceiptReference, Stage1CaseEvidence, Stage1EvidenceBundle,
+        Stage1ExecutionEnvironment, Stage1ExpectedOwnership, Stage1ResourceKind,
+        Stage1SemanticTraceArtifact, Stage1TraceRole, Stage1ValidationFinding,
+        Stage1VersionedIdentity, VerifiedStage1Artifacts, stage1_expected_ownership,
+    },
+    stage2::{
+        ObservedRuntimeIdentity, ProtocolCommandKind, ProtocolResponseProjection, Stage2Runtime,
+        observed_runtime_matches, project_request_command, project_response,
+        runtime_identity_matches, success_result_matches, translation_provenance_matches,
+        validate_initialize_worker_binding,
+    },
 };
 
 pub(crate) fn validate_artifact_contents(
@@ -23,9 +32,17 @@ pub(crate) fn validate_artifact_contents(
     artifacts: &VerifiedStage1Artifacts,
 ) -> Vec<Stage1ValidationFinding> {
     let mut findings = Vec::new();
+    let mut runtime_observations = RawRuntimeObservations::default();
     let matrix = validate_provenance_contents(bundle, artifacts, &mut findings);
     for case in &bundle.cases {
-        validate_case_contents(bundle, case, matrix.as_ref(), artifacts, &mut findings);
+        validate_case_contents(
+            bundle,
+            case,
+            matrix.as_ref(),
+            artifacts,
+            &mut runtime_observations,
+            &mut findings,
+        );
     }
     findings
 }
@@ -344,22 +361,49 @@ fn validate_matrix_manifest(
     if entries.len() != matrix.entries.len() {
         finding(findings, "duplicate-stage1-matrix-case", "matrix contains duplicate case ids");
     }
+    let expected_case_ids =
+        STAGE1_CASE_DEFINITIONS.iter().map(|definition| definition.id).collect::<Vec<_>>();
+    let observed_case_ids =
+        matrix.entries.iter().map(|entry| entry.case_id.as_str()).collect::<Vec<_>>();
+    if observed_case_ids != expected_case_ids {
+        finding(
+            findings,
+            "invalid-stage1-matrix-registry",
+            "matrix entries must exactly match the ordered 31-case Stage 1 registry",
+        );
+    }
     let covered_points =
         matrix.provider_fault_coverage.iter().map(|entry| entry.point).collect::<BTreeSet<_>>();
     if matrix.provider_fault_coverage.len() != 7
         || covered_points.len() != 7
-        || matrix.provider_fault_coverage.iter().any(|entry| {
-            entry.case_id.is_empty()
-                || entry.role.is_empty()
-                || entry.trigger.is_empty()
-                || entry.expected.is_empty()
-                || !entries.contains_key(entry.case_id.as_str())
+        || matrix.provider_fault_coverage.iter().any(|coverage| {
+            coverage.case_id.is_empty()
+                || coverage.role.is_empty()
+                || coverage.trigger.is_empty()
+                || coverage.expected.is_empty()
+                || entries.get(coverage.case_id.as_str()).is_none_or(|entry| {
+                    match coverage.role.as_str() {
+                        "source" => entry.source_fault != Some(coverage.point),
+                        "destination" => entry.destination_fault != Some(coverage.point),
+                        "supplemental-source" => {
+                            coverage.case_id != "evidence-verification"
+                                || !matches!(
+                                    coverage.point,
+                                    MatrixFaultPoint::BeforeJournalWrite
+                                        | MatrixFaultPoint::AfterJournalWrite
+                                        | MatrixFaultPoint::BeforeActivationBundle
+                                        | MatrixFaultPoint::AfterActivationBundle
+                                )
+                        }
+                        _ => true,
+                    }
+                })
         })
     {
         finding(
             findings,
             "incomplete-stage1-provider-fault-coverage",
-            "matrix must map each of the seven provider fault points to one concrete system scenario",
+            "matrix must map each provider fault point to one concrete scenario and bind source/destination roles to the corresponding matrix fault",
         );
     }
     for case in &bundle.cases {
@@ -438,14 +482,22 @@ fn is_sha256(value: &str) -> bool {
 fn validate_case_contents(
     bundle: &Stage1EvidenceBundle,
     case: &Stage1CaseEvidence,
-    _matrix: Option<&MatrixManifest>,
+    matrix: Option<&MatrixManifest>,
     artifacts: &VerifiedStage1Artifacts,
+    runtime_observations: &mut RawRuntimeObservations,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
     let snapshot = parse_snapshot(case, artifacts, findings);
     let traces = parse_traces(case, artifacts, findings);
     let receipts = parse_receipts(case, artifacts, findings);
-    let raw = validate_raw_artifacts(case, artifacts, findings);
+    let raw = validate_raw_artifacts(
+        case,
+        &bundle.environment,
+        matrix,
+        artifacts,
+        runtime_observations,
+        findings,
+    );
 
     validate_snapshot(bundle, case, snapshot.as_ref(), &traces, findings);
     validate_traces(bundle, case, snapshot.as_ref(), &traces, &raw, findings);
@@ -469,6 +521,43 @@ struct RawEvidence {
     dumps: Vec<RawDump>,
     assertion_names: BTreeSet<String>,
     revoked_provider_workers: BTreeSet<(Stage1TraceRole, String)>,
+    primary_worker_pids: BTreeMap<Stage1TraceRole, u32>,
+}
+
+#[derive(Default)]
+struct RawRuntimeObservations {
+    source: Option<ObservedRuntimeIdentity>,
+    destination: Option<ObservedRuntimeIdentity>,
+}
+
+impl RawRuntimeObservations {
+    fn observe(
+        &mut self,
+        role: Stage1TraceRole,
+        runtime: &ObservedRuntimeIdentity,
+        case: &Stage1CaseEvidence,
+        findings: &mut Vec<Stage1ValidationFinding>,
+    ) {
+        let slot = match role {
+            Stage1TraceRole::Source => &mut self.source,
+            Stage1TraceRole::Destination => &mut self.destination,
+        };
+        if let Some(previous) = slot.as_ref() {
+            if previous != runtime {
+                finding(
+                    findings,
+                    "inconsistent-stage1-runtime-identity",
+                    format!(
+                        "{} {} runtime identity or translation provenance changed across the matrix",
+                        case.case_id,
+                        trace_role_name(role)
+                    ),
+                );
+            }
+        } else {
+            *slot = Some(runtime.clone());
+        }
+    }
 }
 
 struct RawDump {
@@ -1140,10 +1229,39 @@ struct RawDumpResult {
 
 fn validate_raw_artifacts(
     case: &Stage1CaseEvidence,
+    environment: &Stage1ExecutionEnvironment,
+    matrix: Option<&MatrixManifest>,
     artifacts: &VerifiedStage1Artifacts,
+    runtime_observations: &mut RawRuntimeObservations,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> RawEvidence {
     let mut evidence = RawEvidence::default();
+    let observed_raw_uris = case
+        .artifacts
+        .raw_execution
+        .iter()
+        .map(|reference| reference.uri.as_str())
+        .collect::<Vec<_>>();
+    let raw_prefix = format!("cases/{}/raw", case.case_id);
+    let mut expected_raw_uris = vec![
+        format!("{raw_prefix}/source.jsonl"),
+        format!("{raw_prefix}/destination.jsonl"),
+        format!("{raw_prefix}/assertions.jsonl"),
+    ];
+    if case.case_id == "performance-observations" {
+        expected_raw_uris.push(format!("{raw_prefix}/performance.json"));
+    }
+    let expected_raw_uri_refs = expected_raw_uris.iter().map(String::as_str).collect::<Vec<_>>();
+    if observed_raw_uris != expected_raw_uri_refs {
+        finding(
+            findings,
+            "invalid-stage1-raw-artifact-set",
+            format!(
+                "{} raw artifacts must be the exact ordered canonical URI set {:?}",
+                case.case_id, expected_raw_uris
+            ),
+        );
+    }
     for reference in &case.artifacts.raw_execution {
         let Some(bytes) = read_case_artifact(case, reference, "raw execution", artifacts, findings)
         else {
@@ -1154,14 +1272,28 @@ fn validate_raw_artifacts(
             .and_then(|name| name.to_str())
             .unwrap_or_default();
         match file_name {
-            "source.jsonl" => {
-                validate_transcript(case, Stage1TraceRole::Source, bytes, &mut evidence, findings)
-            }
-            "destination.jsonl" => validate_transcript(
+            "source.jsonl" => validate_transcript(
                 case,
-                Stage1TraceRole::Destination,
+                TranscriptExpectation {
+                    role: Stage1TraceRole::Source,
+                    runtime: &environment.source_runtime,
+                    matrix,
+                },
                 bytes,
                 &mut evidence,
+                runtime_observations,
+                findings,
+            ),
+            "destination.jsonl" => validate_transcript(
+                case,
+                TranscriptExpectation {
+                    role: Stage1TraceRole::Destination,
+                    runtime: &environment.destination_runtime,
+                    matrix,
+                },
+                bytes,
+                &mut evidence,
+                runtime_observations,
                 findings,
             ),
             "assertions.jsonl" => validate_assertions(case, bytes, &mut evidence, findings),
@@ -1179,6 +1311,22 @@ fn validate_raw_artifacts(
             "missing-stage1-raw-assertions",
             format!("{} has no typed passing assertion observations", case.case_id),
         );
+    }
+    match (
+        evidence.primary_worker_pids.get(&Stage1TraceRole::Source),
+        evidence.primary_worker_pids.get(&Stage1TraceRole::Destination),
+    ) {
+        (Some(source), Some(destination)) if source != destination => {}
+        (Some(_), Some(_)) => finding(
+            findings,
+            "non-independent-stage1-primary-workers",
+            format!("{} source and destination primary workers share one pid", case.case_id),
+        ),
+        _ => finding(
+            findings,
+            "missing-stage1-primary-worker-process",
+            format!("{} does not bind both primary worker processes", case.case_id),
+        ),
     }
     if case.case_id == REPORT_REGENERATION_CASE_ID
         && !evidence.assertion_names.contains(REPORT_REGENERATION_ASSERTION)
@@ -1223,13 +1371,21 @@ fn validate_raw_artifacts(
     evidence
 }
 
+struct TranscriptExpectation<'a> {
+    role: Stage1TraceRole,
+    runtime: &'a Stage1VersionedIdentity,
+    matrix: Option<&'a MatrixManifest>,
+}
+
 fn validate_transcript(
     case: &Stage1CaseEvidence,
-    role: Stage1TraceRole,
+    expectation: TranscriptExpectation<'_>,
     bytes: &[u8],
     evidence: &mut RawEvidence,
+    runtime_observations: &mut RawRuntimeObservations,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
+    let TranscriptExpectation { role, runtime: expected_runtime_identity, matrix } = expectation;
     let lines = parse_json_lines::<RawTranscriptLine>(
         case,
         "worker transcript",
@@ -1237,21 +1393,59 @@ fn validate_transcript(
         "invalid-stage1-raw-transcript",
         findings,
     );
-    let mut sequences = BTreeMap::new();
-    let mut requests = BTreeSet::new();
+    let mut worker_processes = BTreeMap::<String, (u32, u64)>::new();
+    let mut requests = BTreeMap::new();
+    let mut responses = BTreeSet::new();
+    let mut worker_handshakes = BTreeMap::<String, RawWorkerHandshake>::new();
+    let mut primary_initializations = 0_usize;
+    let primary_worker = format!("{}-{}", case.case_id, trace_role_name(role));
     for transcript in lines {
-        let key = (transcript.worker.clone(), transcript.pid);
-        let previous = sequences.insert(key, transcript.sequence);
         if transcript.pid == 0
             || !transcript.worker.starts_with(&case.case_id)
             || transcript.sequence == 0
-            || previous.is_some_and(|sequence| sequence >= transcript.sequence)
         {
             finding(
                 findings,
                 "invalid-stage1-raw-transcript-sequence",
                 format!("{} contains an invalid worker transcript sequence", case.case_id),
             );
+            continue;
+        }
+        if let Some((pid, last_sequence)) = worker_processes.get_mut(&transcript.worker) {
+            if *pid != transcript.pid {
+                finding(
+                    findings,
+                    "invalid-stage1-worker-process",
+                    format!(
+                        "{} worker {} changed pid within one transcript",
+                        case.case_id, transcript.worker
+                    ),
+                );
+                continue;
+            }
+            if last_sequence.checked_add(1) != Some(transcript.sequence) {
+                finding(
+                    findings,
+                    "invalid-stage1-raw-transcript-sequence",
+                    format!(
+                        "{} contains a non-contiguous worker transcript sequence",
+                        case.case_id
+                    ),
+                );
+                continue;
+            }
+            *last_sequence = transcript.sequence;
+        } else {
+            if transcript.sequence != 1 {
+                finding(
+                    findings,
+                    "invalid-stage1-raw-transcript-sequence",
+                    format!("{} worker transcript does not begin at sequence 1", case.case_id),
+                );
+                continue;
+            }
+            worker_processes
+                .insert(transcript.worker.clone(), (transcript.pid, transcript.sequence));
         }
         if transcript.stream == RawTranscriptStream::WorkerStderr {
             continue;
@@ -1269,7 +1463,7 @@ fn validate_transcript(
         };
         let version = value.get("version").and_then(serde_json::Value::as_u64);
         let id = value.get("id").and_then(serde_json::Value::as_str).unwrap_or_default();
-        if version != Some(1) || id.is_empty() {
+        if version != Some(crate::STAGE1_WORKER_PROTOCOL_VERSION) || id.is_empty() {
             finding(
                 findings,
                 "invalid-stage1-worker-protocol-envelope",
@@ -1279,8 +1473,102 @@ fn validate_transcript(
         }
         match transcript.stream {
             RawTranscriptStream::ParentRequest => {
-                if value.get("command").and_then(serde_json::Value::as_object).is_none()
-                    || !requests.insert((transcript.worker.clone(), id.to_owned()))
+                let command = value.get("command").and_then(serde_json::Value::as_object);
+                let untrusted_command_kind = command
+                    .and_then(|command| command.get("kind"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let projection = match project_request_command(&value) {
+                    Ok(projection) => Some(projection),
+                    Err(detail) => {
+                        finding(
+                            findings,
+                            "invalid-stage1-worker-request",
+                            format!(
+                                "{} request {id} has an invalid exact shape: {detail}",
+                                case.case_id
+                            ),
+                        );
+                        None
+                    }
+                };
+                let command_kind = projection.map(|projection| projection.kind);
+                let permits_no_response =
+                    projection.is_some_and(|projection| projection.permits_no_response);
+                let forbids_response =
+                    projection.is_some_and(|projection| projection.forbids_response);
+                let is_initialize = command_kind == Some(ProtocolCommandKind::Initialize);
+                let handshake = worker_handshakes.entry(transcript.worker.clone()).or_default();
+                if !handshake.saw_request && !is_initialize {
+                    finding(
+                        findings,
+                        "stage1-worker-first-request-not-initialize",
+                        format!(
+                            "{} worker {} did not initialize before its first command",
+                            case.case_id, transcript.worker
+                        ),
+                    );
+                }
+                handshake.saw_request = true;
+                let initialization = command.filter(|_| is_initialize).map(|_| {
+                    parse_raw_initialization(
+                        case,
+                        role,
+                        transcript.worker == primary_worker,
+                        &transcript.worker,
+                        expected_runtime_identity,
+                        matrix,
+                        &value,
+                    )
+                });
+                let initialization = match initialization.transpose() {
+                    Ok(initialization) => initialization,
+                    Err(detail) => {
+                        finding(
+                            findings,
+                            "invalid-stage1-initialize-request",
+                            format!("{} {detail}", case.case_id),
+                        );
+                        None
+                    }
+                };
+                if is_initialize {
+                    if handshake.initialize_request_id.is_some() {
+                        finding(
+                            findings,
+                            "duplicate-stage1-worker-initialization",
+                            format!(
+                                "{} worker {} requested initialization more than once",
+                                case.case_id, transcript.worker
+                            ),
+                        );
+                    } else {
+                        handshake.initialize_request_id = Some(id.to_owned());
+                        handshake.state = RawInitializationState::Pending;
+                    }
+                } else if handshake.state != RawInitializationState::Succeeded {
+                    finding(
+                        findings,
+                        "stage1-worker-command-before-initialization",
+                        format!(
+                            "{} worker {} issued a command before successful initialization",
+                            case.case_id, transcript.worker
+                        ),
+                    );
+                }
+                if command.is_none()
+                    || requests
+                        .insert(
+                            (transcript.worker.clone(), id.to_owned()),
+                            RawRequestObservation {
+                                kind: command_kind,
+                                kind_name: untrusted_command_kind.to_owned(),
+                                permits_no_response,
+                                forbids_response,
+                                initialization,
+                            },
+                        )
+                        .is_some()
                 {
                     finding(
                         findings,
@@ -1293,20 +1581,197 @@ fn validate_transcript(
                 }
             }
             RawTranscriptStream::WorkerResponse => {
-                if !requests.contains(&(transcript.worker.clone(), id.to_owned())) {
+                let response = match serde_json::from_value::<RawProtocolResponse>(value.clone()) {
+                    Ok(response)
+                        if response.version == crate::STAGE1_WORKER_PROTOCOL_VERSION
+                            && !response.id.is_empty() =>
+                    {
+                        response
+                    }
+                    Ok(_) => {
+                        finding(
+                            findings,
+                            "invalid-stage1-worker-protocol-response",
+                            format!("{} response {id} has an invalid version or id", case.case_id),
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        finding(
+                            findings,
+                            "invalid-stage1-worker-protocol-response",
+                            format!("{} response {id} has an invalid shape: {error}", case.case_id),
+                        );
+                        continue;
+                    }
+                };
+                let request_key = (transcript.worker.clone(), id.to_owned());
+                let request = requests.get(&request_key).cloned();
+                if request.is_none() {
                     finding(
                         findings,
                         "unmatched-stage1-worker-response",
                         format!("{} response {id} has no matching request", case.case_id),
                     );
                 }
-                if value.pointer("/outcome/status").and_then(serde_json::Value::as_str)
-                    == Some("success")
-                    && value.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
-                        == Some("dump")
+                let first_response = responses.insert(request_key);
+                if !first_response {
+                    finding(
+                        findings,
+                        "duplicate-stage1-worker-response",
+                        format!("{} response {id} is duplicated", case.case_id),
+                    );
+                }
+                if first_response
+                    && request.as_ref().is_some_and(|request| request.forbids_response)
                 {
-                    match value
-                        .pointer("/outcome/result")
+                    finding(
+                        findings,
+                        "unexpected-stage1-worker-response",
+                        format!(
+                            "{} worker {} request {id} ({}) forbids a response",
+                            case.case_id,
+                            transcript.worker,
+                            request
+                                .as_ref()
+                                .map_or("unknown", |request| request.kind_name.as_str())
+                        ),
+                    );
+                }
+                let result = match &response.outcome {
+                    RawProtocolOutcome::Success { result } => Some(result),
+                    RawProtocolOutcome::Error { .. } => None,
+                };
+                let result_kind = result
+                    .and_then(|result| result.get("kind"))
+                    .and_then(serde_json::Value::as_str);
+                let response_projection = match project_response(&value) {
+                    Ok(projection) => Some(projection),
+                    Err(detail) => {
+                        finding(
+                            findings,
+                            "invalid-stage1-worker-protocol-response",
+                            format!(
+                                "{} response {id} has an invalid closed shape: {detail}",
+                                case.case_id
+                            ),
+                        );
+                        None
+                    }
+                };
+                if first_response
+                    && let (Some(request), Some(ProtocolResponseProjection::Success(result_kind))) =
+                        (request.as_ref(), response_projection)
+                    && request
+                        .kind
+                        .is_none_or(|command| !success_result_matches(command, result_kind))
+                {
+                    finding(
+                        findings,
+                        "incompatible-stage1-worker-result",
+                        format!(
+                            "{} response {id} result {result_kind:?} is impossible for request {}",
+                            case.case_id, request.kind_name
+                        ),
+                    );
+                }
+                if first_response
+                    && request.as_ref().is_some_and(|request| {
+                        request.kind == Some(ProtocolCommandKind::Initialize)
+                    })
+                {
+                    let handshake = worker_handshakes.entry(transcript.worker.clone()).or_default();
+                    if handshake.initialize_request_id.as_deref() != Some(id) {
+                        finding(
+                            findings,
+                            "invalid-stage1-worker-initialization-order",
+                            format!(
+                                "{} worker {} answered an initialization outside its one handshake",
+                                case.case_id, transcript.worker
+                            ),
+                        );
+                    } else {
+                        handshake.initialize_response_seen = true;
+                        match &response.outcome {
+                            RawProtocolOutcome::Success { result } => {
+                                let runtime = request
+                                    .as_ref()
+                                    .and_then(|request| request.initialization.as_ref())
+                                    .and_then(|initialization| {
+                                        validate_initialized_runtime(
+                                            case,
+                                            role,
+                                            expected_runtime_identity,
+                                            initialization,
+                                            result,
+                                            findings,
+                                        )
+                                    });
+                                if let Some(runtime) = runtime {
+                                    runtime_observations.observe(role, &runtime, case, findings);
+                                    handshake.state = RawInitializationState::Succeeded;
+                                    if transcript.worker == primary_worker {
+                                        primary_initializations += 1;
+                                        if evidence
+                                            .primary_worker_pids
+                                            .insert(role, transcript.pid)
+                                            .is_some()
+                                        {
+                                            finding(
+                                                findings,
+                                                "duplicate-stage1-primary-worker-process",
+                                                format!(
+                                                    "{} {} primary pid was observed twice",
+                                                    case.case_id,
+                                                    trace_role_name(role)
+                                                ),
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    handshake.state = RawInitializationState::Failed;
+                                    if request
+                                        .as_ref()
+                                        .is_none_or(|request| request.initialization.is_none())
+                                    {
+                                        finding(
+                                            findings,
+                                            "invalid-stage1-initialized-runtime",
+                                            format!(
+                                                "{} initialized response {id} did not answer a typed initialize request",
+                                                case.case_id
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                            RawProtocolOutcome::Error { error } => {
+                                if !error.is_object() {
+                                    finding(
+                                        findings,
+                                        "invalid-stage1-worker-protocol-response",
+                                        format!(
+                                            "{} initialize error response {id} is not an object",
+                                            case.case_id
+                                        ),
+                                    );
+                                }
+                                handshake.state = RawInitializationState::Failed;
+                            }
+                        }
+                    }
+                } else if result_kind == Some("initialized") {
+                    finding(
+                        findings,
+                        "invalid-stage1-initialized-runtime",
+                        format!(
+                            "{} initialized response {id} did not answer its one initialize request",
+                            case.case_id
+                        ),
+                    );
+                }
+                if result_kind == Some("dump") {
+                    match result
                         .cloned()
                         .and_then(|result| serde_json::from_value::<RawDumpResult>(result).ok())
                     {
@@ -1318,20 +1783,334 @@ fn validate_transcript(
                         ),
                     }
                 }
-                if value.pointer("/outcome/status").and_then(serde_json::Value::as_str)
-                    == Some("error")
-                    && value.pointer("/outcome/error/code").and_then(serde_json::Value::as_str)
-                        == Some("provider")
-                    && value
-                        .pointer("/outcome/error/provider_kind")
-                        .and_then(serde_json::Value::as_str)
-                        == Some("Revoked")
-                {
+                if matches!(
+                    &response.outcome,
+                    RawProtocolOutcome::Error { error }
+                        if error.get("code").and_then(serde_json::Value::as_str) == Some("provider")
+                            && error.get("provider_kind").and_then(serde_json::Value::as_str)
+                                == Some("Revoked")
+                ) {
                     evidence.revoked_provider_workers.insert((role, transcript.worker));
                 }
             }
             RawTranscriptStream::WorkerStderr => unreachable!(),
         }
+    }
+    for (worker, handshake) in worker_handshakes {
+        if handshake.initialize_request_id.is_none() {
+            finding(
+                findings,
+                "missing-stage1-worker-initialization",
+                format!("{} worker {worker} has no initialize request", case.case_id),
+            );
+        } else if !handshake.initialize_response_seen {
+            finding(
+                findings,
+                "missing-stage1-worker-initialize-response",
+                format!("{} worker {worker} has no initialize response", case.case_id),
+            );
+        }
+    }
+    for ((worker, request_id), request) in &requests {
+        if !request.permits_no_response
+            && !responses.contains(&(worker.clone(), request_id.clone()))
+        {
+            finding(
+                findings,
+                "missing-stage1-worker-response",
+                format!(
+                    "{} worker {worker} request {request_id} ({}) has no response",
+                    case.case_id, request.kind_name
+                ),
+            );
+        }
+    }
+    if primary_initializations != 1 {
+        finding(
+            findings,
+            "missing-stage1-primary-initialization",
+            format!(
+                "{} {} transcript has {primary_initializations} primary initialized responses",
+                case.case_id,
+                trace_role_name(role)
+            ),
+        );
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RawRequestObservation {
+    kind: Option<ProtocolCommandKind>,
+    kind_name: String,
+    permits_no_response: bool,
+    forbids_response: bool,
+    initialization: Option<RawInitialization>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RawInitializationState {
+    #[default]
+    NotRequested,
+    Pending,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Default)]
+struct RawWorkerHandshake {
+    saw_request: bool,
+    initialize_request_id: Option<String>,
+    initialize_response_seen: bool,
+    state: RawInitializationState,
+}
+
+#[derive(Clone, Debug)]
+struct RawInitialization {
+    role: Stage1TraceRole,
+    runtime: Stage2Runtime,
+    case_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProtocolResponse {
+    version: u64,
+    id: String,
+    outcome: RawProtocolOutcome,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum RawProtocolOutcome {
+    Success { result: serde_json::Value },
+    Error { error: serde_json::Value },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInitializedResult {
+    kind: String,
+    role: Stage1TraceRole,
+    case_id: String,
+    runtime: ObservedRuntimeIdentity,
+}
+
+fn parse_raw_initialization(
+    case: &Stage1CaseEvidence,
+    transcript_role: Stage1TraceRole,
+    primary_worker: bool,
+    worker: &str,
+    expected_runtime_identity: &Stage1VersionedIdentity,
+    matrix: Option<&MatrixManifest>,
+    value: &serde_json::Value,
+) -> Result<RawInitialization, String> {
+    let command = value
+        .get("command")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("initialize request command is not an object")?;
+    let required = ["kind", "role", "runtime", "database_path", "options", "fault"];
+    if command.len() != required.len() || required.iter().any(|field| !command.contains_key(*field))
+    {
+        return Err("initialize request does not have the exact protocol fields".into());
+    }
+    let role = match command.get("role").and_then(serde_json::Value::as_str) {
+        Some("source") => Stage1TraceRole::Source,
+        Some("destination") => Stage1TraceRole::Destination,
+        _ => return Err("initialize request has an invalid role".into()),
+    };
+    if role != transcript_role {
+        return Err(format!(
+            "initialize request role {} does not match the {} transcript",
+            trace_role_name(role),
+            trace_role_name(transcript_role)
+        ));
+    }
+    let runtime = match command.get("runtime").and_then(serde_json::Value::as_str) {
+        Some("wasmtime") => Stage2Runtime::Wasmtime,
+        Some("jco_node") => Stage2Runtime::JcoNode,
+        _ => return Err("initialize request has an invalid runtime selector".into()),
+    };
+    if !runtime_identity_matches(runtime, expected_runtime_identity) {
+        return Err("initialize request runtime selector does not match the environment".into());
+    }
+    if command.get("database_path").and_then(serde_json::Value::as_str).is_none_or(str::is_empty) {
+        return Err("initialize request has an empty database path".into());
+    }
+    let options = serde_json::from_value::<MatrixOptions>(
+        command.get("options").cloned().ok_or("initialize request options are missing")?,
+    )
+    .map_err(|error| format!("initialize request options are not exact: {error}"))?;
+    let fault = serde_json::from_value::<Option<MatrixFaultPoint>>(
+        command.get("fault").cloned().ok_or("initialize request fault is missing")?,
+    )
+    .map_err(|error| format!("initialize request fault is invalid: {error}"))?;
+    validate_initialization_matrix_binding(
+        case,
+        transcript_role,
+        primary_worker,
+        worker,
+        &options,
+        fault,
+        matrix,
+    )?;
+    Ok(RawInitialization { role, runtime, case_id: options.case_id })
+}
+
+fn validate_initialization_matrix_binding(
+    case: &Stage1CaseEvidence,
+    role: Stage1TraceRole,
+    primary_worker: bool,
+    worker: &str,
+    options: &MatrixOptions,
+    fault: Option<MatrixFaultPoint>,
+    matrix: Option<&MatrixManifest>,
+) -> Result<(), String> {
+    validate_initialize_worker_binding(
+        worker,
+        match role {
+            Stage1TraceRole::Source => "source.jsonl",
+            Stage1TraceRole::Destination => "destination.jsonl",
+        },
+        &case.case_id,
+        &options.case_id,
+    )?;
+    let matrix = matrix.ok_or("initialize request cannot be checked without a typed matrix")?;
+    let entry = matrix
+        .entries
+        .iter()
+        .find(|entry| entry.case_id == case.case_id)
+        .ok_or("initialize request has no matrix entry")?;
+    if options.case_id == case.case_id {
+        if options != &entry.options {
+            return Err("initialize request options do not match the matrix entry".into());
+        }
+        let expected_fault = if primary_worker {
+            match role {
+                Stage1TraceRole::Source => entry.source_fault,
+                Stage1TraceRole::Destination => entry.destination_fault,
+            }
+        } else {
+            None
+        };
+        if fault != expected_fault {
+            return Err("initialize request fault does not match its matrix/worker role".into());
+        }
+        return Ok(());
+    }
+
+    if case.case_id != "evidence-verification" || role != Stage1TraceRole::Source {
+        return Err("initialize request options do not bind the top-level case".into());
+    }
+    let expected_options = MatrixOptions {
+        case_id: options.case_id.clone(),
+        namespace_availability: MatrixNamespaceAvailability::Correct,
+        authority_policy: MatrixAuthorityPolicyMode::Sufficient,
+    };
+    if options != &expected_options {
+        return Err("supplemental initialize options are not the exact default profile".into());
+    }
+    let coverage = matrix
+        .provider_fault_coverage
+        .iter()
+        .filter(|coverage| {
+            coverage.case_id == case.case_id
+                && coverage.role == "supplemental-source"
+                && supplemental_case_id(coverage.point) == options.case_id
+        })
+        .collect::<Vec<_>>();
+    if coverage.len() != 1 {
+        return Err(
+            "supplemental initialize is not uniquely bound to provider fault coverage".into()
+        );
+    }
+    let primary = format!("{}-supplemental-source", options.case_id);
+    let retry = format!("{primary}-retry");
+    let recovery = format!("{primary}-recovery");
+    let expected_fault = if worker == primary {
+        Some(coverage[0].point)
+    } else if worker == retry || worker == recovery {
+        None
+    } else {
+        return Err("supplemental initialize uses an unknown worker identity".into());
+    };
+    if fault != expected_fault {
+        return Err("supplemental initialize fault does not match provider coverage".into());
+    }
+    Ok(())
+}
+
+fn supplemental_case_id(point: MatrixFaultPoint) -> String {
+    let point = match point {
+        MatrixFaultPoint::BeforeJournalWrite => "before-journal-write",
+        MatrixFaultPoint::AfterJournalWrite => "after-journal-write",
+        MatrixFaultPoint::BeforeActivationBundle => "before-activation-bundle",
+        MatrixFaultPoint::AfterActivationBundle => "after-activation-bundle",
+        MatrixFaultPoint::BeforeCommitBundle => "before-commit-bundle",
+        MatrixFaultPoint::AfterCommitBundle => "after-commit-bundle",
+        MatrixFaultPoint::AfterKvCommit => "after-kv-commit",
+    };
+    format!("evidence-verification-fault-{point}")
+}
+
+fn validate_initialized_runtime(
+    case: &Stage1CaseEvidence,
+    transcript_role: Stage1TraceRole,
+    expected_runtime_identity: &Stage1VersionedIdentity,
+    initialization: &RawInitialization,
+    result: &serde_json::Value,
+    findings: &mut Vec<Stage1ValidationFinding>,
+) -> Option<ObservedRuntimeIdentity> {
+    let initialized = match serde_json::from_value::<RawInitializedResult>(result.clone()) {
+        Ok(initialized) => initialized,
+        Err(error) => {
+            finding(
+                findings,
+                "invalid-stage1-initialized-runtime",
+                format!(
+                    "{} {} initialized response has an invalid exact shape: {error}",
+                    case.case_id,
+                    trace_role_name(transcript_role)
+                ),
+            );
+            return None;
+        }
+    };
+    let valid = initialized.kind == "initialized"
+        && initialized.role == initialization.role
+        && initialization.role == transcript_role
+        && initialized.case_id == initialization.case_id
+        && observed_runtime_matches(initialization.runtime, &initialized.runtime)
+        && translation_provenance_matches(initialization.runtime, &initialized.runtime)
+        && observed_environment_identity(&initialized.runtime) == *expected_runtime_identity;
+    if !valid {
+        finding(
+            findings,
+            "invalid-stage1-initialized-runtime",
+            format!(
+                "{} {} initialization does not match its selector, role, environment, or required provenance",
+                case.case_id,
+                trace_role_name(transcript_role)
+            ),
+        );
+        return None;
+    }
+    Some(initialized.runtime)
+}
+
+fn observed_environment_identity(runtime: &ObservedRuntimeIdentity) -> Stage1VersionedIdentity {
+    Stage1VersionedIdentity {
+        name: format!("{} adapter with {}", runtime.implementation, runtime.engine),
+        version: format!(
+            "{}+{}.{}",
+            runtime.implementation_version, runtime.engine, runtime.engine_version
+        ),
+    }
+}
+
+const fn trace_role_name(role: Stage1TraceRole) -> &'static str {
+    match role {
+        Stage1TraceRole::Source => "source",
+        Stage1TraceRole::Destination => "destination",
     }
 }
 

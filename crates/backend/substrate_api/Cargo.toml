@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "substrate_api"
 version = "0.2.0"
 publish = false
