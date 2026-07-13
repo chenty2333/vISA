@@ -1,0 +1,23 @@
+[package]
+license.workspace = true
+name = "visa_wacogo"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+test-control = []
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+hex.workspace = true
+rustix = { version = "=1.1.4", features = ["event", "fs"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+visa_component_adapter = { path = "../visa_component_adapter" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../visa_runtime" }

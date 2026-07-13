@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-13.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -20,6 +20,9 @@ The supported development environment and current CI parity boundary is the
 - the `wasm32-unknown-unknown` and `x86_64-unknown-none` targets;
 - Node 24.15.0 with V8 13.6.233.17-node.48, installed from the official
   architecture-specific archive after SHA-256 verification;
+- on linux/amd64 image builds, the official Go 1.26.5 archive plus the
+  source-lock-bound Wacogo module zip and offline module-cache seed used only by
+  the x86-64 Linux Strict Stage 2 gate;
 - QEMU and OVMF for the current x86_64 kernel runner; and
 - the C, autotools, and Linux packages used by the LTP helpers.
 
@@ -61,7 +64,7 @@ volumes by default.
 
 ## Repository gates
 
-The repository exposes two cumulative repository tiers and three standalone
+The repository exposes two cumulative repository tiers and four standalone
 system tiers. Run the ordinary edit-loop gate with:
 
 ```sh
@@ -92,11 +95,32 @@ Run the complete four-direction Stage 2c matrix with:
 scripts/run-docker-ci-gate.sh system-stage2
 ```
 
+Run the locked Strict Stage 2 Wasmtime/Wacogo matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage2-strict
+```
+
 With no tier argument the wrapper runs `full`. It validates the Compose
 configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
 implementation used by CI. `--skip-build` reuses an existing image.
 `--ci-cache` overlays `compose.ci.yaml` and uses the bind-mounted `.ci-cache/`
 layout used by GitHub Actions.
+
+The strict Docker wrapper retains its gate root, locked Wacogo sidecar and build
+receipt, Docker log, and exit receipt together below `.ci-cache/strict-stage2/`
+by default. `--artifact-parent DIR` selects another parent. For a direct Host
+run, provide the prefetched inputs named by `VISA_WACOGO_GO_ARCHIVE`,
+`VISA_WACOGO_GO`, `VISA_WACOGO_MODULE_ZIP`, and
+`VISA_WACOGO_GOMODCACHE`, then run:
+
+```sh
+scripts/ci-gate.sh system-stage2-strict
+```
+
+Both entries converge on `scripts/run-strict-stage2-local-gate.sh`; the Docker
+path supplies the same locked inputs from the development image rather than
+using a second implementation of the gate.
 
 `fast` checks locked metadata, formatting, strict active-spine dependency
 direction, the Stage 1 legacy-deletion/oracle boundary, first-party Rust file
@@ -140,7 +164,19 @@ gate failure.
 flow to an explicitly selected JcoNode-to-JcoNode pair. `system-stage2` creates
 one root containing all four Wasmtime/JcoNode source-destination cells, runs
 124 cases, then invokes the independent Stage 2 verifier over the outer bundle.
-The latter is intentionally expensive and is not part of `full`.
+This legacy v2 matrix retains its `cross-execution-path-portability` claim and
+does not become independent-runtime evidence.
+
+`system-stage2-strict` verifies the official Go toolchain, byte-exact Wacogo
+source lock and module input, fixed Component, seven selected-runtime
+qualification gates, and two byte-identical sidecar builds. It then runs the
+focused live-sidecar and real-Wacogo tests, independently verifies the
+Wacogo-to-Wacogo Stage 1 cell, and executes the strict v3 matrix in this exact
+order: Wasmtime-to-Wasmtime, Wacogo-to-Wacogo, Wasmtime-to-Wacogo, and
+Wacogo-to-Wasmtime. A pass covers 124/124 executions and 31/31 normalized
+equality groups and earns only `strict-cross-runtime-continuity` on x86-64
+Linux with the timer/KV profile. Both Stage 2 matrix gates are intentionally
+expensive and are not part of `full`.
 
 ## Host Cargo commands
 
@@ -169,12 +205,13 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` implements cumulative `fast`/`full` and the three standalone
+   `ci-gate.sh` implements cumulative `fast`/`full` and the four standalone
    system tiers inside the development environment.
 2. **System evidence:** `ci-gate.sh system`, `system-jco-node`, and
-   `system-stage2` orchestrate real runners followed by independent verifier
-   processes. Invoke the binaries directly only when investigating a retained
-   artifact root.
+   `system-stage2` preserve the Stage 1 and legacy v2 paths;
+   `system-stage2-strict` adds the unified locked Wasmtime/Wacogo v3 path. All
+   orchestrate real runners followed by independent verifier processes. Invoke
+   the binaries directly only when investigating a retained artifact root.
 3. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
@@ -233,8 +270,10 @@ gate must not be generalized beyond the proof boundary listed above.
 
 ## Next validation expansion
 
-`fast`, `full`, and the three standalone system tiers are the implemented root
-interface. The JcoNode matrix proves a second translated execution path, not a
-fully independent Component Model implementation. Release, strict independent
-runtime, file/network, cross-ISA, confidential, and production claims remain
+`fast`, `full`, and the four standalone system tiers are the implemented root
+interface. The legacy JcoNode v2 matrix proves a second translated execution
+path, not a fully independent Component Model implementation. The separate
+source-lock-bound Wasmtime/Wacogo v3 matrix supplies that independence and only
+the x86-64 Linux timer/KV `strict-cross-runtime-continuity` claim. File/network,
+cross-ISA, confidential, release, performance, and production claims remain
 unavailable until their exact cells and provenance inputs execute.

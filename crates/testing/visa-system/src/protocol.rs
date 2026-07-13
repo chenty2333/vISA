@@ -22,6 +22,7 @@ pub enum WorkerRole {
 pub enum RuntimeImplementation {
     Wasmtime,
     JcoNode,
+    Wacogo,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,36 @@ pub struct RuntimeIdentityView {
     pub engine: String,
     pub engine_version: String,
     pub translation_provenance: Option<TranslationProvenanceView>,
+    pub implementation_lineage: Option<ImplementationLineageView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ImplementationLineageView {
+    Wacogo {
+        source_lock_schema: String,
+        source_lock_sha256: String,
+        derivative_id: String,
+        upstream_module: String,
+        upstream_version: String,
+        upstream_revision: String,
+        upstream_module_sum: String,
+        upstream_is_qualified_without_patches: bool,
+        patchset_id: String,
+        patchset_sha256: String,
+        patch_sha256s: Vec<String>,
+        patched_tree_sha256: String,
+        sidecar_executable_sha256: String,
+        sidecar_executable_size: u64,
+        sidecar_protocol_version: u32,
+        execution_carrier: String,
+        wacogo_version: String,
+        wacogo_revision: String,
+        wazero_version: String,
+        go_version: String,
+        target: String,
+        main_module: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,10 +268,14 @@ pub enum ResponseOutcome {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerResult {
     Ack,
+    Prepared {
+        runtime: Box<RuntimeIdentityView>,
+    },
     Initialized {
         role: WorkerRole,
         case_id: String,
-        runtime: RuntimeIdentityView,
+        prepared_runtime: Box<RuntimeIdentityView>,
+        live_runtime: Option<Box<RuntimeIdentityView>>,
     },
     State {
         view: StateView,
@@ -276,6 +311,7 @@ pub enum WorkerResult {
         fault_observation: Option<FaultObservationView>,
         key_value_entry: Option<VersionedValue>,
         component_instantiated: bool,
+        live_runtime: Option<RuntimeIdentityView>,
         component: Option<ComponentStatusView>,
         portable_component_state: Option<Vec<u8>>,
     },
@@ -289,6 +325,7 @@ pub struct StateView {
     pub journal_position: JournalPosition,
     pub state_digest: Digest,
     pub component_instantiated: bool,
+    pub live_runtime: Option<RuntimeIdentityView>,
     pub component: Option<ComponentStatusView>,
 }
 
@@ -454,6 +491,16 @@ mod tests {
         assert_eq!(encoded["outcome"]["status"], "success");
         assert_eq!(encoded["outcome"]["result"]["kind"], "ack");
         assert_eq!(serde_json::from_value::<ResponseEnvelope>(encoded).unwrap(), response);
+    }
+
+    #[test]
+    fn worker_protocol_has_an_explicit_wacogo_selector() {
+        let encoded = serde_json::to_string(&RuntimeImplementation::Wacogo).unwrap();
+        assert_eq!(encoded, "\"wacogo\"");
+        assert_eq!(
+            serde_json::from_str::<RuntimeImplementation>(&encoded).unwrap(),
+            RuntimeImplementation::Wacogo
+        );
     }
 
     #[test]

@@ -9,10 +9,10 @@ use super::{
     model::{
         STAGE2_COMMON_INPUT_FILE, STAGE2_EVIDENCE_FILE, STAGE2_EVIDENCE_SCHEMA_VERSION,
         STAGE2_EXECUTION_COUNT, STAGE2_INCOMPLETE_MARKER_FILE, STAGE2_MATRIX_MANIFEST_FILE,
-        STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION, Stage2ArtifactReference, Stage2CellId,
-        Stage2CellManifest, Stage2Claim, Stage2ClaimGuards, Stage2CommonInputManifest,
+        STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION, Stage2ArtifactReference, Stage2CellManifest,
+        Stage2Claim, Stage2ClaimGuards, Stage2ClaimSet, Stage2CommonInputManifest,
         Stage2EvidenceBundle, Stage2InnerVerification, Stage2MatrixManifest, Stage2WriteError,
-        Stage2WriteResult,
+        Stage2WriteResult, stage2_cell_descriptors,
     },
     verify::{
         compare_normalized_cells, load_verified_cell,
@@ -82,9 +82,11 @@ pub fn write_stage2_evidence_artifacts(
         return Err(write_error("invalid-stage2-common-input", render_findings(&common_findings)));
     }
 
-    let mut verified = Vec::with_capacity(Stage2CellId::ALL.len());
-    for cell_id in Stage2CellId::ALL {
-        verified.push(load_verified_cell(cell_id, &stage2_root).map_err(write_from_finding)?);
+    let descriptors =
+        stage2_cell_descriptors(Stage2ClaimSet::CrossExecutionPathPortability).collect::<Vec<_>>();
+    let mut verified = Vec::with_capacity(descriptors.len());
+    for descriptor in &descriptors {
+        verified.push(load_verified_cell(descriptor, &stage2_root).map_err(write_from_finding)?);
     }
     let common_sha256 = sha256_hex(&common_bytes);
     let cross_findings = validate_cross_cell_inputs(&common, &common_sha256, &verified);
@@ -100,21 +102,22 @@ pub fn write_stage2_evidence_artifacts(
     })?;
     let mut cells = Vec::with_capacity(verified.len());
     for cell in &verified {
+        let descriptor = cell.descriptor;
         let normalized_bytes = canonical_stage2_json_bytes(&cell.normalized)
             .map_err(|source| write_error(source.code, source.detail))?;
-        let normalized_uri = cell.id.normalized_uri();
+        let normalized_uri = descriptor.id.normalized_uri();
         publish_atomic(&stage2_root, &normalized_uri, &normalized_bytes)?;
         cells.push(Stage2CellManifest {
-            cell_id: cell.id,
-            requested_source: cell.id.source_runtime(),
-            requested_destination: cell.id.destination_runtime(),
+            cell_id: descriptor.id,
+            requested_source: descriptor.source_runtime,
+            requested_destination: descriptor.destination_runtime,
             observed_source: cell.bundle.environment.source_runtime.clone(),
             observed_destination: cell.bundle.environment.destination_runtime.clone(),
             source_translation_provenance: cell.source_translation_provenance.clone(),
             destination_translation_provenance: cell.destination_translation_provenance.clone(),
             instantiation_observations: cell.instantiation_observations.clone(),
             stage1_bundle: Stage2ArtifactReference {
-                uri: cell.id.stage1_bundle_uri(),
+                uri: descriptor.id.stage1_bundle_uri(),
                 sha256: sha256_hex(&cell.bundle_bytes),
             },
             normalized_observable_trace: Stage2ArtifactReference {
@@ -159,7 +162,7 @@ pub fn write_stage2_evidence_artifacts(
         inner_verifications: verified
             .iter()
             .map(|cell| Stage2InnerVerification {
-                cell_id: cell.id,
+                cell_id: cell.descriptor.id,
                 stage1_bundle_id: cell.bundle.bundle_id.clone(),
                 stage1_bundle_sha256: sha256_hex(&cell.bundle_bytes),
                 case_count: cell.bundle.cases.len(),

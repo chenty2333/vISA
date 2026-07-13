@@ -5,22 +5,29 @@ use std::{
 
 use serde::Deserialize;
 
+#[cfg(test)]
+use super::model::stage2_cell_descriptor;
 use super::{
     artifacts::finding,
     model::{
         STAGE2_INSTANTIATION_OBSERVATIONS_SCHEMA_VERSION, Stage2CaseInstantiationObservation,
-        Stage2CellId, Stage2InstantiationObservation, Stage2InstantiationObservations,
-        Stage2LiveInstantiationBoundary, Stage2NotInstantiatedBoundary,
-        Stage2NotInstantiatedReason, Stage2Runtime, Stage2ValidationFinding,
+        Stage2CellDescriptor, Stage2CellId, Stage2InstantiationObservation,
+        Stage2InstantiationObservations, Stage2LiveInstantiationBoundary,
+        Stage2NotInstantiatedBoundary, Stage2NotInstantiatedReason, Stage2Runtime,
+        Stage2ValidationFinding,
     },
     protocol::{
         CanonicalStateBoundary, ProtocolCommandKind, ProtocolRequestProjection,
         ProtocolResponseProjection, ProtocolResultKind, observed_component_instantiated,
         project_request_command, project_response, success_result_matches,
         validate_canonical_state_response, validate_initialize_request,
-        validate_initialize_response,
+        validate_initialize_response, validate_prepared_response,
     },
-    runtime::{ObservedCellTranslationProvenance, validate_observed_runtime},
+    runtime::{
+        ObservedCellTranslationProvenance, ObservedRuntimeIdentity,
+        complete_runtime_metadata_matches, validate_observed_runtime,
+    },
+    strict_model::Stage2StrictRuntimeIdentityChain,
 };
 use crate::{
     Stage1CaseEvidence, Stage1EvidenceBundle, Stage1ExpectedOwnership, VerifiedStage1Artifacts,
@@ -31,6 +38,119 @@ use crate::{
 pub(super) struct ObservedCellTranscriptEvidence {
     pub(super) translation_provenance: ObservedCellTranslationProvenance,
     pub(super) instantiation_observations: Stage2InstantiationObservations,
+    pub(super) source_runtime_chain: Option<Stage2StrictRuntimeIdentityChain>,
+    pub(super) destination_runtime_chain: Option<Stage2StrictRuntimeIdentityChain>,
+}
+
+#[derive(Default)]
+struct RuntimeChainAccumulator {
+    requested: Option<Stage2Runtime>,
+    prepared: Option<ObservedRuntimeIdentity>,
+    prepared_observation_count: usize,
+    live: Option<ObservedRuntimeIdentity>,
+    live_observation_count: usize,
+}
+
+impl RuntimeChainAccumulator {
+    fn observe_requested(
+        &mut self,
+        runtime: Stage2Runtime,
+        context: RuntimeTranscriptContext<'_>,
+        findings: &mut Vec<Stage2ValidationFinding>,
+    ) {
+        if self.requested.is_some_and(|previous| previous != runtime) {
+            finding(
+                findings,
+                "stage2-runtime-requested-selector-drift",
+                format!(
+                    "{} {} changed the requested {} selector",
+                    context.id.as_str(),
+                    context.case.case_id,
+                    context.role_name
+                ),
+            );
+        } else {
+            self.requested = Some(runtime);
+        }
+    }
+
+    fn observe_prepared(
+        &mut self,
+        runtime: &ObservedRuntimeIdentity,
+        context: RuntimeTranscriptContext<'_>,
+        findings: &mut Vec<Stage2ValidationFinding>,
+    ) {
+        self.prepared_observation_count += 1;
+        if self.prepared.as_ref().is_some_and(|previous| previous != runtime) {
+            finding(
+                findings,
+                "stage2-runtime-prepared-metadata-drift",
+                format!(
+                    "{} {} changed prepared {} runtime metadata",
+                    context.id.as_str(),
+                    context.case.case_id,
+                    context.role_name
+                ),
+            );
+        } else if self.prepared.is_none() {
+            self.prepared = Some(runtime.clone());
+        }
+    }
+
+    fn observe_live(
+        &mut self,
+        runtime: &ObservedRuntimeIdentity,
+        context: RuntimeTranscriptContext<'_>,
+        findings: &mut Vec<Stage2ValidationFinding>,
+    ) {
+        self.live_observation_count += 1;
+        if self.live.as_ref().is_some_and(|previous| previous != runtime) {
+            finding(
+                findings,
+                "stage2-runtime-live-metadata-drift",
+                format!(
+                    "{} {} changed live {} runtime metadata",
+                    context.id.as_str(),
+                    context.case.case_id,
+                    context.role_name
+                ),
+            );
+        } else if self.live.is_none() {
+            self.live = Some(runtime.clone());
+        }
+    }
+
+    fn finish(
+        self,
+        id: Stage2CellId,
+        role_name: &str,
+        expected: Stage2Runtime,
+        findings: &mut Vec<Stage2ValidationFinding>,
+    ) -> Option<Stage2StrictRuntimeIdentityChain> {
+        let valid = self.requested == Some(expected)
+            && self.prepared.is_some()
+            && self.prepared_observation_count > 0
+            && self.live.is_some()
+            && self.live_observation_count > 0;
+        if !valid {
+            finding(
+                findings,
+                "incomplete-stage2-runtime-identity-chain",
+                format!(
+                    "{} has no complete transcript-derived requested/prepared/live {role_name} chain",
+                    id.as_str()
+                ),
+            );
+            return None;
+        }
+        Some(Stage2StrictRuntimeIdentityChain {
+            requested: self.requested.expect("validated requested selector"),
+            prepared: self.prepared.expect("validated prepared metadata").strict_metadata(),
+            prepared_observation_count: self.prepared_observation_count,
+            live: self.live.expect("validated live metadata").strict_metadata(),
+            live_observation_count: self.live_observation_count,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -52,35 +172,40 @@ enum TranscriptStream {
 }
 
 pub(super) fn audit_runtime_transcripts(
-    id: Stage2CellId,
+    descriptor: &'static Stage2CellDescriptor,
     bundle: &Stage1EvidenceBundle,
     artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
+    let id = descriptor.id;
     let mut translation_provenance = ObservedCellTranslationProvenance::default();
+    let mut source_runtime_chain = RuntimeChainAccumulator::default();
+    let mut destination_runtime_chain = RuntimeChainAccumulator::default();
     let mut cases = Vec::with_capacity(bundle.cases.len());
     for case in &bundle.cases {
         let source = audit_role_transcript(
             id,
             case,
             "source.jsonl",
-            id.source_runtime(),
+            descriptor.source_runtime,
             &format!("{}-source", case.case_id),
             artifacts,
             cell_root,
             &mut translation_provenance,
+            &mut source_runtime_chain,
             findings,
         );
         let destination = audit_role_transcript(
             id,
             case,
             "destination.jsonl",
-            id.destination_runtime(),
+            descriptor.destination_runtime,
             &format!("{}-destination", case.case_id),
             artifacts,
             cell_root,
             &mut translation_provenance,
+            &mut destination_runtime_chain,
             findings,
         );
         if let (Some(source), Some(destination)) = (source, destination) {
@@ -91,12 +216,22 @@ pub(super) fn audit_runtime_transcripts(
             });
         }
     }
+    let source_runtime_chain =
+        source_runtime_chain.finish(id, "source", descriptor.source_runtime, findings);
+    let destination_runtime_chain = destination_runtime_chain.finish(
+        id,
+        "destination",
+        descriptor.destination_runtime,
+        findings,
+    );
     ObservedCellTranscriptEvidence {
         translation_provenance,
         instantiation_observations: Stage2InstantiationObservations {
             schema_version: STAGE2_INSTANTIATION_OBSERVATIONS_SCHEMA_VERSION.to_owned(),
             cases,
         },
+        source_runtime_chain,
+        destination_runtime_chain,
     }
 }
 
@@ -110,6 +245,7 @@ fn audit_role_transcript(
     artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     translation_provenance: &mut ObservedCellTranslationProvenance,
+    runtime_chain: &mut RuntimeChainAccumulator,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> Option<Stage2InstantiationObservation> {
     let expected_uri = format!("cases/{}/raw/{role_name}", case.case_id);
@@ -142,6 +278,7 @@ fn audit_role_transcript(
         },
         bytes,
         translation_provenance,
+        runtime_chain,
         findings,
     )
 }
@@ -174,6 +311,7 @@ struct RequestAuditState<'a> {
     handshake: &'a mut PrimaryHandshakeFacts,
     requests: &'a mut BTreeMap<(String, String), RuntimeRequestFacts>,
     initialize_case_ids: &'a mut BTreeMap<(String, String), String>,
+    runtime_chain: &'a mut RuntimeChainAccumulator,
     findings: &'a mut Vec<Stage2ValidationFinding>,
 }
 
@@ -187,6 +325,7 @@ fn audit_runtime_transcript(
     context: RuntimeTranscriptContext<'_>,
     bytes: &[u8],
     translation_provenance: &mut ObservedCellTranslationProvenance,
+    runtime_chain: &mut RuntimeChainAccumulator,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> Option<Stage2InstantiationObservation> {
     let RuntimeTranscriptContext { id, case, role_name, expected_runtime, primary_worker, .. } =
@@ -196,6 +335,7 @@ fn audit_runtime_transcript(
     let mut initialize_case_ids = BTreeMap::<(String, String), String>::new();
     let mut responses = BTreeSet::<(String, String)>::new();
     let mut worker_processes = BTreeMap::<String, (u32, u64)>::new();
+    let mut prepared_by_worker = BTreeMap::<String, ObservedRuntimeIdentity>::new();
     let mut facts = InstantiationFacts::default();
 
     for (line_index, line) in
@@ -298,6 +438,7 @@ fn audit_runtime_transcript(
                     handshake: &mut handshake,
                     requests: &mut requests,
                     initialize_case_ids: &mut initialize_case_ids,
+                    runtime_chain,
                     findings,
                 },
             );
@@ -386,6 +527,48 @@ fn audit_runtime_transcript(
                 translation_provenance,
                 findings,
             );
+            if let Some(prepared) = value
+                .pointer("/outcome/result/prepared_runtime")
+                .cloned()
+                .and_then(|runtime| serde_json::from_value(runtime).ok())
+                && complete_runtime_metadata_matches(expected_runtime, &prepared)
+            {
+                runtime_chain.observe_prepared(&prepared, context, findings);
+                prepared_by_worker.insert(transcript.worker.clone(), prepared.clone());
+                if let Some(live) =
+                    value.pointer("/outcome/result/live_runtime").cloned().and_then(|runtime| {
+                        serde_json::from_value::<ObservedRuntimeIdentity>(runtime).ok()
+                    })
+                    && live == prepared
+                {
+                    runtime_chain.observe_live(&live, context, findings);
+                }
+            }
+        }
+        if command == ProtocolCommandKind::ValidateDestination {
+            match validate_prepared_response(&value).and_then(|runtime| {
+                serde_json::from_value::<ObservedRuntimeIdentity>(runtime.clone())
+                    .map_err(|source| source.to_string())
+            }) {
+                Ok(replacement)
+                    if complete_runtime_metadata_matches(expected_runtime, &replacement)
+                        && prepared_by_worker
+                            .get(&transcript.worker)
+                            .is_some_and(|initialized| initialized == &replacement) =>
+                {
+                    runtime_chain.observe_prepared(&replacement, context, findings);
+                    prepared_by_worker.insert(transcript.worker.clone(), replacement);
+                }
+                Ok(_) | Err(_) => finding(
+                    findings,
+                    "invalid-stage2-replacement-runtime-metadata",
+                    format!(
+                        "{} {} destination replacement preflight metadata changed",
+                        id.as_str(),
+                        case.case_id
+                    ),
+                ),
+            }
         }
         let canonical_boundary = if transcript.worker == primary_worker {
             match (role_name, command) {
@@ -424,6 +607,45 @@ fn audit_runtime_transcript(
                 continue;
             }
         };
+        if component_instantiated == Some(true) {
+            let live = match result_kind {
+                ProtocolResultKind::State
+                | ProtocolResultKind::SafePoint
+                | ProtocolResultKind::Snapshot
+                | ProtocolResultKind::Timer
+                | ProtocolResultKind::EffectProbe => {
+                    value.pointer("/outcome/result/view/live_runtime")
+                }
+                ProtocolResultKind::Dump => value.pointer("/outcome/result/live_runtime"),
+                ProtocolResultKind::Ack
+                | ProtocolResultKind::Prepared
+                | ProtocolResultKind::Initialized => None,
+            }
+            .cloned()
+            .and_then(|runtime| serde_json::from_value::<ObservedRuntimeIdentity>(runtime).ok());
+            if !live.as_ref().is_some_and(|live| {
+                complete_runtime_metadata_matches(expected_runtime, live)
+                    && prepared_by_worker
+                        .get(&transcript.worker)
+                        .is_some_and(|prepared| prepared == live)
+            }) {
+                finding(
+                    findings,
+                    "stage2-prepared-live-runtime-metadata-drift",
+                    format!(
+                        "{} {} live runtime does not match the consumed prepared token",
+                        id.as_str(),
+                        case.case_id
+                    ),
+                );
+                continue;
+            }
+            runtime_chain.observe_live(
+                live.as_ref().expect("validated live runtime above"),
+                context,
+                findings,
+            );
+        }
         audit_successful_instantiation_response(
             context,
             &transcript.worker,
@@ -473,7 +695,8 @@ fn audit_request(
     projection: ProtocolRequestProjection,
     state: RequestAuditState<'_>,
 ) {
-    let RequestAuditState { handshake, requests, initialize_case_ids, findings } = state;
+    let RequestAuditState { handshake, requests, initialize_case_ids, runtime_chain, findings } =
+        state;
     let RuntimeTranscriptContext {
         id,
         case,
@@ -523,6 +746,7 @@ fn audit_request(
             Ok(initialized_case_id) => {
                 initialize_case_ids
                     .insert((worker.to_owned(), request_id.to_owned()), initialized_case_id);
+                runtime_chain.observe_requested(expected_runtime, context, findings);
                 true
             }
             Err(source) => {
@@ -741,13 +965,17 @@ pub(crate) fn audit_runtime_transcript_observation_for_test(
     role_name: &str,
     bytes: &[u8],
 ) -> (Option<Stage2InstantiationObservation>, Vec<Stage2ValidationFinding>) {
+    let descriptor = stage2_cell_descriptor(id).expect("test cell ID must be cataloged");
     let (expected_runtime, primary_worker) = match role_name {
-        "source.jsonl" => (id.source_runtime(), format!("{}-source", case.case_id)),
-        "destination.jsonl" => (id.destination_runtime(), format!("{}-destination", case.case_id)),
+        "source.jsonl" => (descriptor.source_runtime, format!("{}-source", case.case_id)),
+        "destination.jsonl" => {
+            (descriptor.destination_runtime, format!("{}-destination", case.case_id))
+        }
         _ => panic!("unsupported Stage 2 transcript role {role_name}"),
     };
     let mut findings = Vec::new();
     let mut provenance = ObservedCellTranslationProvenance::default();
+    let mut runtime_chain = RuntimeChainAccumulator::default();
     let observation = audit_runtime_transcript(
         RuntimeTranscriptContext {
             id,
@@ -759,6 +987,7 @@ pub(crate) fn audit_runtime_transcript_observation_for_test(
         },
         bytes,
         &mut provenance,
+        &mut runtime_chain,
         &mut findings,
     );
     (observation, findings)

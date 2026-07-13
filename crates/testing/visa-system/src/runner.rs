@@ -82,7 +82,10 @@ mod stage1;
 pub use stage1::{run_stage1, run_stage1_with_runtimes};
 mod stage2;
 
-pub use stage2::{Stage2CellPlan, Stage2RunOutput, Stage2RunnerError, run_stage2_matrix};
+pub use stage2::{
+    Stage2CellPlan, Stage2RunOutput, Stage2RunnerError, Stage2StrictLineageSources,
+    run_stage2_matrix, run_stage2_strict_matrix,
+};
 mod provenance;
 
 fn runner_io(operation: &'static str, path: impl AsRef<Path>, source: io::Error) -> RunnerError {

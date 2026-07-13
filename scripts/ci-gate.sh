@@ -3,13 +3,18 @@ set -Eeuo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-gate.sh [fast|full|system|system-jco-node|system-stage2]
+usage: scripts/ci-gate.sh \
+    [fast|full|system|system-jco-node|system-stage2|system-stage2-strict]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
 The system tier independently runs and validates the real Stage 1 lifecycle;
 system-jco-node does the same for the JcoNode reference cell. system-stage2
 runs and independently validates the complete four-cell Stage 2 matrix.
+system-stage2-strict runs the locked Wacogo qualification, same-path cell, and
+independently validated strict Wasmtime/Wacogo matrix through the unified local
+gate. Set VISA_STRICT_STAGE2_ARTIFACT_ROOT to select its retained output root.
+Locked inputs use the VISA_WACOGO_* variables documented by that local gate.
 System tiers do not repeat the full tier.
 EOF
 }
@@ -24,8 +29,13 @@ on_error() {
     if [[ -n "$system_artifact_root" ]]; then
         printf '%s artifact root retained after failure: %s\n' \
             "$system_artifact_kind" "$system_artifact_root" >&2
-        printf '%s evidence bundle path: %s\n' \
-            "$system_artifact_kind" "$system_bundle_path" >&2
+        if [[ -f "$system_bundle_path" && ! -L "$system_bundle_path" ]]; then
+            printf '%s evidence bundle retained for diagnostics: %s\n' \
+                "$system_artifact_kind" "$system_bundle_path" >&2
+        else
+            printf '%s evidence bundle was not published (expected path: %s)\n' \
+                "$system_artifact_kind" "$system_bundle_path" >&2
+        fi
     fi
     exit "$status"
 }
@@ -87,6 +97,7 @@ active_spine_packages=(
     visa_runtime
     visa_component_adapter
     visa_jco_node
+    visa_wacogo
     visa_wasmtime
     visa-conformance
     visa-system
@@ -261,6 +272,25 @@ gate_system_stage2() {
     printf 'Stage 2 evidence bundle: %s\n' "$system_bundle_path"
 }
 
+gate_system_stage2_strict() {
+    local system_parent="$PWD/target/visa-system"
+    system_artifact_kind="Strict Stage 2"
+    if [[ -n "${VISA_STRICT_STAGE2_ARTIFACT_ROOT:-}" ]]; then
+        system_artifact_root="$VISA_STRICT_STAGE2_ARTIFACT_ROOT"
+    else
+        mkdir -p "$system_parent"
+        system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage2-strict-XXXXXX")"
+    fi
+    system_bundle_path="$system_artifact_root/strict/stage2-evidence.json"
+
+    run_gate "system-stage2-strict: locked qualification, same-path, and strict matrix" \
+        scripts/run-strict-stage2-local-gate.sh \
+            --artifact-root "$system_artifact_root"
+
+    printf 'Strict Stage 2 artifact root: %s\n' "$system_artifact_root"
+    printf 'Strict Stage 2 evidence bundle: %s\n' "$system_bundle_path"
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -273,6 +303,7 @@ case "$tier" in
     system) gate_system ;;
     system-jco-node) gate_system_jco_node ;;
     system-stage2) gate_system_stage2 ;;
+    system-stage2-strict) gate_system_stage2_strict ;;
     -h|--help|help)
         usage
         ;;

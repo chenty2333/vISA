@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0": {
+      "WACS": {
+        "type": "Direct",
+        "requested": "[0.16.14, 0.16.14]",
+        "resolved": "0.16.14",
+        "contentHash": "9/DP/W+QsDNUcO6PP2yvqeeBgh6Gohwi3s0VU13ADW0a2fApXhyVeLm1mjuPptgKvM02px5WJTgenmrNdRn+aw==",
+        "dependencies": {
+          "FluentValidation": "11.10.0",
+          "Microsoft.Extensions.ObjectPool": "9.0.0"
+        }
+      },
+      "WACS.ComponentModel": {
+        "type": "Direct",
+        "requested": "[0.10.3, 0.10.3]",
+        "resolved": "0.10.3",
+        "contentHash": "AYtsSDvfn1wxYcsBx1hZbcRbDdukRp8qV2zFMo8mZfjuwcDeCqbSKjiU+cdGwVAk/yNGC1O1K405AMdHBTI6Xg==",
+        "dependencies": {
+          "System.Threading.Channels": "8.0.0",
+          "WACS": "0.16.14",
+          "WACS.ComponentModel.Parser": "0.2.1"
+        }
+      },
+      "FluentValidation": {
+        "type": "Transitive",
+        "resolved": "11.10.0",
+        "contentHash": "qsJGSJDdZ8qiG+lVJ70PZfJHcEdq8UQZ/tZDXoj78/iHKG6lVKtMJsD11zyyv/IPc7rwqGqnFoFLTNzpo3IPYg=="
+      },
+      "Microsoft.Extensions.ObjectPool": {
+        "type": "Transitive",
+        "resolved": "9.0.0",
+        "contentHash": "UbsU/gYe4nv1DeqMXIVzDfNNek7Sk2kKuAOXL/Y+sLcAR0HwFUqzg1EPiU88jeHNe0g81aPvvHbvHarQr3r9IA=="
+      },
+      "System.Threading.Channels": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "CMaFr7v+57RW7uZfZkPExsPB6ljwzhjACWW1gfU35Y56rk72B/Wu+sTqxVmGSk4SFUlPc3cjeKND0zktziyjBA=="
+      },
+      "WACS.ComponentModel.Parser": {
+        "type": "Transitive",
+        "resolved": "0.2.1",
+        "contentHash": "YekvQbSPKQU3XsLoOPuZTn8vNYvN3KpCD2NWhqyIwH7BVyPjp/4x+hJajoG9TmXu/NG4SddsFYM8rTON9kUH3A=="
+      }
+    }
+  }
+}

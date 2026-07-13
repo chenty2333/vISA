@@ -10,15 +10,18 @@ portable semantic state instead of native handles, reacquire authority, rebuild
 resource bindings, resume, and produce executable evidence about what happened.
 
 > **Project status:** research prototype. The Stage 1 named Wasmtime reference
-> cell is complete for all 31 registered lifecycle and fault cases. The Stage
-> 2a runtime-neutral adapter contract, Stage 2b Jco-translated Node/V8 execution
-> cell, and Stage 2c four-direction matrix are also complete; the matrix runs
-> the unchanged registry in all four Wasmtime/JcoNode source/destination pairs,
-> for 124 executions. This earns only the named
-> `cross-execution-path-portability` result. Every current cell uses
-> x86-64/amd64 Linux and the timer/KV profile. Because Jco's translator lineage
-> includes `wasmtime-environ`, strict Roadmap Stage 2 remains in progress.
-> Independent Component Model runtime, cross-ISA, file/network, confidential,
+> cell is complete for all 31 registered lifecycle and fault cases. The legacy
+> Stage 2a, 2b, and 2c Wasmtime/JcoNode path is also complete for its original
+> `cross-execution-path-portability` claim. A separate strict v3 path now runs
+> the unchanged Component and timer/KV profile through Wasmtime and a
+> source-lock-bound Wacogo derivative whose accepted Component Model lineage is
+> independent of Wasmtime and `wasmtime-environ`. Its exact four runtime cells
+> completed 124/124 executions and 31/31 normalized equality groups in fresh
+> Host and Docker runs, with all inner and outer independent verification
+> passing. The strict verifier accepts only
+> `strict-cross-runtime-continuity`. Both evidence paths remain limited to
+> x86-64/amd64 Linux. Final Roadmap Stage 2 closure remains in progress pending
+> exact-final-commit CI; cross-ISA, file/network, confidential-continuity,
 > stable API, and production claims remain unearned.
 
 ## The problem
@@ -92,8 +95,9 @@ capability.
 
 ## Current repository
 
-The active production spine covers the Stage 1 continuity path and the Stage
-2a, 2b, and 2c adapter, execution-cell, and matrix paths. Strict
+The active production spine covers the Stage 1 continuity path, the legacy
+Stage 2a, 2b, and 2c Wasmtime/JcoNode paths, and the source-lock-bound
+Wasmtime/Wacogo strict-runtime adapter and matrix paths. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
@@ -168,6 +172,19 @@ Node/V8 workers. `system-stage2` runs all four Wasmtime/JcoNode pairs, for 124
 executions, and independently verifies the normalized outer bundle. Both are
 standalone system tiers and neither proves strict runtime independence or
 cross-ISA portability.
+
+Run the strict independent-runtime matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage2-strict
+```
+
+`system-stage2-strict` qualifies and reproducibly builds the source-lock-bound
+Wacogo sidecar, runs the exact Wasmtime/Wacogo four-cell matrix over the
+unchanged 31-case timer/KV registry, and independently verifies all 124
+executions and 31 normalized equality groups. It supports only
+`strict-cross-runtime-continuity` on x86-64/amd64 Linux; it does not prove
+cross-ISA portability or additional resource profiles.
 
 ## Engineering principles
 

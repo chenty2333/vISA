@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{Stage1CaseClass, Stage1CaseOutcome, Stage1FaultSchedule, Stage1VersionedIdentity};
 
@@ -13,6 +13,7 @@ pub const STAGE2_MATRIX_MANIFEST_FILE: &str = "stage2-matrix-manifest.json";
 pub const STAGE2_EVIDENCE_FILE: &str = "stage2-evidence.json";
 pub const STAGE2_INCOMPLETE_MARKER_FILE: &str = "stage2-incomplete";
 pub const STAGE2_EXECUTION_COUNT: usize = 124;
+pub const STAGE2_STRICT_CLAIM_ID: &str = "strict-cross-runtime-continuity";
 pub const STAGE2_COMPONENT_STATE_CODEC_NAME: &str = "VISACS01";
 pub const STAGE2_COMPONENT_STATE_CODEC_VERSION: &str = "visa-component-state-v1";
 pub const STAGE2_INSTANTIATION_OBSERVATIONS_SCHEMA_VERSION: &str =
@@ -52,12 +53,25 @@ pub const STAGE2_WASMTIME_IMPLEMENTATION_VERSION: &str = "0.2.0";
 pub const STAGE2_WASMTIME_ENGINE_VERSION: &str = "43.0.2";
 pub const STAGE2_JCO_NODE_IMPLEMENTATION_VERSION: &str =
     "0.2.0/jco-1.25.2/bindgen-2.0.11/translator-45.0.1";
+pub const STAGE2_WACOGO_ENVIRONMENT_NAME: &str =
+    "visa_wacogo adapter with partite-ai/wacogo+wazero";
+pub const STAGE2_WACOGO_IMPLEMENTATION_VERSION: &str = "0.1.0";
+pub const STAGE2_WACOGO_ENGINE_VERSION: &str = concat!(
+    "wacogo-v0.0.0-20260617023329-3de16a61796c+visa-patchset-v1/",
+    "wazero-v1.11.1-0.20260418165552-5cb4bb3ec0c1"
+);
+pub const STAGE2_WACOGO_ENVIRONMENT_VERSION: &str = concat!(
+    "0.1.0+partite-ai/wacogo+wazero.",
+    "wacogo-v0.0.0-20260617023329-3de16a61796c+visa-patchset-v1/",
+    "wazero-v1.11.1-0.20260418165552-5cb4bb3ec0c1"
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage2Runtime {
     Wasmtime,
     JcoNode,
+    Wacogo,
 }
 
 impl Stage2Runtime {
@@ -65,6 +79,7 @@ impl Stage2Runtime {
         match self {
             Self::Wasmtime => "wasmtime",
             Self::JcoNode => "jco-node",
+            Self::Wacogo => "wacogo",
         }
     }
 
@@ -72,48 +87,41 @@ impl Stage2Runtime {
         match self {
             Self::Wasmtime => "wasmtime",
             Self::JcoNode => "jco_node",
+            Self::Wacogo => "wacogo",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Stage2CellId {
-    WasmtimeToWasmtime,
-    JcoNodeToJcoNode,
-    WasmtimeToJcoNode,
-    JcoNodeToWasmtime,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage2ClaimSet {
+    CrossExecutionPathPortability,
+    StrictCrossRuntimeContinuity,
 }
 
+impl Stage2ClaimSet {
+    pub const fn claim_id(self) -> &'static str {
+        match self {
+            Self::CrossExecutionPathPortability => STAGE2_CLAIM_ID,
+            Self::StrictCrossRuntimeContinuity => STAGE2_STRICT_CLAIM_ID,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Stage2CellId(&'static str);
+
+#[allow(non_upper_case_globals)]
 impl Stage2CellId {
-    pub const ALL: [Self; 4] = [
-        Self::WasmtimeToWasmtime,
-        Self::JcoNodeToJcoNode,
-        Self::WasmtimeToJcoNode,
-        Self::JcoNodeToWasmtime,
-    ];
+    pub const WasmtimeToWasmtime: Self = Self("wasmtime-to-wasmtime");
+    pub const JcoNodeToJcoNode: Self = Self("jco-node-to-jco-node");
+    pub const WasmtimeToJcoNode: Self = Self("wasmtime-to-jco-node");
+    pub const JcoNodeToWasmtime: Self = Self("jco-node-to-wasmtime");
+    pub const WacogoToWacogo: Self = Self("wacogo-to-wacogo");
+    pub const WasmtimeToWacogo: Self = Self("wasmtime-to-wacogo");
+    pub const WacogoToWasmtime: Self = Self("wacogo-to-wasmtime");
 
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::WasmtimeToWasmtime => "wasmtime-to-wasmtime",
-            Self::JcoNodeToJcoNode => "jco-node-to-jco-node",
-            Self::WasmtimeToJcoNode => "wasmtime-to-jco-node",
-            Self::JcoNodeToWasmtime => "jco-node-to-wasmtime",
-        }
-    }
-
-    pub const fn source_runtime(self) -> Stage2Runtime {
-        match self {
-            Self::WasmtimeToWasmtime | Self::WasmtimeToJcoNode => Stage2Runtime::Wasmtime,
-            Self::JcoNodeToJcoNode | Self::JcoNodeToWasmtime => Stage2Runtime::JcoNode,
-        }
-    }
-
-    pub const fn destination_runtime(self) -> Stage2Runtime {
-        match self {
-            Self::WasmtimeToWasmtime | Self::JcoNodeToWasmtime => Stage2Runtime::Wasmtime,
-            Self::JcoNodeToJcoNode | Self::WasmtimeToJcoNode => Stage2Runtime::JcoNode,
-        }
+        self.0
     }
 
     pub fn cell_root(self, stage2_root: &Path) -> PathBuf {
@@ -127,6 +135,103 @@ impl Stage2CellId {
     pub fn normalized_uri(self) -> String {
         format!("normalized/{}.json", self.as_str())
     }
+}
+
+impl Serialize for Stage2CellId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Stage2CellId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        STAGE2_CELL_CATALOG
+            .iter()
+            .find(|descriptor| descriptor.id.as_str() == value)
+            .map(|descriptor| descriptor.id)
+            .ok_or_else(|| D::Error::custom(format!("unknown Stage 2 cell ID {value:?}")))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage2CellDescriptor {
+    pub id: Stage2CellId,
+    pub source_runtime: Stage2Runtime,
+    pub destination_runtime: Stage2Runtime,
+    pub claim_sets: &'static [Stage2ClaimSet],
+}
+
+const EXECUTION_AND_STRICT_CLAIMS: &[Stage2ClaimSet] =
+    &[Stage2ClaimSet::CrossExecutionPathPortability, Stage2ClaimSet::StrictCrossRuntimeContinuity];
+const EXECUTION_CLAIM: &[Stage2ClaimSet] = &[Stage2ClaimSet::CrossExecutionPathPortability];
+
+pub const STAGE2_CELL_CATALOG: &[Stage2CellDescriptor] = &[
+    Stage2CellDescriptor {
+        id: Stage2CellId::WasmtimeToWasmtime,
+        source_runtime: Stage2Runtime::Wasmtime,
+        destination_runtime: Stage2Runtime::Wasmtime,
+        claim_sets: EXECUTION_AND_STRICT_CLAIMS,
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::JcoNodeToJcoNode,
+        source_runtime: Stage2Runtime::JcoNode,
+        destination_runtime: Stage2Runtime::JcoNode,
+        claim_sets: EXECUTION_CLAIM,
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::WasmtimeToJcoNode,
+        source_runtime: Stage2Runtime::Wasmtime,
+        destination_runtime: Stage2Runtime::JcoNode,
+        claim_sets: EXECUTION_CLAIM,
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::JcoNodeToWasmtime,
+        source_runtime: Stage2Runtime::JcoNode,
+        destination_runtime: Stage2Runtime::Wasmtime,
+        claim_sets: EXECUTION_CLAIM,
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::WacogoToWacogo,
+        source_runtime: Stage2Runtime::Wacogo,
+        destination_runtime: Stage2Runtime::Wacogo,
+        claim_sets: &[Stage2ClaimSet::StrictCrossRuntimeContinuity],
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::WasmtimeToWacogo,
+        source_runtime: Stage2Runtime::Wasmtime,
+        destination_runtime: Stage2Runtime::Wacogo,
+        claim_sets: &[Stage2ClaimSet::StrictCrossRuntimeContinuity],
+    },
+    Stage2CellDescriptor {
+        id: Stage2CellId::WacogoToWasmtime,
+        source_runtime: Stage2Runtime::Wacogo,
+        destination_runtime: Stage2Runtime::Wasmtime,
+        claim_sets: &[Stage2ClaimSet::StrictCrossRuntimeContinuity],
+    },
+];
+
+pub fn stage2_cell_descriptor(id: Stage2CellId) -> Option<&'static Stage2CellDescriptor> {
+    STAGE2_CELL_CATALOG.iter().find(|descriptor| descriptor.id == id)
+}
+
+pub fn stage2_cell_descriptors(
+    claim_set: Stage2ClaimSet,
+) -> impl Clone + Iterator<Item = &'static Stage2CellDescriptor> {
+    STAGE2_CELL_CATALOG.iter().filter(move |descriptor| descriptor.claim_sets.contains(&claim_set))
+}
+
+pub fn stage2_cell_ids_match_claim(
+    ids: impl IntoIterator<Item = Stage2CellId>,
+    claim_set: Stage2ClaimSet,
+) -> bool {
+    ids.into_iter().eq(stage2_cell_descriptors(claim_set).map(|descriptor| descriptor.id))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +385,7 @@ pub struct Stage2TranslationProvenance {
 #[serde(rename_all = "kebab-case")]
 pub enum Stage2Claim {
     CrossExecutionPathPortability,
+    StrictCrossRuntimeContinuity,
     IndependentComponentModelRuntimes,
     CrossRuntimePortabilityUnderCurrentRoadmap,
     CrossIsaPortability,

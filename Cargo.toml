@@ -28,6 +28,7 @@ members = [
     "crates/runtime/visa_runtime",
     "crates/runtime/visa_component_adapter",
     "crates/runtime/visa_jco_node",
+    "crates/runtime/visa_wacogo",
     "crates/runtime/visa_wasmtime",
     "crates/backend/substrate_api",
     "crates/backend/substrate_host",
@@ -85,6 +86,7 @@ visa_profile = { path = "crates/core/visa_profile" }
 visa_runtime = { path = "crates/runtime/visa_runtime" }
 visa_component_adapter = { path = "crates/runtime/visa_component_adapter" }
 visa_jco_node = { path = "crates/runtime/visa_jco_node" }
+visa_wacogo = { path = "crates/runtime/visa_wacogo" }
 visa_wasmtime = { path = "crates/runtime/visa_wasmtime" }
 visa_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "43.0.2", default-features = false }

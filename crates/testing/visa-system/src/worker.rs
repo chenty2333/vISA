@@ -6,27 +6,35 @@ use contract_core::{
 };
 use substrate_api::{JournalPort, KvPort, LeasePort};
 use substrate_host::SqliteProvider;
-use visa_jco_node::{JcoNodeAdapter, JcoTranslationProvenance, PreparedJcoComponent};
 use visa_profile::ProviderSupport;
 use visa_runtime::{
     CommandReceipt, Coordinator, RuntimeError, SafePointTimer, SnapshotExpectations, TimerPoll,
     canonical_digest, validate_snapshot,
 };
+#[cfg(test)]
+use visa_wasmtime::ComponentAdapter;
 use visa_wasmtime::{
-    AdapterError, AdapterFailureKind, ComponentAdapter, ComponentStatus, PortableComponentState,
-    PreflightExpectations, PreparedComponent, RuntimeIdentity, WorkloadFailureKind, WorkloadPhase,
+    AdapterError, AdapterFailureKind, ComponentStatus, PortableComponentState,
+    PreflightExpectations, WorkloadFailureKind, WorkloadPhase,
 };
 
 use crate::{
     fixture::{FixtureError, FixtureSpec, OpenProviders, derive_identity},
     protocol::{
         AdapterFailureKindView, ComponentStatusView, CrashMode, DestinationSupportMode,
-        FaultObservationView, INVALID_REQUEST_ID, LeaseRecordView, PROTOCOL_VERSION,
-        RequestEnvelope, RequiredAuthority, ResponseEnvelope, RuntimeIdentityView,
-        RuntimeImplementation, SafePointTimerView, SnapshotExpectationOverrides, StateView,
-        TimerPollView, TranslationProvenanceView, WorkerCommand, WorkerError, WorkerErrorCode,
-        WorkerResult, WorkerRole, WorkloadFailureKindView, WorkloadPhaseView,
+        FaultObservationView, INVALID_REQUEST_ID, ImplementationLineageView, LeaseRecordView,
+        PROTOCOL_VERSION, RequestEnvelope, RequiredAuthority, ResponseEnvelope,
+        RuntimeIdentityView, RuntimeImplementation, SafePointTimerView,
+        SnapshotExpectationOverrides, StateView, TimerPollView, TranslationProvenanceView,
+        WorkerCommand, WorkerError, WorkerErrorCode, WorkerResult, WorkerRole,
+        WorkloadFailureKindView, WorkloadPhaseView,
     },
+};
+
+mod runtime_registry;
+
+use runtime_registry::{
+    Adapter, PreparedAdapter, RuntimeMetadata, instantiate_prepared_adapter, preflight_adapter,
 };
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
@@ -43,132 +51,6 @@ pub struct WorkerTurn {
     pub exit: Option<i32>,
 }
 
-enum Adapter {
-    Wasmtime(ComponentAdapter<SqliteProvider>),
-    JcoNode(Box<JcoNodeAdapter<SqliteProvider>>),
-}
-
-enum PreparedAdapter {
-    Wasmtime(Box<PreparedComponent<SqliteProvider>>),
-    JcoNode(Box<PreparedJcoComponent>),
-}
-
-impl PreparedAdapter {
-    fn runtime_identity(&self) -> RuntimeIdentity {
-        match self {
-            Self::Wasmtime(prepared) => prepared.runtime_identity(),
-            Self::JcoNode(prepared) => prepared.runtime_identity().clone(),
-        }
-    }
-
-    fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
-        match self {
-            Self::Wasmtime(_) => None,
-            Self::JcoNode(prepared) => Some(prepared.translation_provenance()),
-        }
-    }
-}
-
-impl Adapter {
-    fn runtime_identity(&self) -> RuntimeIdentity {
-        match self {
-            Self::Wasmtime(adapter) => adapter.runtime_identity(),
-            Self::JcoNode(adapter) => adapter.runtime_identity(),
-        }
-    }
-
-    fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
-        match self {
-            Self::Wasmtime(_) => None,
-            Self::JcoNode(adapter) => Some(adapter.translation_provenance().clone()),
-        }
-    }
-
-    fn coordinator(&self) -> &Coordinator<SqliteProvider> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.coordinator(),
-            Self::JcoNode(adapter) => adapter.coordinator(),
-        }
-    }
-
-    fn coordinator_mut(&mut self) -> &mut Coordinator<SqliteProvider> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.coordinator_mut(),
-            Self::JcoNode(adapter) => adapter.coordinator_mut(),
-        }
-    }
-
-    fn activate(&mut self, request: &visa_wasmtime::ActivationRequest) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.activate(request),
-            Self::JcoNode(adapter) => adapter.activate(request),
-        }
-    }
-
-    fn safe_point(
-        &mut self,
-        command: Identity,
-    ) -> Result<visa_wasmtime::ComponentSafePoint, AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.safe_point(command),
-            Self::JcoNode(adapter) => adapter.safe_point(command),
-        }
-    }
-
-    fn restore(
-        &mut self,
-        state: &PortableComponentState,
-        remaining_duration_ns: u64,
-    ) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.restore(state, remaining_duration_ns),
-            Self::JcoNode(adapter) => adapter.restore(state, remaining_duration_ns),
-        }
-    }
-
-    fn thaw(&mut self, state: &PortableComponentState) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.thaw(state),
-            Self::JcoNode(adapter) => adapter.thaw(state),
-        }
-    }
-
-    fn timer_fired(&mut self, operation: Identity) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.timer_fired(operation),
-            Self::JcoNode(adapter) => adapter.timer_fired(operation),
-        }
-    }
-
-    fn cancel_pending(&mut self) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.cancel_pending(),
-            Self::JcoNode(adapter) => adapter.cancel_pending(),
-        }
-    }
-
-    fn status(&mut self) -> Result<Option<ComponentStatus>, AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.status(),
-            Self::JcoNode(adapter) => adapter.status(),
-        }
-    }
-
-    fn inject_unsupported_live_resource(&mut self) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.inject_unsupported_live_resource(),
-            Self::JcoNode(adapter) => adapter.inject_unsupported_live_resource(),
-        }
-    }
-
-    fn clear_unsupported_live_resource(&mut self) -> Result<(), AdapterError> {
-        match self {
-            Self::Wasmtime(adapter) => adapter.clear_unsupported_live_resource(),
-            Self::JcoNode(adapter) => adapter.clear_unsupported_live_resource(),
-        }
-    }
-}
-
 struct SourceWorker {
     adapter: Adapter,
     portable_state: Option<PortableComponentState>,
@@ -178,6 +60,15 @@ struct DestinationPending {
     provider: Option<SqliteProvider>,
     prepared: Option<PreparedAdapter>,
     runtime: RuntimeImplementation,
+}
+
+impl DestinationPending {
+    fn teardown_prepared(&mut self) -> Result<(), AdapterError> {
+        if let Some(mut prepared) = self.prepared.take() {
+            prepared.teardown()?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -190,7 +81,6 @@ struct DestinationWorker {
     coordinator: Option<Coordinator<SqliteProvider>>,
     adapter: Option<Adapter>,
     prepared: Option<PreparedAdapter>,
-    runtime: RuntimeImplementation,
     portable_state: PortableComponentState,
     remaining_duration_ns: u64,
     pending_timer_delivery: Option<PendingTimerDelivery>,
@@ -337,7 +227,7 @@ impl Worker {
         let OpenProviders { mut source, mut destination } =
             fixture.open_providers(database_path).map_err(fixture_error)?;
         let fault = fault.map(Into::into);
-        let state = match role {
+        let (state, prepared_runtime, live_runtime) = match role {
             WorkerRole::Source => {
                 if let Some(fault) = fault {
                     source.inject_failure_once(fault);
@@ -359,8 +249,31 @@ impl Worker {
                         })?,
                     )
                 };
-                let adapter = instantiate_adapter(runtime, &fixture, coordinator)?;
-                WorkerState::Source(Box::new(SourceWorker { adapter, portable_state }))
+                let prepared = preflight_adapter(
+                    runtime,
+                    crate::component::bytes(),
+                    &fixture.profile,
+                    &provider_support(&fixture, DestinationSupportMode::Compatible),
+                    PreflightExpectations {
+                        component_digest: fixture.component_digest,
+                        profile_digest: fixture.profile_digest,
+                    },
+                )
+                .map_err(adapter_error)?;
+                let prepared_runtime = prepared.runtime_metadata();
+                let adapter = instantiate_prepared_adapter(prepared, coordinator)
+                    .map_err(|failure| adapter_error(failure.error))?;
+                let live_runtime = adapter.runtime_metadata();
+                if prepared_runtime != live_runtime {
+                    return Err(adapter_error(AdapterError::UnsupportedRuntimeFeature(
+                        "source prepared/live runtime metadata drift escaped the registry".into(),
+                    )));
+                }
+                (
+                    WorkerState::Source(Box::new(SourceWorker { adapter, portable_state })),
+                    prepared_runtime,
+                    Some(live_runtime),
+                )
             }
             WorkerRole::Destination => {
                 if let Some(fault) = fault {
@@ -368,33 +281,25 @@ impl Worker {
                 }
                 let prepared = preflight_adapter(
                     runtime,
-                    &fixture,
+                    crate::component::bytes(),
+                    &fixture.profile,
                     &provider_support(&fixture, DestinationSupportMode::Compatible),
                     PreflightExpectations {
                         component_digest: fixture.component_digest,
                         profile_digest: fixture.profile_digest,
                     },
-                )?;
-                WorkerState::DestinationPending(Box::new(DestinationPending {
-                    provider: Some(destination),
-                    prepared: Some(prepared),
-                    runtime,
-                }))
-            }
-        };
-        let (observed_runtime, translation_provenance) = match &state {
-            WorkerState::Source(source) => {
-                (source.adapter.runtime_identity(), source.adapter.translation_provenance())
-            }
-            WorkerState::DestinationPending(destination) => {
-                let prepared = destination
-                    .prepared
-                    .as_ref()
-                    .expect("destination initialization always prepares its runtime");
-                (prepared.runtime_identity(), prepared.translation_provenance())
-            }
-            WorkerState::Uninitialized | WorkerState::Destination(_) => {
-                unreachable!("initialization constructed an impossible worker state")
+                )
+                .map_err(adapter_error)?;
+                let prepared_runtime = prepared.runtime_metadata();
+                (
+                    WorkerState::DestinationPending(Box::new(DestinationPending {
+                        provider: Some(destination),
+                        prepared: Some(prepared),
+                        runtime,
+                    })),
+                    prepared_runtime,
+                    None,
+                )
             }
         };
         let case_id = fixture.options.case_id.clone();
@@ -404,7 +309,8 @@ impl Worker {
         Ok(WorkerResult::Initialized {
             role,
             case_id,
-            runtime: runtime_identity_view(observed_runtime, translation_provenance),
+            prepared_runtime: Box::new(runtime_identity_view(prepared_runtime)),
+            live_runtime: live_runtime.map(runtime_identity_view).map(Box::new),
         })
     }
 
@@ -745,7 +651,7 @@ impl Worker {
         let expectations = snapshot_expectations(&fixture, overrides);
         let (runtime, slot) = match &mut self.state {
             WorkerState::DestinationPending(destination) => {
-                destination.prepared = None;
+                destination.teardown_prepared().map_err(adapter_error)?;
                 (destination.runtime, &mut destination.prepared)
             }
             _ => return Err(invalid_state("worker is not waiting for destination validation")),
@@ -754,15 +660,18 @@ impl Worker {
         let support = provider_support(&fixture, support_mode);
         let prepared = preflight_adapter(
             runtime,
-            &fixture,
+            crate::component::bytes(),
+            &fixture.profile,
             &support,
             PreflightExpectations {
                 component_digest: expectations.component_digest,
                 profile_digest: expectations.profile_digest,
             },
-        )?;
+        )
+        .map_err(adapter_error)?;
+        let runtime = runtime_identity_view(prepared.runtime_metadata());
         *slot = Some(prepared);
-        Ok(WorkerResult::Ack)
+        Ok(WorkerResult::Prepared { runtime: Box::new(runtime) })
     }
 
     fn load_destination(
@@ -787,7 +696,7 @@ impl Worker {
         let expectations =
             snapshot_expectations(&fixture, &SnapshotExpectationOverrides::default());
         let validated = validate_snapshot(&envelope, &expectations).map_err(runtime_error)?;
-        let (provider, prepared, runtime) = match &mut self.state {
+        let (provider, prepared) = match &mut self.state {
             WorkerState::DestinationPending(destination) => {
                 if destination.provider.is_none() {
                     return Err(invalid_state("destination provider is unavailable"));
@@ -798,7 +707,6 @@ impl Worker {
                 (
                     destination.provider.take().expect("provider presence was checked"),
                     destination.prepared.take().expect("preflight presence was checked"),
-                    destination.runtime,
                 )
             }
             _ => return Err(invalid_state("worker is not waiting for a destination snapshot")),
@@ -812,7 +720,6 @@ impl Worker {
             coordinator: Some(coordinator),
             adapter: None,
             prepared: Some(prepared),
-            runtime,
             portable_state: portable,
             remaining_duration_ns,
             pending_timer_delivery: None,
@@ -869,12 +776,11 @@ impl Worker {
                 .prepared
                 .take()
                 .ok_or_else(|| invalid_state("destination runtime preflight is unavailable"))?;
-            match instantiate_prepared_adapter(destination.runtime, prepared, coordinator) {
+            match instantiate_prepared_adapter(prepared, coordinator) {
                 Ok(adapter) => destination.adapter = Some(adapter),
                 Err(failure) => {
-                    let (error, coordinator) = *failure;
-                    destination.coordinator = Some(coordinator);
-                    return Err(adapter_error(error));
+                    destination.coordinator = Some(failure.coordinator);
+                    return Err(adapter_error(failure.error));
                 }
             }
         }
@@ -943,35 +849,46 @@ impl Worker {
 
     fn dump(&mut self) -> Result<WorkerResult, WorkerError> {
         let key = self.fixture()?.activation.key.as_bytes().to_vec();
-        let (coordinator, component_instantiated, component, portable_component_state) =
-            match &mut self.state {
-                WorkerState::Source(source) => {
-                    let component =
-                        source.adapter.status().map_err(adapter_error)?.map(component_status_view);
-                    (
-                        source.adapter.coordinator(),
-                        true,
-                        component,
-                        source.portable_state.as_ref().map(|state| state.as_bytes().to_vec()),
-                    )
-                }
-                WorkerState::Destination(destination) => {
-                    let component = destination
+        let (
+            coordinator,
+            component_instantiated,
+            live_runtime,
+            component,
+            portable_component_state,
+        ) = match &mut self.state {
+            WorkerState::Source(source) => {
+                let component =
+                    source.adapter.status().map_err(adapter_error)?.map(component_status_view);
+                (
+                    source.adapter.coordinator(),
+                    true,
+                    Some(runtime_identity_view(source.adapter.runtime_metadata())),
+                    component,
+                    source.portable_state.as_ref().map(|state| state.as_bytes().to_vec()),
+                )
+            }
+            WorkerState::Destination(destination) => {
+                let component = destination
+                    .adapter
+                    .as_mut()
+                    .map(|adapter| adapter.status().map_err(adapter_error))
+                    .transpose()?
+                    .flatten()
+                    .map(component_status_view);
+                (
+                    destination.coordinator()?,
+                    destination.component_instantiated(),
+                    destination
                         .adapter
-                        .as_mut()
-                        .map(|adapter| adapter.status().map_err(adapter_error))
-                        .transpose()?
-                        .flatten()
-                        .map(component_status_view);
-                    (
-                        destination.coordinator()?,
-                        destination.component_instantiated(),
-                        component,
-                        Some(destination.portable_state.as_bytes().to_vec()),
-                    )
-                }
-                _ => return Err(invalid_state("worker has no canonical state to dump")),
-            };
+                        .as_ref()
+                        .map(Adapter::runtime_metadata)
+                        .map(runtime_identity_view),
+                    component,
+                    Some(destination.portable_state.as_bytes().to_vec()),
+                )
+            }
+            _ => return Err(invalid_state("worker has no canonical state to dump")),
+        };
         let canonical_state = coordinator.state().clone();
         let state_digest = coordinator.state_digest().map_err(runtime_error)?;
         let journal = coordinator
@@ -1022,6 +939,7 @@ impl Worker {
             fault_observation,
             key_value_entry,
             component_instantiated,
+            live_runtime,
             component,
             portable_component_state,
         })
@@ -1056,6 +974,22 @@ impl Worker {
             _ => Err(invalid_state("command requires a loaded destination worker")),
         }
     }
+
+    fn teardown_normal(&mut self) -> Result<(), WorkerError> {
+        match &mut self.state {
+            WorkerState::Source(source) => source.adapter.teardown().map_err(adapter_error),
+            WorkerState::DestinationPending(destination) => {
+                destination.teardown_prepared().map_err(adapter_error)
+            }
+            WorkerState::Destination(destination) => {
+                let live = destination.adapter.as_mut().map_or(Ok(()), Adapter::teardown);
+                let prepared =
+                    destination.prepared.as_mut().map_or(Ok(()), PreparedAdapter::teardown);
+                live.and(prepared).map_err(adapter_error)
+            }
+            WorkerState::Uninitialized => Ok(()),
+        }
+    }
 }
 
 impl Default for Worker {
@@ -1070,10 +1004,25 @@ where
     W: Write,
 {
     let mut worker = Worker::new();
+    run_json_lines_with_worker(&mut worker, &mut reader, &mut writer)
+}
+
+fn run_json_lines_with_worker<R, W>(
+    worker: &mut Worker,
+    mut reader: R,
+    mut writer: W,
+) -> io::Result<RunExit>
+where
+    R: BufRead,
+    W: Write,
+{
     let mut line = Vec::new();
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line)? == 0 {
+            worker.teardown_normal().map_err(|error| {
+                io::Error::other(format!("normal worker EOF teardown failed: {error:?}"))
+            })?;
             return Ok(RunExit::EndOfInput);
         }
         if line.last() == Some(&b'\n') {
@@ -1156,94 +1105,8 @@ fn request_id_from_bytes(line: &[u8]) -> String {
         .unwrap_or_else(|_| INVALID_REQUEST_ID.to_owned())
 }
 
-fn instantiate_adapter(
-    runtime: RuntimeImplementation,
-    fixture: &FixtureSpec,
-    coordinator: Coordinator<SqliteProvider>,
-) -> Result<Adapter, WorkerError> {
-    match runtime {
-        RuntimeImplementation::Wasmtime => ComponentAdapter::instantiate(
-            crate::component::bytes(),
-            &fixture.profile,
-            &provider_support(fixture, DestinationSupportMode::Compatible),
-            coordinator,
-        )
-        .map(Adapter::Wasmtime)
-        .map_err(adapter_error),
-        RuntimeImplementation::JcoNode => JcoNodeAdapter::instantiate(
-            crate::component::bytes(),
-            &fixture.profile,
-            &provider_support(fixture, DestinationSupportMode::Compatible),
-            coordinator,
-        )
-        .map(|adapter| Adapter::JcoNode(Box::new(adapter)))
-        .map_err(adapter_error),
-    }
-}
-
-fn preflight_adapter(
-    runtime: RuntimeImplementation,
-    fixture: &FixtureSpec,
-    support: &ProviderSupport,
-    expectations: PreflightExpectations,
-) -> Result<PreparedAdapter, WorkerError> {
-    match runtime {
-        RuntimeImplementation::Wasmtime => ComponentAdapter::preflight(
-            crate::component::bytes(),
-            &fixture.profile,
-            support,
-            expectations,
-        )
-        .map(|prepared| PreparedAdapter::Wasmtime(Box::new(prepared)))
-        .map_err(adapter_error),
-        RuntimeImplementation::JcoNode => JcoNodeAdapter::<SqliteProvider>::preflight(
-            crate::component::bytes(),
-            &fixture.profile,
-            support,
-            expectations,
-        )
-        .map(|prepared| PreparedAdapter::JcoNode(Box::new(prepared)))
-        .map_err(adapter_error),
-    }
-}
-
-fn instantiate_prepared_adapter(
-    runtime: RuntimeImplementation,
-    prepared: PreparedAdapter,
-    coordinator: Coordinator<SqliteProvider>,
-) -> Result<Adapter, Box<(AdapterError, Coordinator<SqliteProvider>)>> {
-    match runtime {
-        RuntimeImplementation::Wasmtime => match prepared {
-            PreparedAdapter::Wasmtime(prepared) => {
-                ComponentAdapter::instantiate_prepared_recoverable(*prepared, coordinator)
-                    .map(Adapter::Wasmtime)
-            }
-            PreparedAdapter::JcoNode(_) => Err(Box::new((
-                AdapterError::UnsupportedRuntimeFeature(
-                    "prepared Jco/Node artifact cannot instantiate as Wasmtime".into(),
-                ),
-                coordinator,
-            ))),
-        },
-        RuntimeImplementation::JcoNode => match prepared {
-            PreparedAdapter::JcoNode(prepared) => {
-                JcoNodeAdapter::instantiate_prepared_recoverable(*prepared, coordinator)
-                    .map(|adapter| Adapter::JcoNode(Box::new(adapter)))
-            }
-            PreparedAdapter::Wasmtime(_) => Err(Box::new((
-                AdapterError::UnsupportedRuntimeFeature(
-                    "prepared Wasmtime artifact cannot instantiate as Jco/Node".into(),
-                ),
-                coordinator,
-            ))),
-        },
-    }
-}
-
-fn runtime_identity_view(
-    identity: RuntimeIdentity,
-    translation_provenance: Option<JcoTranslationProvenance>,
-) -> RuntimeIdentityView {
+fn runtime_identity_view(metadata: RuntimeMetadata) -> RuntimeIdentityView {
+    let RuntimeMetadata { identity, translation_provenance, implementation_lineage } = metadata;
     RuntimeIdentityView {
         implementation: identity.implementation,
         implementation_version: identity.implementation_version,
@@ -1269,6 +1132,33 @@ fn runtime_identity_view(
                     .into_iter()
                     .map(digest_hex)
                     .collect(),
+            }
+        }),
+        implementation_lineage: implementation_lineage.map(|provenance| {
+            ImplementationLineageView::Wacogo {
+                source_lock_schema: provenance.source_lock_schema,
+                source_lock_sha256: provenance.source_lock_sha256,
+                derivative_id: provenance.derivative_id,
+                upstream_module: provenance.upstream_module,
+                upstream_version: provenance.wacogo_version.clone(),
+                upstream_revision: provenance.wacogo_revision.clone(),
+                upstream_module_sum: provenance.upstream_module_sum,
+                upstream_is_qualified_without_patches: provenance
+                    .upstream_is_qualified_without_patches,
+                patchset_id: provenance.patchset_id,
+                patchset_sha256: provenance.patchset_sha256,
+                patch_sha256s: provenance.patch_sha256s,
+                patched_tree_sha256: provenance.patched_tree_sha256,
+                sidecar_executable_sha256: digest_hex(provenance.executable_digest),
+                sidecar_executable_size: provenance.executable_size,
+                sidecar_protocol_version: provenance.protocol_version,
+                execution_carrier: provenance.execution_carrier,
+                wacogo_version: provenance.wacogo_version,
+                wacogo_revision: provenance.wacogo_revision,
+                wazero_version: provenance.wazero_version,
+                go_version: provenance.go_version,
+                target: provenance.target,
+                main_module: provenance.main_module,
             }
         }),
     }
@@ -1314,6 +1204,7 @@ fn state_view(role: WorkerRole, adapter: &mut Adapter) -> Result<StateView, Work
         journal_position: coordinator.journal_position(),
         state_digest: coordinator.state_digest().map_err(runtime_error)?,
         component_instantiated: true,
+        live_runtime: Some(runtime_identity_view(adapter.runtime_metadata())),
         component,
     })
 }
@@ -1327,6 +1218,8 @@ fn destination_state_view(destination: &mut DestinationWorker) -> Result<StateVi
         .flatten()
         .map(component_status_view);
     let component_instantiated = destination.component_instantiated();
+    let live_runtime =
+        destination.adapter.as_ref().map(Adapter::runtime_metadata).map(runtime_identity_view);
     let coordinator = destination.coordinator()?;
     Ok(StateView {
         role: WorkerRole::Destination,
@@ -1334,6 +1227,7 @@ fn destination_state_view(destination: &mut DestinationWorker) -> Result<StateVi
         journal_position: coordinator.journal_position(),
         state_digest: coordinator.state_digest().map_err(runtime_error)?,
         component_instantiated,
+        live_runtime,
         component,
     })
 }
@@ -1964,6 +1858,165 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires VISA_WACOGO_BIN pointing to the pinned production sidecar"]
+    fn real_wacogo_worker_failures_do_not_fallback_and_the_worker_continues() {
+        assert!(
+            std::env::var_os("VISA_WACOGO_BIN").is_some(),
+            "set VISA_WACOGO_BIN before explicitly running this live focused test"
+        );
+        let database = TestDatabase::new("wacogo-focused-failures");
+        let options = FixtureOptions::new("wacogo-focused-failures");
+        let mut source = Worker::new();
+        let source_runtime = initialize_with_runtime(
+            &mut source,
+            WorkerRole::Source,
+            RuntimeImplementation::Wacogo,
+            database.path(),
+            options.clone(),
+        );
+        assert_wacogo_runtime_metadata(&source_runtime);
+        invoke(&mut source, WorkerCommand::BootstrapSource).unwrap();
+        invoke(&mut source, WorkerCommand::BeginQuiesce).unwrap();
+        invoke(&mut source, WorkerCommand::InjectUnsupportedLiveResource).unwrap();
+        let freeze_error = invoke(&mut source, WorkerCommand::FreezeSource)
+            .expect_err("a Wacogo-local live resource must reject the safe point");
+        assert_eq!(freeze_error.code, WorkerErrorCode::Adapter);
+        assert_eq!(
+            freeze_error.adapter_kind,
+            Some(AdapterFailureKindView::LiveResourcesAtSafePoint)
+        );
+        let WorkerResult::State { view } = invoke(&mut source, WorkerCommand::Read).unwrap() else {
+            panic!("the Wacogo worker must remain readable after safe-point rejection")
+        };
+        assert_eq!(view.live_runtime.as_ref(), Some(&source_runtime));
+        invoke(&mut source, WorkerCommand::ClearUnsupportedLiveResource).unwrap();
+        invoke(&mut source, WorkerCommand::FreezeSource).unwrap();
+        let (envelope, component_state) =
+            match invoke(&mut source, WorkerCommand::ExportSourceSnapshot).unwrap() {
+                WorkerResult::Snapshot { envelope, component_state, .. } => {
+                    (*envelope, component_state)
+                }
+                other => panic!("expected Wacogo source snapshot, got {other:?}"),
+            };
+
+        let mut destination = Worker::new();
+        let destination_runtime = initialize_with_runtime(
+            &mut destination,
+            WorkerRole::Destination,
+            RuntimeImplementation::Wacogo,
+            database.path(),
+            options,
+        );
+        assert_eq!(destination_runtime, source_runtime);
+        let replacement_error = invoke(
+            &mut destination,
+            WorkerCommand::ValidateDestination {
+                envelope: envelope.clone(),
+                expectations: SnapshotExpectationOverrides::default(),
+                support: DestinationSupportMode::TimerSemanticsUnsupported,
+            },
+        )
+        .expect_err("Wacogo replacement preflight must reject unsupported timer semantics");
+        assert_eq!(replacement_error.code, WorkerErrorCode::Adapter);
+        assert_eq!(
+            replacement_error.adapter_kind,
+            Some(AdapterFailureKindView::IncompatibleProfile)
+        );
+        let WorkerState::DestinationPending(pending) = &destination.state else {
+            panic!("replacement preflight rejection must leave the Wacogo destination pending")
+        };
+        assert!(pending.provider.is_some());
+        assert!(pending.prepared.is_none());
+        assert_eq!(pending.runtime, RuntimeImplementation::Wacogo);
+
+        let replacement = invoke(
+            &mut destination,
+            WorkerCommand::ValidateDestination {
+                envelope: envelope.clone(),
+                expectations: SnapshotExpectationOverrides::default(),
+                support: DestinationSupportMode::Compatible,
+            },
+        )
+        .expect("the same Wacogo worker must accept a corrected replacement preflight");
+        let WorkerResult::Prepared { runtime: replacement_runtime } = replacement else {
+            panic!("replacement validation must return prepared runtime metadata")
+        };
+        assert_eq!(*replacement_runtime, destination_runtime);
+        invoke(&mut destination, WorkerCommand::LoadDestination { envelope, component_state })
+            .unwrap();
+        invoke(&mut destination, WorkerCommand::PrepareDestination).unwrap();
+        let WorkerResult::State { view: committed } =
+            invoke(&mut destination, WorkerCommand::CommitDestination).unwrap()
+        else {
+            panic!("Wacogo commit must return state")
+        };
+        assert!(!committed.component_instantiated);
+        assert!(committed.live_runtime.is_none());
+        let WorkerResult::State { view: resumed } =
+            invoke(&mut destination, WorkerCommand::ResumeDestination).unwrap()
+        else {
+            panic!("Wacogo resume must return state")
+        };
+        assert!(resumed.component_instantiated);
+        assert_eq!(resumed.live_runtime.as_ref(), Some(&destination_runtime));
+
+        for worker in [&mut source, &mut destination] {
+            assert_eq!(
+                run_json_lines_with_worker(worker, Cursor::new(Vec::<u8>::new()), Vec::new())
+                    .unwrap(),
+                RunExit::EndOfInput
+            );
+            worker.teardown_normal().unwrap();
+        }
+        let WorkerState::Source(source_state) = &source.state else {
+            panic!("Wacogo source state changed during EOF teardown")
+        };
+        assert!(source_state.adapter.is_consumed());
+        let WorkerState::Destination(destination_state) = &destination.state else {
+            panic!("Wacogo destination state changed during EOF teardown")
+        };
+        assert!(destination_state.adapter.as_ref().is_some_and(Adapter::is_consumed));
+
+        let pending_database = TestDatabase::new("wacogo-pending-eof");
+        let mut pending = Worker::new();
+        initialize_with_runtime(
+            &mut pending,
+            WorkerRole::Destination,
+            RuntimeImplementation::Wacogo,
+            pending_database.path(),
+            FixtureOptions::new("wacogo-pending-eof"),
+        );
+        assert_eq!(
+            run_json_lines_with_worker(&mut pending, Cursor::new(Vec::<u8>::new()), Vec::new())
+                .unwrap(),
+            RunExit::EndOfInput
+        );
+        pending.teardown_normal().unwrap();
+        let WorkerState::DestinationPending(pending_state) = &pending.state else {
+            panic!("Wacogo pending state changed during EOF teardown")
+        };
+        assert!(pending_state.prepared.is_none());
+    }
+
+    fn assert_wacogo_runtime_metadata(runtime: &RuntimeIdentityView) {
+        assert_eq!(runtime.implementation, "visa_wacogo");
+        assert_eq!(runtime.engine, "partite-ai/wacogo+wazero");
+        assert!(runtime.translation_provenance.is_none());
+        let Some(ImplementationLineageView::Wacogo {
+            source_lock_sha256,
+            sidecar_executable_sha256,
+            sidecar_executable_size,
+            ..
+        }) = runtime.implementation_lineage.as_ref()
+        else {
+            panic!("Wacogo metadata must carry structured implementation lineage")
+        };
+        assert_eq!(source_lock_sha256, visa_wacogo::SOURCE_LOCK_SHA256);
+        assert_eq!(sidecar_executable_sha256, visa_wacogo::SIDECAR_EXECUTABLE_SHA256);
+        assert_eq!(*sidecar_executable_size, visa_wacogo::SIDECAR_EXECUTABLE_SIZE);
+    }
+
+    #[test]
     fn real_guest_safe_point_rejection_rolls_back_and_source_continues() {
         let database = TestDatabase::new("safe-point-rejection");
         let options = FixtureOptions::new("safe-point-unreachable");
@@ -2098,7 +2151,15 @@ mod tests {
         )
         .unwrap();
         match result {
-            WorkerResult::Initialized { role: actual, runtime, .. } if actual == role => runtime,
+            WorkerResult::Initialized { role: actual, prepared_runtime, live_runtime, .. }
+                if actual == role
+                    && match role {
+                        WorkerRole::Source => live_runtime.as_ref() == Some(&prepared_runtime),
+                        WorkerRole::Destination => live_runtime.is_none(),
+                    } =>
+            {
+                *prepared_runtime
+            }
             other => panic!("expected initialized {role:?}, got {other:?}"),
         }
     }

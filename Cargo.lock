@@ -2086,9 +2086,11 @@ dependencies = [
  "substrate_api",
  "substrate_host",
  "visa-conformance",
+ "visa_component_adapter",
  "visa_jco_node",
  "visa_profile",
  "visa_runtime",
+ "visa_wacogo",
  "visa_wasmtime",
  "wit-component 0.244.0",
 ]
@@ -2142,6 +2144,21 @@ dependencies = [
  "contract_core",
  "semantic_core",
  "substrate_api",
+]
+
+[[package]]
+name = "visa_wacogo"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "hex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "visa_component_adapter",
+ "visa_profile",
+ "visa_runtime",
 ]
 
 [[package]]

@@ -18,7 +18,9 @@ substrate_api = { path = "../../backend/substrate_api" }
 substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
 visa_profile = { path = "../../core/visa_profile" }
 visa_runtime = { path = "../../runtime/visa_runtime" }
+visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
 visa_jco_node = { path = "../../runtime/visa_jco_node", features = ["test-control"] }
+visa_wacogo = { path = "../../runtime/visa_wacogo", features = ["test-control"] }
 visa_wasmtime = { path = "../../runtime/visa_wasmtime", features = ["test-control"] }
 visa-conformance = { path = "../visa-conformance" }
 

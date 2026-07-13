@@ -218,6 +218,39 @@ fn artifact_gate_reads_every_referenced_file_and_checks_its_digest() {
 }
 
 #[test]
+fn complete_31_case_artifact_gate_accepts_each_wacogo_strict_cell_pair() {
+    let wasmtime = Stage1VersionedIdentity {
+        name: crate::STAGE2_WASMTIME_ENVIRONMENT_NAME.to_owned(),
+        version: crate::STAGE2_WASMTIME_ENVIRONMENT_VERSION.to_owned(),
+    };
+    let wacogo = Stage1VersionedIdentity {
+        name: crate::STAGE2_WACOGO_ENVIRONMENT_NAME.to_owned(),
+        version: crate::STAGE2_WACOGO_ENVIRONMENT_VERSION.to_owned(),
+    };
+    for (label, source, destination) in [
+        ("wacogo-to-wacogo", wacogo.clone(), wacogo.clone()),
+        ("wasmtime-to-wacogo", wasmtime.clone(), wacogo.clone()),
+        ("wacogo-to-wasmtime", wacogo.clone(), wasmtime.clone()),
+    ] {
+        let root = temp_dir(label);
+        let mut bundle = complete_bundle();
+        bundle.environment.source_runtime = source;
+        bundle.environment.destination_runtime = destination;
+        materialize_artifacts(&mut bundle, &root);
+
+        let structural = validate_stage1_evidence_bundle(&bundle);
+        assert!(structural.ok, "{label}: {:#?}", structural.findings);
+        let artifacts = validate_stage1_evidence_artifacts(&bundle, &root);
+        assert!(artifacts.ok, "{label}: {:#?}", artifacts.findings);
+        let json = serde_json::to_vec(&bundle).unwrap();
+        let gate = gate_stage1_evidence_bundle_json_with_artifacts(&json, &root);
+        assert!(gate.ok, "{label}: {gate:#?}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn artifact_gate_rejects_missing_files_and_content_digest_mismatch() {
     let missing_root = temp_dir("missing-artifact");
     let mut missing = complete_bundle();
@@ -619,7 +652,9 @@ fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts
                         },
                         |protocol| {
                             let provenance = protocol
-                                .pointer_mut("/outcome/result/runtime/translation_provenance")
+                                .pointer_mut(
+                                    "/outcome/result/prepared_runtime/translation_provenance",
+                                )
                                 .and_then(serde_json::Value::as_object_mut)
                                 .unwrap();
                             if changed {
@@ -744,7 +779,8 @@ fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts
                             "kind": "initialized",
                             "role": "destination",
                             "case_id": case_id,
-                            "runtime": test_runtime_observation(TestRuntime::JcoNode),
+                            "prepared_runtime": test_runtime_observation(TestRuntime::JcoNode),
+                            "live_runtime": null,
                         },
                     },
                 });
@@ -758,7 +794,13 @@ fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts
                     "id": read_id,
                     "outcome": {
                         "status": "success",
-                        "result": { "kind": "state" },
+                        "result": {
+                            "kind": "state",
+                            "view": {
+                                "component_instantiated": false,
+                                "live_runtime": null,
+                            }
+                        },
                     },
                 });
                 for (sequence, stream, protocol) in [
@@ -808,8 +850,10 @@ fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts
                             == Some("initialized")
                     },
                     |protocol| {
-                        protocol["outcome"]["result"]["runtime"]["translation_provenance"]["node_executable_sha256"] =
-                            serde_json::Value::String(digest('9'));
+                        for field in ["prepared_runtime", "live_runtime"] {
+                            protocol["outcome"]["result"][field]["translation_provenance"]["node_executable_sha256"] =
+                                serde_json::Value::String(digest('9'));
+                        }
                     },
                 );
             });
@@ -2708,7 +2752,12 @@ fn materialize_raw(
                         "kind": "initialized",
                         "role": role,
                         "case_id": case.case_id,
-                        "runtime": test_runtime_observation(runtime),
+                        "prepared_runtime": test_runtime_observation(runtime),
+                        "live_runtime": if role == "source" {
+                            Some(test_runtime_observation(runtime))
+                        } else {
+                            None
+                        },
                     },
                 }
             });
@@ -2720,12 +2769,22 @@ fn materialize_raw(
                 "command": { "kind": if dump_state.is_some() { "dump" } else { "read" } }
             });
             let result = dump_state.map_or_else(
-                || serde_json::json!({ "kind": "state" }),
+                || {
+                    serde_json::json!({
+                        "kind": "state",
+                        "view": {
+                            "component_instantiated": false,
+                            "live_runtime": null,
+                        }
+                    })
+                },
                 |state| {
                     serde_json::json!({
                         "kind": "dump",
                         "canonical_state": state,
                         "state_digest": contract_core::state_digest(state).unwrap(),
+                        "component_instantiated": true,
+                        "live_runtime": test_runtime_observation(runtime),
                         "portable_component_state": state.portable_state,
                     })
                 },
@@ -2795,7 +2854,8 @@ fn materialize_raw(
                                 "kind": "initialized",
                                 "role": role,
                                 "case_id": supplemental_case,
-                                "runtime": test_runtime_observation(runtime),
+                                "prepared_runtime": test_runtime_observation(runtime),
+                                "live_runtime": test_runtime_observation(runtime),
                             },
                         },
                     });
@@ -2927,6 +2987,7 @@ fn materialize_raw(
 enum TestRuntime {
     Wasmtime,
     JcoNode,
+    Wacogo,
 }
 
 fn test_runtime(identity: &Stage1VersionedIdentity) -> TestRuntime {
@@ -2938,6 +2999,10 @@ fn test_runtime(identity: &Stage1VersionedIdentity) -> TestRuntime {
         && identity.version == crate::STAGE2_JCO_NODE_ENVIRONMENT_VERSION
     {
         TestRuntime::JcoNode
+    } else if identity.name == crate::STAGE2_WACOGO_ENVIRONMENT_NAME
+        && identity.version == crate::STAGE2_WACOGO_ENVIRONMENT_VERSION
+    {
+        TestRuntime::Wacogo
     } else {
         panic!("test fixture has unsupported runtime identity {identity:?}");
     }
@@ -2950,6 +3015,7 @@ fn test_initialize_command(case_id: &str, role: &str, runtime: TestRuntime) -> s
         "runtime": match runtime {
             TestRuntime::Wasmtime => "wasmtime",
             TestRuntime::JcoNode => "jco_node",
+            TestRuntime::Wacogo => "wacogo",
         },
         "database_path": format!("/tmp/{case_id}.sqlite3"),
         "options": {
@@ -2969,6 +3035,7 @@ fn test_runtime_observation(runtime: TestRuntime) -> serde_json::Value {
             "engine": "wasmtime",
             "engine_version": crate::STAGE2_WASMTIME_ENGINE_VERSION,
             "translation_provenance": null,
+            "implementation_lineage": null,
         }),
         TestRuntime::JcoNode => serde_json::json!({
             "implementation": "visa_jco_node+jco+js-component-bindgen",
@@ -2995,8 +3062,49 @@ fn test_runtime_observation(runtime: TestRuntime) -> serde_json::Value {
                 "driver_sha256": digest('3'),
                 "core_module_sha256s": [digest('4')],
             },
+            "implementation_lineage": null,
+        }),
+        TestRuntime::Wacogo => serde_json::json!({
+            "implementation": "visa_wacogo",
+            "implementation_version": crate::STAGE2_WACOGO_IMPLEMENTATION_VERSION,
+            "engine": "partite-ai/wacogo+wazero",
+            "engine_version": crate::STAGE2_WACOGO_ENGINE_VERSION,
+            "translation_provenance": null,
+            "implementation_lineage": test_wacogo_lineage(),
         }),
     }
+}
+
+fn test_wacogo_lineage() -> serde_json::Value {
+    serde_json::json!({
+        "kind": "wacogo",
+        "source_lock_schema": "visa.wacogo-source-lock.v1",
+        "source_lock_sha256": "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235",
+        "derivative_id": "partite-ai-wacogo-3de16a61796c-visa-patchset-v1",
+        "upstream_module": "github.com/partite-ai/wacogo",
+        "upstream_version": "v0.0.0-20260617023329-3de16a61796c",
+        "upstream_revision": "3de16a61796ce02d29795e4a074f37a33e6ebd87",
+        "upstream_module_sum": "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw=",
+        "upstream_is_qualified_without_patches": false,
+        "patchset_id": "visa-wacogo-downstream-v1",
+        "patchset_sha256": "a377b3d3f0da455f14097638380a8bab566b2aa0d33a4f25d90326e7a2b211e2",
+        "patch_sha256s": [
+            "c04b82a5ec2a95c45f5f81bdce5b2cbff11e25556865eb19928b48b6f94eed69",
+            "3531ff7a61de7c41f4237d7077a4dd0602bedd15e3067db070fd3e659575a37e",
+            "4b32fe31643aedab8472c42ae38d635abbfc9133093866b5ff1de9dcc4548d0e"
+        ],
+        "patched_tree_sha256": "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311",
+        "sidecar_executable_sha256": "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606",
+        "sidecar_executable_size": 6754430,
+        "sidecar_protocol_version": 1,
+        "execution_carrier": "owned-component-stdin-frame-v1",
+        "wacogo_version": "v0.0.0-20260617023329-3de16a61796c",
+        "wacogo_revision": "3de16a61796ce02d29795e4a074f37a33e6ebd87",
+        "wazero_version": "v1.11.1-0.20260418165552-5cb4bb3ec0c1",
+        "go_version": "go1.26.5",
+        "target": "linux/amd64",
+        "main_module": "visa.local/wacogo-runtime"
+    })
 }
 
 fn json_lines(values: &[serde_json::Value]) -> Vec<u8> {

@@ -6,8 +6,8 @@
 /.ci-cache/
 
 # Feature-qualification tool outputs
-/specs/*/qualification/**/bin/
-/specs/*/qualification/**/obj/
+/third_party/runtime-b-qualification/qualification/**/bin/
+/third_party/runtime-b-qualification/qualification/**/obj/
 
 # Root-local environment files; templates remain visible
 /.env*

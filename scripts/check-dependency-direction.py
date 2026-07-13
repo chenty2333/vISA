@@ -32,6 +32,14 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "visa_runtime",
         }
     ),
+    "visa_wacogo": frozenset(
+        {
+            "contract_core",
+            "visa_component_adapter",
+            "visa_profile",
+            "visa_runtime",
+        }
+    ),
     "visa_wasmtime": frozenset(
         {
             "contract_core",
@@ -51,9 +59,11 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "substrate_api",
             "substrate_host",
             "visa-conformance",
+            "visa_component_adapter",
             "visa_jco_node",
             "visa_profile",
             "visa_runtime",
+            "visa_wacogo",
             "visa_wasmtime",
         }
     ),

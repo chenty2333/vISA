@@ -11,8 +11,8 @@ use super::{
 use crate::{
     fixture::FixtureOptions,
     protocol::{
-        FaultPointSpec, RuntimeImplementation, StateView, TimerPollView, WorkerCommand,
-        WorkerResult, WorkerRole,
+        FaultPointSpec, ImplementationLineageView, RuntimeImplementation, StateView, TimerPollView,
+        WorkerCommand, WorkerResult, WorkerRole,
     },
 };
 
@@ -73,12 +73,17 @@ pub(super) fn spawn_initialized(
         WorkerResult::Initialized {
             role: actual_role,
             case_id: actual_case,
-            runtime: observed_runtime,
+            prepared_runtime,
+            live_runtime,
         } if actual_role == role
             && actual_case == case_id
-            && runtime_identity_matches(runtime, &observed_runtime) =>
+            && runtime_identity_matches(runtime, &prepared_runtime)
+            && match role {
+                WorkerRole::Source => live_runtime.as_ref() == Some(&prepared_runtime),
+                WorkerRole::Destination => live_runtime.is_none(),
+            } =>
         {
-            client.set_runtime_identity(observed_runtime);
+            client.set_runtime_identity(*prepared_runtime);
             Ok(client)
         }
         other => Err(RunnerError::Assertion {
@@ -97,6 +102,7 @@ fn runtime_identity_matches(
             observed.implementation == "visa_wasmtime"
                 && observed.engine == "wasmtime"
                 && observed.translation_provenance.is_none()
+                && observed.implementation_lineage.is_none()
         }
         RuntimeImplementation::JcoNode => {
             observed.implementation.starts_with("visa_jco_node+")
@@ -104,7 +110,60 @@ fn runtime_identity_matches(
                 && observed.translation_provenance.as_ref().is_some_and(|provenance| {
                     provenance.execution_carrier == visa_jco_node::JCO_NODE_EXECUTION_CARRIER
                 })
+                && observed.implementation_lineage.is_none()
         }
+        RuntimeImplementation::Wacogo => observed.implementation == "visa_wacogo"
+            && observed.engine == "partite-ai/wacogo+wazero"
+            && observed.translation_provenance.is_none()
+            && observed.implementation_lineage.as_ref().is_some_and(|lineage| {
+                matches!(
+                    lineage,
+                    ImplementationLineageView::Wacogo {
+                        source_lock_schema,
+                        source_lock_sha256,
+                        derivative_id,
+                        upstream_module,
+                        upstream_version,
+                        upstream_revision,
+                        upstream_module_sum,
+                        upstream_is_qualified_without_patches: false,
+                        patchset_id,
+                        patchset_sha256,
+                        patch_sha256s,
+                        patched_tree_sha256,
+                        sidecar_executable_sha256,
+                        sidecar_executable_size,
+                        sidecar_protocol_version,
+                        execution_carrier,
+                        wacogo_version,
+                        wacogo_revision,
+                        wazero_version,
+                        go_version,
+                        target,
+                        main_module,
+                    } if source_lock_schema == visa_wacogo::SOURCE_LOCK_SCHEMA
+                        && source_lock_sha256 == visa_wacogo::SOURCE_LOCK_SHA256
+                        && derivative_id == visa_wacogo::DERIVATIVE_ID
+                        && upstream_module == visa_wacogo::UPSTREAM_MODULE
+                        && upstream_version == visa_wacogo::WACOGO_VERSION
+                        && upstream_revision == visa_wacogo::WACOGO_REVISION
+                        && upstream_module_sum == visa_wacogo::UPSTREAM_MODULE_SUM
+                        && patchset_id == visa_wacogo::PATCHSET_ID
+                        && patchset_sha256 == visa_wacogo::PATCHSET_SHA256
+                        && patch_sha256s.iter().map(String::as_str).eq(visa_wacogo::PATCH_SHA256S)
+                        && patched_tree_sha256 == visa_wacogo::PATCHED_TREE_SHA256
+                        && sidecar_executable_sha256 == visa_wacogo::SIDECAR_EXECUTABLE_SHA256
+                        && *sidecar_executable_size == visa_wacogo::SIDECAR_EXECUTABLE_SIZE
+                        && *sidecar_protocol_version == 1
+                        && execution_carrier == "owned-component-stdin-frame-v1"
+                        && wacogo_version == visa_wacogo::WACOGO_VERSION
+                        && wacogo_revision == visa_wacogo::WACOGO_REVISION
+                        && wazero_version == visa_wacogo::WAZERO_VERSION
+                        && go_version == visa_wacogo::GO_VERSION
+                        && target == visa_wacogo::TARGET
+                        && main_module == visa_wacogo::MAIN_MODULE
+                )
+            }),
     }
 }
 

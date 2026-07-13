@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    STAGE2_INCOMPLETE_MARKER_FILE, Stage2ArtifactReference, Stage2CellId, Stage2ValidationFinding,
-    Stage2WriteError,
+    STAGE2_INCOMPLETE_MARKER_FILE, Stage2ArtifactReference, Stage2ClaimSet,
+    Stage2ValidationFinding, Stage2WriteError, stage2_cell_descriptors,
 };
 use crate::{
     artifact_io::{SecureArtifactErrorKind, SecureArtifactRoot},
@@ -31,8 +31,11 @@ pub(super) fn validate_cell_directory_set(
         Some(observed) => observed,
         None => return,
     };
-    let expected =
-        Stage2CellId::ALL.iter().map(|cell| cell.as_str().to_owned()).collect::<BTreeSet<_>>();
+    let descriptors = stage2_cell_descriptors(Stage2ClaimSet::CrossExecutionPathPortability);
+    let expected = descriptors
+        .clone()
+        .map(|descriptor| descriptor.id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
     if observed != expected {
         finding(
             findings,
@@ -40,8 +43,8 @@ pub(super) fn validate_cell_directory_set(
             "cells/ must contain exactly the four fixed cell directories",
         );
     }
-    for cell in Stage2CellId::ALL {
-        let path = cells_root.join(cell.as_str());
+    for descriptor in descriptors {
+        let path = cells_root.join(descriptor.id.as_str());
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
             Ok(_) => finding(
@@ -119,9 +122,10 @@ pub(super) fn validate_normalized_directory_set(
         Some(observed) => observed,
         None => return,
     };
-    let expected = Stage2CellId::ALL
-        .iter()
-        .map(|cell| format!("{}.json", cell.as_str()))
+    let descriptors = stage2_cell_descriptors(Stage2ClaimSet::CrossExecutionPathPortability);
+    let expected = descriptors
+        .clone()
+        .map(|descriptor| format!("{}.json", descriptor.id.as_str()))
         .collect::<BTreeSet<_>>();
     if observed != expected {
         finding(
@@ -130,8 +134,8 @@ pub(super) fn validate_normalized_directory_set(
             "normalized/ must contain exactly the four fixed cell caches",
         );
     }
-    for cell in Stage2CellId::ALL {
-        let path = normalized_root.join(format!("{}.json", cell.as_str()));
+    for descriptor in descriptors {
+        let path = normalized_root.join(format!("{}.json", descriptor.id.as_str()));
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
             Ok(_) => finding(

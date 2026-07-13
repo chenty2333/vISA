@@ -20,7 +20,11 @@ use crate::protocol::{
 };
 
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(5);
-const DROP_GRACE_PERIOD: Duration = Duration::from_millis(100);
+const CRASH_SILENCE_GRACE_PERIOD: Duration = Duration::from_millis(100);
+// Closing worker stdin initiates the normal EOF teardown path. Wacogo bounds
+// its protocol shutdown at two seconds, so the parent must not kill the worker
+// while that shared teardown is still within its own deadline.
+const NORMAL_EOF_GRACE_PERIOD: Duration = Duration::from_secs(3);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -517,7 +521,7 @@ impl WorkerClient {
         &mut self,
         timeout: Duration,
     ) -> Result<(), WorkerClientError> {
-        match self.stdout.recv_timeout(timeout.min(DROP_GRACE_PERIOD)) {
+        match self.stdout.recv_timeout(timeout.min(CRASH_SILENCE_GRACE_PERIOD)) {
             Ok(ReaderEvent::Eof) | Err(RecvTimeoutError::Disconnected) => Ok(()),
             Ok(ReaderEvent::Line(line)) => Err(WorkerClientError::Protocol {
                 detail: format!("immediate crash unexpectedly produced response {line:?}"),
@@ -527,15 +531,17 @@ impl WorkerClient {
             }),
             Err(RecvTimeoutError::Timeout) => Err(WorkerClientError::Timeout {
                 operation: "confirm silent immediate crash".to_owned(),
-                timeout: timeout.min(DROP_GRACE_PERIOD),
+                timeout: timeout.min(CRASH_SILENCE_GRACE_PERIOD),
             }),
         }
     }
 
     fn stop_for_drop(&mut self) {
+        let grace_period =
+            if self.usable { NORMAL_EOF_GRACE_PERIOD } else { CRASH_SILENCE_GRACE_PERIOD };
         self.usable = false;
         self.stdin.take();
-        let deadline = Instant::now() + DROP_GRACE_PERIOD;
+        let deadline = Instant::now() + grace_period;
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
@@ -586,12 +592,16 @@ pub(super) fn exit_status_text(status: ExitStatus) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    static NEXT_MARKER: AtomicU64 = AtomicU64::new(0);
 
     const RESPONSE_SCRIPT: &str = r#"
 IFS= read -r line
 id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-printf '{"version":2,"id":"%s","outcome":{"status":"success","result":{"kind":"ack"}}}\n' "$id"
+printf '{"version":3,"id":"%s","outcome":{"status":"success","result":{"kind":"ack"}}}\n' "$id"
 "#;
 
     #[test]
@@ -615,7 +625,7 @@ printf '{"version":2,"id":"%s","outcome":{"status":"success","result":{"kind":"a
     fn worker_client_rejects_a_mismatched_response_id() {
         let script = r#"
 IFS= read -r line
-printf '{"version":2,"id":"wrong","outcome":{"status":"success","result":{"kind":"ack"}}}\n'
+printf '{"version":3,"id":"wrong","outcome":{"status":"success","result":{"kind":"ack"}}}\n'
 "#;
         let mut client = shell_client(script, Duration::from_secs(1));
         assert!(matches!(
@@ -681,6 +691,31 @@ printf '{"version":2,"id":"wrong","outcome":{"status":"success","result":{"kind"
         assert!(client.stdin.is_none());
         assert!(client.stdout_thread.is_none());
         assert!(client.stderr_thread.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_eof_grace_does_not_truncate_bounded_child_teardown() {
+        let marker = std::env::temp_dir().join(format!(
+            "visa-worker-eof-teardown-{}-{}",
+            std::process::id(),
+            NEXT_MARKER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("IFS= read -r line || true\nsleep 0.2\n: > \"$MARKER\"")
+            .env("MARKER", &marker);
+        let mut client =
+            WorkerClient::spawn_command(command, "delayed-eof".to_owned(), Duration::from_secs(1))
+                .unwrap();
+
+        client.stop_for_drop();
+
+        assert!(marker.is_file(), "the parent killed the child before its EOF teardown completed");
+        assert!(client.child.try_wait().unwrap().is_some());
+        let _ = std::fs::remove_file(marker);
     }
 
     fn shell_client(script: &str, timeout: Duration) -> WorkerClient {

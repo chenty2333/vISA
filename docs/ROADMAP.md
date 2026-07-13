@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-13.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -170,10 +170,13 @@ availability, or a validated commercial market.
 
 ## Stage 2: Independent runtime portability
 
-Status: in progress. The runtime-neutral adapter contract, Jco-translated
-Node/V8 reference cell, and four-direction cross-execution-path harness are
-implemented. The strict exit criterion below remains open because Jco's
-Component translation lineage includes `wasmtime-environ`.
+Status: in progress pending exact-final-commit CI. The strict implementation
+and fresh Host/Docker exit evidence are complete for the named Wasmtime and
+source-lock-bound Wacogo runtime paths on x86-64/amd64 Linux with the timer/KV
+profile. The exact four-cell matrix completed 124/124 executions and 31/31
+normalized equality groups with all inner and outer independent verification
+passing. The legacy Wasmtime/JcoNode path remains a separate
+`cross-execution-path-portability` result.
 
 Goal: restore the same Stage 1 envelope through a genuinely independent
 WebAssembly execution adapter, with no destination-specific component code or
@@ -198,6 +201,13 @@ Completing these substages earns only the named
 `cross-execution-path-portability` result. It does not silently weaken the
 independent-implementation exit criterion.
 
+The separate strict closure path qualifies the source-lock-bound Wacogo
+derivative as independent of Wasmtime and `wasmtime-environ` lineage for the
+exercised Component Model surface. It executes Wacogo same-path and both
+Wasmtime/Wacogo mixed directions over the unchanged 31-case registry and
+independently verifies the exact four-cell strict matrix. This does not upgrade
+the legacy JcoNode evidence or imply support by unmodified upstream Wacogo.
+
 Exit conditions:
 
 - two independently implemented runtime paths execute the same capability
@@ -207,8 +217,15 @@ Exit conditions:
   portable envelope; and
 - unsupported runtime features appear as explicit profile results.
 
-Claim on exit: the published component/resource profile is portable across the
-two named runtime implementations. No broader runtime or ISA claim follows.
+Fresh Host and Docker runs satisfy these technical exit conditions for the two
+named runtime implementations. Final stage closure remains pending
+exact-final-commit CI.
+
+Claim on exit: `strict-cross-runtime-continuity` for Wasmtime and the
+source-lock-bound Wacogo derivative on x86-64/amd64 Linux with the timer/KV
+profile. The legacy Wasmtime/JcoNode evidence remains
+`cross-execution-path-portability`. No cross-ISA, file/network, confidential,
+production-readiness, or broader runtime claim follows.
 
 ## Stage 3: Rich external resources
 
@@ -263,6 +280,8 @@ Claim on exit: only the named TEE/verifier/policy integration is supported.
 
 - Do not advance a stage because types, schemas, or tests exist; advance when
   the end-to-end evidence and deletion conditions are satisfied.
+- Require a stage-closing repository revision to pass pushed CI at its exact
+  final commit before changing the roadmap status to `complete`.
 - Add a capability only when it exercises the final dependency direction.
 - Keep unsupported matrix entries explicit.
 - Promote durable boundary changes into vision or architecture; keep

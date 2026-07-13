@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net9.0": {
+      "WACS.ComponentModel.Harness.Lib": {
+        "type": "Direct",
+        "requested": "[0.27.2, 0.27.2]",
+        "resolved": "0.27.2",
+        "contentHash": "hegqqeCgYrNGA1PJ8mzm7+zEwS9TEkkwy7PkWPnepD2q+RKSfd9Rvft1rY6yhc4/VnngnQRAf4o84bU+i3ymZw==",
+        "dependencies": {
+          "WACS": "0.16.14",
+          "WACS.ComponentModel": "0.10.3",
+          "WACS.ComponentModel.Harness.Runtime": "0.7.5",
+          "WACS.ComponentModel.Parser": "0.2.2"
+        }
+      },
+      "FluentValidation": {
+        "type": "Transitive",
+        "resolved": "11.10.0",
+        "contentHash": "qsJGSJDdZ8qiG+lVJ70PZfJHcEdq8UQZ/tZDXoj78/iHKG6lVKtMJsD11zyyv/IPc7rwqGqnFoFLTNzpo3IPYg=="
+      },
+      "Microsoft.Extensions.ObjectPool": {
+        "type": "Transitive",
+        "resolved": "9.0.0",
+        "contentHash": "UbsU/gYe4nv1DeqMXIVzDfNNek7Sk2kKuAOXL/Y+sLcAR0HwFUqzg1EPiU88jeHNe0g81aPvvHbvHarQr3r9IA=="
+      },
+      "System.Threading.Channels": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "CMaFr7v+57RW7uZfZkPExsPB6ljwzhjACWW1gfU35Y56rk72B/Wu+sTqxVmGSk4SFUlPc3cjeKND0zktziyjBA=="
+      },
+      "WACS": {
+        "type": "Transitive",
+        "resolved": "0.16.14",
+        "contentHash": "9/DP/W+QsDNUcO6PP2yvqeeBgh6Gohwi3s0VU13ADW0a2fApXhyVeLm1mjuPptgKvM02px5WJTgenmrNdRn+aw==",
+        "dependencies": {
+          "FluentValidation": "11.10.0",
+          "Microsoft.Extensions.ObjectPool": "9.0.0"
+        }
+      },
+      "WACS.ComponentModel": {
+        "type": "Transitive",
+        "resolved": "0.10.3",
+        "contentHash": "AYtsSDvfn1wxYcsBx1hZbcRbDdukRp8qV2zFMo8mZfjuwcDeCqbSKjiU+cdGwVAk/yNGC1O1K405AMdHBTI6Xg==",
+        "dependencies": {
+          "System.Threading.Channels": "8.0.0",
+          "WACS": "0.16.14",
+          "WACS.ComponentModel.Parser": "0.2.1"
+        }
+      },
+      "WACS.ComponentModel.Harness.Runtime": {
+        "type": "Transitive",
+        "resolved": "0.7.5",
+        "contentHash": "DixrLEWKnzd3YiDnx363YK1+6CaL3PrBNgMfwEInrqgpnl9ZaLG37sS1w+cQpW/Ve9f6FVfoPiXzvh6u7b9d2g==",
+        "dependencies": {
+          "WACS": "0.16.14",
+          "WACS.ComponentModel.Parser": "0.2.2"
+        }
+      },
+      "WACS.ComponentModel.Parser": {
+        "type": "Transitive",
+        "resolved": "0.2.2",
+        "contentHash": "T0rgGJCFk9iGfXstn+UblE+PgVASDKKc6DLKl6QXXmTNgXLshbrZmDJDkzE2zfmlkbTz6RL/2/bvI32K2s8fgw=="
+      }
+    }
+  }
+}

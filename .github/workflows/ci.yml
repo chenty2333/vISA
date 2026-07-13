@@ -132,3 +132,23 @@ jobs:
       - name: Remove Stage 2 matrix evidence from cache path
         if: ${{ always() }}
         run: rm -rf .ci-cache/target/visa-system
+
+      - name: Clear prior Strict Stage 2 Docker evidence
+        run: rm -rf .ci-cache/strict-stage2
+
+      - name: Strict Stage 2 Docker parity gate
+        id: strict_stage2_docker_parity_gate
+        run: scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage2-strict
+
+      - name: Upload Strict Stage 2 Docker evidence
+        if: ${{ always() && steps.strict_stage2_docker_parity_gate.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: strict-stage2-docker-evidence
+          path: .ci-cache/strict-stage2/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Strict Stage 2 Docker evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/strict-stage2

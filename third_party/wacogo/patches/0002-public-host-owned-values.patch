@@ -1,0 +1,207 @@
+From: vISA downstream patchset
+Subject: [PATCH 2/3] values: expose host-created owned resource values
+Upstream-base: 3de16a61796ce02d29795e4a074f37a33e6ebd87
+License: Apache-2.0
+
+Expose a typed, public constructor for a host-created own<R> value. The host
+registers its native object with the defining host component instance and passes
+the returned representation plus the exported resource type here. Func.Call
+then performs ordinary Canonical ABI ownership transfer. Also retain and stop
+the runtime cleanup so successfully transferred or explicitly dropped handles
+do not emit false leak warnings.
+
+diff --git a/internal/canon/val.go b/internal/canon/val.go
+index ac6e32c..92dae9d 100644
+--- a/internal/canon/val.go
++++ b/internal/canon/val.go
+@@ -401,6 +401,7 @@ type ValOwnHandle struct {
+ 	rep      uint32
+ 	numLends uint32
+ 	state    valHandleState
++	cleanup  runtime.Cleanup
+ }
+ 
+ func (h *ValOwnHandle) val() {}
+@@ -414,7 +415,7 @@ func (h *ValOwnHandle) IssueOwn(rt ResourceType, rep uint32) ResourceHandle {
+ 	h.rt = rt
+ 	h.rep = rep
+ 	h.state = valHandleValid
+-	runtime.AddCleanup(h, leakWarn, leakInfo{rt: rt, rep: rep})
++	h.cleanup = runtime.AddCleanup(h, leakWarn, leakInfo{rt: rt, rep: rep})
+ 	return h
+ }
+ 
+@@ -471,6 +472,7 @@ func (h *ValOwnHandle) TransferOwn(target TransferTarget) (ResourceHandle, error
+ 	rt := h.rt
+ 	rep := h.rep
+ 	h.state = valHandleTransferred
++	h.cleanup.Stop()
+ 	return target.IssueOwn(rt, rep), nil
+ }
+ 
+@@ -494,6 +496,7 @@ func (h *ValOwnHandle) Drop(ctx context.Context) error {
+ 	rt := h.rt
+ 	rep := h.rep
+ 	h.state = valHandleDropped
++	h.cleanup.Stop()
+ 	dtor := rt.Destructor()
+ 	if dtor == nil {
+ 		return nil
+@@ -529,6 +532,16 @@ func newValOwnHandleEmpty() *ValOwnHandle {
+ 	return &ValOwnHandle{}
+ }
+ 
++// NewValOwnHandle mints a free-floating owned resource value from a resource
++// type and its representation. It is intended for hosts that registered a
++// native object with the resource's defining instance and need to transfer
++// that ownership through the typed Func.Call API.
++func NewValOwnHandle(rt ResourceType, rep uint32) *ValOwnHandle {
++	h := newValOwnHandleEmpty()
++	h.IssueOwn(rt, rep)
++	return h
++}
++
+ // NewValOwnHandleForTest mints a *ValOwnHandle pre-populated with
+ // (rt, rep). Test-only; exported so cross-package tests (notably
+ // internal/core integration tests) can synthesize Vals when
+diff --git a/internal/canon/val_handle_test.go b/internal/canon/val_handle_test.go
+index e2e3936..8bc75d0 100644
+--- a/internal/canon/val_handle_test.go
++++ b/internal/canon/val_handle_test.go
+@@ -34,6 +34,47 @@ func TestValOwnHandle_Drop(t *testing.T) {
+ 	}
+ }
+ 
++func TestNewValOwnHandle_TransferOwn(t *testing.T) {
++	rt := &testResourceType{name: "R"}
++	val := NewValOwnHandle(rt, 17)
++	if val.Type() != rt || val.Rep() != 17 {
++		t.Fatalf("new own = (type=%v, rep=%d), want (type=%v, rep=17)", val.Type(), val.Rep(), rt)
++	}
++
++	dst := newStubResourceTable()
++	h, err := val.TransferOwn(dst)
++	if err != nil {
++		t.Fatalf("TransferOwn: %v", err)
++	}
++	if h.Type() != rt || h.Rep() != 17 {
++		t.Fatalf("transferred own = (type=%v, rep=%d), want (type=%v, rep=17)", h.Type(), h.Rep(), rt)
++	}
++	if _, err := val.TransferOwn(dst); err == nil || !strings.Contains(err.Error(), "transferred") {
++		t.Fatalf("second TransferOwn err = %v, want transferred", err)
++	}
++}
++
++func TestNewValOwnHandle_DropRunsDtor(t *testing.T) {
++	called := false
++	rt := &testResourceTypeWithDtor{
++		name: "R",
++		dtor: func(_ context.Context, rep uint32) error {
++			called = true
++			if rep != 23 {
++				t.Errorf("dtor rep = %d, want 23", rep)
++			}
++			return nil
++		},
++	}
++	val := NewValOwnHandle(rt, 23)
++	if err := val.Drop(context.Background()); err != nil {
++		t.Fatalf("Drop: %v", err)
++	}
++	if !called {
++		t.Fatal("dtor not called")
++	}
++}
++
+ func TestValOwnHandle_DropAfterTransferErrors(t *testing.T) {
+ 	rt := &testResourceType{name: "R"}
+ 	src := newStubResourceTable()
+diff --git a/internal/core/val.go b/internal/core/val.go
+index e61d1f5..a645735 100644
+--- a/internal/core/val.go
++++ b/internal/core/val.go
+@@ -80,6 +80,15 @@ type ValFlags = canon.ValFlags
+ // ValOwnHandle is an owned resource handle.
+ type ValOwnHandle = canon.ValOwnHandle
+ 
++// NewValOwnHandle constructs a host-created owned resource value suitable
++// for passing to Func.Call. rep is interpreted by rt's defining instance.
++func NewValOwnHandle(rt *TypeResource, rep uint32) *ValOwnHandle {
++	if rt == nil {
++		panic("wacogo: NewValOwnHandle: nil resource type")
++	}
++	return canon.NewValOwnHandle(resourceType{rt: rt}, rep)
++}
++
+ // --- Non-generic constructors (re-exported as variable aliases) ---
+ 
+ // NewValRecord constructs a record from the given fields in order.
+diff --git a/val.go b/val.go
+index 2a6488a..8a9f2a4 100644
+--- a/val.go
++++ b/val.go
+@@ -69,6 +69,12 @@ type ValEnum = core.ValEnum
+ // ValOwnHandle is an owned resource handle value.
+ type ValOwnHandle = core.ValOwnHandle
+ 
++// NewValOwnHandle constructs a host-created owned resource value suitable
++// for passing to an exported component function through Func.Call.
++func NewValOwnHandle(rt *TypeResource, rep uint32) *ValOwnHandle {
++	return core.NewValOwnHandle(rt, rep)
++}
++
+ // NewValListOf constructs a *ValList whose elements are elems.
+ func NewValListOf[T Val](elems ...T) *ValList {
+ 	return core.NewValListOf[T](elems...)
+diff --git a/val_test.go b/val_test.go
+index 30205fd..e3a2a2d 100644
+--- a/val_test.go
++++ b/val_test.go
+@@ -217,3 +217,47 @@ func TestValOwnHandleDrop(t *testing.T) {
+ 	}
+ 	var _ wacogo.Val = &v
+ }
++
++func TestNewValOwnHandleFromHostResource(t *testing.T) {
++	ctx := context.Background()
++	engine := wacogo.NewEngine(ctx)
++	defer engine.Close(ctx)
++
++	builder := engine.NewHostBuilder("own-value-test")
++	builder.AddResource("item", nil)
++	component, err := builder.Build(ctx)
++	if err != nil {
++		t.Fatalf("Build: %v", err)
++	}
++	defer component.Close(ctx)
++	instance, err := component.Instantiate(ctx)
++	if err != nil {
++		t.Fatalf("Instantiate: %v", err)
++	}
++	defer instance.Close(ctx)
++
++	rt, ok := instance.Core().ExportedType("item").(*wacogo.TypeResource)
++	if !ok {
++		t.Fatalf("item type = %T, want *wacogo.TypeResource", instance.Core().ExportedType("item"))
++	}
++	eh := instance.RegisterResource("payload")
++	own := wacogo.NewValOwnHandle(rt, uint32(eh))
++	if own.Rep() != uint32(eh) {
++		t.Fatalf("own.Rep() = %d, want %d", own.Rep(), eh)
++	}
++	if err := own.Drop(ctx); err != nil {
++		t.Fatalf("Drop: %v", err)
++	}
++	if _, live := instance.LookupResource(eh); live {
++		t.Fatal("host resource remained live after owned value Drop")
++	}
++}
++
++func TestNewValOwnHandleRejectsNilType(t *testing.T) {
++	defer func() {
++		if recover() == nil {
++			t.Fatal("NewValOwnHandle(nil, ...) did not panic")
++		}
++	}()
++	_ = wacogo.NewValOwnHandle(nil, 1)
++}

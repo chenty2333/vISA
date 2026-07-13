@@ -93,6 +93,121 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && rustup default "${RUST_TOOLCHAIN}" \
     && printf '%s\n' 'export PATH=/usr/local/cargo/bin:$PATH' >/etc/profile.d/visa-rust.sh
 
+ENV VISA_WACOGO_GO_ARCHIVE=/opt/visa-wacogo/go1.26.5.linux-amd64.tar.gz
+ENV VISA_WACOGO_GO=/opt/visa-wacogo/go/bin/go
+ENV VISA_WACOGO_MODULE_ZIP=/opt/visa-wacogo/wacogo-module.zip
+ENV VISA_WACOGO_GOMODCACHE=/opt/visa-wacogo/gomodcache
+ENV VISA_WACOGO_GOMODCACHE_SEED=/opt/visa-wacogo/gomodcache.tar.gz
+
+# Strict Stage 2 uses an exact official linux/amd64 Go distribution and an
+# offline module cache. The source lock remains the identity authority: this
+# layer checks every duplicated build-time constant against it before fetching
+# anything. arm64 remains usable for the other development tiers, but receives
+# no Wacogo inputs, so the strict gate fails closed instead of falling back to a
+# system Go installation or another ISA.
+COPY third_party/wacogo/source-lock.json /tmp/visa-wacogo/source-lock.json
+COPY crates/runtime/visa_wacogo/sidecar/go.mod /tmp/visa-wacogo/module/go.mod
+COPY crates/runtime/visa_wacogo/sidecar/go.sum /tmp/visa-wacogo/module/go.sum
+COPY third_party/runtime-b-qualification/qualification/wacogo-probe/go.mod /tmp/visa-wacogo/qualification/go.mod
+COPY third_party/runtime-b-qualification/qualification/wacogo-probe/go.sum /tmp/visa-wacogo/qualification/go.sum
+RUN set -eux; \
+    python3 -c 'import json, pathlib; lock=json.loads(pathlib.Path("/tmp/visa-wacogo/source-lock.json").read_text()); go=lock["build_toolchain"]["go"]; upstream=lock["upstream"]; assert go == {"distribution":"official-go.dev-release","version":"go1.26.5","os":"linux","arch":"amd64","archive_name":"go1.26.5.linux-amd64.tar.gz","archive_size":66879095,"archive_sha256":"5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053","archive_url":"https://go.dev/dl/go1.26.5.linux-amd64.tar.gz","archive_binary_path":"go/bin/go","binary_sha256":"8da5fd321795754b994c64e3eb8a5a14ff47bd285559a7e876f3c79abafc67f9","version_output":"go version go1.26.5 linux/amd64"}; assert upstream["module"] == "github.com/partite-ai/wacogo"; assert upstream["version"] == "v0.0.0-20260617023329-3de16a61796c"; assert upstream["module_zip"]["size"] == 8838002; assert upstream["module_zip"]["sha256"] == "ffc2004ea59076ef619d3043d4ae4400338cf3a8d2c67b294e582715ce5f26f4"'; \
+    mkdir -p /opt/visa-wacogo; \
+    if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+        curl --proto '=https' --tlsv1.2 --fail --show-error --location \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            'https://go.dev/dl/go1.26.5.linux-amd64.tar.gz' \
+            --output "${VISA_WACOGO_GO_ARCHIVE}"; \
+        test "$(wc -c <"${VISA_WACOGO_GO_ARCHIVE}" | tr -d '[:space:]')" = 66879095; \
+        printf '%s  %s\n' \
+            '5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053' \
+            "${VISA_WACOGO_GO_ARCHIVE}" | sha256sum -c -; \
+        tar --extract --gzip --file "${VISA_WACOGO_GO_ARCHIVE}" \
+            --directory /opt/visa-wacogo; \
+        printf '%s  %s\n' \
+            '8da5fd321795754b994c64e3eb8a5a14ff47bd285559a7e876f3c79abafc67f9' \
+            "${VISA_WACOGO_GO}" | sha256sum -c -; \
+        test "$("${VISA_WACOGO_GO}" version)" = 'go version go1.26.5 linux/amd64'; \
+        mkdir -p "${VISA_WACOGO_GOMODCACHE}" /tmp/visa-wacogo/home /tmp/visa-wacogo/go-build; \
+        printf '%s  %s\n' \
+            '6215baed9e8f18c090dbd4ad5d3262af2e1fa9e6ca44ab7c2eba6ff418569bd9' \
+            /tmp/visa-wacogo/qualification/go.mod | sha256sum -c -; \
+        printf '%s  %s\n' \
+            '4eba5686a0fc26a1955537b059ac41f1ffd892d64bc275273e5d2102b42d4b9f' \
+            /tmp/visa-wacogo/qualification/go.sum | sha256sum -c -; \
+        for module_dir in \
+            /tmp/visa-wacogo/module \
+            /tmp/visa-wacogo/qualification; do \
+            cd "$module_dir"; \
+            env \
+                HOME=/tmp/visa-wacogo/home \
+                GOCACHE=/tmp/visa-wacogo/go-build \
+                GOMODCACHE="${VISA_WACOGO_GOMODCACHE}" \
+                GOENV=off \
+                GOSUMDB=sum.golang.org \
+                GOTELEMETRY=off \
+                GOTOOLCHAIN=local \
+                GOPROXY=https://proxy.golang.org \
+                GOVCS='*:off' \
+                GOWORK=off \
+                "${VISA_WACOGO_GO}" mod download all; \
+        done; \
+        cp \
+            "${VISA_WACOGO_GOMODCACHE}/cache/download/github.com/partite-ai/wacogo/@v/v0.0.0-20260617023329-3de16a61796c.zip" \
+            "${VISA_WACOGO_MODULE_ZIP}"; \
+        test "$(wc -c <"${VISA_WACOGO_MODULE_ZIP}" | tr -d '[:space:]')" = 8838002; \
+        printf '%s  %s\n' \
+            'ffc2004ea59076ef619d3043d4ae4400338cf3a8d2c67b294e582715ce5f26f4' \
+            "${VISA_WACOGO_MODULE_ZIP}" | sha256sum -c -; \
+        for module_dir in \
+            /tmp/visa-wacogo/module \
+            /tmp/visa-wacogo/qualification; do \
+            cd "$module_dir"; \
+            env \
+                HOME=/tmp/visa-wacogo/home \
+                GOCACHE=/tmp/visa-wacogo/go-build \
+                GOMODCACHE="${VISA_WACOGO_GOMODCACHE}" \
+                GOENV=off \
+                GOSUMDB=off \
+                GOTELEMETRY=off \
+                GOTOOLCHAIN=local \
+                GOPROXY=off \
+                GOVCS='*:off' \
+                GOWORK=off \
+                "${VISA_WACOGO_GO}" mod download all; \
+            env \
+                GOMODCACHE="${VISA_WACOGO_GOMODCACHE}" \
+                GOENV=off \
+                GOSUMDB=off \
+                GOTELEMETRY=off \
+                GOTOOLCHAIN=local \
+                GOPROXY=off \
+                GOVCS='*:off' \
+                GOWORK=off \
+                "${VISA_WACOGO_GO}" mod verify; \
+        done; \
+        tar --create --file /opt/visa-wacogo/gomodcache.tar \
+            --directory "${VISA_WACOGO_GOMODCACHE}" .; \
+        gzip -n /opt/visa-wacogo/gomodcache.tar; \
+        tar --list --gzip --file "${VISA_WACOGO_GOMODCACHE_SEED}" \
+            | grep -Fqx './github.com/regclient/regclient@v0.8.3/testdata/.wh.layer2.txt'; \
+        tar --list --gzip --file "${VISA_WACOGO_GOMODCACHE_SEED}" \
+            | grep -Fqx './github.com/regclient/regclient@v0.8.3/testdata/exdir/.wh..wh..opq'; \
+        rm -rf "${VISA_WACOGO_GOMODCACHE}"; \
+        chmod -R a-w /opt/visa-wacogo; \
+    else \
+        printf '%s\n' \
+            'Strict Stage 2 Wacogo inputs are unavailable: image is not linux/amd64.' \
+            >/opt/visa-wacogo/UNSUPPORTED-ISA; \
+        chmod a-w /opt/visa-wacogo/UNSUPPORTED-ISA; \
+    fi; \
+    rm -rf /tmp/visa-wacogo
+
+# The image layer stores the verified cache as one archive because overlay
+# layer export treats dependency files named .wh.* as whiteout metadata. The
+# Docker gate materializes this seed into a fresh container-private directory.
+ENV VISA_WACOGO_GOMODCACHE=/tmp/visa-wacogo-gomodcache
+
 RUN set -eux; \
     if getent group "${USER_GID}" >/dev/null; then \
         group_name="$(getent group "${USER_GID}" | cut -d: -f1)"; \

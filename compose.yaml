@@ -15,8 +15,20 @@ services:
     environment:
       CARGO_TARGET_DIR: /workspace/target
       CARGO_TERM_COLOR: always
+      GOENV: "off"
+      GOPROXY: "off"
+      GOSUMDB: "off"
+      GOTELEMETRY: "off"
+      GOTOOLCHAIN: local
+      GOVCS: "*:off"
+      GOWORK: "off"
       PATH: /usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
       VISA_LTP_BUILD_BACKEND: host
+      VISA_WACOGO_GO_ARCHIVE: /opt/visa-wacogo/go1.26.5.linux-amd64.tar.gz
+      VISA_WACOGO_GO: /opt/visa-wacogo/go/bin/go
+      VISA_WACOGO_MODULE_ZIP: /opt/visa-wacogo/wacogo-module.zip
+      VISA_WACOGO_GOMODCACHE: /tmp/visa-wacogo-gomodcache
+      VISA_WACOGO_GOMODCACHE_SEED: /opt/visa-wacogo/gomodcache.tar.gz
     volumes:
       - .:/workspace
       - cargo-registry:/usr/local/cargo/registry

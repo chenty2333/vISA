@@ -1,0 +1,271 @@
+From: vISA downstream patchset
+Subject: [PATCH 3/3] component: expose complete non-executing preflight
+Upstream-base: 3de16a61796ce02d29795e4a074f37a33e6ebd87
+License: Apache-2.0
+
+Expose CheckInstantiation on the public Component alias. It applies the same
+required-import, kind, and parser-level subtype validation as Instantiate,
+without executing the instantiation plan or a core start function. Instantiate
+reuses the same helper, so preflight and live construction cannot drift. Tests
+cover a matching host interface, missing and mismatched imports, and a trapping
+core start that remains untouched until real instantiation.
+
+diff --git a/component_check_test.go b/component_check_test.go
+new file mode 100644
+index 0000000..4f7cc82
+--- /dev/null
++++ b/component_check_test.go
+@@ -0,0 +1,106 @@
++package wacogo_test
++
++import (
++	"bytes"
++	"context"
++	"strings"
++	"testing"
++
++	"github.com/partite-ai/wacogo"
++	"github.com/partite-ai/wacogo/host"
++	"github.com/partite-ai/wacogo/internal/core"
++	"github.com/partite-ai/wacogo/wasmtools"
++)
++
++func loadTextComponent(t *testing.T, engine *wacogo.Engine, wat string) *wacogo.Component {
++	t.Helper()
++	ctx := context.Background()
++	tool, err := wasmtools.Default(ctx)
++	if err != nil {
++		t.Fatalf("wasmtools.Default: %v", err)
++	}
++	bin, err := tool.Parse(ctx, []byte(wat))
++	if err != nil {
++		t.Fatalf("wasmtools.Parse: %v", err)
++	}
++	component, err := engine.LoadComponent(ctx, bytes.NewReader(bin))
++	if err != nil {
++		t.Fatalf("LoadComponent: %v", err)
++	}
++	return component
++}
++
++func newPingHost(t *testing.T, engine *wacogo.Engine, param host.TypeExpr) *host.ComponentInstance {
++	t.Helper()
++	ctx := context.Background()
++	builder := engine.NewHostBuilder("check-instantiation-host")
++	builder.AddFunction("ping", &host.FuncType{
++		Params:  []host.Param{{Name: "value", Type: param}},
++		Results: []host.ResultDecl{{Type: param}},
++	}, func(context.Context, *core.CallContext, *host.ComponentInstance, []uint64) error {
++		return nil
++	})
++	component, err := builder.Build(ctx)
++	if err != nil {
++		t.Fatalf("host Build: %v", err)
++	}
++	t.Cleanup(func() { _ = component.Close(ctx) })
++	instance, err := component.Instantiate(ctx)
++	if err != nil {
++		t.Fatalf("host Instantiate: %v", err)
++	}
++	t.Cleanup(func() { _ = instance.Close(ctx) })
++	return instance
++}
++
++func TestComponentCheckInstantiationValidatesHostInterface(t *testing.T) {
++	ctx := context.Background()
++	engine := wacogo.NewEngine(ctx)
++	t.Cleanup(func() { _ = engine.Close(ctx) })
++
++	consumer := loadTextComponent(t, engine, `(component
++  (type $api (instance
++    (export "ping" (func (param "value" u32) (result u32)))
++  ))
++  (import "example:check/api" (instance (type $api)))
++)`)
++
++	matching := newPingHost(t, engine, host.U32)
++	if err := consumer.CheckInstantiation(
++		wacogo.WithInstanceImport("example:check/api", matching.Core()),
++	); err != nil {
++		t.Fatalf("matching host interface: %v", err)
++	}
++
++	if err := consumer.CheckInstantiation(); err == nil || !strings.Contains(err.Error(), "was not found") {
++		t.Fatalf("missing import error = %v, want was not found", err)
++	}
++
++	mismatched := newPingHost(t, engine, host.U64)
++	if err := consumer.CheckInstantiation(
++		wacogo.WithInstanceImport("example:check/api", mismatched.Core()),
++	); err == nil || !strings.Contains(err.Error(), "mismatch") {
++		t.Fatalf("mismatched host interface error = %v, want type mismatch", err)
++	}
++}
++
++func TestComponentCheckInstantiationDoesNotRunCoreStart(t *testing.T) {
++	ctx := context.Background()
++	engine := wacogo.NewEngine(ctx)
++	t.Cleanup(func() { _ = engine.Close(ctx) })
++
++	component := loadTextComponent(t, engine, `(component
++  (core module $trap
++    (func $start unreachable)
++    (start $start)
++  )
++  (core instance (instantiate $trap))
++)`)
++
++	if err := component.CheckInstantiation(); err != nil {
++		t.Fatalf("CheckInstantiation ran the trapping start function: %v", err)
++	}
++	if _, err := component.Instantiate(ctx); err == nil {
++		t.Fatal("Instantiate unexpectedly succeeded; fixture start function did not trap")
++	}
++}
+diff --git a/internal/core/component.go b/internal/core/component.go
+index 0a3131d..5b72ccc 100644
+--- a/internal/core/component.go
++++ b/internal/core/component.go
+@@ -107,6 +107,14 @@ func (cfg *instantiateConfig) put(name string, arg any) {
+ 	cfg.imports[wasmparser.CanonicalizeImportName(name)] = arg
+ }
+ 
++func applyInstantiateOptions(opts []InstantiateOption) *instantiateConfig {
++	cfg := &instantiateConfig{}
++	for _, opt := range opts {
++		opt(cfg)
++	}
++	return cfg
++}
++
+ // WithFuncImport satisfies a named func import with the given *ExportedFunc.
+ func WithFuncImport(name string, f *ExportedFunc) InstantiateOption {
+ 	return func(cfg *instantiateConfig) { cfg.put(name, f) }
+@@ -136,3 +144,11 @@ func WithTypeImport(name string, t Type) InstantiateOption {
+ func (c *Component) Instantiate(ctx context.Context, opts ...InstantiateOption) (*ComponentInstance, error) {
+ 	return c.engine.instantiate(ctx, c, opts...)
+ }
++
++// CheckInstantiation verifies that opts satisfy every declared import of c
++// without executing the component's instantiation plan or any core start
++// function. It checks import kinds unconditionally and checks component-model
++// subtyping for providers that carry wasmparser type handles.
++func (c *Component) CheckInstantiation(opts ...InstantiateOption) error {
++	return c.checkInstantiationConfig(applyInstantiateOptions(opts))
++}
+diff --git a/internal/core/engine_instantiate.go b/internal/core/engine_instantiate.go
+index a66fd2c..d5f5d45 100644
+--- a/internal/core/engine_instantiate.go
++++ b/internal/core/engine_instantiate.go
+@@ -98,40 +98,9 @@ func (e *Engine) instantiate(ctx context.Context, component *Component, opts ...
+ 	if e.closed.Load() {
+ 		return nil, ErrEngineClosed
+ 	}
+-	cfg := &instantiateConfig{}
+-	for _, opt := range opts {
+-		opt(cfg)
+-	}
+-
+-	// Pre-check instance-typed imports against the component's declared
+-	// type before running the plan. CheckInstantiation silently skips
+-	// imports that have no typed handle (e.g. synthetic host-provided
+-	// instances); those fall through to the existing runtime machinery.
+-	if component.wpType != nil {
+-		args := make(map[string]any, len(cfg.imports))
+-		for name, v := range cfg.imports {
+-			switch ap := v.(type) {
+-			case *ComponentInstance:
+-				if ap.wpInstance != nil {
+-					args[name] = ap.wpInstance
+-				}
+-			case *ExportedFunc:
+-				if ft := ap.ParserFunctionType(); ft != nil {
+-					args[name] = ft
+-				}
+-			case *CompiledModule:
+-				if ap.wpModuleType != nil {
+-					args[name] = ap.wpModuleType
+-				}
+-			case *Component:
+-				if ap.wpType != nil {
+-					args[name] = ap.wpType
+-				}
+-			}
+-		}
+-		if err := component.wpType.CheckInstantiation(args); err != nil {
+-			return nil, fmt.Errorf("wacogo: instantiate: %w", err)
+-		}
++	cfg := applyInstantiateOptions(opts)
++	if err := component.checkInstantiationConfig(cfg); err != nil {
++		return nil, err
+ 	}
+ 
+ 	inst, err := e.instantiateWithParentCfg(ctx, component, nil, cfg)
+@@ -165,11 +134,62 @@ func (e *Engine) instantiate(ctx context.Context, component *Component, opts ...
+ 	return inst, nil
+ }
+ 
+-func (e *Engine) instantiateWithParent(ctx context.Context, component *Component, parentState *instantiationState, opts ...InstantiateOption) (*ComponentInstance, error) {
+-	cfg := &instantiateConfig{}
+-	for _, opt := range opts {
+-		opt(cfg)
++// checkInstantiationConfig is the shared, non-executing validation path for
++// CheckInstantiation and Instantiate. It checks presence and runtime kind for
++// every declared import, then asks wasmparser to validate all imports carrying
++// parser type information.
++func (component *Component) checkInstantiationConfig(cfg *instantiateConfig) error {
++	args := make(map[string]any, len(component.imports))
++	for _, imp := range component.imports {
++		name := wasmparser.CanonicalizeImportName(imp.Name)
++		provider, ok := cfg.imports[name]
++		if !ok || provider == nil {
++			return fmt.Errorf("wacogo: import %q: was not found", imp.Name)
++		}
++		if err := validateImportKind(imp, provider); err != nil {
++			return err
++		}
++		switch ap := provider.(type) {
++		case *ComponentInstance:
++			if ap == nil {
++				return fmt.Errorf("wacogo: import %q: was not found", imp.Name)
++			}
++			if ap.wpInstance != nil {
++				args[name] = ap.wpInstance
++			}
++		case *ExportedFunc:
++			if ap == nil {
++				return fmt.Errorf("wacogo: import %q: was not found", imp.Name)
++			}
++			if ft := ap.ParserFunctionType(); ft != nil {
++				args[name] = ft
++			}
++		case *CompiledModule:
++			if ap == nil {
++				return fmt.Errorf("wacogo: import %q: was not found", imp.Name)
++			}
++			if ap.wpModuleType != nil {
++				args[name] = ap.wpModuleType
++			}
++		case *Component:
++			if ap == nil {
++				return fmt.Errorf("wacogo: import %q: was not found", imp.Name)
++			}
++			if ap.wpType != nil {
++				args[name] = ap.wpType
++			}
++		}
+ 	}
++	if component.wpType != nil {
++		if err := component.wpType.CheckInstantiation(args); err != nil {
++			return fmt.Errorf("wacogo: instantiate: %w", err)
++		}
++	}
++	return nil
++}
++
++func (e *Engine) instantiateWithParent(ctx context.Context, component *Component, parentState *instantiationState, opts ...InstantiateOption) (*ComponentInstance, error) {
++	cfg := applyInstantiateOptions(opts)
+ 	return e.instantiateWithParentCfg(ctx, component, parentState, cfg)
+ }
+ 
+

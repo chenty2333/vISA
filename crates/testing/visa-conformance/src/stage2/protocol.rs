@@ -4,7 +4,7 @@ use contract_core::{Digest, HandoffPhase, JournalPosition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::model::Stage2Runtime;
+use super::{model::Stage2Runtime, runtime::runtime_metadata_value_is_exact};
 use crate::STAGE1_WORKER_PROTOCOL_VERSION;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +53,7 @@ pub enum ProtocolCommandKind {
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolResultKind {
     Ack,
+    Prepared,
     Initialized,
     State,
     SafePoint,
@@ -110,6 +111,7 @@ enum ProtocolWorkerRole {
 enum ProtocolRuntime {
     Wasmtime,
     JcoNode,
+    Wacogo,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +170,14 @@ struct InitializedResultProjection {
     kind: String,
     role: ProtocolWorkerRole,
     case_id: String,
+    prepared_runtime: Value,
+    live_runtime: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedResultProjection {
+    kind: String,
     runtime: Value,
 }
 
@@ -188,6 +198,7 @@ struct StateViewProjection {
     #[serde(rename = "state_digest")]
     _state_digest: Digest,
     component_instantiated: bool,
+    live_runtime: Option<Value>,
     component: Option<ComponentStatusProjection>,
 }
 
@@ -249,6 +260,7 @@ pub(super) fn validate_response_envelope(value: &Value) -> Result<ProtocolRespon
             if matches!(
                 kind,
                 "ack"
+                    | "prepared"
                     | "initialized"
                     | "state"
                     | "safe_point"
@@ -290,7 +302,7 @@ pub(crate) fn project_request_command(value: &Value) -> Result<ProtocolRequestPr
                 &["kind", "role", "runtime", "database_path", "options", "fault"],
             )?;
             require_one_of(command, "role", &["source", "destination"])?;
-            require_one_of(command, "runtime", &["wasmtime", "jco_node"])?;
+            require_one_of(command, "runtime", &["wasmtime", "jco_node", "wacogo"])?;
             require_nonempty_string(command, "database_path")?;
             require_object(command, "options")?;
             let fault = command.get("fault").ok_or("command field fault is missing")?;
@@ -391,6 +403,7 @@ pub(crate) fn project_response(value: &Value) -> Result<ProtocolResponseProjecti
                 value.pointer("/outcome/result/kind").and_then(Value::as_str).unwrap_or_default();
             let result = match kind {
                 "ack" => ProtocolResultKind::Ack,
+                "prepared" => ProtocolResultKind::Prepared,
                 "initialized" => ProtocolResultKind::Initialized,
                 "state" => ProtocolResultKind::State,
                 "safe_point" => ProtocolResultKind::SafePoint,
@@ -433,9 +446,8 @@ pub(crate) const fn success_result_matches(
         ProtocolCommandKind::DuplicateCompletionKvProbe => {
             matches!(result, ProtocolResultKind::EffectProbe)
         }
-        ProtocolCommandKind::ValidateDestination | ProtocolCommandKind::Crash => {
-            matches!(result, ProtocolResultKind::Ack)
-        }
+        ProtocolCommandKind::ValidateDestination => matches!(result, ProtocolResultKind::Prepared),
+        ProtocolCommandKind::Crash => matches!(result, ProtocolResultKind::Ack),
         ProtocolCommandKind::PollTimer => matches!(result, ProtocolResultKind::Timer),
         ProtocolCommandKind::Dump => matches!(result, ProtocolResultKind::Dump),
         ProtocolCommandKind::AdversarialStaleKvWriteProbe => false,
@@ -500,26 +512,52 @@ fn require_array(object: &serde_json::Map<String, Value>, field: &str) -> Result
     }
 }
 
-pub(super) fn observed_component_instantiated(value: &Value) -> Result<Option<bool>, String> {
+pub(crate) fn observed_component_instantiated(value: &Value) -> Result<Option<bool>, String> {
     let result = value
         .pointer("/outcome/result")
         .and_then(Value::as_object)
         .ok_or("successful response has no result object")?;
     let kind = result.get("kind").and_then(Value::as_str).unwrap_or_default();
     match kind {
-        "state" | "safe_point" | "snapshot" | "timer" | "effect_probe" => result
-            .get("view")
-            .and_then(Value::as_object)
-            .and_then(|view| view.get("component_instantiated"))
-            .and_then(Value::as_bool)
-            .map(Some)
-            .ok_or_else(|| format!("{kind} result has no boolean live-state observation")),
-        "dump" => result
-            .get("component_instantiated")
-            .and_then(Value::as_bool)
-            .map(Some)
-            .ok_or_else(|| "dump result has no boolean live-state observation".to_owned()),
-        "ack" | "initialized" => Ok(None),
+        "state" | "safe_point" | "snapshot" | "timer" | "effect_probe" => {
+            let view = result
+                .get("view")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("{kind} result has no state view"))?;
+            let instantiated = view
+                .get("component_instantiated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| format!("{kind} result has no boolean live-state observation"))?;
+            let live = view
+                .get("live_runtime")
+                .ok_or_else(|| format!("{kind} result has no explicit live_runtime field"))?;
+            if !(live.is_null() || runtime_metadata_value_is_exact(live))
+                || live.is_object() != instantiated
+            {
+                return Err(format!(
+                    "{kind} live runtime presence does not match component_instantiated"
+                ));
+            }
+            Ok(Some(instantiated))
+        }
+        "dump" => {
+            let instantiated = result
+                .get("component_instantiated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| "dump result has no boolean live-state observation".to_owned())?;
+            let live = result
+                .get("live_runtime")
+                .ok_or_else(|| "dump result has no explicit live_runtime field".to_owned())?;
+            if !(live.is_null() || runtime_metadata_value_is_exact(live))
+                || live.is_object() != instantiated
+            {
+                return Err(
+                    "dump live runtime presence does not match component_instantiated".to_owned()
+                );
+            }
+            Ok(Some(instantiated))
+        }
+        "ack" | "prepared" | "initialized" => Ok(None),
         _ => Err(format!("cannot audit live state for result kind {kind:?}")),
     }
 }
@@ -541,6 +579,7 @@ pub(super) fn validate_initialize_request(
         (command.runtime, expected_runtime),
         (ProtocolRuntime::Wasmtime, Stage2Runtime::Wasmtime)
             | (ProtocolRuntime::JcoNode, Stage2Runtime::JcoNode)
+            | (ProtocolRuntime::Wacogo, Stage2Runtime::Wacogo)
     );
     if command.kind != "initialize" || command.role != expected_role || !runtime_matches {
         return Err("initialize request must bind the expected role and runtime".to_owned());
@@ -563,10 +602,25 @@ pub(super) fn validate_initialize_response(
         value.pointer("/outcome/result").cloned().ok_or("initialize response has no result")?,
     )
     .map_err(|source| source.to_string())?;
+    let expected_role = expected_role(role_name)?;
+    let result_value = value
+        .pointer("/outcome/result")
+        .and_then(Value::as_object)
+        .ok_or("initialize response has no result object")?;
+    let prepared_is_exact =
+        result_value.get("prepared_runtime").is_some_and(runtime_metadata_value_is_exact);
+    let live_is_explicit = result_value.contains_key("live_runtime");
     if result.kind != "initialized"
-        || result.role != expected_role(role_name)?
+        || result.role != expected_role
         || result.case_id != expected_case_id
-        || !result.runtime.is_object()
+        || !prepared_is_exact
+        || !live_is_explicit
+        || match expected_role {
+            ProtocolWorkerRole::Source => {
+                result.live_runtime.as_ref() != Some(&result.prepared_runtime)
+            }
+            ProtocolWorkerRole::Destination => result.live_runtime.is_some(),
+        }
     {
         return Err(
             "initialize response must bind the expected role, case, and runtime observation"
@@ -574,6 +628,19 @@ pub(super) fn validate_initialize_response(
         );
     }
     Ok(())
+}
+
+pub(super) fn validate_prepared_response(value: &Value) -> Result<&Value, String> {
+    let result: PreparedResultProjection = serde_json::from_value(
+        value.pointer("/outcome/result").cloned().ok_or("prepared response has no result")?,
+    )
+    .map_err(|source| source.to_string())?;
+    if result.kind != "prepared" || !runtime_metadata_value_is_exact(&result.runtime) {
+        return Err("prepared response must carry one runtime observation".to_owned());
+    }
+    value
+        .pointer("/outcome/result/runtime")
+        .ok_or_else(|| "prepared response has no runtime observation".to_owned())
 }
 
 pub(super) fn validate_canonical_state_response(
@@ -604,6 +671,7 @@ pub(super) fn validate_canonical_state_response(
         || result.view.role != expected_role
         || result.view.canonical_phase != expected_phase
         || result.view.component_instantiated != expected_live
+        || result.view.live_runtime.is_some() != expected_live
         || !component_shape_matches
     {
         return Err(
@@ -702,10 +770,77 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{Stage2Runtime, validate_initialize_request};
+    use super::{Stage2Runtime, observed_component_instantiated, validate_initialize_request};
 
     const TOP_CASE: &str = "evidence-verification";
     const CELL_ROOT: &str = "/stage2/cells/wasmtime-to-wasmtime";
+
+    fn exact_runtime() -> serde_json::Value {
+        json!({
+            "implementation": "visa_wasmtime",
+            "implementation_version": super::super::model::STAGE2_WASMTIME_IMPLEMENTATION_VERSION,
+            "engine": "wasmtime",
+            "engine_version": super::super::model::STAGE2_WASMTIME_ENGINE_VERSION,
+            "translation_provenance": null,
+            "implementation_lineage": null
+        })
+    }
+
+    fn live_result(
+        kind: &str,
+        component_instantiated: bool,
+        live_runtime: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let mut observed = json!({ "component_instantiated": component_instantiated });
+        if let Some(live_runtime) = live_runtime {
+            observed["live_runtime"] = live_runtime;
+        }
+        let result = if kind == "dump" {
+            let mut result = observed;
+            result["kind"] = json!(kind);
+            result
+        } else {
+            json!({ "kind": kind, "view": observed })
+        };
+        json!({
+            "outcome": {
+                "status": "success",
+                "result": result
+            }
+        })
+    }
+
+    #[test]
+    fn live_runtime_requires_explicit_null_or_an_exact_metadata_object() {
+        for kind in ["state", "safe_point", "snapshot", "timer", "effect_probe", "dump"] {
+            assert_eq!(
+                observed_component_instantiated(&live_result(kind, false, Some(json!(null)))),
+                Ok(Some(false)),
+                "{kind} must accept explicit null for a non-instantiated component"
+            );
+            assert_eq!(
+                observed_component_instantiated(&live_result(kind, true, Some(exact_runtime()))),
+                Ok(Some(true)),
+                "{kind} must accept exact metadata for an instantiated component"
+            );
+
+            for invalid in [Some(json!("runtime")), Some(json!(["runtime"])), None] {
+                assert!(
+                    observed_component_instantiated(&live_result(kind, false, invalid)).is_err(),
+                    "{kind} accepted a non-null, non-object, or missing false live_runtime"
+                );
+            }
+            assert!(
+                observed_component_instantiated(&live_result(
+                    kind,
+                    true,
+                    Some(json!({ "implementation": "incomplete" }))
+                ))
+                .is_err(),
+                "{kind} accepted an invalid live runtime object"
+            );
+        }
+    }
 
     fn initialize(
         worker: &str,

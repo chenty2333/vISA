@@ -10,11 +10,14 @@ use super::{
         STAGE2_JCO_NODE_ENVIRONMENT_VERSION, STAGE2_JCO_NODE_EXECUTION_CARRIER,
         STAGE2_JCO_NODE_IMPLEMENTATION_VERSION, STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION,
         STAGE2_JCO_TRANSLATION_OPTIONS, STAGE2_JCO_VERSION, STAGE2_JS_COMPONENT_BINDGEN_VERSION,
-        STAGE2_NODE_VERSION, STAGE2_V8_VERSION, STAGE2_WASMTIME_ENGINE_VERSION,
+        STAGE2_NODE_VERSION, STAGE2_V8_VERSION, STAGE2_WACOGO_ENGINE_VERSION,
+        STAGE2_WACOGO_ENVIRONMENT_NAME, STAGE2_WACOGO_ENVIRONMENT_VERSION,
+        STAGE2_WACOGO_IMPLEMENTATION_VERSION, STAGE2_WASMTIME_ENGINE_VERSION,
         STAGE2_WASMTIME_ENVIRONMENT_NAME, STAGE2_WASMTIME_ENVIRONMENT_VERSION,
-        STAGE2_WASMTIME_IMPLEMENTATION_VERSION, Stage2CellId, Stage2CellManifest, Stage2Runtime,
-        Stage2TranslationProvenance, Stage2ValidationFinding,
+        STAGE2_WASMTIME_IMPLEMENTATION_VERSION, Stage2CellDescriptor, Stage2CellId,
+        Stage2CellManifest, Stage2Runtime, Stage2TranslationProvenance, Stage2ValidationFinding,
     },
+    strict_model::{Stage2StrictRuntimeMetadata, Stage2WacogoRuntimeLineageObservation},
 };
 use crate::{
     STAGE1_CASE_DEFINITIONS, Stage1Claim, Stage1EvidenceBundle, Stage1EvidenceKind,
@@ -27,6 +30,7 @@ pub(super) fn translation_presence_matches(
 ) -> bool {
     match (runtime, provenance) {
         (Stage2Runtime::Wasmtime, None) => true,
+        (Stage2Runtime::Wacogo, None) => true,
         (Stage2Runtime::JcoNode, Some(provenance)) => {
             provenance.jco_version == STAGE2_JCO_VERSION
                 && provenance.js_component_bindgen_version == STAGE2_JS_COMPONENT_BINDGEN_VERSION
@@ -50,14 +54,16 @@ pub(super) fn translation_presence_matches(
 }
 
 pub(super) fn validate_inner_cell(
-    id: Stage2CellId,
+    descriptor: &'static Stage2CellDescriptor,
     manifest: &Stage2CellManifest,
     bundle: &Stage1EvidenceBundle,
     artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
-    let observed = validate_inner_cell_without_manifest(id, bundle, artifacts, cell_root, findings);
+    let id = descriptor.id;
+    let observed =
+        validate_inner_cell_without_manifest(descriptor, bundle, artifacts, cell_root, findings);
     if manifest.observed_source != bundle.environment.source_runtime
         || manifest.observed_destination != bundle.environment.destination_runtime
         || manifest.case_count != bundle.cases.len()
@@ -85,12 +91,13 @@ pub(super) fn validate_inner_cell(
 }
 
 pub(super) fn validate_inner_cell_without_manifest(
-    id: Stage2CellId,
+    descriptor: &'static Stage2CellDescriptor,
     bundle: &Stage1EvidenceBundle,
     artifacts: &VerifiedStage1Artifacts,
     cell_root: &Path,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) -> ObservedCellTranscriptEvidence {
+    let id = descriptor.id;
     if bundle.evidence_kind != Stage1EvidenceKind::Execution
         || bundle.claims != [Stage1Claim::CooperativeStatefulComponentHandoff]
         || bundle.cases.len() != STAGE1_CASE_DEFINITIONS.len()
@@ -101,9 +108,9 @@ pub(super) fn validate_inner_cell_without_manifest(
             format!("{} is not exact 31-case cooperative execution evidence", id.as_str()),
         );
     }
-    if !runtime_identity_matches(id.source_runtime(), &bundle.environment.source_runtime)
+    if !runtime_identity_matches(descriptor.source_runtime, &bundle.environment.source_runtime)
         || !runtime_identity_matches(
-            id.destination_runtime(),
+            descriptor.destination_runtime,
             &bundle.environment.destination_runtime,
         )
     {
@@ -118,7 +125,7 @@ pub(super) fn validate_inner_cell_without_manifest(
             finding(findings, source.code, format!("{}: {}", id.as_str(), source.detail));
         }
     }
-    audit_runtime_transcripts(id, bundle, artifacts, cell_root, findings)
+    audit_runtime_transcripts(descriptor, bundle, artifacts, cell_root, findings)
 }
 
 pub(crate) fn runtime_identity_matches(
@@ -134,6 +141,10 @@ pub(crate) fn runtime_identity_matches(
             identity.name == STAGE2_JCO_NODE_ENVIRONMENT_NAME
                 && identity.version == STAGE2_JCO_NODE_ENVIRONMENT_VERSION
         }
+        Stage2Runtime::Wacogo => {
+            identity.name == STAGE2_WACOGO_ENVIRONMENT_NAME
+                && identity.version == STAGE2_WACOGO_ENVIRONMENT_VERSION
+        }
     }
 }
 
@@ -145,6 +156,98 @@ pub(crate) struct ObservedRuntimeIdentity {
     pub(crate) engine: String,
     pub(crate) engine_version: String,
     pub(crate) translation_provenance: Option<Stage2TranslationProvenance>,
+    pub(crate) implementation_lineage: Option<ObservedImplementationLineage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ObservedImplementationLineage {
+    Wacogo {
+        source_lock_schema: String,
+        source_lock_sha256: String,
+        derivative_id: String,
+        upstream_module: String,
+        upstream_version: String,
+        upstream_revision: String,
+        upstream_module_sum: String,
+        upstream_is_qualified_without_patches: bool,
+        patchset_id: String,
+        patchset_sha256: String,
+        patch_sha256s: Vec<String>,
+        patched_tree_sha256: String,
+        sidecar_executable_sha256: String,
+        sidecar_executable_size: u64,
+        sidecar_protocol_version: u32,
+        execution_carrier: String,
+        wacogo_version: String,
+        wacogo_revision: String,
+        wazero_version: String,
+        go_version: String,
+        target: String,
+        main_module: String,
+    },
+}
+
+impl ObservedRuntimeIdentity {
+    pub(super) fn strict_metadata(&self) -> Stage2StrictRuntimeMetadata {
+        Stage2StrictRuntimeMetadata {
+            implementation: self.implementation.clone(),
+            implementation_version: self.implementation_version.clone(),
+            engine: self.engine.clone(),
+            engine_version: self.engine_version.clone(),
+            translation_provenance: self.translation_provenance.clone(),
+            implementation_lineage: self.implementation_lineage.as_ref().map(|lineage| {
+                let ObservedImplementationLineage::Wacogo {
+                    source_lock_schema,
+                    source_lock_sha256,
+                    derivative_id,
+                    upstream_module,
+                    upstream_version,
+                    upstream_revision,
+                    upstream_module_sum,
+                    upstream_is_qualified_without_patches,
+                    patchset_id,
+                    patchset_sha256,
+                    patch_sha256s,
+                    patched_tree_sha256,
+                    sidecar_executable_sha256,
+                    sidecar_executable_size,
+                    sidecar_protocol_version,
+                    execution_carrier,
+                    wacogo_version,
+                    wacogo_revision,
+                    wazero_version,
+                    go_version,
+                    target,
+                    main_module,
+                } = lineage;
+                Stage2WacogoRuntimeLineageObservation {
+                    source_lock_schema: source_lock_schema.clone(),
+                    source_lock_sha256: source_lock_sha256.clone(),
+                    derivative_id: derivative_id.clone(),
+                    upstream_module: upstream_module.clone(),
+                    upstream_version: upstream_version.clone(),
+                    upstream_revision: upstream_revision.clone(),
+                    upstream_module_sum: upstream_module_sum.clone(),
+                    upstream_is_qualified_without_patches: *upstream_is_qualified_without_patches,
+                    patchset_id: patchset_id.clone(),
+                    patchset_sha256: patchset_sha256.clone(),
+                    patch_sha256s: patch_sha256s.clone(),
+                    patched_tree_sha256: patched_tree_sha256.clone(),
+                    sidecar_executable_sha256: sidecar_executable_sha256.clone(),
+                    sidecar_executable_size: *sidecar_executable_size,
+                    sidecar_protocol_version: *sidecar_protocol_version,
+                    execution_carrier: execution_carrier.clone(),
+                    wacogo_version: wacogo_version.clone(),
+                    wacogo_revision: wacogo_revision.clone(),
+                    wazero_version: wazero_version.clone(),
+                    go_version: go_version.clone(),
+                    target: target.clone(),
+                    main_module: main_module.clone(),
+                }
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -163,12 +266,14 @@ pub(super) fn validate_observed_runtime(
     findings: &mut Vec<Stage2ValidationFinding>,
 ) {
     let runtime = value
-        .pointer("/outcome/result/runtime")
+        .pointer("/outcome/result/prepared_runtime")
+        .filter(|runtime| runtime_metadata_value_is_exact(runtime))
         .cloned()
         .and_then(|runtime| serde_json::from_value::<ObservedRuntimeIdentity>(runtime).ok());
     if !runtime.as_ref().is_some_and(|runtime| {
         observed_runtime_matches(expected_runtime, runtime)
             && translation_provenance_matches(expected_runtime, runtime)
+            && implementation_lineage_matches(expected_runtime, runtime)
     }) {
         finding(
             findings,
@@ -214,7 +319,43 @@ pub(crate) fn observed_runtime_matches(
                 && observed.engine_version
                     == format!("{STAGE2_NODE_VERSION}/v8-{STAGE2_V8_VERSION}")
         }
+        Stage2Runtime::Wacogo => {
+            observed.implementation == "visa_wacogo"
+                && observed.implementation_version == STAGE2_WACOGO_IMPLEMENTATION_VERSION
+                && observed.engine == "partite-ai/wacogo+wazero"
+                && observed.engine_version == STAGE2_WACOGO_ENGINE_VERSION
+        }
     }
+}
+
+pub(crate) fn complete_runtime_metadata_matches(
+    runtime: Stage2Runtime,
+    observed: &ObservedRuntimeIdentity,
+) -> bool {
+    observed_runtime_matches(runtime, observed)
+        && translation_provenance_matches(runtime, observed)
+        && implementation_lineage_matches(runtime, observed)
+}
+
+pub(crate) fn runtime_metadata_value_is_exact(value: &serde_json::Value) -> bool {
+    const FIELDS: [&str; 6] = [
+        "implementation",
+        "implementation_version",
+        "engine",
+        "engine_version",
+        "translation_provenance",
+        "implementation_lineage",
+    ];
+    value.as_object().is_some_and(|object| {
+        object.len() == FIELDS.len()
+            && FIELDS.iter().all(|field| object.contains_key(*field))
+            && FIELDS[..4]
+                .iter()
+                .all(|field| object.get(*field).is_some_and(serde_json::Value::is_string))
+            && ["translation_provenance", "implementation_lineage"].iter().all(|field| {
+                object.get(*field).is_some_and(|value| value.is_null() || value.is_object())
+            })
+    })
 }
 
 pub(crate) fn translation_provenance_matches(
@@ -223,6 +364,7 @@ pub(crate) fn translation_provenance_matches(
 ) -> bool {
     match (runtime, observed.translation_provenance.as_ref()) {
         (Stage2Runtime::Wasmtime, None) => true,
+        (Stage2Runtime::Wacogo, None) => true,
         (Stage2Runtime::JcoNode, Some(provenance)) => {
             provenance.translator
                 == "wasmtime-environ component translator (shared by js-component-bindgen)"
@@ -248,6 +390,74 @@ pub(crate) fn translation_provenance_matches(
                 ))
                 && observed.engine_version
                     == format!("{}/v8-{}", provenance.node_version, provenance.v8_version)
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn implementation_lineage_matches(
+    runtime: Stage2Runtime,
+    observed: &ObservedRuntimeIdentity,
+) -> bool {
+    match (runtime, observed.implementation_lineage.as_ref()) {
+        (Stage2Runtime::Wasmtime | Stage2Runtime::JcoNode, None) => true,
+        (
+            Stage2Runtime::Wacogo,
+            Some(ObservedImplementationLineage::Wacogo {
+                source_lock_schema,
+                source_lock_sha256,
+                derivative_id,
+                upstream_module,
+                upstream_version,
+                upstream_revision,
+                upstream_module_sum,
+                upstream_is_qualified_without_patches,
+                patchset_id,
+                patchset_sha256,
+                patch_sha256s,
+                patched_tree_sha256,
+                sidecar_executable_sha256,
+                sidecar_executable_size,
+                sidecar_protocol_version,
+                execution_carrier,
+                wacogo_version,
+                wacogo_revision,
+                wazero_version,
+                go_version,
+                target,
+                main_module,
+            }),
+        ) => {
+            source_lock_schema == "visa.wacogo-source-lock.v1"
+                && source_lock_sha256
+                    == "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235"
+                && derivative_id == "partite-ai-wacogo-3de16a61796c-visa-patchset-v1"
+                && upstream_module == "github.com/partite-ai/wacogo"
+                && upstream_version == "v0.0.0-20260617023329-3de16a61796c"
+                && upstream_revision == "3de16a61796ce02d29795e4a074f37a33e6ebd87"
+                && upstream_module_sum == "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw="
+                && !upstream_is_qualified_without_patches
+                && patchset_id == "visa-wacogo-downstream-v1"
+                && patchset_sha256
+                    == "a377b3d3f0da455f14097638380a8bab566b2aa0d33a4f25d90326e7a2b211e2"
+                && patch_sha256s.iter().map(String::as_str).eq([
+                    "c04b82a5ec2a95c45f5f81bdce5b2cbff11e25556865eb19928b48b6f94eed69",
+                    "3531ff7a61de7c41f4237d7077a4dd0602bedd15e3067db070fd3e659575a37e",
+                    "4b32fe31643aedab8472c42ae38d635abbfc9133093866b5ff1de9dcc4548d0e",
+                ])
+                && patched_tree_sha256
+                    == "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311"
+                && sidecar_executable_sha256
+                    == "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606"
+                && *sidecar_executable_size == 6_754_430
+                && *sidecar_protocol_version == 1
+                && execution_carrier == "owned-component-stdin-frame-v1"
+                && wacogo_version == upstream_version
+                && wacogo_revision == upstream_revision
+                && wazero_version == "v1.11.1-0.20260418165552-5cb4bb3ec0c1"
+                && go_version == "go1.26.5"
+                && target == "linux/amd64"
+                && main_module == "visa.local/wacogo-runtime"
         }
         _ => false,
     }

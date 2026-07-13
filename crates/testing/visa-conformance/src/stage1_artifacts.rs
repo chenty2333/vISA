@@ -21,9 +21,10 @@ use crate::{
     },
     stage2::{
         ObservedRuntimeIdentity, ProtocolCommandKind, ProtocolResponseProjection, Stage2Runtime,
-        observed_runtime_matches, project_request_command, project_response,
-        runtime_identity_matches, success_result_matches, translation_provenance_matches,
-        validate_initialize_worker_binding,
+        complete_runtime_metadata_matches, implementation_lineage_matches,
+        observed_component_instantiated, observed_runtime_matches, project_request_command,
+        project_response, runtime_identity_matches, runtime_metadata_value_is_exact,
+        success_result_matches, translation_provenance_matches, validate_initialize_worker_binding,
     },
 };
 
@@ -1224,6 +1225,8 @@ struct RawTranscriptLine {
 struct RawDumpResult {
     canonical_state: Box<CanonicalState>,
     state_digest: Digest,
+    component_instantiated: bool,
+    live_runtime: Option<ObservedRuntimeIdentity>,
     portable_component_state: Option<Vec<u8>>,
 }
 
@@ -1660,6 +1663,16 @@ fn validate_transcript(
                     }
                 };
                 if first_response
+                    && matches!(response_projection, Some(ProtocolResponseProjection::Success(_)))
+                    && let Err(detail) = observed_component_instantiated(&value)
+                {
+                    finding(
+                        findings,
+                        "invalid-stage1-live-runtime-observation",
+                        format!("{} response {id}: {detail}", case.case_id),
+                    );
+                }
+                if first_response
                     && let (Some(request), Some(ProtocolResponseProjection::Success(result_kind))) =
                         (request.as_ref(), response_projection)
                     && request
@@ -1708,6 +1721,11 @@ fn validate_transcript(
                                         )
                                     });
                                 if let Some(runtime) = runtime {
+                                    handshake.runtime_selector = request
+                                        .as_ref()
+                                        .and_then(|request| request.initialization.as_ref())
+                                        .map(|initialization| initialization.runtime);
+                                    handshake.prepared_runtime = Some(runtime.clone());
                                     runtime_observations.observe(role, &runtime, case, findings);
                                     handshake.state = RawInitializationState::Succeeded;
                                     if transcript.worker == primary_worker {
@@ -1770,12 +1788,72 @@ fn validate_transcript(
                         ),
                     );
                 }
+                if first_response
+                    && result_kind == Some("prepared")
+                    && request.as_ref().is_some_and(|request| {
+                        request.kind == Some(ProtocolCommandKind::ValidateDestination)
+                    })
+                {
+                    let replacement = result.cloned().and_then(|result| {
+                        serde_json::from_value::<RawPreparedResult>(result).ok()
+                    });
+                    let handshake = worker_handshakes.entry(transcript.worker.clone()).or_default();
+                    let valid = replacement.as_ref().is_some_and(|replacement| {
+                        replacement.kind == "prepared"
+                            && result
+                                .and_then(|result| result.get("runtime"))
+                                .is_some_and(runtime_metadata_value_is_exact)
+                            && handshake.runtime_selector.is_some_and(|runtime| {
+                                complete_runtime_metadata_matches(runtime, &replacement.runtime)
+                            })
+                            && handshake.prepared_runtime.as_ref() == Some(&replacement.runtime)
+                    });
+                    if valid {
+                        handshake.prepared_runtime =
+                            replacement.map(|replacement| replacement.runtime);
+                    } else {
+                        finding(
+                            findings,
+                            "invalid-stage1-replacement-runtime",
+                            format!(
+                                "{} replacement preflight metadata differs from initialization",
+                                case.case_id
+                            ),
+                        );
+                    }
+                }
+                if first_response && observed_component_instantiated(&value) == Ok(Some(true)) {
+                    let live = raw_live_runtime(result_kind, result);
+                    let handshake = worker_handshakes.entry(transcript.worker.clone()).or_default();
+                    if !live.as_ref().is_some_and(|live| {
+                        handshake
+                            .runtime_selector
+                            .is_some_and(|runtime| complete_runtime_metadata_matches(runtime, live))
+                            && handshake.prepared_runtime.as_ref() == Some(live)
+                    }) {
+                        finding(
+                            findings,
+                            "invalid-stage1-live-runtime-metadata",
+                            format!(
+                                "{} live runtime does not match the worker prepared token",
+                                case.case_id
+                            ),
+                        );
+                    }
+                }
                 if result_kind == Some("dump") {
                     match result
                         .cloned()
                         .and_then(|result| serde_json::from_value::<RawDumpResult>(result).ok())
                     {
-                        Some(dump) => validate_raw_dump(case, role, dump, evidence, findings),
+                        Some(dump) => validate_raw_dump(
+                            case,
+                            role,
+                            dump,
+                            runtime_observations,
+                            evidence,
+                            findings,
+                        ),
                         None => finding(
                             findings,
                             "invalid-stage1-raw-dump",
@@ -1862,6 +1940,8 @@ struct RawWorkerHandshake {
     initialize_request_id: Option<String>,
     initialize_response_seen: bool,
     state: RawInitializationState,
+    runtime_selector: Option<Stage2Runtime>,
+    prepared_runtime: Option<ObservedRuntimeIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -1892,6 +1972,14 @@ struct RawInitializedResult {
     kind: String,
     role: Stage1TraceRole,
     case_id: String,
+    prepared_runtime: ObservedRuntimeIdentity,
+    live_runtime: Option<ObservedRuntimeIdentity>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPreparedResult {
+    kind: String,
     runtime: ObservedRuntimeIdentity,
 }
 
@@ -1928,6 +2016,7 @@ fn parse_raw_initialization(
     let runtime = match command.get("runtime").and_then(serde_json::Value::as_str) {
         Some("wasmtime") => Stage2Runtime::Wasmtime,
         Some("jco_node") => Stage2Runtime::JcoNode,
+        Some("wacogo") => Stage2Runtime::Wacogo,
         _ => return Err("initialize request has an invalid runtime selector".into()),
     };
     if !runtime_identity_matches(runtime, expected_runtime_identity) {
@@ -2060,6 +2149,24 @@ fn validate_initialized_runtime(
     result: &serde_json::Value,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) -> Option<ObservedRuntimeIdentity> {
+    let prepared_value = result.get("prepared_runtime");
+    let live_value = result.get("live_runtime");
+    if prepared_value.is_none_or(|runtime| !runtime_metadata_value_is_exact(runtime))
+        || live_value.is_none()
+        || live_value
+            .is_some_and(|runtime| !runtime.is_null() && !runtime_metadata_value_is_exact(runtime))
+    {
+        finding(
+            findings,
+            "invalid-stage1-initialized-runtime",
+            format!(
+                "{} {} initialized response omits explicit exact runtime metadata fields",
+                case.case_id,
+                trace_role_name(transcript_role)
+            ),
+        );
+        return None;
+    }
     let initialized = match serde_json::from_value::<RawInitializedResult>(result.clone()) {
         Ok(initialized) => initialized,
         Err(error) => {
@@ -2079,9 +2186,17 @@ fn validate_initialized_runtime(
         && initialized.role == initialization.role
         && initialization.role == transcript_role
         && initialized.case_id == initialization.case_id
-        && observed_runtime_matches(initialization.runtime, &initialized.runtime)
-        && translation_provenance_matches(initialization.runtime, &initialized.runtime)
-        && observed_environment_identity(&initialized.runtime) == *expected_runtime_identity;
+        && observed_runtime_matches(initialization.runtime, &initialized.prepared_runtime)
+        && translation_provenance_matches(initialization.runtime, &initialized.prepared_runtime)
+        && implementation_lineage_matches(initialization.runtime, &initialized.prepared_runtime)
+        && match initialization.role {
+            Stage1TraceRole::Source => {
+                initialized.live_runtime.as_ref() == Some(&initialized.prepared_runtime)
+            }
+            Stage1TraceRole::Destination => initialized.live_runtime.is_none(),
+        }
+        && observed_environment_identity(&initialized.prepared_runtime)
+            == *expected_runtime_identity;
     if !valid {
         finding(
             findings,
@@ -2094,7 +2209,24 @@ fn validate_initialized_runtime(
         );
         return None;
     }
-    Some(initialized.runtime)
+    Some(initialized.prepared_runtime)
+}
+
+fn raw_live_runtime(
+    result_kind: Option<&str>,
+    result: Option<&serde_json::Value>,
+) -> Option<ObservedRuntimeIdentity> {
+    let result = result?;
+    let runtime = match result_kind? {
+        "state" | "safe_point" | "snapshot" | "timer" | "effect_probe" => {
+            result.pointer("/view/live_runtime")
+        }
+        "dump" => result.get("live_runtime"),
+        _ => None,
+    }?;
+    runtime_metadata_value_is_exact(runtime)
+        .then(|| serde_json::from_value(runtime.clone()).ok())
+        .flatten()
 }
 
 fn observed_environment_identity(runtime: &ObservedRuntimeIdentity) -> Stage1VersionedIdentity {
@@ -2118,6 +2250,7 @@ fn validate_raw_dump(
     case: &Stage1CaseEvidence,
     role: Stage1TraceRole,
     dump: RawDumpResult,
+    runtime_observations: &RawRuntimeObservations,
     evidence: &mut RawEvidence,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
@@ -2126,15 +2259,22 @@ fn validate_raw_dump(
         || dump.canonical_state.portable_state.is_empty(),
         |portable| portable == &dump.canonical_state.portable_state,
     );
+    let expected_runtime = match role {
+        Stage1TraceRole::Source => runtime_observations.source.as_ref(),
+        Stage1TraceRole::Destination => runtime_observations.destination.as_ref(),
+    };
+    let runtime_matches = dump.component_instantiated == dump.live_runtime.is_some()
+        && dump.live_runtime.as_ref().is_none_or(|runtime| Some(runtime) == expected_runtime);
     if digest != dump.state_digest
         || !portable_matches
+        || !runtime_matches
         || role_of(dump.canonical_state.activation.role) != role
     {
         finding(
             findings,
             "inconsistent-stage1-raw-dump",
             format!(
-                "{} worker dump role, digest, or opaque portable state is inconsistent",
+                "{} worker dump role, digest, live runtime, or opaque portable state is inconsistent",
                 case.case_id
             ),
         );

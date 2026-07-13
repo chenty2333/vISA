@@ -2,17 +2,19 @@
 
 Status: current validation truth and target validation contract.
 
-Implementation status: `fast`, `full`, the two same-path system cells, and the
-four-cell Stage 2 cross-execution-path matrix are automated. All current system
-cells use x86-64/amd64 and the timer/KV profile. Strict independent Component
-Model runtime, file/network, cross-ISA, confidential, release, and production
-validation remain outside the implemented boundary.
+Implementation status: `fast`, `full`, the two legacy same-path system cells,
+the four-cell legacy v2 cross-execution-path matrix, and the separate four-cell
+strict v3 Wasmtime/Wacogo matrix are automated. All current system cells use
+x86-64/amd64 Linux and the timer/KV profile. File/network, cross-ISA,
+confidential, release, and production validation remain outside the implemented
+boundary.
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-13.
 
 This document defines what each result proves and the acceptance boundaries for
-the first architecture-complete slice and the Stage 2 execution-path matrix.
-Update it when executable gates change.
+the first architecture-complete slice, the legacy Stage 2 execution-path
+matrix, and the strict Stage 2 runtime matrix. Update it when executable gates
+change.
 
 ## Validation principle
 
@@ -32,10 +34,12 @@ providers, hand-written reports, or direct canonical-state mutation.
 
 GitHub Actions runs one Docker-based job on pushes and pull requests. It
 validates the Compose configuration, builds the development image, then runs
-the same `full`, `system`, `system-jco-node`, and `system-stage2` tier
-implementations exposed locally by `scripts/run-docker-ci-gate.sh`. Each system
-step uploads its retained artifact directory, including partial artifacts after
-a failure when any exist.
+the same `full`, `system`, `system-jco-node`, `system-stage2`, and
+`system-stage2-strict` tier implementations exposed locally by
+`scripts/run-docker-ci-gate.sh`. Each system step uploads its retained artifact
+directory, including partial artifacts after a failure when any exist. The
+strict wrapper additionally retains its Docker log, exit receipt, sidecar, and
+build receipt. Current workflow artifacts use a 14-day retention period.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
@@ -44,14 +48,22 @@ a failure when any exist.
 | `system` | All 31 registered Stage 1 lifecycle and fault cases through isolated source/destination workers, followed by independent validation of the produced execution bundle | The named single-runtime reference cell satisfies the Stage 1 workload, resource, authority, recovery, fencing, and evidence contract. It does not repeat `full` or prove another runtime or ISA. |
 | `system-jco-node` | The same 31 registered cases with JcoNode explicitly selected at source and destination, followed by independent Stage 1 validation | The pinned Jco/Node/V8 translated execution cell satisfies the Stage 1 contract without a Wasmtime execution fallback. It does not prove a fully independent Component Model implementation. |
 | `system-stage2` | All four Wasmtime/JcoNode source-destination pairs, 31 cases per pair, four inner Stage 1 validations, and independent outer Stage 2 validation | The same portable state and normalized observable behavior pass in all four declared execution-path cells (124 executions). It does not prove strict runtime independence or cross-ISA portability. |
+| `system-stage2-strict` | Locked Wacogo qualification and reproducible build, focused lifecycle gates, a Wacogo same-path Stage 1 cell, then the exact four Wasmtime/Wacogo cells with 31 cases per cell, four inner validations, and independent strict v3 outer validation | The fixed Component preserves the accepted timer/KV behavior across two independently implemented Component Model runtime lineages in all four directions (124/124 executions and 31/31 equality groups). It establishes only `strict-cross-runtime-continuity` on x86-64 Linux, not another ISA or resource profile. |
 
 The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
 runtime processes on x86-64 Linux, host-process isolation, and a durable,
 non-mock SQLite timer/KV provider. A `system` pass establishes only that cell.
 The JcoNode cells run generated core WebAssembly in Node 24.15.0/V8
 13.6.233.17-node.48 while disclosing the shared `wasmtime-environ` translator
-lineage. This is why the Stage 2 gate is named cross-execution-path rather than
-strict cross-runtime evidence.
+lineage. This is why the legacy v2 Stage 2 gate is named cross-execution-path
+rather than strict cross-runtime evidence.
+
+The strict v3 cells pair the Wasmtime lineage with the source-lock-bound
+`partite-ai/wacogo v0.0.0-20260617023329-3de16a61796c + vISA downstream patchset
+v1` lineage, whose Component parser, validation, linking, Canonical ABI, and
+instantiation do not derive from Wasmtime and whose core execution engine is
+wazero. The selected derivative is qualified; unmodified upstream wacogo is not
+reported as passing.
 
 The strict dependency check protects the active production spine and rejects
 dependencies that point against the accepted architecture. Comparison-oracle
@@ -66,25 +78,27 @@ The standard CI job does not currently run:
 - dependency-license, advisory, and duplicate-version policy; no supported
   `cargo deny` gate or reconciled policy is currently installed;
 - QEMU boot/runtime behavior beyond compiling the kernel target;
-- two independent WebAssembly runtime implementations;
 - file or network continuity profiles;
 - a cross-ISA execution matrix;
 - TEE, attestation, KMS, or confidential-continuity integration;
 - release provenance/performance gates or long-running concurrency, recovery,
   and security testing.
 
-A green CI result establishes the repository checks, both named same-path
-cells, and normalized behavior across the four declared Wasmtime/JcoNode
-directions. It establishes only `cross-execution-path-portability` on the
-x86-64/amd64 timer/KV profile. It does not establish strict runtime
-independence, cross-ISA or additional resource continuity, confidential
-continuity, transparent migration, or production safety.
+A green CI result establishes the repository checks, both legacy named
+same-path cells, normalized behavior across the four declared Wasmtime/JcoNode
+directions, and the separate source-lock-bound Wasmtime/Wacogo strict matrix.
+The legacy v2 evidence establishes `cross-execution-path-portability`; strict
+v3 establishes `strict-cross-runtime-continuity`. Both claims are limited to
+the fixed x86-64 Linux timer/KV profile. Neither establishes cross-ISA or
+additional-resource continuity, confidential continuity, transparent
+migration, release quality, or production safety.
 
 ## Validation tiers
 
-`fast`, `full`, `system`, `system-jco-node`, and `system-stage2` are implemented
-shell commands. `release` and later claim gates below remain acceptance
-contracts until their exact matrix runners exist.
+`fast`, `full`, `system`, `system-jco-node`, `system-stage2`, and
+`system-stage2-strict` are implemented shell commands. `release` and later
+claim gates below remain acceptance contracts until their exact matrix runners
+exist.
 
 ### Fast
 
@@ -119,11 +133,32 @@ single-runtime reference-cell claim, not a broader continuity claim.
 for both workers and validates its ordinary Stage 1 bundle in a separate
 process. `system-stage2` runs Wasmtime-to-Wasmtime, JcoNode-to-JcoNode, and both
 mixed directions from one common input, then independently verifies all four
-inner bundles and the normalized outer evidence. Both are standalone gates;
-the matrix does not substitute for `full`, and neither result is cross-ISA or
-strict independent-Component-Model evidence.
+inner bundles and the normalized legacy v2 outer evidence. Both are standalone
+gates; the matrix does not substitute for `full`, and neither result is
+cross-ISA or strict independent-Component-Model evidence.
 
-The common input is immutable for the whole matrix and binds the original
+`system-stage2-strict` is a separate v3 path. It first verifies the official Go
+1.26.5 linux/amd64 toolchain, exact Wacogo source lock and module zip, fixed
+146,486-byte Component, seven selected-runtime qualification gates, and two
+byte-identical 6,754,430-byte sidecar builds. Focused sidecar and real-runtime
+tests precede a Wacogo-to-Wacogo Stage 1 run. The outer matrix then selects
+exactly these cells in this order:
+
+```text
+wasmtime-to-wasmtime
+wacogo-to-wacogo
+wasmtime-to-wacogo
+wacogo-to-wasmtime
+```
+
+Each cell runs the unchanged 31-case registry from one common input. The writer
+and a separate verifier both require four complete inner validations, 124/124
+executions, 31/31 normalized-v1 equality groups, exact requested -> prepared ->
+live runtime identity chains, complete Wasmtime and Wacogo implementation
+lineage, and no fallback. JcoNode is deliberately absent from strict v3 and
+remains available through legacy v2.
+
+The common input is immutable for each whole matrix and binds the original
 Component, WIT world, profile, configuration, policy, case registry, fault
 schedules, and schema/codec identities. Every cell uses fresh workers, runtime
 instances, provider storage, and native handles. The outer verifier first
@@ -176,10 +211,11 @@ directories, symlinks, or publication root therefore cannot substitute code;
 unsupported translator output fails closed. The trusted Node executable and
 its execution environment, loader, shared libraries, and toolchain remain
 trusted inputs. Ptrace, process-memory, takeover, and denial-of-service
-boundaries are likewise explicitly outside this claim. The required provenance
-changed the worker wire and claim contract, so current evidence uses worker
-protocol v2, Stage 1 evidence v0.3, and Stage 2 matrix/evidence v2; older bundles
-do not inherit this claim.
+boundaries are likewise explicitly outside this claim. Current evidence uses
+worker protocol v3 and Stage 1 evidence v0.4. Legacy Wasmtime/JcoNode outer
+evidence remains v2, while the separate Wasmtime/Wacogo strict outer evidence
+is v3; the two parsers reject mixed or unknown schemas, and older bundles do not
+inherit either newer claim boundary.
 
 ### Release
 
@@ -222,11 +258,11 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | Canonical transition correctness | Reducer model/property tests, rejection state digests, and journal replay | Substrate effect correctness |
 | Single-runtime handoff | Isolated source/destination processes, fresh bindings, real profiled providers, reauthorization, commit/fencing, and lifecycle faults | A second runtime or ISA |
 | Cross-execution-path portability | The unchanged input and 31-case registry in all four Wasmtime/JcoNode directions, four complete inner validations, one normalized outer comparison, disclosed translator lineage, and no execution fallback | Independent Component Model implementations or cross-ISA behavior |
-| Strict cross-runtime continuity | The same accepted workload and normalized semantic trace on two independently implemented runtime paths, including a handoff between them | Cross-ISA behavior |
+| Strict cross-runtime continuity | The fixed Component and timer/KV profile in all four Wasmtime/source-lock-bound-Wacogo directions, complete inner validation, exact runtime/build lineage and no-fallback proof, and equality across all 31 normalized groups | Cross-ISA behavior, additional resources, or support by unmodified upstream Wacogo |
 | Cross-ISA continuity | The same accepted workload across each named source/destination ISA pair with identified carrier and providers | Other runtimes or resources |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |
 | Crash-safe handoff | Durable journal/commit records and faults at every lifecycle transition | Arbitrary external-effect atomicity |
-| Production readiness | Defined reliability, security, operability, compatibility, and performance criteria over representative workloads | Established by any current gate |
+| Production readiness | Defined reliability, security, operability, compatibility, and performance criteria over representative workloads | No current gate establishes this claim |
 
 ### Samples and fixtures
 
@@ -281,9 +317,9 @@ deadline.
 
 The Stage 1 system test uses two isolated runtime instances, fresh bindings,
 and real timer/KV provider behavior. Fakes are allowed in unit tests but cannot
-satisfy this claim. Stage 2c separately adds the Jco-translated execution path;
-a genuinely independent Component Model runtime and every additional ISA still
-require their own matrix cells.
+satisfy this claim. Stage 2c separately adds the Jco-translated execution path,
+and strict v3 separately adds the source-lock-bound Wacogo runtime path. Every
+additional ISA or resource profile still requires its own matrix cells.
 
 ### Required successful path
 
@@ -356,8 +392,10 @@ Even after the baseline slice passes, it does not prove:
 - transparent migration of arbitrary native processes or unmodified Wasm;
 - arbitrary descriptor, socket, device, or non-idempotent-effect preservation;
 - universal exactly-once delivery or physical atomicity with external systems;
-- strict cross-runtime or any cross-ISA continuity; Stage 2c separately earns
-  only `cross-execution-path-portability`;
+- cross-ISA or broader runtime/resource continuity; legacy Stage 2c separately
+  earns only `cross-execution-path-portability`, while strict v3 separately
+  earns only `strict-cross-runtime-continuity` for the named Wasmtime/Wacogo
+  x86-64 Linux timer/KV matrix;
 - correctness of a complete Linux personality, kernel, Virtio, filesystem, or
   network stack;
 - TEE attestation, KMS correctness, or general confidential-computing safety;

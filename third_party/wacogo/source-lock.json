@@ -1,0 +1,251 @@
+{
+  "schema": "visa.wacogo-source-lock.v1",
+  "derivative": {
+    "id": "partite-ai-wacogo-3de16a61796c-visa-patchset-v1",
+    "display_name": "partite-ai/wacogo v0.0.0-20260617023329-3de16a61796c + vISA downstream patchset v1",
+    "upstream_is_qualified_without_patches": false,
+    "supported_host_profile": [
+      "visa:continuity/key-value@0.1.0",
+      "visa:continuity/timers@0.1.0"
+    ],
+    "limitations": {
+      "add_type_host_scope": "root-host-component-only",
+      "nested_host_scope_add_type_supported": false,
+      "stage3_resources_supported": false,
+      "cross_isa_qualified": false
+    }
+  },
+  "upstream": {
+    "module": "github.com/partite-ai/wacogo",
+    "version": "v0.0.0-20260617023329-3de16a61796c",
+    "revision": "3de16a61796ce02d29795e4a074f37a33e6ebd87",
+    "module_sum": "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw=",
+    "module_zip": {
+      "size": 8838002,
+      "sha256": "ffc2004ea59076ef619d3043d4ae4400338cf3a8d2c67b294e582715ce5f26f4",
+      "root": "github.com/partite-ai/wacogo@v0.0.0-20260617023329-3de16a61796c/",
+      "regular_file_count": 667,
+      "uncompressed_regular_file_bytes": 21421972
+    },
+    "go_mod_sha256": "16d4c659be8dd18e6a9d9db79af4dbfad5d3ad9f55698bc275394f0a4cb5530c",
+    "go_sum_sha256": "05e9b384335ba5a97e053d9268cf81c910790cdb8b30d73fd064719a5a551d8c",
+    "license": "Apache-2.0",
+    "license_sha256": "46ae5f0dc2e06a18cde8b06bdb45abea0b6e28d169e6eff2069536780304cf6e"
+  },
+  "patchset": {
+    "id": "visa-wacogo-downstream-v1",
+    "series_file": "patches/series",
+    "series_sha256": "c883b21ac64332290ae6e8ae1db197af2cf5b690c15f74cfb79552c1fe081497",
+    "ordered_concatenation_sha256": "a377b3d3f0da455f14097638380a8bab566b2aa0d33a4f25d90326e7a2b211e2",
+    "patches": [
+      {
+        "file": "patches/0001-host-export-named-defined-types.patch",
+        "sha256": "c04b82a5ec2a95c45f5f81bdce5b2cbff11e25556865eb19928b48b6f94eed69"
+      },
+      {
+        "file": "patches/0002-public-host-owned-values.patch",
+        "sha256": "3531ff7a61de7c41f4237d7077a4dd0602bedd15e3067db070fd3e659575a37e"
+      },
+      {
+        "file": "patches/0003-public-non-executing-preflight.patch",
+        "sha256": "4b32fe31643aedab8472c42ae38d635abbfc9133093866b5ff1de9dcc4548d0e"
+      }
+    ],
+    "post_patch_tree": {
+      "algorithm": "sha256-of-sorted-sha256sum-lines-v1",
+      "sha256": "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311",
+      "regular_file_count": 668
+    }
+  },
+  "build_toolchain": {
+    "go": {
+      "distribution": "official-go.dev-release",
+      "version": "go1.26.5",
+      "os": "linux",
+      "arch": "amd64",
+      "archive_name": "go1.26.5.linux-amd64.tar.gz",
+      "archive_size": 66879095,
+      "archive_sha256": "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053",
+      "archive_url": "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz",
+      "archive_binary_path": "go/bin/go",
+      "binary_sha256": "8da5fd321795754b994c64e3eb8a5a14ff47bd285559a7e876f3c79abafc67f9",
+      "version_output": "go version go1.26.5 linux/amd64"
+    }
+  },
+  "build_policy": {
+    "source_strategy": "verified-module-zip-plus-committed-patches",
+    "full_upstream_source_vendored": false,
+    "cargo_build_rs_allowed": false,
+    "network_allowed": false,
+    "requires_prefetched_module_cache": true,
+    "environment": {
+      "CGO_ENABLED": "0",
+      "GOARCH": "amd64",
+      "GOENV": "off",
+      "GOOS": "linux",
+      "GOAMD64": "v1",
+      "GOPROXY": "off",
+      "GOSUMDB": "off",
+      "GOTELEMETRY": "off",
+      "GOTOOLCHAIN": "local",
+      "GOVCS": "*:off",
+      "GOWORK": "off"
+    },
+    "go_build_flags": [
+      "-mod=readonly",
+      "-trimpath",
+      "-buildvcs=false"
+    ],
+    "go_linker_flags": "-s -w -buildid="
+  },
+  "production_artifacts": {
+    "sidecar": {
+      "accepted_component": {
+        "size": 146486,
+        "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b"
+      },
+      "module_path": "visa.local/wacogo-runtime",
+      "entry_package": "./cmd/visa-wacogo-runtime",
+      "protocol_version": 1,
+      "carrier_version": "owned-component-stdin-frame-v1",
+      "carrier_magic": "VISAWCG1",
+      "target": {
+        "goos": "linux",
+        "goarch": "amd64",
+        "goamd64": "v1",
+        "cgo_enabled": false
+      },
+      "execution_host_requirements": {
+        "os": "linux",
+        "procfs": {
+          "required_path": "/proc/self/fd",
+          "fd_execution_required": true
+        },
+        "memfd": {
+          "required": true,
+          "create_flags": [
+            "MFD_CLOEXEC",
+            "MFD_ALLOW_SEALING"
+          ],
+          "execution_policy": "MFD_EXEC-or-legacy-executable-default",
+          "required_fcntl_operations": [
+            "F_ADD_SEALS",
+            "F_GET_SEALS"
+          ],
+          "required_seals": [
+            "F_SEAL_WRITE",
+            "F_SEAL_GROW",
+            "F_SEAL_SHRINK",
+            "F_SEAL_SEAL"
+          ]
+        },
+        "security_policy": {
+          "executable_memfd_allowed": true
+        }
+      },
+      "binary": {
+        "file": "target/visa-wacogo/visa-wacogo-runtime",
+        "size": 6754430,
+        "sha256": "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606"
+      },
+      "go_module": {
+        "directory": "crates/runtime/visa_wacogo/sidecar",
+        "source_tree": {
+          "algorithm": "sha256-of-sorted-sha256sum-lines-v1",
+          "regular_file_count": 14,
+          "sha256": "8e9120ec87a81cdfb1ac9861f35d4748a21d160f128afb3fdc3463852a56fde0"
+        },
+        "go_mod": {
+          "file": "crates/runtime/visa_wacogo/sidecar/go.mod",
+          "sha256": "f3781e2be0efbbca6bfa82faf0eca8b2bb6b7190a56944e17141ed17d0494d4b"
+        },
+        "go_sum": {
+          "file": "crates/runtime/visa_wacogo/sidecar/go.sum",
+          "sha256": "5ee5cfc734f03608cfbecbb1e22a08c1f7b7636be1d637b9c44fb262fee6bfad"
+        }
+      },
+      "generated_bindings": {
+        "algorithm": "raw-file-concatenation-in-listed-order-sha256-v1",
+        "ordered_concatenation_sha256": "ad7ace9fa2af993b9d58c4afc8ab91c26c7322906014f410b072cf190cfb8484",
+        "files": [
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/keyvalue/keyvalue.bind.go",
+            "sha256": "c21ebfc162a56dfa03b1f1e99a6727075aeb6d0e6349bbb4723686c045892648"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/keyvalue/keyvalue.go",
+            "sha256": "0c405afcc1a18e53b34436e5e2b5e94f69a3d1b02b980a1579253fed8ec3d737"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/keyvalue/keyvalue.wrap.go",
+            "sha256": "56d5df40a1400dc7d443a86872230dd8764ede17fa448c5ef23aa6942c7d6872"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/timers/timers.bind.go",
+            "sha256": "568d1a0122ae8d4da617d5542f58f5819ac0635b3bbba04965feb31626c123f7"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/timers/timers.go",
+            "sha256": "9ec9120dba3674679b772e33b9de8064c8b1d914ccfafd9589d3ff5f68068fed"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/timers/timers.wrap.go",
+            "sha256": "8dff5a455dd06fa7ba85cc41a3ba5f22769867069e94f7ee7435ae2468434b50"
+          }
+        ]
+      },
+      "executable_module_closure": [
+        {
+          "path": "github.com/partite-ai/wacogo",
+          "version": "v0.0.0-20260617023329-3de16a61796c",
+          "sum": "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw=",
+          "replacement": "../wacogo"
+        },
+        {
+          "path": "github.com/tetratelabs/wazero",
+          "version": "v1.11.1-0.20260418165552-5cb4bb3ec0c1",
+          "sum": "h1:EzfzRz7tk71X13orvuP/TsYSnod46/AyuyBQ1WX1Rgs="
+        },
+        {
+          "path": "golang.org/x/sys",
+          "version": "v0.43.0",
+          "sum": "h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI="
+        },
+        {
+          "path": "visa.local/wacogo-runtime",
+          "version": ""
+        }
+      ]
+    }
+  },
+  "redistribution_files": [
+    {
+      "component": "github.com/partite-ai/wacogo",
+      "version": "v0.0.0-20260617023329-3de16a61796c",
+      "license": "Apache-2.0",
+      "file": "LICENSE",
+      "sha256": "46ae5f0dc2e06a18cde8b06bdb45abea0b6e28d169e6eff2069536780304cf6e"
+    },
+    {
+      "component": "github.com/tetratelabs/wazero",
+      "version": "v1.11.1-0.20260418165552-5cb4bb3ec0c1",
+      "license": "Apache-2.0",
+      "file": "licenses/wazero-LICENSE",
+      "sha256": "c46f033d017a5af71a1de0105ec56c41bd47f81a0bbdf779fffe316336dc7c1f"
+    },
+    {
+      "component": "github.com/tetratelabs/wazero",
+      "version": "v1.11.1-0.20260418165552-5cb4bb3ec0c1",
+      "notice": true,
+      "file": "licenses/wazero-NOTICE",
+      "sha256": "e6f0c5c151a3ff1eba8f5930a31ec084ca6d7adda43c8675ab81f7d36af50b4f"
+    },
+    {
+      "component": "golang.org/x/sys",
+      "version": "v0.43.0",
+      "license": "BSD-3-Clause",
+      "file": "licenses/x-sys-LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    }
+  ]
+}

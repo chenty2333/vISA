@@ -4,7 +4,7 @@ Status: accepted target boundary.
 
 Implementation status: transitional and incomplete.
 
-Last reviewed: 2026-07-11.
+Last reviewed: 2026-07-13.
 
 This document defines the intended system boundary. It does not imply that
 every described capability is implemented or validated.
@@ -139,9 +139,9 @@ core model until every platform detail appears portable.
 
 The project earns claims incrementally. The first architecture-complete
 capability runs between isolated source and destination instances. A
-cross-runtime portability claim requires later evidence from genuinely
-independent runtime implementations. Across those explicitly identified paths,
-the success criteria are:
+cross-runtime portability claim is earned only from evidence produced by
+genuinely independent runtime implementations. Across those explicitly
+identified paths, the success criteria are:
 
 - one canonical model and runtime coordinator;
 - real, non-mock resource adapters;

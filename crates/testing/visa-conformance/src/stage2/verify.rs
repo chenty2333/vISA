@@ -14,6 +14,7 @@ use super::{
     runtime::{
         translation_presence_matches, validate_inner_cell, validate_inner_cell_without_manifest,
     },
+    strict_model::Stage2StrictRuntimeIdentityChain,
 };
 use crate::{
     STAGE1_CASE_DEFINITIONS, Stage1EvidenceBundle, VerifiedStage1Artifacts,
@@ -24,7 +25,7 @@ use crate::{
 };
 
 pub(super) struct VerifiedCell {
-    pub(super) id: Stage2CellId,
+    pub(super) descriptor: &'static Stage2CellDescriptor,
     pub(super) bundle: Stage1EvidenceBundle,
     pub(super) bundle_bytes: Vec<u8>,
     pub(super) artifacts: VerifiedStage1Artifacts,
@@ -32,6 +33,8 @@ pub(super) struct VerifiedCell {
     pub(super) source_translation_provenance: Option<Stage2TranslationProvenance>,
     pub(super) destination_translation_provenance: Option<Stage2TranslationProvenance>,
     pub(super) instantiation_observations: Stage2InstantiationObservations,
+    pub(super) source_runtime_chain: Option<Stage2StrictRuntimeIdentityChain>,
+    pub(super) destination_runtime_chain: Option<Stage2StrictRuntimeIdentityChain>,
 }
 
 pub fn parse_stage2_evidence_bundle_json(
@@ -190,10 +193,13 @@ fn validate_stage2_evidence_artifacts_impl(
     validate_cell_directory_set(&root, &mut findings);
     validate_normalized_directory_set(&root, &mut findings);
 
-    let mut verified = Vec::new();
+    let descriptors =
+        stage2_cell_descriptors(Stage2ClaimSet::CrossExecutionPathPortability).collect::<Vec<_>>();
+    let mut verified = Vec::with_capacity(descriptors.len());
     let cells_by_id =
         manifest.cells.iter().map(|cell| (cell.cell_id, cell)).collect::<BTreeMap<_, _>>();
-    for cell_id in Stage2CellId::ALL {
+    for descriptor in &descriptors {
+        let cell_id = descriptor.id;
         let Some(cell_manifest) = cells_by_id.get(&cell_id) else {
             continue;
         };
@@ -250,7 +256,7 @@ fn validate_stage2_evidence_artifacts_impl(
             continue;
         };
         let observed_transcript = validate_inner_cell(
-            cell_id,
+            descriptor,
             cell_manifest,
             &bundle,
             &artifacts,
@@ -270,7 +276,7 @@ fn validate_stage2_evidence_artifacts_impl(
         };
         validate_normalized_cache(&root, cell_manifest, &normalized, &mut findings);
         verified.push(VerifiedCell {
-            id: cell_id,
+            descriptor,
             bundle,
             bundle_bytes,
             artifacts,
@@ -280,10 +286,12 @@ fn validate_stage2_evidence_artifacts_impl(
                 .translation_provenance
                 .destination,
             instantiation_observations: observed_transcript.instantiation_observations,
+            source_runtime_chain: observed_transcript.source_runtime_chain,
+            destination_runtime_chain: observed_transcript.destination_runtime_chain,
         });
     }
 
-    if verified.len() == Stage2CellId::ALL.len() {
+    if verified.len() == descriptors.len() {
         findings.extend(validate_cross_cell_inputs(
             &common,
             &manifest.common_input.sha256,
@@ -308,9 +316,10 @@ fn validate_stage2_evidence_artifacts_impl(
 }
 
 pub(super) fn load_verified_cell(
-    id: Stage2CellId,
+    descriptor: &'static Stage2CellDescriptor,
     root: &Path,
 ) -> Result<VerifiedCell, Stage2ValidationFinding> {
+    let id = descriptor.id;
     let uri = id.stage1_bundle_uri();
     let bundle_bytes = read_contained(root, &uri)?;
     let bundle = parse_stage1_evidence_bundle_json(&bundle_bytes).map_err(|source| {
@@ -335,8 +344,13 @@ pub(super) fn load_verified_cell(
         )
     })?;
     let mut findings = Vec::new();
-    let observed_transcript =
-        validate_inner_cell_without_manifest(id, &bundle, &artifacts, &cell_root, &mut findings);
+    let observed_transcript = validate_inner_cell_without_manifest(
+        descriptor,
+        &bundle,
+        &artifacts,
+        &cell_root,
+        &mut findings,
+    );
     if !findings.is_empty() {
         return Err(single_finding("invalid-stage2-inner-cell", render_findings(&findings)));
     }
@@ -344,7 +358,7 @@ pub(super) fn load_verified_cell(
         single_finding("stage2-normalization-failed", format!("{}: {source}", id.as_str()))
     })?;
     Ok(VerifiedCell {
-        id,
+        descriptor,
         bundle,
         bundle_bytes,
         artifacts,
@@ -352,6 +366,8 @@ pub(super) fn load_verified_cell(
         source_translation_provenance: observed_transcript.translation_provenance.source,
         destination_translation_provenance: observed_transcript.translation_provenance.destination,
         instantiation_observations: observed_transcript.instantiation_observations,
+        source_runtime_chain: observed_transcript.source_runtime_chain,
+        destination_runtime_chain: observed_transcript.destination_runtime_chain,
     })
 }
 
@@ -455,8 +471,16 @@ pub(crate) fn validate_manifest_shape(
     let mut normalized_uris = BTreeSet::new();
     for cell in &manifest.cells {
         validate_instantiation_observations_shape(cell, findings);
-        if cell.requested_source != cell.cell_id.source_runtime()
-            || cell.requested_destination != cell.cell_id.destination_runtime()
+        let Some(descriptor) = stage2_cell_descriptor(cell.cell_id) else {
+            finding(
+                findings,
+                "invalid-stage2-cell-manifest",
+                format!("{} has no catalog descriptor", cell.cell_id.as_str()),
+            );
+            continue;
+        };
+        if cell.requested_source != descriptor.source_runtime
+            || cell.requested_destination != descriptor.destination_runtime
             || cell.case_count != STAGE1_CASE_DEFINITIONS.len()
             || !cell.no_fallback_observed
             || !translation_presence_matches(
@@ -487,7 +511,7 @@ pub(crate) fn validate_manifest_shape(
     }
 }
 
-fn validate_instantiation_observations_shape(
+pub(super) fn validate_instantiation_observations_shape(
     cell: &Stage2CellManifest,
     findings: &mut Vec<Stage2ValidationFinding>,
 ) {
@@ -551,10 +575,17 @@ fn validate_instantiation_observations_shape(
 pub(super) fn compare_normalized_cells(
     cells: &[VerifiedCell],
 ) -> Result<Vec<Stage2CaseComparison>, Stage2ValidationFinding> {
-    if cells.len() != Stage2CellId::ALL.len() {
+    compare_normalized_cells_for_claim(cells, Stage2ClaimSet::CrossExecutionPathPortability)
+}
+
+pub(super) fn compare_normalized_cells_for_claim(
+    cells: &[VerifiedCell],
+    claim_set: Stage2ClaimSet,
+) -> Result<Vec<Stage2CaseComparison>, Stage2ValidationFinding> {
+    if !stage2_cell_ids_match_claim(cells.iter().map(|cell| cell.descriptor.id), claim_set) {
         return Err(single_finding(
             "incomplete-stage2-normalized-matrix",
-            format!("expected four cells, found {}", cells.len()),
+            "cells do not match the exact ordered execution-path descriptor set",
         ));
     }
     let mut comparisons = Vec::with_capacity(STAGE1_CASE_DEFINITIONS.len());
@@ -624,7 +655,7 @@ fn validate_inner_summaries(
         .map(|summary| (summary.cell_id, summary))
         .collect::<BTreeMap<_, _>>();
     for cell in verified {
-        let Some(summary) = by_id.get(&cell.id) else { continue };
+        let Some(summary) = by_id.get(&cell.descriptor.id) else { continue };
         if summary.stage1_bundle_id != cell.bundle.bundle_id
             || summary.stage1_bundle_sha256 != sha256_hex(&cell.bundle_bytes)
             || summary.case_count != STAGE1_CASE_DEFINITIONS.len()
@@ -633,7 +664,7 @@ fn validate_inner_summaries(
             finding(
                 findings,
                 "stage2-inner-verification-summary-mismatch",
-                format!("{} summary differs from raw Stage 1 bundle", cell.id.as_str()),
+                format!("{} summary differs from raw Stage 1 bundle", cell.descriptor.id.as_str()),
             );
         }
     }
@@ -666,7 +697,7 @@ fn require_exact_cell_ids(
     findings: &mut Vec<Stage2ValidationFinding>,
 ) {
     let ids = ids.collect::<Vec<_>>();
-    if ids != Stage2CellId::ALL {
+    if !stage2_cell_ids_match_claim(ids, Stage2ClaimSet::CrossExecutionPathPortability) {
         finding(
             findings,
             "invalid-stage2-cell-set",

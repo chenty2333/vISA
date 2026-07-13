@@ -1,7 +1,7 @@
 use std::{
     fmt,
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -13,11 +13,14 @@ use visa_conformance::{
     STAGE2_AUTHORITY_POLICY_INPUT_SCHEMA_VERSION, STAGE2_COMMON_INPUT_FILE,
     STAGE2_COMMON_INPUT_SCHEMA_VERSION, STAGE2_COMPONENT_STATE_CODEC_NAME,
     STAGE2_COMPONENT_STATE_CODEC_VERSION, STAGE2_EVIDENCE_FILE, STAGE2_INCOMPLETE_MARKER_FILE,
-    STAGE2_MATRIX_MANIFEST_FILE, STAGE2_WIT_WORLD_NAME, STAGE2_WIT_WORLD_SHA256,
+    STAGE2_MATRIX_MANIFEST_FILE, STAGE2_STRICT_CARGO_LOCK_URI, STAGE2_STRICT_LINEAGE_ROOT,
+    STAGE2_STRICT_WACOGO_BUILD_RECEIPT_URI, STAGE2_STRICT_WACOGO_SIDECAR_URI,
+    STAGE2_STRICT_WACOGO_SOURCE_LOCK_URI, STAGE2_WIT_WORLD_NAME, STAGE2_WIT_WORLD_SHA256,
     Stage1VersionedIdentity, Stage2ArtifactReference, Stage2AuthorityPolicyCaseInput,
-    Stage2AuthorityPolicyInput, Stage2CellId, Stage2CommonCaseInput, Stage2CommonInputManifest,
-    Stage2Runtime, Stage2WitWorldInput, Stage2WriteResult, canonical_stage2_json_bytes,
-    canonical_stage2_sha256, sha256_hex, write_stage2_evidence_artifacts,
+    Stage2AuthorityPolicyInput, Stage2CellId, Stage2ClaimSet, Stage2CommonCaseInput,
+    Stage2CommonInputManifest, Stage2Runtime, Stage2WitWorldInput, Stage2WriteResult,
+    canonical_stage2_json_bytes, canonical_stage2_sha256, sha256_hex, stage2_cell_descriptors,
+    write_stage2_evidence_artifacts, write_stage2_strict_evidence_artifacts,
 };
 
 use super::{
@@ -59,6 +62,14 @@ pub struct Stage2RunOutput {
     pub evidence_path: PathBuf,
     pub bundle_id: String,
     pub bundle_sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2StrictLineageSources {
+    pub cargo_lock: PathBuf,
+    pub wacogo_source_lock: PathBuf,
+    pub wacogo_build_receipt: PathBuf,
+    pub wacogo_sidecar: PathBuf,
 }
 
 #[derive(Debug)]
@@ -121,13 +132,51 @@ where
     })
 }
 
+pub fn run_stage2_strict_matrix<F>(
+    artifact_root: impl AsRef<Path>,
+    lineage_sources: &Stage2StrictLineageSources,
+    execute_cell: F,
+) -> Result<Stage2RunOutput, Stage2RunnerError>
+where
+    F: FnMut(&Stage2CellPlan) -> Result<(), String>,
+{
+    run_stage2_matrix_with_claim_and_publisher(
+        artifact_root.as_ref(),
+        Stage2ClaimSet::StrictCrossRuntimeContinuity,
+        |root| capture_strict_lineage(root, lineage_sources),
+        execute_cell,
+        |root| write_stage2_strict_evidence_artifacts(root).map_err(|error| error.to_string()),
+    )
+}
+
 fn run_stage2_matrix_with_publisher<F, P>(
     artifact_root: &Path,
+    execute_cell: F,
+    publish: P,
+) -> Result<Stage2RunOutput, Stage2RunnerError>
+where
+    F: FnMut(&Stage2CellPlan) -> Result<(), String>,
+    P: FnOnce(&Path) -> Result<Stage2WriteResult, String>,
+{
+    run_stage2_matrix_with_claim_and_publisher(
+        artifact_root,
+        Stage2ClaimSet::CrossExecutionPathPortability,
+        |_| Ok(()),
+        execute_cell,
+        publish,
+    )
+}
+
+fn run_stage2_matrix_with_claim_and_publisher<F, S, P>(
+    artifact_root: &Path,
+    claim_set: Stage2ClaimSet,
+    setup: S,
     mut execute_cell: F,
     publish: P,
 ) -> Result<Stage2RunOutput, Stage2RunnerError>
 where
     F: FnMut(&Stage2CellPlan) -> Result<(), String>,
+    S: FnOnce(&Path) -> Result<(), Stage2RunnerError>,
     P: FnOnce(&Path) -> Result<Stage2WriteResult, String>,
 {
     let artifact_root = canonical_empty_root(artifact_root)?;
@@ -145,18 +194,24 @@ where
     };
     let common_input_sha256 = file_sha256(&common_input_path)?;
     status.common_input_sha256 = Some(common_input_sha256.clone());
+    if let Err(error) = setup(&artifact_root) {
+        status.fail(None, error.to_string());
+        replace_json(&marker_path, &status)?;
+        return Err(error);
+    }
 
     let cells_root = artifact_root.join("cells");
     fs::create_dir(&cells_root)
         .map_err(|source| stage2_io("create Stage 2 cells root", &cells_root, source))?;
-    for cell_id in Stage2CellId::ALL {
+    for descriptor in stage2_cell_descriptors(claim_set) {
+        let cell_id = descriptor.id;
         let cell_root = cell_id.cell_root(&artifact_root);
         fs::create_dir(&cell_root)
             .map_err(|source| stage2_io("create Stage 2 cell root", &cell_root, source))?;
         let plan = Stage2CellPlan {
             cell_id,
-            source_runtime: runtime_implementation(cell_id.source_runtime()),
-            destination_runtime: runtime_implementation(cell_id.destination_runtime()),
+            source_runtime: runtime_implementation(descriptor.source_runtime),
+            destination_runtime: runtime_implementation(descriptor.destination_runtime),
             artifact_root: cell_root.clone(),
             common_input_sha256: common_input_sha256.clone(),
         };
@@ -227,6 +282,64 @@ where
         bundle_id: publication.bundle_id,
         bundle_sha256: publication.bundle_sha256,
     })
+}
+
+fn capture_strict_lineage(
+    root: &Path,
+    sources: &Stage2StrictLineageSources,
+) -> Result<(), Stage2RunnerError> {
+    let lineage_root = root.join(STAGE2_STRICT_LINEAGE_ROOT);
+    fs::create_dir(&lineage_root)
+        .map_err(|source| stage2_io("create Strict Stage 2 lineage root", &lineage_root, source))?;
+    for (source, uri) in [
+        (&sources.cargo_lock, STAGE2_STRICT_CARGO_LOCK_URI),
+        (&sources.wacogo_source_lock, STAGE2_STRICT_WACOGO_SOURCE_LOCK_URI),
+        (&sources.wacogo_build_receipt, STAGE2_STRICT_WACOGO_BUILD_RECEIPT_URI),
+        (&sources.wacogo_sidecar, STAGE2_STRICT_WACOGO_SIDECAR_URI),
+    ] {
+        let bytes = read_regular_snapshot(source)?;
+        publish_new(&root.join(uri), &bytes)?;
+    }
+    sync_directory(&lineage_root)
+}
+
+fn read_regular_snapshot(path: &Path) -> Result<Vec<u8>, Stage2RunnerError> {
+    let path_metadata = fs::symlink_metadata(path)
+        .map_err(|source| stage2_io("inspect Strict Stage 2 lineage source", path, source))?;
+    if !path_metadata.file_type().is_file() || path_metadata.file_type().is_symlink() {
+        return Err(Stage2RunnerError::CommonInput {
+            detail: format!(
+                "Strict Stage 2 lineage source is not a non-symlink regular file: {}",
+                path.display()
+            ),
+        });
+    }
+    let mut file = fs::File::open(path)
+        .map_err(|source| stage2_io("open Strict Stage 2 lineage source", path, source))?;
+    let before = file.metadata().map_err(|source| {
+        stage2_io("inspect opened Strict Stage 2 lineage source", path, source)
+    })?;
+    if !before.is_file() {
+        return Err(Stage2RunnerError::CommonInput {
+            detail: format!("opened lineage source is not regular: {}", path.display()),
+        });
+    }
+    let expected_len =
+        usize::try_from(before.len()).map_err(|_| Stage2RunnerError::CommonInput {
+            detail: format!("lineage source is too large: {}", path.display()),
+        })?;
+    let mut bytes = Vec::with_capacity(expected_len);
+    file.read_to_end(&mut bytes)
+        .map_err(|source| stage2_io("read Strict Stage 2 lineage source", path, source))?;
+    let after = file
+        .metadata()
+        .map_err(|source| stage2_io("reinspect Strict Stage 2 lineage source", path, source))?;
+    if before.len() != after.len() || bytes.len() != expected_len {
+        return Err(Stage2RunnerError::CommonInput {
+            detail: format!("lineage source changed while captured: {}", path.display()),
+        });
+    }
+    Ok(bytes)
 }
 
 fn write_common_input(root: &Path) -> Result<PathBuf, Stage2RunnerError> {
@@ -352,6 +465,7 @@ const fn runtime_implementation(runtime: Stage2Runtime) -> RuntimeImplementation
     match runtime {
         Stage2Runtime::Wasmtime => RuntimeImplementation::Wasmtime,
         Stage2Runtime::JcoNode => RuntimeImplementation::JcoNode,
+        Stage2Runtime::Wacogo => RuntimeImplementation::Wacogo,
     }
 }
 
@@ -576,6 +690,130 @@ mod tests {
         );
         assert!(!root.join(STAGE2_INCOMPLETE_MARKER_FILE).exists());
         assert_eq!(output.bundle_id, "test-stage2");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn strict_matrix_orchestrator_runs_the_exact_wasmtime_wacogo_cells_in_order() {
+        let root = test_root("exact-strict-matrix");
+        let seen = Mutex::new(Vec::new());
+        let output = run_stage2_matrix_with_claim_and_publisher(
+            &root,
+            Stage2ClaimSet::StrictCrossRuntimeContinuity,
+            |artifact_root| {
+                assert!(artifact_root.join(STAGE2_COMMON_INPUT_FILE).is_file());
+                Ok(())
+            },
+            |plan| {
+                seen.lock().unwrap().push((
+                    plan.cell_id,
+                    plan.source_runtime,
+                    plan.destination_runtime,
+                ));
+                fs::write(plan.artifact_root.join("stage1-evidence.json"), b"{}")
+                    .map_err(|error| error.to_string())
+            },
+            |artifact_root| {
+                let manifest_path = artifact_root.join(STAGE2_MATRIX_MANIFEST_FILE);
+                let evidence_path = artifact_root.join(STAGE2_EVIDENCE_FILE);
+                fs::write(&manifest_path, b"{}").map_err(|error| error.to_string())?;
+                fs::write(&evidence_path, b"{}").map_err(|error| error.to_string())?;
+                fs::remove_file(artifact_root.join(STAGE2_INCOMPLETE_MARKER_FILE))
+                    .map_err(|error| error.to_string())?;
+                Ok(Stage2WriteResult {
+                    evidence_path,
+                    manifest_path,
+                    bundle_id: "test-stage2-strict".to_owned(),
+                    bundle_sha256: sha256_hex(b"{}"),
+                })
+            },
+        )
+        .expect("strict matrix orchestration succeeds");
+
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            vec![
+                (
+                    Stage2CellId::WasmtimeToWasmtime,
+                    RuntimeImplementation::Wasmtime,
+                    RuntimeImplementation::Wasmtime,
+                ),
+                (
+                    Stage2CellId::WacogoToWacogo,
+                    RuntimeImplementation::Wacogo,
+                    RuntimeImplementation::Wacogo,
+                ),
+                (
+                    Stage2CellId::WasmtimeToWacogo,
+                    RuntimeImplementation::Wasmtime,
+                    RuntimeImplementation::Wacogo,
+                ),
+                (
+                    Stage2CellId::WacogoToWasmtime,
+                    RuntimeImplementation::Wacogo,
+                    RuntimeImplementation::Wasmtime,
+                ),
+            ]
+        );
+        assert_eq!(output.bundle_id, "test-stage2-strict");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn strict_matrix_failure_retains_completed_and_active_cell_evidence() {
+        let root = test_root("strict-partial-evidence");
+        let mut executed = 0_u8;
+        let error = run_stage2_matrix_with_claim_and_publisher(
+            &root,
+            Stage2ClaimSet::StrictCrossRuntimeContinuity,
+            |artifact_root| {
+                fs::write(artifact_root.join("lineage-retained.txt"), b"locked lineage")
+                    .map_err(|source| stage2_io("write test lineage", artifact_root, source))
+            },
+            |plan| {
+                executed += 1;
+                if executed == 1 {
+                    fs::write(plan.artifact_root.join("stage1-evidence.json"), b"{}")
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+
+                assert_eq!(executed, 2, "the matrix must stop at the failed cell");
+                fs::write(plan.artifact_root.join("partial-transcript.json"), b"partial")
+                    .map_err(|error| error.to_string())?;
+                Err("injected Wacogo same-path failure".to_owned())
+            },
+            |_| panic!("outer evidence must not publish after a cell failure"),
+        )
+        .expect_err("the injected strict cell failure must fail closed");
+
+        assert!(matches!(
+            error,
+            Stage2RunnerError::Cell { cell_id: Stage2CellId::WacogoToWacogo, .. }
+        ));
+        assert_eq!(executed, 2);
+
+        let status: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(STAGE2_INCOMPLETE_MARKER_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(status["schema_version"], "visa-system-stage2-incomplete-v1");
+        assert_eq!(status["phase"], "failed");
+        assert!(status["common_input_sha256"].as_str().is_some());
+        assert_eq!(status["completed_cells"], serde_json::json!(["wasmtime-to-wasmtime"]));
+        assert!(status["active_cell"].is_null());
+        assert_eq!(status["failed_cell"], "wacogo-to-wacogo");
+        assert_eq!(status["failure_detail"], "injected Wacogo same-path failure");
+
+        assert!(root.join("cells/wasmtime-to-wasmtime/stage1-evidence.json").is_file());
+        assert_eq!(
+            fs::read(root.join("cells/wacogo-to-wacogo/partial-transcript.json")).unwrap(),
+            b"partial"
+        );
+        assert!(!root.join("cells/wasmtime-to-wacogo").exists());
+        assert_eq!(fs::read(root.join("lineage-retained.txt")).unwrap(), b"locked lineage");
+        assert!(!root.join(STAGE2_MATRIX_MANIFEST_FILE).exists());
+        assert!(!root.join(STAGE2_EVIDENCE_FILE).exists());
+
         fs::remove_dir_all(root).unwrap();
     }
 

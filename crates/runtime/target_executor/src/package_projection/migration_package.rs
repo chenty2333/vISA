@@ -78,7 +78,7 @@ pub(crate) fn demo_migration_package(
             memory_page_count: semantic.page_object_count() as u64,
             vma_count: semantic.vma_region_count() as u32,
             signal_queue_count: 0,
-            note: "host-side package proving cross-ISA restore/rebind boundaries".to_owned(),
+            note: "host-side package modeling reference restore/rebind boundaries".to_owned(),
         },
         semantic: SemanticSnapshotManifest {
             barrier_id: 1,

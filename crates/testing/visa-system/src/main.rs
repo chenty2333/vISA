@@ -20,7 +20,10 @@ use visa_system::{
     },
     fixture::FixtureSpec,
     protocol::{RuntimeIdentityView, RuntimeImplementation},
-    runner::{run_stage1, run_stage1_with_runtimes, run_stage2_matrix},
+    runner::{
+        Stage2StrictLineageSources, run_stage1, run_stage1_with_runtimes, run_stage2_matrix,
+        run_stage2_strict_matrix,
+    },
     worker::{RunExit, run_stdio},
 };
 
@@ -64,6 +67,7 @@ fn run() -> Result<ExitCode, (u8, String)> {
         },
         Mode::Stage1(artifact_root) => run_stage1_command(&artifact_root),
         Mode::Stage2(artifact_root) => run_stage2_command(&artifact_root),
+        Mode::Stage2Strict(artifact_root) => run_stage2_strict_command(&artifact_root),
         Mode::Cell { source, destination, artifact_root } => {
             run_cell_command(&artifact_root, source, destination)
         }
@@ -75,6 +79,7 @@ enum Mode {
     Worker,
     Stage1(PathBuf),
     Stage2(PathBuf),
+    Stage2Strict(PathBuf),
     Cell {
         source: RuntimeImplementation,
         destination: RuntimeImplementation,
@@ -95,6 +100,11 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
         {
             Ok(Mode::Stage2(PathBuf::from(artifact_root)))
         }
+        [command, artifact_root]
+            if command == "stage2-strict" && !artifact_root.as_os_str().is_empty() =>
+        {
+            Ok(Mode::Stage2Strict(PathBuf::from(artifact_root)))
+        }
         [command, source, destination, artifact_root]
             if command == "cell" && !artifact_root.as_os_str().is_empty() =>
         {
@@ -110,7 +120,8 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
 
 fn usage(program: &OsStr) -> String {
     format!(
-        "usage: {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} cell <wasmtime|jco-node> <wasmtime|jco-node> <artifact-root>",
+        "usage: {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} stage2-strict <artifact-root>\n       {} cell <wasmtime|jco-node|wacogo> <wasmtime|jco-node|wacogo> <artifact-root>",
+        PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
@@ -122,6 +133,7 @@ fn parse_runtime(value: &OsStr) -> Result<RuntimeImplementation, (u8, String)> {
     match value.to_str() {
         Some("wasmtime") => Ok(RuntimeImplementation::Wasmtime),
         Some("jco-node") => Ok(RuntimeImplementation::JcoNode),
+        Some("wacogo") => Ok(RuntimeImplementation::Wacogo),
         _ => Err((64, format!("unknown runtime implementation: {}", value.to_string_lossy()))),
     }
 }
@@ -161,6 +173,49 @@ fn run_stage2_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
     println!("Stage 2 bundle id: {}", output.bundle_id);
     println!("Stage 2 bundle sha256: {}", output.bundle_sha256);
     println!("Stage 2 cases: 124/124 (31 cases x 4 cells)");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_stage2_strict_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
+    let artifact_root = usable_artifact_root(artifact_root)?;
+    let executable = current_executable()?;
+    let sidecar = env::var_os("VISA_WACOGO_BIN").map(PathBuf::from).ok_or_else(|| {
+        (
+            64,
+            "stage2-strict requires VISA_WACOGO_BIN to name the locked production sidecar"
+                .to_owned(),
+        )
+    })?;
+    let build_receipt =
+        env::var_os("VISA_WACOGO_BUILD_RECEIPT").map(PathBuf::from).unwrap_or_else(|| {
+            sidecar.parent().unwrap_or_else(|| Path::new(".")).join("build-receipt.json")
+        });
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let lineage = Stage2StrictLineageSources {
+        cargo_lock: workspace_root.join("Cargo.lock"),
+        wacogo_source_lock: workspace_root.join("third_party/wacogo/source-lock.json"),
+        wacogo_build_receipt: build_receipt,
+        wacogo_sidecar: sidecar,
+    };
+    let output = run_stage2_strict_matrix(&artifact_root, &lineage, |plan| {
+        run_evidence_cell(
+            &plan.artifact_root,
+            &executable,
+            plan.source_runtime,
+            plan.destination_runtime,
+            false,
+            Some(&plan.common_input_sha256),
+        )
+        .map_err(|(_, message)| message)
+    })
+    .map_err(|error| (1, format!("Strict Stage 2 runner failed: {error}")))?;
+
+    println!("Strict Stage 2 evidence bundle: {}", output.evidence_path.display());
+    println!("Strict Stage 2 matrix manifest: {}", output.matrix_manifest_path.display());
+    println!("Strict Stage 2 artifact root: {}", output.artifact_root.display());
+    println!("Strict Stage 2 bundle id: {}", output.bundle_id);
+    println!("Strict Stage 2 bundle sha256: {}", output.bundle_sha256);
+    println!("Strict Stage 2 cases: 124/124 (31 cases x 4 Wasmtime/Wacogo cells)");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -652,6 +707,13 @@ mod tests {
         assert_eq!(
             parse_mode(
                 program,
+                &[OsString::from("stage2-strict"), OsString::from("target/strict-matrix")]
+            ),
+            Ok(Mode::Stage2Strict(PathBuf::from("target/strict-matrix")))
+        );
+        assert_eq!(
+            parse_mode(
+                program,
                 &[
                     OsString::from("cell"),
                     OsString::from("jco-node"),
@@ -665,12 +727,54 @@ mod tests {
                 artifact_root: PathBuf::from("target/cell"),
             })
         );
+        for (source, destination, expected_source, expected_destination, root) in [
+            (
+                "wacogo",
+                "wacogo",
+                RuntimeImplementation::Wacogo,
+                RuntimeImplementation::Wacogo,
+                "target/wacogo-to-wacogo",
+            ),
+            (
+                "wasmtime",
+                "wacogo",
+                RuntimeImplementation::Wasmtime,
+                RuntimeImplementation::Wacogo,
+                "target/wasmtime-to-wacogo",
+            ),
+            (
+                "wacogo",
+                "wasmtime",
+                RuntimeImplementation::Wacogo,
+                RuntimeImplementation::Wasmtime,
+                "target/wacogo-to-wasmtime",
+            ),
+        ] {
+            assert_eq!(
+                parse_mode(
+                    program,
+                    &[
+                        OsString::from("cell"),
+                        OsString::from(source),
+                        OsString::from(destination),
+                        OsString::from(root),
+                    ],
+                ),
+                Ok(Mode::Cell {
+                    source: expected_source,
+                    destination: expected_destination,
+                    artifact_root: PathBuf::from(root),
+                })
+            );
+        }
         for invalid in [
             Vec::new(),
             vec![OsString::from("stage1")],
             vec![OsString::from("stage1"), OsString::new()],
             vec![OsString::from("stage2")],
             vec![OsString::from("stage2"), OsString::new()],
+            vec![OsString::from("stage2-strict")],
+            vec![OsString::from("stage2-strict"), OsString::new()],
             vec![OsString::from("worker"), OsString::from("extra")],
             vec![OsString::from("stage1"), OsString::from("root"), OsString::from("extra")],
             vec![
@@ -682,5 +786,25 @@ mod tests {
         ] {
             assert_eq!(parse_mode(program, &invalid).unwrap_err().0, 64);
         }
+    }
+
+    #[test]
+    fn wacogo_runtime_identity_maps_to_the_pinned_stage1_environment_identity() {
+        let runtime = RuntimeIdentityView {
+            implementation: "visa_wacogo".to_owned(),
+            implementation_version: visa_wacogo::VISA_WACOGO_VERSION.to_owned(),
+            engine: "partite-ai/wacogo+wazero".to_owned(),
+            engine_version: visa_wacogo::ENGINE_VERSION.to_owned(),
+            translation_provenance: None,
+            implementation_lineage: None,
+        };
+
+        assert_eq!(
+            runtime_versioned(&runtime),
+            Stage1VersionedIdentity {
+                name: visa_conformance::STAGE2_WACOGO_ENVIRONMENT_NAME.to_owned(),
+                version: visa_conformance::STAGE2_WACOGO_ENVIRONMENT_VERSION.to_owned(),
+            }
+        );
     }
 }

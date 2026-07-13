@@ -219,7 +219,10 @@ pub(super) fn validate_cross_cell_inputs(
             finding(
                 &mut findings,
                 "stage2-common-input-bundle-mismatch",
-                format!("{} does not consume the common artifacts/digests", cell.id.as_str()),
+                format!(
+                    "{} does not consume the common artifacts/digests",
+                    cell.descriptor.id.as_str()
+                ),
             );
         }
         if bundle.provenance.component_sha256 != baseline.bundle.provenance.component_sha256
@@ -234,7 +237,7 @@ pub(super) fn validate_cross_cell_inputs(
             finding(
                 &mut findings,
                 "stage2-cross-cell-global-input-mismatch",
-                format!("{} has different global inputs", cell.id.as_str()),
+                format!("{} has different global inputs", cell.descriptor.id.as_str()),
             );
         }
         if bundle.cases.len() != common.cases.len() {
@@ -243,8 +246,8 @@ pub(super) fn validate_cross_cell_inputs(
         validate_portable_component_codec(cell, &mut findings);
         validate_common_input_identity_binding(cell, common_sha256, &mut findings);
         for (runtime, provenance) in [
-            (cell.id.source_runtime(), cell.source_translation_provenance.as_ref()),
-            (cell.id.destination_runtime(), cell.destination_translation_provenance.as_ref()),
+            (cell.descriptor.source_runtime, cell.source_translation_provenance.as_ref()),
+            (cell.descriptor.destination_runtime, cell.destination_translation_provenance.as_ref()),
         ] {
             if runtime == Stage2Runtime::JcoNode {
                 match (jco_provenance, provenance) {
@@ -253,14 +256,20 @@ pub(super) fn validate_cross_cell_inputs(
                     _ => finding(
                         &mut findings,
                         "stage2-cross-cell-translation-provenance-mismatch",
-                        format!("{} has inconsistent Jco translation provenance", cell.id.as_str()),
+                        format!(
+                            "{} has inconsistent Jco translation provenance",
+                            cell.descriptor.id.as_str()
+                        ),
                     ),
                 }
             } else if provenance.is_some() {
                 finding(
                     &mut findings,
                     "stage2-wasmtime-translation-provenance-present",
-                    format!("{} attributes translation provenance to Wasmtime", cell.id.as_str()),
+                    format!(
+                        "{} attributes translation provenance to Wasmtime",
+                        cell.descriptor.id.as_str()
+                    ),
                 );
             }
         }
@@ -280,7 +289,11 @@ pub(super) fn validate_cross_cell_inputs(
                 finding(
                     &mut findings,
                     "stage2-cross-cell-case-input-or-outcome-mismatch",
-                    format!("{} {} differs from common/baseline", cell.id.as_str(), case.case_id),
+                    format!(
+                        "{} {} differs from common/baseline",
+                        cell.descriptor.id.as_str(),
+                        case.case_id
+                    ),
                 );
             }
         }
@@ -300,7 +313,11 @@ fn validate_portable_component_codec(
                 finding(
                     findings,
                     "wrong-stage2-portable-component-codec",
-                    format!("{} {} snapshot does not use VISACS01", cell.id.as_str(), case.case_id),
+                    format!(
+                        "{} {} snapshot does not use VISACS01",
+                        cell.descriptor.id.as_str(),
+                        case.case_id
+                    ),
                 );
             }
         }
@@ -314,7 +331,7 @@ fn validate_portable_component_codec(
                         "wrong-stage2-portable-component-codec",
                         format!(
                             "{} {} canonical state does not use VISACS01",
-                            cell.id.as_str(),
+                            cell.descriptor.id.as_str(),
                             case.case_id
                         ),
                     );
@@ -326,7 +343,7 @@ fn validate_portable_component_codec(
         finding(
             findings,
             "missing-stage2-portable-component-state",
-            format!("{} has no snapshot portable state", cell.id.as_str()),
+            format!("{} has no snapshot portable state", cell.descriptor.id.as_str()),
         );
     }
 }
@@ -357,7 +374,7 @@ fn validate_common_input_identity_binding(
         finding(
             findings,
             "missing-stage2-common-input-identity-binding-case",
-            format!("{} has no evidence-verification case", cell.id.as_str()),
+            format!("{} has no evidence-verification case", cell.descriptor.id.as_str()),
         );
         return;
     };
@@ -371,7 +388,7 @@ fn validate_common_input_identity_binding(
         finding(
             findings,
             "missing-stage2-common-input-identity-binding-assertion",
-            format!("{} has no evidence-verification assertions", cell.id.as_str()),
+            format!("{} has no evidence-verification assertions", cell.descriptor.id.as_str()),
         );
         return;
     };
@@ -379,7 +396,7 @@ fn validate_common_input_identity_binding(
         finding(
             findings,
             "missing-stage2-captured-common-input-assertion",
-            format!("{} {} was not retained", cell.id.as_str(), reference.uri),
+            format!("{} {} was not retained", cell.descriptor.id.as_str(), reference.uri),
         );
         return;
     };
@@ -398,7 +415,7 @@ fn validate_common_input_identity_binding(
             Err(source) => finding(
                 findings,
                 "invalid-stage2-common-input-identity-binding-assertion",
-                format!("{}: {source}", cell.id.as_str()),
+                format!("{}: {source}", cell.descriptor.id.as_str()),
             ),
         }
     }
@@ -414,7 +431,7 @@ fn validate_common_input_identity_binding(
             "invalid-stage2-common-input-identity-binding-assertion",
             format!(
                 "{} must contain exactly one assertion for common input {common_sha256}",
-                cell.id.as_str()
+                cell.descriptor.id.as_str()
             ),
         );
     }

@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-13.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -120,10 +120,10 @@ continuity. It is not intended to become another workflow engine.
 
 ### Independent Component Model runtime availability
 
-A 2026-07-12 executable qualification advanced three pinned candidate runtimes,
-WACS, WasmEdge, and wacogo, against the unchanged Stage 1 Component and WIT
-world; none passed. This is a result for those recorded candidates, not an
-exhaustive claim about every released runtime or source snapshot. WACS
+A 2026-07-12 executable qualification advanced three pinned upstream candidate
+runtimes, WACS, WasmEdge, and wacogo, against the unchanged Stage 1 Component
+and WIT world; none of those recorded inputs passed. This is not an exhaustive
+claim about every released runtime or source snapshot. WACS
 0.16.14 with WACS.ComponentModel 0.10.3 has an independent pure-C#
 implementation and parses the three-module Component, its interface-instance
 export, and all six timer/KV method and resource-drop imports. Its 0.27.2 typed
@@ -141,21 +141,44 @@ Component during resource validation. These are explicit no-go qualifications,
 not adapters or support claims. Other runtimes listed in the machine record are
 only preliminary discovery screens and do not support this decision.
 
-wacogo pseudo-version `v0.0.0-20260617023329-3de16a61796c` has an independent
-Go Component parser, validator, linker, Canonical ABI, and resource
-implementation over wazero. It loads and compiles the exact Component, and its
-generator builds real key-value and timer host instances from the unchanged
-WIT. Real Component instantiation nevertheless fails before workload execution:
-the nested `import-type-kv-error` argument references unresolved type 24. This
-is a scoped executable no-go, not a claim that wazero itself implements the
-Component Model. The source-only Airbus WAMR Component Model fork remains a
+The durable [Runtime B qualification record](../third_party/runtime-b-qualification/README.md)
+retains the exact candidate identities, executable probes, and go/no-go
+boundaries used by this decision.
+
+Unmodified wacogo pseudo-version
+`v0.0.0-20260617023329-3de16a61796c` has an independent Go Component parser,
+validator, linker, Canonical ABI, and resource implementation over wazero. It
+loads and compiles the exact Component, and its generator builds real key-value
+and timer host instances from the unchanged WIT. Its unmodified public path
+nevertheless fails before workload execution because the nested
+`import-type-kv-error` argument references unresolved type 24. That retained
+result remains a scoped upstream no-go, not a claim that wazero itself
+implements the Component Model.
+
+The selected Runtime B is instead the source-lock-bound derivative
+`partite-ai/wacogo v0.0.0-20260617023329-3de16a61796c + vISA downstream
+patchset v1`. Three retained patches expose the required root-scope named type,
+host-owned value, and non-executing preflight plumbing; they are not represented
+as merged upstream support or as a general fix for nested component scopes. An
+official Go 1.26.5 qualification passed 7/7 gates through public typed APIs:
+byte-identical parse/world validation, non-executing preflight, typed
+owned-resource transfer, all six timer/KV callbacks, source and fresh-
+destination lifecycle, deterministic missing-import link failure, cleanup, and
+no fallback. The source lock, patch digests, module input, toolchain, generated
+host surface, and reproducible sidecar identities are machine-readably bound by
+repository locks. The source-only Airbus WAMR Component Model fork remains a
 future retest candidate and supplies no vISA execution evidence here.
 
-Strict Stage 2 therefore remains open. A candidate must execute the byte-identical
-world through public, supportable APIs, including owned-resource transfer and
-the full lifecycle, before vISA adds a runtime selector or evidence cell. The
-active qualification record pins packages, hashes, fail-closed input checks,
-commands, failures, and the upstream conditions for retesting.
+The qualified derivative subsequently entered the shared production adapter
+and runtime registry. A separate strict v3 matrix executed exactly
+Wasmtime-to-Wasmtime, Wacogo-to-Wacogo, Wasmtime-to-Wacogo, and
+Wacogo-to-Wasmtime over the unchanged 31-case profile. Fresh Host and Docker
+runs completed 124/124 executions and 31/31 normalized equality groups with
+all inner and outer independent verification passing. This supports only
+`strict-cross-runtime-continuity` for the named x86-64 Linux timer/KV profile;
+it does not imply cross-ISA, file/network, confidential-continuity, production,
+or unmodified-upstream-wacogo support. Final Roadmap closure remains governed
+by exact-final-commit pushed CI.
 
 ## Claims vISA must not make without new evidence
 

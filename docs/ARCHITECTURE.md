@@ -2,15 +2,20 @@
 
 Status: accepted target architecture.
 
-Implementation status: the Stage 1 reference path, Stage 2a runtime-neutral
-adapter boundary, Stage 2b Jco-translated Node/V8 cell, and Stage 2c
-four-direction matrix are implemented. They establish only
-`cross-execution-path-portability`. Strict independent Component Model runtime
-portability remains open because Jco's translator lineage includes
-`wasmtime-environ`. File/network profiles, cross-ISA cells, confidential
+Implementation status: the Stage 1 reference path and the legacy Stage 2a,
+2b, and 2c Wasmtime/JcoNode path are implemented; the latter continues to
+establish only `cross-execution-path-portability`. A separate strict v3 path
+now executes the unchanged timer/KV Component through Wasmtime and a
+source-lock-bound Wacogo derivative whose accepted Component Model lineage is
+independent of Wasmtime and `wasmtime-environ`. Fresh Host and Docker runs
+completed the exact four runtime cells with 124/124 executions and 31/31
+normalized equality groups, and all inner and outer independent verification
+passed for `strict-cross-runtime-continuity`. Both paths remain limited to
+x86-64/amd64 Linux. Final Roadmap Stage 2 closure remains in progress pending
+exact-final-commit CI. File/network profiles, cross-ISA cells, confidential
 continuity, and production readiness are not implemented.
 
-Last reviewed: 2026-07-12.
+Last reviewed: 2026-07-13.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -118,10 +123,11 @@ queues, runtime objects, and register frames are non-portable bindings.
 
 `visa_component_adapter` owns the engine-neutral cooperative component
 lifecycle, portable component-state codec, structured adapter/workload
-failures, and host-call bridge. Concrete adapters such as `visa_wasmtime` and
-`visa_jco_node` own engine preparation, WIT lifting/lowering, process/RPC
-transport, and native resource tables. Neither concrete adapter may redefine
-the reducer, coordinator, authority model, effect identity, or snapshot truth.
+failures, and host-call bridge. Concrete adapters such as `visa_wasmtime`,
+`visa_jco_node`, and `visa_wacogo` own engine preparation, WIT lifting/lowering,
+process/RPC transport, and native resource tables. No concrete adapter may
+redefine the reducer, coordinator, authority model, effect identity, or
+snapshot truth.
 
 Destination runtime preparation is a non-executing preflight and must finish
 before Coordinator restore, binding preparation, or handoff commit. Its result
@@ -159,6 +165,15 @@ normalized observable projection. JcoNode executes the translated core Wasm in
 Node/V8, but its translator uses disclosed `wasmtime-environ` lineage; this is
 cross-execution-path evidence, not proof of two independent Component Model
 implementations.
+
+The separate strict v3 outer verifier selects exactly Wasmtime-to-Wasmtime,
+Wacogo-to-Wacogo, Wasmtime-to-Wacogo, and Wacogo-to-Wasmtime. It binds the
+Wacogo source lock, build receipt, executed sidecar, and requested, prepared,
+and live runtime identities; requires every cell to pass the independent Stage
+1 verifier; and recomputes all 31 normalized equality groups across 124
+executions. This establishes only `strict-cross-runtime-continuity` for the
+named x86-64/amd64 Linux timer/KV profile and does not alter the legacy JcoNode
+claim.
 
 ## Canonical state versus native binding
 
@@ -378,8 +393,10 @@ code must not import adapter-specific representations.
 Stage 1 completed this migration for its named reference path. Stage 2a
 extracted the one runtime-neutral component adapter contract; Stage 2b added
 the JcoNode reference execution cell; Stage 2c now exercises all four
-directions without adding a second semantic implementation. As the broader
-repository evolves:
+directions without adding a second semantic implementation. The strict path
+subsequently adds the qualified Wacogo runtime through the same adapter,
+coordinator, semantic-state, and evidence boundaries without adding a second
+semantic authority. As the broader repository evolves:
 
 - do not expand legacy universal object, command, event, or snapshot schemas;
 - migrate one complete lifecycle slice at a time and delete the replaced model
@@ -400,10 +417,12 @@ and claim semantics are durable architectural commitments.
 Stage 1 fixes one reference continuity unit and profile, snapshot encoding,
 SQLite journal/lease mechanism, and Wasmtime/x86-64 Linux/resource matrix cell.
 The completed Stage 2a, 2b, and 2c engineering substages add a shared adapter
-contract plus a Jco-translated Node/V8 execution path on the same x86-64 host
-ISA and timer/KV profile. Strict Roadmap Stage 2 remains in progress because a
-genuinely independent Component Model implementation has not executed.
-Cross-host transport, alternative persistence and lease services,
-compatibility windows, file/network resources, cross-ISA matrices,
-confidential continuity, performance targets, and production readiness remain
-unimplemented.
+contract plus a Jco-translated Node/V8 execution path while retaining only the
+legacy `cross-execution-path-portability` claim. The separate strict path adds
+the source-lock-bound Wacogo derivative and has executed the exact four
+Wasmtime/Wacogo cells over the same x86-64/amd64 Linux timer/KV profile, with
+124/124 executions and 31/31 equality groups passing independent verification.
+Final Roadmap closure remains pending exact-final-commit CI. Cross-host
+transport, alternative persistence and lease services, compatibility windows,
+file/network resources, cross-ISA matrices, confidential continuity,
+performance targets, and production readiness remain unimplemented.
