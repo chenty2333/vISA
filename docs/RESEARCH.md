@@ -177,8 +177,9 @@ runs completed 124/124 executions and 31/31 normalized equality groups with
 all inner and outer independent verification passing. This supports only
 `strict-cross-runtime-continuity` for the named x86-64 Linux timer/KV profile;
 it does not imply cross-ISA, file/network, confidential-continuity, production,
-or unmodified-upstream-wacogo support. Final Roadmap closure remains governed
-by exact-final-commit pushed CI.
+or unmodified-upstream-wacogo support. This is the evidence basis for the
+completed named Stage 2 scope; every broader claim still requires its own
+Roadmap gate and pushed exact-commit evidence.
 
 ## Claims vISA must not make without new evidence
 

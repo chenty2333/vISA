@@ -11,9 +11,9 @@ independent of Wasmtime and `wasmtime-environ`. Fresh Host and Docker runs
 completed the exact four runtime cells with 124/124 executions and 31/31
 normalized equality groups, and all inner and outer independent verification
 passed for `strict-cross-runtime-continuity`. Both paths remain limited to
-x86-64/amd64 Linux. Final Roadmap Stage 2 closure remains in progress pending
-exact-final-commit CI. File/network profiles, cross-ISA cells, confidential
-continuity, and production readiness are not implemented.
+x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV scope.
+File/network profiles, cross-ISA cells, confidential continuity, and production
+readiness are not implemented.
 
 Last reviewed: 2026-07-13.
 
@@ -422,7 +422,7 @@ legacy `cross-execution-path-portability` claim. The separate strict path adds
 the source-lock-bound Wacogo derivative and has executed the exact four
 Wasmtime/Wacogo cells over the same x86-64/amd64 Linux timer/KV profile, with
 124/124 executions and 31/31 equality groups passing independent verification.
-Final Roadmap closure remains pending exact-final-commit CI. Cross-host
+Roadmap Stage 2 is complete for this named matrix and claim. Cross-host
 transport, alternative persistence and lease services, compatibility windows,
 file/network resources, cross-ISA matrices, confidential continuity,
 performance targets, and production readiness remain unimplemented.

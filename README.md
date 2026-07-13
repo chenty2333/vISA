@@ -20,9 +20,9 @@ resource bindings, resume, and produce executable evidence about what happened.
 > Host and Docker runs, with all inner and outer independent verification
 > passing. The strict verifier accepts only
 > `strict-cross-runtime-continuity`. Both evidence paths remain limited to
-> x86-64/amd64 Linux. Final Roadmap Stage 2 closure remains in progress pending
-> exact-final-commit CI; cross-ISA, file/network, confidential-continuity,
-> stable API, and production claims remain unearned.
+> x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV
+> scope; cross-ISA, file/network, confidential-continuity, stable API, and
+> production claims remain unearned.
 
 ## The problem
 

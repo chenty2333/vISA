@@ -170,13 +170,13 @@ availability, or a validated commercial market.
 
 ## Stage 2: Independent runtime portability
 
-Status: in progress pending exact-final-commit CI. The strict implementation
-and fresh Host/Docker exit evidence are complete for the named Wasmtime and
-source-lock-bound Wacogo runtime paths on x86-64/amd64 Linux with the timer/KV
-profile. The exact four-cell matrix completed 124/124 executions and 31/31
-normalized equality groups with all inner and outer independent verification
-passing. The legacy Wasmtime/JcoNode path remains a separate
-`cross-execution-path-portability` result.
+Status: complete for the named Wasmtime and source-lock-bound Wacogo runtime
+paths on x86-64/amd64 Linux with the timer/KV profile. The strict implementation
+and fresh Host/Docker exit evidence completed the exact four-cell matrix with
+124/124 executions and 31/31 normalized equality groups, all inner and outer
+independent verification passed, and the stage-closing repository revision
+passed pushed CI at its exact commit. The legacy Wasmtime/JcoNode path remains
+a separate `cross-execution-path-portability` result.
 
 Goal: restore the same Stage 1 envelope through a genuinely independent
 WebAssembly execution adapter, with no destination-specific component code or
@@ -218,8 +218,8 @@ Exit conditions:
 - unsupported runtime features appear as explicit profile results.
 
 Fresh Host and Docker runs satisfy these technical exit conditions for the two
-named runtime implementations. Final stage closure remains pending
-exact-final-commit CI.
+named runtime implementations, and the stage-closing repository revision passed
+pushed CI at its exact commit.
 
 Claim on exit: `strict-cross-runtime-continuity` for Wasmtime and the
 source-lock-bound Wacogo derivative on x86-64/amd64 Linux with the timer/KV
