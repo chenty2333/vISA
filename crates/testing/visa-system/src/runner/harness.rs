@@ -151,6 +151,31 @@ pub(super) struct CaseHarness {
     pub(super) policy_digest: contract_core::Digest,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoredTimerObservation {
+    Pending(contract_core::LogicalDurationNanos),
+    Fired(contract_core::EvidenceRef),
+}
+
+fn restored_timer_observation(
+    poll: TimerPollView,
+    expected_arm: contract_core::Identity,
+) -> Result<RestoredTimerObservation, String> {
+    match poll {
+        TimerPollView::Pending { arm_operation, remaining }
+            if arm_operation == expected_arm && remaining.0 > 0 =>
+        {
+            Ok(RestoredTimerObservation::Pending(remaining))
+        }
+        TimerPollView::Fired { arm_operation, evidence } if arm_operation == expected_arm => {
+            Ok(RestoredTimerObservation::Fired(evidence))
+        }
+        other => Err(format!(
+            "expected positive Pending or Fired for restored arm {expected_arm:?}, got {other:?}"
+        )),
+    }
+}
+
 impl CaseHarness {
     pub(super) fn new(
         launchers: &RoleLaunchers,
@@ -580,7 +605,7 @@ impl CaseHarness {
             })?
             .timer;
         match timer {
-            SafePointTimerView::Pending { remaining, arm_operation } => {
+            SafePointTimerView::Pending { remaining, arm_operation } if remaining.0 > 0 => {
                 Ok((remaining, arm_operation))
             }
             other => Err(RunnerError::Assertion {
@@ -591,27 +616,65 @@ impl CaseHarness {
     }
 
     pub(super) fn deliver_pending_timer(&mut self) -> Result<(), RunnerError> {
-        let (remaining, _) = self.pending_timer()?;
+        self.pending_timer()?;
+        let expected_arm = self
+            .latest_destination
+            .as_ref()
+            .and_then(|view| view.component.as_ref())
+            .filter(|component| {
+                component.phase == WorkloadPhaseView::Armed && component.expected_version == 1
+            })
+            .and_then(|component| {
+                visa_component_adapter::parse_identity(&component.timer_operation_id)
+            })
+            .ok_or_else(|| RunnerError::Assertion {
+                case_id: self.definition.id.to_owned(),
+                detail: "destination-timer-rearmed: resumed destination has no valid armed timer operation"
+                    .to_owned(),
+            })?;
         let result = self.destination_success(WorkerCommand::PollTimer { deliver: false })?;
-        let (poll, delivered, _) = timer_result(self.definition.id, result)?;
+        let (poll, delivered, view) = timer_result(self.definition.id, result)?;
+        let first_observation =
+            restored_timer_observation(poll, expected_arm).map_err(|detail| {
+                RunnerError::Assertion {
+                    case_id: self.definition.id.to_owned(),
+                    detail: format!("destination-timer-rearmed: {detail}"),
+                }
+            })?;
         self.observe(
             "destination-timer-rearmed",
-            matches!(poll, TimerPollView::Pending { remaining, .. } if remaining.0 > 0)
-                && !delivered,
+            !delivered
+                && view.component.as_ref().is_some_and(|component| {
+                    component.phase == WorkloadPhaseView::Armed
+                        && component.expected_version == 1
+                        && visa_component_adapter::parse_identity(&component.timer_operation_id)
+                            == Some(expected_arm)
+                }),
             format!("poll={poll:?}, delivered={delivered}"),
         )?;
-        thread::sleep(Duration::from_nanos(remaining.0) + TIMER_MARGIN);
+        let first_fired_evidence = match first_observation {
+            RestoredTimerObservation::Pending(remaining) => {
+                thread::sleep(Duration::from_nanos(remaining.0) + TIMER_MARGIN);
+                None
+            }
+            RestoredTimerObservation::Fired(evidence) => Some(evidence),
+        };
         for _ in 0..3 {
             let result = self.destination_success(WorkerCommand::PollTimer { deliver: true })?;
             let (poll, delivered, view) = timer_result(self.definition.id, result)?;
-            match poll {
-                TimerPollView::Fired { .. } => {
+            match restored_timer_observation(poll, expected_arm) {
+                Ok(RestoredTimerObservation::Fired(evidence)) => {
                     self.observe(
                         "single-timer-delivery",
                         delivered
+                            && first_fired_evidence
+                                .is_none_or(|first_evidence| first_evidence == evidence)
                             && view.component.as_ref().is_some_and(|component| {
                                 component.phase == WorkloadPhaseView::Completed
                                     && component.expected_version == 2
+                                    && visa_component_adapter::parse_identity(
+                                        &component.timer_operation_id,
+                                    ) == Some(expected_arm)
                             }),
                         format!("delivered={delivered}, component={:?}", view.component),
                     )?;
@@ -627,13 +690,23 @@ impl CaseHarness {
                     )?;
                     return Ok(());
                 }
-                TimerPollView::Pending { remaining, .. } => {
+                Ok(RestoredTimerObservation::Pending(remaining)) => {
+                    if delivered || first_fired_evidence.is_some() {
+                        return Err(RunnerError::Assertion {
+                            case_id: self.definition.id.to_owned(),
+                            detail: format!(
+                                "destination timer regressed to or delivered while pending: poll={poll:?}, delivered={delivered}"
+                            ),
+                        });
+                    }
                     thread::sleep(Duration::from_nanos(remaining.0) + TIMER_MARGIN);
                 }
-                other => {
+                Err(detail) => {
                     return Err(RunnerError::Assertion {
                         case_id: self.definition.id.to_owned(),
-                        detail: format!("destination timer produced {other:?}"),
+                        detail: format!(
+                            "destination timer produced an invalid observation: {detail}"
+                        ),
                     });
                 }
             }
@@ -691,5 +764,72 @@ impl CaseHarness {
         outcome: Stage1CaseOutcome,
     ) -> Result<CaseExecutionRecord, RunnerError> {
         super::finalize::finalize_case(self, outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use contract_core::{Digest, EvidenceKind, EvidenceRef, Identity};
+
+    use super::{RestoredTimerObservation, restored_timer_observation};
+    use crate::protocol::TimerPollView;
+
+    fn fired(arm_operation: Identity) -> TimerPollView {
+        TimerPollView::Fired {
+            arm_operation,
+            evidence: EvidenceRef {
+                identity: Identity::from_u128(2),
+                kind: EvidenceKind::EffectOutcome,
+                digest: Digest([3; 32]),
+            },
+        }
+    }
+
+    #[test]
+    fn restored_timer_accepts_already_fired_destination_arm() {
+        let arm_operation = Identity::from_u128(1);
+
+        assert!(matches!(
+            restored_timer_observation(fired(arm_operation), arm_operation),
+            Ok(RestoredTimerObservation::Fired(_))
+        ));
+    }
+
+    #[test]
+    fn restored_timer_accepts_positive_pending_destination_arm() {
+        let arm_operation = Identity::from_u128(1);
+        let remaining = contract_core::LogicalDurationNanos(5);
+
+        assert_eq!(
+            restored_timer_observation(
+                TimerPollView::Pending { arm_operation, remaining },
+                arm_operation,
+            ),
+            Ok(RestoredTimerObservation::Pending(remaining))
+        );
+    }
+
+    #[test]
+    fn restored_timer_rejects_zero_remaining_duration() {
+        let arm_operation = Identity::from_u128(1);
+
+        assert!(
+            restored_timer_observation(
+                TimerPollView::Pending {
+                    arm_operation,
+                    remaining: contract_core::LogicalDurationNanos(0),
+                },
+                arm_operation,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn restored_timer_rejects_a_different_destination_arm() {
+        assert!(
+            restored_timer_observation(fired(Identity::from_u128(2)), Identity::from_u128(1))
+                .is_err()
+        );
     }
 }

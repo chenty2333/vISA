@@ -641,6 +641,14 @@ an idempotency key, and a fencing epoch protect the effect; universal
 exactly-once is not claimed. This profile does not preserve a wall-clock
 deadline.
 
+Restoring a pending timer creates a fresh destination arm whose causal parent is
+the source arm recorded at the safe point. Because real time elapses after that
+rearm, the first non-delivering destination poll may observe the destination arm
+either still `Pending` with positive remaining duration or already `Fired`.
+Both branches must retain that destination arm identity; the subsequent
+delivering poll must apply its expiry once, and a repeated poll must not deliver
+it again.
+
 The Stage 1 system test uses two isolated runtime instances, fresh bindings,
 and real timer/KV provider behavior. Fakes are allowed in unit tests but cannot
 satisfy this claim. Stage 2c separately adds the Jco-translated execution path,

@@ -1626,7 +1626,15 @@ mod tests {
         initialize(&mut source, WorkerRole::Source, database.path(), options.clone());
         invoke(&mut source, WorkerCommand::BootstrapSource).unwrap();
         invoke(&mut source, WorkerCommand::BeginQuiesce).unwrap();
-        invoke(&mut source, WorkerCommand::FreezeSource).unwrap();
+        let (remaining, source_arm) =
+            match invoke(&mut source, WorkerCommand::FreezeSource).unwrap() {
+                WorkerResult::SafePoint {
+                    timer: SafePointTimerView::Pending { remaining, arm_operation },
+                    ..
+                } => (remaining, arm_operation),
+                other => panic!("expected pending source timer, got {other:?}"),
+            };
+        assert!(remaining.0 > 0);
         let (envelope, component_state) =
             match invoke(&mut source, WorkerCommand::ExportSourceSnapshot).unwrap() {
                 WorkerResult::Snapshot { envelope, component_state, .. } => {
@@ -1685,32 +1693,75 @@ mod tests {
         };
         assert_eq!(after, before, "a fenced source cannot mutate provider KV state");
 
-        assert!(matches!(
-            invoke(&mut destination, WorkerCommand::ResumeDestination).unwrap(),
-            WorkerResult::State {
-                view: StateView {
-                    canonical_phase: HandoffPhase::Running,
-                    component_instantiated: true,
-                    component: Some(_),
-                    ..
+        let destination_arm =
+            match invoke(&mut destination, WorkerCommand::ResumeDestination).unwrap() {
+                WorkerResult::State {
+                    view:
+                        StateView {
+                            canonical_phase: HandoffPhase::Running,
+                            component_instantiated: true,
+                            component:
+                                Some(ComponentStatusView {
+                                    phase: WorkloadPhaseView::Armed,
+                                    expected_version: 1,
+                                    timer_operation_id,
+                                    ..
+                                }),
+                            ..
+                        },
+                } => visa_component_adapter::parse_identity(&timer_operation_id)
+                    .expect("destination timer operation identity must be canonical hex"),
+                other => panic!("expected an armed destination component, got {other:?}"),
+            };
+        assert_ne!(destination_arm, source_arm);
+
+        thread::sleep(Duration::from_nanos(remaining.0) + Duration::from_millis(20));
+        let observed_evidence =
+            match invoke(&mut destination, WorkerCommand::PollTimer { deliver: false }).unwrap() {
+                WorkerResult::Timer {
+                    poll: TimerPollView::Fired { arm_operation, evidence },
+                    delivered: false,
+                    view:
+                        StateView {
+                            component:
+                                Some(ComponentStatusView {
+                                    phase: WorkloadPhaseView::Armed,
+                                    expected_version: 1,
+                                    ..
+                                }),
+                            ..
+                        },
+                } => {
+                    assert_eq!(arm_operation, destination_arm);
+                    evidence
                 }
-            }
-        ));
-        let completed = poll_until_delivered(&mut destination);
+                other => panic!("expected a retained non-delivering timer expiry, got {other:?}"),
+            };
+        let completed =
+            invoke(&mut destination, WorkerCommand::PollTimer { deliver: true }).unwrap();
         assert!(matches!(
-            completed,
+            &completed,
             WorkerResult::Timer {
+                poll: TimerPollView::Fired { arm_operation, evidence },
                 delivered: true,
                 view: StateView {
                     component: Some(ComponentStatusView {
                         phase: WorkloadPhaseView::Completed,
                         expected_version: 2,
+                        timer_operation_id,
                         ..
                     }),
                     ..
                 },
                 ..
-            }
+            } if *arm_operation == destination_arm
+                && *evidence == observed_evidence
+                && visa_component_adapter::parse_identity(timer_operation_id)
+                    == Some(destination_arm)
+        ));
+        assert!(matches!(
+            invoke(&mut destination, WorkerCommand::PollTimer { deliver: true }).unwrap(),
+            WorkerResult::Timer { poll: TimerPollView::Completed, delivered: false, .. }
         ));
 
         let duplicate = invoke(&mut destination, WorkerCommand::DuplicateCompletionKvProbe)
