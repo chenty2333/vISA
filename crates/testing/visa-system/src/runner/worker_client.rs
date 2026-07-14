@@ -14,6 +14,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::WorkerLauncher;
 use crate::protocol::{
     CrashMode, PROTOCOL_VERSION, RequestEnvelope, ResponseEnvelope, ResponseOutcome,
     RuntimeIdentityView, WorkerCommand, WorkerError, WorkerResult,
@@ -121,9 +122,16 @@ impl WorkerClient {
         label: impl Into<String>,
         default_timeout: Duration,
     ) -> Result<Self, WorkerClientError> {
-        let mut command = Command::new(executable.as_ref());
-        command.arg("worker");
-        Self::spawn_command(command, label.into(), default_timeout)
+        let launcher = WorkerLauncher::direct(executable);
+        Self::spawn_with_launcher(&launcher, label, default_timeout)
+    }
+
+    pub fn spawn_with_launcher(
+        launcher: &WorkerLauncher,
+        label: impl Into<String>,
+        default_timeout: Duration,
+    ) -> Result<Self, WorkerClientError> {
+        Self::spawn_command(launcher.worker_command(), label.into(), default_timeout)
     }
 
     pub fn spawn_current(

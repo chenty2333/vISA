@@ -5,6 +5,7 @@ use visa_conformance::{
     gate_stage2_evidence_bundle_json_with_artifacts,
     gate_stage2_strict_evidence_bundle_json_with_artifacts,
     gate_stage3_evidence_bundle_json_with_artifacts,
+    gate_stage4_evidence_bundle_json_with_artifacts,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +15,7 @@ enum Command {
     Stage2Strict,
     Stage3A,
     Stage3B,
+    Stage4,
 }
 
 fn main() -> ExitCode {
@@ -41,7 +43,7 @@ fn run() -> Result<(), (u8, String)> {
         return Err((
             64,
             format!(
-                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3b> <bundle.json> <artifact-root>",
+                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3b|stage4> <bundle.json> <artifact-root>",
                 PathBuf::from(program).display()
             ),
         ));
@@ -89,6 +91,13 @@ fn run() -> Result<(), (u8, String)> {
                 &artifact_root,
             )),
         ),
+        Some(Command::Stage4) => (
+            "Stage 4",
+            serde_json::to_value(gate_stage4_evidence_bundle_json_with_artifacts(
+                &bytes,
+                &artifact_root,
+            )),
+        ),
         _ => unreachable!(),
     };
     let result =
@@ -110,6 +119,7 @@ fn parse_command(command: Option<&std::ffi::OsStr>) -> Option<Command> {
         Some("stage2-strict") => Some(Command::Stage2Strict),
         Some("stage3a") => Some(Command::Stage3A),
         Some("stage3b") => Some(Command::Stage3B),
+        Some("stage4") => Some(Command::Stage4),
         _ => None,
     }
 }
@@ -121,12 +131,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parser_accepts_only_the_five_exact_verifier_commands() {
+    fn parser_accepts_only_the_six_exact_verifier_commands() {
         assert_eq!(parse_command(Some(OsStr::new("stage1"))), Some(Command::Stage1));
         assert_eq!(parse_command(Some(OsStr::new("stage2"))), Some(Command::Stage2));
         assert_eq!(parse_command(Some(OsStr::new("stage2-strict"))), Some(Command::Stage2Strict));
         assert_eq!(parse_command(Some(OsStr::new("stage3a"))), Some(Command::Stage3A));
         assert_eq!(parse_command(Some(OsStr::new("stage3b"))), Some(Command::Stage3B));
+        assert_eq!(parse_command(Some(OsStr::new("stage4"))), Some(Command::Stage4));
         for rejected in [None, Some(OsStr::new("strict-stage2")), Some(OsStr::new("stage2-v3"))] {
             assert_eq!(parse_command(rejected), None);
         }

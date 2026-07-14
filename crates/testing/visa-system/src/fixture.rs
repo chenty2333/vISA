@@ -603,6 +603,11 @@ mod tests {
         let encoded = serde_json::to_vec(&first).unwrap();
         assert_eq!(serde_json::from_slice::<FixtureSpec>(&encoded).unwrap(), first);
         assert_eq!(first.activation.to_wasmtime().session_id, "deterministic-case:session");
+        assert_eq!(
+            FixtureSpec::new("performance-observations").unwrap().activation.delay_ns,
+            WORKLOAD_DELAY_NS,
+            "performance observations keep the shared Stage 1 workload input"
+        );
     }
 
     #[test]

@@ -345,21 +345,114 @@ their declared dispositions are supported. Independent-runtime Stage 3,
 cross-ISA/substrate, confidential-continuity, and production claims do not
 follow.
 
-## Stage 4: Real target, ISA, and substrate matrix
+## Stage 4: Target, ISA, and substrate qualification
 
-Status: not started. All qualified Stage 1/2 cells and current Stage 3
-resource-profile runners use x86-64/amd64 Linux; no Stage 3 resource profile
-has yet qualified a second runtime, ISA, or target substrate.
+Status: in progress, not complete. The bounded native/QEMU-user implementation,
+evidence writer, independent verifier, and dedicated CI gate are implemented,
+the corrected 217/217 local matrix, all 31 normalized equality groups, and the
+Stage 1--3 control gates have been locally verified. The pushed exact-SHA
+whole-workflow CI result and post-CI artifact verification are still pending.
 
-Goal: exercise the same semantic contract through a no-std/reference kernel or
-other real target adapter and on each ISA named in a published matrix.
+Goal: hold the Stage 1 Wasmtime timer/KV semantic input fixed while changing
+the named target, ISA, and user-mode execution carrier. This stage asks whether
+the portable state, authority, fencing, and externally observable behavior
+remain equal when an independently built target worker executes natively or
+through QEMU-user. It does not introduce a new runtime or resource family.
 
-This stage validates that machine authority and code/execution carriers remain
-outside portable semantic truth. Emulation, real hardware, runtime portability,
-and device enforcement remain separate evidence dimensions.
+### Fixed qualification profile
 
-Exit condition: every advertised matrix cell has an executable runner,
-identified artifacts, raw evidence, and explicit not-supported/not-run states.
+The profile has one x86-64 Linux orchestrator and three explicit endpoints:
+
+- **Hx** -- the owned `x86_64-unknown-linux-gnu` worker executed natively;
+- **Qx** -- byte-identical x86-64 worker execution through owned
+  `qemu-x86_64 -cpu max -L /`; and
+- **Qa** -- an independently cross-built `aarch64-unknown-linux-gnu` worker
+  executed through owned `qemu-aarch64 -cpu max` and the identified AArch64
+  GNU sysroot at `/usr/aarch64-linux-gnu`.
+
+All endpoints keep the Wasmtime runtime, locked Stage 1 Component/WIT world,
+31-case registry, host-process-isolation substrate, and durable SQLite timer/KV
+provider fixed. Stage 3 file and logical-request profiles are not inputs to this
+matrix. Owned worker/QEMU artifacts plus endpoint-specific loader/sysroot and
+build receipts, nonce-bound target hellos, and recorded Rust/Cargo toolchain
+identity identify the actual execution carriers and reject ambient loader or
+QEMU substitution.
+
+The locked matrix is organized around two bounded claims; neither is earned
+until every exit condition below is satisfied:
+
+- `named-target-substrate-continuity-v1`: `Hx->Hx`, `Hx->Qx`, `Qx->Hx`, and
+  `Qx->Qx`; and
+- `emulated-cross-isa-continuity-v1`: `Qx->Qx`, `Qx->Qa`, `Qa->Qx`, and
+  `Qa->Qa`.
+
+`Qx->Qx` is the shared control, so the two claims require seven unique cells.
+Each cell executes all 31 Stage 1 cases: 217 case executions in total and one
+seven-cell normalized equality group for each of the 31 registered cases.
+
+### Evidence boundary
+
+Semantic cross-ISA continuity is not AOT binary portability. Hx/Qx and Qa run
+target-specific worker executables around the same Component and portable
+semantic envelope; Stage 4 does not copy an x86-64 native code image, compiled
+Wasmtime artifact, stack, register file, or process checkpoint into AArch64.
+
+QEMU-user execution is not real AArch64 hardware qualification. Qa establishes
+only the named emulated AArch64 Linux user-mode path on the same orchestrator;
+it does not execute a real ARM machine, system emulator, reference kernel, or
+device-enforcement path. Runtime, provider, host trust, and cross-host movement
+remain separate dimensions.
+
+The `performance-observations` case retains the common 50 ms Stage 1 timer.
+Five raw source reads can exceed that duration under QEMU, so the corrected
+scenario deliberately reaches the `Completed` timer branch before handoff
+timing begins, then proves that destination restore does not recreate or
+redeliver it. It neither lengthens an unrecorded workload input nor accepts
+`Pending` and `Completed` as equivalent. Target speed affects only retained raw
+performance samples, for which this stage makes no performance claim.
+
+### Exit conditions
+
+- Hx, Qx, and Qa are identified by retained executable, ELF ISA, build,
+  recorded Rust/Cargo toolchain identity, launcher, loader/sysroot,
+  QEMU-version where applicable, and nonce-bound runtime target-hello evidence;
+- all seven unique cells pass all 31 cases, producing 217/217 completed
+  executions and 31/31 equal normalized observable groups;
+- every cell's complete Stage 1 bundle passes its full inner artifact-aware
+  verification, rather than relying on the outer summary or cached normalized
+  output;
+- the independent Stage 4 verifier reconstructs the common input and case
+  manifests from retained artifacts, recomputes Stage 2 normalization, checks
+  both exact claim cell sets, and rejects failed, unsupported, or not-run cells
+  from either claim;
+- successful evidence publication is atomic and fail-closed, contains the exact
+  expected artifact set with no incomplete marker or unreferenced additions,
+  and preserves explicit `unsupported` and `not-run` qualification records;
+- a successful bundle is moved as a whole to a different absolute location,
+  without rewriting its JSON, and passes the independent verifier again,
+  proving that artifact lookup is relocation-safe while the historical path is
+  retained solely to validate the original launcher argv;
+- the ordinary repository gate, Stage 1 Wasmtime and JcoNode controls, legacy
+  and Strict Stage 2 four-cell controls, both Stage 3 resource gates, and the
+  dedicated Stage 4 gate all pass on the same final revision; and
+- the pushed stage-closing exact SHA passes the whole CI workflow, after which
+  the uploaded Stage 4 artifact is downloaded and independently rechecked for
+  verification, exact-set closure, and relocation before this status may change
+  to `complete`.
+
+### Claims explicitly not earned
+
+Stage 4 does not claim real AArch64 hardware, no-std/reference-kernel execution,
+real-device enforcement, cross-target Stage 3 file or request continuity, a
+second Stage 4 runtime, AOT binary portability, cross-host continuity, 32-bit or
+big-endian targets, hostile-host protection or confidentiality, or production
+and performance readiness. The legacy reference-kernel path remains explicitly
+`unsupported` because its runtime is not linked and its engine is a legacy
+stub; real AArch64 hardware remains explicitly `not-run`.
+
+Claim on exit: only `named-target-substrate-continuity-v1` and
+`emulated-cross-isa-continuity-v1` for the fixed Wasmtime, Linux user-mode,
+timer/KV profile and the exact Hx/Qx/Qa cells above.
 
 ## Stage 5: Confidential continuity profile
 

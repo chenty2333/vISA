@@ -192,3 +192,93 @@ jobs:
       - name: Remove Stage 3B system evidence from cache path
         if: ${{ always() }}
         run: rm -rf .ci-cache/target/visa-system
+
+  docker-stage4-gate:
+    name: Docker Stage 4 target and ISA gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      COMPOSE: docker compose -f compose.yaml -f compose.ci.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set Docker user ids
+        run: |
+          echo "VISA_DOCKER_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "VISA_DOCKER_GID=$(id -g)" >> "$GITHUB_ENV"
+
+      - name: Prepare Stage 4 cache directories
+        run: |
+          mkdir -p \
+            .ci-cache/cargo-git \
+            .ci-cache/cargo-registry \
+            .ci-cache/target \
+            .ci-cache/visa-ltp
+
+      - name: Restore Docker Stage 4 Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .ci-cache/cargo-git
+            .ci-cache/cargo-registry
+            .ci-cache/target
+            .ci-cache/visa-ltp
+          key: docker-stage4-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'Dockerfile', 'compose.yaml', 'compose.ci.yaml') }}
+          restore-keys: |
+            docker-stage4-${{ runner.os }}-
+            docker-dev-${{ runner.os }}-
+
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Validate Compose configuration
+        run: $COMPOSE config --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker dev image for Stage 4
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: visa-dev:latest
+          build-args: |
+            USER_UID=${{ env.VISA_DOCKER_UID }}
+            USER_GID=${{ env.VISA_DOCKER_GID }}
+          cache-from: |
+            type=gha,scope=visa-dev-stage4
+            type=gha,scope=visa-dev
+          cache-to: type=gha,mode=max,scope=visa-dev-stage4
+
+      - name: Inspect Docker dev image
+        run: docker image inspect visa-dev:latest >/dev/null
+
+      - name: Clear prior Stage 4 evidence
+        run: |
+          rm -rf .ci-cache/target/visa-system
+          mkdir -p .ci-cache/target/visa-system
+
+      - name: Stage 4 target/substrate and cross-ISA aggregate gate
+        id: stage4_system_gate
+        run: |
+          set -o pipefail
+          $COMPOSE run --rm -T dev scripts/ci-gate.sh system-stage4 2>&1 \
+            | tee .ci-cache/target/visa-system/stage4-ci.log
+
+      - name: Upload Stage 4 system evidence
+        if: ${{ always() && (steps.stage4_system_gate.outcome == 'success' || steps.stage4_system_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-target-isa-system-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Stage 4 system evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system

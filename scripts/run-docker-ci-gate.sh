@@ -6,7 +6,8 @@ usage() {
 usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
     [--artifact-parent DIR] \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
-     system-stage3a|system-stage3b|system-stage3]
+     system-stage3a|system-stage3b|system-stage3|system-stage4-target|
+     system-stage4-isa|system-stage4]
 
 Validates the Compose configuration, builds or reuses the vISA development
 image, and runs the selected validation tier. With no tier, runs full.
@@ -18,6 +19,11 @@ with locked offline Wacogo inputs from the image. Its evidence, Docker log, and
 sidecar binary/receipt are retained together under a host-visible run root.
 system-stage3a and system-stage3b independently validate the regular-file and
 logical-request profiles; system-stage3 runs both profiles in sequence.
+system-stage4 cross-builds release x86-64 and AArch64 workers and validates the
+complete seven-cell native/QEMU-user matrix, a raw x86-64 Linux host receipt,
+and bundle relocation. system-stage4-target and
+system-stage4-isa currently run the same fail-closed aggregate matrix rather
+than publishing a reduced target-only or ISA-only claim.
 
 Options:
   --ci-cache           Use compose.ci.yaml bind-mounted cache directories.
@@ -60,7 +66,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3)
+        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3|system-stage4-target|system-stage4-isa|system-stage4)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage

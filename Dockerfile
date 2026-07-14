@@ -208,6 +208,24 @@ RUN set -eux; \
 # Docker gate materializes this seed into a fresh container-private directory.
 ENV VISA_WACOGO_GOMODCACHE=/tmp/visa-wacogo-gomodcache
 
+# Stage 4 is an independent gate layered on the existing development image.
+# Keep its relatively large cross toolchain in a late layer so changes here do
+# not invalidate the pinned Node and Strict Stage 2 Wacogo acquisition layers.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu \
+        libc6-dev-arm64-cross \
+        qemu-user \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add \
+        --toolchain "${RUST_TOOLCHAIN}" \
+        aarch64-unknown-linux-gnu
+
+# The bundled SQLite build must use target tools rather than silently emitting
+# host objects for the AArch64 worker.
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+ENV AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+
 RUN set -eux; \
     if getent group "${USER_GID}" >/dev/null; then \
         group_name="$(getent group "${USER_GID}" | cut -d: -f1)"; \

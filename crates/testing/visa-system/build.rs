@@ -5,6 +5,7 @@ use wit_component::ComponentEncoder;
 mod build_provenance;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let target = env::var("TARGET")?;
     let guest_module = PathBuf::from(
         env::var_os("CARGO_CDYLIB_FILE_HANDOFF_COMPONENT_handoff_component")
             .expect("missing handoff-component artifact dependency"),
@@ -41,5 +42,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!("cargo:rustc-env=VISA_BUILD_SOURCE_SHA256={}", provenance.source_digest);
     println!("cargo:rustc-env=VISA_BUILD_TOOLCHAIN_SHA256={}", provenance.toolchain_digest);
+    println!("cargo:rustc-env=VISA_BUILD_TARGET={target}");
     Ok(())
 }

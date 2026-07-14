@@ -2,6 +2,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -21,11 +22,15 @@ use visa_system::{
     fixture::FixtureSpec,
     protocol::{RuntimeIdentityView, RuntimeImplementation},
     runner::{
-        Stage2StrictLineageSources, run_stage1, run_stage1_with_runtimes, run_stage2_matrix,
+        RoleLaunchers, Stage1RunOutput, Stage2StrictLineageSources, run_stage1,
+        run_stage1_with_launchers, run_stage1_with_runtimes, run_stage2_matrix,
         run_stage2_strict_matrix,
     },
+    target::{TargetHelloV1, observe_target},
     worker::{RunExit, run_stdio},
 };
+
+mod stage4_command;
 
 const EXPECTED_STAGE1_CASES: usize = 31;
 const BASELINE_CASE_ID: &str = "evidence-verification";
@@ -33,17 +38,6 @@ const REPORT_FAILURE_CASE_ID: &str = "report-generation-fails-after-commit";
 const SUBSTRATE_HOST_VERSION: &str = "0.1.0";
 const RUSQLITE_VERSION: &str = "0.40.1";
 const WIT_COMPONENT_VERSION: &str = "0.244.0";
-
-#[cfg(target_env = "gnu")]
-const TARGET_ENV: &str = "gnu";
-#[cfg(target_env = "musl")]
-const TARGET_ENV: &str = "musl";
-#[cfg(target_env = "msvc")]
-const TARGET_ENV: &str = "msvc";
-#[cfg(target_env = "sgx")]
-const TARGET_ENV: &str = "sgx";
-#[cfg(not(any(target_env = "gnu", target_env = "musl", target_env = "msvc", target_env = "sgx")))]
-const TARGET_ENV: &str = "none";
 
 fn main() -> ExitCode {
     match run() {
@@ -60,6 +54,7 @@ fn run() -> Result<ExitCode, (u8, String)> {
     let program = arguments.next().unwrap_or_default();
     let arguments = arguments.collect::<Vec<_>>();
     match parse_mode(&program, &arguments)? {
+        Mode::TargetHello { nonce } => run_target_hello_command(&nonce),
         Mode::Worker => match run_stdio() {
             Ok(RunExit::EndOfInput) => Ok(ExitCode::SUCCESS),
             Ok(RunExit::Requested(code)) => requested_exit_code(code),
@@ -68,6 +63,7 @@ fn run() -> Result<ExitCode, (u8, String)> {
         Mode::Stage1(artifact_root) => run_stage1_command(&artifact_root),
         Mode::Stage2(artifact_root) => run_stage2_command(&artifact_root),
         Mode::Stage2Strict(artifact_root) => run_stage2_strict_command(&artifact_root),
+        Mode::Stage4(artifact_root) => stage4_command::run_stage4_command(&artifact_root),
         Mode::Cell { source, destination, artifact_root } => {
             run_cell_command(&artifact_root, source, destination)
         }
@@ -76,10 +72,14 @@ fn run() -> Result<ExitCode, (u8, String)> {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
+    TargetHello {
+        nonce: String,
+    },
     Worker,
     Stage1(PathBuf),
     Stage2(PathBuf),
     Stage2Strict(PathBuf),
+    Stage4(PathBuf),
     Cell {
         source: RuntimeImplementation,
         destination: RuntimeImplementation,
@@ -89,6 +89,14 @@ enum Mode {
 
 fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, String)> {
     match arguments {
+        [command, nonce] if command == "target-hello" => {
+            let nonce = nonce
+                .to_str()
+                .ok_or_else(|| (64, "target hello nonce must be valid UTF-8".to_owned()))?;
+            visa_system::target::validate_target_nonce(nonce)
+                .map_err(|error| (64, error.to_string()))?;
+            Ok(Mode::TargetHello { nonce: nonce.to_owned() })
+        }
         [command] if command == "worker" => Ok(Mode::Worker),
         [command, artifact_root]
             if command == "stage1" && !artifact_root.as_os_str().is_empty() =>
@@ -105,6 +113,11 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
         {
             Ok(Mode::Stage2Strict(PathBuf::from(artifact_root)))
         }
+        [command, artifact_root]
+            if command == "stage4" && !artifact_root.as_os_str().is_empty() =>
+        {
+            Ok(Mode::Stage4(PathBuf::from(artifact_root)))
+        }
         [command, source, destination, artifact_root]
             if command == "cell" && !artifact_root.as_os_str().is_empty() =>
         {
@@ -120,13 +133,29 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
 
 fn usage(program: &OsStr) -> String {
     format!(
-        "usage: {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} stage2-strict <artifact-root>\n       {} cell <wasmtime|jco-node|wacogo> <wasmtime|jco-node|wacogo> <artifact-root>",
+        "usage: {} target-hello <64-lowercase-hex-nonce>\n       {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} stage2-strict <artifact-root>\n       {} stage4 <artifact-root>\n       {} cell <wasmtime|jco-node|wacogo> <wasmtime|jco-node|wacogo> <artifact-root>",
+        PathBuf::from(program).display(),
+        PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display()
     )
+}
+
+fn run_target_hello_command(nonce: &str) -> Result<ExitCode, (u8, String)> {
+    let hello = observe_target(nonce)
+        .map_err(|error| (2, format!("target hello observation failed: {error}")))?;
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    serde_json::to_writer(&mut writer, &hello)
+        .map_err(|error| (2, format!("cannot encode target hello: {error}")))?;
+    writer
+        .write_all(b"\n")
+        .and_then(|()| writer.flush())
+        .map_err(|error| (2, format!("cannot write target hello: {error}")))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn parse_runtime(value: &OsStr) -> Result<RuntimeImplementation, (u8, String)> {
@@ -163,6 +192,7 @@ fn run_stage2_command(artifact_root: &Path) -> Result<ExitCode, (u8, String)> {
             false,
             Some(&plan.common_input_sha256),
         )
+        .map(|_| ())
         .map_err(|(_, message)| message)
     })
     .map_err(|error| (1, format!("Stage 2 runner failed: {error}")))?;
@@ -206,6 +236,7 @@ fn run_stage2_strict_command(artifact_root: &Path) -> Result<ExitCode, (u8, Stri
             false,
             Some(&plan.common_input_sha256),
         )
+        .map(|_| ())
         .map_err(|(_, message)| message)
     })
     .map_err(|error| (1, format!("Strict Stage 2 runner failed: {error}")))?;
@@ -236,7 +267,7 @@ fn run_evidence_cell(
     destination: RuntimeImplementation,
     stage1_default: bool,
     stage2_common_input_sha256: Option<&str>,
-) -> Result<(), (u8, String)> {
+) -> Result<Stage1RunOutput, (u8, String)> {
     let artifact_root = usable_artifact_root(artifact_root)?;
     let output = if stage1_default {
         run_stage1(executable, &artifact_root)
@@ -244,7 +275,33 @@ fn run_evidence_cell(
         run_stage1_with_runtimes(executable, &artifact_root, source, destination)
     }
     .map_err(|error| (1, format!("Stage 1 runner failed: {error}")))?;
+    publish_stage1_run(&artifact_root, executable, &output, stage2_common_input_sha256)?;
+    Ok(output)
+}
 
+fn run_evidence_cell_with_launchers(
+    artifact_root: &Path,
+    provenance_executable: &Path,
+    launchers: RoleLaunchers,
+) -> Result<Stage1RunOutput, (u8, String)> {
+    let artifact_root = usable_artifact_root(artifact_root)?;
+    let output = run_stage1_with_launchers(
+        launchers,
+        &artifact_root,
+        RuntimeImplementation::Wasmtime,
+        RuntimeImplementation::Wasmtime,
+    )
+    .map_err(|error| (1, format!("Stage 1 runner failed: {error}")))?;
+    publish_stage1_run(&artifact_root, provenance_executable, &output, None)?;
+    Ok(output)
+}
+
+fn publish_stage1_run(
+    artifact_root: &Path,
+    executable: &Path,
+    output: &Stage1RunOutput,
+    stage2_common_input_sha256: Option<&str>,
+) -> Result<(), (u8, String)> {
     if STAGE1_CASE_DEFINITIONS.len() != EXPECTED_STAGE1_CASES {
         return Err((
             1,
@@ -266,8 +323,7 @@ fn run_evidence_cell(
 
     let baseline = FixtureSpec::new(BASELINE_CASE_ID)
         .map_err(|error| (1, format!("cannot construct Stage 1 baseline profile: {error}")))?;
-    let provenance_files =
-        prepare_provenance_files(&artifact_root, executable, &baseline, &output)?;
+    let provenance_files = prepare_provenance_files(artifact_root, executable, &baseline, output)?;
     let timer_profile_digest = canonical_digest(&baseline.profile.timer)
         .map_err(|_| (1, "cannot digest Stage 1 timer profile".to_owned()))?;
     let key_value_profile_digest = canonical_digest(&baseline.profile.key_value)
@@ -279,8 +335,7 @@ fn run_evidence_cell(
         timer_profile_digest,
         key_value_profile_digest,
         output.policy_digest,
-        &output.source_runtime,
-        &output.destination_runtime,
+        output,
     );
     let bundle_id =
         format!("stage1-{}-{}", output.started_at_unix_ms, &digest_hex(output.config_digest)[..16]);
@@ -297,9 +352,9 @@ fn run_evidence_cell(
         output.toolchain_digest,
         provenance_files,
     );
-    let writer = EvidenceWriter::new(&artifact_root);
+    let writer = EvidenceWriter::new(artifact_root);
     let bundle_path = writer.bundle_path();
-    install_bundle_failure_directory(&artifact_root, &bundle_path)?;
+    install_bundle_failure_directory(artifact_root, &bundle_path)?;
     let publish_error = match writer.write_prepublication(&context, &output.records) {
         Err(error) => error,
         Ok(_) => {
@@ -342,7 +397,7 @@ fn run_evidence_cell(
         .find(|record| record.case_id == REPORT_FAILURE_CASE_ID)
         .map(|record| digest_hex(record.state_digest))
         .ok_or_else(|| (1, "report-failure execution record is missing".to_owned()))?;
-    remove_injected_bundle_directory(&artifact_root, &bundle_path)?;
+    remove_injected_bundle_directory(artifact_root, &bundle_path)?;
     let regenerated = writer.regenerate_prepublication(&context).map_err(|error| {
         (1, format!("Stage 1 evidence regeneration from committed artifacts failed: {error}"))
     })?;
@@ -612,19 +667,14 @@ fn execution_environment(
     timer_profile_digest: contract_core::Digest,
     key_value_profile_digest: contract_core::Digest,
     policy_digest: contract_core::Digest,
-    source_runtime: &RuntimeIdentityView,
-    destination_runtime: &RuntimeIdentityView,
+    output: &visa_system::runner::Stage1RunOutput,
 ) -> Stage1ExecutionEnvironment {
-    let isa = Stage1IsaIdentity {
-        architecture: env::consts::ARCH.to_owned(),
-        abi: format!("{}-{TARGET_ENV}", env::consts::OS),
-    };
     Stage1ExecutionEnvironment {
         carrier: versioned("wit-component ComponentEncoder", WIT_COMPONENT_VERSION),
-        source_runtime: runtime_versioned(source_runtime),
-        destination_runtime: runtime_versioned(destination_runtime),
-        source_isa: isa.clone(),
-        destination_isa: isa,
+        source_runtime: runtime_versioned(&output.source_runtime),
+        destination_runtime: runtime_versioned(&output.destination_runtime),
+        source_isa: isa_identity(&output.source_target.hello),
+        destination_isa: isa_identity(&output.destination_target.hello),
         substrate: versioned("host-process-isolation", env!("CARGO_PKG_VERSION")),
         provider: Stage1ProviderIdentity {
             implementation: versioned(
@@ -656,6 +706,10 @@ fn execution_environment(
             },
         ],
     }
+}
+
+fn isa_identity(target: &TargetHelloV1) -> Stage1IsaIdentity {
+    Stage1IsaIdentity { architecture: target.architecture.clone(), abi: target.abi.clone() }
 }
 
 fn runtime_versioned(runtime: &RuntimeIdentityView) -> Stage1VersionedIdentity {
@@ -692,9 +746,15 @@ fn requested_exit_code(code: i32) -> Result<ExitCode, (u8, String)> {
 mod tests {
     use super::*;
 
+    const TARGET_NONCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     #[test]
     fn parser_accepts_only_exact_worker_and_stage1_forms() {
         let program = OsStr::new("visa-system");
+        assert_eq!(
+            parse_mode(program, &[OsString::from("target-hello"), OsString::from(TARGET_NONCE)]),
+            Ok(Mode::TargetHello { nonce: TARGET_NONCE.to_owned() })
+        );
         assert_eq!(parse_mode(program, &[OsString::from("worker")]), Ok(Mode::Worker));
         assert_eq!(
             parse_mode(program, &[OsString::from("stage1"), OsString::from("target/evidence")]),
@@ -710,6 +770,10 @@ mod tests {
                 &[OsString::from("stage2-strict"), OsString::from("target/strict-matrix")]
             ),
             Ok(Mode::Stage2Strict(PathBuf::from("target/strict-matrix")))
+        );
+        assert_eq!(
+            parse_mode(program, &[OsString::from("stage4"), OsString::from("target/stage4")]),
+            Ok(Mode::Stage4(PathBuf::from("target/stage4")))
         );
         assert_eq!(
             parse_mode(
@@ -769,12 +833,21 @@ mod tests {
         }
         for invalid in [
             Vec::new(),
+            vec![OsString::from("target-hello")],
+            vec![OsString::from("target-hello"), OsString::from("short")],
+            vec![
+                OsString::from("target-hello"),
+                OsString::from(TARGET_NONCE),
+                OsString::from("extra"),
+            ],
             vec![OsString::from("stage1")],
             vec![OsString::from("stage1"), OsString::new()],
             vec![OsString::from("stage2")],
             vec![OsString::from("stage2"), OsString::new()],
             vec![OsString::from("stage2-strict")],
             vec![OsString::from("stage2-strict"), OsString::new()],
+            vec![OsString::from("stage4")],
+            vec![OsString::from("stage4"), OsString::new()],
             vec![OsString::from("worker"), OsString::from("extra")],
             vec![OsString::from("stage1"), OsString::from("root"), OsString::from("extra")],
             vec![
@@ -805,6 +878,36 @@ mod tests {
                 name: visa_conformance::STAGE2_WACOGO_ENVIRONMENT_NAME.to_owned(),
                 version: visa_conformance::STAGE2_WACOGO_ENVIRONMENT_VERSION.to_owned(),
             }
+        );
+    }
+
+    #[test]
+    fn stage1_isa_identities_come_from_each_target_hello() {
+        let target = |architecture: &str, target_triple: &str| TargetHelloV1 {
+            schema_version: visa_system::target::TARGET_HELLO_SCHEMA_VERSION.to_owned(),
+            nonce: TARGET_NONCE.to_owned(),
+            target_triple: target_triple.to_owned(),
+            architecture: architecture.to_owned(),
+            os: "linux".to_owned(),
+            abi: "linux-gnu".to_owned(),
+            endianness: visa_system::target::TargetEndianness::Little,
+            pointer_width_bits: 64,
+            executable_sha256: "0".repeat(64),
+            executable_size: 1,
+            build_source_sha256: "1".repeat(64),
+            build_toolchain_sha256: "2".repeat(64),
+            worker_protocol_version: visa_system::protocol::PROTOCOL_VERSION,
+        };
+        let source = target("x86_64", "x86_64-unknown-linux-gnu");
+        let destination = target("aarch64", "aarch64-unknown-linux-gnu");
+
+        assert_eq!(
+            isa_identity(&source),
+            Stage1IsaIdentity { architecture: "x86_64".to_owned(), abi: "linux-gnu".to_owned() }
+        );
+        assert_eq!(
+            isa_identity(&destination),
+            Stage1IsaIdentity { architecture: "aarch64".to_owned(), abi: "linux-gnu".to_owned() }
         );
     }
 }

@@ -7,6 +7,9 @@ rustflags = [
     "target-feature=-bulk-memory,-multivalue,-reference-types,-sign-ext,-nontrapping-fptoint",
 ]
 
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
 [alias]
 kernel = "build -p kernel --target x86_64-unknown-none"
 run-vm = "run -p runner --"

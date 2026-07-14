@@ -8,8 +8,8 @@ use serde::Serialize;
 use visa_conformance::{Stage1CaseDefinition, Stage1CaseOutcome, Stage1PerformanceMetric};
 
 use super::{
-    RunnerError, TIMER_MARGIN, TranscriptLine, TranscriptStream, WORKER_STARTUP_TIMEOUT,
-    WorkerClient, WorkerClientError,
+    RoleLaunchers, RunnerError, TIMER_MARGIN, TranscriptLine, TranscriptStream,
+    WORKER_STARTUP_TIMEOUT, WorkerClient, WorkerClientError,
     registry::{CaseKind, CasePlan, case_kind},
     support::{
         WorkerInitialization, archive_client, digest_hex, elapsed_nanos, remove_database_files,
@@ -130,7 +130,7 @@ pub(super) struct CaseHarness {
     pub(super) definition: &'static Stage1CaseDefinition,
     pub(super) plan: CasePlan,
     pub(super) fixture: FixtureSpec,
-    pub(super) executable: PathBuf,
+    pub(super) launchers: RoleLaunchers,
     pub(super) source_runtime: crate::protocol::RuntimeImplementation,
     pub(super) destination_runtime: crate::protocol::RuntimeImplementation,
     pub(super) work_root: PathBuf,
@@ -153,7 +153,7 @@ pub(super) struct CaseHarness {
 
 impl CaseHarness {
     pub(super) fn new(
-        executable: &Path,
+        launchers: &RoleLaunchers,
         work_root: &Path,
         definition: &'static Stage1CaseDefinition,
         plan: CasePlan,
@@ -173,7 +173,7 @@ impl CaseHarness {
         })?;
         let database = CaseDatabase::new(work_root, definition.id)?;
         let source = spawn_initialized(
-            executable,
+            launchers,
             definition.id,
             WorkerInitialization::new(
                 "source",
@@ -185,7 +185,7 @@ impl CaseHarness {
             .with_fault(plan.source_fault),
         )?;
         let destination = spawn_initialized(
-            executable,
+            launchers,
             definition.id,
             WorkerInitialization::new(
                 "destination",
@@ -200,7 +200,7 @@ impl CaseHarness {
             definition,
             plan,
             fixture,
-            executable: executable.to_path_buf(),
+            launchers: launchers.clone(),
             source_runtime,
             destination_runtime,
             work_root: work_root.to_path_buf(),
@@ -673,7 +673,7 @@ impl CaseHarness {
     pub(super) fn restart_destination(&mut self, label: &str) -> Result<(), RunnerError> {
         self.archive_destination()?;
         self.destination = Some(spawn_initialized(
-            &self.executable,
+            &self.launchers,
             self.definition.id,
             WorkerInitialization::new(
                 label,

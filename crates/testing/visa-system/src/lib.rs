@@ -4,6 +4,7 @@ pub mod evidence;
 pub mod fixture;
 pub mod protocol;
 pub mod runner;
+pub mod target;
 pub mod worker;
 
 pub use evidence::{

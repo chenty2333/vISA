@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use visa_conformance::STAGE1_CASE_DEFINITIONS;
 
 use super::{
-    RunnerError, Stage1RunOutput,
+    RoleLaunchers, RunnerError, Stage1RunOutput, WorkerLauncher,
     harness::CaseHarness,
     provenance::{
         source_provenance, toolchain_provenance, unix_time_ms, workspace_root, write_pretty_json,
@@ -33,10 +33,32 @@ pub fn run_stage1_with_runtimes(
     source_runtime: RuntimeImplementation,
     destination_runtime: RuntimeImplementation,
 ) -> Result<Stage1RunOutput, RunnerError> {
-    let executable = executable.as_ref().to_path_buf();
+    let launcher = WorkerLauncher::direct(executable);
+    run_stage1_with_launchers(
+        RoleLaunchers::new(launcher.clone(), launcher),
+        output_root,
+        source_runtime,
+        destination_runtime,
+    )
+}
+
+pub fn run_stage1_with_launchers(
+    launchers: RoleLaunchers,
+    output_root: impl AsRef<Path>,
+    source_runtime: RuntimeImplementation,
+    destination_runtime: RuntimeImplementation,
+) -> Result<Stage1RunOutput, RunnerError> {
     let output_root = output_root.as_ref();
     fs::create_dir_all(output_root)
         .map_err(|source| runner_io("create Stage 1 output root", output_root, source))?;
+    let source_target = launchers
+        .source()
+        .probe_target()
+        .map_err(|source| RunnerError::TargetProbe { role: "source", source })?;
+    let destination_target = launchers
+        .destination()
+        .probe_target()
+        .map_err(|source| RunnerError::TargetProbe { role: "destination", source })?;
     let started_at_unix_ms = unix_time_ms()?;
     let provenance_root = output_root.join("provenance");
     fs::create_dir_all(&provenance_root)
@@ -68,7 +90,7 @@ pub fn run_stage1_with_runtimes(
     let mut observed_destination_runtime = None;
     for (definition, plan) in STAGE1_CASE_DEFINITIONS.iter().zip(plans) {
         let mut harness = CaseHarness::new(
-            &executable,
+            &launchers,
             &work_root,
             definition,
             plan,
@@ -154,6 +176,8 @@ pub fn run_stage1_with_runtimes(
         destination_runtime: observed_destination_runtime.ok_or_else(|| RunnerError::Registry {
             detail: "Stage 1 matrix reported no destination runtime".to_owned(),
         })?,
+        source_target,
+        destination_target,
     })
 }
 

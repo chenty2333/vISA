@@ -5,8 +5,8 @@ use std::{
 };
 
 use super::{
-    RunnerError, WORKER_STARTUP_TIMEOUT, WORKER_TIMEOUT, WorkerClient, harness::ArchivedTranscript,
-    runner_io,
+    RoleLaunchers, RunnerError, WORKER_STARTUP_TIMEOUT, WORKER_TIMEOUT, WorkerClient,
+    harness::ArchivedTranscript, runner_io,
 };
 use crate::{
     fixture::FixtureOptions,
@@ -43,16 +43,19 @@ impl<'a> WorkerInitialization<'a> {
 }
 
 pub(super) fn spawn_initialized(
-    executable: &Path,
+    launchers: &RoleLaunchers,
     case_id: &str,
     initialization: WorkerInitialization<'_>,
 ) -> Result<WorkerClient, RunnerError> {
     let WorkerInitialization { label, role, runtime, database, options, fault } = initialization;
     let worker_label = format!("{case_id}-{label}");
     let mut client =
-        WorkerClient::spawn(executable, &worker_label, WORKER_TIMEOUT).map_err(|source| {
-            RunnerError::Worker { case_id: case_id.to_owned(), role: role_label(role), source }
-        })?;
+        WorkerClient::spawn_with_launcher(launchers.for_role(role), &worker_label, WORKER_TIMEOUT)
+            .map_err(|source| RunnerError::Worker {
+                case_id: case_id.to_owned(),
+                role: role_label(role),
+                source,
+            })?;
     let result = client
         .request_success_with_timeout(
             WorkerCommand::Initialize {
@@ -91,6 +94,21 @@ pub(super) fn spawn_initialized(
             detail: format!("{label} initialization returned {other:?}"),
         }),
     }
+}
+
+pub(super) fn spawn_uninitialized_for_role(
+    launchers: &RoleLaunchers,
+    case_id: &str,
+    label: &str,
+    role: WorkerRole,
+) -> Result<WorkerClient, RunnerError> {
+    let worker_label = format!("{case_id}-{label}");
+    WorkerClient::spawn_with_launcher(launchers.for_role(role), worker_label, WORKER_TIMEOUT)
+        .map_err(|source| RunnerError::Worker {
+            case_id: case_id.to_owned(),
+            role: role_label(role),
+            source,
+        })
 }
 
 fn runtime_identity_matches(

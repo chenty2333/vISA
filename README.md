@@ -30,8 +30,17 @@ resource bindings, resume, and produce executable evidence about what happened.
 > Stage 3 is complete for these two named bounded profiles. Both Stage 3 paths
 > run Wasmtime to Wasmtime, explicitly record
 > `independent_runtime_coverage=false`, list Wacogo as unsupported, and do not
-> inherit the Stage 2 cross-runtime result. Cross-ISA/substrate,
-> confidential-continuity, stable API, and production claims remain unearned.
+> inherit the Stage 2 cross-runtime result. Bounded Stage 4 is
+> implemented and locally verified, with exact-SHA pushed CI still pending. It
+> keeps the Wasmtime timer/KV workload fixed while qualifying one native
+> x86-64 Linux endpoint and two QEMU-user endpoints with artifact-owned
+> worker/QEMU executables and identified sysroots, covering 7 unique cells,
+> 217/217 case executions, and 31/31 normalized equality groups. This is
+> semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
+> portability, real ARM hardware, Stage 3 resource portability across targets,
+> or a second Stage 4 runtime. Roadmap Stage 4 is therefore not yet marked complete.
+> Confidential-continuity, stable API, and production claims also remain
+> unearned.
 
 ## The problem
 
@@ -106,8 +115,9 @@ capability.
 
 The active continuity spine covers the Stage 1 path, the legacy Stage 2a, 2b,
 and 2c Wasmtime/JcoNode paths, the source-lock-bound Wasmtime/Wacogo
-strict-runtime adapter and matrix paths, and the two Stage 3 resource
-qualification paths. Strict
+strict-runtime adapter and matrix paths, the two Stage 3 resource
+qualification paths, and the bounded Stage 4 target/substrate and emulated
+cross-ISA matrix. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
@@ -252,6 +262,64 @@ Both Stage 3 profiles still trust the host process, kernel, SQLite state, and
 provider-local credential store. `STATX_BTIME`, SQLite fencing, and `VISALR03`
 peer authentication do not establish a hostile-host or confidential-channel
 boundary.
+
+Run the bounded Stage 4 aggregate gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage4
+```
+
+Stage 4 holds the Stage 1 Component, Wasmtime source/destination runtime,
+timer/KV profile, 31-case registry, host kernel, and `substrate_host` SQLite
+provider fixed within the matrix while varying three named execution endpoints:
+
+- `Hx`: the artifact-owned worker runs natively on x86-64 Linux;
+- `Qx`: the artifact-owned x86-64 worker runs under the artifact-owned
+  `qemu-x86_64` with `-cpu max` and the identified `/` sysroot; and
+- `Qa`: the artifact-owned AArch64 worker runs under the artifact-owned
+  `qemu-aarch64` with `-cpu max` and the identified
+  `/usr/aarch64-linux-gnu` sysroot.
+
+The `named-target-substrate-continuity-v1` claim covers `Hx->Hx`, `Hx->Qx`,
+`Qx->Hx`, and `Qx->Qx`. The `emulated-cross-isa-continuity-v1` claim covers
+`Qx->Qx`, `Qx->Qa`, `Qa->Qx`, and `Qa->Qa`. Because `Qx->Qx` is shared, the
+aggregate contains 7 unique cells rather than 8. Every cell executes the same
+31 cases, for 31 × 7 = 217 executions, and the independent outer verifier
+recomputes 31 equality groups across all 7 cells.
+
+This proves equality of the named portable semantic observations across the
+qualified matrix. It does not prove that an AOT native binary is portable: the
+x86-64 and AArch64 workers are separately built target binaries. QEMU-user
+translates user-space instructions but still uses the same host kernel, so
+`Qa` is not a real ARM machine or an ARM-kernel result. The aggregate retains
+the raw stdout and stderr from `/usr/bin/uname -s -r -m` and verifies the host
+receipt; it does not vary the kernel or provider as another matrix dimension.
+
+The Stage 4 publisher creates a durable `stage4-incomplete` marker before
+running cells. Staged verification requires that marker, successful publication
+removes it, and published verification rejects a retained marker. The verifier
+also enforces the exact manifested artifact set and rejects missing,
+unmanifested, temporary, symlinked, hard-linked, or special entries. The local
+gate first verified the successful root, then moved that entire directory to a
+new absolute path without rewriting its JSON and verified it again. The
+recorded execution root remains historical launcher provenance, while artifact
+lookup is relative to the verifier-supplied current root. Verification of an
+uploaded/downloaded copy remains part of exact-SHA CI closure.
+
+The existing `performance-observations` case keeps its original 50 ms timer
+input. It records target-dependent steady-state samples, then waits for that
+timer plus the existing margin before beginning quiescence and verifies the
+fixed `Completed` continuity branch. This prevents QEMU speed from changing a
+semantic `Pending`/`Completed` outcome; it is not a production performance
+claim.
+
+The bounded matrix explicitly does not claim Stage 3 file or logical-request
+resources across targets, a second Stage 4 runtime, AOT-binary portability,
+the legacy no-std reference kernel, real device enforcement, real AArch64
+hardware, cross-host execution, 32-bit or big-endian targets, hostile-host or
+confidential continuity, or production/performance readiness. The
+implementation and local evidence are in place, but exact-SHA pushed CI is
+still pending, so Stage 4 is not yet documented as complete.
 
 ## Engineering principles
 

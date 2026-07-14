@@ -5,7 +5,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-gate.sh \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
-     system-stage3a|system-stage3b|system-stage3]
+     system-stage3a|system-stage3b|system-stage3|system-stage4-target|
+     system-stage4-isa|system-stage4]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
@@ -20,6 +21,13 @@ system-stage3a and system-stage3b run and independently validate the bounded
 regular-file and logical-request continuity profiles. system-stage3 runs both
 Stage 3 profiles in sequence. Stage 3 currently covers Wasmtime-to-Wasmtime
 handoff only and does not inherit Strict Stage 2 independent-runtime coverage.
+system-stage4 builds release x86-64 and AArch64 Wasmtime workers, runs the
+complete seven-cell native/QEMU-user target and cross-ISA matrix, and verifies
+the resulting evidence independently before and after a real directory
+relocation. The evidence includes a raw uname-bound x86-64 Linux host receipt.
+system-stage4-target and
+system-stage4-isa are edit-loop aliases that currently fail closed by running
+that same complete aggregate matrix; they do not publish reduced claims.
 System tiers do not repeat the full tier.
 EOF
 }
@@ -340,6 +348,73 @@ gate_system_stage3() {
     gate_system_stage3b
 }
 
+gate_system_stage4() {
+    local system_parent="$PWD/target/visa-system"
+    local x86_target="$PWD/target/x86_64-unknown-linux-gnu/release"
+    local aarch64_target="$PWD/target/aarch64-unknown-linux-gnu/release"
+    local x86_worker="$x86_target/visa-system"
+    local aarch64_worker="$aarch64_target/visa-system"
+    local x86_conformance="$x86_target/visa-conformance"
+    local qemu_x86_64
+    local qemu_aarch64
+    local relocated_root
+
+    mkdir -p "$system_parent"
+    system_artifact_kind="Stage 4 target/substrate and cross-ISA matrix"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage4-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage4-evidence.json"
+
+    qemu_x86_64="$(command -v qemu-x86_64)"
+    qemu_aarch64="$(command -v qemu-aarch64)"
+
+    run_gate "system-stage4: release x86-64 runner, worker, and verifier" \
+        cargo build --locked --release \
+            --target x86_64-unknown-linux-gnu \
+            -p visa-system \
+            -p visa-conformance
+    run_gate "system-stage4: release AArch64 worker" \
+        cargo build --locked --release \
+            --target aarch64-unknown-linux-gnu \
+            -p visa-system \
+            --bin visa-system
+    run_gate "system-stage4: real seven-cell target/substrate and cross-ISA matrix" \
+        env \
+            VISA_STAGE4_X86_64_WORKER="$x86_worker" \
+            VISA_STAGE4_AARCH64_WORKER="$aarch64_worker" \
+            VISA_STAGE4_QEMU_X86_64="$qemu_x86_64" \
+            VISA_STAGE4_QEMU_AARCH64="$qemu_aarch64" \
+            VISA_STAGE4_QX_SYSROOT=/ \
+            VISA_STAGE4_QA_SYSROOT=/usr/aarch64-linux-gnu \
+            "$x86_worker" stage4 "$system_artifact_root"
+    run_gate "system-stage4: independent Stage 4 evidence validation" \
+        "$x86_conformance" stage4 "$system_bundle_path" "$system_artifact_root"
+
+    relocated_root="${system_artifact_root}-relocated"
+    run_gate "system-stage4: require an unused relocation path" \
+        test ! -e "$relocated_root"
+    run_gate "system-stage4: relocate the byte-identical published bundle" \
+        mv -- "$system_artifact_root" "$relocated_root"
+    system_artifact_root="$relocated_root"
+    system_bundle_path="$system_artifact_root/stage4-evidence.json"
+    run_gate "system-stage4: independently validate the relocated evidence" \
+        "$x86_conformance" stage4 "$system_bundle_path" "$system_artifact_root"
+
+    printf 'Stage 4 artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 4 evidence bundle: %s\n' "$system_bundle_path"
+}
+
+gate_system_stage4_target() {
+    printf '%s\n' \
+        'system-stage4-target currently runs the complete fail-closed Stage 4 aggregate matrix.'
+    gate_system_stage4
+}
+
+gate_system_stage4_isa() {
+    printf '%s\n' \
+        'system-stage4-isa currently runs the complete fail-closed Stage 4 aggregate matrix.'
+    gate_system_stage4
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -356,6 +431,9 @@ case "$tier" in
     system-stage3a) gate_system_stage3a ;;
     system-stage3b) gate_system_stage3b ;;
     system-stage3) gate_system_stage3 ;;
+    system-stage4-target) gate_system_stage4_target ;;
+    system-stage4-isa) gate_system_stage4_isa ;;
+    system-stage4) gate_system_stage4 ;;
     -h|--help|help)
         usage
         ;;

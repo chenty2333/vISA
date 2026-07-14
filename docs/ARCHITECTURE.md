@@ -18,9 +18,16 @@ independent structural bundle verification. The stage-closing implementation
 revision passed pushed CI at its exact commit, so Roadmap Stage 3 is complete
 for these two named bounded profiles. Stage 3 evidence is
 Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
-does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Cross-ISA/target
-substrate cells, confidential continuity, and production readiness are not
-implemented.
+does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Bounded Stage 4 is
+implemented and locally verified, with exact-SHA pushed CI pending. It keeps
+the Wasmtime timer/KV Component, 31-case registry, host kernel, and SQLite
+provider fixed while qualifying native x86-64 Linux and x86-64/AArch64
+QEMU-user endpoints with artifact-owned executables and identified sysroots.
+Its 7 unique cells completed 217/217 executions and 31/31 normalized equality
+groups. This does not establish AOT-binary portability, real ARM hardware,
+Stage 3 resource coverage across targets, or a second Stage 4 runtime. Stage 4
+is not yet marked complete; confidential continuity and production readiness
+also remain unimplemented.
 
 Last reviewed: 2026-07-14.
 
@@ -197,6 +204,92 @@ snapshot, reauthorization, local rebinding, lease transfer, and source-fencing
 boundary for these profiles. It is not evidence for dual-worker process
 isolation, cross-host transport, or a real target/ISA/substrate change; those
 remain separate qualification cells.
+
+### Bounded Stage 4 target and ISA qualification
+
+Stage 4 changes only the target/execution endpoint dimension around the same
+Stage 1 Component, Wasmtime source/destination runtime, timer/KV profile, and
+31-case registry. Within the matrix it fixes the host kernel,
+`host-process-isolation` substrate identity, and
+`substrate_host SqliteProvider with bundled rusqlite` provider identity rather
+than mixing resource, runtime, and provider changes into the target matrix.
+Three named endpoints are admitted:
+
+- `Hx` is an artifact-owned x86-64 worker executing natively on x86-64 Linux;
+- `Qx` is the artifact-owned x86-64 worker executing through the
+  artifact-owned `qemu-x86_64` with `-cpu max` and the identified `/` sysroot;
+  and
+- `Qa` is an artifact-owned AArch64 worker executing through the artifact-owned
+  `qemu-aarch64` with `-cpu max` and the identified
+  `/usr/aarch64-linux-gnu` sysroot.
+
+The target worker protocol returns a nonce-bound hello containing target
+triple, ISA, OS, ABI, endianness, pointer width, executed-worker digest, and
+recorded build source and Rust/Cargo toolchain identity. The orchestrator independently records
+`/usr/bin/uname -s -r -m`, including the executable identity, exact argv, exit
+status, parsed Linux/x86-64 identity, and raw stdout/stderr artifacts. QEMU-user
+changes user-space instruction execution and loader/sysroot selection but uses
+the host kernel. Consequently, `Qa` is emulated AArch64 userspace evidence, not
+real AArch64 hardware or an AArch64-kernel qualification.
+
+The two admitted claims are exact cell sets:
+
+- `named-target-substrate-continuity-v1`: `Hx->Hx`, `Hx->Qx`, `Qx->Hx`, and
+  `Qx->Qx`;
+- `emulated-cross-isa-continuity-v1`: `Qx->Qx`, `Qx->Qa`, `Qa->Qx`, and
+  `Qa->Qa`.
+
+Their shared `Qx->Qx` control yields 7 unique cells. Each cell runs all 31
+cases, producing 31 × 7 = 217 case executions. Every inner Stage 1 bundle is
+independently verified, Stage 2 normalization is independently recomputed, and
+the outer verifier requires 31 equality groups to contain identical normalized
+observations across all 7 cells.
+
+The cross-ISA claim is semantic, not binary. The Wasm Component and portable
+state/profile are held constant, while the x86-64 and AArch64 `visa-system`
+workers are separately compiled ELF binaries whose machine types are checked.
+Nothing in this result says that a Wasmtime AOT image or other native binary can
+move between ISAs.
+
+The Stage 4 publication protocol is fail closed. A durable
+`stage4-incomplete` marker exists before target acquisition or cell execution,
+and prepublication verification requires it. After staged verification passes,
+the publisher removes the marker and then syncs the root; published-mode
+verification rejects any remaining marker. `stage4-status.json` is a runner
+progress diagnostic, not the publication commit record: failures after status
+initialization normally retain it, while an earlier status-write failure may
+leave only the marker and a later outer-gate failure may leave a marker-free
+published root. The verifier derives the exact artifact inventory from the
+evidence, matrix, endpoint receipts, cells, and inner Stage 1 bundles. It
+rejects missing or unmanifested files and directories, temporary files,
+symlinks, multi-link regular files, and special entries.
+
+Relocation does not rewrite evidence. `execution_artifact_root` is the
+historical absolute root used to verify the retained owned-worker/QEMU argv;
+current artifact reads are relative to the verifier-supplied root. The local
+gate verified the original root, moved the whole directory to a different
+absolute path without changing any JSON, and verified it again. The historical
+path remained available only for launcher-argv checks; no artifact was read
+from the old location. Uploaded/downloaded-copy verification remains pending
+until exact-SHA CI.
+
+The `performance-observations` case preserves its original 50 ms workload
+timer. Steady-state samples remain target-speed-dependent, but the case waits
+for the timer plus the established margin before entering quiescence and then
+requires the deterministic `Completed` branch. This prevents measurement or
+QEMU overhead from turning performance variance into semantic inequality and
+does not create a production performance claim.
+
+The claim guards explicitly exclude real AArch64 hardware, the legacy no-std
+reference kernel, real-device enforcement, Stage 3 file/logical-request
+resources across targets, a second Stage 4 runtime, AOT-binary portability,
+cross-host execution, 32-bit or big-endian targets, hostile-host or
+confidential continuity, and production/performance readiness. The no-std
+reference kernel is recorded as unsupported because its runtime is not linked
+and its legacy engine remains a stub; real AArch64 hardware is recorded as
+not-run because this qualification uses QEMU-user. The bounded implementation
+and local evidence are in place, but exact-SHA pushed CI is pending, so this
+document does not mark Roadmap Stage 4 complete.
 
 ## Canonical state versus native binding
 
@@ -471,7 +564,10 @@ coordinator, semantic-state, and evidence boundaries without adding a second
 semantic authority. Stage 3A and Stage 3B then extend the shared profile port
 and reducer/coordinator path with bounded regular-file and logical-request
 extensions, while retaining separate resource-specific WIT, codecs, providers,
-registries, and verifiers. As the broader repository evolves:
+registries, and verifiers. Bounded Stage 4 next varies the named target and
+QEMU-user execution endpoints around the fixed Stage 1 Wasmtime timer/KV
+control, without importing ISA-, loader-, or QEMU-specific identity into the
+portable semantic core. As the broader repository evolves:
 
 - do not expand legacy universal object, command, event, or snapshot schemas;
 - migrate one complete lifecycle slice at a time and delete the replaced model
@@ -499,10 +595,14 @@ Wasmtime/Wacogo cells over the same x86-64/amd64 Linux timer/KV profile, with
 124/124 executions and 31/31 equality groups passing independent verification.
 Roadmap Stage 2 is complete for this named matrix and claim. Cross-host
 transport, alternative persistence and lease services, compatibility windows,
-cross-ISA/target/substrate matrices, confidential continuity, performance
-targets, and production readiness remain unimplemented. Roadmap Stage 3 is
-complete for the two bounded resource profiles described above after their
-stage-closing implementation revision passed pushed CI at its exact commit.
-They do not claim arbitrary directory trees or open descriptors, preservation
-of raw live TCP, generic future/stream continuation, a general async runtime,
-or a qualified second Stage 3 runtime.
+confidential continuity, performance targets, and production readiness remain
+unimplemented. Roadmap Stage 3 is complete for the two bounded resource
+profiles described above after their stage-closing implementation revision
+passed pushed CI at its exact commit. They do not claim arbitrary directory
+trees or open descriptors, preservation of raw live TCP, generic future/stream
+continuation, a general async runtime, or a qualified second Stage 3 runtime.
+Bounded Stage 4 is implemented and locally verified for the exact Hx/Qx/Qa
+matrix described above, including relocated-bundle verification, but its
+exact-SHA pushed CI is pending and it is not yet marked complete. It does not
+extend the claims to real ARM hardware, AOT-binary portability, Stage 3
+resources across targets, the no-std kernel, or a second Stage 4 runtime.

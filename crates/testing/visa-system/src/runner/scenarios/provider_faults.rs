@@ -69,7 +69,7 @@ fn run_before_activation_fault(harness: &mut CaseHarness) -> Result<(), RunnerEr
     archive_supplemental_source(harness, source)?;
 
     let mut recovered = spawn_initialized(
-        &harness.executable,
+        &harness.launchers,
         &case_id,
         WorkerInitialization::new(
             "supplemental-source-retry",
@@ -120,7 +120,7 @@ fn run_after_activation_fault(harness: &mut CaseHarness) -> Result<(), RunnerErr
     archive_supplemental_source(harness, source)?;
 
     let mut recovered = spawn_initialized(
-        &harness.executable,
+        &harness.launchers,
         &case_id,
         WorkerInitialization::new(
             "supplemental-source-recovery",
@@ -194,7 +194,7 @@ fn run_before_journal_fault(harness: &mut CaseHarness) -> Result<(), RunnerError
     archive_supplemental_source(harness, source)?;
 
     let mut recovered = spawn_initialized(
-        &harness.executable,
+        &harness.launchers,
         &case_id,
         WorkerInitialization::new(
             "supplemental-source-retry",
@@ -247,7 +247,7 @@ fn run_after_journal_fault(harness: &mut CaseHarness) -> Result<(), RunnerError>
     archive_supplemental_source(harness, source)?;
 
     let mut recovered = spawn_initialized(
-        &harness.executable,
+        &harness.launchers,
         &case_id,
         WorkerInitialization::new(
             "supplemental-source-recovery",
@@ -299,7 +299,7 @@ fn supplemental_source_worker(
     })?;
     let database = CaseDatabase::new(&harness.work_root, &case_id)?;
     let source = spawn_initialized(
-        &harness.executable,
+        &harness.launchers,
         &case_id,
         WorkerInitialization::new(
             "supplemental-source",

@@ -4,14 +4,17 @@ use visa_conformance::{
 use visa_runtime::canonical_digest;
 
 use super::{
-    RunnerError, WORKER_STARTUP_TIMEOUT, WORKER_TIMEOUT, WorkerClient,
+    RunnerError, WORKER_STARTUP_TIMEOUT, WorkerClient,
     artifacts::{
         assertions_json_lines, binding_for_claim, receipt_artifact, semantic_traces,
         transcript_json_lines,
     },
     harness::{CaseHarness, DumpData},
     registry::fault_schedule,
-    support::{WorkerInitialization, archive_client, digest_hex, spawn_initialized},
+    support::{
+        WorkerInitialization, archive_client, digest_hex, spawn_initialized,
+        spawn_uninitialized_for_role,
+    },
 };
 use crate::{
     evidence::{CaseAuthorityRecord, CaseExecutionRecord},
@@ -51,10 +54,12 @@ pub(super) fn finalize_case(
                 case_id: harness.definition.id.to_owned(),
                 detail: "revocation outcome has no live exported source state".to_owned(),
             })?;
-            let audit_label = format!("{}-source-audit", harness.definition.id);
-            let mut source_audit =
-                WorkerClient::spawn(&harness.executable, audit_label, WORKER_TIMEOUT)
-                    .map_err(|source| harness.worker_error("source-audit", source))?;
+            let mut source_audit = spawn_uninitialized_for_role(
+                &harness.launchers,
+                harness.definition.id,
+                "source-audit",
+                WorkerRole::Source,
+            )?;
             let initialization = source_audit
                 .request_with_timeout(
                     WorkerCommand::Initialize {
@@ -85,7 +90,7 @@ pub(super) fn finalize_case(
         }
         Stage1ExpectedOwnership::SourceRetained => {
             let mut source_audit = spawn_initialized(
-                &harness.executable,
+                &harness.launchers,
                 harness.definition.id,
                 WorkerInitialization::new(
                     "source-audit",
@@ -134,10 +139,12 @@ pub(super) fn finalize_case(
                 format!("response={source_probe:?}"),
             )?;
 
-            let audit_label = format!("{}-source-audit", harness.definition.id);
-            let mut source_audit =
-                WorkerClient::spawn(&harness.executable, audit_label, WORKER_TIMEOUT)
-                    .map_err(|source| harness.worker_error("source-audit", source))?;
+            let mut source_audit = spawn_uninitialized_for_role(
+                &harness.launchers,
+                harness.definition.id,
+                "source-audit",
+                WorkerRole::Source,
+            )?;
             let initialization = source_audit
                 .request_with_timeout(
                     WorkerCommand::Initialize {
@@ -222,7 +229,7 @@ pub(super) fn finalize_case(
                 detail: "committed outcome has no snapshot".to_owned(),
             })?;
             let mut destination_audit = spawn_initialized(
-                &harness.executable,
+                &harness.launchers,
                 harness.definition.id,
                 WorkerInitialization::new(
                     "destination-audit",

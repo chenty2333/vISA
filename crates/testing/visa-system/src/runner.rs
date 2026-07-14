@@ -27,6 +27,8 @@ pub struct Stage1RunOutput {
     pub matrix_manifest_path: PathBuf,
     pub source_runtime: RuntimeIdentityView,
     pub destination_runtime: RuntimeIdentityView,
+    pub source_target: TargetHelloObservation,
+    pub destination_target: TargetHelloObservation,
 }
 
 #[derive(Debug)]
@@ -37,6 +39,7 @@ pub enum RunnerError {
     Assertion { case_id: String, detail: String },
     Fixture { case_id: String, detail: String },
     Registry { detail: String },
+    TargetProbe { role: &'static str, source: WorkerLauncherError },
     Clock,
 }
 
@@ -57,6 +60,9 @@ impl fmt::Display for RunnerError {
                 write!(formatter, "{case_id} fixture failed: {detail}")
             }
             Self::Registry { detail } => write!(formatter, "Stage 1 registry: {detail}"),
+            Self::TargetProbe { role, source } => {
+                write!(formatter, "{role} target preflight failed: {source}")
+            }
             Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
         }
     }
@@ -67,19 +73,22 @@ impl std::error::Error for RunnerError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Worker { source, .. } => Some(source),
+            Self::TargetProbe { source, .. } => Some(source),
             _ => None,
         }
     }
 }
 
+mod launcher;
 mod registry;
 mod worker_client;
 
+pub use launcher::{RoleLaunchers, TargetHelloObservation, WorkerLauncher, WorkerLauncherError};
 pub use worker_client::{TranscriptLine, TranscriptStream, WorkerClient, WorkerClientError};
 
 mod stage1;
 
-pub use stage1::{run_stage1, run_stage1_with_runtimes};
+pub use stage1::{run_stage1, run_stage1_with_launchers, run_stage1_with_runtimes};
 mod stage2;
 
 pub use stage2::{

@@ -17,13 +17,17 @@ The supported development environment and current CI parity boundary is the
 - the `nightly-2026-06-07` Rust toolchain declared by both `Dockerfile` and
   `rust-toolchain.toml`;
 - `rust-src`, `rustfmt`, `clippy`, and `llvm-tools-preview`;
-- the `wasm32-unknown-unknown` and `x86_64-unknown-none` targets;
+- the `wasm32-unknown-unknown`, `x86_64-unknown-none`, and
+  `aarch64-unknown-linux-gnu` targets;
 - Node 24.15.0 with V8 13.6.233.17-node.48, installed from the official
   architecture-specific archive after SHA-256 verification;
 - on linux/amd64 image builds, the official Go 1.26.5 archive plus the
   source-lock-bound Wacogo module zip and offline module-cache seed used only by
   the x86-64 Linux Strict Stage 2 gate;
-- QEMU and OVMF for the current x86_64 kernel runner; and
+- QEMU and OVMF for the current x86_64 kernel runner;
+- the GNU AArch64 cross-C toolchain, the AArch64 glibc development sysroot at
+  `/usr/aarch64-linux-gnu`, and QEMU-user `qemu-x86_64`/`qemu-aarch64` for the
+  bounded Stage 4 matrix; and
 - the C, autotools, and Linux packages used by the LTP helpers.
 
 The Node x64 and arm64 archive digests are copied from the official
@@ -35,9 +39,12 @@ provides local/CI parity rather than a bit-reproducible release toolchain.
 Release claims require all inputs pinned.
 
 Host-native Cargo commands are useful for short edit cycles, but the host is
-not the CI parity boundary. A host workflow must independently provide
-the declared Rust toolchain, targets, QEMU/OVMF when required, and any external
-workload dependencies.
+not the CI parity boundary. A host workflow must independently provide the
+declared Rust toolchain, targets, cross linker, target glibc sysroot,
+QEMU/OVMF or QEMU-user when required, and any external workload dependencies.
+The bounded Stage 4 aggregate additionally fails closed unless its raw
+`/usr/bin/uname -s -r -m` receipt identifies an x86_64 Linux orchestrator
+execution environment.
 
 On SELinux hosts, Compose disables container labeling so the workspace remains
 accessible. After changing Docker group membership, start a new login session.
@@ -64,8 +71,9 @@ volumes by default.
 
 ## Repository gates
 
-The repository exposes two cumulative repository tiers, six standalone system
-gates, and one Stage 3 aggregate. Run the ordinary edit-loop gate with:
+The repository exposes two cumulative repository tiers, the Stage 1/2/3
+standalone system gates, one Stage 3 aggregate, and one complete bounded Stage
+4 aggregate with two edit-loop aliases. Run the ordinary edit-loop gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh fast
@@ -117,6 +125,22 @@ Run both Stage 3 profiles in sequence with:
 
 ```sh
 scripts/run-docker-ci-gate.sh system-stage3
+```
+
+Run the complete bounded Stage 4 target/substrate and emulated cross-ISA matrix
+with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage4
+```
+
+`system-stage4-target` and `system-stage4-isa` are names for focused edit
+loops, not smaller claim gates. Both currently fail closed by running the same
+complete seven-cell aggregate:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage4-target
+scripts/run-docker-ci-gate.sh system-stage4-isa
 ```
 
 With no tier argument the wrapper runs `full`. It validates the Compose
@@ -247,6 +271,89 @@ do not claim arbitrary directory trees, devices, FIFOs, open fds, arbitrary
 live TCP, socket state, generic future/stream continuation, or a general async
 runtime.
 
+`system-stage4` holds the Wasmtime implementation, timer/KV profile, and
+31-case Stage 1 registry fixed while varying three target execution endpoints:
+
+```text
+Hx = native x86_64-unknown-linux-gnu worker
+Qx = the byte-identical x86_64 worker under owned qemu-x86_64 -cpu max -L /
+Qa = an aarch64-unknown-linux-gnu worker under owned qemu-aarch64 -cpu max
+     -L /usr/aarch64-linux-gnu
+```
+
+It cross-builds release x86-64 runner/worker/verifier binaries and the release
+AArch64 worker, executes these seven unique cells, and independently verifies
+the result:
+
+```text
+Hx -> Hx   Hx -> Qx   Qx -> Hx   Qx -> Qx
+Qx -> Qa   Qa -> Qx   Qa -> Qa
+```
+
+That is 217 case executions, seven independently verified inner Stage 1
+bundles, and 31 normalized observable groups compared across all seven cells.
+The Stage 4 release build locks its own Component byte digest; it uses the same
+Stage 1 source/WIT contract but is intentionally a different build artifact
+from Strict Stage 2's dev-profile Component.
+The aggregate publishes only `named-target-substrate-continuity-v1` for the
+four Hx/Qx cells and `emulated-cross-isa-continuity-v1` for the four Qx/Qa
+cells; the shared `Qx -> Qx` cell belongs to both claims. Workers, QEMU
+executables, launcher/build/sysroot receipts, raw nonce-bound target hellos,
+resolved loader-dependency digests, and the raw `uname` host receipt are
+retained in the artifact root. Together with Hx's direct launcher, the host
+receipt binds the run to an execution environment reporting x86-64 Linux and a
+kernel release. It is not hardware attestation, bare-metal evidence, proof that
+no outer virtualization/binfmt layer exists, or a cross-host proof.
+
+The Stage 4 writer starts with `stage4-incomplete` and keeps
+`stage4-status.json` after its initial status write succeeds. Runner failures
+before publication normally retain those diagnostics; an earlier status-write
+failure may retain only the marker. A success removes the status file, verifies
+the complete staged artifact graph, and removes the incomplete marker only when
+publication commits. A subsequent independent-verifier or relocation failure
+is represented by the outer gate exit/log and does not recreate those runner
+diagnostics. The separate
+`visa-conformance stage4` process then checks all inner evidence, independently
+recomputes normalization, validates the exact artifact set, and rejects native
+fallback or claim expansion. The gate next renames the complete directory to
+an unused `-relocated` path without rewriting any JSON and runs the verifier a
+second time. `matrix.json` deliberately retains the historical execution root
+for launcher-argv provenance while artifact lookup uses the new verifier root.
+Unit negative coverage adds an unmanifested file, together with temporary,
+symlink, hardlink, and special entries, and requires exact-set rejection.
+
+The shared `performance-observations` input remains the original 50 ms timer.
+Raw steady-state measurements are target-speed-dependent, so the runner now
+waits for that timer outside the measured interruption interval, requires the
+`Completed` safe-point branch before freeze, and verifies that restore does not
+recreate it. This removes the observed QEMU-dependent Pending-versus-Completed
+flake without lengthening or silently replacing the Stage 1 workload input.
+
+This bounded matrix does not qualify real AArch64 hardware, the legacy
+no-std/reference kernel, real-device enforcement, either Stage 3 resource
+profile across targets, a second Stage 4 runtime, AOT binary portability,
+cross-host execution, 32-bit or big-endian targets, hostile-host
+confidentiality, performance, or production readiness. The Strict Stage 2
+Wasmtime/Wacogo result remains a separate independent-runtime control and is
+not inherited by Stage 4.
+
+After one current image build, the stage-closing local control sweep is:
+
+```sh
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build full
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-jco-node
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage2
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage2-strict
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage3a
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage3b
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage4
+```
+
+`full` and every `system*` tier are standalone; no green tier implies one of
+the omitted controls. The two Stage 4 aliases need not be repeated because they
+execute the same aggregate.
+
 ## Host Cargo commands
 
 The repository defines these target-specific aliases in `.cargo/config.toml`:
@@ -274,15 +381,19 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` implements cumulative `fast`/`full`, six standalone system
-   gates, and the Stage 3 aggregate inside the development environment.
+   `ci-gate.sh` implements cumulative `fast`/`full`, the standalone system
+   gates, the Stage 3 aggregate, and the complete Stage 4 aggregate inside the
+   development environment.
 2. **System evidence:** `ci-gate.sh system`, `system-jco-node`, and
    `system-stage2` preserve the Stage 1 and legacy v2 paths;
    `system-stage2-strict` adds the unified locked Wasmtime/Wacogo v3 path;
    `system-stage3a` and `system-stage3b` add the two bounded Wasmtime-only
-   resource profiles, while `system-stage3` invokes both. All orchestrate real
-   runners followed by independent verifier processes. Invoke the binaries
-   directly only when investigating a retained artifact root.
+   resource profiles, while `system-stage3` invokes both. `system-stage4`
+   supplies the bounded native/QEMU-user target and cross-ISA aggregate;
+   `system-stage4-target` and `system-stage4-isa` currently invoke that same
+   full matrix. All orchestrate real runners followed by independent verifier
+   processes. Invoke the binaries directly only when investigating a retained
+   artifact root.
 3. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
@@ -307,6 +418,16 @@ runners behind a small developer-facing surface.
 LTP caches below `.ci-cache/`; the normal Compose configuration uses named
 volumes. LTP build helpers default to an XDG or home cache outside repository
 build output because their artifacts can be large.
+
+Stage 4 output is written below `target/visa-system/`; a successful run ends in
+`stage4-*-relocated/` because relocation is part of the gate, not a cleanup
+rename. With `--ci-cache`, the evidence root is host-visible below
+`.ci-cache/target/visa-system/`. A prepublication runner failure normally leaves
+a partial root with its marker and, after initialization, status diagnostics;
+a later gate failure may instead leave a marker-free published root. The GitHub
+Stage 4 job additionally tees gate output to
+`.ci-cache/target/visa-system/stage4-ci.log`; `--ci-cache` and the local Docker
+wrapper do not create that log by themselves.
 
 Local LTP binaries, generated manifests, logs, reports, and other runner output
 must use a scenario-specific path below `target/<scenario>/` or a location
@@ -339,16 +460,28 @@ Choose validation based on the claim affected by the change:
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
+The Stage 4 implementation is locally verified, but its roadmap status remains
+open until a pushed stage-closing revision passes the complete GitHub Actions
+workflow at that exact SHA. CI uses two parallel Docker jobs: the existing job
+runs `full`, Stage 1, JcoNode, legacy and Strict Stage 2, and Stage 3A/B; the
+separate Stage 4 job runs `system-stage4` and uploads its evidence/log on
+success or failure. Both jobs, not only the Stage 4 job, must pass at the same
+commit before the bounded stage can be marked complete.
+
 ## Next validation expansion
 
-`fast`, `full`, six standalone system gates, and the Stage 3 aggregate are the
-implemented root interface. The legacy JcoNode v2 matrix proves a second
+`fast`, `full`, the Stage 1/2/3 standalone gates, the Stage 3 aggregate, and the
+bounded Stage 4 aggregate are the implemented root interface. The legacy
+JcoNode v2 matrix proves a second
 translated execution path, not a fully independent Component Model
 implementation. The separate source-lock-bound Wasmtime/Wacogo v3 matrix
 supplies that independence and only the x86-64 Linux timer/KV
 `strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
-bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. A second
-Stage 3 runtime, broader file/network families, cross-process Stage 3 workers,
-cross-ISA/target/substrate, confidential, release, performance, and production
+bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Stage 4
+locally adds only the named native/QEMU-user target-substrate and emulated
+x86-64/AArch64 timer/KV claims described above; exact-SHA pushed-CI closure is
+still pending. A second Stage 3 runtime, broader file/network families,
+cross-process Stage 3 workers, real hardware/reference-kernel/device cells,
+cross-host execution, confidential, release, performance, and production
 claims remain unavailable until their exact cells and provenance inputs
 execute.

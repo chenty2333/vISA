@@ -36,6 +36,10 @@ pub(super) fn run_completed_timer_handoff(harness: &mut CaseHarness) -> Result<(
     )?;
     harness.export(transfer)?;
     harness.normal_commit()?;
+    assert_completed_timer_not_recreated(harness)
+}
+
+fn assert_completed_timer_not_recreated(harness: &mut CaseHarness) -> Result<(), RunnerError> {
     let result = harness.destination_success(WorkerCommand::PollTimer { deliver: true })?;
     let (poll, delivered, view) = timer_result(harness.definition.id, result)?;
     harness.observe(
@@ -290,8 +294,18 @@ pub(super) fn run_performance_case(harness: &mut CaseHarness) -> Result<(), Runn
         metric: Stage1PerformanceMetric::SteadyStateCost,
         samples: steady,
     });
+    // The steady-state samples are intentionally target-speed-dependent. Wait
+    // outside the interruption interval and select one deterministic semantic
+    // branch before freezing, so a slower QEMU target cannot turn measurement
+    // overhead into a Pending-versus-Completed continuity difference.
+    thread::sleep(Duration::from_nanos(harness.fixture.activation.delay_ns) + TIMER_MARGIN);
     harness.begin_quiesce()?;
     let transfer = harness.freeze()?;
+    harness.observe(
+        "performance-timer-completion-captured",
+        matches!(transfer.timer, SafePointTimerView::Completed { .. }),
+        format!("timer={:?}", transfer.timer),
+    )?;
     let transfer = harness.export(transfer)?;
     let snapshot_size = serde_json::to_vec(
         transfer.envelope.as_ref().expect("export populated the snapshot envelope"),
@@ -306,7 +320,7 @@ pub(super) fn run_performance_case(harness: &mut CaseHarness) -> Result<(), Runn
         samples: vec![snapshot_size],
     });
     harness.normal_commit()?;
-    harness.deliver_pending_timer()?;
+    assert_completed_timer_not_recreated(harness)?;
     harness.observe(
         "raw-performance-samples-recorded",
         harness.performance.len() == 3
