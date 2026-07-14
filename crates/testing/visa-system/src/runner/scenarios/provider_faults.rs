@@ -8,6 +8,7 @@ use super::{
         support::{WorkerInitialization, archive_client, spawn_initialized, state_result},
     },
     common::abort_precommit_to_source,
+    success::finish_handoff_with_precompleted_timer,
 };
 use crate::{
     fixture::{FixtureOptions, FixtureSpec},
@@ -364,11 +365,7 @@ pub(super) fn run_unknown_kv_reconciliation(harness: &mut CaseHarness) -> Result
             dump.canonical_state.key_value.last_version, dump.fault_observation
         ),
     )?;
-    harness.begin_quiesce()?;
-    let transfer = harness.freeze()?;
-    harness.export(transfer)?;
-    harness.normal_commit()?;
-    harness.deliver_pending_timer()
+    finish_handoff_with_precompleted_timer(harness)
 }
 
 pub(super) fn run_durable_write_failure(harness: &mut CaseHarness) -> Result<(), RunnerError> {

@@ -29,7 +29,7 @@ use rejections::{
 use success::{
     assert_broader_policy_input, assert_duplicate_kv_replay, assert_evidence_identities,
     assert_narrow_destination_authority, run_cancelled_timer_handoff, run_completed_timer_handoff,
-    run_performance_case, run_repeated_validation_prepare,
+    run_handoff_with_precompleted_timer, run_performance_case, run_repeated_validation_prepare,
 };
 
 pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcome, RunnerError> {
@@ -71,9 +71,9 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
         }
         CaseKind::KvDuplicate => {
             // This case proves operation replay, not timer-pending behavior.
-            // Complete the timer before freeze so slow or descheduled CI hosts
+            // Complete the timer before handoff so slow or descheduled hosts
             // cannot change the case's semantic branch between matrix cells.
-            run_completed_timer_handoff(harness)?;
+            run_handoff_with_precompleted_timer(harness)?;
             assert_duplicate_kv_replay(harness)?;
             Ok(DuplicateKvAppliedOnce)
         }
@@ -155,7 +155,10 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
             Ok(DuplicatePrepareInactive)
         }
         CaseKind::LostCommitAck => {
-            run_pending_handoff(harness, false)?;
+            // This case proves durable commit reconciliation, not timer-pending
+            // behavior. Select the completed branch before the fault window so
+            // host descheduling cannot change its semantics between cells.
+            run_handoff_with_precompleted_timer(harness)?;
             let dump = harness.dump_destination()?;
             harness.observe(
                 "lost-commit-ack-reconciled",

@@ -39,6 +39,29 @@ pub(super) fn run_completed_timer_handoff(harness: &mut CaseHarness) -> Result<(
     assert_completed_timer_not_recreated(harness)
 }
 
+pub(super) fn run_handoff_with_precompleted_timer(
+    harness: &mut CaseHarness,
+) -> Result<(), RunnerError> {
+    harness.bootstrap()?;
+    finish_handoff_with_precompleted_timer(harness)
+}
+
+pub(super) fn finish_handoff_with_precompleted_timer(
+    harness: &mut CaseHarness,
+) -> Result<(), RunnerError> {
+    thread::sleep(Duration::from_nanos(harness.fixture.activation.delay_ns) + TIMER_MARGIN);
+    harness.begin_quiesce()?;
+    let transfer = harness.freeze()?;
+    harness.observe(
+        "pre-handoff-completion-captured",
+        matches!(transfer.timer, SafePointTimerView::Completed { .. }),
+        format!("timer={:?}", transfer.timer),
+    )?;
+    harness.export(transfer)?;
+    harness.normal_commit()?;
+    assert_completed_timer_not_recreated(harness)
+}
+
 fn assert_completed_timer_not_recreated(harness: &mut CaseHarness) -> Result<(), RunnerError> {
     let result = harness.destination_success(WorkerCommand::PollTimer { deliver: true })?;
     let (poll, delivered, view) = timer_result(harness.definition.id, result)?;

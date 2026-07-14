@@ -178,6 +178,16 @@ typed traces, receipts, faults, authority evidence, and provenance. It is
 standalone and does not repeat `full`. This is the basis for the named
 single-runtime reference-cell claim, not a broader continuity claim.
 
+Timer state is selected by the case that owns the claim. The dedicated positive,
+paused, completed, and cancelled timer cases retain their distinct branches.
+`kv-duplicate-idempotent-request`, `kv-unknown-outcome`, and
+`commit-acknowledgement-lost` instead wait for the unchanged 50 ms timer before
+starting handoff or the commit fault window, require the `Completed` snapshot
+branch, and prove that restore does not recreate it. Their claims concern KV
+replay/reconciliation or durable commit reconciliation, not timer-pending
+behavior. This keeps host descheduling out of those claims without changing the
+workload input or adding a Stage 2 normalization exclusion.
+
 ### Stage 2 system cells
 
 `system-jco-node` executes the unchanged Stage 1 registry with JcoNode selected
