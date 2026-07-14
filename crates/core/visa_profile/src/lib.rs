@@ -7,12 +7,210 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use contract_core::{
-    CONTRACT_VERSION, DeliveryPolicy, ExtensionSupport, SchemaVersion, TimerClock,
+    CONTRACT_VERSION, DeliveryPolicy, EffectKind, EffectResult, EntityRef, Extension,
+    ExtensionSupport, Identity, ProfileAccess, Rights, SchemaVersion, TimerClock,
 };
 use serde::{Deserialize, Serialize};
 
+mod logical_request;
+mod regular_file;
+
+pub use logical_request::{
+    LOGICAL_REQUEST_EXTENSION_ID, LOGICAL_REQUEST_EXTENSION_VERSION, LogicalRequestClaim,
+    LogicalRequestIdempotency, LogicalRequestObservation, LogicalRequestOperation,
+    LogicalRequestPhase, LogicalRequestRejection, LogicalRequestReplay, LogicalRequestResult,
+    LogicalRequestState, LogicalRequestTransport, LogicalResponseMetadata,
+    MAX_LOGICAL_REQUEST_BYTES, MAX_LOGICAL_RESPONSE_BYTES, MAX_LOGICAL_RESPONSE_CHUNK_BYTES,
+    decode_logical_request_operation, decode_logical_request_result,
+    encode_logical_request_operation, encode_logical_request_result, logical_request_extension,
+    logical_request_state,
+};
+pub use regular_file::{
+    FileAccessMode, FileDurability, FileLockPolicy, FileLockState, MAX_REGULAR_FILE_BYTES,
+    REGULAR_FILE_EXTENSION_ID, REGULAR_FILE_EXTENSION_VERSION, RegularFileClaim,
+    RegularFileOperation, RegularFileResult, RegularFileState, decode_regular_file_result,
+    encode_regular_file_operation, encode_regular_file_result, regular_file_extension,
+    regular_file_state,
+};
+
 /// Current cooperative-handoff profile version.
 pub const COOPERATIVE_HANDOFF_VERSION: ProfileVersion = ProfileVersion::new(1, 0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuityDisposition {
+    Revalidate,
+    Reconnect,
+    Replay,
+    Reject,
+}
+
+/// Generic header returned to the runtime after a typed profile payload has
+/// been decoded and validated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileResource {
+    pub profile: Identity,
+    pub resource: EntityRef,
+    pub required_rights: Rights,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfilePayloadError {
+    UnknownProfile,
+    MissingExtension,
+    DuplicateExtension,
+    VersionMismatch,
+    InvalidPayload,
+    ResourceMismatch,
+    AccessMismatch,
+    StateConflict,
+    UnsupportedContinuity,
+}
+
+pub fn profile_resources(
+    extensions: &[Extension],
+) -> Result<Vec<ProfileResource>, ProfilePayloadError> {
+    let mut resources = Vec::new();
+    for extension in extensions {
+        match extension.id {
+            REGULAR_FILE_EXTENSION_ID => {
+                let state = regular_file::decode_extension(extension)?;
+                resources.push(ProfileResource {
+                    profile: extension.id,
+                    resource: state.claim.resource,
+                    required_rights: state.claim.required_rights,
+                });
+            }
+            LOGICAL_REQUEST_EXTENSION_ID => {
+                let state = logical_request::decode_extension(extension)?;
+                resources.push(ProfileResource {
+                    profile: extension.id,
+                    resource: state.claim.resource,
+                    required_rights: state.claim.required_rights,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(resources)
+}
+
+pub fn validate_profile_effect(
+    extensions: &[Extension],
+    profile: Identity,
+    resource: EntityRef,
+    access: ProfileAccess,
+    payload: &[u8],
+) -> Result<Rights, ProfilePayloadError> {
+    let extension = unique_extension(extensions, profile)?;
+    match profile {
+        REGULAR_FILE_EXTENSION_ID => {
+            regular_file::validate_effect(extension, resource, access, payload)
+        }
+        LOGICAL_REQUEST_EXTENSION_ID => {
+            logical_request::validate_effect(extension, resource, access, payload)
+        }
+        _ => Err(ProfilePayloadError::UnknownProfile),
+    }
+}
+
+pub fn profile_result_matches(kind: &EffectKind, result: &EffectResult) -> bool {
+    let (
+        EffectKind::Profile { profile, access, payload: operation },
+        EffectResult::Profile { profile: result_profile, payload: result },
+    ) = (kind, result)
+    else {
+        return false;
+    };
+    if profile != result_profile {
+        return false;
+    }
+    match *profile {
+        REGULAR_FILE_EXTENSION_ID => regular_file::result_matches(*access, operation, result),
+        LOGICAL_REQUEST_EXTENSION_ID => logical_request::result_matches(*access, operation, result),
+        _ => false,
+    }
+}
+
+pub fn apply_profile_result(
+    extensions: &mut [Extension],
+    kind: &EffectKind,
+    result: &EffectResult,
+    operation: Identity,
+) -> Result<(), ProfilePayloadError> {
+    let (
+        EffectKind::Profile { profile, access, payload: operation_payload },
+        EffectResult::Profile { profile: result_profile, payload: result_payload },
+    ) = (kind, result)
+    else {
+        return Err(ProfilePayloadError::InvalidPayload);
+    };
+    if profile != result_profile {
+        return Err(ProfilePayloadError::InvalidPayload);
+    }
+    let extension = unique_extension_mut(extensions, *profile)?;
+    match *profile {
+        REGULAR_FILE_EXTENSION_ID => regular_file::apply_result(
+            extension,
+            *access,
+            operation_payload,
+            result_payload,
+            operation,
+        ),
+        LOGICAL_REQUEST_EXTENSION_ID => logical_request::apply_result(
+            extension,
+            *access,
+            operation_payload,
+            result_payload,
+            operation,
+        ),
+        _ => Err(ProfilePayloadError::UnknownProfile),
+    }
+}
+
+/// Validate profile-owned state that must be safe before a canonical freeze.
+/// This does not inspect native handles; it only enforces portable continuity
+/// dispositions that the generic handoff reducer cannot interpret itself.
+pub fn validate_profile_handoff(extensions: &[Extension]) -> Result<(), ProfilePayloadError> {
+    for extension in extensions {
+        match extension.id {
+            REGULAR_FILE_EXTENSION_ID => {
+                regular_file::validate_handoff(extension)?;
+            }
+            LOGICAL_REQUEST_EXTENSION_ID => {
+                logical_request::validate_handoff(extension)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn unique_extension(
+    extensions: &[Extension],
+    profile: Identity,
+) -> Result<&Extension, ProfilePayloadError> {
+    let mut matching = extensions.iter().filter(|extension| extension.id == profile);
+    let extension = matching.next().ok_or(ProfilePayloadError::MissingExtension)?;
+    if matching.next().is_some() {
+        return Err(ProfilePayloadError::DuplicateExtension);
+    }
+    Ok(extension)
+}
+
+fn unique_extension_mut(
+    extensions: &mut [Extension],
+    profile: Identity,
+) -> Result<&mut Extension, ProfilePayloadError> {
+    let mut found = None;
+    for (index, extension) in extensions.iter().enumerate() {
+        if extension.id == profile && found.replace(index).is_some() {
+            return Err(ProfilePayloadError::DuplicateExtension);
+        }
+    }
+    let index = found.ok_or(ProfilePayloadError::MissingExtension)?;
+    Ok(&mut extensions[index])
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

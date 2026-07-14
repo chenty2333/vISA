@@ -1,19 +1,28 @@
 use contract_core::{
     ActivationStatus, AuthorityStatus, CanonicalState, EffectKind, EffectOutcome, EffectRequest,
-    EffectResult, EntityRef, FailureClass, HandoffPhase, IdempotencyKey, Identity, LeaseEpoch,
-    LogicalDurationNanos, NodeIdentity, Rejection, Replay, Rights, VersionedValue,
+    EffectResult, EntityRef, FailureClass, HandoffPhase, IdempotencyKey, Identity, JournalPosition,
+    LeaseEpoch, LogicalDurationNanos, NodeIdentity, OperationRecord, ProfileAccess, Rejection,
+    Replay, Rights, VersionedValue,
 };
 use sha2::{Digest as _, Sha256};
-use substrate_api::{AuthorityPort, JournalPort, KvPort, LeasePort, ProviderErrorKind, TimerPort};
+use substrate_api::{
+    AuthorityPort, JournalPort, KvPort, LeasePort, ProfilePort, ProviderErrorKind, TimerPort,
+};
 use visa_runtime::{CommandReceipt, Coordinator, RuntimeError, canonical_digest};
 
 use crate::{KvFailure, ResourceBindingError, TimerFailure};
 
 /// Provider capabilities required by component imports. Adapter code can only
 /// reach them through the canonical coordinator.
-pub trait AdapterProvider: JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort {}
+pub trait AdapterProvider:
+    JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort + ProfilePort
+{
+}
 
-impl<T> AdapterProvider for T where T: JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort {}
+impl<T> AdapterProvider for T where
+    T: JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort + ProfilePort
+{
+}
 
 #[derive(Clone, Debug)]
 struct BindingContext {
@@ -45,6 +54,56 @@ impl KvBinding {
 
 #[derive(Clone, Debug)]
 pub struct TimerBinding(BindingContext);
+
+/// Opaque engine-local receipt for one versioned resource profile. Typed file
+/// or request state remains in the canonical extension owned by that profile.
+#[derive(Clone, Debug)]
+pub struct ProfileBinding {
+    context: BindingContext,
+    profile: Identity,
+    required_rights: Rights,
+}
+
+impl ProfileBinding {
+    pub fn for_state(state: &CanonicalState, profile: Identity) -> Result<Self, BindingError> {
+        let mut resources = visa_profile::profile_resources(&state.extensions)
+            .map_err(|_| BindingError::InvalidReceipt)?
+            .into_iter()
+            .filter(|resource| resource.profile == profile);
+        let resource = resources.next().ok_or(BindingError::Missing)?;
+        if resources.next().is_some() {
+            return Err(BindingError::Ambiguous);
+        }
+        Ok(Self {
+            context: binding_for(state, resource.resource, resource.required_rights)?,
+            profile,
+            required_rights: resource.required_rights,
+        })
+    }
+
+    pub const fn profile(&self) -> Identity {
+        self.profile
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileCallResult {
+    pub operation: Identity,
+    pub operation_id: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileFailure {
+    Denied,
+    Conflict,
+    StaleBinding,
+    Invalid,
+    Unsupported,
+    Cancelled,
+    Indeterminate(String),
+    Unavailable,
+}
 
 #[derive(Clone, Debug)]
 pub struct BindingSet {
@@ -225,6 +284,148 @@ pub fn timer_cancel<P: AdapterProvider>(
     }
 }
 
+/// Execute a read-only profile observation with an activation-local identity.
+/// Reads deliberately do not accept a guest idempotency key. A new observation
+/// is scoped by the current canonical journal position, while a durable
+/// unresolved observation with the same binding and typed payload is retried
+/// through its original request identity.
+pub fn profile_observe<P: AdapterProvider>(
+    coordinator: &mut Coordinator<P>,
+    binding: &ProfileBinding,
+    payload: Vec<u8>,
+) -> Result<ProfileCallResult, ProfileFailure> {
+    let access = ProfileAccess::Read;
+    validate_profile_binding(coordinator.state(), binding, access)
+        .map_err(profile_binding_error)?;
+    let request = profile_observation_request(
+        &coordinator.state().operations,
+        coordinator.journal_position(),
+        binding,
+        payload,
+    )
+    .map_err(|(error, operation)| profile_runtime_error(error, operation))?;
+    let operation = request.operation;
+    execute_profile_request(coordinator, binding, operation, request)
+}
+
+/// Execute an idempotent mutating or control operation for a typed profile.
+/// The profile owns payload validation and canonical state reduction.
+pub fn profile_execute<P: AdapterProvider>(
+    coordinator: &mut Coordinator<P>,
+    binding: &ProfileBinding,
+    access: ProfileAccess,
+    idempotency_value: &[u8],
+    payload: Vec<u8>,
+) -> Result<ProfileCallResult, ProfileFailure> {
+    if access == ProfileAccess::Read || idempotency_value.is_empty() {
+        return Err(ProfileFailure::Invalid);
+    }
+    validate_profile_binding(coordinator.state(), binding, access)
+        .map_err(profile_binding_error)?;
+    let access_tag = match access {
+        ProfileAccess::Read => b"read".as_slice(),
+        ProfileAccess::Write => b"write".as_slice(),
+        ProfileAccess::Control => b"control".as_slice(),
+    };
+    let idempotency_key =
+        profile_idempotency_key(&binding.context, binding.profile, access_tag, idempotency_value);
+    let operation = operation_for(
+        &[b"profile:".as_slice(), binding.profile.0.as_slice(), b":".as_slice(), access_tag]
+            .concat(),
+        &binding.context,
+        idempotency_key,
+    );
+    let kind = EffectKind::Profile { profile: binding.profile, access, payload };
+    let request = match coordinator
+        .state()
+        .operations
+        .iter()
+        .find(|record| record.request.idempotency_key == idempotency_key)
+    {
+        Some(record)
+            if record.request.resource == binding.context.resource
+                && record.request.subject.identity == binding.context.subject.identity
+                && record.request.kind == kind =>
+        {
+            record.request.clone()
+        }
+        _ => effect_request(&binding.context, operation, idempotency_key, None, kind)
+            .map_err(|error| profile_runtime_error(error, operation))?,
+    };
+    let operation = request.operation;
+    execute_profile_request(coordinator, binding, operation, request)
+}
+
+fn profile_observation_request(
+    operations: &[OperationRecord],
+    position: JournalPosition,
+    binding: &ProfileBinding,
+    payload: Vec<u8>,
+) -> Result<EffectRequest, (RuntimeError, Identity)> {
+    let kind =
+        EffectKind::Profile { profile: binding.profile, access: ProfileAccess::Read, payload };
+    if let Some(request) = operations
+        .iter()
+        .find(|record| {
+            matches!(record.outcome.as_ref(), None | Some(EffectOutcome::Indeterminate { .. }))
+                && profile_observation_matches(&record.request, &binding.context, &kind)
+        })
+        .map(|record| record.request.clone())
+    {
+        return Ok(request);
+    }
+
+    let EffectKind::Profile { payload, .. } = &kind else { unreachable!() };
+    let operation = hash_identity(&[
+        b"visa-profile-observe-v1",
+        &binding.profile.0,
+        &binding.context.resource.identity.0,
+        &binding.context.resource.generation.0.to_be_bytes(),
+        &binding.context.subject.identity.0,
+        &binding.context.subject.generation.0.to_be_bytes(),
+        &binding.context.node.0.0,
+        &binding.context.epoch.0.to_be_bytes(),
+        &position.0.to_be_bytes(),
+        payload,
+    ]);
+    let idempotency_key =
+        IdempotencyKey(hash_identity(&[b"visa-profile-observe-idempotency-v1", &operation.0]).0);
+    effect_request(&binding.context, operation, idempotency_key, None, kind)
+        .map_err(|error| (error, operation))
+}
+
+fn profile_observation_matches(
+    request: &EffectRequest,
+    binding: &BindingContext,
+    kind: &EffectKind,
+) -> bool {
+    request.causal_parent.is_none()
+        && request.node == binding.node
+        && request.subject == binding.subject
+        && request.resource == binding.resource
+        && request.authority == binding.authority
+        && request.lease_epoch == binding.epoch
+        && request.kind == *kind
+}
+
+fn execute_profile_request<P: AdapterProvider>(
+    coordinator: &mut Coordinator<P>,
+    binding: &ProfileBinding,
+    operation: Identity,
+    request: EffectRequest,
+) -> Result<ProfileCallResult, ProfileFailure> {
+    let outcome = execute(coordinator, command_for(operation), request)
+        .map_err(|error| profile_runtime_error(error, operation))?;
+    match outcome {
+        EffectOutcome::Succeeded { result: EffectResult::Profile { profile, payload }, .. }
+            if profile == binding.profile =>
+        {
+            Ok(ProfileCallResult { operation, operation_id: identity_string(operation), payload })
+        }
+        other => Err(profile_outcome_error(other, operation)),
+    }
+}
+
 fn binding_for(
     state: &CanonicalState,
     resource: EntityRef,
@@ -309,6 +510,37 @@ fn validate_binding(
     } else {
         state.timer.claim.resource
     };
+    validate_binding_for_resource(state, binding, expected_resource, required)
+}
+
+fn validate_profile_binding(
+    state: &CanonicalState,
+    binding: &ProfileBinding,
+    access: ProfileAccess,
+) -> Result<(), BindingCheckError> {
+    let required = access.required_rights();
+    if !binding.required_rights.contains(required) {
+        return Err(BindingCheckError::Denied);
+    }
+    let mut resources = visa_profile::profile_resources(&state.extensions)
+        .map_err(|_| BindingCheckError::Stale)?
+        .into_iter()
+        .filter(|resource| resource.profile == binding.profile);
+    let Some(resource) = resources.next() else {
+        return Err(BindingCheckError::Stale);
+    };
+    if resources.next().is_some() || resource.resource != binding.context.resource {
+        return Err(BindingCheckError::Stale);
+    }
+    validate_binding_for_resource(state, &binding.context, resource.resource, required)
+}
+
+fn validate_binding_for_resource(
+    state: &CanonicalState,
+    binding: &BindingContext,
+    expected_resource: EntityRef,
+    required: Rights,
+) -> Result<(), BindingCheckError> {
     if binding.resource != expected_resource
         || binding.subject != state.component
         || binding.node != state.activation.node
@@ -423,6 +655,26 @@ fn idempotency_key_for(binding: &BindingContext, domain: &[u8], value: &[u8]) ->
     )
 }
 
+fn profile_idempotency_key(
+    binding: &BindingContext,
+    profile: Identity,
+    access_tag: &[u8],
+    value: &[u8],
+) -> IdempotencyKey {
+    IdempotencyKey(
+        hash_identity(&[
+            b"visa-profile-continuity-idempotency-v1",
+            &binding.resource.identity.0,
+            &binding.resource.generation.0.to_be_bytes(),
+            &binding.subject.identity.0,
+            &profile.0,
+            access_tag,
+            value,
+        ])
+        .0,
+    )
+}
+
 fn idempotency_from_identity(identity: Identity) -> IdempotencyKey {
     IdempotencyKey(hash_identity(&[b"visa-read-idempotency-v1", &identity.0]).0)
 }
@@ -481,6 +733,71 @@ const fn timer_binding_error(error: BindingCheckError) -> TimerFailure {
     match error {
         BindingCheckError::Stale => TimerFailure::StaleBinding,
         BindingCheckError::Denied => TimerFailure::Denied,
+    }
+}
+
+const fn profile_binding_error(error: BindingCheckError) -> ProfileFailure {
+    match error {
+        BindingCheckError::Stale => ProfileFailure::StaleBinding,
+        BindingCheckError::Denied => ProfileFailure::Denied,
+    }
+}
+
+fn profile_runtime_error(error: RuntimeError, operation: Identity) -> ProfileFailure {
+    match error {
+        RuntimeError::Rejected(Rejection::StaleGeneration { .. })
+        | RuntimeError::Rejected(Rejection::LeaseEpochMismatch { .. })
+        | RuntimeError::Rejected(Rejection::NodeMismatch { .. }) => ProfileFailure::StaleBinding,
+        RuntimeError::Rejected(Rejection::UnknownAuthority { .. })
+        | RuntimeError::Rejected(Rejection::AuthorityRevoked { .. })
+        | RuntimeError::Rejected(Rejection::AuthorityAmplification { .. })
+        | RuntimeError::Rejected(Rejection::InsufficientAuthority { .. })
+        | RuntimeError::Rejected(Rejection::AuthoritySubjectMismatch)
+        | RuntimeError::Rejected(Rejection::AuthorityResourceMismatch) => ProfileFailure::Denied,
+        RuntimeError::Rejected(Rejection::DuplicateOperation { .. })
+        | RuntimeError::Rejected(Rejection::IdempotencyConflict { .. })
+        | RuntimeError::Rejected(Rejection::OutcomeMismatch) => ProfileFailure::Conflict,
+        RuntimeError::Rejected(Rejection::UnknownProfile { .. })
+        | RuntimeError::Rejected(Rejection::InvalidProfilePayload { .. })
+        | RuntimeError::Rejected(Rejection::ProfileMismatch)
+        | RuntimeError::Rejected(Rejection::InvalidRights) => ProfileFailure::Invalid,
+        RuntimeError::OperationOutcomeUnknown { .. }
+        | RuntimeError::JournalOutcomeUnknown { .. } => {
+            ProfileFailure::Indeterminate(identity_string(operation))
+        }
+        RuntimeError::Provider(error) => match error.kind {
+            ProviderErrorKind::Denied | ProviderErrorKind::Revoked => ProfileFailure::Denied,
+            ProviderErrorKind::StaleGeneration | ProviderErrorKind::StaleEpoch => {
+                ProfileFailure::StaleBinding
+            }
+            ProviderErrorKind::Conflict => ProfileFailure::Conflict,
+            ProviderErrorKind::InvalidRequest | ProviderErrorKind::Integrity => {
+                ProfileFailure::Invalid
+            }
+            ProviderErrorKind::Unsupported => ProfileFailure::Unsupported,
+            ProviderErrorKind::OutcomeUnknown => {
+                ProfileFailure::Indeterminate(identity_string(operation))
+            }
+            _ => ProfileFailure::Unavailable,
+        },
+        _ => ProfileFailure::Unavailable,
+    }
+}
+
+fn profile_outcome_error(outcome: EffectOutcome, operation: Identity) -> ProfileFailure {
+    match outcome {
+        EffectOutcome::Failed(failure) => match failure.class {
+            FailureClass::Denied => ProfileFailure::Denied,
+            FailureClass::Conflict => ProfileFailure::Conflict,
+            FailureClass::Integrity => ProfileFailure::Invalid,
+            FailureClass::Unavailable | FailureClass::Internal => ProfileFailure::Unavailable,
+        },
+        EffectOutcome::Indeterminate { .. } => {
+            ProfileFailure::Indeterminate(identity_string(operation))
+        }
+        EffectOutcome::Cancelled { .. } => ProfileFailure::Cancelled,
+        EffectOutcome::Unsupported { .. } => ProfileFailure::Unsupported,
+        EffectOutcome::Succeeded { .. } => ProfileFailure::Invalid,
     }
 }
 
@@ -576,7 +893,7 @@ fn timer_outcome_error(outcome: EffectOutcome) -> TimerFailure {
 
 #[cfg(test)]
 mod tests {
-    use contract_core::{Generation, JournalPosition};
+    use contract_core::{Digest, EvidenceKind, EvidenceRef, Generation, JournalPosition};
 
     use super::*;
 
@@ -623,5 +940,69 @@ mod tests {
             assert_ne!(idempotency_key_for(changed, b"kv-cas", b"request-key"), base_idempotency,);
             assert_ne!(operation_for(b"kv-cas", changed, fixed_idempotency), base_write);
         }
+
+        let profile = Identity::from_u128(12);
+        let base_profile_key = profile_idempotency_key(&base, profile, b"write", b"request-key");
+        for changed in &changed_scopes {
+            let changed_key = profile_idempotency_key(changed, profile, b"write", b"request-key");
+            if changed.resource == base.resource
+                && changed.subject.identity == base.subject.identity
+            {
+                assert_eq!(changed_key, base_profile_key);
+            }
+        }
+    }
+
+    #[test]
+    fn profile_observation_retry_reuses_unresolved_intent_then_advances_after_resolution() {
+        let mut context = binding(5, 6, 7, 8);
+        context.exposed_rights = Rights::PROFILE_READ;
+        let profile = Identity::from_u128(12);
+        let binding = ProfileBinding { context, profile, required_rights: Rights::PROFILE_READ };
+        let payload = b"typed-observation".to_vec();
+
+        let first =
+            profile_observation_request(&[], JournalPosition(10), &binding, payload.clone())
+                .unwrap();
+        let mut records = vec![OperationRecord::prepared(first.clone())];
+
+        let retry =
+            profile_observation_request(&records, JournalPosition(11), &binding, payload.clone())
+                .unwrap();
+        assert_eq!(retry, first);
+        assert_eq!(records.len(), 1, "retry must not add a second durable intent");
+
+        records[0].outcome = Some(EffectOutcome::Indeterminate { evidence: None });
+        let reconcile =
+            profile_observation_request(&records, JournalPosition(12), &binding, payload.clone())
+                .unwrap();
+        assert_eq!(reconcile, first);
+
+        records[0].outcome = Some(EffectOutcome::Succeeded {
+            result: EffectResult::Profile { profile, payload: b"observed".to_vec() },
+            evidence: EvidenceRef {
+                identity: Identity::from_u128(13),
+                kind: EvidenceKind::EffectOutcome,
+                digest: Digest::from_bytes([14; 32]),
+            },
+        });
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    matches!(
+                        record.outcome.as_ref(),
+                        None | Some(EffectOutcome::Indeterminate { .. })
+                    )
+                })
+                .count(),
+            0,
+            "the retried intent must converge instead of leaving unresolved residue",
+        );
+
+        let next =
+            profile_observation_request(&records, JournalPosition(13), &binding, payload).unwrap();
+        assert_ne!(next.operation, first.operation);
+        assert_ne!(next.idempotency_key, first.idempotency_key);
     }
 }

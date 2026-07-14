@@ -4,17 +4,21 @@ Status: current validation truth and target validation contract.
 
 Implementation status: `fast`, `full`, the two legacy same-path system cells,
 the four-cell legacy v2 cross-execution-path matrix, and the separate four-cell
-strict v3 Wasmtime/Wacogo matrix are automated. All current system cells use
-x86-64/amd64 Linux and the timer/KV profile. File/network, cross-ISA,
-confidential, release, and production validation remain outside the implemented
-boundary.
+strict v3 Wasmtime/Wacogo matrix are automated. The Stage 3A bounded
+regular-file and Stage 3B bounded logical-request gates are also automated and
+wired into CI, with an aggregate local command that runs both. All current
+system cells use x86-64/amd64 Linux. Stage 1 and Stage 2 use the timer/KV
+profile; the two Stage 3 gates are separate Wasmtime-to-Wasmtime resource
+profiles and do not inherit the Strict Stage 2 cross-runtime result. Final
+Stage 3 exact-revision CI qualification is pending. Cross-ISA, confidential,
+release, and production validation remain outside the implemented boundary.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-14.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice, the legacy Stage 2 execution-path
-matrix, and the strict Stage 2 runtime matrix. Update it when executable gates
-change.
+matrix, the strict Stage 2 runtime matrix, and the two bounded Stage 3 resource
+profiles. Update it when executable gates change.
 
 ## Validation principle
 
@@ -35,11 +39,13 @@ providers, hand-written reports, or direct canonical-state mutation.
 GitHub Actions runs one Docker-based job on pushes and pull requests. It
 validates the Compose configuration, builds the development image, then runs
 the same `full`, `system`, `system-jco-node`, `system-stage2`, and
-`system-stage2-strict` tier implementations exposed locally by
-`scripts/run-docker-ci-gate.sh`. Each system step uploads its retained artifact
-directory, including partial artifacts after a failure when any exist. The
-strict wrapper additionally retains its Docker log, exit receipt, sidecar, and
-build receipt. Current workflow artifacts use a 14-day retention period.
+`system-stage2-strict`, `system-stage3a`, and `system-stage3b` tier
+implementations exposed locally by `scripts/run-docker-ci-gate.sh`. Each system
+step uploads its retained artifact directory, including partial artifacts after
+a failure when any exist. The strict wrapper additionally retains its Docker
+log, exit receipt, sidecar, and build receipt. Current workflow artifacts use a
+14-day retention period. The local `system-stage3` command runs Stage 3A and
+Stage 3B in sequence; CI runs them as separate uploadable steps.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
@@ -49,6 +55,9 @@ build receipt. Current workflow artifacts use a 14-day retention period.
 | `system-jco-node` | The same 31 registered cases with JcoNode explicitly selected at source and destination, followed by independent Stage 1 validation | The pinned Jco/Node/V8 translated execution cell satisfies the Stage 1 contract without a Wasmtime execution fallback. It does not prove a fully independent Component Model implementation. |
 | `system-stage2` | All four Wasmtime/JcoNode source-destination pairs, 31 cases per pair, four inner Stage 1 validations, and independent outer Stage 2 validation | The same portable state and normalized observable behavior pass in all four declared execution-path cells (124 executions). It does not prove strict runtime independence or cross-ISA portability. |
 | `system-stage2-strict` | Locked Wacogo qualification and reproducible build, focused lifecycle gates, a Wacogo same-path Stage 1 cell, then the exact four Wasmtime/Wacogo cells with 31 cases per cell, four inner validations, and independent strict v3 outer validation | The fixed Component preserves the accepted timer/KV behavior across two independently implemented Component Model runtime lineages in all four directions (124/124 executions and 31/31 equality groups). It establishes only `strict-cross-runtime-continuity` on x86-64 Linux, not another ISA or resource profile. |
+| `system-stage3a` | All 12 accepted bounded regular-file cases through separate source/destination Wasmtime stores, the shared coordinator/profile path, a real Linux regular-file provider, handoff, and independent Stage 3A bundle validation | The `bounded-regular-file-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not imply arbitrary directory trees, devices, FIFOs, already-open fds, atomic exclusion of writers outside the advisory lock/lease protocol, another runtime, or another ISA/substrate. |
+| `system-stage3b` | All 14 accepted bounded logical-request cases through separate source/destination Wasmtime stores, a durable provider ledger, a real bounded loopback TCP protocol/peer, handoff, and independent Stage 3B bundle validation | The `bounded-logical-request-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not preserve arbitrary live TCP, socket sequence state, credential bytes, runtime future/stream state, or prove another runtime. |
+| `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 
 The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
 runtime processes on x86-64 Linux, host-process isolation, and a durable,
@@ -78,7 +87,12 @@ The standard CI job does not currently run:
 - dependency-license, advisory, and duplicate-version policy; no supported
   `cargo deny` gate or reconciled policy is currently installed;
 - QEMU boot/runtime behavior beyond compiling the kernel target;
-- file or network continuity profiles;
+- a qualified second runtime for either Stage 3 resource profile;
+- arbitrary directory-tree/device/FIFO/open-fd continuity or arbitrary live
+  TCP, socket-state, future/stream, and general async-runtime continuity;
+- a process-isolated Stage 3 worker protocol; the current gates use separate
+  source/destination stores, coordinators, and provider instances backed by
+  local SQLite continuity in one OS runner process;
 - a cross-ISA execution matrix;
 - TEE, attestation, KMS, or confidential-continuity integration;
 - release provenance/performance gates or long-running concurrency, recovery,
@@ -86,17 +100,22 @@ The standard CI job does not currently run:
 
 A green CI result establishes the repository checks, both legacy named
 same-path cells, normalized behavior across the four declared Wasmtime/JcoNode
-directions, and the separate source-lock-bound Wasmtime/Wacogo strict matrix.
-The legacy v2 evidence establishes `cross-execution-path-portability`; strict
-v3 establishes `strict-cross-runtime-continuity`. Both claims are limited to
-the fixed x86-64 Linux timer/KV profile. Neither establishes cross-ISA or
-additional-resource continuity, confidential continuity, transparent
-migration, release quality, or production safety.
+directions, the separate source-lock-bound Wasmtime/Wacogo strict matrix, and
+the two bounded Wasmtime-only Stage 3 resource gates. The legacy v2 evidence
+establishes `cross-execution-path-portability`; strict v3 establishes
+`strict-cross-runtime-continuity`. Those Stage 2 claims remain limited to the
+fixed x86-64 Linux timer/KV profile. Stage 3A and Stage 3B separately establish
+only their named regular-file and logical-request profiles with
+`independent_runtime_coverage=false` and Wacogo explicitly unsupported. No
+current result establishes cross-ISA continuity, a second Stage 3 runtime,
+confidential continuity, transparent migration, release quality, or production
+safety.
 
 ## Validation tiers
 
-`fast`, `full`, `system`, `system-jco-node`, `system-stage2`, and
-`system-stage2-strict` are implemented shell commands. `release` and later
+`fast`, `full`, `system`, `system-jco-node`, `system-stage2`,
+`system-stage2-strict`, `system-stage3a`, `system-stage3b`, and the
+`system-stage3` aggregate are implemented shell commands. `release` and later
 claim gates below remain acceptance contracts until their exact matrix runners
 exist.
 
@@ -169,6 +188,105 @@ facts are checked exactly outside normalization. A normalization version may
 exclude only its declared non-portable observations; it cannot expand its
 exclusions to conceal a behavioral difference or malformed inner evidence.
 
+### Stage 3 resource-profile cells
+
+`system-stage3a` runs the fixed 12-case regular-file registry. It exercises
+logical object identity, relative-path rebinding, logical offset, read/write,
+append, truncate, rename and replacement detection, pre-operation detection of
+identity/content/version drift, durability, advisory lock/reacquisition,
+reauthorization, source fencing, indeterminate outcome blocking, and
+idempotent cleanup. The Linux provider uses scoped `openat2` resolution and
+revalidates the native root and file identity with an fd-derived
+device/inode/`STATX_BTIME` tuple. Birth time is required and never silently
+replaced with zero or a device/inode-only fallback. Device, inode, birth time,
+fd, and the absolute provider root are excluded from portable state. This
+detects ordinary inode-number reuse with a different creation timestamp, but
+does not claim a true inode-generation handle, cryptographic identity, or
+hostile-host protection. A deterministic provider race test pauses after the
+redo plan is durable, commits the next lease epoch through another provider,
+then proves that the old source fails the final SQLite fence with no file
+mutation; durable-plan reconciliation is fenced the same way. Drift rejection
+covers state already observable before a provider operation. Concurrent writers
+are ordered or rejected only when they participate in the same advisory
+lock/lease protocol; the gate does not prove atomic compare-and-mutate against
+an uncooperative writer that bypasses it. The race test is a provider test, not
+one of the 12 published case assertions, and the structural bundle verifier does
+not recompute it. The fence orders effect admission; the native file change and
+SQLite outcome are not atomic, so post-effect finalization failure is reported
+as indeterminate and requires reconciliation.
+
+`system-stage3b` runs the fixed 14-case logical-request registry. It exercises
+stable peer and logical-operation identity, provider-level deduplication,
+pending-before-send, lost acknowledgement, unknown completion reconciliation,
+partial-response cursor continuity, timeout, cancellation/completion races,
+credential-reference reacquisition and denial, unsafe replay blocking, source
+fencing, and idempotent cleanup. The provider uses a real bounded loopback TCP
+protocol and durable logical-operation ledger, but the profile explicitly
+rejects raw-live-TCP transport. Socket/TCP sequence state, credential material,
+and runtime future state are absent from portable state and evidence. Its
+`VISALR03` exchange uses a fresh nonce and HMAC-SHA-256 to authenticate the
+configured peer before any application request frame; mismatch cases require
+zero accepted application frames, and the reusable credential is never a wire
+field. Execute is matched to the digest the peer derives from authenticated
+request bytes; Lookup and Cancel explicitly carry the expected digest. The
+provider test suite uses a real-TCP greeting barrier to verify deterministically
+that, after handoff commit, the old source fails the final SQLite
+authority/lease/binding check before an application frame is sent. Ledger
+revision compare-and-save tests under an immediate transaction separately reject
+stale saves and terminal, cursor, or cleanup regression. These provider tests
+are not published 14-case assertions and are not recomputed by the structural
+verifier. The checks do not make a remote effect atomic with the SQLite commit
+or prove general transport encryption.
+
+The `completed-before-freeze` cell removes both the destination-visible
+provider operation entry and the peer operation ledger before reconciliation;
+the retained canonical response metadata must recover the terminal result
+without a second peer execution. `pending-before-send` uses a real TCP failure
+after the peer has received the client hello but before it sends the greeting
+or receives an authenticated application envelope. Peer/credential negative
+assertions are runner-produced from the count of accepted application frames
+and raw payloads captured in the peer-received (client-to-server) direction.
+Those raw frames are not published, so the structural verifier does not
+independently recompute these semantic assertions; the protocol's typed
+greeting/reply structures separately ensure that reusable credential material
+is not a server-to-client wire field.
+
+Each gate creates separate source and destination Wasmtime stores,
+coordinators, and provider instances backed by local SQLite continuity inside
+one OS system-runner process, executes the public
+Component/adapter/coordinator/provider/handoff path, publishes a
+profile-specific evidence bundle, and invokes the independent structural
+`visa-conformance stage3a` or `stage3b` command against the retained artifact
+root. The verifier fixes the schema, claim, case registry/order, terminal
+classes, assertion set, state digests, lease epochs, operation-ID form, artifact
+digests, and runtime identities. It requires
+`independent_runtime_coverage=false` and requires Wacogo to remain explicitly
+unsupported for Stage 3.
+
+The profile and configuration JSON files are publisher-generated, digest-bound
+declarations. The structural verifier checks their exact bytes and publication
+membership, but does not independently parse or enforce their key/value
+semantics.
+
+Unlike the typed Stage 2 transcript normalizer, the current Stage 3 verifier
+does not recompute every case assertion from `trace.json` and the raw before/
+after or request/response bytes. The semantic pass/fail decision is produced by
+the executable system runner from the exact tested revision; the separate
+verifier independently enforces publication completeness, fixed registry and
+assertion shape, scope, identities, digests, epochs, artifact integrity, and
+the no-overclaim boundary. Stage 3 evidence must therefore be described as
+runner-produced semantic evidence plus independent structural verification,
+not as a second independent semantic implementation.
+
+`system-stage3` is only a convenience aggregate that invokes these two gates in
+sequence. The profiles do not form a runtime matrix, and the Strict Stage 2
+Wasmtime/Wacogo conclusion cannot be copied into them. Arbitrary filesystem
+objects, arbitrary live transport continuation, generic future/stream state,
+and general asynchronous-runtime behavior remain outside both claims. The
+single-process topology is sufficient for the current local-rebinding profile
+claims; dual workers, process isolation, cross-host transport, and cross-target
+execution require later qualification.
+
 ### Stable artifact verification boundary
 
 The Linux verifier opens each Stage 1 artifact root once as a directory
@@ -196,6 +314,14 @@ boundary. A same-UID process may still attempt denial of service or, where OS
 policy permits, attack verifier memory/process state. Stage 2 publication-marker
 and directory-topology checks remain part of the controlled single-publisher
 workflow.
+
+The Stage 3 verifiers reuse the same secure artifact-root reader. They reject an
+incomplete publication marker, require unique referenced artifact URIs, open
+each referenced regular file beneath the anchored root, and verify its declared
+size and SHA-256 together with the profile-specific evidence shape. This
+protects the current Stage 3 bundles from ambient-path and unsafe-file
+substitution; it does not upgrade their Wasmtime-only, same-process,
+local-rebinding scope.
 
 JcoNode separately closes its generated-artifact load window with the
 `owned-bytes-stdin-frame-v1` execution carrier. Preflight owns the exact
@@ -259,6 +385,8 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | Single-runtime handoff | Isolated source/destination processes, fresh bindings, real profiled providers, reauthorization, commit/fencing, and lifecycle faults | A second runtime or ISA |
 | Cross-execution-path portability | The unchanged input and 31-case registry in all four Wasmtime/JcoNode directions, four complete inner validations, one normalized outer comparison, disclosed translator lineage, and no execution fallback | Independent Component Model implementations or cross-ISA behavior |
 | Strict cross-runtime continuity | The fixed Component and timer/KV profile in all four Wasmtime/source-lock-bound-Wacogo directions, complete inner validation, exact runtime/build lineage and no-fallback proof, and equality across all 31 normalized groups | Cross-ISA behavior, additional resources, or support by unmodified upstream Wacogo |
+| Bounded regular-file continuity | The fixed 12-case Stage 3A registry through the named Wasmtime source/destination adapter, real scoped Linux file provider, reauthorization/fencing, artifact digests, and independent bundle validation | Arbitrary directory trees, devices, FIFOs, open fds, atomic compare-and-mutate against writers outside the advisory lock/lease protocol, a second runtime, or cross-ISA behavior |
+| Bounded logical-request continuity | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | Cross-ISA continuity | The same accepted workload across each named source/destination ISA pair with identified carrier and providers | Other runtimes or resources |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |
 | Crash-safe handoff | Durable journal/commit records and faults at every lifecycle transition | Arbitrary external-effect atomicity |

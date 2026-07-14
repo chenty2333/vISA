@@ -37,6 +37,105 @@ fn key_value_reads_use_the_same_authority_lease_and_journal_path() {
 }
 
 #[test]
+fn typed_profile_effect_uses_canonical_authority_and_updates_one_extension_state() {
+    use contract_core::ProfileAccess;
+    use visa_profile::{
+        ContinuityDisposition, FileAccessMode, FileDurability, FileLockPolicy, FileLockState,
+        REGULAR_FILE_EXTENSION_ID, RegularFileClaim, RegularFileOperation, RegularFileResult,
+        RegularFileState, encode_regular_file_operation, encode_regular_file_result,
+        regular_file_extension, regular_file_state,
+    };
+
+    let mut fixture = fixture();
+    let resource = EntityRef::initial(id(40));
+    let authority = EntityRef::initial(id(41));
+    let required = Rights::PROFILE_READ
+        .union(Rights::PROFILE_WRITE)
+        .union(Rights::PROFILE_CONTROL)
+        .union(Rights::REBIND);
+    let file = RegularFileState {
+        claim: RegularFileClaim {
+            resource,
+            namespace: id(42),
+            relative_path: b"work/state.bin".to_vec(),
+            required_rights: required,
+            access_mode: FileAccessMode::ReadWrite,
+            durability: FileDurability::Data,
+            lock_policy: FileLockPolicy::ExclusiveLease,
+            max_size: 1024,
+        },
+        logical_offset: 0,
+        version: 1,
+        size: 3,
+        content_digest: digest(43),
+        durable_through: FileDurability::Data,
+        lock_state: FileLockState::Unlocked,
+        disposition: ContinuityDisposition::Revalidate,
+        last_operation: None,
+    };
+    fixture.state.extensions.push(regular_file_extension(&file).unwrap());
+    fixture.state.authorities.push(AuthorityGrant::active_root(
+        authority,
+        fixture.component,
+        resource,
+        required,
+    ));
+    let state = activate(&fixture);
+    let operation_payload =
+        encode_regular_file_operation(&RegularFileOperation::Read { max_bytes: 2 }).unwrap();
+    let request = EffectRequest {
+        operation: id(1_016),
+        idempotency_key: IdempotencyKey::from_u128(16),
+        causal_parent: None,
+        node: fixture.source_node,
+        subject: fixture.component,
+        resource,
+        authority,
+        lease_epoch: LeaseEpoch(1),
+        request_digest: digest(16),
+        kind: EffectKind::Profile {
+            profile: REGULAR_FILE_EXTENSION_ID,
+            access: ProfileAccess::Read,
+            payload: operation_payload,
+        },
+    };
+    let state = prepare_effect(&state, request);
+    let result = RegularFileResult::Read {
+        bytes: b"ab".to_vec(),
+        logical_offset: 2,
+        version: 1,
+        size: 3,
+        content_digest: digest(43),
+    };
+    let state = commit(
+        &state,
+        command(
+            317,
+            CommandKind::ResolveEffect {
+                operation: id(1_016),
+                outcome: EffectOutcome::Succeeded {
+                    result: EffectResult::Profile {
+                        profile: REGULAR_FILE_EXTENSION_ID,
+                        payload: encode_regular_file_result(&result).unwrap(),
+                    },
+                    evidence: evidence(317, EvidenceKind::EffectOutcome),
+                },
+            },
+        ),
+    );
+    let state = regular_file_state(
+        state
+            .extensions
+            .iter()
+            .find(|extension| extension.id == REGULAR_FILE_EXTENSION_ID)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state.logical_offset, 2);
+    assert_eq!(state.last_operation, Some(id(1_016)));
+}
+
+#[test]
 fn duplicate_operation_and_idempotency_never_execute_twice() {
     let fixture = fixture();
     let state = activate(&fixture);

@@ -17,7 +17,10 @@ ACTIVE_SPINE_PREFIXES=(
     crates/runtime/visa_component_adapter/
     crates/runtime/visa_jco_node/
     crates/runtime/visa_wasmtime/
+    crates/testing/stage3-file-component/
+    crates/testing/stage3-request-component/
     crates/testing/visa-conformance/
+    crates/testing/visa-stage3-system/
     crates/testing/visa-system/
 )
 
@@ -91,7 +94,7 @@ report_group() {
     fi
 }
 
-report_group "Active Stage 1 spine (enforced):" true true
+report_group "Active continuity spine (enforced):" true true
 report_group "Oracle/reference and later-stage sources (informational):" false false
 
 if (( violations > 0 )); then

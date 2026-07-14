@@ -5,7 +5,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
     [--artifact-parent DIR] \
-    [fast|full|system|system-jco-node|system-stage2|system-stage2-strict]
+    [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
+     system-stage3a|system-stage3b|system-stage3]
 
 Validates the Compose configuration, builds or reuses the vISA development
 image, and runs the selected validation tier. With no tier, runs full.
@@ -15,6 +16,8 @@ runtime-pair cells and can be substantially slower than the other tiers.
 system-stage2-strict calls the same local Strict Stage 2 gate used on the host,
 with locked offline Wacogo inputs from the image. Its evidence, Docker log, and
 sidecar binary/receipt are retained together under a host-visible run root.
+system-stage3a and system-stage3b independently validate the regular-file and
+logical-request profiles; system-stage3 runs both profiles in sequence.
 
 Options:
   --ci-cache           Use compose.ci.yaml bind-mounted cache directories.
@@ -57,7 +60,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full|system|system-jco-node|system-stage2|system-stage2-strict)
+        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage

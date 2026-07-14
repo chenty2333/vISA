@@ -217,13 +217,24 @@ impl Rights {
     pub const KV_WRITE: Self = Self(1 << 3);
     pub const REBIND: Self = Self(1 << 4);
     pub const HANDOFF: Self = Self(1 << 5);
+    /// Profile-scoped observation. The profile defines the typed operation;
+    /// the canonical core only enforces the authority class.
+    pub const PROFILE_READ: Self = Self(1 << 6);
+    /// Profile-scoped mutation.
+    pub const PROFILE_WRITE: Self = Self(1 << 7);
+    /// Profile-scoped lifecycle control such as sync, lock, or cancellation.
+    pub const PROFILE_CONTROL: Self = Self(1 << 8);
 
     const KNOWN: u16 = Self::TIMER_ARM.0
         | Self::TIMER_CANCEL.0
         | Self::KV_READ.0
         | Self::KV_WRITE.0
         | Self::REBIND.0
-        | Self::HANDOFF.0;
+        | Self::HANDOFF.0
+        | Self::PROFILE_READ.0
+        | Self::PROFILE_WRITE.0
+        | Self::PROFILE_CONTROL.0;
+    pub const ALL: Self = Self(Self::KNOWN);
 
     pub const fn from_bits(bits: u16) -> Option<Self> {
         if bits & !Self::KNOWN == 0 { Some(Self(bits)) } else { None }
@@ -384,6 +395,27 @@ pub enum EvidenceKind {
     Cleanup,
 }
 
+/// Authority class for an operation whose typed semantics live in a versioned
+/// profile extension. This keeps file, request, and provider verbs out of the
+/// canonical effect vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileAccess {
+    Read,
+    Write,
+    Control,
+}
+
+impl ProfileAccess {
+    pub const fn required_rights(self) -> Rights {
+        match self {
+            Self::Read => Rights::PROFILE_READ,
+            Self::Write => Rights::PROFILE_WRITE,
+            Self::Control => Rights::PROFILE_CONTROL,
+        }
+    }
+}
+
 /// Portable reference to evidence; evidence bytes and storage remain external.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -409,6 +441,13 @@ pub enum EffectKind {
         key: Vec<u8>,
         expected_version: Option<u64>,
         value: Vec<u8>,
+    },
+    /// A typed resource-profile operation. `payload` is interpreted only by
+    /// the named profile; providers and runtimes may not redefine it.
+    Profile {
+        profile: Identity,
+        access: ProfileAccess,
+        payload: Vec<u8>,
     },
     LeaseCommit {
         handoff: Identity,
@@ -442,6 +481,7 @@ pub enum EffectResult {
     TimerCancelled,
     KeyValueRead { value: Option<VersionedValue> },
     KeyValue { version: u64, applied: bool },
+    Profile { profile: Identity, payload: Vec<u8> },
     LeaseAdvanced { owner: NodeIdentity, epoch: LeaseEpoch, source_fence: EvidenceRef },
 }
 
@@ -668,6 +708,31 @@ impl CanonicalState {
         claims: ResourceClaims,
         authorities: Vec<AuthorityGrant>,
     ) -> Self {
+        Self::dormant_with_extensions(
+            component,
+            node,
+            component_digest,
+            profile_digest,
+            profile_version,
+            claims,
+            authorities,
+            Vec::new(),
+        )
+    }
+
+    /// Construct a dormant activation with profile-owned canonical state.
+    /// Extension payloads must already be validated by the selected profile.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dormant_with_extensions(
+        component: EntityRef,
+        node: NodeIdentity,
+        component_digest: Digest,
+        profile_digest: Digest,
+        profile_version: SchemaVersion,
+        claims: ResourceClaims,
+        authorities: Vec<AuthorityGrant>,
+        extensions: Vec<Extension>,
+    ) -> Self {
         Self {
             version: CONTRACT_VERSION,
             profile_version,
@@ -692,7 +757,7 @@ impl CanonicalState {
                 last_version: None,
                 last_operation: None,
             },
-            extensions: Vec::new(),
+            extensions,
             authorities,
             operations: Vec::new(),
             exported_snapshot: None,
@@ -937,6 +1002,8 @@ pub enum Rejection {
     SnapshotIntegrityMismatch,
     ProfileMismatch,
     UnsupportedExtension { id: Identity, version: SchemaVersion },
+    UnknownProfile { id: Identity },
+    InvalidProfilePayload { id: Identity },
     SnapshotUnavailable,
     SnapshotAlreadyExported,
     InvalidBinding { claim: EntityRef },

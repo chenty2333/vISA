@@ -12,10 +12,16 @@ completed the exact four runtime cells with 124/124 executions and 31/31
 normalized equality groups, and all inner and outer independent verification
 passed for `strict-cross-runtime-continuity`. Both paths remain limited to
 x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV scope.
-File/network profiles, cross-ISA cells, confidential continuity, and production
-readiness are not implemented.
+Stage 3A bounded regular-file and Stage 3B bounded logical-request resource
+paths are implemented and their local 12-case and 14-case executable evidence
+passes independent structural bundle verification. Exact-revision pushed-CI
+qualification is pending. Stage 3 evidence is currently
+Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
+does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Cross-ISA/target
+substrate cells, confidential continuity, and production readiness are not
+implemented.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-14.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -175,6 +181,22 @@ executions. This establishes only `strict-cross-runtime-continuity` for the
 named x86-64/amd64 Linux timer/KV profile and does not alter the legacy JcoNode
 claim.
 
+Stage 3 deliberately uses separate WIT worlds, guests, adapter resource tables,
+portable state codecs, case registries, evidence schemas, and verifiers for the
+regular-file and logical-request profiles. Both feed the same canonical
+authority, lease, effect journal, snapshot, reauthorization, and fencing path;
+neither changes the frozen Stage 2 evidence contract. Their current executable
+evidence selects only the named Wasmtime Stage 3 adapter on both sides and the
+verifier rejects any independent-runtime overclaim.
+
+The current Stage 3 system runner creates independent source and destination
+Wasmtime stores, coordinators, and provider instances backed by local SQLite
+continuity inside one OS process. That topology exercises the canonical
+snapshot, reauthorization, local rebinding, lease transfer, and source-fencing
+boundary for these profiles. It is not evidence for dual-worker process
+isolation, cross-host transport, or a real target/ISA/substrate change; those
+remain separate qualification cells.
+
 ## Canonical state versus native binding
 
 A logical resource is represented in two parts:
@@ -187,6 +209,55 @@ A logical resource is represented in two parts:
 Bindings are never serialized as authority. The destination creates new
 bindings after profile validation and reauthorization, then reports how each
 claim was satisfied.
+
+The bounded regular-file profile is one concrete application of this split.
+Its canonical extension carries object identity, relative path, logical offset,
+version, size, content digest, durability, lock state, and operation identity;
+the Linux binding keeps fd, inode/device validation, anchored root, and
+exclusive-lock mechanism native. Rename can change the path without changing
+the logical object identity. Provider operations reject identity, content, or
+version drift that is already observable before the operation. Concurrent
+writers are ordered or rejected only when they participate in the same
+advisory lock/lease protocol; the profile does not provide atomic
+compare-and-mutate against an uncooperative writer that bypasses it.
+
+On a qualified Linux filesystem, the provider derives a native identity for
+both the opened root and regular file with fd-based `statx`: device, inode, and
+birth time must all match the provider binding database. `STATX_BTIME` is a
+required capability; absence fails closed instead of degrading to device/inode.
+The tuple detects ordinary inode-number reuse when the replacement has a new
+creation timestamp. It is neither a kernel inode-generation handle nor a
+cryptographic identity and does not resist timestamp collisions, privileged
+metadata manipulation, or a hostile host. Immediately before a file effect,
+the provider also acquires the SQLite writer domain, rechecks intent,
+authority, lease epoch, and pre-state, and retains that transaction through the
+native effect and provider outcome. This orders vISA provider effects against
+handoff commit at the effect-admission boundary. The native file change and
+SQLite outcome are not one atomic transaction: a local finalization failure is
+retained as indeterminate and must reconcile before canonical handoff. The
+fence also does not serialize a writer outside the advisory protocol.
+
+The bounded logical-request profile is another. Its canonical extension carries
+peer identity, credential reference, logical operation ID, request digest,
+phase, response cursor and metadata, rejection, and continuity disposition.
+Socket/TCP sequence state, credential bytes, and runtime future state remain
+native. The destination reconnects to a logical peer, reacquires credentials,
+and consults a durable provider ledger for deduplication or reconciliation; a
+raw live TCP transport is explicitly unsupported. The bounded `VISALR03`
+protocol authenticates the configured peer identity before disclosing an
+application request by using a fresh nonce and HMAC-SHA-256
+challenge/response. Credential material remains provider-local and is never a
+wire field. Lookup and Cancel also carry the expected request digest, so an
+operation ID cannot resolve or cancel a different request. Immediately before
+every authenticated Execute, Lookup, or Cancel frame, the provider enters the
+same SQLite `BEGIN IMMEDIATE` domain as handoff commit and rechecks authority,
+lease epoch, and resource binding while writing the frame. Execute binds the
+digest derived by the peer from the authenticated request bytes; Lookup and
+Cancel carry the expected digest explicitly. An immediate-transaction,
+revision-checked compare-and-save plus terminal/cursor/cleanup checks prevents a
+stale provider snapshot from rolling durable truth backward. This linearizes local send permission
+against the SQLite handoff commit; it neither makes the remote effect atomic
+with that commit nor claims general channel encryption.
 
 Each resource profile declares a continuity disposition. The following names
 are conceptual categories, not a frozen wire-format enum:
@@ -396,7 +467,10 @@ the JcoNode reference execution cell; Stage 2c now exercises all four
 directions without adding a second semantic implementation. The strict path
 subsequently adds the qualified Wacogo runtime through the same adapter,
 coordinator, semantic-state, and evidence boundaries without adding a second
-semantic authority. As the broader repository evolves:
+semantic authority. Stage 3A and Stage 3B then extend the shared profile port
+and reducer/coordinator path with bounded regular-file and logical-request
+extensions, while retaining separate resource-specific WIT, codecs, providers,
+registries, and verifiers. As the broader repository evolves:
 
 - do not expand legacy universal object, command, event, or snapshot schemas;
 - migrate one complete lifecycle slice at a time and delete the replaced model
@@ -424,5 +498,10 @@ Wasmtime/Wacogo cells over the same x86-64/amd64 Linux timer/KV profile, with
 124/124 executions and 31/31 equality groups passing independent verification.
 Roadmap Stage 2 is complete for this named matrix and claim. Cross-host
 transport, alternative persistence and lease services, compatibility windows,
-file/network resources, cross-ISA matrices, confidential continuity,
-performance targets, and production readiness remain unimplemented.
+cross-ISA/target/substrate matrices, confidential continuity, performance
+targets, and production readiness remain unimplemented. Stage 3A and Stage 3B
+now implement the two bounded resource profiles described above, but remain
+open pending exact-revision pushed-CI qualification. They do not claim arbitrary
+directory trees or open descriptors, preservation of raw live TCP, generic
+future/stream continuation, a general async runtime, or a qualified second
+Stage 3 runtime.

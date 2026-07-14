@@ -3,6 +3,7 @@ use contract_core::{
     EffectResult, EntityRef, Event, EventKind, HandoffPhase, Identity, LeaseEpoch, NodeIdentity,
     OperationRecord, Rejection, Replay, Rights, TimerDisposition, TimerStatus,
 };
+use visa_profile::ProfilePayloadError;
 
 use super::{authorize, commit, local_active, push_evidence, quiescing_timer_completion_parent};
 
@@ -246,6 +247,26 @@ fn validate_effect_shape(
                 state.ownership.epoch,
             ))
         }
+        EffectKind::Profile { profile, access, payload } => {
+            if state.phase != HandoffPhase::Running || !local_active(state) {
+                return Err(Rejection::InvalidPhase { actual: state.phase });
+            }
+            let required = visa_profile::validate_profile_effect(
+                &state.extensions,
+                *profile,
+                request.resource,
+                *access,
+                payload,
+            )
+            .map_err(|error| profile_rejection(*profile, error))?;
+            Ok((
+                state.activation.node,
+                state.component,
+                request.resource,
+                required,
+                state.ownership.epoch,
+            ))
+        }
         EffectKind::LeaseCommit { handoff, snapshot, destination, expected_epoch, next_epoch } => {
             if state.phase != HandoffPhase::DestinationPrepared {
                 return Err(Rejection::InvalidPhase { actual: state.phase });
@@ -302,6 +323,9 @@ fn outcome_matches(kind: &EffectKind, outcome: &EffectOutcome) -> bool {
             | (EffectKind::TimerCancel { .. }, EffectResult::TimerCancelled)
             | (EffectKind::KeyValueRead { .. }, EffectResult::KeyValueRead { .. })
             | (EffectKind::KeyValueCompareAndSet { .. }, EffectResult::KeyValue { .. }) => true,
+            (EffectKind::Profile { .. }, EffectResult::Profile { .. }) => {
+                visa_profile::profile_result_matches(kind, result)
+            }
             (
                 EffectKind::LeaseCommit { destination, next_epoch, .. },
                 EffectResult::LeaseAdvanced { owner, epoch, .. },
@@ -352,7 +376,7 @@ fn apply_resource_outcome(
     operation_index: usize,
     outcome: &EffectOutcome,
 ) -> Result<(), Rejection> {
-    let request = &state.operations[operation_index].request;
+    let request = state.operations[operation_index].request.clone();
     let EffectOutcome::Succeeded { result, .. } = outcome else {
         return Ok(());
     };
@@ -373,12 +397,38 @@ fn apply_resource_outcome(
             state.key_value.last_version = Some(*version);
             state.key_value.last_operation = Some(request.operation);
         }
+        (EffectKind::Profile { profile, .. }, EffectResult::Profile { .. }) => {
+            visa_profile::apply_profile_result(
+                &mut state.extensions,
+                &request.kind,
+                result,
+                request.operation,
+            )
+            .map_err(|error| profile_rejection(*profile, error))?;
+        }
         (EffectKind::LeaseCommit { .. }, EffectResult::LeaseAdvanced { .. }) => {
             return Err(Rejection::EventNotApplicable);
         }
         _ => return Err(Rejection::OutcomeMismatch),
     }
     Ok(())
+}
+
+fn profile_rejection(profile: Identity, error: ProfilePayloadError) -> Rejection {
+    match error {
+        ProfilePayloadError::UnknownProfile | ProfilePayloadError::MissingExtension => {
+            Rejection::UnknownProfile { id: profile }
+        }
+        ProfilePayloadError::ResourceMismatch => Rejection::AuthorityResourceMismatch,
+        ProfilePayloadError::AccessMismatch => Rejection::InvalidRights,
+        ProfilePayloadError::DuplicateExtension
+        | ProfilePayloadError::VersionMismatch
+        | ProfilePayloadError::InvalidPayload
+        | ProfilePayloadError::StateConflict
+        | ProfilePayloadError::UnsupportedContinuity => {
+            Rejection::InvalidProfilePayload { id: profile }
+        }
+    }
 }
 
 pub(super) fn outcome_evidence(outcome: &EffectOutcome) -> Option<contract_core::EvidenceRef> {

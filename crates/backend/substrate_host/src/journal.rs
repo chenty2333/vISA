@@ -265,9 +265,12 @@ fn apply_event_projection(
                 .map_err(database_error)?;
             Ok(())
         }
-        EventKind::EffectResolved { operation, outcome }
-        | EventKind::EffectReconciled { operation, outcome } => {
+        EventKind::EffectResolved { operation, outcome } => {
             write_outcome(connection, *operation, outcome)?;
+            Ok(())
+        }
+        EventKind::EffectReconciled { operation, outcome } => {
+            crate::write_reconciled_outcome(connection, *operation, outcome)?;
             Ok(())
         }
         EventKind::OperationCleaned { operation, .. } => {

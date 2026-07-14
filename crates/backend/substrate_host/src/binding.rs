@@ -45,6 +45,11 @@ impl BindingPort for SqliteProvider {
         &mut self,
         request: BindingRequest,
     ) -> Result<BindingReceipt, ProviderError> {
+        if let BindingKind::Profile { profile } = request.kind
+            && profile == visa_profile::LOGICAL_REQUEST_EXTENSION_ID
+        {
+            self.validate_logical_request_binding_material(request.claim, request.candidate_owner)?;
+        }
         let transaction = self.immediate_transaction()?;
         if let Some((receipt, cleaned, kind, namespace)) =
             load_binding_record(&transaction, request.snapshot, request.claim)?
@@ -62,6 +67,14 @@ impl BindingPort for SqliteProvider {
                 || namespace != expected.1
             {
                 return Err(error(ProviderErrorKind::Conflict, false));
+            }
+            if let BindingKind::Profile { profile } = request.kind {
+                crate::regular_file::validate_profile_binding_on(
+                    &transaction,
+                    request.claim,
+                    profile,
+                    request.candidate_owner,
+                )?;
             }
             transaction.commit().map_err(database_error)?;
             return Ok(receipt);
@@ -101,6 +114,10 @@ impl BindingPort for SqliteProvider {
         digest.update(request.exposed_rights.bits().to_be_bytes());
         digest.update(request.candidate_owner.0.0);
         digest.update(number(request.candidate_epoch.0));
+        if let BindingKind::Profile { profile } = request.kind {
+            digest.update(b"profile-binding-v1");
+            digest.update(profile.0);
+        }
         let digest: [u8; 32] = digest.finalize().into();
         let receipt = BindingReceipt {
             handoff: request.handoff,
@@ -134,8 +151,20 @@ impl BindingPort for SqliteProvider {
                 ],
             )
             .map_err(database_error)?;
-        if let BindingKind::KeyValueNamespace { namespace } = request.kind {
-            validate_kv_binding(&transaction, request.claim, namespace, request.candidate_owner)?;
+        match request.kind {
+            BindingKind::PausedDurationTimer => {}
+            BindingKind::KeyValueNamespace { namespace } => validate_kv_binding(
+                &transaction,
+                request.claim,
+                namespace,
+                request.candidate_owner,
+            )?,
+            BindingKind::Profile { profile } => crate::regular_file::validate_profile_binding_on(
+                &transaction,
+                request.claim,
+                profile,
+                request.candidate_owner,
+            )?,
         }
         transaction.commit().map_err(database_error)?;
         Ok(receipt)
@@ -176,6 +205,9 @@ impl BindingPort for SqliteProvider {
                 .map_err(database_error)?;
         }
         self.timers.retain(|_, timer| timer.resource != claim || timer.owner != receipt.node);
+        if self.scope.node == receipt.node {
+            self.regular_files.remove(&claim);
+        }
         Ok(())
     }
 }
@@ -221,6 +253,7 @@ fn binding_storage_kind(kind: BindingKind) -> (i64, Option<Identity>) {
     match kind {
         BindingKind::PausedDurationTimer => (0, None),
         BindingKind::KeyValueNamespace { namespace } => (1, Some(namespace)),
+        BindingKind::Profile { profile } => (2, Some(profile)),
     }
 }
 

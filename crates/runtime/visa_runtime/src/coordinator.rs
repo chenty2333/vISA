@@ -11,8 +11,8 @@ use contract_core::{
 use semantic_core::{ReplayError, apply, preflight, replay, replay_from, restore};
 use substrate_api::{
     ActivationBundle, AuthorityPort, BindingKind, BindingPort, BindingRequest, CommitBundle,
-    JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition, ProviderError, ProviderErrorKind,
-    ReauthorizationRequest, TimerObservation, TimerPort, TimerRecovery,
+    JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition, ProfilePort, ProviderError,
+    ProviderErrorKind, ReauthorizationRequest, TimerObservation, TimerPort, TimerRecovery,
 };
 
 use crate::codec::{EncodeError, canonical_digest, snapshot_integrity, state_digest};
@@ -80,6 +80,13 @@ pub struct AuthorityPlan {
     pub source_authority: EntityRef,
     pub destination_authority: EntityRef,
     pub attenuated_authority: EntityRef,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileAuthorityPlan {
+    pub profile: Identity,
+    pub resource: EntityRef,
+    pub authority: AuthorityPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,15 +530,25 @@ where
     }
 
     fn fenced_resources(&self) -> Vec<EntityRef> {
-        let timer = self.state.timer.claim.resource;
-        let key_value = self.state.key_value.claim.resource;
-        if timer == key_value { vec![timer] } else { vec![timer, key_value] }
+        let mut resources = vec![self.state.timer.claim.resource];
+        if !resources.contains(&self.state.key_value.claim.resource) {
+            resources.push(self.state.key_value.claim.resource);
+        }
+        for grant in &self.state.authorities {
+            if grant.status == AuthorityStatus::Active
+                && grant.rights.contains(Rights::REBIND)
+                && !resources.contains(&grant.resource)
+            {
+                resources.push(grant.resource);
+            }
+        }
+        resources
     }
 }
 
 impl<P> Coordinator<P>
 where
-    P: JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort,
+    P: JournalPort + AuthorityPort + LeasePort + KvPort + TimerPort + ProfilePort,
 {
     pub fn commit_handoff(
         &mut self,
@@ -627,7 +644,7 @@ where
         &mut self,
         request: EffectRequest,
     ) -> Result<CommandReceipt, RuntimeError> {
-        if let Some(outcome) = self.query_operation_truth(&request)? {
+        if let Some(outcome) = self.query_operation_truth(&request, false)? {
             let (resolution, reconciled) =
                 self.resolve_effect(&request, outcome.clone(), false, None)?;
             return Ok(CommandReceipt::Effect(Box::new(EffectReceipt {
@@ -698,6 +715,13 @@ where
             EffectKind::TimerCancel { .. } => self.provider.cancel(request),
             EffectKind::KeyValueRead { .. } => self.provider.read(request),
             EffectKind::KeyValueCompareAndSet { .. } => self.provider.compare_and_set(request),
+            EffectKind::Profile { profile, .. } => {
+                let extension =
+                    self.state.extensions.iter().find(|extension| extension.id == *profile).ok_or(
+                        RuntimeError::Rejected(Rejection::UnknownProfile { id: *profile }),
+                    )?;
+                self.provider.execute_profile(request, extension)
+            }
             EffectKind::LeaseCommit { .. } => {
                 return self.prepare_lease_effect(request);
             }
@@ -859,22 +883,29 @@ where
     }
 
     fn outcome_from_provider_error(
-        &self,
+        &mut self,
         request: &EffectRequest,
         error: ProviderError,
     ) -> Result<ExecutedEffect, RuntimeError> {
         if error.kind != ProviderErrorKind::OutcomeUnknown {
+            if error.retryable {
+                // Keep the durable intent unresolved. Replaying the same
+                // operation/idempotency pair will retry provider execution;
+                // resolving a transient failure would make it permanent.
+                return Err(RuntimeError::Provider(error));
+            }
             return Ok(ExecutedEffect::ordinary(provider_failure(error)));
         }
-        Ok(match self.query_operation_truth(request)? {
+        Ok(match self.query_operation_truth(request, false)? {
             Some(outcome) => ExecutedEffect::reconciled(outcome),
             None => ExecutedEffect::ordinary(EffectOutcome::Indeterminate { evidence: None }),
         })
     }
 
     fn query_operation_truth(
-        &self,
+        &mut self,
         request: &EffectRequest,
+        reconcile_profile: bool,
     ) -> Result<Option<EffectOutcome>, RuntimeError> {
         let journal = self
             .provider
@@ -886,6 +917,22 @@ where
             EffectKind::KeyValueRead { .. } | EffectKind::KeyValueCompareAndSet { .. } => self
                 .provider
                 .query_operation(request.operation, request.idempotency_key)
+                .map_err(RuntimeError::Provider)?,
+            EffectKind::Profile { profile, .. } if reconcile_profile => {
+                let extension = self
+                    .state
+                    .extensions
+                    .iter()
+                    .find(|extension| extension.id == profile)
+                    .cloned()
+                    .ok_or(RuntimeError::Rejected(Rejection::UnknownProfile { id: profile }))?;
+                self.provider
+                    .reconcile_profile_operation(request, &extension)
+                    .map_err(RuntimeError::Provider)?
+            }
+            EffectKind::Profile { .. } => self
+                .provider
+                .query_profile_operation(request.operation, request.idempotency_key)
                 .map_err(RuntimeError::Provider)?,
             _ => None,
         }
@@ -920,7 +967,7 @@ where
             }
         };
         let outcome = self
-            .query_operation_truth(&record.request)?
+            .query_operation_truth(&record.request, true)?
             .ok_or(RuntimeError::OperationOutcomeUnknown { operation })?;
         let (resolution, reconciled) =
             self.resolve_effect(&record.request, outcome.clone(), reconciliation, None)?;
@@ -944,6 +991,23 @@ where
         timer_authority: AuthorityPlan,
         key_value_authority: AuthorityPlan,
     ) -> Result<CommandReceipt, RuntimeError> {
+        self.prepare_destination_with_profiles(
+            command,
+            handoff_authority,
+            timer_authority,
+            key_value_authority,
+            &[],
+        )
+    }
+
+    pub fn prepare_destination_with_profiles(
+        &mut self,
+        command: Identity,
+        handoff_authority: AuthorityPlan,
+        timer_authority: AuthorityPlan,
+        key_value_authority: AuthorityPlan,
+        profile_authorities: &[ProfileAuthorityPlan],
+    ) -> Result<CommandReceipt, RuntimeError> {
         if let Some(prepared) = self.state.prepared_destination.clone() {
             return self
                 .commit_command(Command::new(command, CommandKind::PrepareDestination(prepared)));
@@ -961,6 +1025,7 @@ where
             handoff_authority,
             timer_authority,
             key_value_authority,
+            profile_authorities,
         );
         if let Err(error) = result {
             self.cleanup_preparation(snapshot.snapshot)?;
@@ -976,6 +1041,7 @@ where
         handoff_authority: AuthorityPlan,
         timer_authority: AuthorityPlan,
         key_value_authority: AuthorityPlan,
+        profile_authorities: &[ProfileAuthorityPlan],
     ) -> Result<CommandReceipt, RuntimeError> {
         let component_generation = self
             .state
@@ -1056,6 +1122,52 @@ where
         let key_value_binding =
             self.provider.prepare_binding(key_value_request).map_err(RuntimeError::Provider)?;
 
+        let mut authorities = vec![handoff_grant, timer_grant, key_value_grant];
+        let mut bindings = vec![timer_binding, key_value_binding];
+        let profile_resources = visa_profile::profile_resources(&self.state.extensions)
+            .map_err(|_| RuntimeError::Rejected(Rejection::ProfileMismatch))?;
+        if profile_resources.len() != profile_authorities.len() {
+            return Err(RuntimeError::Rejected(Rejection::ProfileMismatch));
+        }
+        for resource in profile_resources {
+            let mut matching = profile_authorities.iter().filter(|plan| {
+                plan.profile == resource.profile && plan.resource == resource.resource
+            });
+            let plan = matching.next().ok_or(RuntimeError::Rejected(Rejection::ProfileMismatch))?;
+            if matching.next().is_some() {
+                return Err(RuntimeError::Rejected(Rejection::ProfileMismatch));
+            }
+            let grant = self.reauthorize_claim(
+                snapshot.handoff,
+                snapshot.snapshot,
+                plan.authority,
+                destination_subject,
+                resource.resource,
+                resource.required_rights,
+            )?;
+            let binding = self
+                .provider
+                .prepare_binding(BindingRequest {
+                    handoff: snapshot.handoff,
+                    snapshot: snapshot.snapshot,
+                    claim: resource.resource,
+                    authority: grant.authority,
+                    exposed_rights: resource.required_rights,
+                    expected_owner: self
+                        .state
+                        .ownership
+                        .owner
+                        .ok_or(RuntimeError::Rejected(Rejection::SnapshotMismatch))?,
+                    expected_epoch: self.state.ownership.epoch,
+                    candidate_owner: self.state.activation.node,
+                    candidate_epoch: next_epoch,
+                    kind: BindingKind::Profile { profile: resource.profile },
+                })
+                .map_err(RuntimeError::Provider)?;
+            authorities.push(grant);
+            bindings.push(binding);
+        }
+
         let prepared = PreparedDestination {
             handoff: snapshot.handoff,
             snapshot: snapshot.snapshot,
@@ -1063,8 +1175,8 @@ where
             component_generation,
             expected_epoch: self.state.ownership.epoch,
             next_epoch,
-            authorities: vec![handoff_grant, timer_grant, key_value_grant],
-            bindings: vec![timer_binding, key_value_binding],
+            authorities,
+            bindings,
         };
         self.commit_command(Command::new(command, CommandKind::PrepareDestination(prepared)))
     }
@@ -1171,7 +1283,7 @@ where
 
 impl<P> Coordinator<P>
 where
-    P: JournalPort + LeasePort + TimerPort,
+    P: JournalPort + LeasePort + TimerPort + ProfilePort,
 {
     pub fn poll_timer(&mut self) -> Result<TimerPoll, RuntimeError> {
         let (arm_operation, _remaining) = match self.state.timer.status {
@@ -1348,6 +1460,15 @@ where
         operation: Identity,
         evidence: EvidenceRef,
     ) -> Result<CommandReceipt, RuntimeError> {
+        let command = Command::new(command, CommandKind::CleanupOperation { operation, evidence });
+        match preflight(&self.state, &command) {
+            Decision::Commit(_) => {}
+            Decision::Replay(replay) => return Ok(CommandReceipt::Replayed(replay)),
+            Decision::Reject(rejection) => return Err(RuntimeError::Rejected(rejection)),
+            Decision::Execute { request, .. } => {
+                return Err(RuntimeError::InvalidProviderOutcome { operation: request.operation });
+            }
+        }
         let record = self
             .state
             .operations
@@ -1363,13 +1484,14 @@ where
                 EffectKind::TimerCancel { target_operation } => {
                     self.provider.cleanup_timer(target_operation).map_err(RuntimeError::Provider)?
                 }
+                EffectKind::Profile { .. } => self
+                    .provider
+                    .cleanup_profile_operation(&record.request)
+                    .map_err(RuntimeError::Provider)?,
                 _ => {}
             }
         }
-        self.commit_command(Command::new(
-            command,
-            CommandKind::CleanupOperation { operation, evidence },
-        ))
+        self.commit_command(command)
     }
 }
 
@@ -1453,6 +1575,7 @@ fn required_rights(kind: &EffectKind) -> Rights {
         EffectKind::TimerCancel { .. } => Rights::TIMER_CANCEL,
         EffectKind::KeyValueRead { .. } => Rights::KV_READ,
         EffectKind::KeyValueCompareAndSet { .. } => Rights::KV_WRITE,
+        EffectKind::Profile { access, .. } => access.required_rights(),
         EffectKind::LeaseCommit { .. } => Rights::HANDOFF,
     }
 }

@@ -21,8 +21,16 @@ resource bindings, resume, and produce executable evidence about what happened.
 > passing. The strict verifier accepts only
 > `strict-cross-runtime-continuity`. Both evidence paths remain limited to
 > x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV
-> scope; cross-ISA, file/network, confidential-continuity, stable API, and
-> production claims remain unearned.
+> scope and remains the independent-runtime control baseline. Stage 3A now has
+> a bounded regular-file implementation and a locally verified 12-case
+> executable evidence path; Stage 3B has a bounded logical-request
+> (reconnectable-session) implementation and a locally verified 14-case evidence
+> path. Both Stage 3 paths currently run Wasmtime to Wasmtime, explicitly record
+> `independent_runtime_coverage=false`, and list Wacogo as unsupported. Final
+> exact-revision pushed-CI qualification is still pending,
+> so Roadmap Stage 3 is not yet complete and does not inherit the
+> Stage 2 cross-runtime result. Cross-ISA/substrate, confidential-continuity,
+> stable API, and production claims remain unearned.
 
 ## The problem
 
@@ -95,13 +103,22 @@ capability.
 
 ## Current repository
 
-The active production spine covers the Stage 1 continuity path, the legacy
-Stage 2a, 2b, and 2c Wasmtime/JcoNode paths, and the source-lock-bound
-Wasmtime/Wacogo strict-runtime adapter and matrix paths. Strict
+The active continuity spine covers the Stage 1 path, the legacy Stage 2a, 2b,
+and 2c Wasmtime/JcoNode paths, the source-lock-bound Wasmtime/Wacogo
+strict-runtime adapter and matrix paths, and the two Stage 3 resource
+qualification paths. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
 truth.
+
+The Stage 3 qualification work uses separate regular-file and logical-request
+WIT worlds, guests, Wasmtime adapters, profile state codecs, host providers,
+system runners, evidence schemas, case registries, and independent structural
+bundle verifiers.
+It reuses the canonical authority, lease, journal, snapshot, reauthorization,
+and fencing path; it does not modify or re-sign the Strict Stage 2 Component,
+timer/KV registry, normalizer, or digest locks.
 
 Current documentation:
 
@@ -185,6 +202,55 @@ unchanged 31-case timer/KV registry, and independently verifies all 124
 executions and 31 normalized equality groups. It supports only
 `strict-cross-runtime-continuity` on x86-64/amd64 Linux; it does not prove
 cross-ISA portability or additional resource profiles.
+
+Run the bounded Stage 3 resource gates separately with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage3a
+scripts/run-docker-ci-gate.sh system-stage3b
+scripts/run-docker-ci-gate.sh system-stage3
+```
+
+`system-stage3a` exercises one bounded regular file through read/write,
+logical-offset, append, truncate, rename/replacement, external-mutation,
+durability, lock/lease, reauthorization, fencing, and cleanup cases.
+On Linux filesystems that report `STATX_BTIME`, the provider revalidates both
+the namespace root and file with the fd-derived device/inode/birth-time tuple;
+missing birth time is unsupported and never falls back to device/inode alone.
+This detects ordinary inode-number reuse with a different creation timestamp,
+but birth time is not an inode-generation counter or cryptographic identity and
+does not establish a hostile-host claim. A second SQLite immediate transaction
+rechecks the durable intent, authority, lease epoch, and pre-state and remains
+held while the provider attempts the file effect and records its outcome. This
+orders admission to a vISA provider effect against handoff commit; the file
+mutation and SQLite outcome are not atomic, so a post-effect failure remains
+outcome-unknown and is reconciled from the durable plan. External-mutation
+coverage detects identity, content, or version drift already observable before
+a provider operation. Concurrent writers are ordered or rejected only when
+they participate in the same advisory lock/lease protocol; Stage 3A does not
+provide atomic compare-and-mutate against a writer that bypasses that protocol.
+`system-stage3b` exercises logical request identity, peer and credential
+validation, operation-ID deduplication, partial responses, unknown completion,
+timeout, cancellation, reconnect/replay policy, fencing, and cleanup over a
+real bounded loopback transport. Its `VISALR03` handshake uses a fresh nonce
+and HMAC-SHA-256 challenge/response to authenticate the configured peer before
+an application request frame is sent; reusable credential material is not put
+on the wire. Lookup and Cancel frames bind the logical operation ID to the
+expected request digest. Each application frame is emitted under an SQLite
+send fence that rechecks authority, lease epoch, and resource binding, while
+ledger revisions reject stale saves and terminal, cursor, or cleanup rollback.
+These are host-local transactional guarantees for the bounded profile, not
+remote-effect atomicity or general transport encryption. Their claims exclude
+arbitrary directory trees, devices, FIFOs, arbitrary open file descriptors,
+preservation of a raw live TCP connection, runtime future/stream state, and a
+general async runtime.
+`system-stage3` runs both profiles in sequence. These are Wasmtime-only Stage 3
+qualification gates; run
+`system-stage2-strict` separately to preserve the independent-runtime control.
+Both Stage 3 profiles still trust the host process, kernel, SQLite state, and
+provider-local credential store. `STATX_BTIME`, SQLite fencing, and `VISALR03`
+peer authentication do not establish a hostile-host or confidential-channel
+boundary.
 
 ## Engineering principles
 

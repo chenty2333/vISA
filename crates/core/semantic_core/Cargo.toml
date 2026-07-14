@@ -10,3 +10,4 @@ path = "src/lib.rs"
 
 [dependencies]
 contract_core = { path = "../contract_core" }
+visa_profile = { path = "../visa_profile" }

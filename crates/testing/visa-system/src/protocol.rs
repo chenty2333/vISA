@@ -120,6 +120,16 @@ impl From<substrate_host::FaultPoint> for FaultPointSpec {
             substrate_host::FaultPoint::BeforeCommitBundle => Self::BeforeCommitBundle,
             substrate_host::FaultPoint::AfterCommitBundle => Self::AfterCommitBundle,
             substrate_host::FaultPoint::AfterKvCommit => Self::AfterKvCommit,
+            substrate_host::FaultPoint::BeforeProfileEffect
+            | substrate_host::FaultPoint::AfterProfileEffect
+            | substrate_host::FaultPoint::AfterProfileCommit
+            | substrate_host::FaultPoint::BeforeLogicalRequestIo
+            | substrate_host::FaultPoint::AfterRegularFileMutation
+            | substrate_host::FaultPoint::AfterLogicalRequestSend
+            | substrate_host::FaultPoint::AfterLogicalRequestCommit
+            | substrate_host::FaultPoint::AfterLogicalCancelSend => {
+                unreachable!("Stage 3-only fault escaped into the frozen Stage 2 protocol")
+            }
         }
     }
 }

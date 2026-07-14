@@ -93,6 +93,9 @@ pub(super) fn preflight_freeze(
             operation: record.request.operation,
         });
     }
+    if visa_profile::validate_profile_handoff(&state.extensions).is_err() {
+        return Decision::Reject(Rejection::ProfileMismatch);
+    }
     if !valid_timer_freeze(state, timer) {
         return Decision::Reject(Rejection::TimerStateConflict);
     }
@@ -294,9 +297,15 @@ fn validate_bindings(
         &state.key_value.claim.resource,
         state.key_value.claim.required_rights,
     )?;
+    let profile_resources = visa_profile::profile_resources(&state.extensions)
+        .map_err(|_| Rejection::ProfileMismatch)?;
+    for resource in &profile_resources {
+        validate_binding(state, prepared, &resource.resource, resource.required_rights)?;
+    }
     for receipt in &prepared.bindings {
         if receipt.claim != state.timer.claim.resource
             && receipt.claim != state.key_value.claim.resource
+            && !profile_resources.iter().any(|resource| resource.resource == receipt.claim)
         {
             return Err(Rejection::InvalidBinding { claim: receipt.claim });
         }

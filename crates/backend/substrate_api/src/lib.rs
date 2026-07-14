@@ -10,9 +10,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use contract_core::{
-    AuthorityGrant, BindingReceipt, EffectOutcome, EffectRequest, EntityRef, IdempotencyKey,
-    Identity, JournalEntry, JournalPosition, LeaseEpoch, LogicalDurationNanos, NodeIdentity,
-    OperationRecord, Rights,
+    AuthorityGrant, BindingReceipt, EffectOutcome, EffectRequest, EntityRef, Extension,
+    IdempotencyKey, Identity, JournalEntry, JournalPosition, LeaseEpoch, LogicalDurationNanos,
+    NodeIdentity, OperationRecord, Rights,
 };
 
 /// Provider-neutral failure categories. Canonical effect outcomes remain in
@@ -143,6 +143,38 @@ pub trait KvPort {
         operation: Identity,
         idempotency_key: IdempotencyKey,
     ) -> Result<Option<EffectOutcome>, ProviderError>;
+}
+
+/// Mechanism port for versioned resource-profile operations. The canonical
+/// request identifies the profile and carries its typed payload; implementations
+/// may not reinterpret an unknown profile.
+pub trait ProfilePort {
+    fn execute_profile(
+        &mut self,
+        request: &EffectRequest,
+        extension: &Extension,
+    ) -> Result<EffectOutcome, ProviderError>;
+
+    /// Reconcile an operation whose completion acknowledgement may have been
+    /// lost. Both identities must select the same durable operation.
+    fn query_profile_operation(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<Option<EffectOutcome>, ProviderError>;
+
+    /// Reconcile provider-owned durable state for an operation whose outcome
+    /// is indeterminate. Providers with a redo plan may complete it here;
+    /// providers whose truth is already queryable can use the default path.
+    fn reconcile_profile_operation(
+        &mut self,
+        request: &EffectRequest,
+        _extension: &Extension,
+    ) -> Result<Option<EffectOutcome>, ProviderError> {
+        self.query_profile_operation(request.operation, request.idempotency_key)
+    }
+
+    fn cleanup_profile_operation(&mut self, request: &EffectRequest) -> Result<(), ProviderError>;
 }
 
 /// Provider observation of a live host timer.
@@ -278,6 +310,7 @@ pub trait LeasePort {
 pub enum BindingKind {
     PausedDurationTimer,
     KeyValueNamespace { namespace: Identity },
+    Profile { profile: Identity },
 }
 
 /// Provider-neutral destination binding preparation request.

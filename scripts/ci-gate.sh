@@ -4,7 +4,8 @@ set -Eeuo pipefail
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-gate.sh \
-    [fast|full|system|system-jco-node|system-stage2|system-stage2-strict]
+    [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
+     system-stage3a|system-stage3b|system-stage3]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
@@ -15,6 +16,10 @@ system-stage2-strict runs the locked Wacogo qualification, same-path cell, and
 independently validated strict Wasmtime/Wacogo matrix through the unified local
 gate. Set VISA_STRICT_STAGE2_ARTIFACT_ROOT to select its retained output root.
 Locked inputs use the VISA_WACOGO_* variables documented by that local gate.
+system-stage3a and system-stage3b run and independently validate the bounded
+regular-file and logical-request continuity profiles. system-stage3 runs both
+Stage 3 profiles in sequence. Stage 3 currently covers Wasmtime-to-Wasmtime
+handoff only and does not inherit Strict Stage 2 independent-runtime coverage.
 System tiers do not repeat the full tier.
 EOF
 }
@@ -99,7 +104,10 @@ active_spine_packages=(
     visa_jco_node
     visa_wacogo
     visa_wasmtime
+    stage3-file-component
+    stage3-request-component
     visa-conformance
+    visa-stage3-system
     visa-system
 )
 active_spine_args=()
@@ -291,6 +299,47 @@ gate_system_stage2_strict() {
     printf 'Strict Stage 2 evidence bundle: %s\n' "$system_bundle_path"
 }
 
+gate_system_stage3a() {
+    local system_parent="$PWD/target/visa-system"
+    mkdir -p "$system_parent"
+    system_artifact_kind="Stage 3A regular-file continuity"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3a-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage3a-evidence.json"
+
+    run_gate "system-stage3a: bounded regular-file continuity" \
+        cargo run --locked -p visa-stage3-system --bin visa-stage3-system -- \
+            stage3a "$system_artifact_root"
+    run_gate "system-stage3a: independent evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage3a "$system_bundle_path" "$system_artifact_root"
+
+    printf 'Stage 3A artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 3A evidence bundle: %s\n' "$system_bundle_path"
+}
+
+gate_system_stage3b() {
+    local system_parent="$PWD/target/visa-system"
+    mkdir -p "$system_parent"
+    system_artifact_kind="Stage 3B logical-request continuity"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3b-XXXXXX")"
+    system_bundle_path="$system_artifact_root/stage3b-evidence.json"
+
+    run_gate "system-stage3b: reconnectable logical-request continuity" \
+        cargo run --locked -p visa-stage3-system --bin visa-stage3-system -- \
+            stage3b "$system_artifact_root"
+    run_gate "system-stage3b: independent evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage3b "$system_bundle_path" "$system_artifact_root"
+
+    printf 'Stage 3B artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 3B evidence bundle: %s\n' "$system_bundle_path"
+}
+
+gate_system_stage3() {
+    gate_system_stage3a
+    gate_system_stage3b
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -304,6 +353,9 @@ case "$tier" in
     system-jco-node) gate_system_jco_node ;;
     system-stage2) gate_system_stage2 ;;
     system-stage2-strict) gate_system_stage2_strict ;;
+    system-stage3a) gate_system_stage3a ;;
+    system-stage3b) gate_system_stage3b ;;
+    system-stage3) gate_system_stage3 ;;
     -h|--help|help)
         usage
         ;;

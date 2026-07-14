@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-14.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -64,8 +64,8 @@ volumes by default.
 
 ## Repository gates
 
-The repository exposes two cumulative repository tiers and four standalone
-system tiers. Run the ordinary edit-loop gate with:
+The repository exposes two cumulative repository tiers, six standalone system
+gates, and one Stage 3 aggregate. Run the ordinary edit-loop gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh fast
@@ -99,6 +99,24 @@ Run the locked Strict Stage 2 Wasmtime/Wacogo matrix with:
 
 ```sh
 scripts/run-docker-ci-gate.sh system-stage2-strict
+```
+
+Run the bounded Stage 3A regular-file gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage3a
+```
+
+Run the bounded Stage 3B logical-request gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage3b
+```
+
+Run both Stage 3 profiles in sequence with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage3
 ```
 
 With no tier argument the wrapper runs `full`. It validates the Compose
@@ -178,6 +196,57 @@ equality groups and earns only `strict-cross-runtime-continuity` on x86-64
 Linux with the timer/KV profile. Both Stage 2 matrix gates are intentionally
 expensive and are not part of `full`.
 
+`system-stage3a` creates a private root below `target/visa-system/`, runs the
+fixed 12-case regular-file registry through the Stage 3A Component, Wasmtime
+adapter, coordinator, scoped Linux file provider, handoff, and evidence writer,
+then invokes `visa-conformance stage3a` independently over the retained bundle.
+Qualification requires Linux `openat2` and a filesystem that reports
+`STATX_BTIME`. The provider compares device, inode, and birth time for both the
+opened root and file; missing birth time is an unsupported capability with no
+device/inode-only fallback. Its external-mutation cases detect identity,
+content, or version drift already observable before a provider operation, and
+provider tests deterministically race the final SQLite authority/lease/pre-state
+fence against handoff commit. Lock/lease conflict behavior applies only to
+writers participating in the same advisory protocol; the gate does not
+establish atomic compare-and-mutate against an uncooperative writer that
+bypasses it. Birth time is not a cryptographic identity or a Stage 5
+host-attestation mechanism.
+
+`system-stage3b` follows the same two-step runner/verifier shape for the fixed
+14-case logical-request registry. It uses a real bounded loopback TCP
+protocol/peer and a durable provider operation ledger, but it preserves logical
+request identity and reconnect/replay state rather than a raw live transport.
+The `VISALR03` handshake authenticates the configured peer with a fresh nonce
+and HMAC-SHA-256 before sending an application request frame; credential
+material is not transmitted, and Lookup/Cancel also authenticate the expected
+request digest. Every application send performs a final authority, lease, and
+binding check under the SQLite handoff transaction lock. Execute is bound by a
+digest derived from the authenticated request bytes, while Lookup/Cancel carry
+the expected digest. An immediate-transaction revision compare-and-save rejects
+stale terminal/cursor/cleanup rollback. This bounded local admission fence is
+not a general encrypted-channel or remote-effect atomicity claim.
+`system-stage3` runs these two standalone gates in sequence and retains one
+artifact root per profile.
+
+The Stage 3 conformance commands are independent **structural bundle
+verifiers**. The executable runner evaluates the case semantics; the verifier
+then fixes the accepted registry and assertion shape, checks scope and runtime
+identities, and revalidates the published artifact sizes and digests. Unlike
+the typed Stage 2 normalizer, it does not recompute every semantic assertion
+from the raw trace and request/response bytes.
+
+Both Stage 3 gates currently use separate source and destination Wasmtime
+stores, coordinators, and provider instances backed by local SQLite continuity
+within one OS system-runner process on x86-64 Linux. This validates the current
+local-rebinding profiles, not dual-worker process isolation, cross-host
+transport, or a target change. Their bundles require
+`independent_runtime_coverage=false` and list Wacogo as unsupported. Run
+`system-stage2-strict` separately when checking the independent-runtime
+timer/KV control; its conclusion does not transfer to Stage 3. The Stage 3 gates
+do not claim arbitrary directory trees, devices, FIFOs, open fds, arbitrary
+live TCP, socket state, generic future/stream continuation, or a general async
+runtime.
+
 ## Host Cargo commands
 
 The repository defines these target-specific aliases in `.cargo/config.toml`:
@@ -205,13 +274,15 @@ The shell scripts are a transitional implementation surface, not a stable
 public API. Use them according to their current role:
 
 1. **Repository gate:** `run-docker-ci-gate.sh` is the supported outer entry;
-   `ci-gate.sh` implements cumulative `fast`/`full` and the four standalone
-   system tiers inside the development environment.
+   `ci-gate.sh` implements cumulative `fast`/`full`, six standalone system
+   gates, and the Stage 3 aggregate inside the development environment.
 2. **System evidence:** `ci-gate.sh system`, `system-jco-node`, and
    `system-stage2` preserve the Stage 1 and legacy v2 paths;
-   `system-stage2-strict` adds the unified locked Wasmtime/Wacogo v3 path. All
-   orchestrate real runners followed by independent verifier processes. Invoke
-   the binaries directly only when investigating a retained artifact root.
+   `system-stage2-strict` adds the unified locked Wasmtime/Wacogo v3 path;
+   `system-stage3a` and `system-stage3b` add the two bounded Wasmtime-only
+   resource profiles, while `system-stage3` invokes both. All orchestrate real
+   runners followed by independent verifier processes. Invoke the binaries
+   directly only when investigating a retained artifact root.
 3. **Report checks:** `run-report-gates.sh` and
    `check-conformance-report.sh` exercise report and artifact rules without
    proving external workload execution. `run-visa-bench-conformance.sh` runs
@@ -270,10 +341,14 @@ gate must not be generalized beyond the proof boundary listed above.
 
 ## Next validation expansion
 
-`fast`, `full`, and the four standalone system tiers are the implemented root
-interface. The legacy JcoNode v2 matrix proves a second translated execution
-path, not a fully independent Component Model implementation. The separate
-source-lock-bound Wasmtime/Wacogo v3 matrix supplies that independence and only
-the x86-64 Linux timer/KV `strict-cross-runtime-continuity` claim. File/network,
-cross-ISA, confidential, release, performance, and production claims remain
-unavailable until their exact cells and provenance inputs execute.
+`fast`, `full`, six standalone system gates, and the Stage 3 aggregate are the
+implemented root interface. The legacy JcoNode v2 matrix proves a second
+translated execution path, not a fully independent Component Model
+implementation. The separate source-lock-bound Wasmtime/Wacogo v3 matrix
+supplies that independence and only the x86-64 Linux timer/KV
+`strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
+bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. A second
+Stage 3 runtime, broader file/network families, cross-process Stage 3 workers,
+cross-ISA/target/substrate, confidential, release, performance, and production
+claims remain unavailable until their exact cells and provenance inputs
+execute.

@@ -1,0 +1,28 @@
+[package]
+license.workspace = true
+name = "visa-stage3-system"
+version = "0.1.0"
+publish = false
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+substrate_api = { path = "../../backend/substrate_api" }
+substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
+visa-conformance = { path = "../visa-conformance" }
+visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../../runtime/visa_runtime" }
+visa_wasmtime = { path = "../../runtime/visa_wasmtime" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }
+
+[build-dependencies]
+stage3-file-component = { path = "../stage3-file-component", artifact = "cdylib", target = "wasm32-unknown-unknown" }
+stage3-request-component = { path = "../stage3-request-component", artifact = "cdylib", target = "wasm32-unknown-unknown" }
+wit-component = "=0.244.0"

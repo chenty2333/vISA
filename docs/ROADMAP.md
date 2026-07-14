@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-14.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -229,25 +229,126 @@ production-readiness, or broader runtime claim follows.
 
 ## Stage 3: Rich external resources
 
-Status: not started. The current timer/KV profile does not implement file or
-network continuity.
+Status: in progress. Stage 3A and Stage 3B are implemented as separate
+resource-profile slices and have passed their local executable runners and
+independent structural bundle verifiers. Exact-revision pushed-CI qualification
+remains open, so this stage is not yet complete.
+
+The completed Strict Stage 2 timer/KV matrix is the immutable control baseline
+for this widening step. Stage 3 does not modify or re-sign its Component,
+31-case registry, WIT, normalizers, or digest locks.
 
 Goal: validate the continuity-policy extension model with resources whose
 correct result is not always direct reconstruction.
 
-Candidate profiles include file identity/offset/lock state and a network
-resource that must reconnect, proxy, or reject. Each profile must define
-pending-operation, peer, credential, and cleanup behavior.
+### Stage 3A -- bounded regular-file continuity
 
-Exit condition: at least two resource families extend the core without adding
-provider implementations or scenario names to the canonical vocabulary.
+Implementation status: the separate regular-file WIT world, guest, typed
+profile, portable state codec, Wasmtime adapter, Linux host provider, 12-case
+system runner, evidence schema, registry lock, and independent structural verifier are in
+place. The local executable gate passes all 12 accepted cases for the
+`bounded-regular-file-continuity` claim.
 
-Claim on exit: only the named resource dispositions and adapters are supported.
+The portable state contains logical object identity, relative path, logical
+offset, version, size, content digest, durability, lock state, and operation
+identity. Destination binding uses scoped Linux `openat2` resolution and
+revalidates the root, object, authority, and lease rather than serializing an
+fd, inode, device number, birth time, or absolute host root. A qualified
+filesystem must report `STATX_BTIME`; the provider checks the fd-derived
+device/inode/birth-time tuple for both root and file and fails closed when that
+capability is absent. This detects ordinary inode-number reuse with a different
+creation timestamp, not hostile-host metadata forgery or every possible tuple
+collision. A second SQLite immediate transaction holds the final
+authority/lease/pre-state recheck, file effect, and provider outcome in the same
+ordering domain as handoff commit.
 
-## Stage 4: Real target and ISA matrix
+The accepted cases cover read/write and offset continuity, append, truncate,
+rename while preserving object identity, replacement rejection, detection of
+identity/content/version drift already observable before a provider operation,
+advisory-lock conflict and reacquisition, durability with lost-ack
+reconciliation, source fencing, idempotent cleanup, indeterminate-write
+blocking, and destination reauthorization denial. Concurrent writers are
+ordered or rejected only when they participate in the same advisory lock/lease
+protocol. The SQLite fence orders effect admission against handoff commit; it
+does not make the native file change and SQLite outcome one atomic transaction,
+so a local finalization failure remains indeterminate until reconciliation.
 
-Status: not started. All current system and Stage 2 matrix executions use
-x86-64/amd64.
+Explicit non-claims: arbitrary directory-tree continuity, devices, FIFOs,
+arbitrary already-open file descriptors, and transparent migration of every
+filesystem object. Stage 3A also does not provide atomic compare-and-mutate
+against an uncooperative concurrent writer that bypasses its advisory
+lock/lease protocol.
+
+### Stage 3B -- bounded logical-request continuity
+
+Implementation status: the separate logical-request WIT world, guest, typed
+profile, portable state codec, Wasmtime adapter, durable provider ledger, real
+bounded loopback TCP peer/protocol, 14-case system runner, evidence schema,
+registry lock, and independent structural verifier are in place. The local executable gate
+passes all 14 accepted cases for the `bounded-logical-request-continuity`
+claim.
+
+The portable state contains peer identity, a credential reference, logical
+operation ID, request digest, request phase, response cursor and metadata,
+rejection, and continuity disposition. Native socket/TCP sequence state,
+runtime futures, and credential material remain provider-local. Destination
+binding reacquires credential material and uses provider-level operation-ID
+lookup/deduplication instead of treating a transport handle as continuity.
+The bounded `VISALR03` loopback protocol authenticates the configured peer
+with a fresh nonce and HMAC-SHA-256 before sending an application request
+frame, never transmits the reusable credential itself, derives the Execute
+digest from authenticated request bytes, and binds Lookup/Cancel to both
+operation ID and the explicitly carried expected digest. Application sends are serialized with
+the SQLite handoff transaction by a last-moment authority/lease/binding check;
+an immediate-transaction revision compare-and-save preserves terminal phase,
+response cursor, and cleanup monotonicity. This is a bounded host-provider
+admission fence, not atomic commit of the remote peer's effect.
+
+The accepted cases cover completion before freeze, pending-before-send,
+lost-ack deduplication, unknown-completion reconciliation, partial-response
+resume, timeout, cancellation/completion races, peer mismatch, credential
+reacquisition and denial, unsafe non-idempotent replay blocking, explicit raw
+live-TCP rejection, source fencing, and idempotent cleanup.
+
+Explicit non-claims: unconditional preservation of an arbitrary live TCP
+transport, socket sequence state, generic future/stream continuation, and a
+general asynchronous runtime. The authenticated loopback protocol is not a
+general encrypted transport or TLS replacement.
+
+### Stage 3 qualification boundary
+
+Both current Stage 3 runners use separate source and destination Wasmtime
+stores, coordinators, and provider instances backed by local SQLite continuity
+within one OS system-runner process on x86-64/amd64 Linux. This is sufficient
+for the current local-rebinding profiles; it is not dual-worker, process-
+isolation, cross-host, or cross-target evidence. Their evidence requires
+`independent_runtime_coverage=false` and lists Wacogo as an unsupported Stage 3
+runtime. The independent Wasmtime/Wacogo result earned in Strict Stage 2
+therefore does not carry into either Stage 3 resource profile.
+
+Exit conditions:
+
+- both named resource families extend the shared canonical profile/effect path
+  without adding provider implementations or scenario names to the canonical
+  vocabulary;
+- each accepted registry executes through its public Component, runtime,
+  coordinator, provider, handoff, and evidence boundaries and passes its
+  independent structural bundle verifier;
+- the ordinary repository gate, both Stage 3 system gates, and the unchanged
+  Strict Stage 2 four-cell control matrix pass on the final revision; and
+- the stage-closing revision passes pushed CI before this status changes to
+  `complete`.
+
+Claim on exit: only the two named Wasmtime-to-Wasmtime resource profiles and
+their declared dispositions are supported. Independent-runtime Stage 3,
+cross-ISA/substrate, confidential-continuity, and production claims do not
+follow.
+
+## Stage 4: Real target, ISA, and substrate matrix
+
+Status: not started. All qualified Stage 1/2 cells and current Stage 3
+resource-profile runners use x86-64/amd64 Linux; no Stage 3 resource profile
+has yet qualified a second runtime, ISA, or target substrate.
 
 Goal: exercise the same semantic contract through a no-std/reference kernel or
 other real target adapter and on each ISA named in a published matrix.
@@ -271,8 +372,16 @@ The profile binds component, state, policy, authority, journal, and evidence
 digests to a fresh verifier result. Destination secrets are newly released;
 source authority is revoked and fenced.
 
+The named TEE, verifier, policy engine, KMS, rollback/freshness mechanism,
+storage protection, and secure channel are all explicit parts of the Stage 5
+TCB and qualification matrix. Attestation does not retroactively make the host
+SQLite database, `statx` metadata, or the Stage 3 loopback protocol trusted, and
+it does not by itself prove rollback resistance, state freshness, protected
+storage, or confidential transport.
+
 Entry condition: ordinary authority continuity and failure recovery are already
-proven under Stage 1 and Stage 2 fault injection.
+proven for the named timer/KV and rich-resource profiles, and Stage 4 has made
+the target/ISA/substrate evidence boundary explicit.
 
 Claim on exit: only the named TEE/verifier/policy integration is supported.
 

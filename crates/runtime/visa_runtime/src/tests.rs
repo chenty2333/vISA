@@ -13,8 +13,8 @@ use contract_core::{
 use substrate_api::{
     ActivationBundle, AuthorityPolicy, AuthorityPort, BindingPort, BindingRequest, CommitBundle,
     JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition, OperationObservation,
-    PreparedLeaseTransitions, ProviderError, ProviderErrorKind, ReauthorizationRequest,
-    TimerObservation, TimerPort, TimerRecovery,
+    PreparedLeaseTransitions, ProfilePort, ProviderError, ProviderErrorKind,
+    ReauthorizationRequest, TimerObservation, TimerPort, TimerRecovery,
 };
 
 use super::*;
@@ -63,6 +63,7 @@ struct MockProvider {
     lost_bundle_once: Cell<bool>,
     partial_bundle_once: Cell<bool>,
     effect_lost_ack_once: bool,
+    effect_error_once: Option<ProviderError>,
     next_effect_outcome: Option<EffectOutcome>,
     reconciliation_truth: Option<EffectOutcome>,
     observe_observation: Option<TimerObservation>,
@@ -101,6 +102,7 @@ impl Default for MockProvider {
             lost_bundle_once: Cell::new(false),
             partial_bundle_once: Cell::new(false),
             effect_lost_ack_once: false,
+            effect_error_once: None,
             next_effect_outcome: None,
             reconciliation_truth: None,
             observe_observation: None,
@@ -180,6 +182,9 @@ impl MockProvider {
 
     fn execute_outcome(&mut self, request: &EffectRequest) -> Result<EffectOutcome, ProviderError> {
         self.actions.push(Action::Effect);
+        if let Some(error) = self.effect_error_once.take() {
+            return Err(error);
+        }
         let outcome =
             self.next_effect_outcome.take().unwrap_or_else(|| successful_outcome(request));
         let record = self
@@ -359,6 +364,45 @@ impl KvPort for MockProvider {
             .iter()
             .find(|record| record.request.operation == operation)
             .and_then(|record| record.outcome.clone()))
+    }
+}
+
+impl ProfilePort for MockProvider {
+    fn execute_profile(
+        &mut self,
+        request: &EffectRequest,
+        _extension: &contract_core::Extension,
+    ) -> Result<EffectOutcome, ProviderError> {
+        let outcome = self
+            .next_effect_outcome
+            .clone()
+            .ok_or_else(|| ProviderError::new(ProviderErrorKind::Unsupported, false))?;
+        if let Some(operation) =
+            self.operations.iter_mut().find(|record| record.request.operation == request.operation)
+        {
+            operation.outcome = Some(outcome.clone());
+        }
+        Ok(outcome)
+    }
+
+    fn query_profile_operation(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<Option<EffectOutcome>, ProviderError> {
+        Ok(self
+            .operations
+            .iter()
+            .find(|record| {
+                record.request.operation == operation
+                    && record.request.idempotency_key == idempotency_key
+            })
+            .and_then(|record| record.outcome.clone())
+            .or_else(|| self.reconciliation_truth.clone()))
+    }
+
+    fn cleanup_profile_operation(&mut self, _request: &EffectRequest) -> Result<(), ProviderError> {
+        Ok(())
     }
 }
 
@@ -819,6 +863,37 @@ fn journal_resolution_failure_recovers_from_operation_truth() {
         coordinator.state().operations[0].outcome,
         Some(EffectOutcome::Succeeded { .. })
     ));
+}
+
+#[test]
+fn retryable_provider_failure_keeps_the_intent_open_for_the_same_operation() {
+    let provider = MockProvider {
+        effect_error_once: Some(ProviderError::new(ProviderErrorKind::Unavailable, true)),
+        ..MockProvider::default()
+    };
+    let mut coordinator = activated(provider);
+    let request = kv_request(30, LeaseEpoch(1));
+
+    assert!(matches!(
+        coordinator.effect(identity(31), request.clone()),
+        Err(RuntimeError::Provider(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: true,
+        }))
+    ));
+    assert_eq!(coordinator.state().operations.len(), 1);
+    assert!(coordinator.state().operations[0].outcome.is_none());
+
+    let receipt = coordinator.effect(identity(32), request).unwrap();
+    assert!(matches!(receipt, CommandReceipt::Effect(_)));
+    assert!(matches!(
+        coordinator.state().operations[0].outcome,
+        Some(EffectOutcome::Succeeded { .. })
+    ));
+    assert_eq!(
+        coordinator.provider().actions.iter().filter(|action| **action == Action::Effect).count(),
+        2
+    );
 }
 
 #[test]
@@ -1451,6 +1526,9 @@ fn successful_outcome(request: &EffectRequest) -> EffectOutcome {
         EffectKind::KeyValueRead { .. } => EffectResult::KeyValueRead { value: None },
         EffectKind::KeyValueCompareAndSet { .. } => {
             EffectResult::KeyValue { version: 1, applied: true }
+        }
+        EffectKind::Profile { profile, .. } => {
+            EffectResult::Profile { profile, payload: Vec::new() }
         }
         EffectKind::LeaseCommit { destination, next_epoch, .. } => EffectResult::LeaseAdvanced {
             owner: destination,

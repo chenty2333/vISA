@@ -152,3 +152,43 @@ jobs:
       - name: Remove Strict Stage 2 Docker evidence from cache path
         if: ${{ always() }}
         run: rm -rf .ci-cache/strict-stage2
+
+      - name: Clear prior Stage 3A evidence
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Stage 3A regular-file continuity gate
+        id: stage3a_system_gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system-stage3a
+
+      - name: Upload Stage 3A system evidence
+        if: ${{ always() && (steps.stage3a_system_gate.outcome == 'success' || steps.stage3a_system_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3a-regular-file-system-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Stage 3A system evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Clear prior Stage 3B evidence
+        run: rm -rf .ci-cache/target/visa-system
+
+      - name: Stage 3B logical-request continuity gate
+        id: stage3b_system_gate
+        run: $COMPOSE run --rm -T dev scripts/ci-gate.sh system-stage3b
+
+      - name: Upload Stage 3B system evidence
+        if: ${{ always() && (steps.stage3b_system_gate.outcome == 'success' || steps.stage3b_system_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3b-logical-request-system-evidence
+          path: .ci-cache/target/visa-system/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove Stage 3B system evidence from cache path
+        if: ${{ always() }}
+        run: rm -rf .ci-cache/target/visa-system

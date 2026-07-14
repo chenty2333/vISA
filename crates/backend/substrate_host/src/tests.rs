@@ -383,14 +383,58 @@ fn sqlite_configuration_reopens_and_rejects_future_schema() {
     drop(reopened);
 
     let connection = rusqlite::Connection::open(&db.path).expect("raw database opens");
-    connection.pragma_update(None, "user_version", 4).expect("future version installs");
+    connection.pragma_update(None, "user_version", 6).expect("future version installs");
     drop(connection);
     let error = SqliteProvider::open(&db.path, scope).err().expect("future schema is rejected");
     assert_eq!(error.kind, ProviderErrorKind::Integrity);
     let connection = rusqlite::Connection::open(&db.path).expect("raw database reopens");
     let version: i64 =
         connection.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("version reads");
-    assert_eq!(version, 4, "open must not downgrade an unknown schema");
+    assert_eq!(version, 6, "open must not downgrade an unknown schema");
+}
+
+#[test]
+fn sqlite_zero_version_nonempty_schema_is_rejected_before_mutation() {
+    let db = TestDb::new("nonempty-v0-schema");
+    let connection = rusqlite::Connection::open(&db.path).expect("raw database opens");
+    connection
+        .execute_batch("CREATE TABLE legacy_v0_state (value BLOB NOT NULL);")
+        .expect("legacy table installs");
+    let initial_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("initial version reads");
+    assert_eq!(initial_version, 0, "legacy schema remains unversioned");
+    drop(connection);
+
+    let scope = JournalScope { node: node(252), component: id(253) };
+    let error = SqliteProvider::open(&db.path, scope)
+        .err()
+        .expect("nonempty version-zero schema is rejected");
+    assert_eq!(error.kind, ProviderErrorKind::Integrity);
+
+    let connection = rusqlite::Connection::open(&db.path).expect("raw database reopens");
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("version reads after rejection");
+    assert_eq!(version, 0, "rejected open must not assign a schema version");
+
+    let mut statement = connection
+        .prepare(
+            "SELECT type, name FROM sqlite_schema
+             WHERE name NOT LIKE 'sqlite_%'
+             ORDER BY type, name",
+        )
+        .expect("schema query prepares");
+    let objects = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .expect("schema query executes")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("schema objects decode");
+    assert_eq!(
+        objects,
+        vec![("table".to_owned(), "legacy_v0_state".to_owned())],
+        "rejected open must not create provider tables or any other schema objects"
+    );
 }
 
 #[test]

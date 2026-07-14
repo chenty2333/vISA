@@ -12,8 +12,8 @@ pub use codec::{
     snapshot_integrity, state_digest,
 };
 pub use coordinator::{
-    AbortReceipt, AuthorityPlan, CommandReceipt, Coordinator, EffectReceipt, RuntimeError,
-    SafePoint, SafePointTimer, SnapshotExpectations, SourceResumeReceipt, TimerPoll,
+    AbortReceipt, AuthorityPlan, CommandReceipt, Coordinator, EffectReceipt, ProfileAuthorityPlan,
+    RuntimeError, SafePoint, SafePointTimer, SnapshotExpectations, SourceResumeReceipt, TimerPoll,
     ValidatedSnapshot, validate_snapshot,
 };
 

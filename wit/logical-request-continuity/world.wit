@@ -1,0 +1,180 @@
+package visa:request-continuity@0.1.0;
+
+interface logical-request {
+    enum transport {
+        reconnectable,
+        raw-live-tcp,
+    }
+
+    enum delivery-policy {
+        deduplicated,
+        at-most-once,
+        at-least-once,
+        non-recoverable,
+    }
+
+    enum replay-policy {
+        never,
+        before-send,
+        if-idempotent,
+        with-operation-id,
+    }
+
+    enum idempotency {
+        non-idempotent,
+        idempotent,
+        operation-id-deduplicated,
+    }
+
+    enum request-phase {
+        ready,
+        pending,
+        partial-response,
+        unknown-completion,
+        reconciling,
+        replaying,
+        cancelling,
+        completed,
+        timed-out,
+        cancelled,
+        rejected,
+    }
+
+    enum request-rejection {
+        peer-mismatch,
+        credential-denied,
+        unsafe-replay,
+        unsupported-transport,
+        policy-denied,
+    }
+
+    enum continuity-disposition {
+        revalidate,
+        reconnect,
+        replay,
+        reject,
+    }
+
+    record response-metadata {
+        size: u32,
+        digest: list<u8>,
+    }
+
+    record request-observation {
+        operation-id: string,
+        phase: request-phase,
+        response: option<response-metadata>,
+        rejection: option<request-rejection>,
+    }
+
+    record observe-result {
+        observation: request-observation,
+        bytes: list<u8>,
+        response-cursor: u32,
+    }
+
+    variant request-error {
+        denied,
+        peer-mismatch,
+        credential-denied,
+        unsafe-replay,
+        unsupported-transport(transport),
+        policy-denied,
+        stale-binding,
+        invalid-cursor,
+        indeterminate(string),
+        unavailable,
+    }
+
+    resource request-binding {
+        start: func(
+            operation-id: string,
+            peer-identity: string,
+            credential-reference: string,
+            request: list<u8>,
+            timeout-ms: u64,
+        ) -> result<request-observation, request-error>;
+        observe: func(
+            operation-id: string,
+            max-bytes: u32,
+        ) -> result<observe-result, request-error>;
+        reconcile: func(operation-id: string) -> result<request-observation, request-error>;
+        cancel: func(operation-id: string) -> result<request-observation, request-error>;
+    }
+}
+
+interface workload {
+    use logical-request.{
+        continuity-disposition,
+        delivery-policy,
+        idempotency,
+        observe-result,
+        replay-policy,
+        request-binding,
+        request-error,
+        request-observation,
+        request-phase,
+        request-rejection,
+        response-metadata,
+        transport,
+    };
+
+    enum lifecycle {
+        active,
+        frozen,
+    }
+
+    record component-state {
+        session-id: string,
+        peer-identity: string,
+        credential-reference: string,
+        transport: transport,
+        delivery: delivery-policy,
+        replay: replay-policy,
+        idempotency: idempotency,
+        timeout-ms: u64,
+        max-request-size: u32,
+        max-response-size: u32,
+        operation-id: string,
+        request-size: u32,
+        request-digest: list<u8>,
+        request-phase: request-phase,
+        response-cursor: u32,
+        response: option<response-metadata>,
+        rejection: option<request-rejection>,
+        disposition: continuity-disposition,
+        lifecycle: lifecycle,
+    }
+
+    variant workload-error {
+        already-active,
+        invalid-state,
+        safe-point-unavailable,
+        request(request-error),
+    }
+
+    activate: func(
+        session-id: string,
+        state: component-state,
+        request: own<request-binding>,
+    ) -> result<_, workload-error>;
+    start: func(bytes: list<u8>) -> result<request-observation, workload-error>;
+    observe: func(max-bytes: u32) -> result<observe-result, workload-error>;
+    reconcile: func() -> result<request-observation, workload-error>;
+    cancel: func() -> result<request-observation, workload-error>;
+    freeze: func() -> result<component-state, workload-error>;
+    thaw: func(
+        state: component-state,
+        request: own<request-binding>,
+    ) -> result<_, workload-error>;
+    restore: func(
+        state: component-state,
+        request: own<request-binding>,
+    ) -> result<_, workload-error>;
+    status: func() -> option<component-state>;
+}
+
+world logical-request-continuity {
+    import logical-request;
+    export workload;
+}

@@ -201,14 +201,7 @@ fn effective_rights_inner(
     include_prepared: bool,
 ) -> Result<Rights, Rejection> {
     let mut current = authority;
-    let mut effective = Rights::from_bits(u16::MAX).unwrap_or(
-        Rights::TIMER_ARM
-            .union(Rights::TIMER_CANCEL)
-            .union(Rights::KV_READ)
-            .union(Rights::KV_WRITE)
-            .union(Rights::REBIND)
-            .union(Rights::HANDOFF),
-    );
+    let mut effective = Rights::ALL;
     let max_depth = state.authorities.len()
         + if include_prepared {
             state.prepared_destination.as_ref().map_or(0, |prepared| prepared.authorities.len())

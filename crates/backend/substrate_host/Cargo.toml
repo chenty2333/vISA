@@ -13,8 +13,14 @@ test-control = []
 
 [dependencies]
 contract_core = { path = "../../core/contract_core" }
+getrandom = "=0.4.2"
+hmac = "=0.12.1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = "1.0"
 serde_json = "1.0"
 sha2 = "0.10"
 substrate_api = { path = "../substrate_api" }
+visa_profile = { path = "../../core/visa_profile" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }

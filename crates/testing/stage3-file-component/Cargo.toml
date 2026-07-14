@@ -1,0 +1,13 @@
+[package]
+license.workspace = true
+name = "stage3-file-component"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+wit-bindgen = { version = "0.51.0", default-features = false, features = ["macros", "realloc"] }
