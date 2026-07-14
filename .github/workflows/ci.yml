@@ -216,18 +216,17 @@ jobs:
             .ci-cache/target \
             .ci-cache/visa-ltp
 
-      - name: Restore Docker Stage 4 Cargo cache
+      # Build the release/cross-target tree fresh. Restoring the shared dev
+      # target cache alongside the loaded Docker image exhausts runner storage.
+      - name: Restore Docker Stage 4 registry cache
         uses: actions/cache@v5
         with:
           path: |
             .ci-cache/cargo-git
             .ci-cache/cargo-registry
-            .ci-cache/target
-            .ci-cache/visa-ltp
-          key: docker-stage4-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'Dockerfile', 'compose.yaml', 'compose.ci.yaml') }}
+          key: docker-stage4-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'Dockerfile', 'compose.yaml', 'compose.ci.yaml') }}
           restore-keys: |
-            docker-stage4-${{ runner.os }}-
-            docker-dev-${{ runner.os }}-
+            docker-stage4-registry-${{ runner.os }}-
 
       - name: Show Docker versions
         run: |
