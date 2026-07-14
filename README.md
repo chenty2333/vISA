@@ -21,16 +21,17 @@ resource bindings, resume, and produce executable evidence about what happened.
 > passing. The strict verifier accepts only
 > `strict-cross-runtime-continuity`. Both evidence paths remain limited to
 > x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV
-> scope and remains the independent-runtime control baseline. Stage 3A now has
-> a bounded regular-file implementation and a locally verified 12-case
-> executable evidence path; Stage 3B has a bounded logical-request
-> (reconnectable-session) implementation and a locally verified 14-case evidence
-> path. Both Stage 3 paths currently run Wasmtime to Wasmtime, explicitly record
-> `independent_runtime_coverage=false`, and list Wacogo as unsupported. Final
-> exact-revision pushed-CI qualification is still pending,
-> so Roadmap Stage 3 is not yet complete and does not inherit the
-> Stage 2 cross-runtime result. Cross-ISA/substrate, confidential-continuity,
-> stable API, and production claims remain unearned.
+> scope and remains the independent-runtime control baseline. Stage 3A has a
+> bounded regular-file implementation and a qualified 12-case executable
+> evidence path; Stage 3B has a bounded logical-request (reconnectable-session)
+> implementation and a qualified 14-case evidence path. Both gates and their
+> independent structural bundle verifiers passed on the stage-closing
+> implementation revision, which passed pushed CI at its exact commit. Roadmap
+> Stage 3 is complete for these two named bounded profiles. Both Stage 3 paths
+> run Wasmtime to Wasmtime, explicitly record
+> `independent_runtime_coverage=false`, list Wacogo as unsupported, and do not
+> inherit the Stage 2 cross-runtime result. Cross-ISA/substrate,
+> confidential-continuity, stable API, and production claims remain unearned.
 
 ## The problem
 

@@ -229,10 +229,11 @@ production-readiness, or broader runtime claim follows.
 
 ## Stage 3: Rich external resources
 
-Status: in progress. Stage 3A and Stage 3B are implemented as separate
-resource-profile slices and have passed their local executable runners and
-independent structural bundle verifiers. Exact-revision pushed-CI qualification
-remains open, so this stage is not yet complete.
+Status: complete for the two named bounded Wasmtime-to-Wasmtime resource
+profiles on x86-64/amd64 Linux. Stage 3A and Stage 3B passed their executable
+runners and independent structural bundle verifiers, the unchanged Strict
+Stage 2 control remained green on the stage-closing implementation revision,
+and that revision passed pushed CI at its exact commit.
 
 The completed Strict Stage 2 timer/KV matrix is the immutable control baseline
 for this widening step. Stage 3 does not modify or re-sign its Component,
@@ -245,8 +246,8 @@ correct result is not always direct reconstruction.
 
 Implementation status: the separate regular-file WIT world, guest, typed
 profile, portable state codec, Wasmtime adapter, Linux host provider, 12-case
-system runner, evidence schema, registry lock, and independent structural verifier are in
-place. The local executable gate passes all 12 accepted cases for the
+system runner, evidence schema, registry lock, and independent structural
+verifier are in place. The executable gate passes all 12 accepted cases for the
 `bounded-regular-file-continuity` claim.
 
 The portable state contains logical object identity, relative path, logical
@@ -284,9 +285,9 @@ lock/lease protocol.
 Implementation status: the separate logical-request WIT world, guest, typed
 profile, portable state codec, Wasmtime adapter, durable provider ledger, real
 bounded loopback TCP peer/protocol, 14-case system runner, evidence schema,
-registry lock, and independent structural verifier are in place. The local executable gate
-passes all 14 accepted cases for the `bounded-logical-request-continuity`
-claim.
+registry lock, and independent structural verifier are in place. The executable
+gate passes all 14 accepted cases for the
+`bounded-logical-request-continuity` claim.
 
 The portable state contains peer identity, a credential reference, logical
 operation ID, request digest, request phase, response cursor and metadata,

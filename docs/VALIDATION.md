@@ -9,9 +9,10 @@ regular-file and Stage 3B bounded logical-request gates are also automated and
 wired into CI, with an aggregate local command that runs both. All current
 system cells use x86-64/amd64 Linux. Stage 1 and Stage 2 use the timer/KV
 profile; the two Stage 3 gates are separate Wasmtime-to-Wasmtime resource
-profiles and do not inherit the Strict Stage 2 cross-runtime result. Final
-Stage 3 exact-revision CI qualification is pending. Cross-ISA, confidential,
-release, and production validation remain outside the implemented boundary.
+profiles and do not inherit the Strict Stage 2 cross-runtime result. The
+stage-closing Stage 3 implementation revision passed pushed CI at its exact
+commit. Cross-ISA, confidential, release, and production validation remain
+outside the implemented boundary.
 
 Last reviewed: 2026-07-14.
 

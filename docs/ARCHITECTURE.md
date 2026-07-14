@@ -13,9 +13,10 @@ normalized equality groups, and all inner and outer independent verification
 passed for `strict-cross-runtime-continuity`. Both paths remain limited to
 x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV scope.
 Stage 3A bounded regular-file and Stage 3B bounded logical-request resource
-paths are implemented and their local 12-case and 14-case executable evidence
-passes independent structural bundle verification. Exact-revision pushed-CI
-qualification is pending. Stage 3 evidence is currently
+paths are implemented, and their 12-case and 14-case executable evidence passes
+independent structural bundle verification. The stage-closing implementation
+revision passed pushed CI at its exact commit, so Roadmap Stage 3 is complete
+for these two named bounded profiles. Stage 3 evidence is
 Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
 does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Cross-ISA/target
 substrate cells, confidential continuity, and production readiness are not
@@ -499,9 +500,9 @@ Wasmtime/Wacogo cells over the same x86-64/amd64 Linux timer/KV profile, with
 Roadmap Stage 2 is complete for this named matrix and claim. Cross-host
 transport, alternative persistence and lease services, compatibility windows,
 cross-ISA/target/substrate matrices, confidential continuity, performance
-targets, and production readiness remain unimplemented. Stage 3A and Stage 3B
-now implement the two bounded resource profiles described above, but remain
-open pending exact-revision pushed-CI qualification. They do not claim arbitrary
-directory trees or open descriptors, preservation of raw live TCP, generic
-future/stream continuation, a general async runtime, or a qualified second
-Stage 3 runtime.
+targets, and production readiness remain unimplemented. Roadmap Stage 3 is
+complete for the two bounded resource profiles described above after their
+stage-closing implementation revision passed pushed CI at its exact commit.
+They do not claim arbitrary directory trees or open descriptors, preservation
+of raw live TCP, generic future/stream continuation, a general async runtime,
+or a qualified second Stage 3 runtime.
