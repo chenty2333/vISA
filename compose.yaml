@@ -6,7 +6,7 @@ services:
       args:
         USER_UID: ${VISA_DOCKER_UID:-1000}
         USER_GID: ${VISA_DOCKER_GID:-1000}
-    image: visa-dev:latest
+    image: ${VISA_DEV_IMAGE:-visa-dev:latest}
     working_dir: /workspace
     stdin_open: true
     tty: true

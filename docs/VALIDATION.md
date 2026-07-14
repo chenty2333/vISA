@@ -44,24 +44,30 @@ providers, hand-written reports, or direct canonical-state mutation.
 
 ## Current automated gates
 
-GitHub Actions runs two parallel Docker-based jobs on pushes and pull requests.
-The existing development job validates Compose, builds the image, and runs the
-same `full`, `system`, `system-jco-node`, `system-stage2`,
+GitHub Actions separates repository quality from claim qualification on pushes
+and pull requests. One Docker job validates Compose and runs `full`. Six
+parallel matrix lanes run the same `system`, `system-jco-node`, `system-stage2`,
 `system-stage2-strict`, `system-stage3a`, and `system-stage3b` implementations
-exposed locally by `scripts/run-docker-ci-gate.sh`. A separate Stage 4 job
-builds the same development image, runs `system-stage4`, captures its log, and
-uploads the complete or failed Stage 4 artifact parent. Each system step
-uploads retained artifacts, including partial artifacts after a failure when
-any exist. The strict wrapper additionally retains its Docker log, exit
-receipt, sidecar, and build receipt. Current workflow artifacts use a 14-day
-retention period. The local `system-stage3` command runs Stage 3A and Stage 3B
-in sequence; CI runs them as separate uploadable steps. A Stage 4 roadmap
-closure requires both parallel jobs and therefore the complete workflow to pass
-at the same exact pushed SHA, not merely the Stage 4 job.
+exposed locally by `scripts/run-docker-ci-gate.sh`; a separate lane runs the
+complete `system-stage4` aggregate. Each job rebuilds the development image from
+the exact checkout, tags it `visa-dev:<SHA>`, and keeps Cargo target output
+ephemeral instead of restoring it across workflow runs. System evidence and
+logs live outside that target tree under `.ci-artifacts/` and upload on gate
+success or failure, including partial artifacts when any exist. The strict
+wrapper additionally retains its Docker log, exit receipt, sidecar, and build
+receipt. Pull-request artifacts use 3-day retention; push artifacts use 14-day
+retention.
+
+A final fail-closed `Exact-SHA qualification closure` job depends on the quality
+job, all six claim lanes, and Stage 4, and succeeds only when every result is
+`success`. The local `system-stage3` command still runs Stage 3A and Stage 3B in
+sequence; CI runs them as separate uploadable lanes. A Stage 4 qualification
+closure therefore requires the complete workflow to pass at the same exact
+pushed SHA, not merely the Stage 4 lane.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
-| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, first-party Rust file-size maintenance, locked JcoNode Cargo/source/Node/V8 identity, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, adapters, profile, and evidence packages satisfy their local logic and structural edit-loop gates. |
+| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, first-party Rust file-size maintenance, the build/cache/evidence CI contract, locked JcoNode Cargo/source/Node/V8 identity, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, adapters, profile, evidence packages, and CI policy satisfy their local logic and structural edit-loop gates. |
 | `full` | Everything in `fast`, shell parsing, default-feature workspace tests, current opt-in feature tests, active no-std check, selected Wasm check, kernel target check, benchmark compilation, and report/artifact fixture gates | The checked repository builds and tests across its declared compile targets and current fixture contracts. It does not prove a live handoff. |
 | `system` | All 31 registered Stage 1 lifecycle and fault cases through isolated source/destination workers, followed by independent validation of the produced execution bundle | The named single-runtime reference cell satisfies the Stage 1 workload, resource, authority, recovery, fencing, and evidence contract. It does not repeat `full` or prove another runtime or ISA. |
 | `system-jco-node` | The same 31 registered cases with JcoNode explicitly selected at source and destination, followed by independent Stage 1 validation | The pinned Jco/Node/V8 translated execution cell satisfies the Stage 1 contract without a Wasmtime execution fallback. It does not prove a fully independent Component Model implementation. |

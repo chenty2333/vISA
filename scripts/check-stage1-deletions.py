@@ -226,7 +226,7 @@ def check_active_surfaces() -> list[str]:
 
 
 def repository_text_files() -> list[Path]:
-    skipped = {".git", ".ci-cache", "target"}
+    skipped = {".git", ".ci-artifacts", ".ci-cache", "target"}
     files: list[Path] = []
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in TEXT_SUFFIXES:

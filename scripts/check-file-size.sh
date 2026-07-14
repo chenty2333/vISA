@@ -16,6 +16,7 @@ ACTIVE_SPINE_PREFIXES=(
     crates/runtime/visa_runtime/
     crates/runtime/visa_component_adapter/
     crates/runtime/visa_jco_node/
+    crates/runtime/visa_wacogo/
     crates/runtime/visa_wasmtime/
     crates/testing/stage3-file-component/
     crates/testing/stage3-request-component/

@@ -10,6 +10,8 @@ usage: scripts/ci-gate.sh \
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
+Set VISA_EVIDENCE_PARENT to place system evidence outside Cargo's target
+directory; the default remains target/visa-system for direct Host runs.
 The system tier independently runs and validates the real Stage 1 lifecycle;
 system-jco-node does the same for the JcoNode reference cell. system-stage2
 runs and independently validates the complete four-cell Stage 2 matrix.
@@ -54,6 +56,26 @@ on_error() {
 }
 
 trap on_error ERR
+
+system_evidence_parent() {
+    local parent="${VISA_EVIDENCE_PARENT:-$PWD/target/visa-system}"
+
+    if [[ "$parent" != /* ]]; then
+        parent="$PWD/$parent"
+    fi
+    mkdir -p -- "$parent"
+    if [[ ! -d "$parent" || -L "$parent" ]]; then
+        printf 'system evidence parent is not a non-symlink directory: %s\n' \
+            "$parent" >&2
+        return 1
+    fi
+    (CDPATH='' cd -- "$parent" && pwd -P)
+}
+
+cargo_target_directory() {
+    cargo metadata --locked --no-deps --format-version 1 \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])'
+}
 
 in_github_actions() {
     [[ -n "${GITHUB_ACTIONS:-}" ]]
@@ -146,6 +168,11 @@ gate_file_size() {
     run_gate "maintenance: first-party Rust file sizes" scripts/check-file-size.sh
 }
 
+gate_ci_contract() {
+    run_gate "CI: build, cache, evidence, and closure contract" \
+        python3 scripts/check-ci-contract.py
+}
+
 gate_jco_node_toolchain() {
     run_gate "toolchain: locked JcoNode translation and Node/V8 execution" \
         python3 scripts/check-jco-node-toolchain.py
@@ -215,6 +242,7 @@ gate_fast() {
     gate_dependency_direction
     gate_stage1_deletions
     gate_file_size
+    gate_ci_contract
     gate_jco_node_toolchain
     gate_active_clippy
     gate_active_tests
@@ -233,8 +261,8 @@ gate_full() {
 }
 
 gate_system() {
-    local system_parent="$PWD/target/visa-system"
-    mkdir -p "$system_parent"
+    local system_parent
+    system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 1 Wasmtime"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage1-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage1-evidence.json"
@@ -251,8 +279,8 @@ gate_system() {
 }
 
 gate_system_jco_node() {
-    local system_parent="$PWD/target/visa-system"
-    mkdir -p "$system_parent"
+    local system_parent
+    system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 2b JcoNode"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/jco-node-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage1-evidence.json"
@@ -270,8 +298,8 @@ gate_system_jco_node() {
 }
 
 gate_system_stage2() {
-    local system_parent="$PWD/target/visa-system"
-    mkdir -p "$system_parent"
+    local system_parent
+    system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 2 matrix"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage2-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage2-evidence.json"
@@ -289,12 +317,12 @@ gate_system_stage2() {
 }
 
 gate_system_stage2_strict() {
-    local system_parent="$PWD/target/visa-system"
     system_artifact_kind="Strict Stage 2"
     if [[ -n "${VISA_STRICT_STAGE2_ARTIFACT_ROOT:-}" ]]; then
         system_artifact_root="$VISA_STRICT_STAGE2_ARTIFACT_ROOT"
     else
-        mkdir -p "$system_parent"
+        local system_parent
+        system_parent="$(system_evidence_parent)"
         system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage2-strict-XXXXXX")"
     fi
     system_bundle_path="$system_artifact_root/strict/stage2-evidence.json"
@@ -308,8 +336,8 @@ gate_system_stage2_strict() {
 }
 
 gate_system_stage3a() {
-    local system_parent="$PWD/target/visa-system"
-    mkdir -p "$system_parent"
+    local system_parent
+    system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 3A regular-file continuity"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3a-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage3a-evidence.json"
@@ -326,8 +354,8 @@ gate_system_stage3a() {
 }
 
 gate_system_stage3b() {
-    local system_parent="$PWD/target/visa-system"
-    mkdir -p "$system_parent"
+    local system_parent
+    system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 3B logical-request continuity"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3b-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage3b-evidence.json"
@@ -349,9 +377,14 @@ gate_system_stage3() {
 }
 
 gate_system_stage4() {
-    local system_parent="$PWD/target/visa-system"
-    local x86_target="$PWD/target/x86_64-unknown-linux-gnu/release"
-    local aarch64_target="$PWD/target/aarch64-unknown-linux-gnu/release"
+    local system_parent
+    local cargo_target
+    local x86_target
+    local aarch64_target
+    system_parent="$(system_evidence_parent)"
+    cargo_target="$(cargo_target_directory)"
+    x86_target="$cargo_target/x86_64-unknown-linux-gnu/release"
+    aarch64_target="$cargo_target/aarch64-unknown-linux-gnu/release"
     local x86_worker="$x86_target/visa-system"
     local aarch64_worker="$aarch64_target/visa-system"
     local x86_conformance="$x86_target/visa-conformance"
@@ -359,7 +392,6 @@ gate_system_stage4() {
     local qemu_aarch64
     local relocated_root
 
-    mkdir -p "$system_parent"
     system_artifact_kind="Stage 4 target/substrate and cross-ISA matrix"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage4-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage4-evidence.json"

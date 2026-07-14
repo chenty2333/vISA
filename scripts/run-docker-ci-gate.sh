@@ -12,8 +12,9 @@ usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
 Validates the Compose configuration, builds or reuses the vISA development
 image, and runs the selected validation tier. With no tier, runs full.
 System tiers are standalone and preserve their evidence under the container's
-/workspace/target/visa-system directory. system-stage2 executes all four
-runtime-pair cells and can be substantially slower than the other tiers.
+/workspace/evidence directory when --ci-cache is selected; direct Compose runs
+retain the target/visa-system default. system-stage2 executes all four runtime-
+pair cells and can be substantially slower than the other tiers.
 system-stage2-strict calls the same local Strict Stage 2 gate used on the host,
 with locked offline Wacogo inputs from the image. Its evidence, Docker log, and
 sidecar binary/receipt are retained together under a host-visible run root.
@@ -31,7 +32,7 @@ Options:
   --artifact-parent DIR
                        Parent for a unique Strict Stage 2 Docker run root.
                        Valid only with system-stage2-strict; defaults to
-                       the repository's .ci-cache/strict-stage2. Custom paths
+                       the repository's .ci-artifacts/strict-stage2. Custom paths
                        may be outside the repository. Existing symlink path
                        components are rejected in both cases; ':' and newline
                        are rejected because this path becomes a Docker bind.
@@ -101,7 +102,8 @@ if [[ "$tier" != system-stage2-strict ]]; then
             .ci-cache/cargo-git \
             .ci-cache/cargo-registry \
             .ci-cache/target \
-            .ci-cache/visa-ltp
+            .ci-cache/visa-ltp \
+            .ci-artifacts
     fi
     "${compose[@]}" config --quiet
     if [[ "$build_image" -eq 1 ]]; then
@@ -114,7 +116,7 @@ fi
 repo_root=$(git rev-parse --show-toplevel)
 artifact_parent_scope=custom
 if [[ -z "$artifact_parent" ]]; then
-    artifact_parent="$repo_root/.ci-cache/strict-stage2"
+    artifact_parent="$repo_root/.ci-artifacts/strict-stage2"
     artifact_parent_scope=repository
 fi
 artifact_parent=$(
@@ -222,7 +224,8 @@ if [[ "$use_ci_cache" -eq 1 ]]; then
         .ci-cache/cargo-git \
         .ci-cache/cargo-registry \
         .ci-cache/target \
-        .ci-cache/visa-ltp
+        .ci-cache/visa-ltp \
+        .ci-artifacts
 fi
 log_strict_command "${compose[@]}" config --quiet
 if [[ "$build_image" -eq 1 ]]; then

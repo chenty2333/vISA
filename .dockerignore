@@ -4,6 +4,9 @@
 # Repository build and CI outputs
 /target/
 /.ci-cache/
+/.ci-artifacts/
+__pycache__/
+*.py[cod]
 
 # Feature-qualification tool outputs
 /third_party/runtime-b-qualification/qualification/**/bin/

@@ -1,6 +1,9 @@
 # Repository build and CI outputs
 /target/
 /.ci-cache/
+/.ci-artifacts/
+__pycache__/
+*.py[cod]
 
 # Root-local environment files; templates remain visible
 /.env*

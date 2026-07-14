@@ -1,11 +1,14 @@
 services:
   dev:
     environment:
+      CARGO_INCREMENTAL: "0"
       CI: "true"
       GITHUB_ACTIONS: ${GITHUB_ACTIONS:-}
+      VISA_EVIDENCE_PARENT: /workspace/evidence
     volumes:
       - .:/workspace
       - ./.ci-cache/cargo-registry:/usr/local/cargo/registry
       - ./.ci-cache/cargo-git:/usr/local/cargo/git
       - ./.ci-cache/target:/workspace/target
       - ./.ci-cache/visa-ltp:/home/visa/.cache/visa-ltp
+      - ./.ci-artifacts:/workspace/evidence

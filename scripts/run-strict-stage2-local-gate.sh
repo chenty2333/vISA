@@ -13,7 +13,8 @@ Runs the locked local Strict Stage 2 gate in this fixed order:
 
 Options:
   --artifact-root ROOT  New or existing empty output directory. If omitted,
-                        create target/visa-system/strict-stage2-local-XXXXXX.
+                        create strict-stage2-local-XXXXXX below
+                        VISA_EVIDENCE_PARENT or target/visa-system.
   --go-archive FILE     Prefetched official go1.26.5 linux/amd64 archive.
   --go FILE             go executable extracted from that archive.
   --module-zip FILE     Prefetched pinned partite-ai/wacogo module zip.
@@ -25,6 +26,7 @@ Options:
   -h, --help            Show this help.
 
 Environment fallbacks:
+  VISA_EVIDENCE_PARENT
   VISA_WACOGO_GO_ARCHIVE
   VISA_WACOGO_GO
   VISA_WACOGO_MODULE_ZIP
@@ -46,6 +48,10 @@ usage_error() {
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+default_artifact_parent=${VISA_EVIDENCE_PARENT:-$repo_root/target/visa-system}
+if [[ "$default_artifact_parent" != /* ]]; then
+    default_artifact_parent="$repo_root/$default_artifact_parent"
+fi
 
 artifact_root_input=""
 go_archive=${VISA_WACOGO_GO_ARCHIVE:-}
@@ -103,7 +109,8 @@ done
 
 if [[ "$dry_run" -eq 1 ]]; then
     printf 'dry-run=true\n'
-    printf 'artifact-root=%s\n' "${artifact_root_input:-<auto-under-target/visa-system>}"
+    printf 'artifact-root=%s\n' \
+        "${artifact_root_input:-<auto-under-$default_artifact_parent>}"
     printf 'go-archive=%s\n' "${go_archive:-<required>}"
     printf 'go=%s\n' "${go_bin:-<required>}"
     printf 'module-zip=%s\n' "${module_zip:-<required>}"
@@ -123,7 +130,7 @@ prepare_artifact_root() {
     local first_entry
 
     if [[ -z "$requested" ]]; then
-        parent="$repo_root/target/visa-system"
+        parent="$default_artifact_parent"
         mkdir -p -- "$parent"
         [[ -d "$parent" && ! -L "$parent" ]] \
             || usage_error "default artifact parent is not a non-symlink directory: $parent"

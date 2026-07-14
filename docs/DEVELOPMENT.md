@@ -146,11 +146,12 @@ scripts/run-docker-ci-gate.sh system-stage4-isa
 With no tier argument the wrapper runs `full`. It validates the Compose
 configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
 implementation used by CI. `--skip-build` reuses an existing image.
-`--ci-cache` overlays `compose.ci.yaml` and uses the bind-mounted `.ci-cache/`
-layout used by GitHub Actions.
+`--ci-cache` overlays `compose.ci.yaml`. It bind-mounts Cargo and LTP build state
+below `.ci-cache/`, places system evidence below `.ci-artifacts/`, and disables
+Cargo incremental compilation to match GitHub Actions.
 
 The strict Docker wrapper retains its gate root, locked Wacogo sidecar and build
-receipt, Docker log, and exit receipt together below `.ci-cache/strict-stage2/`
+receipt, Docker log, and exit receipt together below `.ci-artifacts/strict-stage2/`
 by default. `--artifact-parent DIR` selects another parent. For a direct Host
 run, provide the prefetched inputs named by `VISA_WACOGO_GO_ARCHIVE`,
 `VISA_WACOGO_GO`, `VISA_WACOGO_MODULE_ZIP`, and
@@ -166,8 +167,9 @@ using a second implementation of the gate.
 
 `fast` checks locked metadata, formatting, strict active-spine dependency
 direction, the Stage 1 legacy-deletion/oracle boundary, first-party Rust file
-sizes (including not-yet-added files), the locked JcoNode Cargo/source/Node/V8
-identity, strict Clippy for active-spine targets, and active-spine tests. `full`
+sizes (including not-yet-added files), the build/cache/evidence CI contract, the
+locked JcoNode Cargo/source/Node/V8 identity, strict Clippy for active-spine
+targets, and active-spine tests. `full`
 includes `fast`, then adds shell parsing,
 default-feature workspace tests, every current opt-in feature, active no-std
 compilation, selected Wasm packages, the kernel target, benchmark compilation,
@@ -185,10 +187,12 @@ It rejects dependencies that point against the accepted contract -> reducer ->
 coordinator -> adapter/tool direction. Oracle packages remain buildable under
 `full`, but they cannot enter the protected production spine.
 
-The implemented `system` tier creates a private artifact root below
-`target/visa-system/`, runs all 31 Stage 1 registry cases through isolated
-source and destination worker processes, writes an execution evidence bundle,
-then invokes the independent `visa-conformance stage1` validator. The command
+The implemented `system` tier creates a private artifact root, runs all 31 Stage
+1 registry cases through isolated source and destination worker processes,
+writes an execution evidence bundle, then invokes the independent
+`visa-conformance stage1` validator. Direct Host and normal Compose runs default
+to `target/visa-system/`; `VISA_EVIDENCE_PARENT` selects another parent, and the
+CI-cache overlay fixes it at the host-visible `.ci-artifacts/` mount. The command
 prints the retained artifact root and bundle path on success and preserves them
 on failure for diagnosis.
 
@@ -220,10 +224,11 @@ equality groups and earns only `strict-cross-runtime-continuity` on x86-64
 Linux with the timer/KV profile. Both Stage 2 matrix gates are intentionally
 expensive and are not part of `full`.
 
-`system-stage3a` creates a private root below `target/visa-system/`, runs the
-fixed 12-case regular-file registry through the Stage 3A Component, Wasmtime
-adapter, coordinator, scoped Linux file provider, handoff, and evidence writer,
-then invokes `visa-conformance stage3a` independently over the retained bundle.
+`system-stage3a` creates a private root under the same configurable evidence
+parent, runs the fixed 12-case regular-file registry through the Stage 3A
+Component, Wasmtime adapter, coordinator, scoped Linux file provider, handoff,
+and evidence writer, then invokes `visa-conformance stage3a` independently over
+the retained bundle.
 Qualification requires Linux `openat2` and a filesystem that reports
 `STATX_BTIME`. The provider compares device, inode, and birth time for both the
 opened root and file; missing birth time is an unsupported capability with no
@@ -416,22 +421,30 @@ runners behind a small developer-facing surface.
 
 ## Outputs and caches
 
-`target/` and `.ci-cache/` are ignored. The CI-cache overlay stores Cargo and
-LTP caches below `.ci-cache/`; the normal Compose configuration uses named
-volumes. LTP build helpers default to an XDG or home cache outside repository
-build output because their artifacts can be large.
+`target/`, `.ci-cache/`, and `.ci-artifacts/` are ignored, but they have distinct
+lifecycles. The CI-cache overlay stores Cargo registry/git state, transient Cargo
+target output, and the LTP build cache below `.ci-cache/`; GitHub Actions restores
+only Cargo registry/git state across runs, never the full target tree. The
+quality job owns publication of that shared dependency cache, while claim lanes
+restore it without publishing duplicates. Current CI does not run or cache an
+external LTP build. CI sets `CARGO_INCREMENTAL=0`. The normal Compose
+configuration uses named volumes. LTP build helpers default to an XDG or home
+cache outside repository build output because their artifacts can be large.
 
-Stage 4 output is written below `target/visa-system/`; a successful run ends in
-`stage4-*-relocated/` because relocation is part of the gate, not a cleanup
-rename. With `--ci-cache`, the evidence root is host-visible below
-`.ci-cache/target/visa-system/`. A prepublication runner failure normally leaves
-a partial root with its marker and, after initialization, status diagnostics;
-a later gate failure may instead leave a marker-free published root. The GitHub
-Stage 4 job additionally tees gate output to
-`.ci-cache/target/visa-system/stage4-ci.log`; `--ci-cache` and the local Docker
-wrapper do not create that log by themselves. When rechecking a downloaded
-Actions artifact, pass the inner `stage4-*-relocated/` directory and its
-`stage4-evidence.json` to `visa-conformance stage4`; do not pass the artifact
+`.ci-artifacts/` contains retained system evidence and gate logs. Keeping it
+outside the Cargo target tree allows evidence to be uploaded, diagnosed, or
+deleted without changing the build-cache lifecycle.
+
+For a direct run, Stage 4 output defaults to `target/visa-system/`; a successful
+run ends in `stage4-*-relocated/` because relocation is part of the gate, not a
+cleanup rename. With `--ci-cache`, the evidence root is host-visible below
+`.ci-artifacts/`. A prepublication runner failure normally leaves a partial root
+with its marker and, after initialization, status diagnostics; a later gate
+failure may instead leave a marker-free published root. The GitHub Stage 4 job
+additionally tees gate output to `.ci-artifacts/stage4-ci.log`; `--ci-cache` and
+the local Docker wrapper do not create that log by themselves. When rechecking a
+downloaded Actions artifact, pass the inner `stage4-*-relocated/` directory and
+its `stage4-evidence.json` to `visa-conformance stage4`; do not pass the artifact
 parent, which also contains `stage4-ci.log`.
 
 Local LTP binaries, generated manifests, logs, reports, and other runner output
@@ -469,10 +482,16 @@ Bounded Roadmap Stage 4 is complete only for its two named claims. Accepted
 qualification revision `10d2a6138e7d773b2fa4f5195abb850931a477c8` passed both
 Docker jobs in Actions run `29348729990`, and the downloaded Stage 4 artifact
 passed independent verification at a different root. The complete receipt is
-recorded in [validation](VALIDATION.md#stage-4-closure-receipt). CI retains the
-same two-job topology: the existing job runs `full`, Stage 1, JcoNode, legacy
-and Strict Stage 2, and Stage 3A/B; the separate Stage 4 job runs
-`system-stage4` and uploads its evidence/log on success or failure.
+recorded in [validation](VALIDATION.md#stage-4-closure-receipt).
+
+Current CI separates repository quality from claim qualification. One job runs
+`full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
+Strict Stage 2, Stage 3A, and Stage 3B; a separate lane runs the complete Stage 4
+aggregate. A final `Exact-SHA qualification closure` job fails unless all eight
+independent jobs succeeded for the same source SHA. Every Docker image is built
+from that checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload
+from `.ci-artifacts/` on gate success or failure. Pull-request artifacts are
+retained for 3 days and push artifacts for 14 days.
 
 ## Next validation expansion
 

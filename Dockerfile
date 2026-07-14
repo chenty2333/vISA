@@ -43,6 +43,7 @@ RUN apt-get update \
         perl \
         pkgconf \
         python3 \
+        python3-yaml \
         qemu-system-x86 \
         sed \
         sudo \

@@ -21,6 +21,7 @@ pub(crate) const SOURCE_ROOTS: &[&str] = &[
     "crates/testing/visa-conformance",
     "crates/testing/visa-system",
     "scripts/check-dependency-direction.py",
+    "scripts/check-ci-contract.py",
     "scripts/check-file-size.sh",
     "scripts/check-jco-node-toolchain.py",
     "scripts/wacogo-build-sidecar.sh",
