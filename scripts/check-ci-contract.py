@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,18 @@ CARGO_CACHE_KEY = (
     "docker-cargo-${{ runner.os }}-"
     "${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'Dockerfile', "
     "'compose.yaml', 'compose.ci.yaml') }}"
+)
+IMAGE_REVISION_LABEL = "org.opencontainers.image.revision=${{ github.sha }}"
+IMAGE_SOURCE_LABEL = (
+    "org.opencontainers.image.source="
+    "${{ github.server_url }}/${{ github.repository }}"
+)
+LOCKED_CARGO_WRAPPERS = (
+    "scripts/run-host-ltp-log-adapter.sh",
+    "scripts/run-visa-bench-conformance.sh",
+    "scripts/run-visa-ltp-conformance.sh",
+    "scripts/run-visa-ltp-manifest.sh",
+    "scripts/run-visa-ltp-single.sh",
 )
 
 
@@ -70,6 +83,13 @@ def step_with_id(job: dict[str, Any], step_id: str) -> dict[str, Any]:
     steps = job.get("steps", [])
     matches = [step for step in steps if isinstance(step, dict) and step.get("id") == step_id]
     require(len(matches) == 1, f"expected exactly one workflow step with id {step_id}")
+    return matches[0]
+
+
+def step_with_name(job: dict[str, Any], name: str) -> dict[str, Any]:
+    steps = job.get("steps", [])
+    matches = [step for step in steps if isinstance(step, dict) and step.get("name") == name]
+    require(len(matches) == 1, f"expected exactly one workflow step named {name}")
     return matches[0]
 
 
@@ -112,6 +132,37 @@ def check_compose() -> None:
         "./.ci-cache/target:/workspace/target" in volumes,
         "compose.ci.yaml must keep transient Cargo output under .ci-cache/target",
     )
+
+
+def check_toolchain_alignment() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    matches = re.findall(r"^ARG RUST_TOOLCHAIN=([^\s]+)$", dockerfile, flags=re.MULTILINE)
+    require(len(matches) == 1, "Dockerfile must declare exactly one RUST_TOOLCHAIN default")
+
+    try:
+        with (ROOT / "rust-toolchain.toml").open("rb") as file:
+            toolchain_document = tomllib.load(file)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ContractError(f"cannot parse rust-toolchain.toml: {error}") from error
+    toolchain = toolchain_document.get("toolchain", {})
+    require(isinstance(toolchain, dict), "rust-toolchain.toml must contain [toolchain]")
+    require(
+        toolchain.get("channel") == matches[0],
+        "Dockerfile RUST_TOOLCHAIN must match rust-toolchain.toml channel",
+    )
+
+
+def check_locked_cargo_wrappers() -> None:
+    cargo_command = re.compile(r"\bcargo\s+(?:run|bench)\b")
+    for relative in LOCKED_CARGO_WRAPPERS:
+        for line_number, line in enumerate(
+            (ROOT / relative).read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if cargo_command.search(line):
+                require(
+                    "--locked" in line or "--frozen" in line,
+                    f"{relative}:{line_number}: qualification Cargo command is not lockfile-bound",
+                )
 
 
 def check_cache_paths(jobs: dict[str, Any]) -> None:
@@ -191,6 +242,37 @@ def check_checkouts(jobs: dict[str, Any]) -> None:
         require(
             checkouts[0].get("with", {}).get("persist-credentials") == "false",
             f"{job_name}: checkout credentials must not persist",
+        )
+
+
+def check_exact_sha_images(jobs: dict[str, Any]) -> None:
+    expected_labels = {IMAGE_REVISION_LABEL, IMAGE_SOURCE_LABEL}
+    for job_name in QUALIFICATION_JOBS:
+        job = jobs[job_name]
+        image = job.get("env", {}).get("VISA_DEV_IMAGE")
+        require(image == EXACT_SHA_IMAGE, f"{job_name}: Docker image is not exact-SHA tagged")
+
+        builds = steps_using(job, "docker/build-push-action@")
+        require(len(builds) == 1, f"{job_name}: expected exactly one Docker image build")
+        settings = builds[0].get("with", {})
+        require(settings.get("context") == ".", f"{job_name}: Docker build context drifted")
+        require(settings.get("file") == "Dockerfile", f"{job_name}: Dockerfile path drifted")
+        require(settings.get("load") == "true", f"{job_name}: Docker image must be loaded")
+        require(
+            settings.get("tags") == "${{ env.VISA_DEV_IMAGE }}",
+            f"{job_name}: Docker build must use the exact-SHA image tag",
+        )
+        labels = {line.strip() for line in str(settings.get("labels", "")).splitlines()}
+        require(labels == expected_labels, f"{job_name}: Docker image identity labels drifted")
+
+        inspect = step_with_name(job, "Inspect exact-SHA Docker image")
+        command = str(inspect.get("run", ""))
+        require(
+            "docker image inspect" in command
+            and "org.opencontainers.image.revision" in command
+            and '"$VISA_DEV_IMAGE"' in command
+            and 'test "$actual_revision" = "$GITHUB_SHA"' in command,
+            f"{job_name}: exact-SHA image inspection must verify the OCI revision label",
         )
 
 
@@ -321,12 +403,9 @@ def check_workflow() -> None:
     for job_name in (*QUALIFICATION_JOBS, "exact-sha-closure"):
         require(job_name in jobs, f"workflow is missing required job {job_name}")
 
-    for job_name in QUALIFICATION_JOBS:
-        image = jobs[job_name].get("env", {}).get("VISA_DEV_IMAGE")
-        require(image == EXACT_SHA_IMAGE, f"{job_name}: Docker image is not exact-SHA tagged")
-
     check_action_pins(jobs)
     check_checkouts(jobs)
+    check_exact_sha_images(jobs)
     check_cache_paths(jobs)
     check_dependency_caches(jobs)
     check_claim_matrix(jobs["docker-claim-gates"])
@@ -340,6 +419,8 @@ def main() -> int:
     try:
         check_ignores()
         check_compose()
+        check_toolchain_alignment()
+        check_locked_cargo_wrappers()
         check_workflow()
     except (ContractError, OSError) as error:
         print(f"CI contract violation: {error}", file=sys.stderr)

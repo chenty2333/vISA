@@ -79,7 +79,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=visa-dev
 
       - name: Inspect exact-SHA Docker image
-        run: docker image inspect "$VISA_DEV_IMAGE" >/dev/null
+        run: |
+          actual_revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$VISA_DEV_IMAGE")"
+          test "$actual_revision" = "$GITHUB_SHA"
 
       - name: Full repository gate
         run: scripts/run-docker-ci-gate.sh --ci-cache --skip-build full
@@ -171,7 +175,11 @@ jobs:
           cache-from: type=gha,scope=visa-dev
 
       - name: Inspect exact-SHA Docker image
-        run: docker image inspect "$VISA_DEV_IMAGE" >/dev/null
+        run: |
+          actual_revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$VISA_DEV_IMAGE")"
+          test "$actual_revision" = "$GITHUB_SHA"
 
       - name: Run ${{ matrix.label }} gate
         id: claim_gate
@@ -260,7 +268,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=visa-dev-stage4
 
       - name: Inspect exact-SHA Docker image
-        run: docker image inspect "$VISA_DEV_IMAGE" >/dev/null
+        run: |
+          actual_revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$VISA_DEV_IMAGE")"
+          test "$actual_revision" = "$GITHUB_SHA"
 
       - name: Stage 4 target/substrate and cross-ISA aggregate gate
         id: stage4_system_gate

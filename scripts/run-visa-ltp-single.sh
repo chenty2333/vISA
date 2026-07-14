@@ -50,19 +50,19 @@ fi
 set +e
 if [[ -n "${VISA_LTP_RUN_TIMEOUT:-}" ]]; then
     timeout --kill-after=5s "$VISA_LTP_RUN_TIMEOUT" \
-        env "${runner_env[@]}" cargo run --quiet -p runner -- --verbose \
+        env "${runner_env[@]}" cargo run --locked --quiet -p runner -- --verbose \
         >"$serial_log" 2>&1
 else
-    env "${runner_env[@]}" cargo run --quiet -p runner -- --verbose >"$serial_log" 2>&1
+    env "${runner_env[@]}" cargo run --locked --quiet -p runner -- --verbose >"$serial_log" 2>&1
 fi
 run_status=$?
 set -e
 
 raw_uri="$(basename "$raw_log")"
 serial_uri="$(basename "$serial_log")"
-cargo run --quiet -p conformance-oracle -- \
+cargo run --locked --quiet -p conformance-oracle -- \
     ltp-raw-log-from-serial "$case_id" "$serial_log" "$run_status" >"$raw_log"
-cargo run --quiet -p conformance-oracle -- \
+cargo run --locked --quiet -p conformance-oracle -- \
     ltp-visa-trace-from-serial "$spec_id" "$case_id" "$test_elf" "$raw_uri" "$serial_uri" \
     "$serial_log" "$run_status" >"$trace_log"
 

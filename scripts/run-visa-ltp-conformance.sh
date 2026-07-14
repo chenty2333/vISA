@@ -53,7 +53,7 @@ if [[ ! -x "$single_runner" ]]; then
 fi
 
 run_conformance() {
-    cargo run --quiet -p conformance-oracle -- "$@"
+    cargo run --locked --quiet -p conformance-oracle -- "$@"
 }
 
 logs_dir="$output_dir/logs"
