@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-14.
+Last reviewed: 2026-07-15.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -275,10 +275,12 @@ runtime.
 31-case Stage 1 registry fixed while varying three target execution endpoints:
 
 ```text
-Hx = native x86_64-unknown-linux-gnu worker
-Qx = the byte-identical x86_64 worker under owned qemu-x86_64 -cpu max -L /
-Qa = an aarch64-unknown-linux-gnu worker under owned qemu-aarch64 -cpu max
-     -L /usr/aarch64-linux-gnu
+Hx = artifact-owned x86_64-unknown-linux-gnu worker, executed natively
+Qx = the same artifact-owned x86-64 worker under the artifact-owned
+     qemu-x86_64 executable with -cpu max and the identified / sysroot
+Qa = artifact-owned aarch64-unknown-linux-gnu worker under the artifact-owned
+     qemu-aarch64 executable with -cpu max and the identified
+     /usr/aarch64-linux-gnu sysroot
 ```
 
 It cross-builds release x86-64 runner/worker/verifier binaries and the release
@@ -427,7 +429,10 @@ a partial root with its marker and, after initialization, status diagnostics;
 a later gate failure may instead leave a marker-free published root. The GitHub
 Stage 4 job additionally tees gate output to
 `.ci-cache/target/visa-system/stage4-ci.log`; `--ci-cache` and the local Docker
-wrapper do not create that log by themselves.
+wrapper do not create that log by themselves. When rechecking a downloaded
+Actions artifact, pass the inner `stage4-*-relocated/` directory and its
+`stage4-evidence.json` to `visa-conformance stage4`; do not pass the artifact
+parent, which also contains `stage4-ci.log`.
 
 Local LTP binaries, generated manifests, logs, reports, and other runner output
 must use a scenario-specific path below `target/<scenario>/` or a location
@@ -460,13 +465,14 @@ Choose validation based on the claim affected by the change:
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
-The Stage 4 implementation is locally verified, but its roadmap status remains
-open until a pushed stage-closing revision passes the complete GitHub Actions
-workflow at that exact SHA. CI uses two parallel Docker jobs: the existing job
-runs `full`, Stage 1, JcoNode, legacy and Strict Stage 2, and Stage 3A/B; the
-separate Stage 4 job runs `system-stage4` and uploads its evidence/log on
-success or failure. Both jobs, not only the Stage 4 job, must pass at the same
-commit before the bounded stage can be marked complete.
+Bounded Roadmap Stage 4 is complete only for its two named claims. Accepted
+qualification revision `10d2a6138e7d773b2fa4f5195abb850931a477c8` passed both
+Docker jobs in Actions run `29348729990`, and the downloaded Stage 4 artifact
+passed independent verification at a different root. The complete receipt is
+recorded in [validation](VALIDATION.md#stage-4-closure-receipt). CI retains the
+same two-job topology: the existing job runs `full`, Stage 1, JcoNode, legacy
+and Strict Stage 2, and Stage 3A/B; the separate Stage 4 job runs
+`system-stage4` and uploads its evidence/log on success or failure.
 
 ## Next validation expansion
 
@@ -477,10 +483,10 @@ translated execution path, not a fully independent Component Model
 implementation. The separate source-lock-bound Wasmtime/Wacogo v3 matrix
 supplies that independence and only the x86-64 Linux timer/KV
 `strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
-bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Stage 4
-locally adds only the named native/QEMU-user target-substrate and emulated
-x86-64/AArch64 timer/KV claims described above; exact-SHA pushed-CI closure is
-still pending. A second Stage 3 runtime, broader file/network families,
+bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Completed
+Stage 4 adds only the named native/QEMU-user target-substrate and emulated
+x86-64/AArch64 timer/KV claims described above. A second Stage 3 runtime,
+broader file/network families,
 cross-process Stage 3 workers, real hardware/reference-kernel/device cells,
 cross-host execution, confidential, release, performance, and production
 claims remain unavailable until their exact cells and provenance inputs

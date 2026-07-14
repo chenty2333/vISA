@@ -19,17 +19,20 @@ revision passed pushed CI at its exact commit, so Roadmap Stage 3 is complete
 for these two named bounded profiles. Stage 3 evidence is
 Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
 does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Bounded Stage 4 is
-implemented and locally verified, with exact-SHA pushed CI pending. It keeps
-the Wasmtime timer/KV Component, 31-case registry, host kernel, and SQLite
-provider fixed while qualifying native x86-64 Linux and x86-64/AArch64
-QEMU-user endpoints with artifact-owned executables and identified sysroots.
-Its 7 unique cells completed 217/217 executions and 31/31 normalized equality
-groups. This does not establish AOT-binary portability, real ARM hardware,
-Stage 3 resource coverage across targets, or a second Stage 4 runtime. Stage 4
-is not yet marked complete; confidential continuity and production readiness
-also remain unimplemented.
+complete only for `named-target-substrate-continuity-v1` and
+`emulated-cross-isa-continuity-v1`: the accepted qualification revision passed
+the complete exact-SHA workflow, and its uploaded evidence was downloaded and
+independently reverified at another root. It keeps the Wasmtime timer/KV
+Component, 31-case registry, host kernel, and SQLite provider fixed while
+qualifying native x86-64 Linux and x86-64/AArch64 QEMU-user endpoints with
+artifact-owned executables and identified sysroots. Its 7 unique cells
+completed 217/217 executions and 31/31 normalized equality groups. This does
+not establish AOT-binary portability, real ARM hardware, Stage 3 resource
+coverage across targets, or a second Stage 4 runtime. Confidential continuity
+and production readiness also remain unimplemented. The exact closure receipt
+is in [validation](VALIDATION.md#stage-4-closure-receipt).
 
-Last reviewed: 2026-07-14.
+Last reviewed: 2026-07-15.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -270,8 +273,10 @@ current artifact reads are relative to the verifier-supplied root. The local
 gate verified the original root, moved the whole directory to a different
 absolute path without changing any JSON, and verified it again. The historical
 path remained available only for launcher-argv checks; no artifact was read
-from the old location. Uploaded/downloaded-copy verification remains pending
-until exact-SHA CI.
+from the old location. The accepted Actions artifact was subsequently
+downloaded under a different parent and independently verified, then moved
+again without rewriting its JSON and independently verified once more. See the
+[closure receipt](VALIDATION.md#stage-4-closure-receipt).
 
 The `performance-observations` case preserves its original 50 ms workload
 timer. Steady-state samples remain target-speed-dependent, but the case waits
@@ -287,9 +292,9 @@ cross-host execution, 32-bit or big-endian targets, hostile-host or
 confidential continuity, and production/performance readiness. The no-std
 reference kernel is recorded as unsupported because its runtime is not linked
 and its legacy engine remains a stub; real AArch64 hardware is recorded as
-not-run because this qualification uses QEMU-user. The bounded implementation
-and local evidence are in place, but exact-SHA pushed CI is pending, so this
-document does not mark Roadmap Stage 4 complete.
+not-run because this qualification uses QEMU-user. The bounded implementation,
+exact-SHA workflow, and downloaded-artifact rechecks complete Roadmap Stage 4
+only for the two exact claims above.
 
 ## Canonical state versus native binding
 
@@ -601,8 +606,8 @@ profiles described above after their stage-closing implementation revision
 passed pushed CI at its exact commit. They do not claim arbitrary directory
 trees or open descriptors, preservation of raw live TCP, generic future/stream
 continuation, a general async runtime, or a qualified second Stage 3 runtime.
-Bounded Stage 4 is implemented and locally verified for the exact Hx/Qx/Qa
-matrix described above, including relocated-bundle verification, but its
-exact-SHA pushed CI is pending and it is not yet marked complete. It does not
-extend the claims to real ARM hardware, AOT-binary portability, Stage 3
-resources across targets, the no-std kernel, or a second Stage 4 runtime.
+Bounded Stage 4 is complete for the exact Hx/Qx/Qa matrix and two named claims
+described above, including exact-SHA workflow and downloaded relocated-bundle
+verification. It does not extend the claims to real ARM hardware, AOT-binary
+portability, Stage 3 resources across targets, the no-std kernel, or a second
+Stage 4 runtime.

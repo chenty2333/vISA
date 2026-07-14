@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-14.
+Last reviewed: 2026-07-15.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -347,39 +347,43 @@ follow.
 
 ## Stage 4: Target, ISA, and substrate qualification
 
-Status: in progress, not complete. The bounded native/QEMU-user implementation,
-evidence writer, independent verifier, and dedicated CI gate are implemented,
-the corrected 217/217 local matrix, all 31 normalized equality groups, and the
-Stage 1--3 control gates have been locally verified. The pushed exact-SHA
-whole-workflow CI result and post-CI artifact verification are still pending.
+Status: complete for `named-target-substrate-continuity-v1` and
+`emulated-cross-isa-continuity-v1` at accepted qualification revision
+`10d2a6138e7d773b2fa4f5195abb850931a477c8`. Both jobs in Actions run
+`29348729990` passed, and its uploaded Stage 4 artifact was downloaded and
+independently reverified at a different root. The exact receipt is recorded in
+[validation](VALIDATION.md#stage-4-closure-receipt).
 
 Goal: hold the Stage 1 Wasmtime timer/KV semantic input fixed while changing
 the named target, ISA, and user-mode execution carrier. This stage asks whether
 the portable state, authority, fencing, and externally observable behavior
-remain equal when an independently built target worker executes natively or
-through QEMU-user. It does not introduce a new runtime or resource family.
+remain equal when the x86-64 worker and separately cross-built AArch64 worker
+execute natively or through QEMU-user. It does not introduce a new runtime or
+resource family.
 
 ### Fixed qualification profile
 
 The profile has one x86-64 Linux orchestrator and three explicit endpoints:
 
-- **Hx** -- the owned `x86_64-unknown-linux-gnu` worker executed natively;
-- **Qx** -- byte-identical x86-64 worker execution through owned
-  `qemu-x86_64 -cpu max -L /`; and
-- **Qa** -- an independently cross-built `aarch64-unknown-linux-gnu` worker
-  executed through owned `qemu-aarch64 -cpu max` and the identified AArch64
-  GNU sysroot at `/usr/aarch64-linux-gnu`.
+- **Hx** -- the artifact-owned `x86_64-unknown-linux-gnu` worker executed
+  natively;
+- **Qx** -- the same artifact-owned x86-64 worker executed through the
+  artifact-owned `qemu-x86_64` executable with `-cpu max` and the identified
+  `/` sysroot; and
+- **Qa** -- an artifact-owned, separately cross-built
+  `aarch64-unknown-linux-gnu` worker executed through the artifact-owned
+  `qemu-aarch64` executable with `-cpu max` and the identified AArch64 GNU
+  sysroot at `/usr/aarch64-linux-gnu`.
 
 All endpoints keep the Wasmtime runtime, locked Stage 1 Component/WIT world,
 31-case registry, host-process-isolation substrate, and durable SQLite timer/KV
 provider fixed. Stage 3 file and logical-request profiles are not inputs to this
-matrix. Owned worker/QEMU artifacts plus endpoint-specific loader/sysroot and
-build receipts, nonce-bound target hellos, and recorded Rust/Cargo toolchain
-identity identify the actual execution carriers and reject ambient loader or
-QEMU substitution.
+matrix. Artifact-owned worker/QEMU executables plus identified endpoint-specific
+loader/sysroot inputs and their receipts, build receipts, nonce-bound target
+hellos, and recorded Rust/Cargo toolchain identity identify the actual execution
+carriers and reject ambient loader or QEMU substitution.
 
-The locked matrix is organized around two bounded claims; neither is earned
-until every exit condition below is satisfied:
+The completed matrix earns exactly these two bounded claims:
 
 - `named-target-substrate-continuity-v1`: `Hx->Hx`, `Hx->Qx`, `Qx->Hx`, and
   `Qx->Qx`; and
@@ -411,7 +415,7 @@ redeliver it. It neither lengthens an unrecorded workload input nor accepts
 `Pending` and `Completed` as equivalent. Target speed affects only retained raw
 performance samples, for which this stage makes no performance claim.
 
-### Exit conditions
+### Exit conditions satisfied at closure
 
 - Hx, Qx, and Qa are identified by retained executable, ELF ISA, build,
   recorded Rust/Cargo toolchain identity, launcher, loader/sysroot,
@@ -434,11 +438,12 @@ performance samples, for which this stage makes no performance claim.
   retained solely to validate the original launcher argv;
 - the ordinary repository gate, Stage 1 Wasmtime and JcoNode controls, legacy
   and Strict Stage 2 four-cell controls, both Stage 3 resource gates, and the
-  dedicated Stage 4 gate all pass on the same final revision; and
-- the pushed stage-closing exact SHA passes the whole CI workflow, after which
-  the uploaded Stage 4 artifact is downloaded and independently rechecked for
-  verification, exact-set closure, and relocation before this status may change
-  to `complete`.
+  dedicated Stage 4 gate all passed at accepted qualification revision
+  `10d2a6138e7d773b2fa4f5195abb850931a477c8`; and
+- Actions run `29348729990` completed successfully, after which the uploaded
+  Stage 4 artifact was downloaded and independently rechecked for verification,
+  exact-set closure, and relocation as recorded in the
+  [closure receipt](VALIDATION.md#stage-4-closure-receipt).
 
 ### Claims explicitly not earned
 
@@ -450,7 +455,7 @@ and performance readiness. The legacy reference-kernel path remains explicitly
 `unsupported` because its runtime is not linked and its engine is a legacy
 stub; real AArch64 hardware remains explicitly `not-run`.
 
-Claim on exit: only `named-target-substrate-continuity-v1` and
+Claim earned: only `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1` for the fixed Wasmtime, Linux user-mode,
 timer/KV profile and the exact Hx/Qx/Qa cells above.
 

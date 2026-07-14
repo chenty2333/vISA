@@ -6,26 +6,27 @@ Implementation status: `fast`, `full`, the two legacy same-path system cells,
 the four-cell legacy v2 cross-execution-path matrix, and the separate four-cell
 strict v3 Wasmtime/Wacogo matrix are automated. The Stage 3A bounded
 regular-file and Stage 3B bounded logical-request gates are also automated and
-wired into CI, with an aggregate local command that runs both. A bounded Stage
-4 aggregate now locally passes all seven native/QEMU-user target cells, 217/217
-timer/KV executions, seven complete inner Stage 1 validations, 31/31 normalized
-equality groups, independent outer verification, exact-set checks, and
-byte-identical directory relocation. Its stage-closing exact-SHA pushed-CI
-qualification is still pending, so Roadmap Stage 4 is not yet complete. Stage 1
-and Stage 2 use the timer/KV profile; the two Stage 3 gates are separate
-Wasmtime-to-Wasmtime resource profiles and do not inherit the Strict Stage 2
-cross-runtime result. The Stage 4 matrix also holds Wasmtime and timer/KV fixed
+wired into CI, with an aggregate local command that runs both. Bounded Stage 4
+is complete only for `named-target-substrate-continuity-v1` and
+`emulated-cross-isa-continuity-v1`: all seven native/QEMU-user target cells,
+217/217 timer/KV executions, seven complete inner Stage 1 validations, 31/31
+normalized equality groups, independent outer verification, exact-set checks,
+directory relocation, the complete exact-SHA workflow, and downloaded-artifact
+reverification passed. Stage 1 and Stage 2 use the timer/KV profile; the two
+Stage 3 gates are separate Wasmtime-to-Wasmtime resource profiles and do not
+inherit the Strict Stage 2 cross-runtime result. The Stage 4 matrix also holds
+Wasmtime and timer/KV fixed
 and does not inherit that independent-runtime claim. Confidential, release,
 performance, and production validation remain outside the implemented
 boundary.
 
-Last reviewed: 2026-07-14.
+Last reviewed: 2026-07-15.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice, the legacy Stage 2 execution-path
 matrix, the strict Stage 2 runtime matrix, and the two bounded Stage 3 resource
-profiles, plus the locally verified bounded Stage 4 target/substrate and
-emulated cross-ISA matrix. Update it when executable gates change.
+profiles, plus the completed bounded Stage 4 target/substrate and emulated
+cross-ISA matrix. Update it when executable gates change.
 
 ## Validation principle
 
@@ -69,7 +70,7 @@ at the same exact pushed SHA, not merely the Stage 4 job.
 | `system-stage3a` | All 12 accepted bounded regular-file cases through separate source/destination Wasmtime stores, the shared coordinator/profile path, a real Linux regular-file provider, handoff, and independent Stage 3A bundle validation | The `bounded-regular-file-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not imply arbitrary directory trees, devices, FIFOs, already-open fds, atomic exclusion of writers outside the advisory lock/lease protocol, another runtime, or another ISA/substrate. |
 | `system-stage3b` | All 14 accepted bounded logical-request cases through separate source/destination Wasmtime stores, a durable provider ledger, a real bounded loopback TCP protocol/peer, handoff, and independent Stage 3B bundle validation | The `bounded-logical-request-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not preserve arbitrary live TCP, socket sequence state, credential bytes, runtime future/stream state, or prove another runtime. |
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
-| `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Exact-SHA pushed-CI closure is pending. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
+| `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
 | `system-stage4-target`, `system-stage4-isa` | Each invokes the same complete fail-closed `system-stage4` aggregate | These are edit-loop aliases, not reduced matrices or independent additional claims. |
 
 The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
@@ -130,9 +131,10 @@ timer/KV claims; it holds Wasmtime fixed and does not transfer the Strict Stage
 2 runtime result or either Stage 3 resource result into those cells. No current
 result establishes a second Stage 3/4 runtime, real target hardware or device
 enforcement, cross-host or confidential continuity, transparent migration,
-release quality, or production safety. Until the first pushed exact-SHA Stage 4
-workflow passes, this paragraph describes the configured closure bar and local
-evidence rather than a completed Roadmap Stage 4 claim.
+release quality, or production safety. The accepted
+[Stage 4 closure receipt](#stage-4-closure-receipt) confirms the required
+complete workflow and post-CI artifact verification without widening any of
+those exclusions.
 
 ## Validation tiers
 
@@ -318,10 +320,12 @@ Component profile, and the 31-case Stage 1 registry while varying three named
 target execution endpoints:
 
 ```text
-Hx = native x86_64-unknown-linux-gnu worker
-Qx = the byte-identical x86_64 worker under owned qemu-x86_64 -cpu max -L /
-Qa = an aarch64-unknown-linux-gnu worker under owned qemu-aarch64 -cpu max
-     -L /usr/aarch64-linux-gnu
+Hx = artifact-owned x86_64-unknown-linux-gnu worker, executed natively
+Qx = the same artifact-owned x86-64 worker under the artifact-owned
+     qemu-x86_64 executable with -cpu max and the identified / sysroot
+Qa = artifact-owned aarch64-unknown-linux-gnu worker under the artifact-owned
+     qemu-aarch64 executable with -cpu max and the identified
+     /usr/aarch64-linux-gnu sysroot
 ```
 
 The exact seven-cell catalog is:
@@ -345,11 +349,12 @@ Stage 2's dev-profile Component artifact; neither lock is substituted for the
 other.
 
 The x86-64 and AArch64 workers are separate target-native ELF binaries built
-from one recorded source identity and one recorded Rust toolchain identity;
-this is semantic cross-ISA evidence, not AOT binary portability. Hx and Qx must
-retain byte-identical x86-64 workers. Qx and Qa must use the named owned
-QEMU-user programs with `-cpu max`, explicit sysroots, no native fallback,
-exact launcher argv, raw version output, and retained binary digests. The
+from one recorded source identity and one recorded Rust/Cargo toolchain
+identity; this is semantic cross-ISA evidence, not AOT binary portability. Hx
+and Qx must retain byte-identical x86-64 workers. Qx and Qa must use the named
+artifact-owned QEMU-user executables with `-cpu max`, explicit, identified
+sysroots, no native fallback, exact launcher argv, raw version output, and
+retained binary digests. The
 target loader is executed in each target environment with `--list`; raw output
 fixes the exact dependency path set, and the sysroot manifest binds the
 resolved loader/libc digests. Nonce-bound raw source and destination
@@ -410,9 +415,46 @@ the runtime is not linked and its old engine path remains a stub. Neither state
 is presented as a passing cell.
 
 The complete bounded matrix and all negative/relocation checks are locally
-green. Roadmap completion remains pending until the stage-closing pushed SHA
-passes both parallel CI jobs, including `full`, Stage 1, JcoNode, legacy and
-Strict Stage 2, Stage 3A/B, and the separate Stage 4 aggregate.
+green. The accepted qualification SHA also passed both parallel CI jobs,
+including `full`, Stage 1, JcoNode, legacy and Strict Stage 2, Stage 3A/B, and
+the separate Stage 4 aggregate; its downloaded artifact passed independent
+verification again.
+
+### Stage 4 closure receipt
+
+Roadmap Stage 4 closed on 2026-07-15 at accepted qualification revision
+[`10d2a6138e7d773b2fa4f5195abb850931a477c8`](https://github.com/chenty2333/vISA/commit/10d2a6138e7d773b2fa4f5195abb850931a477c8)
+through GitHub Actions run
+[`29348729990`](https://github.com/chenty2333/vISA/actions/runs/29348729990),
+which completed at 2026-07-15 02:33:47 +08:00. Both `Docker dev gate` and
+`Docker Stage 4 target and ISA gate` concluded `success` at that exact SHA.
+
+The run uploaded `stage4-target-isa-system-evidence` as artifact ID
+`8317869015`; GitHub reported archive digest
+`sha256:38cb4c834eb890df23237f7ca60d89a64592fd0e3568707041b548dc10bd5637`.
+The artifact was downloaded below the ignored
+`.ci-cache/remote-stage4-10d2a613/` parent, distinct from the retained historical
+execution root `/workspace/target/visa-system/stage4-Trq6jL`. The inner
+`stage4-Trq6jL-relocated` bundle passed the independent verifier built from the
+same qualification revision. It was then moved without JSON changes to
+`stage4-Trq6jL-relocated-again` and this exact command also exited 0:
+
+```sh
+cargo run --locked -q -p visa-conformance --bin visa-conformance -- \
+  stage4 \
+  .ci-cache/remote-stage4-10d2a613/stage4-Trq6jL-relocated-again/stage4-evidence.json \
+  .ci-cache/remote-stage4-10d2a613/stage4-Trq6jL-relocated-again
+```
+
+That post-download verification rechecked marker/status absence, the exact
+1,789-file inventory, 217/217 executions, all seven independently verified
+inner Stage 1 bundles, and all 31 equal normalized groups. The downloaded
+bundle ID is `stage4-8ee5d615a144acaff5dde40a`; its
+`stage4-evidence.json` SHA-256 is
+`8e439bb34f83120432ef897e0067db31bb7db8503a25fac570dda2020a9b6dc9`.
+This receipt closes only the two named Stage 4 claims and does not promote the
+host receipt, QEMU execution, or identified sysroots into portable semantic
+truth.
 
 ### Stable artifact verification boundary
 
@@ -665,7 +707,7 @@ Even after the baseline slice passes, it does not prove:
   separately earns only `strict-cross-runtime-continuity` for the named
   Wasmtime/Wacogo x86-64 Linux timer/KV matrix, and bounded Stage 4 separately
   adds only its named QEMU-user target/substrate and emulated x86-64/AArch64
-  timer/KV cells after exact-SHA closure;
+  timer/KV cells under the recorded exact-SHA closure;
 - correctness of a complete Linux personality, kernel, Virtio, filesystem, or
   network stack;
 - TEE attestation, KMS correctness, or general confidential-computing safety;

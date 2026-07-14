@@ -30,15 +30,19 @@ resource bindings, resume, and produce executable evidence about what happened.
 > Stage 3 is complete for these two named bounded profiles. Both Stage 3 paths
 > run Wasmtime to Wasmtime, explicitly record
 > `independent_runtime_coverage=false`, list Wacogo as unsupported, and do not
-> inherit the Stage 2 cross-runtime result. Bounded Stage 4 is
-> implemented and locally verified, with exact-SHA pushed CI still pending. It
-> keeps the Wasmtime timer/KV workload fixed while qualifying one native
+> inherit the Stage 2 cross-runtime result. Bounded Stage 4 is complete only
+> for `named-target-substrate-continuity-v1` and
+> `emulated-cross-isa-continuity-v1`. Its accepted qualification revision
+> passed both Docker jobs in the exact-SHA workflow, and the uploaded evidence
+> was downloaded under a different root and independently reverified; the
+> complete receipt is recorded in [validation](docs/VALIDATION.md#stage-4-closure-receipt).
+> It keeps the Wasmtime timer/KV workload fixed while qualifying one native
 > x86-64 Linux endpoint and two QEMU-user endpoints with artifact-owned
 > worker/QEMU executables and identified sysroots, covering 7 unique cells,
 > 217/217 case executions, and 31/31 normalized equality groups. This is
 > semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
 > portability, real ARM hardware, Stage 3 resource portability across targets,
-> or a second Stage 4 runtime. Roadmap Stage 4 is therefore not yet marked complete.
+> or a second Stage 4 runtime.
 > Confidential-continuity, stable API, and production claims also remain
 > unearned.
 
@@ -303,8 +307,11 @@ unmanifested, temporary, symlinked, hard-linked, or special entries. The local
 gate first verified the successful root, then moved that entire directory to a
 new absolute path without rewriting its JSON and verified it again. The
 recorded execution root remains historical launcher provenance, while artifact
-lookup is relative to the verifier-supplied current root. Verification of an
-uploaded/downloaded copy remains part of exact-SHA CI closure.
+lookup is relative to the verifier-supplied current root. The accepted Actions
+artifact was later downloaded beneath a different parent and independently
+verified; that downloaded bundle was then moved once more without changing its
+JSON and verified again. The exact receipt is in
+[validation](docs/VALIDATION.md#stage-4-closure-receipt).
 
 The existing `performance-observations` case keeps its original 50 ms timer
 input. It records target-dependent steady-state samples, then waits for that
@@ -318,8 +325,9 @@ resources across targets, a second Stage 4 runtime, AOT-binary portability,
 the legacy no-std reference kernel, real device enforcement, real AArch64
 hardware, cross-host execution, 32-bit or big-endian targets, hostile-host or
 confidential continuity, or production/performance readiness. The
-implementation and local evidence are in place, but exact-SHA pushed CI is
-still pending, so Stage 4 is not yet documented as complete.
+implementation, exact-SHA workflow, and downloaded-artifact checks complete
+Roadmap Stage 4 only for the two named claims above; every listed exclusion
+remains unearned.
 
 ## Engineering principles
 
