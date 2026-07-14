@@ -495,6 +495,7 @@ verify_locked_component() {
 configure_component_build_environment() {
     local configured_cargo_home=${CARGO_HOME:-}
     local configured_rustup_home=${RUSTUP_HOME:-}
+    local configured_cargo_incremental=${CARGO_INCREMENTAL:-unset}
     local canonical_cargo_home
     local canonical_rustup_home
     local record_path="$qualification_root/component-build-environment.env"
@@ -548,8 +549,10 @@ configure_component_build_environment() {
     unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
     CARGO_HOME=$component_cargo_home
     RUSTUP_HOME=$component_rustup_home
+    CARGO_INCREMENTAL=1
     CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=$component_target_rustflags
-    export CARGO_HOME RUSTUP_HOME CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
+    export CARGO_HOME RUSTUP_HOME CARGO_INCREMENTAL
+    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
 
     {
         printf '%s\n' 'schema=visa.strict-stage2-component-build-environment.v1'
@@ -559,6 +562,8 @@ configure_component_build_environment() {
         printf 'rustup-home.input=%s\n' "$configured_rustup_home"
         printf 'rustup-home.canonical=%s\n' "$component_rustup_home"
         printf '%s\n' 'rustup-home.remapped=/home/ava/.rustup'
+        printf 'cargo-incremental.input=%s\n' "$configured_cargo_incremental"
+        printf '%s\n' 'cargo-incremental.locked=1'
         printf '%s\n' 'generic-rustflags=unset'
         printf 'target-rustflags=%s\n' "$component_target_rustflags"
     } >"$record_path"
@@ -587,6 +592,8 @@ prepare_component() {
         || fail 'Cargo home changed after Component build-environment canonicalization'
     [[ "${RUSTUP_HOME:-}" == "$component_rustup_home" ]] \
         || fail 'Rustup home changed after Component build-environment canonicalization'
+    [[ "${CARGO_INCREMENTAL:-}" == 1 ]] \
+        || fail 'locked incremental mode changed before Component preparation'
     [[ "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}" == \
         "$component_target_rustflags" ]] \
         || fail 'locked wasm32 Component target rustflags are not active'

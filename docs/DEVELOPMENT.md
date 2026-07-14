@@ -224,6 +224,12 @@ equality groups and earns only `strict-cross-runtime-continuity` on x86-64
 Linux with the timer/KV profile. Both Stage 2 matrix gates are intentionally
 expensive and are not part of `full`.
 
+The locked dev-profile Component was qualified with Cargo incremental mode.
+The Strict gate therefore canonicalizes and records `CARGO_INCREMENTAL=1`
+before building it, even though the general CI overlay uses `0` to reduce the
+size and cross-run coupling of ephemeral target trees. Ambient CI settings
+cannot silently select different Component bytes.
+
 `system-stage3a` creates a private root under the same configurable evidence
 parent, runs the fixed 12-case regular-file registry through the Stage 3A
 Component, Wasmtime adapter, coordinator, scoped Linux file provider, handoff,
