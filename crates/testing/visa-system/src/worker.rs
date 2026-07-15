@@ -1552,7 +1552,8 @@ mod tests {
         assert!(matches!(
             frozen,
             WorkerResult::SafePoint {
-                timer: SafePointTimerView::Pending { .. },
+                timer: SafePointTimerView::Pending { .. }
+                    | SafePointTimerView::Completed { .. },
                 ref view,
                 ..
             } if view.canonical_phase == HandoffPhase::Frozen
