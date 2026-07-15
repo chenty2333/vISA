@@ -43,8 +43,29 @@ resource bindings, resume, and produce executable evidence about what happened.
 > semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
 > portability, real ARM hardware, Stage 3 resource portability across targets,
 > or a second Stage 4 runtime.
+> A separate candidate `bounded-joint-handoff-refinement-v1` track now pins
+> local-clean neutral revision `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`
+> (tree `1572ca83969e091898444c880d91885008d4cef7`). This current revision is
+> unpushed; the earlier `8fcdaf42...` result remains historical remote evidence,
+> not the identity of the current source lock. The neutral mapping still declares
+> `adapter_qualification=false`. The same-boot vISA/reference lane maps 16
+> normative neutral cases to 16 vISA cases and keeps one supplemental
+> retained-tombstone recovery. Its online `Coordinator<SqliteProvider>`
+> HostSubstrate cell retains 14-record commit and 9-record abort WAL
+> transcripts, including the exact pre-call bytes for seven ownership/effect
+> peer-invocation classes, for strict independent replay. Nexus-local
+> handoff-admission and production-Registry refinement are locally clean at
+> `a890e5c3e25138662c213f19280ba3b209939813`. Four live process tests pass
+> against its exact `nexus-effect-peer` binary, including a real logical request,
+> post-durable ownership Commit acknowledgement loss, and loss of the terminal
+> Nexus response before adapter acceptance. The standalone two-file publisher
+> and relocation verifier have a smoke pass. The final artifact still requires a
+> committed clean vISA SHA, and no closing remote CI has been observed.
+> The HostSubstrate result assumes `exclusive_trusted_coordinator_api=true`:
+> its owning guards constrain a non-Byzantine orchestrator, not a second raw
+> `Coordinator`/provider handle or a hostile caller of public projection APIs.
 > Confidential-continuity, stable API, and production claims also remain
-> unearned.
+> unearned. Roadmap Stage 5 has not started.
 
 ## The problem
 
@@ -121,7 +142,12 @@ The active continuity spine covers the Stage 1 path, the legacy Stage 2a, 2b,
 and 2c Wasmtime/JcoNode paths, the source-lock-bound Wasmtime/Wacogo
 strict-runtime adapter and matrix paths, the two Stage 3 resource
 qualification paths, and the bounded Stage 4 target/substrate and emulated
-cross-ISA matrix. Strict
+cross-ISA matrix. It also contains the isolated joint-handoff protocol core,
+runtime projection adapter, durable recovery log, conformance oracle,
+reference protocol lane, HostSubstrate vertical, exact-binary Nexus process
+cell, real logical-request dual-lost-ack experiment, and standalone
+publisher/relocation runner for the candidate
+`bounded-joint-handoff-refinement-v1` track. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
@@ -328,6 +354,38 @@ confidential continuity, or production/performance readiness. The
 implementation, exact-SHA workflow, and downloaded-artifact checks complete
 Roadmap Stage 4 only for the two named claims above; every listed exclusion
 remains unearned.
+
+Run the candidate joint-handoff gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-joint-handoff
+```
+
+This gate source-locks the 16-case neutral composition, runs 16
+production-reducer traces and 17 reference ownership/effect scenarios (16
+normative plus one supplemental retained-tombstone recovery), and executes the
+independently verified HostSubstrate commit and abort verticals. The current
+source lock pins local-clean, unpushed neutral revision
+`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`; it deliberately remains
+`reference-only-not-nexus-qualified` because Nexus execution truth is carried by
+the separate v2 qualification lock.
+
+The exact-binary process lane is published with
+`scripts/run-nexus-process-joint-cell.sh`. Its runner requires clean vISA and
+Nexus checkouts, independently verifies the Nexus v2 receipt, publishes exactly
+two files, verifies them in another process, relocates them, and verifies the
+same bytes again. The runner has passed a smoke test, but its final clean-vISA
+artifact must be regenerated after this work is committed.
+
+The HostSubstrate refinement assumes an exclusive trusted coordinator API. A
+second raw `Coordinator` or provider handle that bypasses the durable joint
+guard is a TCB violation; provider-level prevention of Byzantine in-process
+bypass is not claimed. Neither the vISA lane nor the native-v1 mapping
+extension or local Nexus/process evidence establishes Registry replacement,
+real OSTD execution, IRQ/SMP behavior, the production retained-tombstone path,
+cross-host execution, host-reboot or
+permanent-source-loss recovery, cryptographic authenticity, hostile rollback
+or freshness protection, TEE/KMS behavior, confidentiality, or Stage 5.
 
 ## Engineering principles
 

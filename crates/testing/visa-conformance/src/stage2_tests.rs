@@ -195,6 +195,25 @@ fn fr016_event_order_and_effect_identity_are_retained() {
 }
 
 #[test]
+fn joint_destination_resume_normalizes_only_cross_runtime_evidence() {
+    let mut first = trace(Stage1TraceRole::Destination, 1, 50_000_000);
+    first.entries[0].event.kind = EventKind::JointDestinationResumed {
+        activation_record_digest: Digest::from_bytes([0x41; 32]),
+    };
+    let mut second = first.clone();
+    second.entries[0].event.kind = EventKind::JointDestinationResumed {
+        activation_record_digest: Digest::from_bytes([0x42; 32]),
+    };
+
+    let normalized = normalize_trace(first);
+    assert_eq!(normalized, normalize_trace(second));
+    assert!(matches!(
+        normalized.entries[0].event.kind,
+        EventKind::JointDestinationResumed { activation_record_digest: Digest::ZERO }
+    ));
+}
+
+#[test]
 fn strict_normalizer_rejects_nested_unknown_trace_and_snapshot_fields() {
     let root = temp_dir("unknown-fields");
     fs::create_dir_all(&root).unwrap();

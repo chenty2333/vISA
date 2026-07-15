@@ -1,0 +1,276 @@
+{
+  "schema": "visa.nexus-handoff-qualification-lock.v2",
+  "evidence_status": "same-boot-nexus-handoff-admission-only",
+  "claim_id": "bounded-joint-handoff-refinement-v1",
+  "nexus": {
+    "repository": "https://github.com/chenty2333/Nexus",
+    "revision": "a890e5c3e25138662c213f19280ba3b209939813",
+    "analyzed_baseline_revision": "7829e609b3d770b684316a30170a7412faa62f9b",
+    "role": "nexus-local-handoff-admission-only",
+    "receipt_schema": "nexus.research.handoff-admission.v2",
+    "summary_schema": "nexus.research.handoff-admission.summary.v2",
+    "command": "./x research handoff-admission",
+    "prospective": true,
+    "source_fingerprint": "9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078",
+    "source_files": [
+      "x",
+      "Dockerfile",
+      ".cargo/config.toml",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "third_party/tlaplus/1.8.0-227f61b/tla2tools-227f61b.jar",
+      "third_party/tlaplus/1.8.0-227f61b/PROVENANCE.json",
+      "third_party/tlaplus/1.8.0-227f61b/SHA256SUMS",
+      "third_party/tlaplus/1.8.0-227f61b/LICENSE.upstream",
+      "crates/cser-model/Cargo.toml",
+      "crates/cser-model/src/lib.rs",
+      "crates/cser-model/src/handoff_admission.rs",
+      "crates/cser-model/tests/handoff_admission_support/mod.rs",
+      "crates/cser-model/tests/handoff_admission_sequences.rs",
+      "crates/cser-model/tests/handoff_admission_properties.rs",
+      "crates/cser-model/tests/handoff_admission_loom.rs",
+      "crates/cser-model/README.md",
+      "crates/cser-transition-gates/Cargo.toml",
+      "crates/cser-transition-gates/src/lib.rs",
+      "crates/cser-transition-gates/src/handoff.rs",
+      "crates/cser-transition-gates/tests/handoff_loom.rs",
+      "crates/cser-transition-gates/tests/production_handoff_registry.rs",
+      "crates/nexus-effect-peer/Cargo.toml",
+      "crates/nexus-effect-peer/README.md",
+      "crates/nexus-effect-peer/src/lib.rs",
+      "crates/nexus-effect-peer/src/main.rs",
+      "crates/nexus-effect-peer/src/peer.rs",
+      "crates/nexus-effect-peer/src/peer_tests.rs",
+      "crates/nexus-effect-peer/src/wire.rs",
+      "crates/nexus-effect-peer/tests/stdio.rs",
+      "kernel/nexus-ostd/src/cser/effect_registry.rs",
+      "specs/cser/check.sh",
+      "specs/cser/HandoffAdmissionCser.tla",
+      "specs/cser/HandoffAdmissionCserSafetyMC.cfg",
+      "specs/cser/HandoffAdmissionCserProgressMC.cfg",
+      "specs/cser/HANDOFF_ADMISSION.md",
+      "specs/cser/README.md",
+      "docs/rfcs/0002-handoff-admission-profile.md",
+      "evaluation/handoff-admission/fault-matrix.toml",
+      "evaluation/handoff-admission/README.md",
+      "README.md",
+      "ARCHITECTURE.md",
+      "CONTRIBUTING.md",
+      "tools/xtask/Cargo.toml",
+      "tools/xtask/Cargo.lock",
+      "tools/xtask/src/main.rs",
+      "tools/xtask/src/evidence.rs",
+      "tools/xtask/src/handoff_admission.rs",
+      "tools/xtask/src/production_identity.rs"
+    ]
+  },
+  "artifacts": {
+    "receipt": {
+      "path": "target/research/handoff-admission/receipt.json"
+    },
+    "matrix": {
+      "path": "evaluation/handoff-admission/fault-matrix.toml",
+      "sha256": "9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e"
+    },
+    "tla_log": {
+      "path": "target/research/handoff-admission/tla.log"
+    },
+    "rust_oracle_log": {
+      "path": "target/research/handoff-admission/rust-oracle.log"
+    },
+    "summary": {
+      "path": "target/research/handoff-admission/summary.txt"
+    }
+  },
+  "fault_contract": {
+    "matrix_schema": "nexus.research.handoff-admission.fault-matrix.v1",
+    "profile": "docs/rfcs/0002-handoff-admission-profile.md",
+    "cells": 10,
+    "required_invariants": [
+      "AtMostOneExecutionAuthority",
+      "NoPostFreezeUntrackedEffect",
+      "AbortImpliesNoDestinationAuthority",
+      "CommitDecisionImpliesSourcePrincipalFenced",
+      "PostCommitPublicationImpliesPreFreezeCommittedAndClosureOwned",
+      "UnknownDecisionImpliesRemainFrozen",
+      "DestinationActivationRequiresSourceClosure",
+      "EveryReceiptBindsOneDecisionAndOneCohort",
+      "StaleBindingCannotPublish",
+      "TombstoneCannotBeInterpretedAsClosure"
+    ],
+    "negative_mutations": [
+      "drop-cell",
+      "duplicate-cell",
+      "reorder-cell",
+      "rename-witness",
+      "rename-rust-test",
+      "allow-freeze-without-intent",
+      "allow-first-commit-after-freeze",
+      "accept-untyped-abort",
+      "accept-conflicting-decision",
+      "activate-before-closure",
+      "treat-tombstone-as-closure"
+    ],
+    "fault_model": "same-boot-crash-stop-retry-reorder-lost-ack",
+    "ownership_log_tcb": "trusted-non-equivocating-no-rollback-tcb"
+  },
+  "formal": {
+    "specification": "HandoffAdmissionCser",
+    "declarative_tla": true,
+    "temporal_properties": 2,
+    "configurations": [
+      {
+        "config": "HandoffAdmissionCserSafetyMC.cfg",
+        "heading": "HandoffAdmissionCser complete local safety graph",
+        "generated": 100118,
+        "distinct": 32438,
+        "depth": 25,
+        "states_left_on_queue": 0,
+        "property_mode": "safety-with-postcommit-retention",
+        "temporal_branches": 0
+      },
+      {
+        "config": "HandoffAdmissionCserProgressMC.cfg",
+        "heading": "HandoffAdmissionCser conditional local closure progress",
+        "generated": 72470,
+        "distinct": 26390,
+        "depth": 25,
+        "states_left_on_queue": 0,
+        "property_mode": "conditional-progress-2-temporal-branches",
+        "temporal_branches": 2
+      }
+    ],
+    "witnesses": [
+      {
+        "invariant": "IntentCrashBeforeFreezeAbsent",
+        "description": "intent crash before freeze leaves source authority active"
+      },
+      {
+        "invariant": "FreezeBeforeCommitAbsent",
+        "description": "freeze wins before first commit and rejects it atomically"
+      },
+      {
+        "invariant": "CommitBeforeFreezeAbsent",
+        "description": "first commit wins before freeze and joins the drain cohort"
+      },
+      {
+        "invariant": "PredecisionTombstoneBlockedAbsent",
+        "description": "predecision retained tombstone blocks ownership commit"
+      },
+      {
+        "invariant": "TypedAbortRequiredAbsent",
+        "description": "untyped abort rejects before the typed abort thaws source"
+      },
+      {
+        "invariant": "CommitAckLossReplayAbsent",
+        "description": "lost commit acknowledgement replays one decision"
+      },
+      {
+        "invariant": "SourceCrashStaleBindingAbsent",
+        "description": "source crash rejects the old binding while decision is unknown"
+      },
+      {
+        "invariant": "DuplicateCommitCloseAbsent",
+        "description": "duplicate commit-close replays one closure"
+      },
+      {
+        "invariant": "ConflictingDecisionRejectedAbsent",
+        "description": "conflicting abort after commit rejects without mutation"
+      },
+      {
+        "invariant": "PostcommitRetainedRecoveryAbsent",
+        "description": "postcommit retained effect blocks activation without ownership rollback"
+      }
+    ]
+  },
+  "rust_oracle": {
+    "independent_from_production_registry": true,
+    "suites": [
+      {
+        "kind": "sequence",
+        "heading": "==> handoff-admission sequence oracle",
+        "tests": [
+          "intent_crash_before_freeze_leaves_source_active",
+          "freeze_before_first_commit_rejects_commit_atomically",
+          "first_commit_before_freeze_is_classified_for_drain",
+          "predecision_tombstone_blocks_ownership_commit",
+          "typed_abort_receipt_is_required_to_thaw",
+          "lost_commit_ack_replays_the_same_decision",
+          "source_crash_rejects_old_binding_while_frozen",
+          "duplicate_commit_close_returns_the_same_closure",
+          "conflicting_abort_after_commit_is_rejected_atomically",
+          "postcommit_retained_effect_blocks_activation_without_rollback"
+        ]
+      },
+      {
+        "kind": "property",
+        "heading": "==> handoff-admission property oracle",
+        "tests": [
+          "arbitrary_pre_freeze_effect_population_preserves_all_invariants",
+          "decision_identity_substitutions_reject_without_mutation",
+          "exact_commit_replay_never_advances_authority_twice"
+        ]
+      },
+      {
+        "kind": "loom",
+        "heading": "==> handoff-admission Loom oracle",
+        "tests": [
+          "abort_and_commit_decisions_cannot_both_win",
+          "duplicate_close_replays_one_receipt",
+          "freeze_and_first_commit_have_one_serialized_winner"
+        ]
+      }
+    ]
+  },
+  "production_registry": {
+    "registry_source": "kernel/nexus-ostd/src/cser/effect_registry.rs",
+    "substrate_source": "crates/cser-transition-gates/src/handoff.rs",
+    "handoff_index_owned_by_registry": true,
+    "admission_and_publication_share_registry_lock": true,
+    "commit_close_reuses_revoke_lifecycle": true,
+    "local_fault_cells_mapped": 9,
+    "external_intent_only_cells": 1,
+    "real_ostd_execution_claimed": false,
+    "suites": [
+      {
+        "kind": "substrate_loom",
+        "heading": "==> handoff-admission substrate Loom refinement",
+        "tests": [
+          "abort_and_commit_cannot_both_win",
+          "freeze_and_source_mutation_have_one_outer_lock_winner"
+        ]
+      },
+      {
+        "kind": "registry_sequence",
+        "heading": "==> handoff-admission production Registry refinement",
+        "tests": [
+          "abort_thaw_preserves_the_same_precommit_effect",
+          "empty_handoff_close_preflights_terminal_revision_before_commit",
+          "frozen_source_crash_preserves_cohort_and_abort_requires_recovery",
+          "ordinary_revoke_remains_valid_after_an_aborted_handoff",
+          "ownership_decision_cannot_replay_across_registry_or_cohort_identity",
+          "partial_abort_returns_prior_ticket_before_a_later_terminal_overflow",
+          "partial_abort_returns_publication_tickets_until_committed_children_drain",
+          "precommit_device_roots_reject_freeze_without_mutation",
+          "production_commit_reuses_irreversible_revoke_and_mints_one_closure",
+          "production_freeze_abort_ack_and_thaw_reopen_exact_admission",
+          "retained_tombstones_block_or_delay_but_never_fabricate_closure"
+        ]
+      }
+    ]
+  },
+  "boundaries": {
+    "same_boot_only": true,
+    "crash_stop_only": true,
+    "ownership_log_non_equivocation_in_tcb": true,
+    "host_reboot_claimed": false,
+    "malicious_rollback_claimed": false,
+    "cryptographic_freshness_claimed": false,
+    "production_registry_modified": true,
+    "production_registry_refinement_checked": true,
+    "joint_visa_execution_claimed": false,
+    "real_ostd_smp_claimed": false,
+    "canonical_v0_1_catalog_modified": false
+  }
+}

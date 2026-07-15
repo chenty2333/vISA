@@ -13,6 +13,7 @@ import sys
 # dependencies are excluded because they cannot enter a production artifact.
 ALLOWED_WORKSPACE_DEPENDENCIES = {
     "contract_core": frozenset(),
+    "joint_handoff_core": frozenset({"contract_core"}),
     "handoff-component": frozenset(),
     "visa_profile": frozenset({"contract_core"}),
     "semantic_core": frozenset({"contract_core", "visa_profile"}),
@@ -20,6 +21,9 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "substrate_host": frozenset({"contract_core", "substrate_api", "visa_profile"}),
     "visa_runtime": frozenset(
         {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
+    ),
+    "visa_joint_handoff": frozenset(
+        {"contract_core", "joint_handoff_core", "substrate_api", "visa_runtime"}
     ),
     "visa_component_adapter": frozenset(
         {"contract_core", "substrate_api", "visa_profile", "visa_runtime"}
@@ -66,6 +70,17 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "visa_profile",
             "visa_runtime",
             "visa_wasmtime",
+        }
+    ),
+    "visa-joint-handoff-system": frozenset(
+        {
+            "contract_core",
+            "joint_handoff_core",
+            "substrate_api",
+            "substrate_host",
+            "visa-conformance",
+            "visa_joint_handoff",
+            "visa_runtime",
         }
     ),
     "visa-system": frozenset(

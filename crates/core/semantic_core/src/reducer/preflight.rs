@@ -1,4 +1,7 @@
-use contract_core::{CanonicalState, Command, CommandKind, Decision, Rejection};
+use contract_core::{
+    ActivationRole, CanonicalState, Command, CommandKind, Decision, EffectKind, HandoffPhase,
+    Rejection,
+};
 
 use super::{
     preflight_abort, preflight_activate, preflight_attenuation, preflight_begin_handoff,
@@ -17,6 +20,9 @@ pub fn preflight(state: &CanonicalState, command: &Command) -> Decision {
     }
     if command.identity.is_zero() {
         return Decision::Reject(Rejection::InvalidIdentity);
+    }
+    if joint_destination_activation_held(state) {
+        return Decision::Reject(Rejection::InvalidPhase { actual: state.phase });
     }
 
     match &command.kind {
@@ -72,4 +78,13 @@ pub fn preflight(state: &CanonicalState, command: &Command) -> Decision {
         CommandKind::ResumeSource => preflight_resume_source(state, command.identity),
         CommandKind::ResumeDestination => preflight_resume(state, command.identity),
     }
+}
+
+fn joint_destination_activation_held(state: &CanonicalState) -> bool {
+    state.phase == HandoffPhase::Committed
+        && state.activation.role == ActivationRole::Destination
+        && state.operations.iter().any(|record| {
+            record.request.causal_parent.is_some()
+                && matches!(record.request.kind, EffectKind::LeaseCommit { .. })
+        })
 }

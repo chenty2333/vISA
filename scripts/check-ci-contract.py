@@ -23,11 +23,23 @@ EXPECTED_CLAIMS = {
     "stage3b": ("system-stage3b", "stage3b-logical-request-system-evidence"),
 }
 
-QUALIFICATION_JOBS = (
+STAGE_QUALIFICATION_JOBS = (
     "docker-quality-gate",
     "docker-claim-gates",
     "docker-stage4-gate",
 )
+JOINT_REFERENCE_JOB = "docker-joint-handoff-reference-gate"
+JOINT_NEXUS_JOB = "docker-joint-handoff-nexus-qualification"
+VISA_DOCKER_GATE_JOBS = (*STAGE_QUALIFICATION_JOBS, JOINT_REFERENCE_JOB)
+CLOSURE_JOBS = (*VISA_DOCKER_GATE_JOBS, JOINT_NEXUS_JOB)
+
+NEXUS_LOCK_PATH = (
+    "third_party/joint-handoff-qualification/nexus-qualification-lock.json"
+)
+NEXUS_REPOSITORY = "chenty2333/Nexus"
+NEXUS_CHECKOUT_PATH = ".ci-nexus"
+NEXUS_ARTIFACT_ROOT = ".ci-artifacts/nexus-handoff-qualification"
+NEXUS_GATE_LOG = ".ci-artifacts/nexus-handoff-qualification-ci.log"
 
 EXACT_SHA_IMAGE = "visa-dev:${{ github.sha }}"
 RETENTION_POLICY = "${{ github.event_name == 'pull_request' && 3 || 14 }}"
@@ -100,6 +112,10 @@ def check_ignores() -> None:
             "/.ci-artifacts/" in lines,
             f"{relative} must exclude the generated .ci-artifacts directory",
         )
+        require(
+            "/.ci-nexus/" in lines,
+            f"{relative} must exclude the generated .ci-nexus checkout",
+        )
 
 
 def check_compose() -> None:
@@ -121,6 +137,10 @@ def check_compose() -> None:
     require(
         environment.get("VISA_EVIDENCE_PARENT") == "/workspace/evidence",
         "compose.ci.yaml must place evidence outside Cargo's target directory",
+    )
+    require(
+        environment.get("GITHUB_SHA") == "${GITHUB_SHA:-}",
+        "compose.ci.yaml must pass the workflow SHA into qualification containers",
     )
 
     volumes = overlay_dev.get("volumes", [])
@@ -165,6 +185,32 @@ def check_locked_cargo_wrappers() -> None:
                 )
 
 
+def check_joint_expectation_wiring() -> None:
+    source = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+    expected = """\
+    expectation_args=(
+        "$visa_sha"
+        "${locked[nexus_revision]}"
+        "${locked[neutral_revision]}"
+        "${locked[neutral_tree]}"
+        "${locked[neutral_bundle_sha256]}"
+        "${locked[source_lock_sha256]}"
+        "${locked[protocol_sha256]}"
+        "${locked[machine_contract_sha256]}"
+        "${locked[refinement_map_sha256]}"
+        "${locked[abstract_registry_sha256]}"
+    )"""
+    require(
+        expected in source,
+        "joint publisher/verifier expectations must retain their keyed semantic order",
+    )
+    require(
+        source.count('"${expectation_args[@]}"') == 3,
+        "joint runner must pass the same ten provenance expectations to the publisher "
+        "and both verifier invocations",
+    )
+
+
 def check_cache_paths(jobs: dict[str, Any]) -> None:
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
@@ -183,7 +229,7 @@ def check_cache_paths(jobs: dict[str, Any]) -> None:
 
 def check_dependency_caches(jobs: dict[str, Any]) -> None:
     expected_paths = {".ci-cache/cargo-git", ".ci-cache/cargo-registry"}
-    for job_name in QUALIFICATION_JOBS:
+    for job_name in VISA_DOCKER_GATE_JOBS:
         job = jobs[job_name]
         cache_steps = steps_using(job, "actions/cache@")
         cache_steps += steps_using(job, "actions/cache/restore@")
@@ -236,7 +282,7 @@ def check_action_pins(jobs: dict[str, Any]) -> None:
 
 
 def check_checkouts(jobs: dict[str, Any]) -> None:
-    for job_name in QUALIFICATION_JOBS:
+    for job_name in VISA_DOCKER_GATE_JOBS:
         checkouts = steps_using(jobs[job_name], "actions/checkout@")
         require(len(checkouts) == 1, f"{job_name}: expected exactly one checkout")
         require(
@@ -247,7 +293,7 @@ def check_checkouts(jobs: dict[str, Any]) -> None:
 
 def check_exact_sha_images(jobs: dict[str, Any]) -> None:
     expected_labels = {IMAGE_REVISION_LABEL, IMAGE_SOURCE_LABEL}
-    for job_name in QUALIFICATION_JOBS:
+    for job_name in VISA_DOCKER_GATE_JOBS:
         job = jobs[job_name]
         image = job.get("env", {}).get("VISA_DEV_IMAGE")
         require(image == EXACT_SHA_IMAGE, f"{job_name}: Docker image is not exact-SHA tagged")
@@ -335,9 +381,10 @@ def check_claim_matrix(job: dict[str, Any]) -> None:
         "claim matrix must invoke its selected Docker system tier",
     )
     require(".ci-artifacts/${LANE}-ci.log" in command, "claim lane must retain its gate log")
+    require("set -o pipefail" in command, "claim matrix gate must protect tee")
 
 
-def check_quality_and_stage4(jobs: dict[str, Any]) -> None:
+def check_quality_stage4_and_joint_reference(jobs: dict[str, Any]) -> None:
     quality_commands = "\n".join(
         str(step.get("run", "")) for step in jobs["docker-quality-gate"].get("steps", [])
     )
@@ -353,6 +400,162 @@ def check_quality_and_stage4(jobs: dict[str, Any]) -> None:
         "Stage 4 job must run the complete aggregate gate",
     )
     require(".ci-artifacts/stage4-ci.log" in command, "Stage 4 must retain its gate log")
+    require("set -o pipefail" in command, "Stage 4 gate must protect tee")
+
+    joint_job = jobs[JOINT_REFERENCE_JOB]
+    require(
+        joint_job.get("name") == "Docker joint handoff reference-only gate",
+        "joint handoff job must remain explicitly reference-only",
+    )
+    joint = step_with_id(joint_job, "joint_reference_gate")
+    command = str(joint.get("run", ""))
+    require(
+        "scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-joint-handoff"
+        in command,
+        "joint handoff reference job must run the dedicated Docker system tier",
+    )
+    require(
+        ".ci-artifacts/joint-handoff-reference-ci.log" in command,
+        "joint handoff reference job must retain its gate log",
+    )
+    require("set -o pipefail" in command, "joint handoff reference gate must protect tee")
+    uploads = steps_using(joint_job, "actions/upload-artifact@")
+    require(len(uploads) == 1, "joint handoff reference job must upload one artifact")
+    require(
+        uploads[0].get("with", {}).get("name")
+        == "joint-handoff-reference-system-evidence",
+        "joint handoff artifact name must remain explicitly reference-only",
+    )
+
+
+def check_nexus_qualification(job: dict[str, Any]) -> None:
+    require(
+        job.get("name") == "Docker Nexus exact-SHA handoff-admission qualification",
+        "Nexus qualification job name drifted",
+    )
+    require(
+        job.get("runs-on") == "ubuntu-latest"
+        and job.get("timeout-minutes") == "120",
+        "Nexus qualification job must retain its bounded runner and timeout",
+    )
+    require(
+        job.get("env", {}) == {},
+        "Nexus qualification job must not inherit a vISA Docker image environment",
+    )
+
+    steps = job.get("steps", [])
+    require(isinstance(steps, list), "Nexus qualification job must contain steps")
+    require(
+        [step.get("name") for step in steps if isinstance(step, dict)]
+        == [
+            "Checkout exact vISA SHA",
+            "Read committed Nexus qualification lock",
+            "Checkout exact locked Nexus SHA",
+            "Run Nexus-local handoff-admission qualification",
+            "Upload Nexus-local handoff-admission evidence",
+            "Remove Nexus qualification checkout and evidence from runner",
+        ],
+        "Nexus qualification step inventory or order drifted",
+    )
+    checkouts = steps_using(job, "actions/checkout@")
+    require(len(checkouts) == 2, "Nexus qualification job must have exactly two checkouts")
+    visa_checkout, nexus_checkout = checkouts
+    require(
+        visa_checkout.get("name") == "Checkout exact vISA SHA"
+        and visa_checkout.get("with")
+        == {
+            "ref": "${{ github.sha }}",
+            "persist-credentials": "false",
+        },
+        "Nexus qualification must first checkout the exact workflow vISA SHA",
+    )
+
+    lock_step = step_with_id(job, "nexus_lock")
+    lock_command = str(lock_step.get("run", ""))
+    require(
+        "scripts/check-nexus-handoff-qualification.py" in lock_command
+        and f"--lock {NEXUS_LOCK_PATH}" in lock_command
+        and "--emit-lock-values" in lock_command,
+        "Nexus revision must be parsed from the committed qualification lock",
+    )
+    require(
+        '"${#lock_values[@]}" -ne 4' in lock_command
+        and "^[0-9a-f]{40}$" in lock_command
+        and 'printf \'revision=%s\\n\' "$revision" >> "$GITHUB_OUTPUT"'
+        in lock_command,
+        "Nexus lock step must validate and export exactly one lowercase revision",
+    )
+    require(
+        nexus_checkout.get("name") == "Checkout exact locked Nexus SHA"
+        and nexus_checkout.get("with")
+        == {
+            "repository": NEXUS_REPOSITORY,
+            "ref": "${{ steps.nexus_lock.outputs.revision }}",
+            "path": NEXUS_CHECKOUT_PATH,
+            "fetch-depth": "0",
+            "persist-credentials": "false",
+        },
+        "Nexus checkout must use the dynamic exact revision emitted by the lock step",
+    )
+    require(
+        steps.index(visa_checkout) < steps.index(lock_step) < steps.index(nexus_checkout),
+        "vISA checkout, lock parsing, and Nexus checkout order drifted",
+    )
+
+    for prefix in (
+        "actions/cache@",
+        "actions/cache/restore@",
+        "docker/setup-buildx-action@",
+        "docker/build-push-action@",
+    ):
+        require(
+            not steps_using(job, prefix),
+            "Nexus qualification must use Nexus's own pinned environment, not the "
+            f"vISA image/cache path ({prefix})",
+        )
+
+    gate = step_with_id(job, "nexus_qualification")
+    command = str(gate.get("run", ""))
+    require(
+        "scripts/run-nexus-handoff-qualification.sh" in command
+        and f"--checkout {NEXUS_CHECKOUT_PATH}" in command
+        and f"--artifact-root {NEXUS_ARTIFACT_ROOT}" in command,
+        "Nexus qualification gate must invoke the source-locked wrapper",
+    )
+    require(
+        "rm -rf .ci-artifacts" in command
+        and "mkdir -p .ci-artifacts" in command
+        and "set -o pipefail" in command
+        and f"| tee {NEXUS_GATE_LOG}" in command,
+        "Nexus qualification must retain a top-level log and fail closed across tee",
+    )
+    require(
+        "find .ci-artifacts -mindepth 1 -maxdepth 1 -printf '%y %f\\n'"
+        in command
+        and "LC_ALL=C sort" in command
+        and "d nexus-handoff-qualification\\nf nexus-handoff-qualification-ci.log"
+        in command
+        and '"$actual_inventory" != "$expected_inventory"' in command,
+        "Nexus qualification top-level artifact inventory must fail closed",
+    )
+    require(
+        "scripts/run-docker-ci-gate.sh" not in command
+        and "VISA_DEV_IMAGE" not in command
+        and ".ci-cache" not in command,
+        "Nexus qualification must not masquerade as a vISA Docker-image lane",
+    )
+
+    uploads = steps_using(job, "actions/upload-artifact@")
+    require(len(uploads) == 1, "Nexus qualification must upload exactly one artifact")
+    require(
+        uploads[0].get("with", {}).get("name")
+        == "joint-handoff-nexus-qualification-evidence",
+        "Nexus qualification artifact identity drifted",
+    )
+    require(
+        uploads[0].get("with", {}).get("path") == ".ci-artifacts/",
+        "Nexus artifact inventory must contain the wrapper tree and top-level log only",
+    )
 
 
 def check_closure(job: dict[str, Any]) -> None:
@@ -362,8 +565,11 @@ def check_closure(job: dict[str, Any]) -> None:
     )
     needs = job.get("needs", [])
     require(
-        isinstance(needs, list) and set(needs) == set(QUALIFICATION_JOBS),
-        "exact-SHA closure must depend on quality, claim matrix, and Stage 4 jobs",
+        isinstance(needs, list)
+        and len(needs) == len(CLOSURE_JOBS)
+        and set(needs) == set(CLOSURE_JOBS),
+        "exact-SHA closure must depend on quality, Stage 1-4, joint reference, "
+        "and Nexus qualification jobs",
     )
     require(job.get("if") == "${{ always() }}", "exact-SHA closure must always evaluate")
 
@@ -375,6 +581,12 @@ def check_closure(job: dict[str, Any]) -> None:
         "QUALITY_RESULT": "${{ needs.docker-quality-gate.result }}",
         "CLAIMS_RESULT": "${{ needs.docker-claim-gates.result }}",
         "STAGE4_RESULT": "${{ needs.docker-stage4-gate.result }}",
+        "JOINT_REFERENCE_RESULT": (
+            "${{ needs.docker-joint-handoff-reference-gate.result }}"
+        ),
+        "JOINT_NEXUS_RESULT": (
+            "${{ needs.docker-joint-handoff-nexus-qualification.result }}"
+        ),
     }
     require(environment == expected_results, "closure result bindings drifted")
 
@@ -385,6 +597,11 @@ def check_closure(job: dict[str, Any]) -> None:
             f"closure must reject non-success {variable}",
         )
     require("exit 1" in command, "closure must exit nonzero when a dependency failed")
+    require(
+        "Nexus exact-SHA qualification lane" in command
+        and "${JOINT_NEXUS_RESULT}" in command,
+        "closure summary must report the independent Nexus qualification result",
+    )
 
 
 def check_workflow() -> None:
@@ -400,7 +617,7 @@ def check_workflow() -> None:
     )
     jobs = workflow.get("jobs", {})
     require(isinstance(jobs, dict), "workflow jobs must be a mapping")
-    for job_name in (*QUALIFICATION_JOBS, "exact-sha-closure"):
+    for job_name in (*CLOSURE_JOBS, "exact-sha-closure"):
         require(job_name in jobs, f"workflow is missing required job {job_name}")
 
     check_action_pins(jobs)
@@ -409,9 +626,12 @@ def check_workflow() -> None:
     check_cache_paths(jobs)
     check_dependency_caches(jobs)
     check_claim_matrix(jobs["docker-claim-gates"])
-    check_quality_and_stage4(jobs)
+    check_quality_stage4_and_joint_reference(jobs)
+    check_nexus_qualification(jobs[JOINT_NEXUS_JOB])
     check_upload("docker-claim-gates", jobs["docker-claim-gates"], "claim_gate")
     check_upload("docker-stage4-gate", jobs["docker-stage4-gate"], "stage4_system_gate")
+    check_upload(JOINT_REFERENCE_JOB, jobs[JOINT_REFERENCE_JOB], "joint_reference_gate")
+    check_upload(JOINT_NEXUS_JOB, jobs[JOINT_NEXUS_JOB], "nexus_qualification")
     check_closure(jobs["exact-sha-closure"])
 
 
@@ -421,6 +641,7 @@ def main() -> int:
         check_compose()
         check_toolchain_alignment()
         check_locked_cargo_wrappers()
+        check_joint_expectation_wiring()
         check_workflow()
     except (ContractError, OSError) as error:
         print(f"CI contract violation: {error}", file=sys.stderr)

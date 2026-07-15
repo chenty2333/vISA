@@ -1,0 +1,389 @@
+schema = "visa-nexus-handoff.nexus-native-v1-refinement.v1"
+claim_id = "bounded-joint-handoff-refinement-v1"
+mapping_kind = "field-level-deterministic-projection"
+native_request_schema = "nexus.effect-peer.request.v1"
+native_response_schema = "nexus.effect-peer.response.v1"
+native_receipt_schema = "nexus.effect-peer.native-receipt.v1"
+neutral_wire_schema = "visa-nexus-handoff.wire-contract.v1"
+native_authentication_boundary = "sha256-integrity-only-not-authenticity"
+adapter_qualification = false
+ownership_truth_source = false
+normative_case_count = 16
+supplemental_case_count = 1
+
+[encoding]
+transport = "bounded-json-lines"
+line_terminator = "lf"
+max_line_bytes = 65536
+canonical_json = "serde-struct-field-order-compact"
+integer_encoding = "unsigned-big-endian"
+identity_projection = "sha256-domain-first-16"
+digest_projection = "sha256-domain-first-8"
+reject_zero_projection = true
+reject_projection_collision = true
+
+[raw_chain]
+retain_request_line = true
+retain_response_line = true
+retain_error_response = true
+request_digest = "sha256-canonical-request"
+payload_digest = "sha256-canonical-tagged-payload"
+receipt_digest = "sha256-canonical-receipt-input"
+successful_sequence = "contiguous-from-one"
+parent_rule = "previous-successful-native-receipt"
+exact_replay = "same-request-id-and-canonical-bytes-requires-byte-identical-response"
+request_id_conflict = "different-canonical-bytes-rejected-without-transition"
+error_advances_chain = false
+timeout_result = "outcome-unknown-remain-frozen"
+eof_result = "outcome-unknown-remain-frozen"
+malformed_result = "reject-no-neutral-receipt"
+query_authority = "observation-only"
+ownership_decision_source = "externally-verified-typed-receipt-only"
+
+[state_validation]
+decision_position = "strictly-after-frozen-intent-position"
+decision_branch = "thaw-xor-close"
+source_recovery_required = "unsupported-rebind-no-neutral-thaw"
+retained_latch = "no-later-neutral-closure-under-native-v1"
+frozen_scope_revision = "u64-zero-valid-for-new-empty-scope"
+progress_context = "binding-exact-authority-status-derived-scope-revision-monotonic"
+progress_shape = "status-specific-strict"
+cross_transcript_process_continuity = "not-provable-from-native-v1-wire-requires-external-pin"
+authority_dispositions = "candidates-only-require-external-neutral-evidence"
+
+[registry_binding]
+normative_case_count = 16
+supplemental_case_count = 1
+supplemental_case_id = "supplemental-postcommit-retained-tombstone"
+native_v1_full_registry_qualified = false
+unsupported_normative_case_ids = ["frozen-service-crash-rebind"]
+unsupported_supplemental_case_ids = ["supplemental-postcommit-retained-tombstone"]
+
+[[identity_mapping]]
+native_field = "freeze.body.handoff_id"
+neutral_field = "JointHandoffKey.handoff"
+direction = "neutral-to-native-u64"
+domain = "handoff-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "thaw|close-step.body.handoff_id"
+neutral_field = "JointHandoffKey.handoff"
+direction = "neutral-to-native-u64"
+domain = "handoff-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "freeze.body.log_identity"
+neutral_field = "PrepareIntentReceipt.header.log_id"
+direction = "neutral-to-native-u64"
+domain = "ownership-log-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "thaw|close-step.body.log_identity"
+neutral_field = "PrepareIntentReceipt.header.log_id"
+direction = "neutral-to-native-u64"
+domain = "ownership-log-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "freeze.body.service_incarnation"
+neutral_field = "PrepareIntentReceipt.header.issuer_incarnation"
+direction = "neutral-to-native-u64"
+domain = "ownership-service-incarnation"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "thaw|close-step.body.service_incarnation"
+neutral_field = "PrepareIntentReceipt.header.issuer_incarnation"
+direction = "neutral-to-native-u64"
+domain = "ownership-service-incarnation"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "freeze.body.key_identity"
+neutral_field = "PrepareIntentReceipt.header.key_id"
+direction = "neutral-to-native-u64"
+domain = "ownership-key-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "thaw|close-step.body.key_identity"
+neutral_field = "PrepareIntentReceipt.header.key_id"
+direction = "neutral-to-native-u64"
+domain = "ownership-key-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "register.body.client_effect"
+neutral_field = "JointEffectRecord.effect"
+direction = "neutral-to-native-u64"
+domain = "client-effect-id"
+rule = "sha256-domain-first-8"
+
+[[identity_mapping]]
+native_field = "admission-frozen.registry_instance"
+neutral_field = "EffectScopeVersion.registry_instance"
+direction = "native-u64-to-neutral-identity128"
+domain = "registry-instance"
+rule = "sha256-domain-first-16"
+
+[[identity_mapping]]
+native_field = "admission-frozen.scope_id"
+neutral_field = "EffectScopeVersion.scope_id"
+direction = "native-u64-to-neutral-identity128"
+domain = "scope-id"
+rule = "sha256-domain-first-16"
+
+[[identity_mapping]]
+native_field = "admission-frozen.boot_incarnation"
+neutral_field = "ReceiptHeader.issuer_incarnation"
+direction = "native-u64-to-neutral-identity128"
+domain = "effect-issuer-incarnation"
+rule = "sha256-domain-first-16"
+
+[[identity_mapping]]
+native_field = "effect-registered.native_effect_id"
+neutral_field = "JointMappingManifest.native_effect_identity"
+direction = "native-u64-to-neutral-identity128"
+domain = "native-effect-id"
+rule = "sha256-domain-first-16"
+
+[[digest_mapping]]
+native_field = "freeze.body.request_digest"
+neutral_field = "PrepareIntentReceipt.receipt_ref.digest"
+direction = "neutral-to-native-u64"
+domain = "ownership-intent-receipt-digest"
+rule = "sha256-domain-first-8"
+promotes_native_digest = false
+
+[[digest_mapping]]
+native_field = "thaw|close-step.body.request_digest"
+neutral_field = "PrepareIntentReceipt.receipt_ref.digest"
+direction = "neutral-to-native-u64"
+domain = "ownership-intent-receipt-digest"
+rule = "sha256-domain-first-8"
+promotes_native_digest = false
+
+[[digest_mapping]]
+native_field = "admission-frozen.cohort_digest"
+neutral_field = "NexusFreezeReceipt.effect_cohort_digest"
+direction = "native-binding-plus-neutral-recompute"
+domain = "native-cohort-binding"
+rule = "retain-u64-and-recompute-sha256-from-neutral-effect-manifest"
+promotes_native_digest = false
+
+[[digest_mapping]]
+native_field = "admission-frozen.classification_digest"
+neutral_field = "NexusFreezeReceipt.classification_root"
+direction = "native-binding-plus-neutral-recompute"
+domain = "native-classification-binding"
+rule = "retain-u64-and-recompute-sha256-from-neutral-effect-manifest"
+promotes_native_digest = false
+
+[[digest_mapping]]
+native_field = "closure-progress.terminal_manifest_digest"
+neutral_field = "ClosureReceipt.effect_manifest_digest"
+direction = "native-binding-plus-neutral-recompute"
+domain = "native-terminal-manifest-binding"
+rule = "retain-u64-and-recompute-sha256-from-frozen-neutral-effect-manifest"
+promotes_native_digest = false
+
+[[context_mapping]]
+native_field = "admission-frozen.registry_instance"
+neutral_field = "NexusFreezeReceipt.registry_instance"
+rule = "identity-projection"
+
+[[context_mapping]]
+native_field = "admission-frozen.scope_id"
+neutral_field = "NexusFreezeReceipt.scope_id"
+rule = "identity-projection"
+
+[[context_mapping]]
+native_field = "admission-frozen.scope_generation"
+neutral_field = "NexusFreezeReceipt.scope_generation"
+rule = "exact-u64"
+
+[[context_mapping]]
+native_field = "admission-frozen.authority_epoch"
+neutral_field = "NexusFreezeReceipt.authority_epoch"
+rule = "exact-u64"
+
+[[context_mapping]]
+native_field = "admission-frozen.freeze_generation"
+neutral_field = "NexusFreezeReceipt.freeze_generation"
+rule = "exact-u64"
+
+[[context_mapping]]
+native_field = "freeze.body.intent_position"
+neutral_field = "PrepareIntentReceipt.header.sequence"
+rule = "exact-u64"
+
+[[context_mapping]]
+native_field = "thaw|close-step.body.decision_position"
+neutral_field = "OwnershipAbortReceipt|OwnershipCommitReceipt.header.sequence"
+rule = "exact-u64-from-externally-verified-receipt"
+
+[[context_mapping]]
+native_field = "admission-frozen.boot_incarnation"
+neutral_field = "JointMappingManifest.native_context"
+rule = "sha256-context-member"
+
+[[context_mapping]]
+native_field = "admission-frozen.binding_epoch"
+neutral_field = "JointMappingManifest.native_context"
+rule = "sha256-context-member"
+
+[[context_mapping]]
+native_field = "admission-frozen.frozen_scope_revision"
+neutral_field = "JointMappingManifest.native_context"
+rule = "sha256-context-member"
+
+[[context_mapping]]
+native_field = "admission-frozen.cohort_digest"
+neutral_field = "JointMappingManifest.native_context"
+rule = "sha256-context-member"
+
+[[context_mapping]]
+native_field = "admission-frozen.classification_digest"
+neutral_field = "JointMappingManifest.native_context"
+rule = "sha256-context-member"
+
+[[readiness_mapping]]
+native = "ready-to-commit"
+neutral = "ready-to-commit"
+result = "candidate-nexus-freeze-ready-requires-neutral-manifest"
+
+[[readiness_mapping]]
+native = "needs-abort"
+neutral = "blocked"
+result = "emit-nexus-freeze-blocked"
+
+[[readiness_mapping]]
+native = "publication-pending"
+neutral = "blocked"
+result = "emit-nexus-freeze-blocked"
+
+[[readiness_mapping]]
+native = "blocked-retained"
+neutral = "blocked"
+result = "emit-nexus-freeze-blocked"
+
+[[status_mapping]]
+native = "frozen"
+neutral = "prepared-frozen-observation"
+result = "observation-only-no-neutral-receipt"
+
+[[status_mapping]]
+native = "aborted"
+neutral = "abort-observation"
+result = "observation-only-no-neutral-receipt"
+
+[[status_mapping]]
+native = "closing"
+neutral = "source-close-pending"
+result = "candidate-closure-progress-requires-verified-commit-and-neutral-manifest"
+
+[[status_mapping]]
+native = "retained"
+neutral = "destination-recovery-required"
+result = "unsupported-retained-no-neutral-receipt"
+
+[[status_mapping]]
+native = "closed"
+neutral = "source-closed"
+result = "candidate-closure-requires-verified-commit-and-neutral-terminal-manifest"
+
+[[operation_mapping]]
+native = "initialize"
+neutral = "process-context"
+result = "evidence-only"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "register"
+neutral = "effect-publication-input"
+result = "evidence-only"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "prepare"
+neutral = "effect-publication-input"
+result = "evidence-only"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "commit"
+neutral = "effect-publication-input"
+result = "evidence-only-after-native-transition"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "complete"
+neutral = "effect-publication-input"
+result = "evidence-only"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "acknowledge-publication"
+neutral = "effect-publication-input"
+result = "evidence-only"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "freeze"
+neutral = "effect-freeze"
+result = "candidate-admission-frozen-requires-neutral-manifest"
+ownership_input = "verified-prepare-intent"
+
+[[operation_mapping]]
+native = "abort-uncommitted"
+neutral = "effect-abort-progress"
+result = "evidence-only-never-authority"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "thaw"
+neutral = "effect-thaw"
+result = "candidate-admission-thawed-requires-verified-abort"
+ownership_input = "verified-ownership-abort"
+
+[[operation_mapping]]
+native = "close-step"
+neutral = "effect-close"
+result = "candidate-closing-or-closed-requires-verified-commit-and-neutral-manifest"
+ownership_input = "verified-ownership-commit"
+
+[[operation_mapping]]
+native = "query"
+neutral = "effect-query"
+result = "observation-only-never-authority"
+ownership_input = "none"
+
+[[operation_mapping]]
+native = "shutdown"
+neutral = "process-lifecycle"
+result = "evidence-only"
+ownership_input = "none"
+
+[[unsupported]]
+feature = "service-rebind"
+case_id = "frozen-service-crash-rebind"
+normative = true
+native_signal = "admission-thawed.source-recovery-required=true-and-no-native-v1-command"
+required_result = "adapter-not-qualified-remain-frozen"
+
+[[unsupported]]
+feature = "peer-process-replacement"
+case_id = "frozen-service-crash-rebind"
+normative = true
+native_signal = "cross-transcript-process-lifetime-not-provable-from-native-v1-wire"
+required_result = "external-pin-required-otherwise-outcome-unknown-remain-frozen-new-handoff-required"
+
+[[unsupported]]
+feature = "postcommit-retained-tombstone-recovery"
+case_id = "supplemental-postcommit-retained-tombstone"
+normative = false
+native_signal = "handoff-status-retained"
+required_result = "destination-inactive-recovery-required-no-neutral-receipt"

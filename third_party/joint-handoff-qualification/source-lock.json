@@ -1,0 +1,60 @@
+{
+  "schema": "visa.joint-handoff-qualification-source-lock.v1",
+  "evidence_status": "reference-only-not-nexus-qualified",
+  "visa": {
+    "repository": "https://github.com/chenty2333/vISA",
+    "revision_source": "checked-out-exact-git-sha"
+  },
+  "nexus": {
+    "repository": "https://github.com/chenty2333/Nexus",
+    "revision": "7829e609b3d770b684316a30170a7412faa62f9b",
+    "execution": "reference-peer-only"
+  },
+  "joint_artifact": {
+    "repository": "https://github.com/chenty2333/visa-nexus-handoff",
+    "revision": "75c5dacde8179e31eb88e17c5b7e8e3a9050e50b",
+    "tree": "1572ca83969e091898444c880d91885008d4cef7",
+    "source_bundle": {
+      "path": "third_party/joint-handoff-qualification/neutral-source.bundle",
+      "sha256": "4ffc9e90cea81e8588abfd2bac5df2365d9bd2c67cfd0dcbefd87e3328375a87",
+      "head": "75c5dacde8179e31eb88e17c5b7e8e3a9050e50b"
+    }
+  },
+  "protocol_schema": {
+    "path": "third_party/joint-handoff-qualification/joint-handoff-wire-v1.md",
+    "source_path": "specs/joint-handoff/joint-handoff-wire-v1.md",
+    "git_blob": "3ad36d7f3df9dd8c19cf89a3a55eb1a6db68eeae",
+    "sha256": "9caf3d39eb9a198a3a085691944e6665d4c4298b164276bf3df3d70e7328cf2d"
+  },
+  "neutral_wire_contract": {
+    "path": "third_party/joint-handoff-qualification/wire-v1.toml",
+    "source_path": "specs/joint-handoff/wire-v1.toml",
+    "git_blob": "cfe4b8fb7b40aa48d0dc3d10c5e36d34ae64c67e",
+    "sha256": "29d9fff455b1697ef80959b22862668ca7e09c6bf077812362c265013daad040"
+  },
+  "machine_contract": {
+    "path": "third_party/joint-handoff-qualification/nexus-native-v1-refinement.toml",
+    "source_path": "specs/joint-handoff/nexus-native-v1-refinement.toml",
+    "git_blob": "384775246c1bcadee4761203a7c97120f294f3d0",
+    "sha256": "f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5"
+  },
+  "refinement_map": {
+    "path": "third_party/joint-handoff-qualification/refinement-map.toml",
+    "source_path": "specs/joint-handoff/refinement-map.toml",
+    "git_blob": "17027fb8679f9e99c1fa0f1c08a8cb98d73357bc",
+    "sha256": "5f2136a2dcb63e836194fbbac3561d2a2b577fb28405701eb6a8e4a4048c8f80"
+  },
+  "abstract_case_registry": {
+    "claim_id": "bounded-joint-handoff-refinement-v1",
+    "case_count": 16,
+    "path": "third_party/joint-handoff-qualification/neutral-fault-matrix.toml",
+    "source_path": "specs/joint-handoff/fault-matrix.toml",
+    "git_blob": "9a0e037cfab2c3d909a3f6de64dbed9d1467fb06",
+    "sha256": "aa3c3671eec4cf87e9d09482a7d37619a289719187d9e97756cfe1773d431110"
+  },
+  "case_registry": {
+    "claim_id": "bounded-joint-handoff-refinement-v1",
+    "case_count": 16,
+    "sha256": "4bc9c66bd88659a59407e1d296d8df101c0ada14598e759c66713583501d7485"
+  }
+}

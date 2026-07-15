@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-16.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -118,6 +118,62 @@ vISA is intended to occupy the layer between application-level workflow replay
 and machine-level snapshots: component runtime semantics plus external resource
 continuity. It is not intended to become another workflow engine.
 
+### Ownership, effect closure, and confidential migration
+
+Opaque snapshots preserve machine state, but do not establish external-effect,
+authority, and freshness continuity. Two-phase commit, atomic RPC,
+presumed-abort/presumed-commit recovery, idempotency keys, and fencing leases
+already provide the basic vocabulary for prepared state, decision recovery, and
+stale-writer exclusion. The candidate contribution must not be described as the
+invention of a prepared record, signed receipt, epoch, or commit protocol.
+
+Confidential VM migration and attestation-bound key release additionally protect
+machine-state transport and constrain which destination can receive secrets.
+Those mechanisms do not by themselves determine whether a non-idempotent
+external effect completed, close every descendant effect on the old source, or
+prove that a replayed ownership history is fresh. Conversely, a semantic
+handoff receipt graph does not provide encryption, attestation, rollback
+resistance, or protected storage.
+
+The candidate `bounded-joint-handoff-refinement-v1` contribution is narrower:
+an executable refinement among vISA portable continuity, one externally owned
+non-equivocating decision, and an independently owned native effect-cohort
+closure service. The boundary is useful only if neither adapter copies the
+other's state machine or ledger, unknown outcomes remain fail closed, and
+destination activation is derived from the exact commit, closure, and source
+fence chain.
+
+The current source lock pins local-clean, unpushed neutral revision
+`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` (tree
+`1572ca83969e091898444c880d91885008d4cef7`). It supplies the reviewed wire
+contract, 16-case normative model, TLA+ safety/progress checks, expected rollback
+counterexample, independent mutation-tested oracle, and exact Nexus native-v1
+field mapping. Earlier remote results, including `8fcdaf42...`, remain historical
+evidence rather than the current source identity. The mapping still declares
+`adapter_qualification=false`, so it is contract evidence rather than Nexus
+execution truth. The vISA registry has 16 case-identity mappings plus one
+supplemental retained-tombstone recovery scenario.
+
+The TLA+ `BeginFreeze` action deliberately makes gate close, source freeze,
+freeze-generation advance, and boundary capture one atomic abstract step. TLC
+therefore checks the abstract safety and conditional-progress relation, not the
+concrete WAL-before-effect ordering. The latter is a separate refinement result
+from the Rust durable session, SQLite append/reopen evidence, exact pre-call
+peer-invocation bytes, and independent transcript replay.
+
+The vISA system runner now executes a same-boot HostSubstrate commit/abort
+vertical through `Coordinator<SqliteProvider>`. Its strict verifier reconstructs
+14 commit records, 9 abort records, seven ownership/effect peer-invocation
+classes, local journals and leases, crash/reopen checkpoints, and the exact
+completion record authorizing destination resume. This result is conditional
+on `exclusive_trusted_coordinator_api=true`: an adversarial second raw
+coordinator/provider handle or hostile public-projection caller is outside the
+model. The separate Nexus-local axis is locally clean at
+`a890e5c3e25138662c213f19280ba3b209939813`; its v2 receipt records that the
+production Registry refinement was checked. Four live process tests pass
+against the exact binary SHA-256
+`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
+
 ### Independent Component Model runtime availability
 
 A 2026-07-12 executable qualification advanced three pinned upstream candidate
@@ -190,6 +246,8 @@ Roadmap gate and pushed exact-commit evidence.
 - that one real-machine run proves cross-runtime or cross-ISA portability;
 - that capability vocabulary alone proves authority safety;
 - that a local transaction can provide universal exactly-once external effects;
+- that the joint-handoff reference peers qualify production Nexus, cross-host
+  ownership, cryptographic receipts, freshness, or rollback resistance;
 - that the current candidate users constitute a validated market; or
 - that vISA is a standard, production platform, or complete OS.
 
@@ -235,6 +293,38 @@ fencing, silent authority downgrade, and omitted events.
 
 The hypothesis fails when an observable semantic error passes verification, or
 when detecting errors requires recording nearly all native execution state.
+
+### RQ4: Minimal semantic handoff across authority domains
+
+Given a durable non-equivocating ownership decision and fail-closed recovery,
+can reversible vISA freeze and irreversible native effect closure preserve both
+at-most-one execution authority and complete accounting of the frozen effect
+cohort under crash, retry, reordering, duplicate delivery, and lost
+acknowledgements without serializing native device state?
+
+The hypothesis fails if any accepted trace permits dual source/destination
+authority, accepts a post-freeze untracked effect, activates the destination
+before terminal source closure, thaws on timeout or lookup absence, accepts
+conflicting abort and commit decisions, loses a retained cleanup obligation, or
+accepts a stale/mismatched receipt without a state-preserving rejection.
+
+The first evaluation boundary is same-boot process crash. The 16 abstract
+schedules and 16 concrete cases exercise both freeze/publication orders,
+abort/thaw, lost commit acknowledgement, rebind, stale receipts, decision
+races, crash recovery, and substituted destination preparation; the concrete
+runner adds one supplemental retained-tombstone recovery case. The HostSubstrate
+and Nexus-local axes are implemented and locally verified. The real
+logical-request experiment loses the ownership Commit acknowledgement only
+after durability, then separately discards the terminal Nexus child response
+before adapter acceptance. Exact query/retry and same-request-ID byte-identical
+replay preserve one ownership decision, one accepted native receipt, and one
+external execution. The standalone publication/relocation path has a smoke
+pass, but the final clean vISA artifact and remote CI remain open. The
+accumulated evidence cannot establish real OSTD execution, IRQ/SMP behavior,
+Registry replacement, the production retained-tombstone path, host-reboot
+recovery, permanent source loss, cross-host progress, Byzantine safety,
+cryptographic authenticity, anti-rollback, freshness, TEE/KMS behavior, or
+confidentiality.
 
 ## Demand validation
 

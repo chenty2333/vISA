@@ -8,12 +8,14 @@ FAIL_LINES=5000
 
 ACTIVE_SPINE_PREFIXES=(
     crates/core/contract_core/
+    crates/core/joint_handoff_core/
     crates/testing/handoff-component/
     crates/core/visa_profile/
     crates/core/semantic_core/
     crates/backend/substrate_api/
     crates/backend/substrate_host/
     crates/runtime/visa_runtime/
+    crates/runtime/visa_joint_handoff/
     crates/runtime/visa_component_adapter/
     crates/runtime/visa_jco_node/
     crates/runtime/visa_wacogo/
@@ -22,6 +24,7 @@ ACTIVE_SPINE_PREFIXES=(
     crates/testing/stage3-request-component/
     crates/testing/visa-conformance/
     crates/testing/visa-stage3-system/
+    crates/testing/visa-joint-handoff-system/
     crates/testing/visa-system/
 )
 

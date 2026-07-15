@@ -372,6 +372,23 @@ pub fn apply(state: &CanonicalState, event: &Event) -> Result<ApplyResult, Rejec
                 return Err(Rejection::EventNotApplicable);
             }
         }
+        EventKind::JointDestinationResumed { activation_record_digest } => {
+            if *activation_record_digest == contract_core::Digest::ZERO {
+                return Err(Rejection::EventNotApplicable);
+            }
+            if state.phase == HandoffPhase::Running && local_active(state) {
+                true
+            } else if state.phase == HandoffPhase::Committed
+                && state.activation.role == ActivationRole::Destination
+                && local_active(state)
+            {
+                next.phase = HandoffPhase::Running;
+                thaw_timer(&mut next);
+                false
+            } else {
+                return Err(Rejection::EventNotApplicable);
+            }
+        }
     };
 
     if replay { Ok(ApplyResult::Replay(state.clone())) } else { Ok(ApplyResult::Applied(next)) }

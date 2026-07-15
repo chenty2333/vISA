@@ -4,7 +4,7 @@ Status: accepted target boundary.
 
 Implementation status: transitional and incomplete.
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-16.
 
 This document defines the intended system boundary. It does not imply that
 every described capability is implemented or validated.
@@ -87,7 +87,9 @@ vISA integrates with, but does not semantically own:
 - Linux, WASI, or other guest/personality API breadth;
 - Virtio, filesystems, network stacks, and device implementations;
 - memory pre-copy, dirty-page transport, and arbitrary process checkpointing;
-- workflow engines and external databases; or
+- workflow engines and external databases;
+- external ownership-decision services and kernel-enforced causal-effect
+  closure services; or
 - TEE, KMS, attestation, and infrastructure orchestration services.
 
 These systems may be adapters, reference implementations, test substrates, or
@@ -105,6 +107,59 @@ native process at any instruction. A compute-state carrier may preserve Wasm
 memory or continuation state, but vISA is responsible for coordinating that
 carrier with semantic state, external effects, authority, resource rebinding,
 and commit/abort.
+
+## Joint handoff research boundary
+
+Opaque snapshots can preserve machine state, but they do not establish whether
+an external effect completed, whether old authority is irreversibly closed, or
+whether an observed ownership decision is fresh. The candidate
+`bounded-joint-handoff-refinement-v1` track asks whether a minimal semantic
+handoff layer can compose three separate authorities without copying any of
+their native state: vISA portable continuity, one durable ownership decision,
+and native closure of the frozen source effect cohort.
+
+The current candidate is deliberately same-boot. Its source lock pins
+local-clean neutral revision `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`
+(tree `1572ca83969e091898444c880d91885008d4cef7`), which defines the 16
+normative schedules and current Nexus native-v1 mapping. This revision is
+unpushed. Earlier `873880c...`, `b5a462...`, and `8fcdaf42...` revisions remain
+historical remote evidence only. The current mapping preserves
+`adapter_qualification=false`: it freezes a relation, not Nexus execution
+truth. The reference lane maps the 16 normative cases by identity to 16 vISA
+cases and adds one supplemental retained-tombstone recovery.
+
+The system runner separately executes an online HostSubstrate commit/abort
+vertical through `Coordinator<SqliteProvider>`. Its strict verifier reconstructs
+14 commit records, 9 abort records, canonical pre-call bytes for seven
+ownership/effect peer-invocation classes, local journals and leases,
+crash/reopen checkpoints, and the completion record authorizing destination
+resume. The SQLite projection remains a local crash-recovery record, not a
+second ownership ledger.
+
+This result declares `exclusive_trusted_coordinator_api=true`: it trusts an
+exclusive, non-Byzantine coordinator API. A second raw coordinator/provider
+handle or hostile public-projection caller is outside the boundary; provider-
+or kernel-enforced adversarial admission is not claimed.
+
+The Nexus-local axis is now locally clean at
+`a890e5c3e25138662c213f19280ba3b209939813`. Its v2 receipt records
+`production_registry_refinement_checked=true`, while the neutral mapping
+correctly keeps `adapter_qualification=false`. Four live process tests pass
+against the exact identified Nexus binary. They include one real logical
+request and two distinct acknowledgement-loss boundaries: ownership Commit
+after its durable SQLite transaction, and the terminal Nexus close response
+after the child produced it but before the adapter accepted it. Exact query and
+same-request replay recover one decision, one native receipt-chain entry, and
+one external execution.
+
+This work is not Stage 5. The standalone process publisher and relocation
+verifier have a smoke pass, but the final artifact still requires the committed
+clean vISA SHA and remote CI is unobserved. No result establishes Registry
+replacement, the production retained-tombstone path, real OSTD IRQ/SMP,
+host-reboot or permanent source-loss recovery, cross-host continuity, Byzantine
+ownership-service safety, cryptographic authenticity, anti-rollback or
+freshness, TEE or KMS behavior, confidentiality, or production readiness. Stage
+5 remains not started.
 
 ## Desired outcomes
 
@@ -131,6 +186,10 @@ The project should attempt to falsify, not assume, these hypotheses:
    retry, rollback, replay, revocation, and handoff transition.
 3. A compact semantic trace and evidence bundle can detect externally visible
    adapter or substrate divergence without recording native execution state.
+4. Given one non-equivocating ownership decision and fail-closed recovery, a
+   reversible semantic freeze can compose with irreversible native effect
+   closure without admitting dual execution authority or losing accounting of
+   the frozen effect cohort.
 
 If these hypotheses fail, vISA must narrow its claims rather than expand the
 core model until every platform detail appears portable.

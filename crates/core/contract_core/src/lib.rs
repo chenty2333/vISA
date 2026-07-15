@@ -946,6 +946,9 @@ pub enum EventKind {
     },
     SourceResumed,
     DestinationResumed,
+    JointDestinationResumed {
+        activation_record_digest: Digest,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

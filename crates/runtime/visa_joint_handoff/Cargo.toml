@@ -1,0 +1,13 @@
+[package]
+name = "visa_joint_handoff"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+
+[dependencies]
+contract_core.workspace = true
+joint_handoff_core.workspace = true
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+substrate_api = { path = "../../backend/substrate_api" }
+visa_runtime.workspace = true

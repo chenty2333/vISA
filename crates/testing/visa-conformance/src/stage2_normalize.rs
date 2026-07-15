@@ -896,6 +896,9 @@ fn normalize_event(event: &mut EventKind, role: Stage1TraceRole) {
         EventKind::HandoffCommitted { outcome, .. } => normalize_outcome(outcome, role),
         EventKind::HandoffAborted { evidence } => normalize_optional_evidence(evidence),
         EventKind::PreparationCleaned { cleanup } => normalize_cleanup(cleanup),
+        EventKind::JointDestinationResumed { activation_record_digest } => {
+            *activation_record_digest = Digest::ZERO;
+        }
         EventKind::Activated { .. }
         | EventKind::AuthorityAttenuated { .. }
         | EventKind::AuthorityRevoked { .. }

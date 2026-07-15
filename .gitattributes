@@ -3,3 +3,4 @@
 # the applied code remains checked with `git apply --whitespace=error-all`.
 third_party/wacogo/patches/*.patch -whitespace
 third_party/runtime-b-qualification/qualification/wacogo-patches/*.patch -whitespace
+third_party/joint-handoff-qualification/*.bundle binary

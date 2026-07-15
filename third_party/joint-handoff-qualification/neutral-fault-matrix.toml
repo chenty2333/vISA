@@ -1,0 +1,349 @@
+schema = "visa-nexus-handoff.fault-matrix.v1"
+claim_id = "bounded-joint-handoff-refinement-v1"
+expected_count = 16
+normative = true
+description = "Fixed bounded schedules for the neutral vISA/Nexus handoff composition."
+
+[[case]]
+id = "freeze-wins-effect-commit"
+title = "Freeze linearizes before first external publication"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "commit-effect-current-binding",
+  "quiesce-committed", "issue-freeze-receipt", "prepare-destination-a",
+  "seal-prepared", "decide-commit", "query-decision",
+  "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "rejected:source-authority-fenced",
+  "idempotent", "applied", "applied", "applied", "applied", "applied",
+  "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "source-closed", "decision-commit",
+  "has-rejection:source-authority-fenced", "cohort-exact",
+]
+forbidden = ["post-freeze effect commit", "destination activation before closure"]
+
+[[case]]
+id = "effect-commit-wins-freeze"
+title = "First external publication linearizes before freeze"
+terminal = "destination-active"
+events = [
+  "register-effect", "commit-effect-current-binding", "prepare-intent-a",
+  "begin-freeze", "quiesce-committed", "issue-freeze-receipt",
+  "prepare-destination-a", "seal-prepared", "decide-commit",
+  "query-decision", "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "applied", "applied", "applied", "applied",
+  "applied", "applied", "applied", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "source-closed", "decision-commit",
+  "committed-effects-quiesced", "cohort-exact",
+]
+forbidden = ["omitted committed effect", "new tombstone after PreparedFrozen"]
+
+[[case]]
+id = "destination-prepare-fails-abort-thaw"
+title = "Destination failure returns through an authoritative abort"
+terminal = "source-thawed"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-b", "decide-abort",
+  "thaw-current-abort", "query-decision", "thaw-current-abort",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied",
+  "rejected:destination-mismatch", "applied", "rejected:decision-unknown",
+  "applied", "applied",
+]
+assertions = [
+  "all-invariants", "source-active", "destination-inactive", "decision-abort",
+  "has-rejection:decision-unknown", "gate-open",
+]
+forbidden = ["timeout-implied abort", "destination authority after abort"]
+
+[[case]]
+id = "commit-ack-lost-query-close"
+title = "Lost commit acknowledgement remains frozen until query"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "observe-unknown", "crash-coordinator",
+  "recover-coordinator", "thaw-current-abort", "query-decision",
+  "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "idempotent", "applied", "applied",
+  "rejected:wrong-decision-receipt", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "source-closed", "decision-commit",
+  "has-rejection:wrong-decision-receipt", "gate-closed",
+]
+forbidden = ["source thaw on unknown", "commit interpreted as abort"]
+
+[[case]]
+id = "frozen-service-crash-rebind"
+title = "A frozen service rebind cannot revive an old binding"
+terminal = "destination-active"
+events = [
+  "register-effect", "prepare-intent-a", "begin-freeze", "crash-service",
+  "rebind-service", "commit-effect-old-binding", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "query-decision", "close-current-commit",
+  "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "applied", "applied", "applied",
+  "rejected:stale-binding", "idempotent", "applied", "applied", "applied",
+  "applied", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "binding-advanced",
+  "has-rejection:stale-binding", "cohort-exact",
+]
+forbidden = ["old binding publication", "freeze snapshot rewritten after rebind"]
+
+[[case]]
+id = "unresolved-tombstone-blocks-seal"
+title = "A pre-commit unresolved tombstone blocks ownership commit"
+terminal = "source-thawed"
+events = [
+  "register-effect", "commit-effect-current-binding", "mark-tombstone",
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "decide-commit", "decide-abort",
+  "query-decision", "thaw-current-abort",
+]
+expected = [
+  "applied", "applied", "applied", "applied", "applied",
+  "rejected:unresolved-tombstone", "applied",
+  "rejected:prepared-record-required", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "source-active", "decision-abort", "blocker-retained",
+  "has-rejection:prepared-record-required", "destination-inactive",
+]
+forbidden = ["commit with blocker", "tombstone migrated as portable state"]
+
+[[case]]
+id = "stale-token-scope-epoch-probes"
+title = "Mismatched receipt lineage is rejected without mutation"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a",
+  "probe-wrong-scope-receipt", "probe-wrong-lease-receipt",
+  "probe-stale-freeze-receipt", "probe-wrong-registry-receipt",
+  "probe-wrong-handoff-receipt", "seal-prepared", "decide-commit",
+  "query-decision", "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied",
+  "rejected:scope-mismatch", "rejected:lease-epoch-mismatch",
+  "rejected:freeze-generation-mismatch", "rejected:registry-instance-mismatch",
+  "rejected:handoff-id-mismatch", "applied", "applied", "applied", "applied",
+  "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "all-rejections-failure-atomic",
+  "has-rejection:scope-mismatch", "has-rejection:lease-epoch-mismatch",
+  "has-rejection:freeze-generation-mismatch",
+  "has-rejection:registry-instance-mismatch", "has-rejection:handoff-id-mismatch",
+]
+forbidden = ["boolean verified bypass", "partial mutation before receipt rejection"]
+
+[[case]]
+id = "abort-commit-race-abort-wins"
+title = "Abort wins the terminal decision race"
+terminal = "source-thawed"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-abort", "decide-commit", "query-decision", "thaw-current-abort",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "rejected:decision-conflict", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "source-active", "decision-abort",
+  "has-rejection:decision-conflict", "destination-inactive",
+]
+forbidden = ["commit after abort", "two terminal decisions"]
+
+[[case]]
+id = "abort-commit-race-commit-wins"
+title = "Commit wins the terminal decision race"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "decide-abort", "query-decision",
+  "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "rejected:decision-conflict", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "decision-commit",
+  "has-rejection:decision-conflict", "source-closed",
+]
+forbidden = ["abort after commit", "source resume after commit"]
+
+[[case]]
+id = "source-crash-after-commit-before-close"
+title = "Source recovery is fail closed after commit decision"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "crash-source", "query-decision", "close-current-commit",
+  "recover-source", "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "applied", "applied", "rejected:source-offline", "applied",
+  "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "source-closed",
+  "has-rejection:source-offline", "decision-commit",
+]
+forbidden = ["boot-time source publication", "destination activation without closure"]
+
+[[case]]
+id = "destination-crash-before-activation"
+title = "Destination recovery cannot bypass source closure"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "query-decision", "close-current-commit",
+  "crash-destination", "activate-destination-a", "recover-destination",
+  "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "applied", "applied", "applied", "rejected:destination-offline",
+  "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "source-closed",
+  "has-rejection:destination-offline", "decision-commit",
+]
+forbidden = ["source reopen after destination crash", "activation while destination is down"]
+
+[[case]]
+id = "concurrent-two-destinations"
+title = "One source epoch admits one destination reservation"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "prepare-intent-b", "begin-freeze",
+  "quiesce-committed", "issue-freeze-receipt", "prepare-destination-a",
+  "seal-prepared", "decide-commit", "query-decision",
+  "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "rejected:concurrent-intent", "applied", "idempotent",
+  "applied", "applied", "applied", "applied", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "owner-destination-a",
+  "has-rejection:concurrent-intent", "single-destination",
+]
+forbidden = ["two prepared destinations", "owner epoch reused"]
+
+[[case]]
+id = "crash-after-freeze-before-seal"
+title = "An orphan freeze is recovered through its prior reservation"
+terminal = "source-thawed"
+events = [
+  "prepare-intent-a", "begin-freeze", "crash-coordinator", "decide-abort",
+  "recover-coordinator", "decide-abort", "query-decision", "thaw-current-abort",
+]
+expected = [
+  "applied", "applied", "applied", "rejected:coordinator-offline",
+  "applied", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "source-active", "decision-abort",
+  "has-rejection:coordinator-offline", "gate-open",
+]
+forbidden = ["orphan freeze timeout thaw", "reservation loss"]
+
+[[case]]
+id = "stale-destination-prepared-receipt"
+title = "PreparedFrozen binds the exact destination preparation"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-stale-generation",
+  "prepare-destination-stale-snapshot", "prepare-destination-b",
+  "prepare-destination-a", "seal-prepared", "decide-commit",
+  "query-decision", "close-current-commit", "activate-destination-a",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied",
+  "rejected:freeze-generation-mismatch", "rejected:snapshot-version-mismatch",
+  "rejected:destination-mismatch", "applied", "applied", "applied", "applied",
+  "applied", "applied",
+]
+assertions = [
+  "all-invariants", "destination-active", "all-rejections-failure-atomic",
+  "has-rejection:freeze-generation-mismatch",
+  "has-rejection:snapshot-version-mismatch", "has-rejection:destination-mismatch",
+]
+forbidden = ["substituted destination receipt", "snapshot digest drift"]
+
+[[case]]
+id = "duplicate-reordered-receipts"
+title = "Duplicate delivery is idempotent and conflicting delivery is rejected"
+terminal = "destination-active"
+events = [
+  "prepare-intent-a", "begin-freeze", "quiesce-committed",
+  "issue-freeze-receipt", "prepare-destination-a", "seal-prepared",
+  "decide-commit", "decide-commit", "observe-unknown", "close-current-commit",
+  "query-decision", "query-decision", "close-current-commit",
+  "close-current-commit", "activate-destination-a", "activate-destination-a",
+  "decide-abort",
+]
+expected = [
+  "applied", "applied", "idempotent", "applied", "applied", "applied",
+  "applied", "idempotent", "idempotent", "rejected:decision-unknown",
+  "applied", "idempotent", "applied", "idempotent", "applied", "idempotent",
+  "rejected:decision-conflict",
+]
+assertions = [
+  "all-invariants", "destination-active", "decision-commit", "has-idempotent",
+  "has-rejection:decision-unknown", "has-rejection:decision-conflict",
+]
+forbidden = ["duplicate closure revision", "conflicting terminal decision accepted"]
+
+[[case]]
+id = "precommit-abort-preserves-uncommitted-effect"
+title = "Authoritative pre-commit abort preserves source-local uncommitted work"
+terminal = "source-thawed"
+events = [
+  "register-effect", "prepare-intent-a", "begin-freeze",
+  "quiesce-committed", "issue-freeze-receipt", "prepare-destination-b",
+  "decide-abort", "query-decision", "thaw-current-abort",
+  "commit-effect-current-binding",
+]
+expected = [
+  "applied", "applied", "applied", "idempotent", "applied",
+  "rejected:destination-mismatch", "applied", "applied", "applied", "applied",
+]
+assertions = [
+  "all-invariants", "source-active", "destination-inactive", "decision-abort",
+  "gate-open", "registered-effect-retry-completed",
+]
+forbidden = [
+  "pre-decision cancellation becomes permanent after abort",
+  "resumed source loses a registered uncommitted effect",
+]

@@ -32,7 +32,17 @@ coverage across targets, or a second Stage 4 runtime. Confidential continuity
 and production readiness also remain unimplemented. The exact closure receipt
 is in [validation](VALIDATION.md#stage-4-closure-receipt).
 
-Last reviewed: 2026-07-15.
+The separate candidate `bounded-joint-handoff-refinement-v1` track has an
+accepted 16-case neutral model/contract, a source-locked native-v1 mapping
+extension, a pure composition reducer, typed receipt admission, durable SQLite
+recovery, an independent verifier, a reference protocol lane, and a complete
+same-boot HostSubstrate vertical. It also has a locally clean Nexus-local
+qualification, four passing exact-binary process tests, a real logical-request
+dual-lost-ack experiment, and a standalone publisher/relocation runner. The
+final clean-vISA artifact and remote CI remain open. This is not Roadmap Stage
+5.
+
+Last reviewed: 2026-07-16.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -295,6 +305,131 @@ and its legacy engine remains a stub; real AArch64 hardware is recorded as
 not-run because this qualification uses QEMU-user. The bounded implementation,
 exact-SHA workflow, and downloaded-artifact rechecks complete Roadmap Stage 4
 only for the two exact claims above.
+
+### Candidate bounded joint-handoff refinement
+
+The joint profile composes three authorities that remain independently owned:
+
+1. vISA owns portable state, resource claims, the local handoff lifecycle, and
+   projection of a verified terminal result into the local runtime.
+2. One external ownership service owns the durable reservation and the single
+   immutable abort-or-commit decision.
+3. One effect-closure service owns scope membership, publication admission,
+   the frozen effect cohort, native close order, and retained cleanup
+   obligations.
+
+The required order is:
+
+```text
+ownership reserve
+  -> vISA source freeze
+  -> durable effect-freeze attempt
+  -> effect freeze
+  -> vISA destination prepare
+  -> ownership seal
+  -> exactly one ownership decision
+      -> abort: effect thaw -> vISA source resume
+      -> commit: effect close -> vISA source fence -> destination activation
+```
+
+An unavailable decision or an effect-freeze request with unknown outcome keeps
+the source frozen. A timeout, lookup miss, lease expiry, or local cache entry is
+never an abort. Destination activation requires the exact commit, terminal
+closure, and source-fence receipt chain. A retained tombstone is a post-commit
+recovery obligation and cannot be converted into an abort.
+
+The TLA+ model makes `BeginFreeze` one atomic abstract transition: it closes
+admission, freezes source authority, advances the freeze generation, and
+captures the effect/snapshot boundary together. TLC checks invariants and
+conditional progress over that abstraction. It does not prove the concrete
+WAL-before-effect ordering. That implementation refinement is established by
+the Rust reducer/session rules, SQLite append-and-reopen behavior, retained
+pre-call invocation bytes, and independent transcript replay described below.
+
+`joint_handoff_core` defines the isolated typed protocol and pure reducer
+without changing `contract_core::CONTRACT_VERSION` or the Stage 1-4 canonical
+state shape. `visa_joint_handoff` admits native receipt bytes only through a
+pinned authenticator, replays them into an opaque verified state, and exposes
+source/destination projection adapters. `ReceiptRequest` is a response-derived
+receipt-issuance/authentication binding; it is not the request sent to an
+ownership or effect peer. Host refinement evidence therefore retains the
+canonical pre-call `peer_invocation` separately for every mutating peer call.
+Its append-only durable session persists the exact canonical effect-freeze
+invocation before calling the effect peer. Recovery reauthenticates and
+semantically replays every record; it never trusts a cached projection as
+ownership truth.
+
+The same-boot Host refinement also declares
+`exclusive_trusted_coordinator_api=true`. Opening a second raw `Coordinator` or
+provider handle that bypasses the durable joint guard, or invoking public
+projection APIs through a hostile in-process caller, is a TCB violation. The
+owning guards enforce non-Byzantine orchestrator discipline; provider- or
+kernel-level adversarial joint-membership admission is not implemented.
+
+The current SQLite projection exercises atomic append/head update, reopen,
+exact replay, conflict rejection, and retention of an unresolved effect-freeze
+obligation. It is a local crash-recovery projection, not an ownership ledger or
+a cross-host authority service. The reference ownership peer separately uses a
+SQLite current-owner row and immutable handoff history; that test peer is not a
+production or cross-host service.
+
+The HostSubstrate vertical executes the local source and destination projection
+through production `Coordinator<SqliteProvider>` APIs. Source abort, source
+fence, and destination activation each append a durable attempt before local
+mutation, an observed record bound to the resulting journal position and state
+digest, and an integrity-bound completion afterward. The retained evidence has
+an exact 14-record commit transcript and 9-record abort transcript. Seven
+ownership/effect peer-invocation classes retain canonical pre-call bytes
+separately from response-derived receipt issuance requests. The independent
+verifier reconstructs every record window, peer request/response relation,
+receipt chain, journal, lease, lost-completion-append acknowledgement, and the
+destination pre-resume checkpoint. Destination resume is bound to the durable
+activation completion-record digest rather than merely to an attempted local
+mutation.
+
+The current source lock pins local-clean, unpushed neutral revision
+`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` at tree
+`1572ca83969e091898444c880d91885008d4cef7`. Its machine contract SHA-256
+is `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.
+It freezes the field-level mapping and 16-case identity relation to the vISA
+registry while explicitly keeping `adapter_qualification=false`. Earlier
+remote-accepted revisions remain historical evidence, not the current source
+identity. The reference lane runs those 16 cases plus one supplemental
+post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
+the separate online vISA runtime refinement evidence.
+
+The Nexus-local model/oracle/fault-matrix and production Registry refinement are
+locally clean at `a890e5c3e25138662c213f19280ba3b209939813`. Its v2 receipt
+has SHA-256 `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`
+and records `production_registry_refinement_checked=true`. This does not
+conflict with the neutral machine mapping's `adapter_qualification=false`: the
+former is executed Nexus-local evidence, while the latter refuses to infer
+adapter execution from a composition relation.
+
+Four live process tests pass against that exact revision and binary SHA-256
+`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
+The real logical-request cell binds the completed logical operation through the
+Nexus effect cohort, ownership Prepared/Commit, and Closure. The ownership fault
+commits with SQLite WAL and `synchronous=FULL` before suppressing the Commit
+acknowledgement; recovery reopens, queries, and retries the exact request. The
+Nexus fault discards the real terminal child response before adapter acceptance
+and admits only a byte-identical replay under the same request ID. The external
+logical request, native Register, Prepare, and Commit each execute once.
+
+The standalone process-cell publisher requires clean exact vISA and Nexus
+checkouts, validates both source locks and the Nexus receipt, publishes exactly
+two files, verifies them in a second process, relocates them, and verifies the
+same bytes in a third. Its implementation and smoke pass are complete; the
+final artifact still awaits the committed clean vISA SHA.
+
+Therefore `bounded-joint-handoff-refinement-v1` remains a candidate. Final
+clean-vISA local/Docker gates, exact-SHA remote CI, final artifact publication,
+and a combined closing receipt are still required. The current architecture
+does not establish host reboot or permanent source-loss recovery, real OSTD
+execution, IRQ/SMP behavior, Registry replacement, the production
+retained-tombstone path, cross-host transport, Byzantine ownership-service
+behavior, cryptographic receipt authenticity, hostile-storage anti-rollback or
+freshness, TEE/KMS behavior, confidentiality, or production readiness.
 
 ## Canonical state versus native binding
 

@@ -172,10 +172,27 @@ fn validate_activation_bundle(
     Ok(())
 }
 
+pub(crate) fn append_external_source_entry_on(
+    connection: &rusqlite::Connection,
+    scope: JournalScope,
+    entry: &JournalEntry,
+) -> Result<(), ProviderError> {
+    append_entry_on_with_projection(connection, scope, entry, false)
+}
+
 fn append_entry_on(
     connection: &rusqlite::Connection,
     scope: JournalScope,
     entry: &JournalEntry,
+) -> Result<(), ProviderError> {
+    append_entry_on_with_projection(connection, scope, entry, true)
+}
+
+fn append_entry_on_with_projection(
+    connection: &rusqlite::Connection,
+    scope: JournalScope,
+    entry: &JournalEntry,
+    apply_provider_projection: bool,
 ) -> Result<(), ProviderError> {
     if let Some(existing) = load_canonical_entry(connection, scope, entry.position)? {
         return if existing == *entry {
@@ -212,7 +229,9 @@ fn append_entry_on(
         return Err(error(ProviderErrorKind::Integrity, false));
     }
 
-    apply_event_projection(connection, &entry.event.kind)?;
+    if apply_provider_projection {
+        apply_event_projection(connection, &entry.event.kind)?;
+    }
     connection
         .execute(
             "INSERT INTO canonical_journal(

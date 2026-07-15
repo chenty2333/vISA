@@ -10,9 +10,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use contract_core::{
-    AuthorityGrant, BindingReceipt, EffectOutcome, EffectRequest, EntityRef, Extension,
-    IdempotencyKey, Identity, JournalEntry, JournalPosition, LeaseEpoch, LogicalDurationNanos,
-    NodeIdentity, OperationRecord, Rights,
+    AuthorityGrant, BindingReceipt, Digest, EffectOutcome, EffectRequest, EntityRef, EvidenceRef,
+    Extension, IdempotencyKey, Identity, JournalEntry, JournalPosition, LeaseEpoch,
+    LogicalDurationNanos, NodeIdentity, OperationRecord, Rights,
 };
 
 /// Provider-neutral failure categories. Canonical effect outcomes remain in
@@ -90,6 +90,58 @@ pub struct CommitBundle {
     pub entry: JournalEntry,
     pub lease_transitions: Vec<LeaseTransition>,
     pub final_authorities: Vec<EntityRef>,
+}
+
+/// A local, crash-stable projection of an externally authoritative handoff
+/// decision onto the source journal and provider leases.
+///
+/// The external ownership service remains the decision authority. This bundle
+/// contains only the already-validated canonical event and the local lease
+/// transitions needed to make the old source unusable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalSourceFenceBundle {
+    pub entry: JournalEntry,
+    pub lease_transitions: Vec<LeaseTransition>,
+    pub decision_digest: Digest,
+    pub closure_digest: Digest,
+}
+
+/// Exact source-side abort/resume projection requested by the joint-handoff
+/// runtime. The request is also used to reconcile a local commit whose joint
+/// receipt was not recorded before a process crash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceAbortProjectionRequest {
+    pub handoff: Identity,
+    pub snapshot: Option<Identity>,
+    pub local_freeze_recorded: bool,
+    pub abort_command: Identity,
+    pub resume_command: Identity,
+    pub abort_evidence: EvidenceRef,
+    pub thaw_evidence: Option<EvidenceRef>,
+}
+
+/// Exact destination-side lease-commit/resume projection requested by the
+/// joint-handoff runtime. `request_digest` binds the request prepared by the
+/// neutral protocol before any local effect is executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestinationActivationProjectionRequest {
+    pub handoff: Identity,
+    pub commit_command: Identity,
+    pub commit_operation: Identity,
+    pub commit_idempotency: IdempotencyKey,
+    pub request_digest: Digest,
+    pub resume_command: Identity,
+}
+
+/// Provider transaction used only by the joint-handoff composition profile.
+pub trait ExternalHandoffProjectionPort {
+    /// Atomically append the source `HandoffCommitted` projection and advance
+    /// every local resource lease. Replaying the exact bundle is idempotent;
+    /// any conflicting event or transition fails closed.
+    fn commit_external_source_fence(
+        &mut self,
+        bundle: &ExternalSourceFenceBundle,
+    ) -> Result<(), ProviderError>;
 }
 
 /// Source activation entry and all initial profiled resource leases. Providers

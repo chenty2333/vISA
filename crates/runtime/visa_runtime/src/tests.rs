@@ -8,13 +8,16 @@ use contract_core::{
     CanonicalState, CleanupStatus, Digest, EffectKind, EffectOutcome, EffectRequest, EffectResult,
     EntityRef, EvidenceKind, EvidenceRef, Generation, HandoffPhase, IdempotencyKey, Identity,
     JournalEntry, JournalPosition, KeyValueClaim, LeaseEpoch, LogicalDurationNanos, NodeIdentity,
-    OperationRecord, ResourceClaims, Rights, TimerClaim, TimerClock, TimerDisposition, TimerStatus,
+    OperationRecord, Rejection, Replay, ResourceClaims, Rights, TimerClaim, TimerClock,
+    TimerDisposition, TimerStatus,
 };
 use substrate_api::{
     ActivationBundle, AuthorityPolicy, AuthorityPort, BindingPort, BindingRequest, CommitBundle,
-    JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition, OperationObservation,
-    PreparedLeaseTransitions, ProfilePort, ProviderError, ProviderErrorKind,
-    ReauthorizationRequest, TimerObservation, TimerPort, TimerRecovery,
+    DestinationActivationProjectionRequest, ExternalHandoffProjectionPort,
+    ExternalSourceFenceBundle, JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition,
+    OperationObservation, PreparedLeaseTransitions, ProfilePort, ProviderError, ProviderErrorKind,
+    ReauthorizationRequest, SourceAbortProjectionRequest, TimerObservation, TimerPort,
+    TimerRecovery,
 };
 
 use super::*;
@@ -81,6 +84,8 @@ struct MockProvider {
     binding_destructive_cleanups: usize,
     lease_prepare_calls: usize,
     bundle_calls: usize,
+    external_fence_calls: usize,
+    lost_external_fence_once: Cell<bool>,
 }
 
 impl Default for MockProvider {
@@ -120,6 +125,8 @@ impl Default for MockProvider {
             binding_destructive_cleanups: 0,
             lease_prepare_calls: 0,
             bundle_calls: 0,
+            external_fence_calls: 0,
+            lost_external_fence_once: Cell::new(false),
         }
     }
 }
@@ -640,6 +647,49 @@ impl LeasePort for MockProvider {
     }
 }
 
+impl ExternalHandoffProjectionPort for MockProvider {
+    fn commit_external_source_fence(
+        &mut self,
+        bundle: &ExternalSourceFenceBundle,
+    ) -> Result<(), ProviderError> {
+        self.external_fence_calls += 1;
+        if let Some(existing) =
+            self.entries.iter().find(|entry| entry.position == bundle.entry.position)
+        {
+            if existing != &bundle.entry {
+                return Err(ProviderError::new(ProviderErrorKind::Conflict, false));
+            }
+        } else {
+            let expected = self
+                .entries
+                .last()
+                .map_or(JournalPosition(1), |entry| JournalPosition(entry.position.0 + 1));
+            if bundle.entry.position != expected {
+                return Err(ProviderError::new(ProviderErrorKind::Conflict, false));
+            }
+            for transition in &bundle.lease_transitions {
+                let lease = self
+                    .leases
+                    .iter_mut()
+                    .find(|lease| lease.resource == transition.resource)
+                    .ok_or(ProviderError::new(ProviderErrorKind::NotFound, false))?;
+                if lease.owner != transition.expected_owner
+                    || lease.epoch != transition.expected_epoch
+                {
+                    return Err(ProviderError::new(ProviderErrorKind::StaleEpoch, false));
+                }
+                lease.owner = transition.next_owner;
+                lease.epoch = transition.next_epoch;
+            }
+            self.entries.push(bundle.entry.clone());
+        }
+        if self.lost_external_fence_once.replace(false) {
+            return Err(MockProvider::unknown_error());
+        }
+        Ok(())
+    }
+}
+
 impl BindingPort for MockProvider {
     fn prepare_binding(
         &mut self,
@@ -1102,12 +1152,22 @@ fn source_abort_cleans_preparation_then_resumes_timer_before_running() {
 fn destination_commit_fences_both_resources_atomically_and_applies_to_source() {
     let (source_state, mut destination, _prepared) =
         prepared_destination(ReauthorizationMode::Exact);
-    let receipt = destination
-        .commit_handoff(identity(71), identity(70), IdempotencyKey::from_bytes([70; 16]))
-        .unwrap();
+    let operation = identity(70);
+    let idempotency = IdempotencyKey::from_bytes([70; 16]);
+    let preview = destination.handoff_commit_request_digest(operation, idempotency).unwrap();
+    let receipt = destination.commit_handoff(identity(71), operation, idempotency).unwrap();
     let CommandReceipt::Effect(effect) = receipt else {
         panic!("lease commit must execute");
     };
+    let Some(JournalEntry {
+        event:
+            contract_core::Event { kind: contract_core::EventKind::EffectPrepared { request }, .. },
+        ..
+    }) = effect.intent.as_ref()
+    else {
+        panic!("lease commit must retain its durable request intent");
+    };
+    assert_eq!(request.request_digest, preview);
 
     assert_eq!(destination.provider().bundle_calls, 1);
     assert_eq!(destination.provider().lease_prepare_calls, 1);
@@ -1135,6 +1195,315 @@ fn destination_commit_fences_both_resources_atomically_and_applies_to_source() {
         ),
         Ok(CommandReceipt::Replayed(_))
     ));
+}
+
+#[test]
+fn external_joint_commit_projects_source_fence_and_is_idempotent() {
+    let mut source = exported_source_coordinator();
+    let decision = evidence(90, EvidenceKind::AuthorityDecision);
+    let closure = evidence(91, EvidenceKind::SourceFence);
+    let receipt = source
+        .project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            closure,
+        )
+        .unwrap();
+    assert!(matches!(receipt, CommandReceipt::Committed(_)));
+    assert_eq!(source.state().phase, HandoffPhase::Committed);
+    assert_eq!(source.state().activation.status, ActivationStatus::Fenced);
+    assert_eq!(source.state().ownership.owner, Some(node(DESTINATION)));
+    assert!(source.state().evidence.contains(&decision));
+    assert!(source.state().evidence.contains(&closure));
+    assert!(
+        source
+            .provider()
+            .leases
+            .iter()
+            .all(|lease| lease.owner == node(DESTINATION) && lease.epoch == LeaseEpoch(2))
+    );
+
+    let replay = source
+        .project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            closure,
+        )
+        .unwrap();
+    assert_eq!(replay, CommandReceipt::Replayed(Replay::NoChange));
+    assert_eq!(source.provider().external_fence_calls, 1);
+
+    assert!(matches!(
+        source.project_external_source_fence(
+            identity(94),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            closure,
+        ),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+}
+
+#[test]
+fn external_joint_source_fence_recovers_a_lost_provider_ack() {
+    let mut source = exported_source_coordinator();
+    source.provider().lost_external_fence_once.set(true);
+    source
+        .project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            evidence(90, EvidenceKind::AuthorityDecision),
+            evidence(91, EvidenceKind::SourceFence),
+        )
+        .unwrap();
+    assert_eq!(source.state().phase, HandoffPhase::Committed);
+    assert_eq!(source.provider().external_fence_calls, 1);
+}
+
+#[test]
+fn external_joint_source_fence_rejects_untyped_or_colliding_evidence() {
+    let mut source = exported_source_coordinator();
+    let decision = evidence(90, EvidenceKind::LeaseCommit);
+    assert!(matches!(
+        source.project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            evidence(91, EvidenceKind::SourceFence),
+        ),
+        Err(RuntimeError::Rejected(Rejection::InvalidIdentity))
+    ));
+    assert_eq!(source.state().phase, HandoffPhase::Exported);
+}
+
+#[test]
+fn source_abort_projection_recovers_post_commit_before_joint_receipt() {
+    let mut source = exported_source_coordinator();
+    let projection = SourceAbortProjectionRequest {
+        handoff: identity(43),
+        snapshot: Some(identity(44)),
+        local_freeze_recorded: true,
+        abort_command: identity(90),
+        resume_command: identity(91),
+        abort_evidence: evidence(92, EvidenceKind::AuthorityDecision),
+        thaw_evidence: Some(evidence(93, EvidenceKind::Cleanup)),
+    };
+    source.project_source_abort_and_resume(projection).unwrap();
+    let terminal = (source.journal_position(), source.state_digest().unwrap());
+    let cleanup_calls = source.provider().binding_cleanup_calls;
+
+    let provider = source.into_provider();
+    let mut recovered = Coordinator::recover(initial_state(node(SOURCE)), provider).unwrap();
+    recovered.project_source_abort_and_resume(projection).unwrap();
+    assert_eq!((recovered.journal_position(), recovered.state_digest().unwrap()), terminal);
+    assert_eq!(recovered.provider().binding_cleanup_calls, cleanup_calls);
+
+    let wrong_handoff = SourceAbortProjectionRequest { handoff: identity(199), ..projection };
+    assert!(matches!(
+        recovered.project_source_abort_and_resume(wrong_handoff),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+    let wrong_evidence = SourceAbortProjectionRequest {
+        abort_evidence: evidence(94, EvidenceKind::AuthorityDecision),
+        ..projection
+    };
+    assert!(matches!(
+        recovered.project_source_abort_and_resume(wrong_evidence),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+}
+
+#[test]
+fn external_source_fence_projection_recovers_only_the_exact_terminal_lineage() {
+    let mut source = exported_source_coordinator();
+    let decision = evidence(90, EvidenceKind::AuthorityDecision);
+    let closure = evidence(91, EvidenceKind::SourceFence);
+    source
+        .project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            closure,
+        )
+        .unwrap();
+    let terminal = (source.journal_position(), source.state_digest().unwrap());
+    let provider = source.into_provider();
+    let mut recovered = Coordinator::recover(initial_state(node(SOURCE)), provider).unwrap();
+
+    assert_eq!(
+        recovered
+            .project_external_source_fence(
+                identity(92),
+                identity(93),
+                node(DESTINATION),
+                LeaseEpoch(2),
+                decision,
+                closure,
+            )
+            .unwrap(),
+        CommandReceipt::Replayed(Replay::NoChange)
+    );
+    assert_eq!((recovered.journal_position(), recovered.state_digest().unwrap()), terminal);
+    assert_eq!(recovered.provider().external_fence_calls, 1);
+
+    assert!(matches!(
+        recovered.project_external_source_fence(
+            identity(92),
+            identity(199),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            decision,
+            closure,
+        ),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+    assert!(matches!(
+        recovered.project_external_source_fence(
+            identity(92),
+            identity(93),
+            node(DESTINATION),
+            LeaseEpoch(2),
+            evidence(94, EvidenceKind::AuthorityDecision),
+            closure,
+        ),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+}
+
+#[test]
+fn destination_projection_recovery_does_not_repeat_the_semantic_lease_effect() {
+    let (envelope, mut provider) = exported_snapshot();
+    provider.reauthorization_mode = ReauthorizationMode::Exact;
+    let validated = validate_snapshot(&envelope, &expectations()).unwrap();
+    let mut destination = Coordinator::restore(validated.clone(), provider).unwrap();
+    destination.prepare_destination(identity(60), handoff_plan(), timer_plan(), kv_plan()).unwrap();
+    let operation = identity(70);
+    let idempotency = IdempotencyKey::from_bytes([70; 16]);
+    let resume_command = identity(72);
+    let projection = DestinationActivationProjectionRequest {
+        handoff: identity(43),
+        commit_command: identity(71),
+        commit_operation: operation,
+        commit_idempotency: idempotency,
+        request_digest: destination
+            .guarded_handoff_commit_request_digest(operation, idempotency, resume_command)
+            .unwrap(),
+        resume_command,
+    };
+    destination.project_destination_commit(projection).unwrap();
+    let activation_record_digest = digest(98);
+    let preview =
+        destination.preview_destination_resume(projection, activation_record_digest).unwrap();
+    destination.project_destination_resume(projection, activation_record_digest, preview).unwrap();
+    let terminal = (destination.journal_position(), destination.state_digest().unwrap());
+    assert_eq!(destination.provider().lease_prepare_calls, 1);
+    assert_eq!(destination.provider().bundle_calls, 1);
+
+    let provider = destination.into_provider();
+    let mut recovered = Coordinator::restore(validated, provider).unwrap();
+    recovered.project_destination_commit(projection).unwrap();
+    let recovered_preview =
+        recovered.preview_destination_resume(projection, activation_record_digest).unwrap();
+    recovered
+        .project_destination_resume(projection, activation_record_digest, recovered_preview)
+        .unwrap();
+    assert_eq!((recovered.journal_position(), recovered.state_digest().unwrap()), terminal);
+    assert_eq!(recovered.provider().lease_prepare_calls, 1);
+    assert_eq!(recovered.provider().bundle_calls, 1);
+    assert_eq!(
+        recovered
+            .state()
+            .operations
+            .iter()
+            .filter(|record| record.request.operation == operation)
+            .count(),
+        1
+    );
+
+    let wrong_handoff =
+        DestinationActivationProjectionRequest { handoff: identity(199), ..projection };
+    assert!(matches!(
+        recovered.project_destination_commit(wrong_handoff),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+    let wrong_operation =
+        DestinationActivationProjectionRequest { commit_operation: identity(199), ..projection };
+    assert!(matches!(
+        recovered.project_destination_commit(wrong_operation),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+    let wrong_digest =
+        DestinationActivationProjectionRequest { request_digest: digest(99), ..projection };
+    assert!(matches!(
+        recovered.project_destination_commit(wrong_digest),
+        Err(RuntimeError::JournalConflict { .. })
+    ));
+}
+
+#[test]
+fn joint_destination_projection_rejects_pending_timer_before_any_lease_effect() {
+    let (envelope, mut provider) = exported_pending_snapshot();
+    provider.reauthorization_mode = ReauthorizationMode::Exact;
+    let validated = validate_snapshot(&envelope, &expectations()).unwrap();
+    let mut destination = Coordinator::restore(validated, provider).unwrap();
+    destination.prepare_destination(identity(60), handoff_plan(), timer_plan(), kv_plan()).unwrap();
+    assert!(matches!(
+        destination.state().timer.status,
+        TimerStatus::Frozen(TimerDisposition::Pending { .. })
+    ));
+
+    let operation = identity(170);
+    let idempotency = IdempotencyKey::from_bytes([170; 16]);
+    let resume_command = identity(172);
+    let projection = DestinationActivationProjectionRequest {
+        handoff: identity(35),
+        commit_command: identity(171),
+        commit_operation: operation,
+        commit_idempotency: idempotency,
+        request_digest: destination
+            .guarded_handoff_commit_request_digest(operation, idempotency, resume_command)
+            .unwrap(),
+        resume_command,
+    };
+    let before = (
+        destination.journal_position(),
+        destination.state_digest().unwrap(),
+        destination.provider().entries.len(),
+        destination.provider().lease_prepare_calls,
+        destination.provider().bundle_calls,
+    );
+    assert_eq!(
+        destination.project_destination_commit(projection),
+        Err(RuntimeError::Rejected(Rejection::TimerStateConflict))
+    );
+    assert_eq!(
+        destination.preview_destination_resume(projection, digest(98)),
+        Err(RuntimeError::Rejected(Rejection::TimerStateConflict))
+    );
+    assert_eq!(
+        (
+            destination.journal_position(),
+            destination.state_digest().unwrap(),
+            destination.provider().entries.len(),
+            destination.provider().lease_prepare_calls,
+            destination.provider().bundle_calls,
+        ),
+        before
+    );
 }
 
 #[test]
@@ -1341,6 +1710,22 @@ fn activated(provider: MockProvider) -> Coordinator<MockProvider> {
     let mut coordinator = Coordinator::recover(initial, provider).unwrap();
     coordinator.activate(identity(20), entity(HANDOFF_AUTHORITY), LeaseEpoch(1)).unwrap();
     coordinator
+}
+
+fn exported_source_coordinator() -> Coordinator<MockProvider> {
+    let mut source = activated(MockProvider::default());
+    source.begin_quiesce(identity(40), entity(HANDOFF_AUTHORITY)).unwrap();
+    let safe_point = source.prepare_safe_point().unwrap();
+    source.commit_safe_point(identity(41), vec![1, 2, 3], safe_point).unwrap();
+    source
+        .export_snapshot(
+            identity(42),
+            identity(43),
+            identity(44),
+            evidence(45, EvidenceKind::SnapshotIntegrity),
+        )
+        .unwrap();
+    source
 }
 
 fn exported_snapshot() -> (contract_core::SnapshotEnvelope, MockProvider) {

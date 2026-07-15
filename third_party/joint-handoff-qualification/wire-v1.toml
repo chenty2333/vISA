@@ -1,0 +1,149 @@
+schema = "visa-nexus-handoff.wire-contract.v1"
+protocol_major = 1
+protocol_minor = 0
+claim_id = "bounded-joint-handoff-refinement-v1"
+authentication_profile = "native-pinned-verifier; stage0-checksum-not-cryptographic"
+request_identity = ["handoff_id", "operation_kind", "request_digest", "expected_state_sequence"]
+issuer_roles = ["ownership", "visa-source", "visa-destination", "effect-closure"]
+issuer_identity_fixed_per_handoff = true
+previous_digest_scope = "same-issuer-incarnation-key-log"
+cross_issuer_causality = "typed-payload-references"
+
+operations = [
+  "ownership-reserve",
+  "visa-source-freeze",
+  "record-effect-freeze-attempt",
+  "effect-freeze",
+  "visa-destination-prepare",
+  "ownership-seal",
+  "ownership-abort",
+  "ownership-commit",
+  "effect-thaw",
+  "effect-close",
+  "visa-source-resume",
+  "visa-source-fence",
+  "visa-destination-activate",
+]
+common_prefix = [
+  "ownership-reserve",
+  "visa-source-freeze",
+  "record-effect-freeze-attempt",
+  "effect-freeze",
+  "visa-destination-prepare",
+  "ownership-seal",
+]
+abort_branch = [
+  "ownership-abort",
+  "effect-thaw",
+  "visa-source-resume",
+]
+commit_branch = [
+  "ownership-commit",
+  "effect-close",
+  "visa-source-fence",
+  "visa-destination-activate",
+]
+
+[[receipt]]
+kind = "prepare-intent"
+issuer_role = "ownership"
+required_causal_refs = []
+optional_causal_refs = []
+
+[[receipt]]
+kind = "visa-freeze"
+issuer_role = "visa-source"
+required_causal_refs = ["prepare-intent"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "nexus-freeze"
+issuer_role = "effect-closure"
+required_causal_refs = ["prepare-intent"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "destination-prepared"
+issuer_role = "visa-destination"
+required_causal_refs = ["prepare-intent", "visa-freeze", "nexus-freeze"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "ownership-prepared"
+issuer_role = "ownership"
+required_causal_refs = ["prepare-intent", "visa-freeze", "nexus-freeze", "destination-prepared"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "ownership-abort"
+issuer_role = "ownership"
+required_causal_refs = ["prepare-intent"]
+optional_causal_refs = ["ownership-prepared"]
+
+[[receipt]]
+kind = "ownership-commit"
+issuer_role = "ownership"
+required_causal_refs = ["ownership-prepared"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "nexus-thaw"
+issuer_role = "effect-closure"
+required_causal_refs = ["nexus-freeze", "ownership-abort"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "closure-progress"
+issuer_role = "effect-closure"
+required_causal_refs = ["nexus-freeze", "ownership-commit"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "closure"
+issuer_role = "effect-closure"
+required_causal_refs = ["nexus-freeze", "ownership-commit"]
+optional_causal_refs = ["closure-progress"]
+
+[[receipt]]
+kind = "retained-tombstone"
+issuer_role = "effect-closure"
+required_causal_refs = ["nexus-freeze", "ownership-commit"]
+optional_causal_refs = ["closure-progress"]
+
+[[receipt]]
+kind = "visa-source-fence"
+issuer_role = "visa-source"
+required_causal_refs = ["visa-freeze", "ownership-commit", "closure"]
+optional_causal_refs = []
+
+[[receipt]]
+kind = "visa-source-resume"
+issuer_role = "visa-source"
+required_causal_refs = ["visa-freeze", "ownership-abort"]
+optional_causal_refs = ["nexus-thaw"]
+
+[[receipt]]
+kind = "visa-destination-activation"
+issuer_role = "visa-destination"
+required_causal_refs = ["destination-prepared", "ownership-commit", "closure", "visa-source-fence"]
+optional_causal_refs = []
+
+[[recovery_rule]]
+condition = "ownership-outcome-unknown"
+required_result = "remain-frozen"
+
+[[recovery_rule]]
+condition = "effect-freeze-outcome-unknown"
+required_result = "retain-attempt-and-remain-frozen"
+
+[[recovery_rule]]
+condition = "exact-ownership-abort"
+required_result = "exact-effect-thaw-then-visa-source-resume"
+
+[[recovery_rule]]
+condition = "exact-ownership-commit"
+required_result = "effect-close-then-visa-source-fence-then-destination-activation"
+
+[[recovery_rule]]
+condition = "retained-post-commit-tombstone"
+required_result = "recovery-required-until-fresh-closure"

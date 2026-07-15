@@ -7,7 +7,7 @@ usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
     [--artifact-parent DIR] \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
      system-stage3a|system-stage3b|system-stage3|system-stage4-target|
-     system-stage4-isa|system-stage4]
+     system-stage4-isa|system-stage4|system-joint-handoff]
 
 Validates the Compose configuration, builds or reuses the vISA development
 image, and runs the selected validation tier. With no tier, runs full.
@@ -25,6 +25,8 @@ complete seven-cell native/QEMU-user matrix, a raw x86-64 Linux host receipt,
 and bundle relocation. system-stage4-target and
 system-stage4-isa currently run the same fail-closed aggregate matrix rather
 than publishing a reduced target-only or ISA-only claim.
+system-joint-handoff runs the relocatable reference-only joint protocol cell;
+it does not qualify the source-locked Nexus revision.
 
 Options:
   --ci-cache           Use compose.ci.yaml bind-mounted cache directories.
@@ -67,7 +69,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3|system-stage4-target|system-stage4-isa|system-stage4)
+        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3|system-stage4-target|system-stage4-isa|system-stage4|system-joint-handoff)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage

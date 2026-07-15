@@ -123,12 +123,14 @@ impl From<substrate_host::FaultPoint> for FaultPointSpec {
             substrate_host::FaultPoint::BeforeProfileEffect
             | substrate_host::FaultPoint::AfterProfileEffect
             | substrate_host::FaultPoint::AfterProfileCommit
+            | substrate_host::FaultPoint::BeforeExternalSourceFence
+            | substrate_host::FaultPoint::AfterExternalSourceFence
             | substrate_host::FaultPoint::BeforeLogicalRequestIo
             | substrate_host::FaultPoint::AfterRegularFileMutation
             | substrate_host::FaultPoint::AfterLogicalRequestSend
             | substrate_host::FaultPoint::AfterLogicalRequestCommit
             | substrate_host::FaultPoint::AfterLogicalCancelSend => {
-                unreachable!("Stage 3-only fault escaped into the frozen Stage 2 protocol")
+                unreachable!("non-Stage-2 fault escaped into the frozen Stage 2 protocol")
             }
         }
     }

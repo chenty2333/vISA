@@ -6,7 +6,7 @@ usage() {
 usage: scripts/ci-gate.sh \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
      system-stage3a|system-stage3b|system-stage3|system-stage4-target|
-     system-stage4-isa|system-stage4]
+     system-stage4-isa|system-stage4|system-joint-handoff]
 
 Runs a validation tier inside the vISA development environment.
 The full tier includes every fast-tier gate. With no argument, runs full.
@@ -30,6 +30,9 @@ relocation. The evidence includes a raw uname-bound x86-64 Linux host receipt.
 system-stage4-target and
 system-stage4-isa are edit-loop aliases that currently fail closed by running
 that same complete aggregate matrix; they do not publish reduced claims.
+system-joint-handoff runs the fixed reference peers, production reducer replay,
+independent verifier, and relocation check. It is reference-only evidence and
+does not qualify the pinned Nexus revision named by its source lock.
 System tiers do not repeat the full tier.
 EOF
 }
@@ -124,12 +127,14 @@ run_gate() {
 
 active_spine_packages=(
     contract_core
+    joint_handoff_core
     handoff-component
     visa_profile
     semantic_core
     substrate_api
     substrate_host
     visa_runtime
+    visa_joint_handoff
     visa_component_adapter
     visa_jco_node
     visa_wacogo
@@ -138,6 +143,7 @@ active_spine_packages=(
     stage3-request-component
     visa-conformance
     visa-stage3-system
+    visa-joint-handoff-system
     visa-system
 )
 active_spine_args=()
@@ -178,6 +184,18 @@ gate_jco_node_toolchain() {
         python3 scripts/check-jco-node-toolchain.py
 }
 
+gate_joint_handoff_source_lock() {
+    run_gate "source lock: reference-only joint handoff inputs" \
+        python3 scripts/check-joint-handoff-source-lock.py
+}
+
+gate_nexus_handoff_verifier_self_tests() {
+    run_gate "joint handoff source-lock checker self-tests" \
+        python3 scripts/test-check-joint-handoff-source-lock.py
+    run_gate "Nexus handoff qualification verifier self-tests" \
+        python3 scripts/test-check-nexus-handoff-qualification.py
+}
+
 gate_active_clippy() {
     run_gate "clippy: active spine and test targets" \
         cargo clippy --locked "${active_spine_args[@]}" --all-targets -- -D warnings
@@ -211,10 +229,12 @@ gate_active_no_std() {
     run_gate "no-std: active portable crates on x86_64-unknown-none" \
         cargo check --locked \
             -p contract_core \
+            -p joint_handoff_core \
             -p visa_profile \
             -p semantic_core \
             -p substrate_api \
             -p visa_runtime \
+            -p visa_joint_handoff \
             --target x86_64-unknown-none
 }
 
@@ -244,6 +264,8 @@ gate_fast() {
     gate_file_size
     gate_ci_contract
     gate_jco_node_toolchain
+    gate_joint_handoff_source_lock
+    gate_nexus_handoff_verifier_self_tests
     gate_active_clippy
     gate_active_tests
 }
@@ -447,6 +469,129 @@ gate_system_stage4_isa() {
     gate_system_stage4
 }
 
+gate_system_joint_handoff() {
+    local system_parent
+    local visa_sha
+    local key
+    local value
+    local -A locked=()
+    local -a required_lock_keys
+    local -a expectation_args
+    local run_root
+    local reference_root
+    local relocated_root
+    local outer_incomplete
+
+    visa_sha="$(git rev-parse --verify HEAD)"
+    if [[ ! "$visa_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        printf 'joint handoff vISA revision is not an exact lowercase Git SHA: %s\n' \
+            "$visa_sha" >&2
+        return 1
+    fi
+    if [[ -n "${GITHUB_SHA:-}" && "$visa_sha" != "$GITHUB_SHA" ]]; then
+        printf 'joint handoff checkout SHA differs from GITHUB_SHA: checkout=%s github=%s\n' \
+            "$visa_sha" "$GITHUB_SHA" >&2
+        return 1
+    fi
+    if ! git diff --quiet --ignore-submodules -- \
+        || ! git diff --cached --quiet --ignore-submodules -- \
+        || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+        printf '%s\n' \
+            'joint handoff evidence requires a clean worktree at the recorded exact vISA SHA' >&2
+        return 1
+    fi
+
+    gate_joint_handoff_source_lock
+    while IFS='=' read -r key value; do
+        case "$key" in
+            nexus_revision|neutral_revision|neutral_tree|neutral_bundle_sha256|protocol_sha256|machine_contract_sha256|refinement_map_sha256|abstract_registry_sha256|source_lock_sha256) ;;
+            *)
+                printf 'joint handoff source lock emitted unknown key: %s\n' "$key" >&2
+                return 1
+                ;;
+        esac
+        if [[ -z "$value" || -n "${locked[$key]+present}" ]]; then
+            printf 'joint handoff source lock emitted empty or duplicate key: %s\n' "$key" >&2
+            return 1
+        fi
+        locked[$key]="$value"
+    done < <(python3 scripts/check-joint-handoff-source-lock.py --emit-values)
+    required_lock_keys=(
+        nexus_revision neutral_revision neutral_tree neutral_bundle_sha256 protocol_sha256
+        machine_contract_sha256 refinement_map_sha256 abstract_registry_sha256
+        source_lock_sha256
+    )
+    for key in "${required_lock_keys[@]}"; do
+        if [[ -z "${locked[$key]+present}" ]]; then
+            printf 'joint handoff source lock omitted key: %s\n' "$key" >&2
+            return 1
+        fi
+    done
+    expectation_args=(
+        "$visa_sha"
+        "${locked[nexus_revision]}"
+        "${locked[neutral_revision]}"
+        "${locked[neutral_tree]}"
+        "${locked[neutral_bundle_sha256]}"
+        "${locked[source_lock_sha256]}"
+        "${locked[protocol_sha256]}"
+        "${locked[machine_contract_sha256]}"
+        "${locked[refinement_map_sha256]}"
+        "${locked[abstract_registry_sha256]}"
+    )
+
+    system_parent="$(system_evidence_parent)"
+    run_root="$(umask 077; mktemp -d "$system_parent/joint-handoff-reference-XXXXXX")"
+    reference_root="$run_root/reference"
+    relocated_root="$run_root/reference-relocated"
+    outer_incomplete="$run_root/joint-handoff-gate-incomplete"
+    system_artifact_kind="joint handoff reference-only"
+    system_artifact_root="$run_root"
+    system_bundle_path="$reference_root/joint-handoff-evidence.json"
+    printf '%s\n' 'joint handoff reference gate incomplete' >"$outer_incomplete"
+
+    run_gate "system-joint-handoff: reference peers and production reducer replay" \
+        cargo run --locked \
+            -p visa-joint-handoff-system \
+            --bin visa-joint-handoff-system \
+            -- \
+            "$reference_root" \
+            "${expectation_args[@]}"
+    run_gate "system-joint-handoff: publisher removed its incomplete marker" \
+        bash -c 'test ! -e "$1" && test ! -L "$1"' \
+            _ "$reference_root/joint-handoff-incomplete"
+    run_gate "system-joint-handoff: exact reference artifact inventory" \
+        bash -c '
+            actual="$(find "$1" -mindepth 1 -maxdepth 1 -printf "%f\n" | LC_ALL=C sort)"
+            expected="$(printf "%s\n" joint-handoff-evidence.json production-replay.json)"
+            test "$actual" = "$expected"
+        ' _ "$reference_root"
+    run_gate "system-joint-handoff: independent evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            joint-handoff "$system_bundle_path" "$reference_root" \
+            "${expectation_args[@]}"
+    run_gate "system-joint-handoff: require an unused relocation path" \
+        test ! -e "$relocated_root"
+    run_gate "system-joint-handoff: relocate the byte-identical publication" \
+        mv -- "$reference_root" "$relocated_root"
+    system_bundle_path="$relocated_root/joint-handoff-evidence.json"
+    run_gate "system-joint-handoff: independently validate relocated evidence" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            joint-handoff "$system_bundle_path" "$relocated_root" \
+            "${expectation_args[@]}"
+    run_gate "system-joint-handoff: retain no incomplete publication marker" \
+        bash -c '
+            test ! -e "$1/joint-handoff-incomplete"
+            test ! -L "$1/joint-handoff-incomplete"
+            rm -- "$2"
+        ' _ "$relocated_root" "$outer_incomplete"
+
+    printf 'Joint handoff reference artifact root: %s\n' "$system_artifact_root"
+    printf 'Joint handoff reference evidence bundle: %s\n' "$system_bundle_path"
+    printf '%s\n' \
+        'Joint handoff evidence status: reference-only; Nexus exact-SHA qualification not claimed.'
+}
+
 if [[ "$#" -gt 1 ]]; then
     usage
     exit 64
@@ -466,6 +611,7 @@ case "$tier" in
     system-stage4-target) gate_system_stage4_target ;;
     system-stage4-isa) gate_system_stage4_isa ;;
     system-stage4) gate_system_stage4 ;;
+    system-joint-handoff) gate_system_joint_handoff ;;
     -h|--help|help)
         usage
         ;;

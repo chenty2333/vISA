@@ -1115,6 +1115,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "joint_handoff_core"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "postcard",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "js-component-bindgen"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2100,6 +2110,7 @@ name = "visa-conformance"
 version = "0.2.0"
 dependencies = [
  "contract_core",
+ "postcard",
  "rustix",
  "semantic_core",
  "serde",
@@ -2107,6 +2118,23 @@ dependencies = [
  "serde_json",
  "sha2",
  "visa_profile",
+]
+
+[[package]]
+name = "visa-joint-handoff-system"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "joint_handoff_core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "substrate_api",
+ "substrate_host",
+ "visa-conformance",
+ "visa_joint_handoff",
+ "visa_runtime",
 ]
 
 [[package]]
@@ -2183,6 +2211,17 @@ dependencies = [
  "wasmtime-environ 45.0.1",
  "wit-component 0.251.0",
  "wit-parser 0.251.0",
+]
+
+[[package]]
+name = "visa_joint_handoff"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "joint_handoff_core",
+ "serde",
+ "substrate_api",
+ "visa_runtime",
 ]
 
 [[package]]

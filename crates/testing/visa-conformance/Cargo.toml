@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 contract_core = { path = "../../core/contract_core" }
 semantic_core = { path = "../../core/semantic_core" }
+postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
 serde.workspace = true
 serde_ignored.workspace = true
 serde_json.workspace = true

@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-15.
+Last reviewed: 2026-07-16.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -463,6 +463,103 @@ stub; real AArch64 hardware remains explicitly `not-run`.
 Claim earned: only `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1` for the fixed Wasmtime, Linux user-mode,
 timer/KV profile and the exact Hx/Qx/Qa cells above.
+
+## Candidate research track: bounded joint-handoff refinement
+
+Status: active, same-boot, and not closed. The candidate claim is
+`bounded-joint-handoff-refinement-v1`; it is an independent research track
+before Stage 5, not evidence that Stage 5 has started. Its local evidence is
+split between the neutral composition, vISA HostSubstrate, Nexus-local
+refinement, and exact-binary process axes; no axis may stand in for another.
+Final clean-vISA publication and remote CI remain open.
+
+The track asks whether vISA semantic freeze, one durable non-equivocating
+ownership decision, and native closure of a frozen effect cohort can compose
+without a copied ownership ledger, dual execution authority, or serialization
+of native device state. Its two kill conditions remain mandatory:
+
+1. no vISA or effect adapter may maintain a second ownership ledger; and
+2. source thaw requires the exact durable abort decision for that reservation
+   and, when effect freeze occurred, the exact thaw of that freeze generation.
+
+The current source lock pins local-clean, unpushed neutral revision
+`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` (tree
+`1572ca83969e091898444c880d91885008d4cef7`). It fixes the v1 wire
+contract, TLA+ models, independent oracle, mutation corpus, 16-case normative
+registry, and Nexus native-v1 field mapping. Its machine contract is
+`f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.
+The historical `8fcdaf42...` remote result is not the current source identity.
+The current mapping explicitly declares `adapter_qualification=false`; Nexus
+execution truth is separate.
+
+The TLA+ `BeginFreeze` action is an atomic abstraction of admission close,
+source freeze, generation advance, and boundary capture. TLC does not prove the
+concrete WAL-before-effect ordering. That obligation is discharged on the vISA
+axis by the Rust/SQLite durable projection and independently replayed raw
+transcript evidence.
+
+The current vISA candidate implements the pure joint reducer, pinned native
+receipt admission, append-only durable replay, a SQLite projection backend,
+reference ownership/effect peers, independent semantic verification, exact
+artifact inventory, and relocation checks. The concrete reference runner
+executes the 16 normative cases plus one supplemental post-commit
+retained-tombstone recovery scenario.
+
+The same system runner executes a distinct online HostSubstrate vertical
+through production `Coordinator<SqliteProvider>` APIs. Its 14-record commit and
+9-record abort transcripts retain durable attempt/observed/completion lineage
+and canonical pre-call bytes for seven ownership/effect peer-invocation
+classes. The independent verifier recomputes receipts, peer relations,
+journals, leases, log heads, crash/reopen checkpoints, lost acknowledgements,
+the pre-resume exposure gate, and the completion record authorizing the final
+destination resume.
+
+This vISA result declares `exclusive_trusted_coordinator_api=true` as a TCB
+assumption. A second raw coordinator/provider handle or hostile caller of the
+public projection surface is outside the bounded claim; the current guard is
+not provider- or kernel-enforced adversarial admission.
+
+The Nexus-local axis is locally clean at
+`a890e5c3e25138662c213f19280ba3b209939813`. Its source-bound v2 receipt
+SHA-256 is `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`,
+and the v2 lock SHA-256 is
+`306ee1fff5a53b010f9906084925ca5fa6af44bd779bf3658957f4552a0bcb21`.
+The receipt records production Registry refinement as checked. Four live
+process tests pass on the exact Nexus binary
+`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
+
+The real logical-request experiment now crosses both lost-acknowledgement
+boundaries. Ownership loses the Commit acknowledgement only after the SQLite
+decision is durable, then reopens, queries, and replays exactly. Nexus loses the
+terminal close response after the child produced it but before adapter
+acceptance, then admits one byte-identical same-request-ID replay. The logical
+request executes once and its Nexus Register/Prepare/Commit publication occurs
+once.
+
+The standalone exact-two-file publisher and relocation verifier are implemented
+and have passed a smoke run. A final artifact cannot be minted honestly until
+this vISA worktree is committed and the runner can bind that clean exact SHA.
+
+The candidate remains open until all of these are true at final exact
+revisions:
+
+- the final clean vISA joint cell consumes the current neutral source lock and
+  separate Nexus v2 qualification lock without treating the mapping as Nexus
+  execution evidence;
+- local and Docker repository gates, the joint gate, and pushed exact-SHA CI
+  close for the same vISA revision;
+- the combined receipt records the final vISA, Nexus, and neutral revisions,
+  keeps the neutral composition, vISA runtime execution, and Nexus local
+  refinement as distinct evidence axes, and downloaded evidence is
+  independently reverified; and
+- the temporary Feature 009 specification is reconciled with the final
+  receipts before removal.
+
+No current result establishes real OSTD or IRQ/SMP execution, Registry
+replacement, the production retained-tombstone path, host reboot or permanent
+source-loss recovery, cross-host transport, Byzantine ownership-service
+behavior, cryptographic receipt authenticity, hostile-storage anti-rollback or
+freshness, TEE/KMS behavior, confidentiality, or production readiness.
 
 ## Stage 5: Confidential continuity profile
 

@@ -1,0 +1,19 @@
+[package]
+name = "visa-joint-handoff-system"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+
+[dependencies]
+contract_core.workspace = true
+joint_handoff_core.workspace = true
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+substrate_api.workspace = true
+substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
+visa-conformance = { path = "../visa-conformance" }
+visa_joint_handoff.workspace = true
+visa_runtime.workspace = true

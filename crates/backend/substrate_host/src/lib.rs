@@ -8,6 +8,7 @@
 
 mod authority;
 mod binding;
+mod joint;
 mod journal;
 mod kv;
 mod lease;
@@ -114,6 +115,8 @@ pub enum FaultPoint {
     AfterActivationBundle,
     BeforeCommitBundle,
     AfterCommitBundle,
+    BeforeExternalSourceFence,
+    AfterExternalSourceFence,
     AfterKvCommit,
     BeforeProfileEffect,
     AfterProfileEffect,

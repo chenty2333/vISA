@@ -2,6 +2,7 @@
 /target/
 /.ci-cache/
 /.ci-artifacts/
+/.ci-nexus/
 __pycache__/
 *.py[cod]
 

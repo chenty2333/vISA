@@ -297,6 +297,172 @@ jobs:
         if: ${{ always() }}
         run: rm -rf .ci-artifacts
 
+  docker-joint-handoff-reference-gate:
+    name: Docker joint handoff reference-only gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VISA_DEV_IMAGE: visa-dev:${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set Docker user ids
+        run: |
+          echo "VISA_DOCKER_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "VISA_DOCKER_GID=$(id -g)" >> "$GITHUB_ENV"
+
+      - name: Prepare isolated build and evidence directories
+        run: |
+          mkdir -p \
+            .ci-cache/cargo-git \
+            .ci-cache/cargo-registry \
+            .ci-cache/target \
+            .ci-cache/visa-ltp \
+            .ci-artifacts
+
+      - name: Restore Cargo dependency cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .ci-cache/cargo-git
+            .ci-cache/cargo-registry
+          key: docker-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'Dockerfile', 'compose.yaml', 'compose.ci.yaml') }}
+          restore-keys: |
+            docker-cargo-${{ runner.os }}-
+
+      - name: Validate Compose configuration
+        run: docker compose -f compose.yaml -f compose.ci.yaml config --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Load exact-SHA Docker development image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ${{ env.VISA_DEV_IMAGE }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          build-args: |
+            USER_UID=${{ env.VISA_DOCKER_UID }}
+            USER_GID=${{ env.VISA_DOCKER_GID }}
+          cache-from: type=gha,scope=visa-dev
+
+      - name: Inspect exact-SHA Docker image
+        run: |
+          actual_revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$VISA_DEV_IMAGE")"
+          test "$actual_revision" = "$GITHUB_SHA"
+
+      - name: Joint handoff reference-only system gate
+        id: joint_reference_gate
+        run: |
+          rm -rf .ci-artifacts
+          mkdir -p .ci-artifacts
+          set -o pipefail
+          scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-joint-handoff 2>&1 \
+            | tee .ci-artifacts/joint-handoff-reference-ci.log
+
+      - name: Upload joint handoff reference-only evidence
+        if: ${{ always() && (steps.joint_reference_gate.outcome == 'success' || steps.joint_reference_gate.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: joint-handoff-reference-system-evidence
+          path: .ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 3 || 14 }}
+
+      - name: Remove joint handoff reference evidence from runner
+        if: ${{ always() }}
+        run: rm -rf .ci-artifacts
+
+  docker-joint-handoff-nexus-qualification:
+    name: Docker Nexus exact-SHA handoff-admission qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact vISA SHA
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Read committed Nexus qualification lock
+        id: nexus_lock
+        run: |
+          set -Eeuo pipefail
+          lock_output="$(
+            scripts/check-nexus-handoff-qualification.py \
+              --lock third_party/joint-handoff-qualification/nexus-qualification-lock.json \
+              --emit-lock-values
+          )"
+          mapfile -t lock_values <<< "$lock_output"
+          if [[ "${#lock_values[@]}" -ne 4 ]]; then
+            printf 'qualification lock emitted %s values, expected 4\n' \
+              "${#lock_values[@]}" >&2
+            exit 1
+          fi
+          revision="${lock_values[0]}"
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'qualification lock emitted an invalid Nexus revision: %s\n' \
+              "$revision" >&2
+            exit 1
+          fi
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact locked Nexus SHA
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: chenty2333/Nexus
+          ref: ${{ steps.nexus_lock.outputs.revision }}
+          path: .ci-nexus
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run Nexus-local handoff-admission qualification
+        id: nexus_qualification
+        run: |
+          rm -rf .ci-artifacts
+          mkdir -p .ci-artifacts
+          set -o pipefail
+          scripts/run-nexus-handoff-qualification.sh \
+            --checkout .ci-nexus \
+            --artifact-root .ci-artifacts/nexus-handoff-qualification 2>&1 \
+            | tee .ci-artifacts/nexus-handoff-qualification-ci.log
+          actual_inventory="$(
+            find .ci-artifacts -mindepth 1 -maxdepth 1 -printf '%y %f\n' \
+              | LC_ALL=C sort
+          )"
+          expected_inventory=$'d nexus-handoff-qualification\nf nexus-handoff-qualification-ci.log'
+          if [[ "$actual_inventory" != "$expected_inventory" ]]; then
+            printf 'Nexus qualification top-level artifact inventory drifted\n' >&2
+            printf 'expected:\n%s\nactual:\n%s\n' \
+              "$expected_inventory" "$actual_inventory" >&2
+            exit 1
+          fi
+
+      - name: Upload Nexus-local handoff-admission evidence
+        if: ${{ always() && (steps.nexus_qualification.outcome == 'success' || steps.nexus_qualification.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: joint-handoff-nexus-qualification-evidence
+          path: .ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 3 || 14 }}
+
+      - name: Remove Nexus qualification checkout and evidence from runner
+        if: ${{ always() }}
+        run: rm -rf .ci-nexus .ci-artifacts
+
   exact-sha-closure:
     name: Exact-SHA qualification closure
     if: ${{ always() }}
@@ -304,6 +470,8 @@ jobs:
       - docker-quality-gate
       - docker-claim-gates
       - docker-stage4-gate
+      - docker-joint-handoff-reference-gate
+      - docker-joint-handoff-nexus-qualification
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -312,6 +480,8 @@ jobs:
           QUALITY_RESULT: ${{ needs.docker-quality-gate.result }}
           CLAIMS_RESULT: ${{ needs.docker-claim-gates.result }}
           STAGE4_RESULT: ${{ needs.docker-stage4-gate.result }}
+          JOINT_REFERENCE_RESULT: ${{ needs.docker-joint-handoff-reference-gate.result }}
+          JOINT_NEXUS_RESULT: ${{ needs.docker-joint-handoff-nexus-qualification.result }}
         run: |
           {
             echo "### Exact-SHA qualification closure"
@@ -321,14 +491,19 @@ jobs:
             echo "- Repository quality: \`${QUALITY_RESULT}\`"
             echo "- Stage 1-3 claim lanes: \`${CLAIMS_RESULT}\`"
             echo "- Stage 4 claim lane: \`${STAGE4_RESULT}\`"
+            echo "- Joint handoff reference-only lane: \`${JOINT_REFERENCE_RESULT}\`"
+            echo "- Nexus exact-SHA qualification lane: \`${JOINT_NEXUS_RESULT}\`"
             echo "- Image tag: \`visa-dev:${GITHUB_SHA}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$QUALITY_RESULT" != success \
               || "$CLAIMS_RESULT" != success \
-              || "$STAGE4_RESULT" != success ]]; then
-            printf '::error title=vISA exact-SHA closure failed::quality=%s claims=%s stage4=%s\n' \
-              "$QUALITY_RESULT" "$CLAIMS_RESULT" "$STAGE4_RESULT"
+              || "$STAGE4_RESULT" != success \
+              || "$JOINT_REFERENCE_RESULT" != success \
+              || "$JOINT_NEXUS_RESULT" != success ]]; then
+            printf '::error title=vISA exact-SHA closure failed::quality=%s claims=%s stage4=%s joint-reference=%s joint-nexus=%s\n' \
+              "$QUALITY_RESULT" "$CLAIMS_RESULT" "$STAGE4_RESULT" \
+              "$JOINT_REFERENCE_RESULT" "$JOINT_NEXUS_RESULT"
             exit 1
           fi
 

@@ -4,15 +4,18 @@ use contract_core::{
     ActivationRole, ActivationStatus, AuthorityGrant, AuthorityStatus, CONTRACT_VERSION,
     CanonicalState, CleanupStatus, Command, CommandKind, Decision, Digest, EffectFailure,
     EffectKind, EffectOutcome, EffectRequest, EffectResult, EntityRef, Event, EventKind,
-    EvidenceRef, ExtensionSupport, FailureClass, HandoffPhase, IdempotencyKey, Identity,
-    JournalEntry, JournalPosition, LeaseEpoch, NodeIdentity, PreparedDestination, Rejection,
-    Replay, Rights, SchemaVersion, SnapshotEnvelope, SnapshotRecord, TimerDisposition, TimerStatus,
+    EvidenceKind, EvidenceRef, ExtensionSupport, FailureClass, HandoffPhase, IdempotencyKey,
+    Identity, JournalEntry, JournalPosition, LeaseEpoch, NodeIdentity, PreparedDestination,
+    Rejection, Replay, Rights, SchemaVersion, SnapshotEnvelope, SnapshotRecord, TimerDisposition,
+    TimerStatus,
 };
 use semantic_core::{ReplayError, apply, preflight, replay, replay_from, restore};
 use substrate_api::{
     ActivationBundle, AuthorityPort, BindingKind, BindingPort, BindingRequest, CommitBundle,
-    JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition, ProfilePort, ProviderError,
-    ProviderErrorKind, ReauthorizationRequest, TimerObservation, TimerPort, TimerRecovery,
+    DestinationActivationProjectionRequest, ExternalHandoffProjectionPort,
+    ExternalSourceFenceBundle, JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition,
+    ProfilePort, ProviderError, ProviderErrorKind, ReauthorizationRequest,
+    SourceAbortProjectionRequest, TimerObservation, TimerPort, TimerRecovery,
 };
 
 use crate::codec::{EncodeError, canonical_digest, snapshot_integrity, state_digest};
@@ -131,6 +134,14 @@ pub struct SnapshotExpectations {
     pub profile_version: SchemaVersion,
     pub supported_extensions: Vec<ExtensionSupport>,
     pub destination: NodeIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestinationResumePreview {
+    pub journal_position: JournalPosition,
+    pub state_digest: Digest,
+    /// Exact durable joint-log authorization record bound into the resume event.
+    pub activation_record_digest: Digest,
 }
 
 /// A compatibility-checked snapshot whose state cannot be extracted or
@@ -556,6 +567,51 @@ where
         operation: Identity,
         idempotency_key: IdempotencyKey,
     ) -> Result<CommandReceipt, RuntimeError> {
+        let request = self.handoff_commit_request(operation, idempotency_key)?;
+        self.effect(command, request)
+    }
+
+    /// Recompute the exact provider request digest for the currently prepared
+    /// destination without executing it.
+    pub fn handoff_commit_request_digest(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<Digest, RuntimeError> {
+        Ok(self.handoff_commit_request(operation, idempotency_key)?.request_digest)
+    }
+
+    /// Joint-handoff variant. `resume_guard` is retained as the lease-commit
+    /// causal parent, making a generic `ResumeDestination` distinguishable
+    /// from the receipt-authorized exact resume path after recovery.
+    pub fn guarded_handoff_commit_request_digest(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+        resume_guard: Identity,
+    ) -> Result<Digest, RuntimeError> {
+        Ok(self
+            .handoff_commit_request_with_guard(operation, idempotency_key, Some(resume_guard))?
+            .request_digest)
+    }
+
+    fn handoff_commit_request(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<EffectRequest, RuntimeError> {
+        self.handoff_commit_request_with_guard(operation, idempotency_key, None)
+    }
+
+    fn handoff_commit_request_with_guard(
+        &self,
+        operation: Identity,
+        idempotency_key: IdempotencyKey,
+        resume_guard: Option<Identity>,
+    ) -> Result<EffectRequest, RuntimeError> {
+        if resume_guard == Some(Identity::ZERO) {
+            return Err(RuntimeError::Rejected(Rejection::InvalidIdentity));
+        }
         let prepared =
             self.state.prepared_destination.clone().ok_or(RuntimeError::SnapshotUnavailable)?;
         let subject = EntityRef::new(self.state.component.identity, prepared.component_generation);
@@ -585,26 +641,324 @@ where
         let request_digest = canonical_digest(&(
             operation,
             idempotency_key,
+            resume_guard,
             prepared.destination,
             subject,
             authority,
             kind.clone(),
         ))?;
-        self.effect(
-            command,
-            EffectRequest {
-                operation,
-                idempotency_key,
-                causal_parent: None,
-                node: prepared.destination,
-                subject,
-                resource: subject,
-                authority,
-                lease_epoch: prepared.expected_epoch,
-                request_digest,
-                kind,
-            },
-        )
+        Ok(EffectRequest {
+            operation,
+            idempotency_key,
+            causal_parent: resume_guard,
+            node: prepared.destination,
+            subject,
+            resource: subject,
+            authority,
+            lease_epoch: prepared.expected_epoch,
+            request_digest,
+            kind,
+        })
+    }
+
+    /// Execute or reconcile only the destination lease-commit projection. The
+    /// canonical state remains `Committed`; workload admission stays closed
+    /// until a separately durable activation receipt authorizes the exact
+    /// `DestinationResumed` output.
+    ///
+    /// This is a trusted joint-composition primitive, not a workload-facing
+    /// API. Possession of a second raw `Coordinator` handle is outside the
+    /// bounded stage's exclusive-coordinator TCB assumption.
+    #[doc(hidden)]
+    pub fn project_destination_commit(
+        &mut self,
+        projection: DestinationActivationProjectionRequest,
+    ) -> Result<(), RuntimeError> {
+        let request = self.destination_projection_request(&projection)?;
+        match self.inspect_destination_projection(&projection, &request, None)? {
+            DestinationProjectionProgress::Committed | DestinationProjectionProgress::Resumed => {
+                return Ok(());
+            }
+            DestinationProjectionProgress::PreState
+            | DestinationProjectionProgress::IntentPending => {}
+        }
+        self.effect(projection.commit_command, request.clone())?;
+        if self.inspect_destination_projection(&projection, &request, None)?
+            != DestinationProjectionProgress::Committed
+        {
+            return Err(self.projection_conflict());
+        }
+        Ok(())
+    }
+
+    /// Compute the exact next journal position and state digest without
+    /// appending a provider record. After a replayed resume, this returns the
+    /// already committed output for the same command.
+    #[doc(hidden)]
+    pub fn preview_destination_resume(
+        &self,
+        projection: DestinationActivationProjectionRequest,
+        activation_record_digest: Digest,
+    ) -> Result<DestinationResumePreview, RuntimeError> {
+        if activation_record_digest == Digest::ZERO {
+            return Err(self.projection_conflict());
+        }
+        let request = self.destination_projection_request(&projection)?;
+        match self.inspect_destination_projection(
+            &projection,
+            &request,
+            Some(activation_record_digest),
+        )? {
+            DestinationProjectionProgress::PreState
+            | DestinationProjectionProgress::IntentPending => Err(self.projection_conflict()),
+            DestinationProjectionProgress::Committed => {
+                let event = Event::new(
+                    projection.resume_command,
+                    EventKind::JointDestinationResumed { activation_record_digest },
+                );
+                let (entry, _) = self.build_entry(event)?;
+                Ok(DestinationResumePreview {
+                    journal_position: entry.position,
+                    state_digest: entry.output_state,
+                    activation_record_digest,
+                })
+            }
+            DestinationProjectionProgress::Resumed => {
+                let entries = self.provider.replay_from(None).map_err(RuntimeError::Provider)?;
+                let resume = unique_event(&entries, projection.resume_command)?
+                    .ok_or_else(|| self.projection_conflict())?;
+                if !matches!(
+                    resume.event.kind,
+                    EventKind::JointDestinationResumed { activation_record_digest }
+                        if activation_record_digest != Digest::ZERO
+                ) {
+                    return Err(RuntimeError::JournalConflict { position: resume.position });
+                }
+                Ok(DestinationResumePreview {
+                    journal_position: resume.position,
+                    state_digest: resume.output_state,
+                    activation_record_digest,
+                })
+            }
+        }
+    }
+
+    /// Append or reconcile the exact resume output authorized by a durable
+    /// activation receipt.
+    #[doc(hidden)]
+    pub fn project_destination_resume(
+        &mut self,
+        projection: DestinationActivationProjectionRequest,
+        activation_record_digest: Digest,
+        expected: DestinationResumePreview,
+    ) -> Result<(), RuntimeError> {
+        if activation_record_digest == Digest::ZERO
+            || expected.activation_record_digest != activation_record_digest
+            || self.preview_destination_resume(projection, activation_record_digest)? != expected
+        {
+            return Err(self.projection_conflict());
+        }
+        let request = self.destination_projection_request(&projection)?;
+        if self.inspect_destination_projection(&projection, &request, None)?
+            == DestinationProjectionProgress::Committed
+        {
+            self.commit_event(Event::new(
+                projection.resume_command,
+                EventKind::JointDestinationResumed { activation_record_digest },
+            ))?;
+        }
+        if self.inspect_destination_projection(
+            &projection,
+            &request,
+            Some(activation_record_digest),
+        )? != DestinationProjectionProgress::Resumed
+            || self.preview_destination_resume(projection, activation_record_digest)? != expected
+        {
+            return Err(self.projection_conflict());
+        }
+        Ok(())
+    }
+
+    fn destination_projection_request(
+        &self,
+        projection: &DestinationActivationProjectionRequest,
+    ) -> Result<EffectRequest, RuntimeError> {
+        validate_destination_projection_request(projection)?;
+        let timer_profile_matches = match self.state.phase {
+            HandoffPhase::DestinationPrepared | HandoffPhase::Committed => {
+                self.state.timer.status == TimerStatus::Frozen(TimerDisposition::Idle)
+            }
+            HandoffPhase::Running => {
+                self.state.activation.role == ActivationRole::Destination
+                    && self.state.activation.status == ActivationStatus::Active
+                    && self.state.timer.status == TimerStatus::Idle
+            }
+            _ => false,
+        };
+        if !timer_profile_matches {
+            return Err(RuntimeError::Rejected(Rejection::TimerStateConflict));
+        }
+        let request = self.handoff_commit_request_with_guard(
+            projection.commit_operation,
+            projection.commit_idempotency,
+            Some(projection.resume_command),
+        )?;
+        if request.request_digest != projection.request_digest
+            || !matches!(
+                request.kind,
+                EffectKind::LeaseCommit { handoff, .. } if handoff == projection.handoff
+            )
+        {
+            return Err(self.projection_conflict());
+        }
+        Ok(request)
+    }
+
+    fn inspect_destination_projection(
+        &self,
+        projection: &DestinationActivationProjectionRequest,
+        request: &EffectRequest,
+        expected_activation_record_digest: Option<Digest>,
+    ) -> Result<DestinationProjectionProgress, RuntimeError> {
+        let entries = self.provider.replay_from(None).map_err(RuntimeError::Provider)?;
+        let intent = unique_event(&entries, projection.commit_command)?;
+        let resume = unique_event(&entries, projection.resume_command)?;
+        let operation_entries = operation_entries(&entries, projection.commit_operation);
+
+        let Some(intent) = intent else {
+            if resume.is_some()
+                || !operation_entries.is_empty()
+                || self
+                    .provider
+                    .operation(projection.commit_operation)
+                    .map_err(RuntimeError::Provider)?
+                    .is_some()
+                || self
+                    .provider
+                    .idempotency(projection.commit_idempotency)
+                    .map_err(RuntimeError::Provider)?
+                    .is_some()
+                || self.state.phase != HandoffPhase::DestinationPrepared
+            {
+                return Err(self.projection_conflict());
+            }
+            return Ok(DestinationProjectionProgress::PreState);
+        };
+        if !matches!(&intent.event.kind, EventKind::EffectPrepared { request: actual } if actual == request)
+        {
+            return Err(RuntimeError::JournalConflict { position: intent.position });
+        }
+
+        let by_operation = self
+            .provider
+            .operation(projection.commit_operation)
+            .map_err(RuntimeError::Provider)?
+            .ok_or_else(|| self.projection_conflict())?;
+        let by_idempotency = self
+            .provider
+            .idempotency(projection.commit_idempotency)
+            .map_err(RuntimeError::Provider)?
+            .ok_or_else(|| self.projection_conflict())?;
+        if by_operation != by_idempotency || by_operation.record.request != *request {
+            return Err(self.projection_conflict());
+        }
+
+        let resolution = operation_entries
+            .iter()
+            .copied()
+            .find(|entry| matches!(entry.event.kind, EventKind::HandoffCommitted { .. }));
+        if operation_entries.len() != usize::from(resolution.is_some()) + 1
+            || operation_entries.first().copied() != Some(intent)
+        {
+            return Err(self.projection_conflict());
+        }
+        let Some(resolution) = resolution else {
+            if resume.is_some() || self.state.phase != HandoffPhase::DestinationPrepared {
+                return Err(self.projection_conflict());
+            }
+            return Ok(DestinationProjectionProgress::IntentPending);
+        };
+        if intent.position.next() != Some(resolution.position)
+            || resolution.event.identity
+                != derived_identity(projection.commit_operation, b"resolve")?
+        {
+            return Err(RuntimeError::JournalConflict { position: resolution.position });
+        }
+
+        let EffectKind::LeaseCommit { handoff, snapshot, destination, expected_epoch, next_epoch } =
+            request.kind
+        else {
+            return Err(self.projection_conflict());
+        };
+        let EventKind::HandoffCommitted {
+            operation,
+            handoff: committed_handoff,
+            snapshot: committed_snapshot,
+            source,
+            destination: committed_destination,
+            previous_epoch,
+            new_epoch,
+            outcome,
+        } = &resolution.event.kind
+        else {
+            return Err(RuntimeError::JournalConflict { position: resolution.position });
+        };
+        let EffectOutcome::Succeeded {
+            result: EffectResult::LeaseAdvanced { owner, epoch, source_fence },
+            evidence,
+        } = outcome
+        else {
+            return Err(RuntimeError::JournalConflict { position: resolution.position });
+        };
+        if *operation != projection.commit_operation
+            || *committed_handoff != handoff
+            || *committed_snapshot != snapshot
+            || source.is_zero()
+            || *source == destination
+            || *committed_destination != destination
+            || *previous_epoch != expected_epoch
+            || *new_epoch != next_epoch
+            || *owner != destination
+            || *epoch != next_epoch
+            || !matches!(evidence.kind, EvidenceKind::EffectOutcome | EvidenceKind::LeaseCommit)
+            || evidence.identity.is_zero()
+            || evidence.digest == Digest::ZERO
+            || source_fence.kind != EvidenceKind::SourceFence
+            || source_fence.identity.is_zero()
+            || source_fence.digest == Digest::ZERO
+            || evidence.digest == source_fence.digest
+            || by_operation.record.outcome.as_ref() != Some(outcome)
+        {
+            return Err(RuntimeError::JournalConflict { position: resolution.position });
+        }
+        self.verify_projection_leases(destination, next_epoch)?;
+
+        let Some(resume) = resume else {
+            if self.state.phase != HandoffPhase::Committed
+                || self.position != resolution.position
+                || self.state_digest()? != resolution.output_state
+            {
+                return Err(self.projection_conflict());
+            }
+            return Ok(DestinationProjectionProgress::Committed);
+        };
+        if !matches!(
+            resume.event.kind,
+            EventKind::JointDestinationResumed { activation_record_digest }
+                if activation_record_digest != Digest::ZERO
+                    && expected_activation_record_digest
+                        .is_none_or(|expected| expected == activation_record_digest)
+        ) || resolution.position.next() != Some(resume.position)
+            || self.position != resume.position
+            || self.state_digest()? != resume.output_state
+            || self.state.phase != HandoffPhase::Running
+            || self.state.activation.role != ActivationRole::Destination
+            || self.state.activation.status != ActivationStatus::Active
+            || self.state.ownership != contract_core::Ownership::owned(destination, next_epoch)
+        {
+            return Err(RuntimeError::JournalConflict { position: resume.position });
+        }
+        Ok(DestinationProjectionProgress::Resumed)
     }
 
     pub fn effect(
@@ -982,6 +1336,408 @@ where
 
 impl<P> Coordinator<P>
 where
+    P: JournalPort + LeasePort,
+{
+    fn projection_conflict(&self) -> RuntimeError {
+        RuntimeError::JournalConflict { position: self.position }
+    }
+
+    fn verify_projection_leases(
+        &self,
+        owner: NodeIdentity,
+        epoch: LeaseEpoch,
+    ) -> Result<(), RuntimeError> {
+        for resource in self.fenced_resources() {
+            if self.provider.current_lease(resource).map_err(RuntimeError::Provider)?
+                != Some(LeaseRecord { resource, owner, epoch })
+            {
+                return Err(self.projection_conflict());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<P> Coordinator<P>
+where
+    P: JournalPort + LeasePort + ExternalHandoffProjectionPort,
+{
+    /// Project an externally authoritative commit and completed source closure
+    /// into the source canonical journal and local provider leases.
+    ///
+    /// The caller must validate the native ownership and closure receipts. This
+    /// method binds their digests into the existing `HandoffCommitted` event;
+    /// it never makes an ownership decision itself.
+    #[allow(clippy::too_many_arguments)]
+    pub fn project_external_source_fence(
+        &mut self,
+        command: Identity,
+        operation: Identity,
+        destination: NodeIdentity,
+        next_epoch: LeaseEpoch,
+        decision_evidence: EvidenceRef,
+        closure_evidence: EvidenceRef,
+    ) -> Result<CommandReceipt, RuntimeError> {
+        if command.is_zero()
+            || operation.is_zero()
+            || destination.is_zero()
+            || decision_evidence.identity.is_zero()
+            || decision_evidence.digest == Digest::ZERO
+            || decision_evidence.kind != contract_core::EvidenceKind::AuthorityDecision
+            || closure_evidence.identity.is_zero()
+            || closure_evidence.digest == Digest::ZERO
+            || closure_evidence.kind != contract_core::EvidenceKind::SourceFence
+            || decision_evidence.digest == closure_evidence.digest
+        {
+            return Err(RuntimeError::Rejected(Rejection::InvalidIdentity));
+        }
+
+        let snapshot = self
+            .state
+            .exported_snapshot
+            .as_ref()
+            .cloned()
+            .ok_or(RuntimeError::SnapshotUnavailable)?;
+        let source = self.state.activation.node;
+        let previous_epoch = if self.state.phase == HandoffPhase::Committed {
+            let EventKind::HandoffCommitted { previous_epoch, .. } = self
+                .inspect_external_source_fence(
+                    command,
+                    operation,
+                    &snapshot,
+                    source,
+                    destination,
+                    next_epoch,
+                    decision_evidence,
+                    closure_evidence,
+                )?
+                .event
+                .kind
+            else {
+                return Err(self.projection_conflict());
+            };
+            return if previous_epoch.next() == Some(next_epoch) {
+                Ok(CommandReceipt::Replayed(Replay::NoChange))
+            } else {
+                Err(self.projection_conflict())
+            };
+        } else {
+            if self.state.phase != HandoffPhase::Exported {
+                return Err(RuntimeError::Rejected(Rejection::EventNotApplicable));
+            }
+            self.ensure_external_source_fence_absent(command, operation)?;
+            self.state.ownership.epoch
+        };
+        let owner = self
+            .state
+            .ownership
+            .owner
+            .ok_or(RuntimeError::Rejected(Rejection::EventNotApplicable))?;
+        if previous_epoch.next() != Some(next_epoch) || owner != source || source == destination {
+            return Err(RuntimeError::Rejected(Rejection::LeaseEpochMismatch {
+                expected: previous_epoch.next().unwrap_or(previous_epoch),
+                actual: next_epoch,
+            }));
+        }
+
+        let outcome = EffectOutcome::Succeeded {
+            result: EffectResult::LeaseAdvanced {
+                owner: destination,
+                epoch: next_epoch,
+                source_fence: closure_evidence,
+            },
+            evidence: decision_evidence,
+        };
+        let event = Event::new(
+            command,
+            EventKind::HandoffCommitted {
+                operation,
+                handoff: snapshot.handoff,
+                snapshot: snapshot.snapshot,
+                source,
+                destination,
+                previous_epoch,
+                new_epoch: next_epoch,
+                outcome,
+            },
+        );
+        let (entry, next) = self.build_entry(event)?;
+        let transitions = self
+            .fenced_resources()
+            .into_iter()
+            .map(|resource| LeaseTransition {
+                resource,
+                expected_owner: source,
+                next_owner: destination,
+                expected_epoch: previous_epoch,
+                next_epoch,
+            })
+            .collect::<Vec<_>>();
+        let bundle = ExternalSourceFenceBundle {
+            entry: entry.clone(),
+            lease_transitions: transitions.clone(),
+            decision_digest: decision_evidence.digest,
+            closure_digest: closure_evidence.digest,
+        };
+        match self.provider.commit_external_source_fence(&bundle) {
+            Ok(()) => {}
+            Err(error) if error.kind == ProviderErrorKind::OutcomeUnknown => {
+                let observed =
+                    self.provider.entry(entry.position).map_err(RuntimeError::Provider)?;
+                if observed.as_ref() != Some(&entry) {
+                    return Err(RuntimeError::JournalOutcomeUnknown { position: entry.position });
+                }
+                for transition in &transitions {
+                    let observed = self
+                        .provider
+                        .current_lease(transition.resource)
+                        .map_err(RuntimeError::Provider)?;
+                    if observed
+                        != Some(LeaseRecord {
+                            resource: transition.resource,
+                            owner: destination,
+                            epoch: next_epoch,
+                        })
+                    {
+                        return Err(RuntimeError::JournalOutcomeUnknown {
+                            position: entry.position,
+                        });
+                    }
+                }
+            }
+            Err(error) => return Err(RuntimeError::Provider(error)),
+        }
+        let committed = self.publish(entry, next).map(CommandReceipt::Committed)?;
+        self.inspect_external_source_fence(
+            command,
+            operation,
+            &snapshot,
+            source,
+            destination,
+            next_epoch,
+            decision_evidence,
+            closure_evidence,
+        )?;
+        Ok(committed)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn inspect_external_source_fence(
+        &self,
+        command: Identity,
+        operation: Identity,
+        snapshot: &SnapshotRecord,
+        source: NodeIdentity,
+        destination: NodeIdentity,
+        next_epoch: LeaseEpoch,
+        decision_evidence: EvidenceRef,
+        closure_evidence: EvidenceRef,
+    ) -> Result<JournalEntry, RuntimeError> {
+        let entries = self.provider.replay_from(None).map_err(RuntimeError::Provider)?;
+        let entry = unique_event(&entries, command)?.ok_or_else(|| self.projection_conflict())?;
+        let operation_entries = operation_entries(&entries, operation);
+        if operation_entries != [entry]
+            || self.provider.operation(operation).map_err(RuntimeError::Provider)?.is_some()
+        {
+            return Err(self.projection_conflict());
+        }
+        let EventKind::HandoffCommitted {
+            operation: actual_operation,
+            handoff,
+            snapshot: actual_snapshot,
+            source: actual_source,
+            destination: actual_destination,
+            previous_epoch,
+            new_epoch,
+            outcome,
+        } = &entry.event.kind
+        else {
+            return Err(RuntimeError::JournalConflict { position: entry.position });
+        };
+        let expected_outcome = EffectOutcome::Succeeded {
+            result: EffectResult::LeaseAdvanced {
+                owner: destination,
+                epoch: next_epoch,
+                source_fence: closure_evidence,
+            },
+            evidence: decision_evidence,
+        };
+        if *actual_operation != operation
+            || *handoff != snapshot.handoff
+            || *actual_snapshot != snapshot.snapshot
+            || *actual_source != source
+            || *actual_destination != destination
+            || previous_epoch.next() != Some(next_epoch)
+            || *new_epoch != next_epoch
+            || *outcome != expected_outcome
+            || self.position != entry.position
+            || self.state_digest()? != entry.output_state
+            || self.state.phase != HandoffPhase::Committed
+            || self.state.activation.role != ActivationRole::Source
+            || self.state.activation.status != ActivationStatus::Fenced
+            || self.state.ownership != contract_core::Ownership::owned(destination, next_epoch)
+        {
+            return Err(RuntimeError::JournalConflict { position: entry.position });
+        }
+        self.verify_projection_leases(destination, next_epoch)?;
+        Ok(entry.clone())
+    }
+
+    fn ensure_external_source_fence_absent(
+        &self,
+        command: Identity,
+        operation: Identity,
+    ) -> Result<(), RuntimeError> {
+        let entries = self.provider.replay_from(None).map_err(RuntimeError::Provider)?;
+        if unique_event(&entries, command)?.is_some()
+            || !operation_entries(&entries, operation).is_empty()
+            || self.provider.operation(operation).map_err(RuntimeError::Provider)?.is_some()
+        {
+            return Err(self.projection_conflict());
+        }
+        Ok(())
+    }
+}
+
+impl<P> Coordinator<P>
+where
+    P: JournalPort + AuthorityPort + BindingPort + LeasePort + TimerPort + ProfilePort,
+{
+    /// Execute or reconcile an exact source abort/cleanup/resume projection.
+    /// Completed local work is accepted only when its full canonical lineage
+    /// and retained source leases match the request.
+    pub fn project_source_abort_and_resume(
+        &mut self,
+        projection: SourceAbortProjectionRequest,
+    ) -> Result<(), RuntimeError> {
+        validate_source_abort_projection_request(&projection)?;
+        if self.inspect_source_abort_projection(&projection)? == ProjectionProgress::Terminal {
+            return Ok(());
+        }
+        self.abort_handoff(
+            projection.abort_command,
+            Some(projection.abort_evidence),
+            projection.thaw_evidence,
+        )?;
+        self.resume_source(projection.resume_command)?;
+        if self.inspect_source_abort_projection(&projection)? != ProjectionProgress::Terminal {
+            return Err(self.projection_conflict());
+        }
+        Ok(())
+    }
+
+    fn inspect_source_abort_projection(
+        &self,
+        projection: &SourceAbortProjectionRequest,
+    ) -> Result<ProjectionProgress, RuntimeError> {
+        let entries = self.provider.replay_from(None).map_err(RuntimeError::Provider)?;
+        let abort = unique_event(&entries, projection.abort_command)?;
+        let resume = unique_event(&entries, projection.resume_command)?;
+
+        if !projection.local_freeze_recorded {
+            if projection.snapshot.is_some()
+                || abort.is_some()
+                || resume.is_some()
+                || self.state.phase != HandoffPhase::Running
+                || self.state.activation.role != ActivationRole::Source
+                || self.state.activation.status != ActivationStatus::Active
+                || self.state.ownership.owner != Some(self.state.activation.node)
+            {
+                return Err(self.projection_conflict());
+            }
+            self.verify_projection_leases(self.state.activation.node, self.state.ownership.epoch)?;
+            return Ok(ProjectionProgress::Terminal);
+        }
+
+        let cleanup = if let Some(snapshot) = projection.snapshot {
+            let snapshot_entry = entries.iter().find(|entry| {
+                matches!(
+                    &entry.event.kind,
+                    EventKind::SnapshotExported { snapshot: record }
+                        if record.handoff == projection.handoff && record.snapshot == snapshot
+                )
+            });
+            if snapshot_entry.is_none() {
+                return Err(self.projection_conflict());
+            }
+            let cleanup_command = derived_identity(snapshot, b"cleanup-preparation")?;
+            unique_event(&entries, cleanup_command)?
+        } else {
+            None
+        };
+
+        let Some(abort) = abort else {
+            if cleanup.is_some()
+                || resume.is_some()
+                || !matches!(
+                    self.state.phase,
+                    HandoffPhase::Quiescing | HandoffPhase::Frozen | HandoffPhase::Exported
+                )
+            {
+                return Err(self.projection_conflict());
+            }
+            return Ok(ProjectionProgress::PreState);
+        };
+        if !matches!(
+            &abort.event.kind,
+            EventKind::HandoffAborted { evidence } if *evidence == Some(projection.abort_evidence)
+        ) {
+            return Err(RuntimeError::JournalConflict { position: abort.position });
+        }
+
+        let tail = if let Some(snapshot) = projection.snapshot {
+            let Some(cleanup) = cleanup else {
+                if resume.is_some() || self.state.phase != HandoffPhase::Aborted {
+                    return Err(self.projection_conflict());
+                }
+                return Ok(ProjectionProgress::Partial);
+            };
+            if !matches!(
+                &cleanup.event.kind,
+                EventKind::PreparationCleaned { cleanup: actual }
+                    if actual.snapshot == snapshot
+                        && actual.evidence == projection.thaw_evidence
+            ) || abort.position.next() != Some(cleanup.position)
+            {
+                return Err(RuntimeError::JournalConflict { position: cleanup.position });
+            }
+            cleanup
+        } else {
+            if entries.iter().any(|entry| {
+                entry.position.0 > abort.position.0
+                    && matches!(entry.event.kind, EventKind::PreparationCleaned { .. })
+            }) {
+                return Err(self.projection_conflict());
+            }
+            abort
+        };
+
+        let Some(resume) = resume else {
+            if self.state.phase != HandoffPhase::Aborted || self.position != tail.position {
+                return Err(self.projection_conflict());
+            }
+            return Ok(ProjectionProgress::Partial);
+        };
+        if !matches!(resume.event.kind, EventKind::SourceResumed)
+            || tail.position.next() != Some(resume.position)
+            || self.position != resume.position
+            || self.state_digest()? != resume.output_state
+            || self.state.phase != HandoffPhase::Running
+            || self.state.activation.role != ActivationRole::Source
+            || self.state.activation.status != ActivationStatus::Active
+            || self.state.ownership.owner != Some(self.state.activation.node)
+            || self.state.exported_snapshot.is_some()
+            || self.state.preparation_cleanup.is_some()
+        {
+            return Err(RuntimeError::JournalConflict { position: resume.position });
+        }
+        self.verify_projection_leases(self.state.activation.node, self.state.ownership.epoch)?;
+        Ok(ProjectionProgress::Terminal)
+    }
+}
+
+impl<P> Coordinator<P>
+where
     P: JournalPort + AuthorityPort + BindingPort,
 {
     pub fn prepare_destination(
@@ -1273,6 +2029,15 @@ where
     }
 
     pub fn cleanup_snapshot_bindings(&mut self, snapshot: Identity) -> Result<(), RuntimeError> {
+        let cleanup_snapshot = self
+            .state
+            .exported_snapshot
+            .as_ref()
+            .map(|record| record.snapshot)
+            .or_else(|| self.state.preparation_cleanup.map(|cleanup| cleanup.snapshot));
+        if self.state.phase != HandoffPhase::Aborted || cleanup_snapshot != Some(snapshot) {
+            return Err(RuntimeError::SnapshotUnavailable);
+        }
         let resources = self.fenced_resources();
         for resource in resources {
             self.provider.cleanup_binding(snapshot, resource).map_err(RuntimeError::Provider)?;
@@ -1598,6 +2363,90 @@ fn provider_failure(error: ProviderError) -> EffectOutcome {
         ProviderErrorKind::Unsupported => unreachable!(),
     };
     EffectOutcome::Failed(EffectFailure { class, retryable: error.retryable, evidence: None })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProjectionProgress {
+    PreState,
+    Partial,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DestinationProjectionProgress {
+    PreState,
+    IntentPending,
+    Committed,
+    Resumed,
+}
+
+fn validate_source_abort_projection_request(
+    projection: &SourceAbortProjectionRequest,
+) -> Result<(), RuntimeError> {
+    if projection.handoff.is_zero()
+        || projection.abort_command.is_zero()
+        || projection.resume_command.is_zero()
+        || projection.abort_command == projection.resume_command
+        || projection.abort_evidence.identity.is_zero()
+        || projection.abort_evidence.digest == Digest::ZERO
+        || projection.abort_evidence.kind != EvidenceKind::AuthorityDecision
+        || projection.snapshot.is_some_and(Identity::is_zero)
+        || projection.thaw_evidence.is_some_and(|evidence| {
+            evidence.identity.is_zero()
+                || evidence.digest == Digest::ZERO
+                || evidence.kind != EvidenceKind::Cleanup
+                || evidence.digest == projection.abort_evidence.digest
+        })
+    {
+        return Err(RuntimeError::Rejected(Rejection::InvalidIdentity));
+    }
+    Ok(())
+}
+
+fn validate_destination_projection_request(
+    projection: &DestinationActivationProjectionRequest,
+) -> Result<(), RuntimeError> {
+    if projection.handoff.is_zero()
+        || projection.commit_command.is_zero()
+        || projection.commit_operation.is_zero()
+        || projection.commit_idempotency.0 == [0; 16]
+        || projection.request_digest == Digest::ZERO
+        || projection.resume_command.is_zero()
+        || projection.commit_command == projection.commit_operation
+        || projection.commit_command == projection.resume_command
+        || projection.commit_operation == projection.resume_command
+    {
+        return Err(RuntimeError::Rejected(Rejection::InvalidIdentity));
+    }
+    Ok(())
+}
+
+fn unique_event(
+    entries: &[JournalEntry],
+    identity: Identity,
+) -> Result<Option<&JournalEntry>, RuntimeError> {
+    let mut matches = entries.iter().filter(|entry| entry.event.identity == identity);
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(RuntimeError::JournalConflict {
+            position: first.map_or(JournalPosition::ORIGIN, |entry| entry.position),
+        });
+    }
+    Ok(first)
+}
+
+fn operation_entries(entries: &[JournalEntry], operation: Identity) -> Vec<&JournalEntry> {
+    entries
+        .iter()
+        .filter(|entry| match &entry.event.kind {
+            EventKind::EffectPrepared { request } => request.operation == operation,
+            EventKind::EffectResolved { operation: actual, .. }
+            | EventKind::EffectReconciled { operation: actual, .. }
+            | EventKind::OperationCleaned { operation: actual, .. }
+            | EventKind::HandoffCommitted { operation: actual, .. } => *actual == operation,
+            _ => false,
+        })
+        .collect()
 }
 
 struct ExecutedEffect {

@@ -1,0 +1,111 @@
+schema = "visa-nexus-handoff.refinement-map.v1"
+claim_id = "bounded-joint-handoff-refinement-v1"
+mapping_kind = "case-id-identity-only"
+adapter_qualification = false
+qualification_note = "This map fixes case identity and analyzed inputs only; it is not evidence that either production adapter is qualified."
+
+[analyzed_baselines]
+visa_revision = "01692baa8d2b42ac901c3f354753e0208728ae71"
+nexus_revision = "7829e609b3d770b684316a30170a7412faa62f9b"
+status = "pre-implementation-analysis-only"
+
+[abstract_registry]
+identity_domain = "neutral-abstract-fault-registry"
+schema = "visa-nexus-handoff.fault-matrix.v1"
+source_path = "specs/joint-handoff/fault-matrix.toml"
+sha256 = "aa3c3671eec4cf87e9d09482a7d37619a289719187d9e97756cfe1773d431110"
+case_count = 16
+normative = true
+
+[concrete_registry]
+identity_domain = "visa-concrete-reference-registry"
+schema = "visa-joint-handoff-case-registry.v1"
+source_path = "crates/testing/visa-conformance/src/joint_handoff/model.rs::JOINT_HANDOFF_CASE_DEFINITIONS"
+sha256 = "4bc9c66bd88659a59407e1d296d8df101c0ada14598e759c66713583501d7485"
+case_count = 16
+source_status = "reference-registry-snapshot-not-adapter-qualified"
+
+[[case_mapping]]
+abstract_case_id = "freeze-wins-effect-commit"
+concrete_case_id = "freeze-wins-effect-commit"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "effect-commit-wins-freeze"
+concrete_case_id = "effect-commit-wins-freeze"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "destination-prepare-fails-abort-thaw"
+concrete_case_id = "destination-prepare-fails-abort-thaw"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "commit-ack-lost-query-close"
+concrete_case_id = "commit-ack-lost-query-close"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "frozen-service-crash-rebind"
+concrete_case_id = "frozen-service-crash-rebind"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "unresolved-tombstone-blocks-seal"
+concrete_case_id = "unresolved-tombstone-blocks-seal"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "stale-token-scope-epoch-probes"
+concrete_case_id = "stale-token-scope-epoch-probes"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "abort-commit-race-abort-wins"
+concrete_case_id = "abort-commit-race-abort-wins"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "abort-commit-race-commit-wins"
+concrete_case_id = "abort-commit-race-commit-wins"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "source-crash-after-commit-before-close"
+concrete_case_id = "source-crash-after-commit-before-close"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "destination-crash-before-activation"
+concrete_case_id = "destination-crash-before-activation"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "concurrent-two-destinations"
+concrete_case_id = "concurrent-two-destinations"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "crash-after-freeze-before-seal"
+concrete_case_id = "crash-after-freeze-before-seal"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "stale-destination-prepared-receipt"
+concrete_case_id = "stale-destination-prepared-receipt"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "duplicate-reordered-receipts"
+concrete_case_id = "duplicate-reordered-receipts"
+relation = "case-id-identity"
+
+[[case_mapping]]
+abstract_case_id = "precommit-abort-preserves-uncommitted-effect"
+concrete_case_id = "precommit-abort-preserves-uncommitted-effect"
+relation = "case-id-identity"
+
+[[concrete_extension]]
+concrete_case_id = "supplemental-postcommit-retained-tombstone"
+relation = "post-commit-retained-recovery-extension"
+normative_to_abstract_registry = false

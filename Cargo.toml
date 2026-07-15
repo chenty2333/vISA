@@ -5,6 +5,7 @@ members = [
     "crates/core/artifact_manifest",
     "crates/core/contract_core",
     "crates/core/contract_validate",
+    "crates/core/joint_handoff_core",
     "crates/core/semantic_core",
     "crates/core/target_abi",
     "crates/core/visa_profile",
@@ -26,6 +27,7 @@ members = [
     "crates/runtime/supervisor_catalog",
     "crates/runtime/target_executor",
     "crates/runtime/visa_runtime",
+    "crates/runtime/visa_joint_handoff",
     "crates/runtime/visa_component_adapter",
     "crates/runtime/visa_jco_node",
     "crates/runtime/visa_wacogo",
@@ -38,6 +40,7 @@ members = [
     "crates/testing/stage3-file-component",
     "crates/testing/stage3-request-component",
     "crates/testing/visa-stage3-system",
+    "crates/testing/visa-joint-handoff-system",
     "crates/testing/visa-system",
     "crates/services/console_service",
     "crates/services/devfs_service",
@@ -63,6 +66,7 @@ artifact_manifest = { path = "crates/core/artifact_manifest" }
 bootloader_api = "0.11.15"
 contract_core = { path = "crates/core/contract_core" }
 contract_validate = { path = "crates/core/contract_validate" }
+joint_handoff_core = { path = "crates/core/joint_handoff_core" }
 fatfs = "0.3.6"
 ext4-view = "0.9.3"
 hex = "0.4.3"
@@ -87,6 +91,7 @@ target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
 visa_profile = { path = "crates/core/visa_profile" }
 visa_runtime = { path = "crates/runtime/visa_runtime" }
+visa_joint_handoff = { path = "crates/runtime/visa_joint_handoff" }
 visa_component_adapter = { path = "crates/runtime/visa_component_adapter" }
 visa_jco_node = { path = "crates/runtime/visa_jco_node" }
 visa_wacogo = { path = "crates/runtime/visa_wacogo" }

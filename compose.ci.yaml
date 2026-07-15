@@ -4,6 +4,7 @@ services:
       CARGO_INCREMENTAL: "0"
       CI: "true"
       GITHUB_ACTIONS: ${GITHUB_ACTIONS:-}
+      GITHUB_SHA: ${GITHUB_SHA:-}
       VISA_EVIDENCE_PARENT: /workspace/evidence
     volumes:
       - .:/workspace
