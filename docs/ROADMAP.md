@@ -351,10 +351,10 @@ follow.
 
 Status: complete for `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1` at accepted qualification revision
-`10d2a6138e7d773b2fa4f5195abb850931a477c8`. Both jobs in Actions run
-`29348729990` passed, and its uploaded Stage 4 artifact was downloaded and
-independently reverified at a different root. The exact receipt is recorded in
-[validation](VALIDATION.md#stage-4-closure-receipt).
+`457ae1d64915c0b3febd84e136d08be53063210f`. Actions run
+`29386011420` passed its exact-SHA closure, and its uploaded Stage 4 artifact
+was downloaded and independently reverified at a different root. The exact
+receipt is recorded in [validation](VALIDATION.md#stage-4-closure-receipt).
 
 Goal: hold the Stage 1 Wasmtime timer/KV semantic input fixed while changing
 the named target, ISA, and user-mode execution carrier. This stage asks whether
@@ -444,11 +444,11 @@ performance samples, for which this stage makes no performance claim.
 - the ordinary repository gate, Stage 1 Wasmtime and JcoNode controls, legacy
   and Strict Stage 2 four-cell controls, both Stage 3 resource gates, and the
   dedicated Stage 4 gate all passed at accepted qualification revision
-  `10d2a6138e7d773b2fa4f5195abb850931a477c8`; and
-- Actions run `29348729990` completed successfully, after which the uploaded
-  Stage 4 artifact was downloaded and independently rechecked for verification,
-  exact-set closure, and relocation as recorded in the
-  [closure receipt](VALIDATION.md#stage-4-closure-receipt).
+  `457ae1d64915c0b3febd84e136d08be53063210f`; and
+- Actions run `29386011420` completed its exact-SHA closure successfully, after
+  which the uploaded Stage 4 artifact was downloaded and independently
+  rechecked for verification, exact-set closure, and relocation as recorded in
+  the [closure receipt](VALIDATION.md#stage-4-closure-receipt).
 
 ### Claims explicitly not earned
 

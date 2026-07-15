@@ -488,10 +488,11 @@ Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
 Bounded Roadmap Stage 4 is complete only for its two named claims. Accepted
-qualification revision `10d2a6138e7d773b2fa4f5195abb850931a477c8` passed both
-Docker jobs in Actions run `29348729990`, and the downloaded Stage 4 artifact
-passed independent verification at a different root. The complete receipt is
-recorded in [validation](VALIDATION.md#stage-4-closure-receipt).
+qualification revision `457ae1d64915c0b3febd84e136d08be53063210f` passed all
+eight independent qualification jobs and the exact-SHA closure in Actions run
+`29386011420`; the downloaded Stage 4 artifact passed independent verification
+at a different root. The complete receipt is recorded in
+[validation](VALIDATION.md#stage-4-closure-receipt).
 
 Current CI separates repository quality from claim qualification. One job runs
 `full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,

@@ -441,43 +441,44 @@ the runtime is not linked and its old engine path remains a stub. Neither state
 is presented as a passing cell.
 
 The complete bounded matrix and all negative/relocation checks are locally
-green. The accepted qualification SHA also passed both parallel CI jobs,
-including `full`, Stage 1, JcoNode, legacy and Strict Stage 2, Stage 3A/B, and
-the separate Stage 4 aggregate; its downloaded artifact passed independent
-verification again.
+green. The accepted qualification SHA also passed the complete CI workflow,
+including `full`, Stage 1, JcoNode, legacy and Strict Stage 2, Stage 3A/B, the
+separate Stage 4 aggregate, and the exact-SHA closure; its downloaded artifact
+passed independent verification again.
 
 ### Stage 4 closure receipt
 
 Roadmap Stage 4 closed on 2026-07-15 at accepted qualification revision
-[`10d2a6138e7d773b2fa4f5195abb850931a477c8`](https://github.com/chenty2333/vISA/commit/10d2a6138e7d773b2fa4f5195abb850931a477c8)
+[`457ae1d64915c0b3febd84e136d08be53063210f`](https://github.com/chenty2333/vISA/commit/457ae1d64915c0b3febd84e136d08be53063210f)
 through GitHub Actions run
-[`29348729990`](https://github.com/chenty2333/vISA/actions/runs/29348729990),
-which completed at 2026-07-15 02:33:47 +08:00. Both `Docker dev gate` and
-`Docker Stage 4 target and ISA gate` concluded `success` at that exact SHA.
+[`29386011420`](https://github.com/chenty2333/vISA/actions/runs/29386011420),
+which completed at 2026-07-15 12:57:00 +08:00. All eight independent
+qualification jobs and `Exact-SHA qualification closure` concluded `success`
+at that exact SHA.
 
 The run uploaded `stage4-target-isa-system-evidence` as artifact ID
-`8317869015`; GitHub reported archive digest
-`sha256:38cb4c834eb890df23237f7ca60d89a64592fd0e3568707041b548dc10bd5637`.
-The artifact was downloaded below the ignored
-`.ci-cache/remote-stage4-10d2a613/` parent, distinct from the retained historical
-execution root `/workspace/target/visa-system/stage4-Trq6jL`. The inner
-`stage4-Trq6jL-relocated` bundle passed the independent verifier built from the
+`8332365550`; GitHub reported archive digest
+`sha256:e6da2259f2e36f9053f48fe2c9fc7e2692cf887f4546a13f2570728eb17f0bf2`
+and size `120726772` bytes. The artifact was downloaded below the host-local
+`/tmp/visa-final-validation/` parent, distinct from the retained historical
+execution root `/workspace/evidence/stage4-QMEhgk`. The inner
+`stage4-QMEhgk-relocated` bundle passed the independent verifier built from the
 same qualification revision. It was then moved without JSON changes to
-`stage4-Trq6jL-relocated-again` and this exact command also exited 0:
+`stage4-QMEhgk-relocated-again` and this exact command also exited 0:
 
 ```sh
 cargo run --locked -q -p visa-conformance --bin visa-conformance -- \
   stage4 \
-  .ci-cache/remote-stage4-10d2a613/stage4-Trq6jL-relocated-again/stage4-evidence.json \
-  .ci-cache/remote-stage4-10d2a613/stage4-Trq6jL-relocated-again
+  /tmp/visa-final-validation/stage4-QMEhgk-relocated-again/stage4-evidence.json \
+  /tmp/visa-final-validation/stage4-QMEhgk-relocated-again
 ```
 
 That post-download verification rechecked marker/status absence, the exact
 1,789-file inventory, 217/217 executions, all seven independently verified
 inner Stage 1 bundles, and all 31 equal normalized groups. The downloaded
-bundle ID is `stage4-8ee5d615a144acaff5dde40a`; its
+bundle ID is `stage4-437d2ad93d373e288eea1c39`; its
 `stage4-evidence.json` SHA-256 is
-`8e439bb34f83120432ef897e0067db31bb7db8503a25fac570dda2020a9b6dc9`.
+`198718a8c1b833bca0fc2a9be02d0d9e68ae3994a0bde23b9364dd0a10496fbb`.
 This receipt closes only the two named Stage 4 claims and does not promote the
 host receipt, QEMU execution, or identified sysroots into portable semantic
 truth.
