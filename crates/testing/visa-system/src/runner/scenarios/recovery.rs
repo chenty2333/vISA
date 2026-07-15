@@ -2,7 +2,8 @@ use std::thread;
 
 use super::{
     super::{RunnerError, WORKER_TIMEOUT, harness::CaseHarness, support::state_result},
-    common::{abort_precommit_to_source, assert_post_commit_source_rejected, run_pending_handoff},
+    common::{abort_precommit_to_source, assert_post_commit_source_rejected},
+    success::run_handoff_with_precompleted_timer,
 };
 use crate::protocol::{
     CrashMode, ResponseEnvelope, ResponseOutcome, WorkerCommand, WorkerErrorCode, WorkerResult,
@@ -114,7 +115,7 @@ pub(super) fn run_crash_after_commit(harness: &mut CaseHarness) -> Result<(), Ru
 }
 
 pub(super) fn run_duplicate_restore(harness: &mut CaseHarness) -> Result<(), RunnerError> {
-    run_pending_handoff(harness, false)?;
+    run_handoff_with_precompleted_timer(harness)?;
     let expected = harness
         .latest_destination
         .as_ref()
@@ -181,5 +182,5 @@ pub(super) fn run_repeated_cleanup(harness: &mut CaseHarness) -> Result<(), Runn
 }
 
 pub(super) fn run_report_failure(harness: &mut CaseHarness) -> Result<(), RunnerError> {
-    run_pending_handoff(harness, false)
+    run_handoff_with_precompleted_timer(harness)
 }

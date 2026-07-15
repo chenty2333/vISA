@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 use visa_conformance::{
     STAGE1_CASE_DEFINITIONS, Stage1CaseClass, Stage1CaseDefinition, Stage1FaultInjection,
-    Stage1FaultSchedule,
+    Stage1FaultSchedule, Stage2SnapshotTimerStrategy, stage2_snapshot_timer_strategy,
 };
 use visa_runtime::{canonical_bytes, canonical_digest};
 
@@ -153,6 +153,7 @@ pub(super) struct CasePlan {
     pub(super) source_fault: Option<FaultPointSpec>,
     pub(super) destination_fault: Option<FaultPointSpec>,
     pub(super) destination_support: DestinationSupportMode,
+    pub(super) snapshot_timer_strategy: Stage2SnapshotTimerStrategy,
     pub(super) scenario: String,
 }
 
@@ -165,6 +166,10 @@ impl CasePlan {
         let mut source_fault = None;
         let mut destination_fault = None;
         let mut destination_support = DestinationSupportMode::Compatible;
+        let snapshot_timer_strategy =
+            stage2_snapshot_timer_strategy(definition.id).ok_or_else(|| RunnerError::Registry {
+                detail: format!("{} has no snapshot timer strategy", definition.id),
+            })?;
         match kind {
             CaseKind::KvUnknown => source_fault = Some(FaultPointSpec::AfterKvCommit),
             CaseKind::MissingAuthority => {
@@ -193,7 +198,8 @@ impl CasePlan {
             source_fault,
             destination_fault,
             destination_support,
-            scenario: format!("{kind:?}"),
+            snapshot_timer_strategy,
+            scenario: format!("{kind:?}/timer={snapshot_timer_strategy:?}"),
         })
     }
 }
@@ -383,5 +389,76 @@ mod tests {
                 .collect::<Vec<_>>(),
             STAGE1_CASE_DEFINITIONS.iter().map(|definition| definition.id).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn every_case_has_one_explicit_snapshot_timer_strategy() {
+        let pending = BTreeSet::from([
+            "timer-positive-duration-at-freeze",
+            "timer-paused-during-long-handoff",
+            "timer-semantics-unsupported",
+        ]);
+        let scenario_controlled = BTreeSet::from([
+            "timer-completes-during-quiescence",
+            "timer-cancelled-during-quiescence",
+            "performance-observations",
+            "safe-point-unreachable",
+            "unsupported-live-resource-or-borrow",
+            "repeated-cancel-abort-cleanup",
+        ]);
+        let precompleted = BTreeSet::from([
+            "authority-sufficient-narrower",
+            "kv-duplicate-idempotent-request",
+            "handoff-repeated-validation-prepare",
+            "journal-replay",
+            "source-post-commit-stale-attempt",
+            "evidence-verification",
+            "kv-unknown-outcome",
+            "corrupt-snapshot-or-component-digest",
+            "incompatible-snapshot-or-profile-version",
+            "unknown-extension-or-profile-mismatch",
+            "destination-authority-missing-or-insufficient",
+            "required-capability-revoked",
+            "adapter-broader-authority",
+            "kv-binding-wrong-or-missing",
+            "destination-crash-before-commit",
+            "prepare-message-duplicate-or-lost",
+            "commit-acknowledgement-lost",
+            "source-races-with-commit",
+            "destination-crash-after-commit",
+            "duplicate-restore-or-stale-snapshot",
+            "durable-journal-or-commit-write-fails",
+            "report-generation-fails-after-commit",
+        ]);
+
+        assert!(pending.is_disjoint(&scenario_controlled));
+        assert!(pending.is_disjoint(&precompleted));
+        assert!(scenario_controlled.is_disjoint(&precompleted));
+        let catalog =
+            STAGE1_CASE_DEFINITIONS.iter().map(|definition| definition.id).collect::<BTreeSet<_>>();
+        let partition = pending
+            .union(&scenario_controlled)
+            .copied()
+            .chain(precompleted.iter().copied())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(partition, catalog);
+
+        for definition in STAGE1_CASE_DEFINITIONS {
+            let plan = CasePlan::new(definition).expect("registered case has a timer strategy");
+            let expected = if pending.contains(definition.id) {
+                Stage2SnapshotTimerStrategy::Pending
+            } else if scenario_controlled.contains(definition.id) {
+                Stage2SnapshotTimerStrategy::ScenarioControlled
+            } else if precompleted.contains(definition.id) {
+                Stage2SnapshotTimerStrategy::Precompleted
+            } else {
+                panic!("{} is missing from the timer strategy partition", definition.id)
+            };
+            assert_eq!(plan.snapshot_timer_strategy, expected, "{}", definition.id);
+            assert!(
+                plan.scenario.ends_with(&format!("timer={expected:?}")),
+                "timer strategy must be bound into scenario provenance"
+            );
+        }
     }
 }

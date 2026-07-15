@@ -1407,14 +1407,17 @@ fn validate_case_artifacts(
         validate_artifact_reference(bundle, case, "raw_execution", raw, &mut uris, findings);
     }
 
-    if stage1_expected_ownership(case.outcome) != Stage1ExpectedOwnership::SourceRetained {
-        if case.artifacts.snapshot.is_none() {
-            push_finding(
-                findings,
-                "missing-stage1-case-snapshot",
-                format!("{} completed commit without a snapshot reference", case.case_id),
-            );
-        }
+    let expected_ownership = stage1_expected_ownership(case.outcome);
+    let snapshot_required = expected_ownership != Stage1ExpectedOwnership::SourceRetained
+        || case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection;
+    if snapshot_required && case.artifacts.snapshot.is_none() {
+        push_finding(
+            findings,
+            "missing-stage1-case-snapshot",
+            format!("{} requires a locked snapshot reference", case.case_id),
+        );
+    }
+    if expected_ownership != Stage1ExpectedOwnership::SourceRetained {
         for resource in
             [Stage1ResourceKind::PausedDurationTimer, Stage1ResourceKind::DurableKeyValue]
         {

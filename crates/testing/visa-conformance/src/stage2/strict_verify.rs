@@ -2,7 +2,10 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 use super::{
     artifacts::{finding, read_and_hash, read_contained, single_finding},
-    common::{accepted_registry_sha256, validate_common_input, validate_cross_cell_inputs},
+    common::{
+        accepted_registry_sha256, parse_common_input, validate_common_input,
+        validate_cross_cell_inputs,
+    },
     model::*,
     strict_lineage::{
         STAGE2_STRICT_LINEAGE_ROOT, StrictCargoLockIdentity, load_and_validate_strict_lineage,
@@ -132,10 +135,10 @@ fn validate_stage2_strict_evidence_artifacts_impl(
         Some(bytes) => bytes,
         None => return Stage2ValidationReport::new(findings),
     };
-    let common: Stage2CommonInputManifest = match serde_json::from_slice(&common_bytes) {
+    let common = match parse_common_input(&common_bytes) {
         Ok(common) => common,
         Err(source) => {
-            finding(&mut findings, "invalid-stage2-common-input-json", source.to_string());
+            finding(&mut findings, source.code, source.detail);
             return Stage2ValidationReport::new(findings);
         }
     };

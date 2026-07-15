@@ -93,10 +93,12 @@ real persistent adapter rather than an in-memory mock.
 The timer exercises asynchronous waiting, deadlines, cancellation, quiescence,
 and reconstruction without importing network protocol complexity.
 
-The Stage 1 timer stores a remaining logical duration at freeze and starts a
-fresh host-monotonic wait after destination commit. Time spent frozen does not
-consume that duration. This deliberately avoids comparing unrelated host
-monotonic epochs and makes no wall-clock deadline-continuity claim.
+The Stage 1 timer stores a remaining logical duration only for a pending freeze
+and starts a fresh host-monotonic wait after destination commit. Completed or
+cancelled freezes retain their terminal disposition and are not recreated. Time
+spent frozen does not consume a pending duration. This deliberately avoids
+comparing unrelated host monotonic epochs and makes no wall-clock
+deadline-continuity claim.
 
 The KV namespace exercises external authority, persistent effects,
 idempotency, target-side rebinding, and source fencing. Together they expose the
@@ -392,7 +394,9 @@ The completed matrix earns exactly these two bounded claims:
 
 `Qx->Qx` is the shared control, so the two claims require seven unique cells.
 Each cell executes all 31 Stage 1 cases: 217 case executions in total and one
-seven-cell normalized equality group for each of the 31 registered cases.
+seven-cell normalized equality group for each of the 31 registered cases. The
+Stage 4 common input and verifier also retain the same typed 3 Pending / 22
+Precompleted / 6 ScenarioControlled timer-strategy partition used by Stage 2.
 
 ### Evidence boundary
 
@@ -427,8 +431,9 @@ performance samples, for which this stage makes no performance claim.
   output;
 - the independent Stage 4 verifier reconstructs the common input and case
   manifests from retained artifacts, recomputes Stage 2 normalization, checks
-  both exact claim cell sets, and rejects failed, unsupported, or not-run cells
-  from either claim;
+  every snapshot and authoritative final branch against the typed timer
+  strategy, checks both exact claim cell sets, and rejects failed, unsupported,
+  or not-run cells from either claim;
 - successful evidence publication is atomic and fail-closed, contains the exact
   expected artifact set with no incomplete marker or unreferenced additions,
   and preserves explicit `unsupported` and `not-run` qualification records;

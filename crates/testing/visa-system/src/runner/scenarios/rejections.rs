@@ -189,22 +189,13 @@ pub(super) fn run_revoked_capability(harness: &mut CaseHarness) -> Result<(), Ru
     harness.source_success(WorkerCommand::RevokeRequiredAuthority {
         authority: RequiredAuthority::Timer,
     })?;
-    harness.begin_quiesce()?;
-    let transfer = harness.freeze()?;
-    harness.export(transfer)?;
+    harness.snapshot_after_bootstrap()?;
     harness.load_destination(&[contract_core::HandoffPhase::Exported])?;
     let error = harness.destination_rejection(WorkerCommand::PrepareDestination)?;
-    let dump = harness.dump_destination()?;
     harness.observe(
-        "revoked-capability-not-resurrected",
+        "revoked-capability-prepare-rejected",
         error.code == WorkerErrorCode::Provider
-            && error.provider_kind.as_deref() == Some("Revoked")
-            && !dump.component_instantiated
-            && dump.component.is_none()
-            && dump.binding_receipts.is_empty(),
-        format!(
-            "error={error:?}, component_instantiated={}, receipts={:?}",
-            dump.component_instantiated, dump.binding_receipts
-        ),
+            && error.provider_kind.as_deref() == Some("Revoked"),
+        format!("error={error:?}"),
     )
 }

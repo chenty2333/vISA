@@ -307,7 +307,10 @@ That is 217 case executions, seven independently verified inner Stage 1
 bundles, and 31 normalized observable groups compared across all seven cells.
 The Stage 4 release build locks its own Component byte digest; it uses the same
 Stage 1 source/WIT contract but is intentionally a different build artifact
-from Strict Stage 2's dev-profile Component.
+from Strict Stage 2's dev-profile Component. The Stage 4 common input uses its
+v2 schema to retain the same typed 3 Pending / 22 Precompleted / 6
+ScenarioControlled timer-strategy partition as the Stage 2 common input; the
+verifier checks both the snapshot disposition and authoritative final branch.
 The aggregate publishes only `named-target-substrate-continuity-v1` for the
 four Hx/Qx cells and `emulated-cross-isa-continuity-v1` for the four Qx/Qa
 cells; the shared `Qx -> Qx` cell belongs to both claims. Workers, QEMU

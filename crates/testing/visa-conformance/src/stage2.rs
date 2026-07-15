@@ -13,8 +13,9 @@ mod writer;
 
 #[cfg(test)]
 pub(crate) use artifacts::{publish_atomic, read_contained};
+pub(crate) use common::normalized_case_matches_snapshot_timer_strategy;
 #[cfg(test)]
-pub(crate) use common::validate_common_input;
+pub(crate) use common::{parse_common_input, validate_common_input};
 #[cfg(test)]
 pub(crate) use instantiation::{
     audit_runtime_transcript_for_test, audit_runtime_transcript_observation_for_test,

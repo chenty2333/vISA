@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Stage1AuthorityEnforcementIdentity, Stage1EvidenceKind, Stage1FaultSchedule,
     Stage1ProviderIdentity, Stage1ResourceProfile, Stage1VersionedIdentity,
+    Stage2SnapshotTimerStrategy,
 };
 
 pub const STAGE4_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage4-evidence-v1";
 pub const STAGE4_MATRIX_SCHEMA_VERSION: &str = "visa-stage4-matrix-v1";
-pub const STAGE4_COMMON_INPUT_SCHEMA_VERSION: &str = "visa-stage4-common-input-v1";
+pub const STAGE4_COMMON_INPUT_SCHEMA_VERSION: &str = "visa-stage4-common-input-v2";
 pub const STAGE4_BUILD_RECEIPT_SCHEMA_VERSION: &str = "visa-stage4-build-receipt-v1";
 pub const STAGE4_LAUNCHER_RECEIPT_SCHEMA_VERSION: &str = "visa-stage4-launcher-receipt-v1";
 pub const STAGE4_SYSROOT_RECEIPT_SCHEMA_VERSION: &str = "visa-stage4-sysroot-receipt-v1";
@@ -34,7 +35,7 @@ pub const STAGE4_ACCEPTED_COMPONENT_SHA256: &str =
     "64ac7689f90a09f2b0a6756cf9087e952e775f81470c57b1c12a988ecee967af";
 // Updated only by an explicit endpoint/cell/claim/case registry review.
 pub const STAGE4_ACCEPTED_REGISTRY_SHA256: &str =
-    "8c502a98254f28e03eddb69abb1743e6d7b276349e4cce027c37bc8ce90dfd58";
+    "add0099df5d8b8f89c847496ab151347e1b6051810f2beb722f8b0ddc3e23cdf";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Stage4EndpointId {
@@ -435,6 +436,7 @@ pub struct Stage4CommonCaseInput {
     pub case_id: String,
     pub case_config_sha256: String,
     pub case_policy_sha256: String,
+    pub snapshot_timer_strategy: Stage2SnapshotTimerStrategy,
     pub fault_schedule: Stage1FaultSchedule,
 }
 

@@ -65,7 +65,7 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
             Ok(CancelledTimerCleanedNotRecreated)
         }
         CaseKind::AuthorityNarrower => {
-            run_pending_handoff(harness, false)?;
+            run_handoff_with_precompleted_timer(harness)?;
             assert_narrow_destination_authority(harness)?;
             Ok(RestoredWithNarrowerAuthority)
         }
@@ -82,16 +82,16 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
             Ok(PrepareIdempotentInactive)
         }
         CaseKind::JournalReplay => {
-            run_pending_handoff(harness, false)?;
+            run_handoff_with_precompleted_timer(harness)?;
             Ok(ReplayDigestMatched)
         }
         CaseKind::StaleSource => {
-            run_pending_handoff(harness, false)?;
+            run_handoff_with_precompleted_timer(harness)?;
             assert_post_commit_source_rejected(harness)?;
             Ok(StaleSourceRejected)
         }
         CaseKind::EvidenceVerification => {
-            run_pending_handoff(harness, false)?;
+            run_handoff_with_precompleted_timer(harness)?;
             assert_evidence_identities(harness)?;
             run_supplemental_fault_coverage(harness)?;
             Ok(EvidenceIdentityVerified)
@@ -133,7 +133,7 @@ pub(super) fn execute_case(harness: &mut CaseHarness) -> Result<Stage1CaseOutcom
             Ok(RevocationRejectedNoResurrection)
         }
         CaseKind::BroaderAuthority => {
-            run_pending_handoff(harness, false)?;
+            run_handoff_with_precompleted_timer(harness)?;
             assert_broader_policy_input(harness)?;
             assert_narrow_destination_authority(harness)?;
             Ok(ExcessAuthorityAttenuated)

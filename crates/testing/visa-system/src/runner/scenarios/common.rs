@@ -65,9 +65,28 @@ pub(super) fn abort_precommit_to_source(
     let resumed =
         state_result(harness.definition.id, harness.source_success(WorkerCommand::ThawSource)?)?;
     let dump = harness.dump_source()?;
-    let component_resumed = dump.component.as_ref().is_some_and(|component| {
-        component.phase == WorkloadPhaseView::Armed && component.expected_version == 1
-    });
+    let snapshot_timer = harness.snapshot.as_ref().map(|snapshot| snapshot.timer);
+    let workload_resumed = match snapshot_timer {
+        Some(SafePointTimerView::Pending { .. }) => {
+            dump.component.as_ref().is_some_and(|component| {
+                component.phase == WorkloadPhaseView::Armed && component.expected_version == 1
+            }) && matches!(
+                dump.canonical_state.timer.status,
+                contract_core::TimerStatus::Armed { remaining } if remaining.0 > 0
+            ) && dump.key_value_entry.as_ref().is_some_and(|value| {
+                value.version == 1 && value.value == harness.fixture.activation.initial_value
+            })
+        }
+        Some(SafePointTimerView::Completed { .. }) => {
+            dump.component.as_ref().is_some_and(|component| {
+                component.phase == WorkloadPhaseView::Completed && component.expected_version == 2
+            }) && dump.canonical_state.timer.status == contract_core::TimerStatus::Completed
+                && dump.key_value_entry.as_ref().is_some_and(|value| {
+                    value.version == 2 && value.value == harness.fixture.activation.completion_value
+                })
+        }
+        _ => false,
+    };
     let source_lease_epoch = harness.fixture.activation.initial_lease_epoch;
     harness.observe(
         observation,
@@ -84,9 +103,9 @@ pub(super) fn abort_precommit_to_source(
             && dump.leases.iter().all(|lease| {
                 lease.owner == harness.fixture.ids.source_node && lease.epoch == source_lease_epoch
             })
-            && component_resumed,
+            && workload_resumed,
         format!(
-            "aborted={:?}, resumed={:?}, canonical={:?}, activation={:?}, ownership={:?}, leases={:?}, receipts={:?}, component={:?}",
+            "aborted={:?}, resumed={:?}, canonical={:?}, activation={:?}, ownership={:?}, leases={:?}, receipts={:?}, snapshot_timer={snapshot_timer:?}, timer={:?}, component={:?}, kv={:?}",
             aborted.canonical_phase,
             resumed.canonical_phase,
             dump.canonical_state.phase,
@@ -94,7 +113,9 @@ pub(super) fn abort_precommit_to_source(
             dump.canonical_state.ownership,
             dump.leases,
             dump.binding_receipts,
+            dump.canonical_state.timer.status,
             dump.component,
+            dump.key_value_entry,
         ),
     )
 }

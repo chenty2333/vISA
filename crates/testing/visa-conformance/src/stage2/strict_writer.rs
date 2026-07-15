@@ -5,7 +5,10 @@ use super::{
         ensure_incomplete_marker, publish_atomic, read_contained, remove_if_exists,
         render_findings, sync_directory, write_error, write_from_finding,
     },
-    common::{accepted_registry_sha256, validate_common_input, validate_cross_cell_inputs},
+    common::{
+        accepted_registry_sha256, parse_common_input, validate_common_input,
+        validate_cross_cell_inputs,
+    },
     model::*,
     strict_lineage::load_and_validate_strict_lineage,
     strict_model::*,
@@ -37,13 +40,12 @@ pub fn write_stage2_strict_evidence_artifacts(
 
     let common_uri = STAGE2_COMMON_INPUT_FILE.to_owned();
     let common_bytes = read_contained(&stage2_root, &common_uri).map_err(write_from_finding)?;
-    let common: Stage2CommonInputManifest =
-        serde_json::from_slice(&common_bytes).map_err(|source| {
-            write_error(
-                "invalid-stage2-common-input-json",
-                format!("cannot parse {STAGE2_COMMON_INPUT_FILE}: {source}"),
-            )
-        })?;
+    let common = parse_common_input(&common_bytes).map_err(|source| {
+        write_error(
+            source.code,
+            format!("cannot parse {STAGE2_COMMON_INPUT_FILE}: {}", source.detail),
+        )
+    })?;
     let common_findings = validate_common_input(&common, &stage2_root);
     if !common_findings.is_empty() {
         return Err(write_error(

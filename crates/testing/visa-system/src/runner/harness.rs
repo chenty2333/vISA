@@ -5,7 +5,9 @@ use std::{
 };
 
 use serde::Serialize;
-use visa_conformance::{Stage1CaseDefinition, Stage1CaseOutcome, Stage1PerformanceMetric};
+use visa_conformance::{
+    Stage1CaseDefinition, Stage1CaseOutcome, Stage1PerformanceMetric, Stage2SnapshotTimerStrategy,
+};
 
 use super::{
     RoleLaunchers, RunnerError, TIMER_MARGIN, TranscriptLine, TranscriptStream,
@@ -39,6 +41,7 @@ pub(super) struct DumpData {
     pub(super) state_digest: contract_core::Digest,
     pub(super) journal: Vec<contract_core::JournalEntry>,
     pub(super) leases: Vec<LeaseRecordView>,
+    pub(super) authority_grants: Vec<contract_core::AuthorityGrant>,
     pub(super) binding_receipts: Vec<contract_core::BindingReceipt>,
     pub(super) fault_observation: Option<FaultObservationView>,
     pub(super) key_value_entry: Option<contract_core::VersionedValue>,
@@ -54,6 +57,7 @@ impl DumpData {
             state_digest,
             journal,
             leases,
+            authority_grants,
             binding_receipts,
             fault_observation,
             key_value_entry,
@@ -73,6 +77,7 @@ impl DumpData {
             state_digest,
             journal,
             leases,
+            authority_grants,
             binding_receipts,
             fault_observation,
             key_value_entry,
@@ -461,8 +466,54 @@ impl CaseHarness {
 
     pub(super) fn bootstrap_snapshot(&mut self) -> Result<SnapshotTransfer, RunnerError> {
         self.bootstrap()?;
+        self.snapshot_after_bootstrap()
+    }
+
+    pub(super) fn snapshot_after_bootstrap(&mut self) -> Result<SnapshotTransfer, RunnerError> {
+        let strategy = self.plan.snapshot_timer_strategy;
+        match strategy {
+            Stage2SnapshotTimerStrategy::Pending => {}
+            Stage2SnapshotTimerStrategy::Precompleted => {
+                thread::sleep(
+                    Duration::from_nanos(self.fixture.activation.delay_ns) + TIMER_MARGIN,
+                );
+            }
+            Stage2SnapshotTimerStrategy::ScenarioControlled => {
+                return Err(RunnerError::Assertion {
+                    case_id: self.definition.id.to_owned(),
+                    detail: "scenario-controlled timer cannot use the generic snapshot path"
+                        .to_owned(),
+                });
+            }
+        }
         self.begin_quiesce()?;
         let transfer = self.freeze()?;
+        match strategy {
+            Stage2SnapshotTimerStrategy::Pending => {
+                if !matches!(
+                    transfer.timer,
+                    SafePointTimerView::Pending { remaining, .. } if remaining.0 > 0
+                ) {
+                    return Err(RunnerError::Assertion {
+                        case_id: self.definition.id.to_owned(),
+                        detail: format!(
+                            "pending snapshot strategy froze timer as {:?}",
+                            transfer.timer
+                        ),
+                    });
+                }
+            }
+            Stage2SnapshotTimerStrategy::Precompleted => {
+                self.observe(
+                    "pre-handoff-completion-captured",
+                    matches!(transfer.timer, SafePointTimerView::Completed { .. }),
+                    format!("timer={:?}", transfer.timer),
+                )?;
+            }
+            Stage2SnapshotTimerStrategy::ScenarioControlled => {
+                unreachable!("scenario-controlled strategy was rejected before quiescence")
+            }
+        }
         self.export(transfer)
     }
 
@@ -487,11 +538,14 @@ impl CaseHarness {
             case_id: self.definition.id.to_owned(),
             detail: "destination load requires a snapshot".to_owned(),
         })?;
+        let envelope = transfer.envelope.ok_or_else(|| RunnerError::Assertion {
+            case_id: self.definition.id.to_owned(),
+            detail: "destination load requires an exported envelope".to_owned(),
+        })?;
+        let expected_resources =
+            [envelope.body.claims.timer.resource, envelope.body.claims.key_value.resource];
         let result = self.destination_success(WorkerCommand::LoadDestination {
-            envelope: transfer.envelope.ok_or_else(|| RunnerError::Assertion {
-                case_id: self.definition.id.to_owned(),
-                detail: "destination load requires an exported envelope".to_owned(),
-            })?,
+            envelope,
             component_state: transfer.component_state,
         })?;
         let view = state_result(self.definition.id, result)?;
@@ -507,23 +561,32 @@ impl CaseHarness {
         }
         let owner = dump.canonical_state.ownership.owner;
         let epoch = dump.canonical_state.ownership.epoch;
+        let exact_canonical_leases = dump.leases.len() == expected_resources.len()
+            && expected_resources.iter().all(|resource| {
+                dump.leases.iter().any(|lease| {
+                    lease.resource == *resource
+                        && Some(lease.owner) == owner
+                        && lease.epoch == epoch
+                })
+            });
+        let key_value_version_matches = dump.key_value_entry.as_ref().map(|value| value.version)
+            == dump.canonical_state.key_value.last_version;
         self.observe(
             "destination-load-does-not-self-activate-or-change-leases",
             !view.component_instantiated
                 && !dump.component_instantiated
                 && dump.component.is_none()
                 && owner.is_some()
-                && dump
-                    .leases
-                    .iter()
-                    .all(|lease| Some(lease.owner) == owner && lease.epoch == epoch),
+                && exact_canonical_leases
+                && key_value_version_matches,
             format!(
-                "component_instantiated={}/{}, component={:?}, ownership={:?}, leases={:?}",
+                "component_instantiated={}/{}, component={:?}, ownership={:?}, leases={:?}, key_value={:?}",
                 view.component_instantiated,
                 dump.component_instantiated,
                 dump.component,
                 dump.canonical_state.ownership,
-                dump.leases
+                dump.leases,
+                dump.key_value_entry,
             ),
         )?;
         Ok(view)

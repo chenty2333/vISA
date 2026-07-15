@@ -178,15 +178,23 @@ typed traces, receipts, faults, authority evidence, and provenance. It is
 standalone and does not repeat `full`. This is the basis for the named
 single-runtime reference-cell claim, not a broader continuity claim.
 
-Timer state is selected by the case that owns the claim. The dedicated positive,
-paused, completed, and cancelled timer cases retain their distinct branches.
-`kv-duplicate-idempotent-request`, `kv-unknown-outcome`, and
-`commit-acknowledgement-lost` instead wait for the unchanged 50 ms timer before
-starting handoff or the commit fault window, require the `Completed` snapshot
-branch, and prove that restore does not recreate it. Their claims concern KV
-replay/reconciliation or durable commit reconciliation, not timer-pending
-behavior. This keeps host descheduling out of those claims without changing the
-workload input or adding a Stage 2 normalization exclusion.
+Timer state is selected by an exhaustive case-registry strategy. The dedicated
+`visa-stage2-common-input-v2` contract fixes all 31 cases as three `Pending`, 22
+`Precompleted`, and six `ScenarioControlled` strategies. The dedicated positive,
+paused, completed, cancelled, and cleanup cases retain their distinct branches,
+while `timer-semantics-unsupported` retains a positive `Pending` snapshot for its
+capability rejection. Cases whose primary claim is not timer disposition wait
+for the unchanged 50 ms timer before handoff, require the `Completed` snapshot
+branch, and prove that the authoritative final trace does not recreate it.
+Scenario-controlled safe-point/live-resource rejections publish no snapshot and
+must return to a running source with a positive armed timer. This keeps host
+descheduling out of authority, KV, journal, recovery, and evidence claims without
+changing the workload input, weakening exact cross-cell comparison, or adding a
+Stage 2 normalization exclusion. Pre-commit abort checks derive their exact
+component, timer, and KV expectation from the already locked snapshot branch.
+The outer strategy check proves the case-specific snapshot disposition and
+authoritative final branch. Ordering within quiescence remains a Stage 1
+trace/raw-evidence obligation; it is not a wall-clock chronology claim.
 
 ### Stage 2 system cells
 
@@ -221,14 +229,16 @@ remains available through legacy v2.
 
 The common input is immutable for each whole matrix and binds the original
 Component, WIT world, profile, configuration, policy, case registry, fault
-schedules, and schema/codec identities. Every cell uses fresh workers, runtime
-instances, provider storage, and native handles. The outer verifier first
-completes the full Stage 1 validation of every inner bundle, then independently
-recomputes a versioned typed normalization and compares all 31 four-cell groups.
-Runtime identity, translation provenance, cell completeness, and no-fallback
-facts are checked exactly outside normalization. A normalization version may
-exclude only its declared non-portable observations; it cannot expand its
-exclusions to conceal a behavioral difference or malformed inner evidence.
+schedules, typed snapshot-timer strategies, and schema/codec identities. Every
+cell uses fresh workers, runtime instances, provider storage, and native handles.
+The outer verifier first completes the full Stage 1 validation of every inner
+bundle, then independently recomputes a versioned typed normalization, verifies
+each actual snapshot and authoritative final branch against the accepted
+strategy, and compares all 31 four-cell groups. Runtime identity, translation
+provenance, cell completeness, and no-fallback facts are checked exactly outside
+normalization. A normalization version may exclude only its declared
+non-portable observations; it cannot expand its exclusions to conceal a
+behavioral difference or malformed inner evidence.
 
 ### Stage 3 resource-profile cells
 
@@ -628,18 +638,20 @@ independent horizontal demos.
 
 ### Workload and resource profile
 
-The component owns a portable work/session identity and a pending logical timer.
-It has only the rights needed to read/conditionally update one durable KV
-namespace and arm/cancel that timer.
+The component owns a portable work/session identity and one logical timer. It has
+only the rights needed to read/conditionally update one durable KV namespace and
+arm/cancel that timer. The accepted case strategy decides whether the safe point
+captures that timer as pending, completed, cancelled, or no snapshot at all.
 
-The source records a baseline value and arms the timer. At freeze, the Stage 1
-profile records its remaining duration rather than a host-monotonic timestamp.
-The duration is paused during handoff; after commit, the destination rebinds the
-same namespace and starts a fresh monotonic wait for that duration. On expiry,
-one canonical operation conditionally updates the value. Operation identity,
-an idempotency key, and a fencing epoch protect the effect; universal
-exactly-once is not claimed. This profile does not preserve a wall-clock
-deadline.
+The source records a baseline value and arms the timer. A pending freeze records
+its remaining duration rather than a host-monotonic timestamp. The duration is
+paused during handoff; after commit, the destination rebinds the same namespace
+and starts a fresh monotonic wait for that duration. Completed and cancelled
+freezes instead retain their terminal disposition and must not create another
+destination timer. On expiry, one canonical operation conditionally updates the
+value. Operation identity, an idempotency key, and a fencing epoch protect the
+effect; universal exactly-once is not claimed. This profile does not preserve a
+wall-clock deadline.
 
 Restoring a pending timer creates a fresh destination arm whose causal parent is
 the source arm recorded at the safe point. Because real time elapses after that
@@ -695,7 +707,7 @@ additional ISA or resource profile still requires its own matrix cells.
 | Incompatible snapshot or component-profile version | Reject before bindings or component execution; do not guess a downgrade. |
 | Unknown required extension/profile mismatch | Reject destination preparation without downgrade. |
 | Missing or insufficient destination authority | Reject before execution; snapshot data grants no rights. |
-| Required capability was revoked | Reject rebinding and prevent the snapshot from resurrecting the old authority. |
+| Required capability was revoked | Retain one `Completed` snapshot exactly projected by the authoritative source. The primary destination response lifecycle must be exactly `Initialize -> LoadDestination -> Dump -> PrepareDestination/Provider/Revoked -> Dump`; its two inert dumps bind the unclaimed destination trace base/final, preserve the two source-owned timer/KV leases and KV observation, and create no binding or workload session. A fresh source recovery must produce exactly one audit dump equal to the unique primary-source final dump, retaining `Exported + Frozen(Completed)` and the revoked authority without thawing the workload. |
 | Adapter returns broader authority | Attenuate to the authorized intersection or reject; never expose the excess. |
 | Wrong/missing KV namespace binding | Reject preparation; do not substitute another namespace. |
 | Timer deadline semantics unsupported | Reject preparation rather than silently changing clock behavior. |

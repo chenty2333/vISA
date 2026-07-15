@@ -54,6 +54,44 @@ pub(super) fn finalize_case(
                 case_id: harness.definition.id.to_owned(),
                 detail: "revocation outcome has no live exported source state".to_owned(),
             })?;
+            let destination_base =
+                harness.destination_base.as_ref().ok_or_else(|| RunnerError::Assertion {
+                    case_id: harness.definition.id.to_owned(),
+                    detail: "revocation outcome has no destination baseline dump".to_owned(),
+                })?;
+            let destination_final =
+                live_destination.as_ref().ok_or_else(|| RunnerError::Assertion {
+                    case_id: harness.definition.id.to_owned(),
+                    detail: "revocation outcome has no final destination dump".to_owned(),
+                })?;
+            let destination_preserved = destination_final.canonical_state
+                == destination_base.canonical_state
+                && destination_final.state_digest == destination_base.state_digest
+                && destination_final.journal == destination_base.journal
+                && destination_final.leases == destination_base.leases
+                && destination_final.authority_grants == destination_base.authority_grants
+                && destination_final.binding_receipts == destination_base.binding_receipts
+                && destination_final.fault_observation == destination_base.fault_observation
+                && destination_final.key_value_entry == destination_base.key_value_entry
+                && destination_final.portable_component_state
+                    == destination_base.portable_component_state
+                && destination_final.canonical_state.phase == contract_core::HandoffPhase::Exported
+                && !destination_final.component_instantiated
+                && destination_final.component.is_none()
+                && destination_final.binding_receipts.is_empty();
+            harness.observe(
+                "revoked-capability-not-resurrected",
+                destination_preserved,
+                format!(
+                    "base_digest={:?}, final_digest={:?}, phase={:?}, component_instantiated={}, component={:?}, receipts={:?}",
+                    destination_base.state_digest,
+                    destination_final.state_digest,
+                    destination_final.canonical_state.phase,
+                    destination_final.component_instantiated,
+                    destination_final.component,
+                    destination_final.binding_receipts,
+                ),
+            )?;
             let mut source_audit = spawn_uninitialized_for_role(
                 &harness.launchers,
                 harness.definition.id,
@@ -72,17 +110,64 @@ pub(super) fn finalize_case(
                     WORKER_STARTUP_TIMEOUT,
                 )
                 .map_err(|source| harness.worker_error("source-audit", source))?;
+            let snapshot_timer =
+                harness.snapshot.as_ref().map(|snapshot| snapshot.timer).ok_or_else(|| {
+                    RunnerError::Assertion {
+                        case_id: harness.definition.id.to_owned(),
+                        detail: "revocation outcome has no locked source snapshot".to_owned(),
+                    }
+                })?;
+            let mut recovery_detail = format!("response={initialization:?}");
+            let recovery_preserved_revocation = match (snapshot_timer, &initialization.outcome) {
+                (
+                    crate::protocol::SafePointTimerView::Completed { .. },
+                    ResponseOutcome::Success { result },
+                ) if matches!(
+                    result.as_ref(),
+                    WorkerResult::Initialized {
+                        role: WorkerRole::Source,
+                        case_id,
+                        ..
+                    } if case_id == harness.definition.id
+                ) =>
+                {
+                    let recovered = DumpData::from_result(
+                        harness.definition.id,
+                        source_audit
+                            .request_success(WorkerCommand::Dump)
+                            .map_err(|source| harness.worker_error("source-audit", source))?,
+                    )?;
+                    recovery_detail = format!(
+                        "response={initialization:?}, live_digest={:?}, recovered_digest={:?}, timer={:?}, component_instantiated={}, component={:?}",
+                        live.state_digest,
+                        recovered.state_digest,
+                        recovered.canonical_state.timer.status,
+                        recovered.component_instantiated,
+                        recovered.component,
+                    );
+                    recovered.canonical_state == live.canonical_state
+                        && recovered.state_digest == live.state_digest
+                        && recovered.journal == live.journal
+                        && recovered.leases == live.leases
+                        && recovered.authority_grants == live.authority_grants
+                        && recovered.binding_receipts == live.binding_receipts
+                        && recovered.fault_observation == live.fault_observation
+                        && recovered.key_value_entry == live.key_value_entry
+                        && recovered.portable_component_state == live.portable_component_state
+                        && recovered.canonical_state.timer.status
+                            == contract_core::TimerStatus::Frozen(
+                                contract_core::TimerDisposition::Completed,
+                            )
+                        && recovered.component.is_none()
+                }
+                _ => false,
+            };
             harness.source_transcripts.push(archive_client(&source_audit)?);
             drop(source_audit);
             harness.observe(
-                "source-recovery-requires-reauthorization",
-                matches!(
-                    initialization.outcome,
-                    ResponseOutcome::Error { ref error }
-                        if error.code == WorkerErrorCode::Provider
-                            && error.provider_kind.as_deref() == Some("Revoked")
-                ),
-                format!("response={initialization:?}"),
+                "source-recovery-does-not-resurrect-revoked-timer",
+                recovery_preserved_revocation,
+                recovery_detail,
             )?;
             // Executable recovery must not recreate the revoked timer binding. The typed
             // source trace below remains the independent, pure canonical replay proof.

@@ -4,7 +4,7 @@ use std::{
     path::{Component, Path},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::model::*;
@@ -20,6 +20,26 @@ use crate::{
 };
 
 const UNAME_PROGRAM: &str = "/usr/bin/uname";
+
+#[derive(Deserialize)]
+struct Stage4CommonInputHeader {
+    schema_version: String,
+}
+
+fn parse_stage4_common_input(
+    bytes: &[u8],
+) -> Result<Stage4CommonInputIdentity, (&'static str, String)> {
+    let header = serde_json::from_slice::<Stage4CommonInputHeader>(bytes)
+        .map_err(|source| ("invalid-stage4-common-input-json", source.to_string()))?;
+    if header.schema_version != STAGE4_COMMON_INPUT_SCHEMA_VERSION {
+        return Err((
+            "unsupported-stage4-common-input-schema",
+            format!("found {}", header.schema_version),
+        ));
+    }
+    serde_json::from_slice(bytes)
+        .map_err(|source| ("invalid-stage4-common-input-json", source.to_string()))
+}
 
 pub fn parse_stage4_evidence_bundle_json(
     bytes: &[u8],
@@ -161,17 +181,15 @@ fn validate_stage4_evidence_bundle_impl(
 
     let common_bytes =
         read_reference(&root, &matrix.common_input, "Stage 4 common input", &mut findings);
-    let common = common_bytes.as_deref().and_then(|bytes| {
-        match serde_json::from_slice::<Stage4CommonInputIdentity>(bytes) {
-            Ok(common) => Some(common),
-            Err(source) => {
-                finding(
-                    &mut findings,
-                    "invalid-stage4-common-input-json",
-                    format!("cannot parse {}: {source}", matrix.common_input.uri),
-                );
-                None
-            }
+    let common = common_bytes.as_deref().and_then(|bytes| match parse_stage4_common_input(bytes) {
+        Ok(common) => Some(common),
+        Err((code, detail)) => {
+            finding(
+                &mut findings,
+                code,
+                format!("cannot parse {}: {detail}", matrix.common_input.uri),
+            );
+            None
         }
     });
     if let Some(common) = common.as_ref() {
@@ -321,6 +339,14 @@ fn validate_stage4_evidence_bundle_impl(
                         continue;
                     }
                 };
+                if let Some(common) = common.as_ref() {
+                    validate_snapshot_timer_strategies(
+                        cell.cell_id,
+                        &normalized,
+                        common,
+                        &mut findings,
+                    );
+                }
                 validate_normalized_cache(
                     &root,
                     cell.cell_id,
@@ -912,11 +938,11 @@ fn validate_common_shape(
         );
     }
     if common.cases.len() != STAGE1_CASE_DEFINITIONS.len()
-        || common
-            .cases
-            .iter()
-            .zip(STAGE1_CASE_DEFINITIONS)
-            .any(|(case, definition)| case.case_id != definition.id)
+        || common.cases.iter().zip(STAGE1_CASE_DEFINITIONS).any(|(case, definition)| {
+            case.case_id != definition.id
+                || crate::stage2_snapshot_timer_strategy(definition.id)
+                    != Some(case.snapshot_timer_strategy)
+        })
     {
         finding(
             findings,
@@ -934,6 +960,7 @@ fn validate_common_shape(
             allowed_outcomes: definition.allowed_outcomes.to_vec(),
             case_config_sha256: case.case_config_sha256.clone(),
             case_policy_sha256: case.case_policy_sha256.clone(),
+            snapshot_timer_strategy: case.snapshot_timer_strategy,
             fault_schedule: case.fault_schedule.clone(),
         })
         .collect::<Vec<_>>();
@@ -1677,6 +1704,8 @@ pub(crate) fn common_input_from_stage1(bundle: &Stage1EvidenceBundle) -> Stage4C
                 case_id: case.case_id.clone(),
                 case_config_sha256: case.case_config_sha256.clone(),
                 case_policy_sha256: case.case_policy_sha256.clone(),
+                snapshot_timer_strategy: crate::stage2_snapshot_timer_strategy(&case.case_id)
+                    .expect("compiled Stage 1 case has a Stage 2 timer strategy"),
                 fault_schedule: case.fault_schedule.clone(),
             })
             .collect(),
@@ -1732,6 +1761,45 @@ fn validate_normalized_cache(
             "stage4-normalized-cache-mismatch",
             format!("{} cache differs from independently recomputed normalization", cell.as_str()),
         );
+    }
+}
+
+fn validate_snapshot_timer_strategies(
+    cell: Stage4CellId,
+    normalized: &Stage2NormalizedCellV1,
+    common: &Stage4CommonInputIdentity,
+    findings: &mut Vec<Stage4ValidationFinding>,
+) {
+    if normalized.cases.len() != common.cases.len() {
+        finding(
+            findings,
+            "stage4-snapshot-timer-strategy-mismatch",
+            format!(
+                "{} has {} normalized cases for {} accepted timer strategies",
+                cell.as_str(),
+                normalized.cases.len(),
+                common.cases.len()
+            ),
+        );
+    }
+    for (observed, expected) in normalized.cases.iter().zip(&common.cases) {
+        if observed.case_id != expected.case_id
+            || !crate::normalized_case_matches_snapshot_timer_strategy(
+                observed,
+                expected.snapshot_timer_strategy,
+            )
+        {
+            finding(
+                findings,
+                "stage4-snapshot-timer-strategy-mismatch",
+                format!(
+                    "{} {} snapshot does not match {:?}",
+                    cell.as_str(),
+                    observed.case_id,
+                    expected.snapshot_timer_strategy
+                ),
+            );
+        }
     }
 }
 
@@ -2477,6 +2545,58 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(unique.len(), 7);
         assert_eq!(claims[0].required_cells[3], claims[1].required_cells[0]);
+    }
+
+    #[test]
+    fn stage4_common_input_loader_reports_the_v2_schema_boundary() {
+        let mut encoded = serde_json::to_value(common_input()).unwrap();
+        encoded["schema_version"] = serde_json::json!("visa-stage4-common-input-v1");
+        let error = parse_stage4_common_input(&serde_json::to_vec(&encoded).unwrap()).unwrap_err();
+        assert_eq!(error.0, "unsupported-stage4-common-input-schema");
+
+        encoded["schema_version"] = serde_json::json!(STAGE4_COMMON_INPUT_SCHEMA_VERSION);
+        encoded["cases"] = serde_json::json!([{
+            "case_id": "timer-positive-duration-at-freeze",
+            "case_config_sha256": "a".repeat(64),
+            "case_policy_sha256": "b".repeat(64),
+            "fault_schedule": { "schedule_id": "none", "injections": [] }
+        }]);
+        let error = parse_stage4_common_input(&serde_json::to_vec(&encoded).unwrap()).unwrap_err();
+        assert_eq!(error.0, "invalid-stage4-common-input-json");
+    }
+
+    #[test]
+    fn stage4_timer_strategy_validation_fails_closed_on_case_set_drift() {
+        let mut common = common_input();
+        common.cases.push(Stage4CommonCaseInput {
+            case_id: "timer-positive-duration-at-freeze".to_owned(),
+            case_config_sha256: "a".repeat(64),
+            case_policy_sha256: "b".repeat(64),
+            snapshot_timer_strategy: crate::Stage2SnapshotTimerStrategy::Pending,
+            fault_schedule: crate::Stage1FaultSchedule {
+                schedule_id: "none".to_owned(),
+                injections: Vec::new(),
+            },
+        });
+        let normalized = Stage2NormalizedCellV1 {
+            schema_version: crate::STAGE2_NORMALIZED_TRACE_SCHEMA_VERSION.to_owned(),
+            timer_equivalence: crate::Stage2TimerEquivalenceProfile::PausedDurationZeroVsPositiveV1,
+            derived_integrity_equivalence:
+                crate::Stage2DerivedIntegrityEquivalenceProfile::Stage1VerifiedDerivedDigestsV1,
+            cases: Vec::new(),
+        };
+        let mut findings = Vec::new();
+        validate_snapshot_timer_strategies(
+            Stage4CellId::HxToHx,
+            &normalized,
+            &common,
+            &mut findings,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code == "stage4-snapshot-timer-strategy-mismatch")
+        );
     }
 
     #[test]

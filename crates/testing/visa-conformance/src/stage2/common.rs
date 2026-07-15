@@ -10,7 +10,8 @@ use super::{
         STAGE2_COMMON_INPUT_SCHEMA_VERSION, STAGE2_COMPONENT_STATE_CODEC_NAME,
         STAGE2_COMPONENT_STATE_CODEC_VERSION, STAGE2_WIT_WORLD_NAME, STAGE2_WIT_WORLD_SHA256,
         Stage2AuthorityPolicyInput, Stage2CommonCaseInput, Stage2CommonInputManifest,
-        Stage2Runtime, Stage2TranslationProvenance, Stage2ValidationFinding,
+        Stage2Runtime, Stage2SnapshotTimerStrategy, Stage2TranslationProvenance,
+        Stage2ValidationFinding, stage2_snapshot_timer_strategy,
     },
     verify::VerifiedCell,
 };
@@ -18,6 +19,37 @@ use crate::{
     STAGE1_CASE_DEFINITIONS, STAGE1_EVIDENCE_SCHEMA_VERSION, STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION,
     canonical_stage2_sha256, sha256_hex,
 };
+
+#[derive(Deserialize)]
+struct Stage2CommonInputHeader {
+    schema_version: String,
+}
+
+pub(crate) struct Stage2CommonInputLoadError {
+    pub(crate) code: &'static str,
+    pub(crate) detail: String,
+}
+
+pub(crate) fn parse_common_input(
+    bytes: &[u8],
+) -> Result<Stage2CommonInputManifest, Stage2CommonInputLoadError> {
+    let header = serde_json::from_slice::<Stage2CommonInputHeader>(bytes).map_err(|source| {
+        Stage2CommonInputLoadError {
+            code: "invalid-stage2-common-input-json",
+            detail: source.to_string(),
+        }
+    })?;
+    if header.schema_version != STAGE2_COMMON_INPUT_SCHEMA_VERSION {
+        return Err(Stage2CommonInputLoadError {
+            code: "unsupported-stage2-common-input-schema",
+            detail: format!("found {}", header.schema_version),
+        });
+    }
+    serde_json::from_slice(bytes).map_err(|source| Stage2CommonInputLoadError {
+        code: "invalid-stage2-common-input-json",
+        detail: source.to_string(),
+    })
+}
 
 pub(crate) fn validate_common_input(
     common: &Stage2CommonInputManifest,
@@ -105,6 +137,7 @@ pub(crate) fn validate_common_input(
             || case.allowed_outcomes != definition.allowed_outcomes
             || !is_sha256(&case.case_config_sha256)
             || !is_sha256(&case.case_policy_sha256)
+            || stage2_snapshot_timer_strategy(definition.id) != Some(case.snapshot_timer_strategy)
             || case.fault_schedule.schedule_id.is_empty()
         {
             finding(
@@ -244,6 +277,7 @@ pub(super) fn validate_cross_cell_inputs(
             continue;
         }
         validate_portable_component_codec(cell, &mut findings);
+        validate_snapshot_timer_strategies(cell, common, &mut findings);
         validate_common_input_identity_binding(cell, common_sha256, &mut findings);
         for (runtime, provenance) in [
             (cell.descriptor.source_runtime, cell.source_translation_provenance.as_ref()),
@@ -299,6 +333,102 @@ pub(super) fn validate_cross_cell_inputs(
         }
     }
     findings
+}
+
+fn validate_snapshot_timer_strategies(
+    cell: &VerifiedCell,
+    common: &Stage2CommonInputManifest,
+    findings: &mut Vec<Stage2ValidationFinding>,
+) {
+    for (expected, observed) in common.cases.iter().zip(&cell.normalized.cases) {
+        if !normalized_case_matches_snapshot_timer_strategy(
+            observed,
+            expected.snapshot_timer_strategy,
+        ) {
+            let snapshot_timer = observed.snapshot.as_ref().map(|snapshot| snapshot.body.timer);
+            finding(
+                findings,
+                "stage2-snapshot-timer-strategy-mismatch",
+                format!(
+                    "{} {} recorded {:?} for {:?}",
+                    cell.descriptor.id.as_str(),
+                    expected.case_id,
+                    snapshot_timer,
+                    expected.snapshot_timer_strategy
+                ),
+            );
+        }
+    }
+}
+
+pub(crate) fn normalized_case_matches_snapshot_timer_strategy(
+    observed: &crate::Stage2NormalizedCaseV1,
+    strategy: Stage2SnapshotTimerStrategy,
+) -> bool {
+    let snapshot_timer = observed.snapshot.as_ref().map(|snapshot| snapshot.body.timer);
+    let final_state = observed
+        .semantic_traces
+        .iter()
+        .find(|trace| trace.claimed_final)
+        .map(|trace| &trace.final_state);
+    match strategy {
+        Stage2SnapshotTimerStrategy::Pending => {
+            let pending_snapshot = matches!(
+                snapshot_timer,
+                Some(contract_core::TimerDisposition::Pending { remaining, .. })
+                    if remaining.0 > 0
+            );
+            pending_snapshot
+                && match observed.case_id.as_str() {
+                    "timer-positive-duration-at-freeze" | "timer-paused-during-long-handoff" => {
+                        final_state.is_some_and(|state| completed_timer_status(state.timer.status))
+                    }
+                    "timer-semantics-unsupported" => {
+                        final_state.is_some_and(running_with_positive_armed_timer)
+                    }
+                    _ => false,
+                }
+        }
+        Stage2SnapshotTimerStrategy::Precompleted => {
+            matches!(snapshot_timer, Some(contract_core::TimerDisposition::Completed))
+                && final_state.is_some_and(|state| completed_timer_status(state.timer.status))
+        }
+        Stage2SnapshotTimerStrategy::ScenarioControlled => match observed.case_id.as_str() {
+            "timer-completes-during-quiescence" | "performance-observations" => {
+                matches!(snapshot_timer, Some(contract_core::TimerDisposition::Completed))
+                    && final_state.is_some_and(|state| completed_timer_status(state.timer.status))
+            }
+            "timer-cancelled-during-quiescence" | "repeated-cancel-abort-cleanup" => {
+                matches!(snapshot_timer, Some(contract_core::TimerDisposition::Cancelled))
+                    && final_state.is_some_and(|state| cancelled_timer_status(state.timer.status))
+            }
+            "safe-point-unreachable" | "unsupported-live-resource-or-borrow" => {
+                snapshot_timer.is_none()
+                    && final_state.is_some_and(running_with_positive_armed_timer)
+            }
+            _ => false,
+        },
+    }
+}
+
+fn running_with_positive_armed_timer(state: &contract_core::CanonicalState) -> bool {
+    state.phase == contract_core::HandoffPhase::Running
+        && matches!(
+            state.timer.status,
+            contract_core::TimerStatus::Armed { remaining } if remaining.0 > 0
+        )
+}
+
+fn completed_timer_status(status: contract_core::TimerStatus) -> bool {
+    matches!(
+        status,
+        contract_core::TimerStatus::Completed
+            | contract_core::TimerStatus::Frozen(contract_core::TimerDisposition::Completed)
+    )
+}
+
+fn cancelled_timer_status(status: contract_core::TimerStatus) -> bool {
+    matches!(status, contract_core::TimerStatus::Cancelled | contract_core::TimerStatus::Cleaned)
 }
 
 fn validate_portable_component_codec(

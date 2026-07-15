@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{Stage1CaseClass, Stage1CaseOutcome, Stage1FaultSchedule, Stage1VersionedIdentity};
 
-pub const STAGE2_COMMON_INPUT_SCHEMA_VERSION: &str = "visa-stage2-common-input-v1";
+pub const STAGE2_COMMON_INPUT_SCHEMA_VERSION: &str = "visa-stage2-common-input-v2";
 pub const STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION: &str = "visa-stage2-matrix-manifest-v2";
 pub const STAGE2_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage2-evidence-v2";
 pub const STAGE2_CLAIM_ID: &str = "cross-execution-path-portability";
@@ -39,7 +39,7 @@ pub const STAGE2_V8_VERSION: &str = "13.6.233.17-node.48";
 pub const STAGE2_JCO_NODE_RPC_PROTOCOL_VERSION: u32 = 3;
 pub const STAGE2_JCO_NODE_EXECUTION_CARRIER: &str = crate::JCO_NODE_EXECUTION_CARRIER;
 pub const STAGE2_ACCEPTED_REGISTRY_SHA256: &str =
-    "95e05af67ff122ca4be0a94823340bcf5ad368f05be8946ca0a26a47816ecfd9";
+    "e05a2a1899d05e65a9e05ff5103463a9b6f1309dd1e331e3e26d6a58edc3a3e3";
 pub const STAGE2_WIT_WORLD_NAME: &str = "visa:continuity/cooperative-handoff@0.1.0";
 pub const STAGE2_WIT_WORLD_SHA256: &str =
     "709eb08784d446068bbaed47dbfb1dddd637f957cf5de1f3713d5be0aa7d5920";
@@ -266,6 +266,51 @@ pub struct Stage2WitWorldInput {
     pub artifact: Stage2ArtifactReference,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Stage2SnapshotTimerStrategy {
+    Pending,
+    Precompleted,
+    ScenarioControlled,
+}
+
+pub fn stage2_snapshot_timer_strategy(case_id: &str) -> Option<Stage2SnapshotTimerStrategy> {
+    Some(match case_id {
+        "timer-positive-duration-at-freeze"
+        | "timer-paused-during-long-handoff"
+        | "timer-semantics-unsupported" => Stage2SnapshotTimerStrategy::Pending,
+        "timer-completes-during-quiescence"
+        | "timer-cancelled-during-quiescence"
+        | "performance-observations"
+        | "safe-point-unreachable"
+        | "unsupported-live-resource-or-borrow"
+        | "repeated-cancel-abort-cleanup" => Stage2SnapshotTimerStrategy::ScenarioControlled,
+        "authority-sufficient-narrower"
+        | "kv-duplicate-idempotent-request"
+        | "handoff-repeated-validation-prepare"
+        | "journal-replay"
+        | "source-post-commit-stale-attempt"
+        | "evidence-verification"
+        | "kv-unknown-outcome"
+        | "corrupt-snapshot-or-component-digest"
+        | "incompatible-snapshot-or-profile-version"
+        | "unknown-extension-or-profile-mismatch"
+        | "destination-authority-missing-or-insufficient"
+        | "required-capability-revoked"
+        | "adapter-broader-authority"
+        | "kv-binding-wrong-or-missing"
+        | "destination-crash-before-commit"
+        | "prepare-message-duplicate-or-lost"
+        | "commit-acknowledgement-lost"
+        | "source-races-with-commit"
+        | "destination-crash-after-commit"
+        | "duplicate-restore-or-stale-snapshot"
+        | "durable-journal-or-commit-write-fails"
+        | "report-generation-fails-after-commit" => Stage2SnapshotTimerStrategy::Precompleted,
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stage2CommonCaseInput {
@@ -274,6 +319,7 @@ pub struct Stage2CommonCaseInput {
     pub allowed_outcomes: Vec<Stage1CaseOutcome>,
     pub case_config_sha256: String,
     pub case_policy_sha256: String,
+    pub snapshot_timer_strategy: Stage2SnapshotTimerStrategy,
     pub fault_schedule: Stage1FaultSchedule,
 }
 

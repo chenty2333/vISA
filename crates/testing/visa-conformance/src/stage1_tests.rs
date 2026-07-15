@@ -162,6 +162,19 @@ fn validator_rejects_digest_and_identity_disagreement() {
         "inconsistent-stage1-snapshot-digest",
     );
 
+    let mut missing_revocation_snapshot = complete_bundle();
+    let revocation = missing_revocation_snapshot
+        .cases
+        .iter_mut()
+        .find(|case| case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection)
+        .unwrap();
+    revocation.artifacts.snapshot = None;
+    revocation.state.snapshot_sha256 = None;
+    assert_code(
+        &validate_stage1_evidence_bundle(&missing_revocation_snapshot),
+        "missing-stage1-case-snapshot",
+    );
+
     let mut identity_mismatch = complete_bundle();
     identity_mismatch.cases[0].artifacts.semantic_traces[0].execution_id = "other-run".to_string();
     assert_code(
@@ -329,6 +342,16 @@ fn artifact_gate_rejects_snapshot_and_trace_semantic_tampering() {
     );
 
     assert_artifact_tamper(
+        "destination-snapshot-cursor-tamper",
+        &["inconsistent-stage1-destination-trace-base"],
+        |bundle, root| {
+            rewrite_committed_trace(bundle, root, |trace| {
+                trace.base_cursor = contract_core::JournalPosition::ORIGIN;
+            });
+        },
+    );
+
+    assert_artifact_tamper(
         "trace-entry-output-tamper",
         &["invalid-stage1-semantic-replay"],
         |bundle, root| {
@@ -402,6 +425,26 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
     );
 
     assert_artifact_tamper(
+        "raw-authority-projection-tamper",
+        &["inconsistent-stage1-raw-dump"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                    },
+                    |protocol| {
+                        protocol["outcome"]["result"]["authority_grants"] = serde_json::json!([]);
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
         "revocation-tombstone-tamper",
         &["missing-stage1-revoked-authority-tombstone"],
         |bundle, root| {
@@ -428,7 +471,7 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
                 .iter()
                 .position(|case| case.case_id == "required-capability-revoked")
                 .unwrap();
-            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
                 for line in lines {
                     if line.get("stream").and_then(serde_json::Value::as_str)
                         != Some("worker_response")
@@ -450,6 +493,519 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
     );
 
     assert_artifact_tamper(
+        "revocation-provider-retryable-tamper",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol
+                            .pointer("/outcome/error/provider_kind")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("Revoked")
+                    },
+                    |protocol| {
+                        protocol["outcome"]["error"]["retryable"] = serde_json::json!(true);
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-completed-recovery-tamper",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                for line in lines {
+                    if !line
+                        .get("worker")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|worker| worker.ends_with("-source-audit"))
+                        || line.get("stream").and_then(serde_json::Value::as_str)
+                            != Some("worker_response")
+                    {
+                        continue;
+                    }
+                    let mut response = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    if response.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                        == Some("dump")
+                    {
+                        response["outcome"]["result"]["component"] =
+                            serde_json::json!({ "phase": "completed" });
+                        line["line"] =
+                            serde_json::Value::String(serde_json::to_string(&response).unwrap());
+                    }
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-completed-recovery-state-drift",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                            && protocol
+                                .get("id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|id| id.contains("-source-audit-"))
+                    },
+                    |protocol| {
+                        let mut state = serde_json::from_value::<contract_core::CanonicalState>(
+                            protocol["outcome"]["result"]["canonical_state"].clone(),
+                        )
+                        .unwrap();
+                        state.key_value.last_version = Some(u64::MAX);
+                        protocol["outcome"]["result"]["state_digest"] =
+                            serde_json::to_value(contract_core::state_digest(&state).unwrap())
+                                .unwrap();
+                        protocol["outcome"]["result"]["canonical_state"] =
+                            serde_json::to_value(state).unwrap();
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-duplicate-audit-dump",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                let duplicate = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|worker| worker.ends_with("-source-audit"))
+                    })
+                    .filter(|line| {
+                        let protocol = serde_json::from_str::<serde_json::Value>(
+                            line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                        )
+                        .unwrap();
+                        protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                            || protocol
+                                .pointer("/outcome/result/kind")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("dump")
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(duplicate.len(), 2);
+                for mut line in duplicate {
+                    line["sequence"] = serde_json::json!(
+                        line.get("sequence").and_then(serde_json::Value::as_u64).unwrap() + 2
+                    );
+                    let mut protocol = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    let id = protocol
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap()
+                        .strip_suffix("000002")
+                        .unwrap();
+                    protocol["id"] = serde_json::json!(format!("{id}000003"));
+                    line["line"] =
+                        serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
+                    lines.push(line);
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-duplicate-primary-source-dump",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                let primary_worker = "required-capability-revoked-source";
+                let mut duplicate = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .filter(|line| {
+                        let protocol = serde_json::from_str::<serde_json::Value>(
+                            line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                        )
+                        .unwrap();
+                        protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                            || protocol
+                                .pointer("/outcome/result/kind")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("dump")
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(duplicate.len(), 2);
+                for line in &mut duplicate {
+                    line["sequence"] = serde_json::json!(
+                        line.get("sequence").and_then(serde_json::Value::as_u64).unwrap() + 2
+                    );
+                    let mut protocol = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    protocol["id"] = serde_json::json!(format!("{primary_worker}-000003"));
+                    if protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                        == Some("dump")
+                    {
+                        let mut state = serde_json::from_value::<contract_core::CanonicalState>(
+                            protocol["outcome"]["result"]["canonical_state"].clone(),
+                        )
+                        .unwrap();
+                        state.key_value.last_version = Some(u64::MAX);
+                        protocol["outcome"]["result"]["state_digest"] =
+                            serde_json::to_value(contract_core::state_digest(&state).unwrap())
+                                .unwrap();
+                        protocol["outcome"]["result"]["canonical_state"] =
+                            serde_json::to_value(state).unwrap();
+                    }
+                    line["line"] =
+                        serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
+                }
+                lines.extend(duplicate);
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-duplicate-destination-prepare",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let primary_worker = "required-capability-revoked-destination";
+                let prepare_id = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .find_map(|line| {
+                        let protocol =
+                            serde_json::from_str::<serde_json::Value>(line.get("line")?.as_str()?)
+                                .ok()?;
+                        (protocol.pointer("/command/kind")?.as_str()? == "prepare_destination")
+                            .then(|| protocol.get("id")?.as_str().map(str::to_owned))
+                            .flatten()
+                    })
+                    .unwrap();
+                let mut duplicate = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .filter(|line| {
+                        serde_json::from_str::<serde_json::Value>(
+                            line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                        )
+                        .unwrap()
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                            == Some(&prepare_id)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(duplicate.len(), 2);
+                let next_sequence = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .filter_map(|line| line.get("sequence").and_then(serde_json::Value::as_u64))
+                    .max()
+                    .unwrap()
+                    + 1;
+                for (offset, line) in duplicate.iter_mut().enumerate() {
+                    line["sequence"] = serde_json::json!(next_sequence + offset as u64);
+                    let mut protocol = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    protocol["id"] = serde_json::json!(format!("{primary_worker}-000006"));
+                    line["line"] =
+                        serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
+                }
+                lines.extend(duplicate);
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-extra-destination-transition",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                let primary_worker = "required-capability-revoked-destination";
+                let load_id = format!("{primary_worker}-000002");
+                let mut transition = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .filter(|line| {
+                        serde_json::from_str::<serde_json::Value>(
+                            line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                        )
+                        .unwrap()
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                            == Some(load_id.as_str())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(transition.len(), 2);
+                let next_sequence = lines
+                    .iter()
+                    .filter(|line| {
+                        line.get("worker").and_then(serde_json::Value::as_str)
+                            == Some(primary_worker)
+                    })
+                    .filter_map(|line| line.get("sequence").and_then(serde_json::Value::as_u64))
+                    .max()
+                    .unwrap()
+                    + 1;
+                for (offset, line) in transition.iter_mut().enumerate() {
+                    line["sequence"] = serde_json::json!(next_sequence + offset as u64);
+                    let mut protocol = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    protocol["id"] = serde_json::json!(format!("{primary_worker}-000006"));
+                    if protocol.get("command").is_some() {
+                        protocol["command"] = serde_json::json!({ "kind": "commit_destination" });
+                    }
+                    line["line"] =
+                        serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
+                }
+                lines.extend(transition);
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-destination-component-resurrection",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                            && protocol
+                                .get("id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|id| id.ends_with("-destination-000005"))
+                    },
+                    |protocol| {
+                        protocol["outcome"]["result"]["component"] =
+                            serde_json::json!({ "phase": "completed" });
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-destination-provider-drift",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                for line in lines {
+                    if line.get("stream").and_then(serde_json::Value::as_str)
+                        != Some("worker_response")
+                    {
+                        continue;
+                    }
+                    let mut protocol = serde_json::from_str::<serde_json::Value>(
+                        line.get("line").and_then(serde_json::Value::as_str).unwrap(),
+                    )
+                    .unwrap();
+                    if protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                        != Some("dump")
+                    {
+                        continue;
+                    }
+                    let destination =
+                        protocol["outcome"]["result"]["canonical_state"]["activation"]["node"]
+                            .clone();
+                    for lease in protocol["outcome"]["result"]["leases"].as_array_mut().unwrap() {
+                        lease["owner"] = destination.clone();
+                    }
+                    protocol["outcome"]["result"]["key_value_entry"] = serde_json::json!({
+                        "value": [100, 114, 105, 102, 116],
+                        "version": u64::MAX,
+                    });
+                    line["line"] =
+                        serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
+                }
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-destination-fault-observation-drift",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/outcome/result/kind").and_then(serde_json::Value::as_str)
+                            == Some("dump")
+                            && protocol
+                                .get("id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|id| id.ends_with("-destination-000005"))
+                    },
+                    |protocol| {
+                        protocol["outcome"]["result"]["fault_observation"] = serde_json::json!({
+                            "point": "before_journal_write",
+                            "count": 1,
+                        });
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-missing-destination-trace",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, _root| {
+            let case = bundle
+                .cases
+                .iter_mut()
+                .find(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            case.artifacts.semantic_traces.retain(|trace| trace.uri.ends_with("source.json"));
+            case.state.trace_sha256s =
+                case.artifacts.semantic_traces.iter().map(|trace| trace.sha256.clone()).collect();
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-retained-snapshot-pending",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            let reference = bundle.cases[case_index].artifacts.snapshot.as_ref().unwrap().clone();
+            let mut snapshot = read_json::<contract_core::SnapshotEnvelope>(root, &reference.uri);
+            snapshot.body.timer = contract_core::TimerDisposition::Pending {
+                remaining: contract_core::LogicalDurationNanos(1),
+                arm_operation: contract_core::Identity::from_u128(999),
+            };
+            snapshot.integrity = contract_core::snapshot_integrity(&snapshot.body).unwrap();
+            let case = &mut bundle.cases[case_index];
+            let reference = case.artifacts.snapshot.as_mut().unwrap();
+            write_case_ref(root, reference, &serde_json::to_vec_pretty(&snapshot).unwrap());
+            case.state.snapshot_sha256 = Some(reference.sha256.clone());
+        },
+    );
+
+    assert_artifact_tamper(
+        "revocation-provider-command-binding-tamper",
+        &["missing-stage1-revocation-provider-observation"],
+        |bundle, root| {
+            let case_index = bundle
+                .cases
+                .iter()
+                .position(|case| case.case_id == "required-capability-revoked")
+                .unwrap();
+            rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|id| id.ends_with("-destination-000004"))
+                            && protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                                == Some("prepare_destination")
+                    },
+                    |protocol| {
+                        protocol["command"]["kind"] = serde_json::json!("read");
+                    },
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
         "revocation-assertion-tamper",
         &["missing-stage1-revocation-assertion"],
         |bundle, root| {
@@ -461,7 +1017,7 @@ fn artifact_gate_rejects_receipt_and_raw_dump_semantic_tampering() {
             rewrite_case_assertions(bundle, root, case_index, |assertions| {
                 assertions.retain(|assertion| {
                     assertion.get("name").and_then(serde_json::Value::as_str)
-                        != Some("source-recovery-requires-reauthorization")
+                        != Some("source-recovery-does-not-resurrect-revoked-timer")
                 });
             });
         },
@@ -741,6 +1297,8 @@ fn artifact_gate_binds_initialized_runtime_and_sealed_carrier_to_raw_transcripts
                                 "message": "forged initialization failure",
                                 "retryable": false,
                                 "provider_kind": "Denied",
+                                "adapter_kind": null,
+                                "workload_kind": null,
                             },
                             "result": result,
                         });
@@ -917,7 +1475,7 @@ fn artifact_gate_enforces_per_worker_transcript_state() {
                                 && protocol
                                     .pointer("/outcome/status")
                                     .and_then(serde_json::Value::as_str)
-                                    == Some("error")
+                                    == Some("success")
                         })
                 }));
                 mutate_embedded_protocol(
@@ -1742,6 +2300,8 @@ fn complete_bundle() -> Stage1EvidenceBundle {
             let outcome = definition.allowed_outcomes[0];
             let committed =
                 stage1_expected_ownership(outcome) != Stage1ExpectedOwnership::SourceRetained;
+            let revocation = outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection;
+            let snapshot_required = committed || revocation;
             let authority = authority_for(outcome, &policy_sha256);
             let reference = |name: &str, sha256: String| Stage1ArtifactReference {
                 uri: format!("cases/{}/{name}", definition.id),
@@ -1754,7 +2314,7 @@ fn complete_bundle() -> Stage1EvidenceBundle {
                 component_sha256: component_sha256.clone(),
                 profile_sha256: profile_sha256.clone(),
             };
-            let snapshot = committed.then(|| reference("snapshot.json", digest('b')));
+            let snapshot = snapshot_required.then(|| reference("snapshot.json", digest('b')));
             let binding_receipts = if committed {
                 vec![
                     Stage1BindingReceiptReference {
@@ -1771,7 +2331,7 @@ fn complete_bundle() -> Stage1EvidenceBundle {
             } else {
                 Vec::new()
             };
-            let semantic_traces = if committed {
+            let semantic_traces = if committed || revocation {
                 vec![
                     reference("traces/source.json", digest('c')),
                     reference("traces/destination.json", digest('c')),
@@ -1823,7 +2383,7 @@ fn complete_bundle() -> Stage1EvidenceBundle {
                 state: Stage1StateEvidence {
                     state_sha256: digest('0'),
                     replay_state_sha256: digest('0'),
-                    snapshot_sha256: committed.then(|| digest('b')),
+                    snapshot_sha256: snapshot_required.then(|| digest('b')),
                     trace_sha256s,
                 },
             }
@@ -2254,12 +2814,16 @@ fn materialize_case(
     let profile_digest = digest_from_hex(profile_sha256);
     let mut source = source_state(case, component_digest, profile_digest);
     if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
-        source.phase = contract_core::HandoffPhase::Exported;
         source.authorities[1].status = contract_core::AuthorityStatus::Revoked;
         source.authorities[1].authority.generation = contract_core::Generation(1);
     }
     let expected = stage1_expected_ownership(case.outcome);
     let (final_state, traces, snapshot, receipts) = match expected {
+        Stage1ExpectedOwnership::SourceRetained
+            if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection =>
+        {
+            revocation_source_retained_case(case, source)
+        }
         Stage1ExpectedOwnership::SourceRetained => {
             let trace = Stage1SemanticTraceArtifact {
                 schema_version: STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION.to_owned(),
@@ -2298,9 +2862,11 @@ fn materialize_case(
     case.authority.source_authority_root_sha256 = contract_hex(
         contract_core::canonical_digest(source_raw_state.authorities.as_slice()).unwrap(),
     );
-    let destination_authorities = destination_raw_state
-        .as_ref()
-        .map_or_else(|| &[][..], |state| state.authorities.as_slice());
+    let destination_authorities = if expected == Stage1ExpectedOwnership::SourceRetained {
+        &[][..]
+    } else {
+        destination_raw_state.as_ref().map_or_else(|| &[][..], |state| state.authorities.as_slice())
+    };
     case.authority.destination_authority_root_sha256 =
         contract_hex(contract_core::canonical_digest(destination_authorities).unwrap());
     assert_eq!(case.artifacts.semantic_traces.len(), traces.len());
@@ -2395,16 +2961,19 @@ fn source_state(
     state
 }
 
-fn committed_case(
+struct ExportedSourceCase {
+    source: contract_core::CanonicalState,
+    source_trace: Stage1SemanticTraceArtifact,
+    envelope: contract_core::SnapshotEnvelope,
+    snapshot_record: contract_core::SnapshotRecord,
+    seed: u128,
+}
+
+fn exported_source_case(
     case: &Stage1CaseEvidence,
     mut source: contract_core::CanonicalState,
-    expected: Stage1ExpectedOwnership,
-) -> (
-    contract_core::CanonicalState,
-    Vec<Stage1SemanticTraceArtifact>,
-    Option<contract_core::SnapshotEnvelope>,
-    Vec<contract_core::BindingReceipt>,
-) {
+    timer: contract_core::TimerDisposition,
+) -> ExportedSourceCase {
     let handoff = identity_from_hex(&case.handoff_id);
     let snapshot_id = identity_from_hex(&case.snapshot_id);
     let seed = u128::from_be_bytes(handoff.0);
@@ -2428,7 +2997,7 @@ fn committed_case(
             contract_core::Identity::from_u128(seed + 38),
             contract_core::EventKind::Frozen {
                 portable_state: b"opaque-stage1-component-state".to_vec(),
-                timer: contract_core::TimerDisposition::Idle,
+                timer,
             },
         ),
     );
@@ -2467,6 +3036,61 @@ fn committed_case(
         integrity: contract_core::snapshot_integrity(&body).unwrap(),
         body,
     };
+    ExportedSourceCase { source, source_trace, envelope, snapshot_record, seed }
+}
+
+fn revocation_source_retained_case(
+    case: &Stage1CaseEvidence,
+    mut source: contract_core::CanonicalState,
+) -> (
+    contract_core::CanonicalState,
+    Vec<Stage1SemanticTraceArtifact>,
+    Option<contract_core::SnapshotEnvelope>,
+    Vec<contract_core::BindingReceipt>,
+) {
+    source.key_value.last_version = Some(2);
+    let ExportedSourceCase { source, mut source_trace, envelope, snapshot_record, seed } =
+        exported_source_case(case, source, contract_core::TimerDisposition::Completed);
+    source_trace.claimed_final = true;
+    let destination_node =
+        contract_core::NodeIdentity::new(contract_core::Identity::from_u128(seed + 41));
+    let destination = semantic_core::restore(
+        &envelope,
+        envelope.integrity,
+        source.component_digest,
+        source.profile_digest,
+        source.profile_version,
+        &[],
+        destination_node,
+    )
+    .unwrap();
+    let destination_trace = Stage1SemanticTraceArtifact {
+        schema_version: STAGE1_SEMANTIC_TRACE_SCHEMA_VERSION.to_owned(),
+        role: Stage1TraceRole::Destination,
+        scope: Stage1JournalScope { node: destination_node, component: source.component.identity },
+        base_cursor: snapshot_record.journal_position,
+        base_state: destination.clone(),
+        entries: Vec::new(),
+        final_state: destination,
+        claimed_final: false,
+    };
+    (source, vec![source_trace, destination_trace], Some(envelope), Vec::new())
+}
+
+fn committed_case(
+    case: &Stage1CaseEvidence,
+    source: contract_core::CanonicalState,
+    expected: Stage1ExpectedOwnership,
+) -> (
+    contract_core::CanonicalState,
+    Vec<Stage1SemanticTraceArtifact>,
+    Option<contract_core::SnapshotEnvelope>,
+    Vec<contract_core::BindingReceipt>,
+) {
+    let ExportedSourceCase { source, source_trace, envelope, snapshot_record, seed } =
+        exported_source_case(case, source, contract_core::TimerDisposition::Idle);
+    let handoff = snapshot_record.handoff;
+    let snapshot_id = snapshot_record.snapshot;
     let destination =
         contract_core::NodeIdentity::new(contract_core::Identity::from_u128(seed + 41));
     let mut state = semantic_core::restore(
@@ -2716,6 +3340,16 @@ fn evidence(seed: u128, kind: contract_core::EvidenceKind) -> contract_core::Evi
     }
 }
 
+fn raw_authority_grants(
+    state: &contract_core::CanonicalState,
+) -> Vec<contract_core::AuthorityGrant> {
+    let mut grants = state.authorities.clone();
+    if let Some(prepared) = &state.prepared_destination {
+        grants.extend(prepared.authorities.clone());
+    }
+    grants
+}
+
 fn materialize_raw(
     case: &mut Stage1CaseEvidence,
     root: &Path,
@@ -2725,6 +3359,25 @@ fn materialize_raw(
     source_runtime: &Stage1VersionedIdentity,
     destination_runtime: &Stage1VersionedIdentity,
 ) {
+    let revocation_provider_leases =
+        if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
+            let owner = source_state.ownership.owner.unwrap();
+            [source_state.timer.claim.resource, source_state.key_value.claim.resource]
+                .into_iter()
+                .map(|resource| {
+                    serde_json::json!({
+                        "resource": resource,
+                        "owner": owner,
+                        "epoch": source_state.ownership.epoch,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+    let revocation_key_value_entry = (case.outcome
+        == Stage1CaseOutcome::RevocationRejectedNoResurrection)
+        .then(|| contract_core::VersionedValue { value: b"completed".to_vec(), version: 2 });
     for reference in &mut case.artifacts.raw_execution {
         if reference.uri.ends_with("source.jsonl") || reference.uri.ends_with("destination.jsonl") {
             let role =
@@ -2762,33 +3415,71 @@ fn materialize_raw(
                 }
             });
             let request_id = format!("{worker}-000002");
-            let dump_state = if role == "source" { Some(source_state) } else { destination_state };
+            let revocation_destination_state = (role == "destination"
+                && case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection)
+                .then(|| {
+                    destination_state
+                        .cloned()
+                        .expect("revocation case has a destination restore trace")
+                });
+            let dump_state = if role == "source" {
+                Some(source_state)
+            } else {
+                destination_state.or(revocation_destination_state.as_ref())
+            };
+            let uninstantiated_revocation_destination = revocation_destination_state.is_some();
+            let command = if uninstantiated_revocation_destination {
+                serde_json::json!({
+                    "kind": "load_destination",
+                    "envelope": {},
+                    "component_state": [],
+                })
+            } else {
+                serde_json::json!({ "kind": if dump_state.is_some() { "dump" } else { "read" } })
+            };
             let request = serde_json::json!({
                 "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
-                "command": { "kind": if dump_state.is_some() { "dump" } else { "read" } }
+                "command": command,
             });
-            let result = dump_state.map_or_else(
-                || {
-                    serde_json::json!({
-                        "kind": "state",
-                        "view": {
-                            "component_instantiated": false,
-                            "live_runtime": null,
-                        }
-                    })
-                },
-                |state| {
-                    serde_json::json!({
-                        "kind": "dump",
-                        "canonical_state": state,
-                        "state_digest": contract_core::state_digest(state).unwrap(),
-                        "component_instantiated": true,
-                        "live_runtime": test_runtime_observation(runtime),
-                        "portable_component_state": state.portable_state,
-                    })
-                },
-            );
+            let result = if uninstantiated_revocation_destination {
+                serde_json::json!({
+                    "kind": "state",
+                    "view": {
+                        "component_instantiated": false,
+                        "live_runtime": null,
+                    }
+                })
+            } else {
+                dump_state.map_or_else(
+                    || {
+                        serde_json::json!({
+                            "kind": "state",
+                            "view": {
+                                "component_instantiated": false,
+                                "live_runtime": null,
+                            }
+                        })
+                    },
+                    |state| {
+                        serde_json::json!({
+                            "kind": "dump",
+                            "canonical_state": state,
+                            "state_digest": contract_core::state_digest(state).unwrap(),
+                            "journal": [],
+                            "leases": revocation_provider_leases.clone(),
+                            "authority_grants": raw_authority_grants(state),
+                            "binding_receipts": [],
+                            "fault_observation": null,
+                            "key_value_entry": revocation_key_value_entry.clone(),
+                            "component_instantiated": true,
+                            "live_runtime": test_runtime_observation(runtime),
+                            "component": null,
+                            "portable_component_state": state.portable_state,
+                        })
+                    },
+                )
+            };
             let response = serde_json::json!({
                 "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
                 "id": request_id,
@@ -2878,56 +3569,199 @@ fn materialize_raw(
                 }
             }
             if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
-                let (revoked_worker, revoked_id, sequence, command) = if role == "source" {
-                    let revoked_worker = format!("{}-source-audit", case.case_id);
-                    (
-                        revoked_worker.clone(),
-                        format!("{revoked_worker}-000001"),
-                        1,
-                        test_initialize_command(&case.case_id, role, runtime),
-                    )
-                } else {
-                    (
-                        worker.clone(),
-                        format!("{worker}-000003"),
-                        5,
-                        serde_json::json!({ "kind": "prepare_destination" }),
-                    )
-                };
-                let revoked_request = serde_json::json!({
-                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
-                    "id": revoked_id,
-                    "command": command,
-                });
-                let revoked_response = serde_json::json!({
-                    "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
-                    "id": revoked_id,
-                    "outcome": {
-                        "status": "error",
-                        "error": {
-                            "code": "provider",
-                            "message": "required authority is revoked",
-                            "retryable": false,
-                            "provider_kind": "Revoked"
-                        }
+                if role == "source" {
+                    let audit_worker = format!("{}-source-audit", case.case_id);
+                    let initialize_id = format!("{audit_worker}-000001");
+                    let dump_id = format!("{audit_worker}-000002");
+                    let initialize_request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": initialize_id,
+                        "command": test_initialize_command(&case.case_id, role, runtime),
+                    });
+                    let initialize_response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": initialize_id,
+                        "outcome": {
+                            "status": "success",
+                            "result": {
+                                "kind": "initialized",
+                                "role": role,
+                                "case_id": case.case_id,
+                                "prepared_runtime": test_runtime_observation(runtime),
+                                "live_runtime": test_runtime_observation(runtime),
+                            },
+                        },
+                    });
+                    let dump_request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": dump_id,
+                        "command": { "kind": "dump" },
+                    });
+                    let dump_response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": dump_id,
+                        "outcome": {
+                            "status": "success",
+                            "result": {
+                                "kind": "dump",
+                                "canonical_state": source_state,
+                                "state_digest": contract_core::state_digest(source_state).unwrap(),
+                                "journal": [],
+                                "leases": revocation_provider_leases.clone(),
+                                "authority_grants": raw_authority_grants(source_state),
+                                "binding_receipts": [],
+                                "fault_observation": null,
+                                "key_value_entry": revocation_key_value_entry.clone(),
+                                "component_instantiated": true,
+                                "live_runtime": test_runtime_observation(runtime),
+                                "component": null,
+                                "portable_component_state": source_state.portable_state,
+                            },
+                        },
+                    });
+                    for (sequence, stream, line) in [
+                        (1, "parent_request", initialize_request),
+                        (2, "worker_response", initialize_response),
+                        (3, "parent_request", dump_request),
+                        (4, "worker_response", dump_response),
+                    ] {
+                        transcript.push(serde_json::json!({
+                            "worker": audit_worker,
+                            "pid": 101,
+                            "sequence": sequence,
+                            "stream": stream,
+                            "line": serde_json::to_string(&line).unwrap(),
+                        }));
                     }
-                });
-                transcript.extend([
-                    serde_json::json!({
-                        "worker": revoked_worker.clone(),
-                        "pid": if role == "source" { 101 } else { primary_pid },
-                        "sequence": sequence,
-                        "stream": "parent_request",
-                        "line": serde_json::to_string(&revoked_request).unwrap(),
-                    }),
-                    serde_json::json!({
-                        "worker": revoked_worker,
-                        "pid": if role == "source" { 101 } else { primary_pid },
-                        "sequence": sequence + 1,
-                        "stream": "worker_response",
-                        "line": serde_json::to_string(&revoked_response).unwrap(),
-                    }),
-                ]);
+                } else {
+                    let baseline_dump_id = format!("{worker}-000003");
+                    let revoked_id = format!("{worker}-000004");
+                    let final_dump_id = format!("{worker}-000005");
+                    let destination_dump_state = revocation_destination_state
+                        .clone()
+                        .expect("revocation destination has a baseline state");
+                    let destination_dump_digest =
+                        contract_core::state_digest(&destination_dump_state).unwrap();
+                    let destination_portable_state = destination_dump_state.portable_state.clone();
+                    let baseline_dump_request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": baseline_dump_id,
+                        "command": { "kind": "dump" },
+                    });
+                    let baseline_dump_response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": baseline_dump_id,
+                        "outcome": {
+                            "status": "success",
+                            "result": {
+                                "kind": "dump",
+                                "canonical_state": destination_dump_state.clone(),
+                                "state_digest": destination_dump_digest,
+                                "journal": [],
+                                "leases": revocation_provider_leases.clone(),
+                                "authority_grants": raw_authority_grants(&destination_dump_state),
+                                "binding_receipts": [],
+                                "fault_observation": null,
+                                "key_value_entry": revocation_key_value_entry.clone(),
+                                "component_instantiated": false,
+                                "live_runtime": null,
+                                "component": null,
+                                "portable_component_state": destination_portable_state.clone(),
+                            },
+                        },
+                    });
+                    let revoked_request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": revoked_id,
+                        "command": { "kind": "prepare_destination" },
+                    });
+                    let revoked_response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": revoked_id,
+                        "outcome": {
+                            "status": "error",
+                            "error": {
+                                "code": "provider",
+                                "message": "required authority is revoked",
+                                "retryable": false,
+                                "provider_kind": "Revoked",
+                                "adapter_kind": null,
+                                "workload_kind": null,
+                            }
+                        }
+                    });
+                    let final_dump_request = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": final_dump_id,
+                        "command": { "kind": "dump" },
+                    });
+                    let final_dump_response = serde_json::json!({
+                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                        "id": final_dump_id,
+                        "outcome": {
+                            "status": "success",
+                            "result": {
+                                "kind": "dump",
+                                "canonical_state": destination_dump_state,
+                                "state_digest": destination_dump_digest,
+                                "journal": [],
+                                "leases": revocation_provider_leases.clone(),
+                                "authority_grants": raw_authority_grants(&destination_dump_state),
+                                "binding_receipts": [],
+                                "fault_observation": null,
+                                "key_value_entry": revocation_key_value_entry.clone(),
+                                "component_instantiated": false,
+                                "live_runtime": null,
+                                "component": null,
+                                "portable_component_state": destination_portable_state,
+                            },
+                        },
+                    });
+                    transcript.extend([
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 5,
+                            "stream": "parent_request",
+                            "line": serde_json::to_string(&baseline_dump_request).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 6,
+                            "stream": "worker_response",
+                            "line": serde_json::to_string(&baseline_dump_response).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 7,
+                            "stream": "parent_request",
+                            "line": serde_json::to_string(&revoked_request).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 8,
+                            "stream": "worker_response",
+                            "line": serde_json::to_string(&revoked_response).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 9,
+                            "stream": "parent_request",
+                            "line": serde_json::to_string(&final_dump_request).unwrap(),
+                        }),
+                        serde_json::json!({
+                            "worker": worker,
+                            "pid": primary_pid,
+                            "sequence": 10,
+                            "stream": "worker_response",
+                            "line": serde_json::to_string(&final_dump_response).unwrap(),
+                        }),
+                    ]);
+                }
             }
             let bytes = json_lines(&transcript);
             write_case_ref(root, reference, &bytes);
@@ -2959,7 +3793,7 @@ fn materialize_raw(
             if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
                 for name in [
                     "revoked-capability-not-resurrected",
-                    "source-recovery-requires-reauthorization",
+                    "source-recovery-does-not-resurrect-revoked-timer",
                 ] {
                     assertions.push(serde_json::json!({
                         "name": name,
@@ -3287,8 +4121,9 @@ fn rewrite_source_trace_phase(
     phase: contract_core::HandoffPhase,
 ) {
     rewrite_source_trace(bundle, root, case_id, |trace| {
-        assert!(trace.entries.is_empty());
-        trace.base_state.phase = phase;
+        if trace.entries.is_empty() {
+            trace.base_state.phase = phase;
+        }
         trace.final_state.phase = phase;
     });
 }

@@ -4,9 +4,10 @@ use std::{
 };
 
 use contract_core::{
-    ActivationRole, ActivationStatus, AuthorityStatus, BindingReceipt, CanonicalState, Digest,
-    EventKind, ExtensionSupport, HandoffPhase, Identity, LeaseEpoch, Rights, SnapshotEnvelope,
-    canonical_digest, snapshot_integrity, state_digest,
+    ActivationRole, ActivationStatus, AuthorityGrant, AuthorityStatus, BindingReceipt,
+    CanonicalState, Digest, EntityRef, EventKind, ExtensionSupport, HandoffPhase, Identity,
+    JournalEntry, LeaseEpoch, NodeIdentity, Rights, SnapshotEnvelope, TimerDisposition,
+    TimerStatus, VersionedValue, canonical_digest, snapshot_integrity, state_digest,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -495,6 +496,7 @@ fn validate_case_contents(
         case,
         &bundle.environment,
         matrix,
+        ParsedCaseArtifacts { snapshot: snapshot.as_ref(), traces: &traces },
         artifacts,
         runtime_observations,
         findings,
@@ -511,6 +513,12 @@ struct ParsedTrace {
     replayed: Option<CanonicalState>,
 }
 
+#[derive(Clone, Copy)]
+struct ParsedCaseArtifacts<'a> {
+    snapshot: Option<&'a SnapshotEnvelope>,
+    traces: &'a [ParsedTrace],
+}
+
 struct ParsedReceipt {
     resource: Stage1ResourceKind,
     claimed_identity: String,
@@ -521,8 +529,22 @@ struct ParsedReceipt {
 struct RawEvidence {
     dumps: Vec<RawDump>,
     assertion_names: BTreeSet<String>,
-    revoked_provider_workers: BTreeSet<(Stage1TraceRole, String)>,
+    command_observations: Vec<RawCommandObservation>,
     primary_worker_pids: BTreeMap<Stage1TraceRole, u32>,
+}
+
+struct RawCommandObservation {
+    role: Stage1TraceRole,
+    worker: String,
+    command: ProtocolCommandKind,
+    outcome: RawCommandOutcome,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RawCommandOutcome {
+    Success,
+    ProviderRevoked,
+    OtherError,
 }
 
 #[derive(Default)]
@@ -561,13 +583,26 @@ impl RawRuntimeObservations {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct RawDump {
     role: Stage1TraceRole,
+    worker: String,
     state: CanonicalState,
+    component_instantiated: bool,
+    component_present: bool,
+    journal: Vec<JournalEntry>,
+    leases: Vec<RawLeaseRecord>,
+    authority_grants: Vec<AuthorityGrant>,
+    binding_receipts: Vec<BindingReceipt>,
+    fault_observation: Option<RawFaultObservation>,
+    key_value_entry: Option<VersionedValue>,
 }
 
 const REPORT_REGENERATION_CASE_ID: &str = "report-generation-fails-after-commit";
 const REPORT_REGENERATION_ASSERTION: &str = "report-publication-failed-and-regenerated";
+const REVOCATION_DESTINATION_ASSERTION: &str = "revoked-capability-not-resurrected";
+const REVOCATION_COMPLETED_RECOVERY_ASSERTION: &str =
+    "source-recovery-does-not-resurrect-revoked-timer";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -798,6 +833,16 @@ fn validate_snapshot(
     if let Some(destination) =
         traces.iter().find(|trace| trace.trace.role == Stage1TraceRole::Destination)
     {
+        if destination.trace.base_cursor != body.snapshot.journal_position {
+            finding(
+                findings,
+                "inconsistent-stage1-destination-trace-base",
+                format!(
+                    "{} destination trace cursor does not equal the retained snapshot cursor",
+                    case.case_id
+                ),
+            );
+        }
         let supported = body
             .extensions
             .iter()
@@ -1222,18 +1267,55 @@ struct RawTranscriptLine {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawDumpResult {
+    kind: String,
     canonical_state: Box<CanonicalState>,
     state_digest: Digest,
+    journal: Vec<JournalEntry>,
+    leases: Vec<RawLeaseRecord>,
+    authority_grants: Vec<AuthorityGrant>,
+    binding_receipts: Vec<BindingReceipt>,
+    fault_observation: Option<RawFaultObservation>,
+    key_value_entry: Option<VersionedValue>,
     component_instantiated: bool,
     live_runtime: Option<ObservedRuntimeIdentity>,
+    component: serde_json::Value,
     portable_component_state: Option<Vec<u8>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLeaseRecord {
+    resource: EntityRef,
+    owner: NodeIdentity,
+    epoch: LeaseEpoch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawFaultPoint {
+    BeforeJournalWrite,
+    AfterJournalWrite,
+    BeforeActivationBundle,
+    AfterActivationBundle,
+    BeforeCommitBundle,
+    AfterCommitBundle,
+    AfterKvCommit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFaultObservation {
+    point: RawFaultPoint,
+    count: u64,
 }
 
 fn validate_raw_artifacts(
     case: &Stage1CaseEvidence,
     environment: &Stage1ExecutionEnvironment,
     matrix: Option<&MatrixManifest>,
+    parsed: ParsedCaseArtifacts<'_>,
     artifacts: &VerifiedStage1Artifacts,
     runtime_observations: &mut RawRuntimeObservations,
     findings: &mut Vec<Stage1ValidationFinding>,
@@ -1341,34 +1423,160 @@ fn validate_raw_artifacts(
         );
     }
     if case.outcome == crate::stage1::Stage1CaseOutcome::RevocationRejectedNoResurrection {
-        let roles = evidence
-            .revoked_provider_workers
+        let primary_source_worker = format!("{}-source", case.case_id);
+        let source_audit_worker = format!("{}-source-audit", case.case_id);
+        let primary_destination_worker = format!("{}-destination", case.case_id);
+        let destination_lifecycle = evidence
+            .command_observations
             .iter()
-            .map(|(role, _)| *role)
-            .collect::<BTreeSet<_>>();
-        if evidence.revoked_provider_workers.len() < 2
-            || !roles.contains(&Stage1TraceRole::Source)
-            || !roles.contains(&Stage1TraceRole::Destination)
-        {
+            .filter(|observation| {
+                observation.role == Stage1TraceRole::Destination
+                    && observation.worker == primary_destination_worker
+            })
+            .map(|observation| (observation.command, observation.outcome))
+            .collect::<Vec<_>>();
+        let destination_lifecycle_is_exact = destination_lifecycle
+            == [
+                (ProtocolCommandKind::Initialize, RawCommandOutcome::Success),
+                (ProtocolCommandKind::LoadDestination, RawCommandOutcome::Success),
+                (ProtocolCommandKind::Dump, RawCommandOutcome::Success),
+                (ProtocolCommandKind::PrepareDestination, RawCommandOutcome::ProviderRevoked),
+                (ProtocolCommandKind::Dump, RawCommandOutcome::Success),
+            ];
+        let any_source_revoked = evidence.command_observations.iter().any(|observation| {
+            observation.role == Stage1TraceRole::Source
+                && observation.outcome == RawCommandOutcome::ProviderRevoked
+        });
+        let primary_source_dumps = evidence
+            .dumps
+            .iter()
+            .filter(|dump| {
+                dump.role == Stage1TraceRole::Source && dump.worker == primary_source_worker
+            })
+            .collect::<Vec<_>>();
+        let source_audit_dumps = evidence
+            .dumps
+            .iter()
+            .filter(|dump| {
+                dump.role == Stage1TraceRole::Source && dump.worker == source_audit_worker
+            })
+            .collect::<Vec<_>>();
+        let destination_dumps = evidence
+            .dumps
+            .iter()
+            .filter(|dump| {
+                dump.role == Stage1TraceRole::Destination
+                    && dump.worker == primary_destination_worker
+            })
+            .collect::<Vec<_>>();
+        let destination_traces = parsed
+            .traces
+            .iter()
+            .filter(|trace| trace.trace.role == Stage1TraceRole::Destination)
+            .collect::<Vec<_>>();
+        let completed_recovery_preserved = match (
+            primary_source_dumps.as_slice(),
+            source_audit_dumps.as_slice(),
+            destination_dumps.as_slice(),
+            destination_traces.as_slice(),
+        ) {
+            ([primary], [audit], [destination_base, destination_final], [destination_trace]) => {
+                let snapshot_matches = parsed.snapshot.is_some_and(|snapshot| {
+                    snapshot.body.timer == TimerDisposition::Completed
+                        && primary.state.snapshot_body().as_ref() == Some(&snapshot.body)
+                        && destination_base.state.snapshot_body().as_ref() == Some(&snapshot.body)
+                        && destination_final.state.snapshot_body().as_ref() == Some(&snapshot.body)
+                });
+                let expected_lease_resources = BTreeSet::from([
+                    primary.state.timer.claim.resource,
+                    primary.state.key_value.claim.resource,
+                ]);
+                let destination_lease_resources = destination_final
+                    .leases
+                    .iter()
+                    .map(|lease| lease.resource)
+                    .collect::<BTreeSet<_>>();
+                let destination_leases_match_source =
+                    primary.state.ownership.owner.is_some_and(|owner| {
+                        destination_final.leases.len() == expected_lease_resources.len()
+                            && destination_lease_resources == expected_lease_resources
+                            && destination_final.leases.iter().all(|lease| {
+                                lease.owner == owner && lease.epoch == primary.state.ownership.epoch
+                            })
+                    });
+                let key_value_matches_canonical =
+                    primary.key_value_entry.as_ref().map(|value| value.version)
+                        == primary.state.key_value.last_version;
+                state_digest(&primary.state)
+                    .is_ok_and(|digest| contract_digest_hex(digest) == case.state.state_sha256)
+                    && snapshot_matches
+                    && primary.state.phase == HandoffPhase::Exported
+                    && primary.state.timer.status
+                        == TimerStatus::Frozen(TimerDisposition::Completed)
+                    && audit.state == primary.state
+                    && audit.journal == primary.journal
+                    && audit.leases == primary.leases
+                    && audit.authority_grants == primary.authority_grants
+                    && audit.binding_receipts == primary.binding_receipts
+                    && audit.fault_observation == primary.fault_observation
+                    && audit.key_value_entry == primary.key_value_entry
+                    && audit.component_instantiated == primary.component_instantiated
+                    && !primary.component_present
+                    && !audit.component_present
+                    && destination_base == destination_final
+                    && destination_leases_match_source
+                    && destination_final.leases == primary.leases
+                    && destination_final.authority_grants == primary.authority_grants
+                    && destination_final.binding_receipts == primary.binding_receipts
+                    && destination_final.fault_observation == primary.fault_observation
+                    && destination_final.key_value_entry == primary.key_value_entry
+                    && key_value_matches_canonical
+                    && destination_final.state.ownership == primary.state.ownership
+                    && destination_final.state.phase == HandoffPhase::Exported
+                    && !destination_final.component_instantiated
+                    && !destination_final.component_present
+                    && destination_final.binding_receipts.is_empty()
+                    && !destination_trace.trace.claimed_final
+                    && destination_trace.trace.base_state == destination_base.state
+                    && destination_trace.trace.entries == destination_final.journal
+                    && destination_trace.trace.final_state == destination_final.state
+                    && destination_trace.replayed.as_ref() == Some(&destination_final.state)
+            }
+            _ => false,
+        };
+        if !destination_lifecycle_is_exact || any_source_revoked || !completed_recovery_preserved {
             finding(
                 findings,
                 "missing-stage1-revocation-provider-observation",
                 format!(
-                    "{} must observe Provider/Revoked from destination prepare and fresh source recovery",
+                    "{} must observe an exact Initialize/Load/Dump/PrepareDestination-Revoked/Dump destination lifecycle, a source-owned provider projection bound to its destination trace, and one snapshot-bound completed-frozen fresh source recovery",
                     case.case_id
                 ),
             );
         }
-        for required in
-            ["revoked-capability-not-resurrected", "source-recovery-requires-reauthorization"]
-        {
-            if !evidence.assertion_names.contains(required) {
-                finding(
-                    findings,
-                    "missing-stage1-revocation-assertion",
-                    format!("{} omits required assertion {required}", case.case_id),
-                );
-            }
+        if !evidence.assertion_names.contains(REVOCATION_DESTINATION_ASSERTION) {
+            finding(
+                findings,
+                "missing-stage1-revocation-assertion",
+                format!(
+                    "{} omits required assertion {REVOCATION_DESTINATION_ASSERTION}",
+                    case.case_id
+                ),
+            );
+        }
+        let completed_asserted =
+            evidence.assertion_names.contains(REVOCATION_COMPLETED_RECOVERY_ASSERTION);
+        let legacy_pending_asserted =
+            evidence.assertion_names.contains("source-recovery-requires-reauthorization");
+        if !completed_recovery_preserved || !completed_asserted || legacy_pending_asserted {
+            finding(
+                findings,
+                "missing-stage1-revocation-assertion",
+                format!(
+                    "{} omits the completed-frozen recovery assertion or includes a stale pending-branch assertion",
+                    case.case_id
+                ),
+            );
         }
     }
     evidence
@@ -1763,17 +1971,7 @@ fn validate_transcript(
                                     }
                                 }
                             }
-                            RawProtocolOutcome::Error { error } => {
-                                if !error.is_object() {
-                                    finding(
-                                        findings,
-                                        "invalid-stage1-worker-protocol-response",
-                                        format!(
-                                            "{} initialize error response {id} is not an object",
-                                            case.case_id
-                                        ),
-                                    );
-                                }
+                            RawProtocolOutcome::Error { .. } => {
                                 handshake.state = RawInitializationState::Failed;
                             }
                         }
@@ -1822,6 +2020,25 @@ fn validate_transcript(
                         );
                     }
                 }
+                if first_response
+                    && let Some(command) = request.as_ref().and_then(|request| request.kind)
+                {
+                    let outcome = match &response.outcome {
+                        RawProtocolOutcome::Success { .. } => RawCommandOutcome::Success,
+                        RawProtocolOutcome::Error { error }
+                            if error.is_exact_provider_revoked() =>
+                        {
+                            RawCommandOutcome::ProviderRevoked
+                        }
+                        RawProtocolOutcome::Error { .. } => RawCommandOutcome::OtherError,
+                    };
+                    evidence.command_observations.push(RawCommandObservation {
+                        role,
+                        worker: transcript.worker.clone(),
+                        command,
+                        outcome,
+                    });
+                }
                 if first_response && observed_component_instantiated(&value) == Ok(Some(true)) {
                     let live = raw_live_runtime(result_kind, result);
                     let handshake = worker_handshakes.entry(transcript.worker.clone()).or_default();
@@ -1849,6 +2066,7 @@ fn validate_transcript(
                         Some(dump) => validate_raw_dump(
                             case,
                             role,
+                            &transcript.worker,
                             dump,
                             runtime_observations,
                             evidence,
@@ -1860,15 +2078,6 @@ fn validate_transcript(
                             format!("{} contains a malformed typed worker dump", case.case_id),
                         ),
                     }
-                }
-                if matches!(
-                    &response.outcome,
-                    RawProtocolOutcome::Error { error }
-                        if error.get("code").and_then(serde_json::Value::as_str) == Some("provider")
-                            && error.get("provider_kind").and_then(serde_json::Value::as_str)
-                                == Some("Revoked")
-                ) {
-                    evidence.revoked_provider_workers.insert((role, transcript.worker));
                 }
             }
             RawTranscriptStream::WorkerStderr => unreachable!(),
@@ -1963,7 +2172,104 @@ struct RawProtocolResponse {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 enum RawProtocolOutcome {
     Success { result: serde_json::Value },
-    Error { error: serde_json::Value },
+    Error { error: RawWorkerError },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+struct RequiredNullable<T>(Option<T>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawWorkerErrorCode {
+    Protocol,
+    InvalidState,
+    Fixture,
+    Provider,
+    Runtime,
+    Adapter,
+    Io,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+enum RawProviderErrorKind {
+    InvalidRequest,
+    Unsupported,
+    NotFound,
+    Conflict,
+    StaleGeneration,
+    StaleEpoch,
+    Denied,
+    Revoked,
+    Integrity,
+    Unavailable,
+    OutcomeUnknown,
+    Storage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawAdapterFailureKind {
+    IncompatibleProfile,
+    ProfileEncoding,
+    ProfileDigestMismatch,
+    ComponentDigestMismatch,
+    Engine,
+    InvalidComponent,
+    Link,
+    UnsupportedRuntimeFeature,
+    Instantiation,
+    GuestTrap,
+    Workload,
+    ResourceBinding,
+    LiveResourcesAtSafePoint,
+    SafePointStateMismatch,
+    PortableStateMismatch,
+    PortableState,
+    Coordinator,
+    SafePointRollback,
+    SafePointGuestRollback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawWorkloadFailureKind {
+    AlreadyActive,
+    InvalidState,
+    WrongTimer,
+    SafePointUnavailable,
+    KeyValueDenied,
+    KeyValueConflict,
+    KeyValueStaleBinding,
+    KeyValueIndeterminate,
+    KeyValueUnavailable,
+    TimerDenied,
+    TimerStaleBinding,
+    TimerNotPending,
+    TimerUnavailable,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkerError {
+    code: RawWorkerErrorCode,
+    message: String,
+    retryable: RequiredNullable<bool>,
+    provider_kind: RequiredNullable<RawProviderErrorKind>,
+    adapter_kind: RequiredNullable<RawAdapterFailureKind>,
+    workload_kind: RequiredNullable<RawWorkloadFailureKind>,
+}
+
+impl RawWorkerError {
+    fn is_exact_provider_revoked(&self) -> bool {
+        self.code == RawWorkerErrorCode::Provider
+            && !self.message.is_empty()
+            && self.retryable.0 == Some(false)
+            && self.provider_kind.0 == Some(RawProviderErrorKind::Revoked)
+            && self.adapter_kind.0.is_none()
+            && self.workload_kind.0.is_none()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2249,12 +2555,17 @@ const fn trace_role_name(role: Stage1TraceRole) -> &'static str {
 fn validate_raw_dump(
     case: &Stage1CaseEvidence,
     role: Stage1TraceRole,
+    worker: &str,
     dump: RawDumpResult,
     runtime_observations: &RawRuntimeObservations,
     evidence: &mut RawEvidence,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
     let digest = state_digest(&dump.canonical_state).unwrap_or(Digest::ZERO);
+    let mut expected_authority_grants = dump.canonical_state.authorities.clone();
+    if let Some(prepared) = &dump.canonical_state.prepared_destination {
+        expected_authority_grants.extend(prepared.authorities.clone());
+    }
     let portable_matches = dump.portable_component_state.as_ref().map_or_else(
         || dump.canonical_state.portable_state.is_empty(),
         |portable| portable == &dump.canonical_state.portable_state,
@@ -2265,7 +2576,9 @@ fn validate_raw_dump(
     };
     let runtime_matches = dump.component_instantiated == dump.live_runtime.is_some()
         && dump.live_runtime.as_ref().is_none_or(|runtime| Some(runtime) == expected_runtime);
-    if digest != dump.state_digest
+    if dump.kind != "dump"
+        || digest != dump.state_digest
+        || dump.authority_grants != expected_authority_grants
         || !portable_matches
         || !runtime_matches
         || role_of(dump.canonical_state.activation.role) != role
@@ -2274,12 +2587,24 @@ fn validate_raw_dump(
             findings,
             "inconsistent-stage1-raw-dump",
             format!(
-                "{} worker dump role, digest, live runtime, or opaque portable state is inconsistent",
+                "{} worker dump role, digest, authority projection, live runtime, or opaque portable state is inconsistent",
                 case.case_id
             ),
         );
     }
-    evidence.dumps.push(RawDump { role, state: *dump.canonical_state });
+    evidence.dumps.push(RawDump {
+        role,
+        worker: worker.to_owned(),
+        state: *dump.canonical_state,
+        component_instantiated: dump.component_instantiated,
+        component_present: !dump.component.is_null(),
+        journal: dump.journal,
+        leases: dump.leases,
+        authority_grants: dump.authority_grants,
+        binding_receipts: dump.binding_receipts,
+        fault_observation: dump.fault_observation,
+        key_value_entry: dump.key_value_entry,
+    });
 }
 
 fn validate_assertions(

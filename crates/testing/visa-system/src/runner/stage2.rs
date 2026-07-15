@@ -413,16 +413,17 @@ fn write_common_input(root: &Path) -> Result<PathBuf, Stage2RunnerError> {
             allowed_outcomes: definition.allowed_outcomes.to_vec(),
             case_config_sha256: digest_hex(entry.config_digest),
             case_policy_sha256: digest_hex(entry.policy_digest),
+            snapshot_timer_strategy: plan.snapshot_timer_strategy,
             fault_schedule: fault_schedule(definition, plan),
         })
         .collect::<Vec<_>>();
-    if canonical_stage2_sha256(&cases)
-        .map_err(|error| Stage2RunnerError::CommonInput { detail: error.to_string() })?
-        != STAGE2_ACCEPTED_REGISTRY_SHA256
-    {
+    let registry_sha256 = canonical_stage2_sha256(&cases)
+        .map_err(|error| Stage2RunnerError::CommonInput { detail: error.to_string() })?;
+    if registry_sha256 != STAGE2_ACCEPTED_REGISTRY_SHA256 {
         return Err(Stage2RunnerError::CommonInput {
-            detail: "prepared Stage 2 case registry does not match the accepted catalog lock"
-                .to_owned(),
+            detail: format!(
+                "prepared Stage 2 case registry digest is {registry_sha256}, expected accepted catalog lock {STAGE2_ACCEPTED_REGISTRY_SHA256}"
+            ),
         });
     }
     let manifest = Stage2CommonInputManifest {

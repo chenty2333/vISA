@@ -147,7 +147,7 @@ done
 
 gate_metadata() {
     run_gate "metadata: locked workspace resolution" \
-        bash -lc 'cargo metadata --locked --no-deps --format-version 1 >/tmp/visa-cargo-metadata.json'
+        bash -c 'cargo metadata --locked --no-deps --format-version 1 >/dev/null'
 }
 
 gate_fmt() {

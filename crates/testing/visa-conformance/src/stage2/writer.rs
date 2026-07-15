@@ -5,14 +5,17 @@ use super::{
         ensure_incomplete_marker, publish_atomic, read_contained, remove_if_exists,
         render_findings, sync_directory, write_error, write_from_finding,
     },
-    common::{accepted_registry_sha256, validate_common_input, validate_cross_cell_inputs},
+    common::{
+        accepted_registry_sha256, parse_common_input, validate_common_input,
+        validate_cross_cell_inputs,
+    },
     model::{
         STAGE2_COMMON_INPUT_FILE, STAGE2_EVIDENCE_FILE, STAGE2_EVIDENCE_SCHEMA_VERSION,
         STAGE2_EXECUTION_COUNT, STAGE2_INCOMPLETE_MARKER_FILE, STAGE2_MATRIX_MANIFEST_FILE,
         STAGE2_MATRIX_MANIFEST_SCHEMA_VERSION, Stage2ArtifactReference, Stage2CellManifest,
-        Stage2Claim, Stage2ClaimGuards, Stage2ClaimSet, Stage2CommonInputManifest,
-        Stage2EvidenceBundle, Stage2InnerVerification, Stage2MatrixManifest, Stage2WriteError,
-        Stage2WriteResult, stage2_cell_descriptors,
+        Stage2Claim, Stage2ClaimGuards, Stage2ClaimSet, Stage2EvidenceBundle,
+        Stage2InnerVerification, Stage2MatrixManifest, Stage2WriteError, Stage2WriteResult,
+        stage2_cell_descriptors,
     },
     verify::{
         compare_normalized_cells, load_verified_cell,
@@ -70,13 +73,12 @@ pub fn write_stage2_evidence_artifacts(
 
     let common_uri = STAGE2_COMMON_INPUT_FILE.to_owned();
     let common_bytes = read_contained(&stage2_root, &common_uri).map_err(write_from_finding)?;
-    let common: Stage2CommonInputManifest =
-        serde_json::from_slice(&common_bytes).map_err(|source| {
-            write_error(
-                "invalid-stage2-common-input-json",
-                format!("cannot parse {STAGE2_COMMON_INPUT_FILE}: {source}"),
-            )
-        })?;
+    let common = parse_common_input(&common_bytes).map_err(|source| {
+        write_error(
+            source.code,
+            format!("cannot parse {STAGE2_COMMON_INPUT_FILE}: {}", source.detail),
+        )
+    })?;
     let common_findings = validate_common_input(&common, &stage2_root);
     if !common_findings.is_empty() {
         return Err(write_error("invalid-stage2-common-input", render_findings(&common_findings)));

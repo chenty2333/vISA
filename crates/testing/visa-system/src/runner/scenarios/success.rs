@@ -49,15 +49,7 @@ pub(super) fn run_handoff_with_precompleted_timer(
 pub(super) fn finish_handoff_with_precompleted_timer(
     harness: &mut CaseHarness,
 ) -> Result<(), RunnerError> {
-    thread::sleep(Duration::from_nanos(harness.fixture.activation.delay_ns) + TIMER_MARGIN);
-    harness.begin_quiesce()?;
-    let transfer = harness.freeze()?;
-    harness.observe(
-        "pre-handoff-completion-captured",
-        matches!(transfer.timer, SafePointTimerView::Completed { .. }),
-        format!("timer={:?}", transfer.timer),
-    )?;
-    harness.export(transfer)?;
+    harness.snapshot_after_bootstrap()?;
     harness.normal_commit()?;
     assert_completed_timer_not_recreated(harness)
 }

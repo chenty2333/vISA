@@ -9,7 +9,10 @@ use super::{
         finding, read_and_hash, read_contained, render_findings, single_finding,
         validate_cell_directory_set, validate_normalized_directory_set,
     },
-    common::{accepted_registry_sha256, validate_common_input, validate_cross_cell_inputs},
+    common::{
+        accepted_registry_sha256, parse_common_input, validate_common_input,
+        validate_cross_cell_inputs,
+    },
     model::*,
     runtime::{
         translation_presence_matches, validate_inner_cell, validate_inner_cell_without_manifest,
@@ -171,10 +174,10 @@ fn validate_stage2_evidence_artifacts_impl(
             Some(bytes) => bytes,
             None => return Stage2ValidationReport::new(findings),
         };
-    let common: Stage2CommonInputManifest = match serde_json::from_slice(&common_bytes) {
+    let common = match parse_common_input(&common_bytes) {
         Ok(common) => common,
         Err(source) => {
-            finding(&mut findings, "invalid-stage2-common-input-json", source.to_string());
+            finding(&mut findings, source.code, source.detail);
             return Stage2ValidationReport::new(findings);
         }
     };
