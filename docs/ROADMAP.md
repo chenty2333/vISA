@@ -482,13 +482,14 @@ of native device state. Its two kill conditions remain mandatory:
 2. source thaw requires the exact durable abort decision for that reservation
    and, when effect freeze occurred, the exact thaw of that freeze generation.
 
-The current source lock pins local-clean, unpushed neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` (tree
-`1572ca83969e091898444c880d91885008d4cef7`). It fixes the v1 wire
+The current source lock pins remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79` (tree
+`a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). It fixes the v1 wire
 contract, TLA+ models, independent oracle, mutation corpus, 16-case normative
 registry, and Nexus native-v1 field mapping. Its machine contract is
 `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.
-The historical `8fcdaf42...` remote result is not the current source identity.
+The accepted artifact was independently reverified after download; receipt
+commit `be250c30...` is documentation lineage, not the source identity.
 The current mapping explicitly declares `adapter_qualification=false`; Nexus
 execution truth is separate.
 

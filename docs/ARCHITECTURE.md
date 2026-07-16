@@ -366,6 +366,28 @@ projection APIs through a hostile in-process caller, is a TCB violation. The
 owning guards enforce non-Byzantine orchestrator discipline; provider- or
 kernel-level adversarial joint-membership admission is not implemented.
 
+The bounded adversary model covers crash-stop process failure, the named lost-
+acknowledgement windows, retry, duplicate/reordered delivery, and malformed,
+stale, or substituted receipts within one host boot. It trusts the ownership log
+to be linearizable, durable, non-equivocating, and free from rollback. The Nexus
+Registry/effect service, vISA reducer/coordinator and SQLite projection, receipt
+admission code, exact schemas and executed binaries, and both publishers and
+verifiers are in the TCB. Test receipt authentication binds pinned identities
+and bytes; it is not a cryptographic authenticity or freshness mechanism.
+Progress is conditional on ownership query, the closure worker, and destination
+recovery eventually becoming available. Permanent loss may leave the source
+Frozen forever without violating the safety claim.
+
+Qualification-lock semantic review is also a trusted release step. The
+automatic checker proves that the approved exact checkout, source fingerprint,
+matrix, receipt shape, and expected test/log inventory agree; it cannot decide
+that a new source diff still implements the intended semantics. The approved
+`a890e5c3..a4016af3` increment changes only the two Linux-network evidence
+scripts outside the locked handoff source set; treating that increment as
+irrelevant to the handoff qualification is an explicit maintainer judgement.
+Likewise, the 11 `negative_mutations` names are a contract-locked falsifier
+catalog, not evidence that eleven independently source-mutated Nexus builds ran.
+
 The current SQLite projection exercises atomic append/head update, reopen,
 exact replay, conflict rejection, and retention of an unresolved effect-freeze
 obligation. It is a local crash-recovery projection, not an ownership ledger or
@@ -387,14 +409,14 @@ destination pre-resume checkpoint. Destination resume is bound to the durable
 activation completion-record digest rather than merely to an attempted local
 mutation.
 
-The current source lock pins local-clean, unpushed neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` at tree
-`1572ca83969e091898444c880d91885008d4cef7`. Its machine contract SHA-256
+The current source lock pins remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79` at tree
+`a65f264bb7eaf390cbd6285d791b4f7f43e9be25`. Its machine contract SHA-256
 is `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.
 It freezes the field-level mapping and 16-case identity relation to the vISA
-registry while explicitly keeping `adapter_qualification=false`. Earlier
-remote-accepted revisions remain historical evidence, not the current source
-identity. The reference lane runs those 16 cases plus one supplemental
+registry while explicitly keeping `adapter_qualification=false`. Its downloaded
+exact-SHA artifact passed independent verification; later `be250c30...` is
+receipt lineage, not the source identity. The reference lane runs those 16 cases plus one supplemental
 post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
 the separate online vISA runtime refinement evidence.
 

@@ -535,15 +535,19 @@ still declares `adapter_qualification=false`; it does not qualify Nexus. These
 remote receipts remain valid historical evidence, but neither revision is the
 current source-lock identity.
 
-The current source lock instead pins local-clean, unpushed neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`, tree
-`1572ca83969e091898444c880d91885008d4cef7`. Its machine-contract SHA-256 is
+The current source lock pins accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79`, tree
+`a65f264bb7eaf390cbd6285d791b4f7f43e9be25`. Its machine-contract SHA-256 is
 `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`,
 vendored Git-bundle SHA-256 is
-`4ffc9e90cea81e8588abfd2bac5df2365d9bd2c67cfd0dcbefd87e3328375a87`,
+`afe0fdfba1d2e47f5b6ee582833c03befca8e436f3a3d09d0b5df27612549e31`,
 and complete source-lock SHA-256 is
-`45469eca977bb6249a2c8a43996b9b0bedce9693775f4e1872e106c7af988931`.
-No remote result is claimed for this newer neutral revision.
+`e8894d79ba2b3f164e94451d14139313a477481dc11c94d84a76a7ef774b9d50`.
+Its run `29476495326`, job `87550513459`, and artifact `8366758594` succeeded;
+the downloaded ZIP digest matched GitHub metadata and its bundle passed the
+exact verifier before and after another relocation. Receipt commit
+`be250c30b99035807c553f26171aae72f651eb1e` passed its own CI and is
+documentation lineage rather than the accepted implementation identity.
 
 In that TLA+ model, `BeginFreeze` is one atomic abstract transition: admission
 closes, source authority freezes, the generation advances, and the abstract

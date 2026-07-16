@@ -143,9 +143,9 @@ other's state machine or ledger, unknown outcomes remain fail closed, and
 destination activation is derived from the exact commit, closure, and source
 fence chain.
 
-The current source lock pins local-clean, unpushed neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` (tree
-`1572ca83969e091898444c880d91885008d4cef7`). It supplies the reviewed wire
+The current source lock pins remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79` (tree
+`a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). It supplies the reviewed wire
 contract, 16-case normative model, TLA+ safety/progress checks, expected rollback
 counterexample, independent mutation-tested oracle, and exact Nexus native-v1
 field mapping. Earlier remote results, including `8fcdaf42...`, remain historical
@@ -318,8 +318,20 @@ logical-request experiment loses the ownership Commit acknowledgement only
 after durability, then separately discards the terminal Nexus child response
 before adapter acceptance. Exact query/retry and same-request-ID byte-identical
 replay preserve one ownership decision, one accepted native receipt, and one
-external execution. The standalone publication/relocation path has a smoke
-pass, but the final clean vISA artifact and remote CI remain open. The
+external execution. This is supplemental, post-hoc observational binding: the
+external request completes before native Register/Prepare/Commit, and the cell
+does not execute vISA source freeze/fence or destination activation. It therefore
+does not test whether Nexus admission serialized the external effect or prove a
+vISA runtime handoff vertical.
+
+Mutation evidence is also deliberately split. The neutral verifier executes 10
+corrupted semantic-trace mutations. The Nexus lock structurally binds 11 named
+falsifier classes, while its actual model/oracle/Registry suites execute their
+declared sequence, property, and Loom tests. The 11-name catalog is not eleven
+independently source-mutated Nexus builds.
+
+The standalone publication/relocation path has a smoke pass, but the final clean
+vISA artifact and remote CI remain open. The
 accumulated evidence cannot establish real OSTD execution, IRQ/SMP behavior,
 Registry replacement, the production retained-tombstone path, host-reboot
 recovery, permanent source loss, cross-host progress, Byzantine safety,

@@ -14,9 +14,7 @@ use crate::{
     NativeJsonlExchange, OwnershipAbortRequest, OwnershipCommitRequest, OwnershipReserveRequest,
     OwnershipSealRequest, ProcessEffectPeer, ProcessEffectPeerIdentity, ProcessEffectPeerLaunch,
     ProcessServiceRebindObservation, ReferenceOwnershipLog, effect_receipt_issuer,
-    nexus_effect_wire::{PeerRequest, PeerResponse},
-    ownership_receipt_issuer,
-    process_effect_peer::verify_native_receipt,
+    ownership_receipt_issuer, process_effect_peer::validate_native_jsonl_chain,
 };
 
 pub const NEXUS_PROCESS_QUALIFICATION_SCHEMA: &str = "visa.nexus-process-qualification-cell.v1";
@@ -200,7 +198,7 @@ fn run_committed_close(
     peer.shutdown().map_err(debug)?;
     outcome(&mut operations, "shutdown", "clean-exit");
     let native_chain = peer.native_transcript().map_err(debug)?;
-    validate_native_chain(&native_chain)?;
+    validate_native_jsonl_chain(&native_chain).map_err(debug)?;
     Ok(NexusProcessScenarioReport {
         case_id: "nexus-process-committed-effect-close".to_owned(),
         process,
@@ -304,7 +302,7 @@ fn run_registered_abort_commit(
     peer.shutdown().map_err(debug)?;
     outcome(&mut operations, "shutdown", "clean-exit");
     let native_chain = peer.native_transcript().map_err(debug)?;
-    validate_native_chain(&native_chain)?;
+    validate_native_jsonl_chain(&native_chain).map_err(debug)?;
     let scenario = NexusProcessScenarioReport {
         case_id: "nexus-process-case-16-registered-abort-thaw-same-effect-commit".to_owned(),
         process,
@@ -525,7 +523,7 @@ pub fn validate_nexus_process_qualification_report(
             }
         }
         require(!scenario.exact_replays.is_empty(), "scenario omitted exact replay evidence")?;
-        validate_native_chain(&scenario.native_chain)?;
+        validate_native_jsonl_chain(&scenario.native_chain).map_err(debug)?;
         for replay in &scenario.exact_replays {
             require(
                 replay.request_id != 0
@@ -566,67 +564,6 @@ pub fn validate_nexus_process_qualification_report(
         }),
         "case 16 omitted its production service crash/rebind operation",
     )?;
-    Ok(())
-}
-
-fn validate_native_chain(chain: &[NativeJsonlExchange]) -> Result<(), String> {
-    require(!chain.is_empty(), "native JSONL chain was empty")?;
-    let mut previous = None;
-    let mut previous_sequence = 0;
-    for (index, exchange) in chain.iter().enumerate() {
-        let expected = u64::try_from(index).map_err(debug)? + 1;
-        require(
-            exchange.request_id == expected && exchange.receipt_sequence == expected,
-            "native request/receipt sequence was not contiguous",
-        )?;
-        require(
-            exchange.request_jsonl.ends_with('\n')
-                && exchange.response_jsonl.ends_with('\n')
-                && !exchange.request_jsonl.ends_with("\r\n")
-                && !exchange.response_jsonl.ends_with("\r\n"),
-            "native transcript did not preserve canonical LF-delimited JSONL",
-        )?;
-        require(
-            exchange.previous_receipt_sha256 == previous,
-            "native transcript parent digest was not contiguous",
-        )?;
-        let request_json = exchange
-            .request_jsonl
-            .strip_suffix('\n')
-            .ok_or_else(|| "native request was not LF terminated".to_owned())?;
-        let request: PeerRequest = serde_json::from_str(request_json).map_err(debug)?;
-        require(
-            request.request_id == exchange.request_id
-                && serde_json::to_vec(&request).map_err(debug)? == request_json.as_bytes(),
-            "native request transcript was not canonical or changed request identity",
-        )?;
-        let response: PeerResponse =
-            serde_json::from_str(exchange.response_jsonl.trim_end_matches('\n')).map_err(debug)?;
-        require(
-            serde_json::to_vec(&response).map_err(debug)?
-                == exchange.response_jsonl.trim_end_matches('\n').as_bytes(),
-            "native response transcript was not canonical JSON",
-        )?;
-        let receipt =
-            response.receipt.ok_or_else(|| "native transcript omitted receipt".to_owned())?;
-        require(
-            response.request_id == exchange.request_id
-                && receipt.sequence == exchange.receipt_sequence
-                && receipt.request_sha256 == exchange.request_sha256
-                && receipt.previous_receipt_sha256 == exchange.previous_receipt_sha256
-                && receipt.receipt_sha256 == exchange.receipt_sha256,
-            "native transcript metadata did not match its raw JSONL response",
-        )?;
-        verify_native_receipt(
-            &receipt,
-            request_json.as_bytes(),
-            previous_sequence,
-            previous.as_deref(),
-        )
-        .map_err(debug)?;
-        previous_sequence = receipt.sequence;
-        previous = Some(exchange.receipt_sha256.clone());
-    }
     Ok(())
 }
 

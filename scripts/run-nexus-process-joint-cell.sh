@@ -11,12 +11,22 @@ usage: scripts/run-nexus-process-joint-cell.sh \
 Runs the source-locked, clean exact-SHA vISA + Nexus same-boot process cell.
 The separate Nexus v2 qualification receipt must already exist under the clean
 Nexus checkout at target/research/handoff-admission/receipt.json. The runner
-publishes at a temporary location, verifies it in a second process, relocates
-the exact two-file artifact, and verifies the relocated bytes in a third
-process.
+executes the externally supplied Nexus peer, publishes its exact hash-bound
+bytes with the report and manifest at a temporary location, verifies the
+strict three-file artifact in a second process, relocates it, and verifies the
+relocated artifact from its own relative nexus-effect-peer entry in a third
+process. Verification validates but does not re-execute the retained binary;
+file permissions are not an evidence field because artifact transport may
+normalize the locally published 0500 mode (for example, to 0644 on download).
+
+The final artifact may live outside the vISA checkout or under the checkout's
+ignored .ci-artifacts directory. Other in-checkout output paths are rejected.
 
 Limitations remain explicit: same boot only; Registry replacement and retained
-tombstone mapping are unsupported; this script does not claim remote CI.
+tombstone mapping are unsupported; the exact executed executable bytes are
+retained and hash-identified, but verification does not re-execute them and the
+retained file mode is not evidence; the artifact does not claim reproducible
+source-to-binary derivation; this script does not claim remote CI.
 EOF
 }
 
@@ -103,7 +113,13 @@ artifact_root="$artifact_parent/$artifact_name"
 [[ ! -e "$artifact_root" && ! -L "$artifact_root" ]] \
     || fail "final artifact root already exists: $artifact_root"
 case "$artifact_root/" in
-    "$root/"*) fail "artifact root must be outside the clean vISA checkout" ;;
+    "$root/.ci-artifacts/"*)
+        git -C "$root" check-ignore -q -- "$artifact_root" \
+            || fail ".ci-artifacts output is not ignored by the vISA checkout"
+        ;;
+    "$root/"*)
+        fail "artifact root must be outside the vISA checkout or below ignored .ci-artifacts"
+        ;;
 esac
 
 require_clean_checkout() {
@@ -169,9 +185,7 @@ nexus_bin_sha256="$(sha256sum -- "$nexus_bin" | cut -d ' ' -f1)"
 [[ "$nexus_bin_sha256" =~ ^[0-9a-f]{64}$ ]] \
     || fail "Nexus executable SHA-256 is not canonical"
 
-runner_args=(
-    "$visa_revision"
-    "$nexus_bin"
+provenance_args=(
     "$nexus_bin_sha256"
     "$qualified_nexus_revision"
     "$qualified_nexus_baseline_revision"
@@ -211,10 +225,19 @@ run_artifact_command() {
     local location="$2"
     (
         CDPATH='' cd -- "$root"
-        cargo run --locked --quiet \
-            -p visa-joint-handoff-system \
-            --bin nexus-process-qualification \
-            -- "$mode" "$location" "${runner_args[@]}"
+        if [[ "$mode" == run ]]; then
+            cargo run --locked --quiet \
+                -p visa-joint-handoff-system \
+                --bin nexus-process-qualification \
+                -- "$mode" "$location" "$visa_revision" "$nexus_bin" \
+                "${provenance_args[@]}"
+        else
+            cargo run --locked --quiet \
+                -p visa-joint-handoff-system \
+                --bin nexus-process-qualification \
+                -- "$mode" "$location" "$visa_revision" \
+                "${provenance_args[@]}"
+        fi
     )
 }
 
@@ -244,4 +267,4 @@ printf 'Nexus exact revision: %s\n' "$qualified_nexus_revision"
 printf 'Nexus reference baseline revision: %s\n' "$qualified_nexus_baseline_revision"
 printf 'Nexus executable SHA-256: %s\n' "$nexus_bin_sha256"
 printf '%s\n' \
-    'Limitations: same boot only; Registry replacement and retained tombstone mapping unsupported; remote CI not observed.'
+    'Limitations: same boot only; Registry replacement and retained tombstone mapping unsupported; exact executed executable bytes retained and hash identified; verification does not re-execute them; retained file mode is not evidence; reproducible source-to-binary derivation not claimed; remote CI not observed.'

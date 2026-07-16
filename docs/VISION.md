@@ -119,11 +119,11 @@ their native state: vISA portable continuity, one durable ownership decision,
 and native closure of the frozen source effect cohort.
 
 The current candidate is deliberately same-boot. Its source lock pins
-local-clean neutral revision `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`
-(tree `1572ca83969e091898444c880d91885008d4cef7`), which defines the 16
-normative schedules and current Nexus native-v1 mapping. This revision is
-unpushed. Earlier `873880c...`, `b5a462...`, and `8fcdaf42...` revisions remain
-historical remote evidence only. The current mapping preserves
+remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
+(tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`), which defines the 16
+normative schedules and current Nexus native-v1 mapping. Its exact-SHA artifact
+was independently reverified after download; `be250c30...` is the later receipt
+lineage. Earlier accepted revisions remain historical evidence only. The current mapping preserves
 `adapter_qualification=false`: it freezes a relation, not Nexus execution
 truth. The reference lane maps the 16 normative cases by identity to 16 vISA
 cases and adds one supplemental retained-tombstone recovery.
@@ -141,20 +141,28 @@ exclusive, non-Byzantine coordinator API. A second raw coordinator/provider
 handle or hostile public-projection caller is outside the boundary; provider-
 or kernel-enforced adversarial admission is not claimed.
 
-The Nexus-local axis is now locally clean at
-`a890e5c3e25138662c213f19280ba3b209939813`. Its v2 receipt records
+The Nexus-local axis is locked to clean revision
+`a4016af3a3de753cd78c6ff645b6e9d6605d5614`. Its v2 receipt records
 `production_registry_refinement_checked=true`, while the neutral mapping
-correctly keeps `adapter_qualification=false`. Four live process tests pass
-against the exact identified Nexus binary. They include one real logical
-request and two distinct acknowledgement-loss boundaries: ownership Commit
-after its durable SQLite transaction, and the terminal Nexus close response
-after the child produced it but before the adapter accepted it. Exact query and
-same-request replay recover one decision, one native receipt-chain entry, and
-one external execution.
+correctly keeps `adapter_qualification=false`. Exact-binary process tests include
+two distinct acknowledgement-loss boundaries: ownership Commit after its
+durable SQLite transaction, and the terminal Nexus close response after the
+child produced it but before the adapter accepted it. Exact query and same-
+request replay recover one decision and one accepted native receipt-chain
+entry. The logical-request cell is supplemental post-hoc binding: it neither
+places Nexus admission before the external effect nor executes the vISA runtime
+handoff lifecycle.
 
-This work is not Stage 5. The standalone process publisher and relocation
-verifier have a smoke pass, but the final artifact still requires the committed
-clean vISA SHA and remote CI is unobserved. No result establishes Registry
+The threat model is same-boot crash-stop with named retry/reorder/lost-ACK
+faults. A non-equivocating, no-rollback ownership log, both local SQLite stores,
+the Nexus Registry, exact receipt-admission code, and the publishers/verifiers
+remain in the TCB. Authentication is test identity/integrity binding rather than
+cryptographic freshness, and progress depends on recovery services eventually
+becoming available.
+
+This work is not Stage 5. Artifact-owned executable publication is being closed,
+but the final artifact still requires the committed clean vISA SHA and its
+exact-SHA CI receipt. No result establishes Registry
 replacement, the production retained-tombstone path, real OSTD IRQ/SMP,
 host-reboot or permanent source-loss recovery, cross-host continuity, Byzantine
 ownership-service safety, cryptographic authenticity, anti-rollback or

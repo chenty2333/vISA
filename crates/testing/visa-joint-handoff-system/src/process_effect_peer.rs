@@ -1053,6 +1053,118 @@ pub(crate) fn verify_native_receipt(
     Ok(())
 }
 
+pub(crate) fn validate_native_jsonl_chain(
+    chain: &[NativeJsonlExchange],
+) -> Result<(), EffectPeerError> {
+    if chain.is_empty() {
+        return Err(rejected("native JSONL chain was empty"));
+    }
+    let mut previous = None;
+    let mut previous_sequence = 0;
+    for (index, exchange) in chain.iter().enumerate() {
+        let expected = u64::try_from(index).map_err(|_| EffectPeerError::Integrity)? + 1;
+        if exchange.request_id != expected || exchange.receipt_sequence != expected {
+            return Err(rejected("native request/receipt sequence was not contiguous"));
+        }
+        if !exchange.request_jsonl.ends_with('\n')
+            || !exchange.response_jsonl.ends_with('\n')
+            || exchange.request_jsonl.ends_with("\r\n")
+            || exchange.response_jsonl.ends_with("\r\n")
+        {
+            return Err(rejected(
+                "native transcript did not preserve canonical LF-delimited JSONL",
+            ));
+        }
+        if exchange.previous_receipt_sha256 != previous {
+            return Err(rejected("native transcript parent digest was not contiguous"));
+        }
+        let request_json = exchange
+            .request_jsonl
+            .strip_suffix('\n')
+            .ok_or_else(|| rejected("native request was not LF terminated"))?;
+        let request: PeerRequest = serde_json::from_str(request_json)
+            .map_err(|_| rejected("native request transcript was not valid JSON"))?;
+        if request.schema != REQUEST_SCHEMA
+            || request.request_id != exchange.request_id
+            || serde_json::to_vec(&request).map_err(|_| EffectPeerError::Integrity)?
+                != request_json.as_bytes()
+        {
+            return Err(rejected(
+                "native request transcript schema, canonical form, or identity mismatched",
+            ));
+        }
+        let response_json = exchange
+            .response_jsonl
+            .strip_suffix('\n')
+            .ok_or_else(|| rejected("native response was not LF terminated"))?;
+        let response: PeerResponse = serde_json::from_str(response_json)
+            .map_err(|_| rejected("native response transcript was not valid JSON"))?;
+        if serde_json::to_vec(&response).map_err(|_| EffectPeerError::Integrity)?
+            != response_json.as_bytes()
+        {
+            return Err(rejected("native response transcript was not canonical JSON"));
+        }
+        if response.schema != RESPONSE_SCHEMA
+            || response.request_id != exchange.request_id
+            || !matches!(response.status, ResponseStatus::Ok)
+            || response.error.is_some()
+        {
+            return Err(rejected(
+                "native response transcript was not an accepted success response",
+            ));
+        }
+        let expected_kind = expected_native_receipt_kind(&request.command);
+        let receipt =
+            response.receipt.ok_or_else(|| rejected("native transcript omitted receipt"))?;
+        if receipt.kind != expected_kind || receipt.payload.receipt_kind() != expected_kind {
+            return Err(rejected("native command and receipt payload kind did not correspond"));
+        }
+        let receipt_kind = serde_json::to_value(receipt.kind)
+            .map_err(|_| EffectPeerError::Integrity)?
+            .as_str()
+            .ok_or(EffectPeerError::Integrity)?
+            .to_owned();
+        if receipt.sequence != exchange.receipt_sequence
+            || receipt_kind != exchange.receipt_kind
+            || receipt.request_sha256 != exchange.request_sha256
+            || receipt.previous_receipt_sha256 != exchange.previous_receipt_sha256
+            || receipt.receipt_sha256 != exchange.receipt_sha256
+        {
+            return Err(rejected(
+                "native transcript metadata did not match its raw JSONL response",
+            ));
+        }
+        verify_native_receipt(
+            &receipt,
+            request_json.as_bytes(),
+            previous_sequence,
+            previous.as_deref(),
+        )?;
+        previous_sequence = receipt.sequence;
+        previous = Some(exchange.receipt_sha256.clone());
+    }
+    Ok(())
+}
+
+const fn expected_native_receipt_kind(command: &PeerCommand) -> NativeReceiptKind {
+    match command {
+        PeerCommand::Initialize(_) => NativeReceiptKind::Initialized,
+        PeerCommand::Register(_) => NativeReceiptKind::EffectRegistered,
+        PeerCommand::Prepare(_) => NativeReceiptKind::EffectPrepared,
+        PeerCommand::Commit(_) => NativeReceiptKind::EffectCommitted,
+        PeerCommand::Complete(_) => NativeReceiptKind::EffectCompleted,
+        PeerCommand::AcknowledgePublication(_) => NativeReceiptKind::PublicationAcknowledged,
+        PeerCommand::CrashService(_) => NativeReceiptKind::ServiceCrashed,
+        PeerCommand::RebindService(_) => NativeReceiptKind::ServiceRebound,
+        PeerCommand::Freeze(_) => NativeReceiptKind::AdmissionFrozen,
+        PeerCommand::AbortUncommitted => NativeReceiptKind::UncommittedAborted,
+        PeerCommand::Thaw(_) => NativeReceiptKind::AdmissionThawed,
+        PeerCommand::CloseStep(_) => NativeReceiptKind::ClosureProgress,
+        PeerCommand::Query => NativeReceiptKind::HandoffQuery,
+        PeerCommand::Shutdown => NativeReceiptKind::Shutdown,
+    }
+}
+
 fn validate_launch(launch: &ProcessEffectPeerLaunch) -> Result<(), EffectPeerError> {
     if launch.executable_sha256.len() != 64
         || !launch.executable_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1317,7 +1429,7 @@ fn read_response_line(reader: &mut BufReader<ChildStdout>) -> Result<Vec<u8>, Ef
     Ok(raw)
 }
 
-fn compact_identity(domain: &[u8], identity: Identity) -> u64 {
+pub(crate) fn compact_identity(domain: &[u8], identity: Identity) -> u64 {
     let mut digest = Sha256::new();
     digest.update(b"vISA nexus effect peer identity v1");
     digest.update(domain);
@@ -1325,7 +1437,7 @@ fn compact_identity(domain: &[u8], identity: Identity) -> u64 {
     nonzero_u64(digest.finalize().as_slice())
 }
 
-fn compact_digest(domain: &[u8], value: Digest) -> u64 {
+pub(crate) fn compact_digest(domain: &[u8], value: Digest) -> u64 {
     let mut digest = Sha256::new();
     digest.update(b"vISA nexus effect peer digest v1");
     digest.update(domain);
@@ -1338,7 +1450,7 @@ fn nonzero_u64(bytes: &[u8]) -> u64 {
     if value == 0 { 1 } else { value }
 }
 
-fn mapped_u64_digest(domain: &[u8], value: u64) -> Digest {
+pub(crate) fn mapped_u64_digest(domain: &[u8], value: u64) -> Digest {
     let mut digest = Sha256::new();
     digest.update(b"vISA mapped Nexus native u64 v1");
     digest.update(domain);
@@ -1346,7 +1458,7 @@ fn mapped_u64_digest(domain: &[u8], value: u64) -> Digest {
     Digest::from_bytes(digest.finalize().into())
 }
 
-fn mapped_native_digest(domain: &[u8], value: &impl Serialize) -> Digest {
+pub(crate) fn mapped_native_digest(domain: &[u8], value: &impl Serialize) -> Digest {
     let mut digest = Sha256::new();
     digest.update(b"vISA mapped Nexus native payload v1");
     digest.update(domain);
@@ -1414,6 +1526,46 @@ mod tests {
 
     fn rejected_result(result: Result<(), EffectPeerError>) {
         assert!(matches!(result, Err(EffectPeerError::NativeReceiptRejected(_))));
+    }
+
+    fn exchange_with_shutdown_receipt(request: PeerRequest) -> NativeJsonlExchange {
+        let request_bytes = serde_json::to_vec(&request).unwrap();
+        let receipt = receipt(1, &request_bytes, None);
+        let response = PeerResponse {
+            schema: RESPONSE_SCHEMA.to_owned(),
+            request_id: request.request_id,
+            status: ResponseStatus::Ok,
+            receipt: Some(receipt.clone()),
+            error: None,
+        };
+        NativeJsonlExchange {
+            request_id: request.request_id,
+            request_jsonl: format!("{}\n", String::from_utf8(request_bytes).unwrap()),
+            response_jsonl: format!("{}\n", serde_json::to_string(&response).unwrap()),
+            receipt_sequence: 1,
+            receipt_kind: "shutdown".to_owned(),
+            request_sha256: receipt.request_sha256.clone(),
+            previous_receipt_sha256: None,
+            receipt_sha256: receipt.receipt_sha256.clone(),
+        }
+    }
+
+    fn shutdown_exchange() -> NativeJsonlExchange {
+        exchange_with_shutdown_receipt(PeerRequest {
+            schema: REQUEST_SCHEMA.to_owned(),
+            request_id: 1,
+            command: PeerCommand::Shutdown,
+        })
+    }
+
+    fn mutate_response(
+        exchange: &mut NativeJsonlExchange,
+        mutation: impl FnOnce(&mut PeerResponse),
+    ) {
+        let mut response: PeerResponse =
+            serde_json::from_str(exchange.response_jsonl.strip_suffix('\n').unwrap()).unwrap();
+        mutation(&mut response);
+        exchange.response_jsonl = format!("{}\n", serde_json::to_string(&response).unwrap());
     }
 
     #[test]
@@ -1484,6 +1636,71 @@ mod tests {
             first.sequence,
             Some(&first.receipt_sha256),
         ));
+    }
+
+    #[test]
+    fn native_jsonl_chain_binds_raw_bytes_and_every_metadata_field() {
+        let valid = shutdown_exchange();
+        assert_eq!(validate_native_jsonl_chain(std::slice::from_ref(&valid)), Ok(()));
+
+        let mut changed = valid.clone();
+        changed.receipt_kind = "initialized".to_owned();
+        rejected_result(validate_native_jsonl_chain(&[changed]));
+
+        let mut changed = valid.clone();
+        changed.response_jsonl.push('\n');
+        rejected_result(validate_native_jsonl_chain(&[changed]));
+
+        let mut changed = valid;
+        changed.receipt_sequence = 2;
+        rejected_result(validate_native_jsonl_chain(&[changed]));
+    }
+
+    #[test]
+    fn native_jsonl_chain_rejects_live_adapter_response_invariant_mutations() {
+        let wrong_request_schema = exchange_with_shutdown_receipt(PeerRequest {
+            schema: "substituted-request-schema".to_owned(),
+            request_id: 1,
+            command: PeerCommand::Shutdown,
+        });
+        rejected_result(validate_native_jsonl_chain(&[wrong_request_schema]));
+
+        let mut wrong_response_schema = shutdown_exchange();
+        mutate_response(&mut wrong_response_schema, |response| {
+            response.schema = "substituted-response-schema".to_owned();
+        });
+        rejected_result(validate_native_jsonl_chain(&[wrong_response_schema]));
+
+        let mut error_with_receipt = shutdown_exchange();
+        mutate_response(&mut error_with_receipt, |response| {
+            response.status = ResponseStatus::Error;
+        });
+        rejected_result(validate_native_jsonl_chain(&[error_with_receipt]));
+
+        let mut success_with_error = shutdown_exchange();
+        mutate_response(&mut success_with_error, |response| {
+            response.error = Some(crate::nexus_effect_wire::NativeError {
+                code: "impossible-success-error".to_owned(),
+                detail: "success responses cannot retain native errors".to_owned(),
+            });
+        });
+        rejected_result(validate_native_jsonl_chain(&[success_with_error]));
+
+        let mut success_without_receipt = shutdown_exchange();
+        mutate_response(&mut success_without_receipt, |response| {
+            response.receipt = None;
+        });
+        rejected_result(validate_native_jsonl_chain(&[success_without_receipt]));
+    }
+
+    #[test]
+    fn native_jsonl_chain_rejects_command_receipt_kind_mismatch() {
+        let query_with_shutdown_receipt = exchange_with_shutdown_receipt(PeerRequest {
+            schema: REQUEST_SCHEMA.to_owned(),
+            request_id: 1,
+            command: PeerCommand::Query,
+        });
+        rejected_result(validate_native_jsonl_chain(&[query_with_shutdown_receipt]));
     }
 
     #[test]

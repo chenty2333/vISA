@@ -4,7 +4,7 @@
   "claim_id": "bounded-joint-handoff-refinement-v1",
   "nexus": {
     "repository": "https://github.com/chenty2333/Nexus",
-    "revision": "a890e5c3e25138662c213f19280ba3b209939813",
+    "revision": "a4016af3a3de753cd78c6ff645b6e9d6605d5614",
     "analyzed_baseline_revision": "7829e609b3d770b684316a30170a7412faa62f9b",
     "role": "nexus-local-handoff-admission-only",
     "receipt_schema": "nexus.research.handoff-admission.v2",

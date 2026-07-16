@@ -44,23 +44,27 @@ resource bindings, resume, and produce executable evidence about what happened.
 > portability, real ARM hardware, Stage 3 resource portability across targets,
 > or a second Stage 4 runtime.
 > A separate candidate `bounded-joint-handoff-refinement-v1` track now pins
-> local-clean neutral revision `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`
-> (tree `1572ca83969e091898444c880d91885008d4cef7`). This current revision is
-> unpushed; the earlier `8fcdaf42...` result remains historical remote evidence,
-> not the identity of the current source lock. The neutral mapping still declares
+> remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
+> (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). Its exact-SHA artifact was
+> downloaded and independently reverified; `be250c30...` is receipt lineage,
+> not the accepted implementation identity. The neutral mapping still declares
 > `adapter_qualification=false`. The same-boot vISA/reference lane maps 16
 > normative neutral cases to 16 vISA cases and keeps one supplemental
 > retained-tombstone recovery. Its online `Coordinator<SqliteProvider>`
 > HostSubstrate cell retains 14-record commit and 9-record abort WAL
 > transcripts, including the exact pre-call bytes for seven ownership/effect
-> peer-invocation classes, for strict independent replay. Nexus-local
-> handoff-admission and production-Registry refinement are locally clean at
-> `a890e5c3e25138662c213f19280ba3b209939813`. Four live process tests pass
-> against its exact `nexus-effect-peer` binary, including a real logical request,
-> post-durable ownership Commit acknowledgement loss, and loss of the terminal
-> Nexus response before adapter acceptance. The standalone two-file publisher
-> and relocation verifier have a smoke pass. The final artifact still requires a
-> committed clean vISA SHA, and no closing remote CI has been observed.
+> peer-invocation classes, for strict independent replay. Nexus-local handoff
+> admission and production-Registry refinement are locked to clean revision
+> `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+> `9b972a23...`, matrix `9f3f1579...`, and qualification-lock `36ed37f0...`.
+> The exact-binary process tests pass locally. Their supplemental logical-request
+> cell exercises post-durable ownership Commit acknowledgement loss and loss of
+> the terminal Nexus response before adapter acceptance, but the external effect
+> completes before native Register/Prepare/Commit. It therefore does not prove
+> Nexus admission ordered the effect or execute a vISA runtime handoff. Final
+> artifacts retain the exact executed binary by content identity without
+> claiming reproducible source-to-binary derivation. Closing vISA exact-SHA CI
+> and post-download receipts are still pending.
 > The HostSubstrate result assumes `exclusive_trusted_coordinator_api=true`:
 > its owning guards constrain a non-Byzantine orchestrator, not a second raw
 > `Coordinator`/provider handle or a hostile caller of public projection APIs.
@@ -365,8 +369,8 @@ This gate source-locks the 16-case neutral composition, runs 16
 production-reducer traces and 17 reference ownership/effect scenarios (16
 normative plus one supplemental retained-tombstone recovery), and executes the
 independently verified HostSubstrate commit and abort verticals. The current
-source lock pins local-clean, unpushed neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`; it deliberately remains
+source lock pins remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79`; it deliberately remains
 `reference-only-not-nexus-qualified` because Nexus execution truth is carried by
 the separate v2 qualification lock.
 

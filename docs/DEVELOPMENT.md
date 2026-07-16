@@ -151,14 +151,14 @@ scripts/run-docker-ci-gate.sh system-joint-handoff
 ```
 
 This tier deliberately requires a clean worktree at an exact vISA Git SHA. It
-validates current local-clean neutral revision
-`75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` at tree
-`1572ca83969e091898444c880d91885008d4cef7`. The vendored bundle SHA-256 is
-`4ffc9e90cea81e8588abfd2bac5df2365d9bd2c67cfd0dcbefd87e3328375a87`
+validates remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79` at tree
+`a65f264bb7eaf390cbd6285d791b4f7f43e9be25`. The vendored bundle SHA-256 is
+`afe0fdfba1d2e47f5b6ee582833c03befca8e436f3a3d09d0b5df27612549e31`
 and the complete source-lock SHA-256 is
-`45469eca977bb6249a2c8a43996b9b0bedce9693775f4e1872e106c7af988931`.
-This neutral revision is unpushed; the earlier `8fcdaf42...` remote result is
-historical. The tier runs 16
+`e8894d79ba2b3f164e94451d14139313a477481dc11c94d84a76a7ef774b9d50`.
+The implementation's downloaded exact-SHA artifact passed independent
+verification; `be250c30...` is its receipt lineage. The tier runs 16
 production-reducer traces, executes 16 normative reference ownership/effect
 cases plus one supplemental retained-tombstone recovery, reopens the durable
 SQLite projection, and executes the HostSubstrate commit and abort verticals.

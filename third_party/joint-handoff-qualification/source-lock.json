@@ -12,12 +12,12 @@
   },
   "joint_artifact": {
     "repository": "https://github.com/chenty2333/visa-nexus-handoff",
-    "revision": "75c5dacde8179e31eb88e17c5b7e8e3a9050e50b",
-    "tree": "1572ca83969e091898444c880d91885008d4cef7",
+    "revision": "f4a8211f0e5fde13e0f6101be3c3322854458c79",
+    "tree": "a65f264bb7eaf390cbd6285d791b4f7f43e9be25",
     "source_bundle": {
       "path": "third_party/joint-handoff-qualification/neutral-source.bundle",
-      "sha256": "4ffc9e90cea81e8588abfd2bac5df2365d9bd2c67cfd0dcbefd87e3328375a87",
-      "head": "75c5dacde8179e31eb88e17c5b7e8e3a9050e50b"
+      "sha256": "afe0fdfba1d2e47f5b6ee582833c03befca8e436f3a3d09d0b5df27612549e31",
+      "head": "f4a8211f0e5fde13e0f6101be3c3322854458c79"
     }
   },
   "protocol_schema": {

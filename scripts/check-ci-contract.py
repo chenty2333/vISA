@@ -39,7 +39,22 @@ NEXUS_LOCK_PATH = (
 NEXUS_REPOSITORY = "chenty2333/Nexus"
 NEXUS_CHECKOUT_PATH = ".ci-nexus"
 NEXUS_ARTIFACT_ROOT = ".ci-artifacts/nexus-handoff-qualification"
-NEXUS_GATE_LOG = ".ci-artifacts/nexus-handoff-qualification-ci.log"
+NEXUS_EFFECT_PEER = ".ci-nexus/target/debug/nexus-effect-peer"
+NEXUS_PROCESS_ARTIFACT_ROOT = ".ci-artifacts/nexus-process-joint-cell"
+NEXUS_LOGICAL_ARTIFACT_ROOT = ".ci-artifacts/logical-request-lost-ack-cell"
+NEXUS_GATE_LOG = ".ci-artifacts/nexus-visa-same-boot-qualification-ci.log"
+NEXUS_QUALIFICATION_ARTIFACT = "nexus-visa-same-boot-qualification-evidence"
+NEXUS_CLAIM_BOUNDARY = (
+    "Claim boundary: clean exact-SHA same-boot Nexus-local refinement and "
+    "process-backed joint handoff only; the logical-request dual-lost-ACK artifact "
+    "is a supplemental observational binding that neither executes a vISA runtime "
+    "handoff nor proves Nexus serialized admission before the external effect. This "
+    "is a host-build qualification, not a vISA Docker-image lane, and does not "
+    "claim Registry replacement, retained tombstone, "
+    "cross-host/reboot/permanent-source-loss recovery, "
+    "Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service "
+    "death/OSTD/IRQ/SMP, a production live-wire adapter, or performance."
+)
 
 EXACT_SHA_IMAGE = "visa-dev:${{ github.sha }}"
 RETENTION_POLICY = "${{ github.event_name == 'pull_request' && 3 || 14 }}"
@@ -54,6 +69,8 @@ IMAGE_SOURCE_LABEL = (
     "${{ github.server_url }}/${{ github.repository }}"
 )
 LOCKED_CARGO_WRAPPERS = (
+    "scripts/run-logical-request-lost-ack-cell.sh",
+    "scripts/run-nexus-process-joint-cell.sh",
     "scripts/run-host-ltp-log-adapter.sh",
     "scripts/run-visa-bench-conformance.sh",
     "scripts/run-visa-ltp-conformance.sh",
@@ -322,16 +339,27 @@ def check_exact_sha_images(jobs: dict[str, Any]) -> None:
         )
 
 
-def check_upload(job_name: str, job: dict[str, Any], gate_id: str) -> None:
+def check_upload(
+    job_name: str,
+    job: dict[str, Any],
+    gate_id: str,
+    *,
+    include_cancelled: bool = False,
+) -> None:
     uploads = steps_using(job, "actions/upload-artifact@")
     require(len(uploads) == 1, f"{job_name}: expected exactly one artifact upload")
-    expected_condition = (
-        "${{ always() && (steps."
-        + gate_id
-        + ".outcome == 'success' || steps."
-        + gate_id
-        + ".outcome == 'failure') }}"
-    )
+    if include_cancelled:
+        expected_condition = (
+            "${{ always() && steps." + gate_id + ".outcome != 'skipped' }}"
+        )
+    else:
+        expected_condition = (
+            "${{ always() && (steps."
+            + gate_id
+            + ".outcome == 'success' || steps."
+            + gate_id
+            + ".outcome == 'failure') }}"
+        )
     require(
         uploads[0].get("if") == expected_condition,
         f"{job_name}: evidence must upload after gate success or failure",
@@ -430,7 +458,7 @@ def check_quality_stage4_and_joint_reference(jobs: dict[str, Any]) -> None:
 
 def check_nexus_qualification(job: dict[str, Any]) -> None:
     require(
-        job.get("name") == "Docker Nexus exact-SHA handoff-admission qualification",
+        job.get("name") == "Nexus + vISA exact-SHA same-boot qualification",
         "Nexus qualification job name drifted",
     )
     require(
@@ -439,8 +467,9 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
         "Nexus qualification job must retain its bounded runner and timeout",
     )
     require(
-        job.get("env", {}) == {},
-        "Nexus qualification job must not inherit a vISA Docker image environment",
+        job.get("env", {}) == {} and "container" not in job,
+        "Nexus qualification job must remain a host lane without a vISA Docker "
+        "image or job container",
     )
 
     steps = job.get("steps", [])
@@ -451,9 +480,9 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
             "Checkout exact vISA SHA",
             "Read committed Nexus qualification lock",
             "Checkout exact locked Nexus SHA",
-            "Run Nexus-local handoff-admission qualification",
-            "Upload Nexus-local handoff-admission evidence",
-            "Remove Nexus qualification checkout and evidence from runner",
+            "Run Nexus + vISA same-boot qualification",
+            "Upload Nexus + vISA same-boot qualification evidence",
+            "Remove Nexus + vISA qualification checkout and evidence from runner",
         ],
         "Nexus qualification step inventory or order drifted",
     )
@@ -516,25 +545,85 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
 
     gate = step_with_id(job, "nexus_qualification")
     command = str(gate.get("run", ""))
+    local_command = (
+        "run_logged scripts/run-nexus-handoff-qualification.sh \\\n"
+        f"  --checkout {NEXUS_CHECKOUT_PATH} \\\n"
+        f"  --artifact-root {NEXUS_ARTIFACT_ROOT}"
+    )
     require(
-        "scripts/run-nexus-handoff-qualification.sh" in command
-        and f"--checkout {NEXUS_CHECKOUT_PATH}" in command
-        and f"--artifact-root {NEXUS_ARTIFACT_ROOT}" in command,
-        "Nexus qualification gate must invoke the source-locked wrapper",
+        local_command in command,
+        "Nexus qualification gate source-locked wrapper command or exact arguments "
+        "drifted",
     )
     require(
         "rm -rf .ci-artifacts" in command
         and "mkdir -p .ci-artifacts" in command
-        and "set -o pipefail" in command
-        and f"| tee {NEXUS_GATE_LOG}" in command,
+        and "set -Eeuo pipefail" in command
+        and f"gate_log={NEXUS_GATE_LOG}" in command
+        and '"$@" 2>&1 | tee -a "$gate_log"' in command,
         "Nexus qualification must retain a top-level log and fail closed across tee",
+    )
+
+    host_build = re.compile(
+        rf"\(\n\s+CDPATH='' cd -- {re.escape(NEXUS_CHECKOUT_PATH)}\n"
+        r"\s+cargo build --locked \\\n"
+        r"\s+--package nexus-effect-peer \\\n"
+        r"\s+--bin nexus-effect-peer\n"
+        r'\s*\) 2>&1 \| tee -a "\$gate_log"'
+    )
+    require(
+        host_build.search(command) is not None and "--manifest-path" not in command,
+        "Nexus effect peer must be host-built from the locked Nexus toolchain cwd",
+    )
+
+    process_command = (
+        "run_logged scripts/run-nexus-process-joint-cell.sh \\\n"
+        f"  --nexus-checkout {NEXUS_CHECKOUT_PATH} \\\n"
+        f"  --nexus-bin {NEXUS_EFFECT_PEER} \\\n"
+        f"  --artifact-root {NEXUS_PROCESS_ARTIFACT_ROOT}"
+    )
+    logical_command = (
+        "run_logged scripts/run-logical-request-lost-ack-cell.sh \\\n"
+        f"  --nexus-checkout {NEXUS_CHECKOUT_PATH} \\\n"
+        f"  --nexus-bin {NEXUS_EFFECT_PEER} \\\n"
+        f"  --artifact-root {NEXUS_LOGICAL_ARTIFACT_ROOT}"
+    )
+    require(
+        process_command in command,
+        "Nexus process joint cell command or exact arguments drifted",
+    )
+    require(
+        logical_command in command,
+        "logical-request lost-ACK cell command or exact arguments drifted",
+    )
+    require(
+        command.count("run_logged scripts/") == 3,
+        "Nexus qualification must contain exactly the three locked runner commands",
+    )
+    ordered_commands = (
+        "scripts/run-nexus-handoff-qualification.sh",
+        "cargo build --locked",
+        "scripts/run-nexus-process-joint-cell.sh",
+        "scripts/run-logical-request-lost-ack-cell.sh",
+        "find .ci-artifacts -mindepth 1 -maxdepth 1",
+        NEXUS_CLAIM_BOUNDARY,
+    )
+    command_offsets = [command.find(fragment) for fragment in ordered_commands]
+    require(
+        all(offset >= 0 for offset in command_offsets)
+        and command_offsets == sorted(command_offsets),
+        "Nexus qualification command order or claim boundary drifted",
     )
     require(
         "find .ci-artifacts -mindepth 1 -maxdepth 1 -printf '%y %f\\n'"
         in command
         and "LC_ALL=C sort" in command
-        and "d nexus-handoff-qualification\\nf nexus-handoff-qualification-ci.log"
-        in command
+        and (
+            "d logical-request-lost-ack-cell\\n"
+            "d nexus-handoff-qualification\\n"
+            "d nexus-process-joint-cell\\n"
+            "f nexus-visa-same-boot-qualification-ci.log"
+        ) in command
         and '"$actual_inventory" != "$expected_inventory"' in command,
         "Nexus qualification top-level artifact inventory must fail closed",
     )
@@ -549,12 +638,12 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
     require(len(uploads) == 1, "Nexus qualification must upload exactly one artifact")
     require(
         uploads[0].get("with", {}).get("name")
-        == "joint-handoff-nexus-qualification-evidence",
+        == NEXUS_QUALIFICATION_ARTIFACT,
         "Nexus qualification artifact identity drifted",
     )
     require(
         uploads[0].get("with", {}).get("path") == ".ci-artifacts/",
-        "Nexus artifact inventory must contain the wrapper tree and top-level log only",
+        "Nexus artifact upload must contain the three qualification trees and gate log",
     )
 
 
@@ -598,7 +687,7 @@ def check_closure(job: dict[str, Any]) -> None:
         )
     require("exit 1" in command, "closure must exit nonzero when a dependency failed")
     require(
-        "Nexus exact-SHA qualification lane" in command
+        "Nexus + vISA exact-SHA same-boot lane" in command
         and "${JOINT_NEXUS_RESULT}" in command,
         "closure summary must report the independent Nexus qualification result",
     )
@@ -631,7 +720,12 @@ def check_workflow() -> None:
     check_upload("docker-claim-gates", jobs["docker-claim-gates"], "claim_gate")
     check_upload("docker-stage4-gate", jobs["docker-stage4-gate"], "stage4_system_gate")
     check_upload(JOINT_REFERENCE_JOB, jobs[JOINT_REFERENCE_JOB], "joint_reference_gate")
-    check_upload(JOINT_NEXUS_JOB, jobs[JOINT_NEXUS_JOB], "nexus_qualification")
+    check_upload(
+        JOINT_NEXUS_JOB,
+        jobs[JOINT_NEXUS_JOB],
+        "nexus_qualification",
+        include_cancelled=True,
+    )
     check_closure(jobs["exact-sha-closure"])
 
 
