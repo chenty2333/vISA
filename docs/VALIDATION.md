@@ -21,7 +21,7 @@ performance, and production validation remain outside the implemented
 boundary. A separate `system-joint-handoff` lane now combines a reference
 protocol subreport with an independently verified HostSubstrate vertical for
 the candidate `bounded-joint-handoff-refinement-v1`. Nexus-local qualification
-is locked to clean `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, and the exact-
+is locked to clean `979b66aa60fd9b86de3ebef8e344140e61cc54ad`, and the exact-
 binary process tests pass locally. The process publisher now owns the executed
 binary in its strict artifact; the logical-request publisher is explicitly
 supplemental. The final clean-vISA artifacts and exact-SHA vISA CI remain
@@ -614,11 +614,11 @@ hostile caller of public projection APIs is outside the claim. The cell does
 not establish provider- or kernel-enforced adversarial joint membership.
 
 The Nexus-local lane is locked to clean revision
-`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source fingerprint
 `9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078`,
 matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and v2 qualification-lock SHA-256
-`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+`48c819b8d8fe76d6e53eaf542c92aaddad67d5201e14ede3d43906b22c6d2cb1`.
 The receipt reports `production_registry_refinement_checked=true`, whereas the
 neutral mapping reports `adapter_qualification=false`. Those statements are
 deliberately about different evidence axes.

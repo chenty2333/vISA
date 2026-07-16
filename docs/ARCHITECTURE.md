@@ -385,6 +385,23 @@ that a new source diff still implements the intended semantics. The approved
 `a890e5c3..a4016af3` increment changes only the two Linux-network evidence
 scripts outside the locked handoff source set; treating that increment as
 irrelevant to the handoff qualification is an explicit maintainer judgement.
+The subsequent `a4016af3..979b66aa` increment changes only
+`kernel/nexus-ostd/scripts/assert-linux-futex-startup-source.sh`,
+`kernel/nexus-ostd/scripts/assert-linux-futex-startup.sh`,
+`kernel/nexus-ostd/src/personality/linux_futex.rs`, and
+`kernel/nexus-ostd/x`, also outside that locked source set. The final
+`979b66aa` fix replaces runnable-parent yield polling with per-stage
+`WaitQueue`s: the child Release-publishes readiness before `wake_one`; the
+parent Acquire-checks readiness before and after wait-queue insertion and,
+while still waiting, parks through the scheduler's `dequeue_current` path.
+This removes the runnable-parent selection window without losing an early
+notification. Its 128-tick assertion qualifies successful child-entry latency
+only. `WaitQueue` has no timer-driven wake, so an absent receipt is failed
+closed by the unchanged outer QEMU timeout, not an internal guest-tick failure
+deadline. Accepting these same-boot futex-startup changes as semantically
+irrelevant to the handoff model is another explicit maintainer judgement;
+exact full CI and independent verification of the downloaded canonical Nexus
+bundle remain separate closure prerequisites.
 Likewise, the 11 `negative_mutations` names are a contract-locked falsifier
 catalog, not evidence that eleven independently source-mutated Nexus builds ran.
 
@@ -421,11 +438,11 @@ post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
 the separate online vISA runtime refinement evidence.
 
 The Nexus-local model/oracle/fault-matrix and production Registry refinement are
-locked to clean revision `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source
+locked to clean revision `979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source
 fingerprint `9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078`,
 matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and qualification-lock SHA-256
-`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+`48c819b8d8fe76d6e53eaf542c92aaddad67d5201e14ede3d43906b22c6d2cb1`.
 Its v2 receipt records `production_registry_refinement_checked=true`. This does not
 conflict with the neutral machine mapping's `adapter_qualification=false`: the
 former is executed Nexus-local evidence, while the latter refuses to infer

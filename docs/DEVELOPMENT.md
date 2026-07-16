@@ -179,9 +179,9 @@ scripts/run-nexus-handoff-qualification.sh \
 ```
 
 That lane is locked to Nexus revision
-`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source fingerprint
 `9b972a23...`, matrix `9f3f1579...`, and v2 qualification-lock SHA-256
-`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+`48c819b8d8fe76d6e53eaf542c92aaddad67d5201e14ede3d43906b22c6d2cb1`.
 The receipt records `production_registry_refinement_checked=true`. Its SHA-256
 is specific to one generated run and is recorded only in a corresponding
 validation receipt.

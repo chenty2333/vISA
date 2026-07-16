@@ -521,9 +521,9 @@ public projection surface is outside the bounded claim; the current guard is
 not provider- or kernel-enforced adversarial admission.
 
 The Nexus-local axis is locked to clean revision
-`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source fingerprint
 `9b972a23...`, matrix `9f3f1579...`, and v2 qualification-lock SHA-256
-`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+`48c819b8d8fe76d6e53eaf542c92aaddad67d5201e14ede3d43906b22c6d2cb1`.
 The receipt records production Registry refinement as checked. Generated receipt
 and local binary digests are run identities, not stable revision identities;
 final process artifacts retain the exact executed binary bytes.

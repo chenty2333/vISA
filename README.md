@@ -55,8 +55,8 @@ resource bindings, resume, and produce executable evidence about what happened.
 > transcripts, including the exact pre-call bytes for seven ownership/effect
 > peer-invocation classes, for strict independent replay. Nexus-local handoff
 > admission and production-Registry refinement are locked to clean revision
-> `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
-> `9b972a23...`, matrix `9f3f1579...`, and qualification-lock `36ed37f0...`.
+> `979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source fingerprint
+> `9b972a23...`, matrix `9f3f1579...`, and qualification-lock `48c819b8...`.
 > The exact-binary process tests pass locally. Their supplemental logical-request
 > cell exercises post-durable ownership Commit acknowledgement loss and loss of
 > the terminal Nexus response before adapter acceptance, but the external effect
