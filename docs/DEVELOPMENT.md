@@ -225,7 +225,9 @@ configuration, builds the image, then invokes the same `scripts/ci-gate.sh`
 implementation used by CI. `--skip-build` reuses an existing image.
 `--ci-cache` overlays `compose.ci.yaml`. It bind-mounts Cargo and LTP build state
 below `.ci-cache/`, places system evidence below `.ci-artifacts/`, and disables
-Cargo incremental compilation to match GitHub Actions.
+Cargo incremental compilation to match GitHub Actions. Inside the container,
+the artifact mount is exposed at the ignored `/workspace/evidence` alias so a
+clean-checking qualification gate cannot mistake its own output root for source.
 
 The strict Docker wrapper retains its gate root, locked Wacogo sidecar and build
 receipt, Docker log, and exit receipt together below `.ci-artifacts/strict-stage2/`
@@ -511,10 +513,11 @@ runners behind a small developer-facing surface.
 
 ## Outputs and caches
 
-`target/`, `.ci-cache/`, and `.ci-artifacts/` are ignored, but they have distinct
-lifecycles. The CI-cache overlay stores Cargo registry/git state, transient Cargo
-target output, and the LTP build cache below `.ci-cache/`; GitHub Actions restores
-only Cargo registry/git state across runs, never the full target tree. The
+`target/`, `.ci-cache/`, `.ci-artifacts/`, and the CI-only `evidence/` bind alias
+are ignored, but they have distinct lifecycles. The CI-cache overlay stores Cargo
+registry/git state, transient Cargo target output, and the LTP build cache below
+`.ci-cache/`; GitHub Actions restores only Cargo registry/git state across runs,
+never the full target tree. The
 quality job owns publication of that shared dependency cache, while claim lanes
 restore it without publishing duplicates. Current CI does not run or cache an
 external LTP build. CI sets `CARGO_INCREMENTAL=0`. The normal Compose
@@ -587,13 +590,15 @@ at a different root. The complete receipt is recorded in
 Current CI separates repository quality from claim qualification. One job runs
 `full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
 Strict Stage 2, Stage 3A, and Stage 3B; a separate lane runs the complete Stage 4
-aggregate, and another separate lane runs the candidate joint-handoff cell. A
-final `Exact-SHA qualification closure` job fails unless all nine job executions
-succeed for the same source SHA. The closure summary explicitly says that the
-joint lane does not qualify Nexus. Every Docker image is built from that
-checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
-`.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
-for 3 days and push artifacts for 14 days.
+aggregate, one separate Docker lane runs the candidate reference/HostSubstrate
+joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local
+and process qualification. A final `Exact-SHA qualification closure` job fails
+unless all ten prerequisite job executions succeed for the same source SHA,
+making eleven jobs including closure. The reference-only lane does not qualify
+Nexus, and neither joint lane substitutes for the other. Every Docker image is
+built from that checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs
+upload from `.ci-artifacts/` on gate success or failure. Pull-request artifacts
+are retained for 3 days and push artifacts for 14 days.
 
 ## Next validation expansion
 
