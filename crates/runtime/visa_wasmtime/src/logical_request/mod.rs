@@ -6,6 +6,7 @@ mod state;
 
 pub use adapter::{
     LogicalRequestAdapter, LogicalRequestCallResult, PreparedLogicalRequestComponent,
+    PreparedLogicalRequestStart,
 };
 pub use contract_core::DeliveryPolicy;
 pub use error::{LogicalRequestAdapterError, LogicalRequestFailure, LogicalRequestWorkloadFailure};

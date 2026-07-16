@@ -24,7 +24,7 @@ pub use logical_request::{
     LogicalRequestRejection, LogicalRequestReplay, LogicalRequestResult, LogicalRequestState,
     LogicalRequestStateCodecError, LogicalRequestStoreState, LogicalRequestTransport,
     LogicalRequestWorkloadFailure, LogicalRequestWorkloadLifecycle, LogicalResponseMetadata,
-    PortableLogicalRequestState, PreparedLogicalRequestComponent,
+    PortableLogicalRequestState, PreparedLogicalRequestComponent, PreparedLogicalRequestStart,
 };
 pub use regular_file::{
     FileDurability, FileLockState, PortableRegularFileState, PreparedRegularFileComponent,

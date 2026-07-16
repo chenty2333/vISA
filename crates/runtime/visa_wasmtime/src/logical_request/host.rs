@@ -315,6 +315,10 @@ fn request_error(error: ProfileFailure, context: FailureContext) -> RequestError
     }
 }
 
+pub(super) fn start_profile_failure(error: ProfileFailure) -> RequestError {
+    request_error(error, FailureContext::Start)
+}
+
 fn request_state_for_call(state: &CanonicalState) -> Result<LogicalRequestState, RequestError> {
     match canonical_logical_request(state) {
         Ok(state) => Ok(state),

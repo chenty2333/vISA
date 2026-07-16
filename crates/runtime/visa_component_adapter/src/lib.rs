@@ -13,8 +13,8 @@ pub use error::{
 pub use host::{
     AdapterProvider, BindingError, BindingSet, KvBinding, KvWriteResult, ProfileBinding,
     ProfileCallResult, ProfileFailure, TimerArmResult, TimerBinding, identity_string,
-    kv_conditional_put, kv_read, parse_identity, profile_execute, profile_observe, timer_arm,
-    timer_cancel,
+    kv_conditional_put, kv_read, parse_identity, prepare_profile_effect, profile_execute,
+    profile_observe, timer_arm, timer_cancel,
 };
 pub use lifecycle::{
     CooperativeRuntimeFactory, CooperativeRuntimeInstance, RecoverableInstantiation,

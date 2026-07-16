@@ -1163,3 +1163,221 @@ fn adapter_error(error: LogicalRequestAdapterError) -> String {
 fn provider_error(error: substrate_api::ProviderError) -> String {
     format!("provider error: {:?} (retryable={})", error.kind, error.retryable)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use contract_core::{AuthorityStatus, ProfileAccess};
+    use visa_component_adapter::{ProfileBinding, prepare_profile_effect};
+
+    use super::*;
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(1);
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let sequence = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "visa-stage3b-prepared-start-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn definition() -> &'static Stage3CaseDefinition {
+        &STAGE3B_CASE_DEFINITIONS[0]
+    }
+
+    fn standard_case(root: &Path, request: &[u8]) -> RequestCaseContext {
+        start_standard(root, definition(), request, b"prepared response").unwrap()
+    }
+
+    #[test]
+    fn prepared_start_matches_the_actual_stored_effect_request() {
+        let root = TestRoot::new("actual-request");
+        let mut case = standard_case(&root.0, b"prepared request");
+        let prepared = case.source.prepare_start(case.request.clone()).unwrap();
+        let expected = prepared.effect_request().clone();
+        assert_eq!(case.peer.execution_count(), 0);
+
+        let result = case.source.start_prepared(&prepared).unwrap();
+        let actual = case
+            .source
+            .coordinator()
+            .state()
+            .operations
+            .iter()
+            .find(|record| record.request.operation == expected.operation)
+            .unwrap();
+        assert_eq!(actual.request, expected);
+        assert_eq!(result.effect_operation_id, identity_hex(expected.operation));
+        assert_eq!(case.peer.execution_count(), 1);
+    }
+
+    #[test]
+    fn changed_request_is_rejected_before_external_dispatch() {
+        let root = TestRoot::new("changed-request");
+        let expected = b"prepared request";
+        let changed = b"tampered request";
+        assert_eq!(expected.len(), changed.len());
+        let case = standard_case(&root.0, expected);
+        assert!(case.source.prepare_start(changed.to_vec()).is_err());
+        assert_eq!(case.peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn canonical_transition_invalidates_prepared_start_before_external_dispatch() {
+        let root = TestRoot::new("changed-prestate");
+        let mut case = standard_case(&root.0, b"prepared request");
+        let prepared = case.source.prepare_start(case.request.clone()).unwrap();
+        case.source
+            .coordinator_mut()
+            .begin_quiesce(
+                derive_stage3b_identity(definition().id, "prepared-start-begin-quiesce"),
+                case.ids.source_handoff_authority,
+            )
+            .unwrap();
+        assert_ne!(case.source.coordinator().state_digest().unwrap(), prepared.pre_state_digest());
+        assert_ne!(case.source.coordinator().journal_position(), prepared.pre_journal_position());
+        assert!(case.source.start_prepared(&prepared).is_err());
+        assert_eq!(case.peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn different_prestate_at_same_journal_position_is_rejected_before_external_dispatch() {
+        let expected_root = TestRoot::new("expected-prestate");
+        let changed_root = TestRoot::new("changed-prestate");
+        let expected = standard_case(&expected_root.0, b"prepared request");
+        let mut changed = standard_case(&changed_root.0, b"tampered request");
+        let prepared = expected.source.prepare_start(expected.request.clone()).unwrap();
+        assert_eq!(
+            changed.source.coordinator().journal_position(),
+            prepared.pre_journal_position()
+        );
+        assert_ne!(
+            changed.source.coordinator().state_digest().unwrap(),
+            prepared.pre_state_digest()
+        );
+        assert!(changed.source.start_prepared(&prepared).is_err());
+        assert_eq!(changed.peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn revoked_request_authority_invalidates_prepared_start_before_external_dispatch() {
+        let root = TestRoot::new("changed-authority");
+        let mut case = standard_case(&root.0, b"prepared request");
+        let prepared = case.source.prepare_start(case.request.clone()).unwrap();
+        case.source
+            .coordinator_mut()
+            .revoke_authority(
+                derive_stage3b_identity(definition().id, "prepared-start-revoke-authority"),
+                case.ids.source_request_authority,
+            )
+            .unwrap();
+        assert!(case.source.coordinator().state().authorities.iter().any(|grant| {
+            grant.authority.identity == case.ids.source_request_authority.identity
+                && grant.status == AuthorityStatus::Revoked
+        }));
+        assert!(case.source.start_prepared(&prepared).is_err());
+        assert_eq!(case.peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn exact_existing_effect_identity_is_reused_for_the_durable_retry() {
+        let root = TestRoot::new("existing-identity");
+        let mut options = Stage3bFixtureOptions::standard();
+        options.source_fault = Some(FaultPoint::BeforeLogicalRequestIo);
+        let mut case = start_case(
+            &root.0,
+            definition(),
+            b"prepared request",
+            STAGE3B_DEFAULT_PEER_IDENTITY.to_vec(),
+            STAGE3B_DEFAULT_CREDENTIAL_MATERIAL.to_vec(),
+            LoopbackLogicalPeerBehavior::Static(b"prepared response".to_vec()),
+            options,
+        )
+        .unwrap();
+        assert!(case.source.start(case.request.clone()).is_err());
+        assert_eq!(case.peer.execution_count(), 0);
+        let existing = case.source.coordinator().state().operations.last().unwrap().request.clone();
+
+        let prepared = case.source.prepare_start(case.request.clone()).unwrap();
+        assert_eq!(prepared.effect_request(), &existing);
+        let result = case.source.start_prepared(&prepared).unwrap();
+        assert_eq!(result.effect_operation_id, identity_hex(existing.operation));
+        assert_eq!(case.peer.execution_count(), 1);
+    }
+
+    #[test]
+    fn revoked_source_grant_one_generation_later_keeps_real_handoff_replay_identity() {
+        let root = TestRoot::new("revoked-source-continuity");
+        let mut case = standard_case(&root.0, b"prepared request");
+        let call = case.source.start(case.request.clone()).unwrap();
+        let source_effect = visa_component_adapter::parse_identity(&call.effect_operation_id)
+            .and_then(|operation| {
+                case.source
+                    .coordinator()
+                    .state()
+                    .operations
+                    .iter()
+                    .find(|record| record.request.operation == operation)
+                    .map(|record| record.request.clone())
+            })
+            .unwrap();
+        let logical_operation =
+            canonical_request(case.source.coordinator().state()).unwrap().operation_id;
+        let mut committed = handoff(&mut case).unwrap();
+        committed
+            .destination
+            .coordinator_mut()
+            .revoke_authority(
+                derive_stage3b_identity(definition().id, "revoke-source-request-after-handoff"),
+                source_effect.authority,
+            )
+            .unwrap();
+        let historical = committed
+            .destination
+            .coordinator()
+            .state()
+            .authorities
+            .iter()
+            .find(|grant| grant.authority.identity == source_effect.authority.identity)
+            .unwrap();
+        assert_eq!(historical.status, AuthorityStatus::Revoked);
+        assert_eq!(
+            historical.authority.generation,
+            source_effect.authority.generation.next().unwrap()
+        );
+        let binding = ProfileBinding::for_state(
+            committed.destination.coordinator().state(),
+            LOGICAL_REQUEST_EXTENSION_ID,
+        )
+        .unwrap();
+        let contract_core::EffectKind::Profile { payload, .. } = &source_effect.kind else {
+            panic!("logical request stored a non-profile effect");
+        };
+        let idempotency = identity_hex(logical_operation);
+        assert_eq!(
+            prepare_profile_effect(
+                committed.destination.coordinator().state(),
+                &binding,
+                ProfileAccess::Write,
+                idempotency.as_bytes(),
+                payload.clone(),
+            ),
+            Ok(source_effect),
+        );
+        assert_eq!(case.peer.execution_count(), 1);
+    }
+}

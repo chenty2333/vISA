@@ -317,11 +317,27 @@ pub fn profile_execute<P: AdapterProvider>(
     idempotency_value: &[u8],
     payload: Vec<u8>,
 ) -> Result<ProfileCallResult, ProfileFailure> {
+    let request =
+        prepare_profile_effect(coordinator.state(), binding, access, idempotency_value, payload)?;
+    let operation = request.operation;
+    execute_profile_request(coordinator, binding, operation, request)
+}
+
+/// Construct the exact canonical effect request that [`profile_execute`] will
+/// submit without mutating canonical state or dispatching to a provider.
+/// Existing idempotency records retain their original request identity; a
+/// non-equivalent reuse of the same idempotency key is rejected as a conflict.
+pub fn prepare_profile_effect(
+    state: &CanonicalState,
+    binding: &ProfileBinding,
+    access: ProfileAccess,
+    idempotency_value: &[u8],
+    payload: Vec<u8>,
+) -> Result<EffectRequest, ProfileFailure> {
     if access == ProfileAccess::Read || idempotency_value.is_empty() {
         return Err(ProfileFailure::Invalid);
     }
-    validate_profile_binding(coordinator.state(), binding, access)
-        .map_err(profile_binding_error)?;
+    validate_profile_binding(state, binding, access).map_err(profile_binding_error)?;
     let access_tag = match access {
         ProfileAccess::Read => b"read".as_slice(),
         ProfileAccess::Write => b"write".as_slice(),
@@ -329,31 +345,90 @@ pub fn profile_execute<P: AdapterProvider>(
     };
     let idempotency_key =
         profile_idempotency_key(&binding.context, binding.profile, access_tag, idempotency_value);
-    let operation = operation_for(
-        &[b"profile:".as_slice(), binding.profile.0.as_slice(), b":".as_slice(), access_tag]
-            .concat(),
-        &binding.context,
-        idempotency_key,
-    );
+    let operation_domain = profile_operation_domain(binding.profile, access_tag);
+    let operation = operation_for(&operation_domain, &binding.context, idempotency_key);
     let kind = EffectKind::Profile { profile: binding.profile, access, payload };
-    let request = match coordinator
-        .state()
-        .operations
-        .iter()
-        .find(|record| record.request.idempotency_key == idempotency_key)
-    {
-        Some(record)
-            if record.request.resource == binding.context.resource
-                && record.request.subject.identity == binding.context.subject.identity
-                && record.request.kind == kind =>
+    let candidate = effect_request(&binding.context, operation, idempotency_key, None, kind)
+        .map_err(|error| profile_runtime_error(error, operation))?;
+
+    let mut matching =
+        state.operations.iter().filter(|record| record.request.idempotency_key == idempotency_key);
+    if let Some(record) = matching.next() {
+        if matching.next().is_some()
+            || !historical_profile_request_matches(
+                state,
+                &record.request,
+                &binding.context,
+                &candidate.kind,
+                &operation_domain,
+                access.required_rights(),
+            )
+            || state.operations.iter().any(|other| {
+                !core::ptr::eq(other, record) && other.request.operation == record.request.operation
+            })
         {
-            record.request.clone()
+            return Err(ProfileFailure::Conflict);
         }
-        _ => effect_request(&binding.context, operation, idempotency_key, None, kind)
-            .map_err(|error| profile_runtime_error(error, operation))?,
+        return Ok(record.request.clone());
+    }
+    if state.operations.iter().any(|record| record.request.operation == candidate.operation) {
+        return Err(ProfileFailure::Conflict);
+    }
+    Ok(candidate)
+}
+
+fn historical_profile_request_matches(
+    state: &CanonicalState,
+    request: &EffectRequest,
+    current: &BindingContext,
+    kind: &EffectKind,
+    operation_domain: &[u8],
+    required_rights: Rights,
+) -> bool {
+    if request.causal_parent.is_some()
+        || request.resource != current.resource
+        || request.subject.identity != current.subject.identity
+        || request.kind != *kind
+        || canonical_digest(&request.kind).ok() != Some(request.request_digest)
+    {
+        return false;
+    }
+    let historical = BindingContext {
+        resource: request.resource,
+        authority: request.authority,
+        subject: request.subject,
+        node: request.node,
+        epoch: request.lease_epoch,
+        exposed_rights: current.exposed_rights,
     };
-    let operation = request.operation;
-    execute_profile_request(coordinator, binding, operation, request)
+    if request.operation != operation_for(operation_domain, &historical, request.idempotency_key) {
+        return false;
+    }
+
+    let mut grants = state
+        .authorities
+        .iter()
+        .filter(|grant| grant.authority.identity == request.authority.identity);
+    let Some(grant) = grants.next() else {
+        return false;
+    };
+    if grants.next().is_some()
+        || grant.subject != request.subject
+        || grant.resource != request.resource
+        || !grant.rights.contains(required_rights)
+    {
+        return false;
+    }
+    match grant.status {
+        AuthorityStatus::Active => grant.authority == request.authority,
+        AuthorityStatus::Revoked => {
+            request.authority.generation.next() == Some(grant.authority.generation)
+        }
+    }
+}
+
+fn profile_operation_domain(profile: Identity, access_tag: &[u8]) -> Vec<u8> {
+    [b"profile:".as_slice(), profile.0.as_slice(), b":".as_slice(), access_tag].concat()
 }
 
 fn profile_observation_request(
@@ -893,7 +968,16 @@ fn timer_outcome_error(outcome: EffectOutcome) -> TimerFailure {
 
 #[cfg(test)]
 mod tests {
-    use contract_core::{Digest, EvidenceKind, EvidenceRef, Generation, JournalPosition};
+    use contract_core::{
+        AuthorityGrant, DeliveryPolicy, Digest, EvidenceKind, EvidenceRef, Generation,
+        JournalPosition, KeyValueClaim, Ownership, ResourceClaims, SchemaVersion, TimerClaim,
+        TimerClock,
+    };
+    use visa_profile::{
+        ContinuityDisposition, LOGICAL_REQUEST_EXTENSION_ID, LogicalRequestClaim,
+        LogicalRequestIdempotency, LogicalRequestPhase, LogicalRequestReplay, LogicalRequestState,
+        LogicalRequestTransport, logical_request_extension,
+    };
 
     use super::*;
 
@@ -914,6 +998,76 @@ mod tests {
             epoch: LeaseEpoch(epoch),
             exposed_rights: Rights::KV_READ.union(Rights::KV_WRITE),
         }
+    }
+
+    fn profile_preview_fixture() -> (CanonicalState, ProfileBinding, Vec<u8>, Vec<u8>) {
+        let node = NodeIdentity::new(Identity::from_u128(20));
+        let component = EntityRef::new(Identity::from_u128(21), Generation(2));
+        let request_resource = EntityRef::new(Identity::from_u128(22), Generation(3));
+        let request_authority = EntityRef::new(Identity::from_u128(23), Generation(4));
+        let request = b"prepared logical request".to_vec();
+        let logical_request = LogicalRequestState {
+            claim: LogicalRequestClaim {
+                resource: request_resource,
+                peer_identity: b"service.example/v1".to_vec(),
+                credential_reference: Identity::from_u128(24),
+                required_rights: Rights::PROFILE_WRITE.union(Rights::REBIND),
+                transport: LogicalRequestTransport::Reconnectable,
+                delivery: DeliveryPolicy::Deduplicated,
+                replay: LogicalRequestReplay::WithOperationId,
+                idempotency: LogicalRequestIdempotency::OperationIdDeduplicated,
+                timeout_millis: 5_000,
+                max_request_size: 1024,
+                max_response_size: 4096,
+            },
+            operation_id: Identity::from_u128(25),
+            request_size: request.len() as u32,
+            request_digest: canonical_digest(request.as_slice()).unwrap(),
+            phase: LogicalRequestPhase::Ready,
+            response_cursor: 0,
+            response: None,
+            rejection: None,
+            disposition: ContinuityDisposition::Revalidate,
+            last_operation: None,
+        };
+        let extension = logical_request_extension(&logical_request).unwrap();
+        let authority = AuthorityGrant::active_root(
+            request_authority,
+            component,
+            request_resource,
+            Rights::PROFILE_WRITE.union(Rights::REBIND),
+        );
+        let mut state = CanonicalState::dormant_with_extensions(
+            component,
+            node,
+            Digest::from_bytes([26; 32]),
+            Digest::from_bytes([27; 32]),
+            SchemaVersion::new(1, 0),
+            ResourceClaims {
+                timer: TimerClaim {
+                    resource: EntityRef::initial(Identity::from_u128(28)),
+                    clock: TimerClock::PausedMonotonicDuration,
+                    required_rights: Rights::TIMER_ARM,
+                },
+                key_value: KeyValueClaim {
+                    resource: EntityRef::initial(Identity::from_u128(29)),
+                    namespace: Identity::from_u128(30),
+                    required_rights: Rights::KV_READ,
+                    delivery: DeliveryPolicy::Deduplicated,
+                },
+            },
+            vec![authority],
+            vec![extension],
+        );
+        state.phase = HandoffPhase::Running;
+        state.activation.status = ActivationStatus::Active;
+        state.ownership = Ownership::owned(node, LeaseEpoch(8));
+        let binding = ProfileBinding::for_state(&state, LOGICAL_REQUEST_EXTENSION_ID).unwrap();
+        let payload = visa_profile::encode_logical_request_operation(
+            &visa_profile::LogicalRequestOperation::Start { request: request.clone() },
+        )
+        .unwrap();
+        (state, binding, logical_request.operation_id.0.to_vec(), payload)
     }
 
     #[test]
@@ -1004,5 +1158,174 @@ mod tests {
             profile_observation_request(&records, JournalPosition(13), &binding, payload).unwrap();
         assert_ne!(next.operation, first.operation);
         assert_ne!(next.idempotency_key, first.idempotency_key);
+    }
+
+    #[test]
+    fn source_unresolved_exact_profile_request_is_replayed() {
+        let (mut state, binding, idempotency, payload) = profile_preview_fixture();
+        let candidate = prepare_profile_effect(
+            &state,
+            &binding,
+            ProfileAccess::Write,
+            &idempotency,
+            payload.clone(),
+        )
+        .unwrap();
+        state.operations.push(OperationRecord::prepared(candidate.clone()));
+        assert_eq!(
+            prepare_profile_effect(
+                &state,
+                &binding,
+                ProfileAccess::Write,
+                &idempotency,
+                payload.clone(),
+            ),
+            Ok(candidate.clone()),
+        );
+    }
+
+    #[test]
+    fn profile_same_key_continuity_accepts_one_generation_revoked_source_grant() {
+        let (mut state, source_binding, idempotency, payload) = profile_preview_fixture();
+        let source = prepare_profile_effect(
+            &state,
+            &source_binding,
+            ProfileAccess::Write,
+            &idempotency,
+            payload.clone(),
+        )
+        .unwrap();
+        state.operations.push(OperationRecord::prepared(source.clone()));
+
+        let destination_node = NodeIdentity::new(Identity::from_u128(40));
+        let destination_component =
+            EntityRef::new(state.component.identity, state.component.generation.next().unwrap());
+        let destination_authority = EntityRef::initial(Identity::from_u128(41));
+        state.component = destination_component;
+        state.activation.node = destination_node;
+        state.ownership = Ownership::owned(destination_node, LeaseEpoch(9));
+        state.authorities.push(AuthorityGrant::active_root(
+            destination_authority,
+            destination_component,
+            source.resource,
+            Rights::PROFILE_WRITE.union(Rights::REBIND),
+        ));
+        let source_grant =
+            state.authorities.iter_mut().find(|grant| grant.authority == source.authority).unwrap();
+        source_grant.status = AuthorityStatus::Revoked;
+        source_grant.authority.generation = source.authority.generation.next().unwrap();
+        let destination_binding =
+            ProfileBinding::for_state(&state, LOGICAL_REQUEST_EXTENSION_ID).unwrap();
+
+        let mut without_history = state.clone();
+        without_history.operations.clear();
+        let destination_candidate = prepare_profile_effect(
+            &without_history,
+            &destination_binding,
+            ProfileAccess::Write,
+            &idempotency,
+            payload.clone(),
+        )
+        .unwrap();
+        assert_ne!(source.operation, destination_candidate.operation);
+        assert_ne!(source.node, destination_candidate.node);
+        assert_ne!(source.subject.generation, destination_candidate.subject.generation);
+        assert_ne!(source.authority, destination_candidate.authority);
+        assert_ne!(source.lease_epoch, destination_candidate.lease_epoch);
+        assert_eq!(
+            prepare_profile_effect(
+                &state,
+                &destination_binding,
+                ProfileAccess::Write,
+                &idempotency,
+                payload.clone(),
+            ),
+            Ok(source.clone()),
+        );
+
+        let source_grant_index = state
+            .authorities
+            .iter()
+            .position(|grant| grant.authority.identity == source.authority.identity)
+            .unwrap();
+        let invalid_grants: &[fn(&mut AuthorityGrant)] = &[
+            |grant| grant.authority.generation = grant.authority.generation.next().unwrap(),
+            |grant| grant.subject = EntityRef::initial(Identity::from_u128(42)),
+            |grant| grant.resource = EntityRef::initial(Identity::from_u128(43)),
+            |grant| grant.rights = Rights::REBIND,
+        ];
+        for mutate in invalid_grants {
+            let mut invalid = state.clone();
+            mutate(&mut invalid.authorities[source_grant_index]);
+            assert_eq!(
+                prepare_profile_effect(
+                    &invalid,
+                    &destination_binding,
+                    ProfileAccess::Write,
+                    &idempotency,
+                    payload.clone(),
+                ),
+                Err(ProfileFailure::Conflict),
+            );
+        }
+        let mut duplicate = state.clone();
+        duplicate.authorities.push(duplicate.authorities[source_grant_index].clone());
+        assert_eq!(
+            prepare_profile_effect(
+                &duplicate,
+                &destination_binding,
+                ProfileAccess::Write,
+                &idempotency,
+                payload,
+            ),
+            Err(ProfileFailure::Conflict),
+        );
+    }
+
+    #[test]
+    fn profile_preview_rejects_corrupt_historical_requests_and_operation_collisions() {
+        let (mut state, binding, idempotency, payload) = profile_preview_fixture();
+        let candidate = prepare_profile_effect(
+            &state,
+            &binding,
+            ProfileAccess::Write,
+            &idempotency,
+            payload.clone(),
+        )
+        .unwrap();
+        state.operations.push(OperationRecord::prepared(candidate.clone()));
+
+        let mutations: &[fn(&mut EffectRequest)] = &[
+            |request| request.operation = Identity::from_u128(31),
+            |request| request.idempotency_key = IdempotencyKey::from_u128(31),
+            |request| request.causal_parent = Some(Identity::from_u128(32)),
+            |request| request.node = NodeIdentity::new(Identity::from_u128(32)),
+            |request| request.subject.generation = Generation(33),
+            |request| request.authority.generation = Generation(35),
+            |request| request.lease_epoch = LeaseEpoch(36),
+            |request| request.request_digest = Digest::from_bytes([37; 32]),
+        ];
+        for mutate in mutations {
+            let mut changed = state.clone();
+            mutate(&mut changed.operations[0].request);
+            assert_eq!(
+                prepare_profile_effect(
+                    &changed,
+                    &binding,
+                    ProfileAccess::Write,
+                    &idempotency,
+                    payload.clone(),
+                ),
+                Err(ProfileFailure::Conflict),
+            );
+        }
+
+        let mut collision = candidate;
+        collision.idempotency_key = IdempotencyKey::from_u128(38);
+        state.operations.push(OperationRecord::prepared(collision));
+        assert_eq!(
+            prepare_profile_effect(&state, &binding, ProfileAccess::Write, &idempotency, payload,),
+            Err(ProfileFailure::Conflict),
+        );
     }
 }

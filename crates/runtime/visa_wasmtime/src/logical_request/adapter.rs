@@ -1,14 +1,18 @@
-use contract_core::{ActivationRole, Digest, HandoffPhase};
+use contract_core::{
+    ActivationRole, ActivationStatus, Digest, EffectRequest, HandoffPhase, JournalPosition,
+    ProfileAccess,
+};
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
-    PortableLogicalRequestState, ResourceBindingError, RuntimeIdentity, component_digest,
-    identity_string,
+    PortableLogicalRequestState, ProfileBinding, ResourceBindingError, RuntimeIdentity,
+    component_digest, identity_string, prepare_profile_effect,
 };
 use visa_profile::{
-    LogicalRequestObservation, LogicalRequestOperation, LogicalRequestResult, LogicalRequestState,
-    LogicalRequestTransport,
+    LOGICAL_REQUEST_EXTENSION_ID, LogicalRequestObservation, LogicalRequestOperation,
+    LogicalRequestPhase, LogicalRequestResult, LogicalRequestState, LogicalRequestTransport,
+    encode_logical_request_operation,
 };
-use visa_runtime::Coordinator;
+use visa_runtime::{Coordinator, canonical_digest};
 use wasmtime::{
     Config, Engine, Store,
     component::{Component, HasSelf, Linker},
@@ -21,8 +25,11 @@ use super::{
             ObserveResult, RequestObservation as WitObservation,
         },
     },
-    error::{LogicalRequestAdapterError, LogicalRequestWorkloadFailure},
-    host::{CanonicalRequestError, LogicalRequestStoreState, canonical_logical_request},
+    error::{LogicalRequestAdapterError, LogicalRequestFailure, LogicalRequestWorkloadFailure},
+    host::{
+        CanonicalRequestError, LogicalRequestStoreState, canonical_logical_request,
+        start_profile_failure,
+    },
     state::{from_wit_phase, from_wit_rejection, from_wit_state, to_wit_state},
 };
 
@@ -33,6 +40,35 @@ pub struct LogicalRequestCallResult {
     /// Canonical vISA effect identity used by journal reconciliation.
     pub effect_operation_id: String,
     pub result: LogicalRequestResult,
+}
+
+/// Immutable preview of one logical-request start. Private fields prevent a
+/// caller from substituting request bytes or canonical effect identity between
+/// admission and the Wasmtime/provider dispatch path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedLogicalRequestStart {
+    request: Vec<u8>,
+    effect_request: EffectRequest,
+    pre_state_digest: Digest,
+    pre_journal_position: JournalPosition,
+}
+
+impl PreparedLogicalRequestStart {
+    pub fn request(&self) -> &[u8] {
+        &self.request
+    }
+
+    pub const fn effect_request(&self) -> &EffectRequest {
+        &self.effect_request
+    }
+
+    pub const fn pre_state_digest(&self) -> Digest {
+        self.pre_state_digest
+    }
+
+    pub const fn pre_journal_position(&self) -> JournalPosition {
+        self.pre_journal_position
+    }
 }
 
 pub struct PreparedLogicalRequestComponent<P: 'static> {
@@ -216,6 +252,95 @@ where
         request: Vec<u8>,
     ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
         self.execute(LogicalRequestOperation::Start { request })
+    }
+
+    /// Preview the exact effect identity for a logical-request start without
+    /// entering the guest or dispatching to the provider.
+    pub fn prepare_start(
+        &self,
+        request: Vec<u8>,
+    ) -> Result<PreparedLogicalRequestStart, LogicalRequestAdapterError> {
+        self.require_source_running()?;
+        if self.session_id.is_none() {
+            return Err(LogicalRequestAdapterError::InvalidOperation);
+        }
+        let canonical = self.canonical_request()?;
+        ensure_supported_transport(canonical.claim.transport)?;
+        let request_size = u32::try_from(request.len())
+            .map_err(|_| LogicalRequestAdapterError::InvalidOperation)?;
+        let request_digest = canonical_digest(request.as_slice())
+            .map_err(|_| LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        if canonical.phase != LogicalRequestPhase::Ready
+            || request_size != canonical.request_size
+            || request_size > canonical.claim.max_request_size
+            || request_digest != canonical.request_digest
+        {
+            return Err(LogicalRequestAdapterError::InvalidOperation);
+        }
+
+        let operation = LogicalRequestOperation::Start { request: request.clone() };
+        let payload = encode_logical_request_operation(&operation)
+            .map_err(|_| LogicalRequestAdapterError::InvalidOperation)?;
+        let binding =
+            ProfileBinding::for_state(self.coordinator().state(), LOGICAL_REQUEST_EXTENSION_ID)
+                .map_err(|error| LogicalRequestAdapterError::ResourceBinding(error.into()))?;
+        let operation_id = identity_string(canonical.operation_id);
+        let effect_request = prepare_profile_effect(
+            self.coordinator().state(),
+            &binding,
+            ProfileAccess::Write,
+            operation_id.as_bytes(),
+            payload,
+        )
+        .map_err(profile_start_error)?;
+        let pre_state_digest = self
+            .coordinator()
+            .state_digest()
+            .map_err(|_| LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        Ok(PreparedLogicalRequestStart {
+            request,
+            effect_request,
+            pre_state_digest,
+            pre_journal_position: self.coordinator().journal_position(),
+        })
+    }
+
+    /// Start a previously previewed request only while the complete canonical
+    /// state, journal position, and re-derived effect request still match.
+    pub fn start_prepared(
+        &mut self,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        let current_digest = self
+            .coordinator()
+            .state_digest()
+            .map_err(|_| LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        validate_prepared_start_prestate(
+            prepared.pre_state_digest,
+            prepared.pre_journal_position,
+            current_digest,
+            self.coordinator().journal_position(),
+        )?;
+        let reviewed = self.prepare_start(prepared.request.clone())?;
+        if reviewed != *prepared {
+            return Err(LogicalRequestAdapterError::InvalidOperation);
+        }
+
+        let result = self.start(prepared.request.clone())?;
+        if result.effect_operation_id != identity_string(prepared.effect_request.operation) {
+            return Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
+        }
+        let actual = self
+            .coordinator()
+            .state()
+            .operations
+            .iter()
+            .find(|record| record.request.operation == prepared.effect_request.operation)
+            .ok_or(LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        if actual.request != prepared.effect_request {
+            return Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
+        }
+        Ok(result)
     }
 
     pub fn observe(
@@ -491,6 +616,7 @@ where
     fn require_source_running(&self) -> Result<(), LogicalRequestAdapterError> {
         let canonical = self.coordinator().state();
         if canonical.activation.role != ActivationRole::Source
+            || canonical.activation.status != ActivationStatus::Active
             || canonical.phase != HandoffPhase::Running
         {
             return Err(LogicalRequestAdapterError::ResourceBinding(
@@ -499,6 +625,27 @@ where
         }
         Ok(())
     }
+}
+
+fn validate_prepared_start_prestate(
+    expected_digest: Digest,
+    expected_position: JournalPosition,
+    current_digest: Digest,
+    current_position: JournalPosition,
+) -> Result<(), LogicalRequestAdapterError> {
+    if current_digest != expected_digest || current_position != expected_position {
+        Err(LogicalRequestAdapterError::InvalidOperation)
+    } else {
+        Ok(())
+    }
+}
+
+fn profile_start_error(
+    error: visa_component_adapter::ProfileFailure,
+) -> LogicalRequestAdapterError {
+    LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
+        LogicalRequestFailure::from(start_profile_failure(error)),
+    ))
 }
 
 fn ensure_supported_transport(
@@ -550,5 +697,25 @@ mod tests {
             ))
         );
         assert_eq!(ensure_supported_transport(LogicalRequestTransport::Reconnectable), Ok(()));
+    }
+
+    #[test]
+    fn prepared_start_prestate_digest_and_journal_position_are_independent_fences() {
+        let digest = Digest::from_bytes([1; 32]);
+        let position = JournalPosition(2);
+        assert_eq!(validate_prepared_start_prestate(digest, position, digest, position), Ok(()));
+        assert_eq!(
+            validate_prepared_start_prestate(
+                digest,
+                position,
+                Digest::from_bytes([3; 32]),
+                position,
+            ),
+            Err(LogicalRequestAdapterError::InvalidOperation)
+        );
+        assert_eq!(
+            validate_prepared_start_prestate(digest, position, digest, JournalPosition(3)),
+            Err(LogicalRequestAdapterError::InvalidOperation)
+        );
     }
 }
