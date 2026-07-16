@@ -178,13 +178,13 @@ scripts/run-nexus-handoff-qualification.sh \
   --artifact-root <new-artifact-root>
 ```
 
-That lane is locally clean at Nexus revision
-`a890e5c3e25138662c213f19280ba3b209939813`. The receipt SHA-256 is
-`4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`,
-and the v2 qualification-lock SHA-256 is
-`306ee1fff5a53b010f9906084925ca5fa6af44bd779bf3658957f4552a0bcb21`.
-The receipt records `production_registry_refinement_checked=true`; no Nexus
-remote-CI result is claimed.
+That lane is locked to Nexus revision
+`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`9b972a23...`, matrix `9f3f1579...`, and v2 qualification-lock SHA-256
+`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+The receipt records `production_registry_refinement_checked=true`. Its SHA-256
+is specific to one generated run and is recorded only in a corresponding
+validation receipt.
 
 Run the standalone exact-binary process publisher with:
 
@@ -195,17 +195,20 @@ scripts/run-nexus-process-joint-cell.sh \
   --artifact-root <new-final-artifact-root>
 ```
 
-Four live process tests pass against the exact Nexus binary SHA-256
-`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
-They cover raw-chain replay, Registered-effect abort preservation, the bounded
+Exact-binary process tests cover raw-chain replay, Registered-effect abort preservation, the bounded
 process qualification scenarios, and the real logical-request dual-lost-ack
-cell. The latter performs a post-durable ownership Commit acknowledgement loss
+cell. The latter is supplemental: it performs a post-durable ownership Commit acknowledgement loss
 and a terminal Nexus response loss before adapter acceptance; both recover via
-exact query/retry without duplicate execution or publication.
+exact query/retry without duplicate execution or publication, but does not run
+vISA freeze/fence/activation or put Nexus admission before the external effect.
 
 The standalone runner validates both locks and the Nexus receipt, publishes an
-exact two-file artifact, verifies it in a second process, relocates it, and
-verifies the same bytes in a third. Its implementation and smoke run pass, but
+exact three-file process artifact containing the executed binary, verifies it in
+a second process, relocates it, and verifies the same bytes in a third. The
+supplemental logical runner publishes five files: manifest, report, two SQLite
+databases, and the same content-identified binary. Download verification accepts
+artifact-service mode normalization, does not re-execute the binary, and does
+not claim reproducible source-to-binary derivation. The smoke runs pass, but
 the final artifact must wait until this vISA work is committed so the runner can
 bind the final clean vISA SHA.
 

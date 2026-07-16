@@ -16,10 +16,11 @@ v2 qualification receipt must exist in the clean Nexus checkout.
 
 Run mode executes the supplied external Nexus binary and then embeds its exact
 bytes as ./nexus-effect-peer. The runner publishes to a temporary location,
-verifies the exact five-file artifact without consulting the external binary,
-relocates it, and verifies the relocated artifact in a third process. The
-observed original executable path is historical only: it is not normative
-provenance and does not affect run identity.
+statically verifies the exact five-file artifact without consulting or
+re-executing the external binary, relocates it, and verifies the relocated
+artifact in a third process. The observed original executable path is
+historical only: it is not normative provenance and does not affect run
+identity.
 
 This supplemental artifact does not claim a normative joint-handoff result,
 Nexus-serialized external-effect admission, an executed vISA runtime handoff,
@@ -33,7 +34,7 @@ EOF
 }
 
 fail() {
-    printf 'Logical-request dual-lost-ACK cell failed: %s\n' "$*" >&2
+    printf 'Supplemental logical-request dual-lost-ACK observation failed: %s\n' "$*" >&2
     exit 1
 }
 
@@ -284,4 +285,4 @@ printf 'Nexus executable SHA-256: %s\n' "$nexus_bin_sha256"
 printf '%s\n' \
     'Inventory: exactly five files, including artifact-owned ./nexus-effect-peer bytes verified by path, size, SHA-256, and schema after relocation.'
 printf '%s\n' \
-    'Limitations: supplemental/non-normative only; no normative joint-handoff claim, Nexus-serialized external-effect admission, vISA runtime handoff, source fencing, destination activation, host-reboot recovery, raw TCP frame capture, Registry replacement, retained tombstone, reproducible source-to-binary derivation, or remote CI claim.'
+    'Limitations: supplemental/non-normative only; static verification does not re-execute the embedded binary; no normative joint-handoff claim, Nexus-serialized external-effect admission, vISA runtime handoff, source fencing, destination activation, host-reboot recovery, raw TCP frame capture, Registry replacement, retained tombstone, reproducible source-to-binary derivation, or remote CI claim.'

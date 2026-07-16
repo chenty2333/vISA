@@ -421,27 +421,37 @@ post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
 the separate online vISA runtime refinement evidence.
 
 The Nexus-local model/oracle/fault-matrix and production Registry refinement are
-locally clean at `a890e5c3e25138662c213f19280ba3b209939813`. Its v2 receipt
-has SHA-256 `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`
-and records `production_registry_refinement_checked=true`. This does not
+locked to clean revision `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source
+fingerprint `9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078`,
+matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
+and qualification-lock SHA-256
+`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+Its v2 receipt records `production_registry_refinement_checked=true`. This does not
 conflict with the neutral machine mapping's `adapter_qualification=false`: the
 former is executed Nexus-local evidence, while the latter refuses to infer
 adapter execution from a composition relation.
 
-Four live process tests pass against that exact revision and binary SHA-256
-`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
-The real logical-request cell binds the completed logical operation through the
+Exact-binary process tests pass against that revision. A generated receipt SHA
+and locally built binary SHA identify one run, not the revision; final artifacts
+retain the executed binary bytes and bind them by content without claiming a
+reproducible source-to-binary derivation. The supplemental logical-request cell binds the completed logical operation through the
 Nexus effect cohort, ownership Prepared/Commit, and Closure. The ownership fault
 commits with SQLite WAL and `synchronous=FULL` before suppressing the Commit
 acknowledgement; recovery reopens, queries, and retries the exact request. The
 Nexus fault discards the real terminal child response before adapter acceptance
 and admits only a byte-identical replay under the same request ID. The external
-logical request, native Register, Prepare, and Commit each execute once.
+logical request, native Register, Prepare, and Commit each execute once, but in
+that order: the cell is post-hoc observational binding, not Nexus admission of
+the external effect or a vISA freeze/fence/activation vertical.
 
 The standalone process-cell publisher requires clean exact vISA and Nexus
-checkouts, validates both source locks and the Nexus receipt, publishes exactly
-two files, verifies them in a second process, relocates them, and verifies the
-same bytes in a third. Its implementation and smoke pass are complete; the
+checkouts, validates both source locks and the Nexus receipt, publishes a strict
+three-file manifest/report/executed-binary artifact, verifies it in a second
+process, relocates it, and verifies the same bytes in a third. The supplemental
+logical cell analogously publishes five files, including its two SQLite
+databases and the executed binary. Verification statically validates the
+retained binary content and does not re-execute it; file mode is not evidence.
+The implementations and smoke passes are complete; the
 final artifact still awaits the committed clean vISA SHA.
 
 Therefore `bounded-joint-handoff-refinement-v1` remains a candidate. Final

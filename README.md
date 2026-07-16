@@ -376,10 +376,13 @@ the separate v2 qualification lock.
 
 The exact-binary process lane is published with
 `scripts/run-nexus-process-joint-cell.sh`. Its runner requires clean vISA and
-Nexus checkouts, independently verifies the Nexus v2 receipt, publishes exactly
-two files, verifies them in another process, relocates them, and verifies the
-same bytes again. The runner has passed a smoke test, but its final clean-vISA
-artifact must be regenerated after this work is committed.
+Nexus checkouts, independently verifies the Nexus v2 receipt, publishes a strict
+three-file manifest/report/executed-binary artifact, verifies it in another
+process, relocates it, and verifies the same bytes again. The separate
+`run-logical-request-lost-ack-cell.sh` publisher emits a five-file supplemental
+artifact with its two SQLite databases. Both retain binary content identity but
+do not re-execute it during verification or claim reproducible derivation. The
+final clean-vISA artifacts must be regenerated after this work is committed.
 
 The HostSubstrate refinement assumes an exclusive trusted coordinator API. A
 second raw `Coordinator` or provider handle that bypasses the durable joint

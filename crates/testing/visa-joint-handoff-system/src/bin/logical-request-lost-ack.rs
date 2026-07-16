@@ -288,7 +288,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("Logical-request dual-lost-ACK artifact failed: {error}");
+            eprintln!("Supplemental logical-request dual-lost-ACK artifact failed: {error}");
             ExitCode::from(1)
         }
     }
@@ -850,7 +850,8 @@ fn validate_provider_ledger_binding(
         canonical_digest(request).map_err(|error| format!("request digest: {error:?}"))?;
     let actual_response_metadata = StoredResponseMetadata {
         size: u32::try_from(response.len()).unwrap_or(u32::MAX),
-        digest: canonical_digest(response).map_err(|error| format!("response digest: {error:?}"))?,
+        digest: canonical_digest(response)
+            .map_err(|error| format!("response digest: {error:?}"))?,
     };
     let expected_peer_identity = b"visa-joint-logical-request-peer-v1".as_slice();
     let expected_credential_reference =

@@ -21,10 +21,13 @@ performance, and production validation remain outside the implemented
 boundary. A separate `system-joint-handoff` lane now combines a reference
 protocol subreport with an independently verified HostSubstrate vertical for
 the candidate `bounded-joint-handoff-refinement-v1`. Nexus-local qualification
-is locally clean at `a890e5c3e25138662c213f19280ba3b209939813`, and four live
-process tests pass against its exact binary. The standalone process publisher
-and relocation verifier have a smoke pass. The final clean-vISA artifact and
-remote CI remain pending.
+is locked to clean `a4016af3a3de753cd78c6ff645b6e9d6605d5614`, and the exact-
+binary process tests pass locally. The process publisher now owns the executed
+binary in its strict artifact; the logical-request publisher is explicitly
+supplemental. The final clean-vISA artifacts and exact-SHA vISA CI remain
+pending. Nexus run `29475464538` attempt 1 retained a QEMU timeout failure
+artifact; any same-SHA retry must be evaluated as a separate attempt rather than
+erasing that failure history.
 
 Last reviewed: 2026-07-16.
 
@@ -68,13 +71,14 @@ log, exit receipt, sidecar, and build receipt. Pull-request artifacts use 3-day
 retention; push artifacts use 14-day retention.
 
 A final fail-closed `Exact-SHA qualification closure` job depends on the quality
-job, all six claim lanes, Stage 4, and the joint-handoff lane, and
+job, all six claim lanes, Stage 4, the Docker reference/HostSubstrate joint lane,
+and a separate host-built Nexus/process qualification lane, and
 succeeds only when every result is `success`. The local `system-stage3` command
 still runs Stage 3A and Stage 3B in sequence; CI runs them as separate
 uploadable lanes. A Stage 4 qualification closure therefore requires the
 complete workflow to pass at the same exact pushed SHA, not merely the Stage 4
-lane. Success of the joint lane does not substitute for the separate Nexus v2
-receipt, exact-binary process evidence, or final clean-vISA artifact.
+lane. Success of either joint lane does not substitute for the other, the Nexus
+v2 receipt, exact-binary process evidence, or final clean-vISA artifact.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
@@ -91,7 +95,8 @@ receipt, exact-binary process evidence, or final clean-vISA artifact.
 | `system-stage4-target`, `system-stage4-isa` | Each invokes the same complete fail-closed `system-stage4` aggregate | These are edit-loop aliases, not reduced matrices or independent additional claims. |
 | `system-joint-handoff` | Exact Git-object source-lock validation; 16 normative concrete production-reducer traces; 16 reference ownership/effect cases plus one supplemental retained-tombstone scenario; durable SQLite reopen; an online `Coordinator<SqliteProvider>` HostSubstrate cell with 14 commit records, 9 abort records, and seven canonical peer-invocation classes; exact two-file publication; strict independent semantic verification before and after relocation | Establishes same-boot local evidence for the neutral/reference and vISA HostSubstrate axes of candidate `bounded-joint-handoff-refinement-v1`. It does not itself execute the separate Nexus-local or exact-binary process lanes or close the final clean-vISA cell. |
 | `run-nexus-handoff-qualification.sh` | Clean exact-SHA Nexus checkout; source fingerprint; model, oracle, fault matrix, and production Registry refinement; independent v2 receipt verification; exact artifact copy and relocated recheck | Locally establishes only `same-boot-nexus-handoff-admission-only` for the locked Nexus revision. It does not execute the joint vISA cell, real OSTD/IRQ/SMP, reboot recovery, Registry replacement, or the production retained-tombstone path. |
-| `run-nexus-process-joint-cell.sh` | Clean exact vISA and Nexus checkouts; current neutral source lock; Nexus v2 lock and receipt; exact Nexus binary; two process scenarios; exact two-file publication; independent verification before and after relocation | The implementation and smoke run establish the publisher/verification mechanism. A final qualification artifact still requires the committed clean vISA SHA; no remote-CI result is implied. |
+| `run-nexus-process-joint-cell.sh` | Clean exact vISA and Nexus checkouts; current neutral source lock; Nexus v2 lock and receipt; exact Nexus binary; two process scenarios; strict three-file manifest/report/executed-binary publication; independent static and semantic verification before and after relocation | The implementation and smoke run establish the self-contained publisher/verification mechanism without re-executing the retained binary or claiming reproducible source-to-binary derivation. A final qualification artifact still requires the committed clean vISA SHA. |
+| `run-logical-request-lost-ack-cell.sh` | The same exact identities plus one real logical request, durable ownership Commit acknowledgement loss, terminal Nexus response loss, two SQLite databases, raw JSONL, and a strict five-file artifact including the executed binary | Supplemental observational evidence only. It proves the named retries and post-hoc lineage without duplicate execution/publication; it does not execute vISA freeze/fence/activation or prove Nexus admission preceded the external effect. |
 
 The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
 runtime processes on x86-64 Linux, host-process isolation, and a durable,
@@ -604,23 +609,22 @@ non-Byzantine orchestrator, while a second raw `Coordinator`/provider handle or
 hostile caller of public projection APIs is outside the claim. The cell does
 not establish provider- or kernel-enforced adversarial joint membership.
 
-The Nexus-local lane is locally clean at
-`a890e5c3e25138662c213f19280ba3b209939813`. The source-bound v2 receipt
-SHA-256 is `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`;
-the checked-in v2 qualification-lock SHA-256 is
-`306ee1fff5a53b010f9906084925ca5fa6af44bd779bf3658957f4552a0bcb21`.
+The Nexus-local lane is locked to clean revision
+`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078`,
+matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
+and v2 qualification-lock SHA-256
+`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
 The receipt reports `production_registry_refinement_checked=true`, whereas the
 neutral mapping reports `adapter_qualification=false`. Those statements are
 deliberately about different evidence axes.
 
-Four live process tests pass against the exact Nexus binary SHA-256
-`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
-They cover raw JSONL replay and chain preservation, Registered-effect survival
+Exact-binary process tests cover raw JSONL replay and chain preservation, Registered-effect survival
 across abort/thaw, the bounded process qualification scenarios including
 same-Registry service rebind, and the real logical-request dual-lost-ack cell.
 Service rebind is not Registry replacement.
 
-The logical-request cell performs two real transport-fault boundaries. The
+The supplemental logical-request cell performs two real transport-fault boundaries. The
 ownership service commits its SQLite transaction with WAL and
 `synchronous=FULL`, then suppresses the typed Commit acknowledgement; recovery
 drops and reopens the connection, queries the durable decision, and retries the
@@ -631,12 +635,20 @@ byte-identical replay. Evidence proves one external logical-request execution,
 one native Register/Prepare/Commit sequence, and one accepted terminal chain
 entry. The real `VISALR03` loopback peer sees the application request but not
 credential material. The report retains the exact typed provider exchange and
-all raw Nexus JSONL; it does not claim retained raw TCP frame capture.
+all raw Nexus JSONL. The application request completes before native
+Register/Prepare/Commit and no vISA source freeze/fence or destination activation
+runs, so this does not establish Nexus admission ordering or a vISA runtime
+handoff. It also does not claim retained raw TCP frame capture.
 
 The standalone process publisher and relocation runner are implemented and have
 passed a smoke run. They validate clean source identities, both locks, the Nexus
-receipt, and the exact binary; publish exactly two files; verify in a separate
-process; relocate; and verify the same bytes again. The final vISA revision,
+receipt, and the exact binary; publish a strict three-file
+manifest/report/executed-binary artifact; verify in a separate process; relocate;
+and verify the same bytes again. The supplemental logical publisher emits a
+strict five-file artifact including both SQLite databases and the executed
+binary. Static verification binds the binary content but does not re-execute it,
+claim reproducible derivation, or treat upload/download file mode as evidence.
+The final vISA revision,
 combined vISA/Nexus/neutral triplet, pushed vISA CI run, final artifact
 ID/digest, and post-download receipt are intentionally not recorded yet. They
 require this work to be committed and rerun from the resulting clean vISA SHA.
@@ -757,7 +769,7 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | Bounded logical-request continuity | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | Named target/substrate continuity | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Qx, Qx -> Hx, and Qx -> Qx; raw x86-64 Linux host receipt; owned worker/QEMU artifacts plus loader/sysroot receipts; four complete inner validations; and equality within the seven-cell aggregate | Real hardware, a new kernel/device substrate, another runtime/resource family, or cross-host behavior |
 | Emulated cross-ISA continuity | The fixed workload across Qx -> Qx, Qx -> Qa, Qa -> Qx, and Qa -> Qa; separate x86-64/AArch64 worker ELFs, artifact-owned QEMU executables and identified sysroots, four complete inner validations, and equality within the seven-cell aggregate | AOT binary portability, real AArch64 hardware, a second runtime, Stage 3 resources, 32-bit/big-endian targets, or cross-host behavior |
-| Candidate bounded joint-handoff refinement | The current local-clean neutral model/mapping and unchanged 16-case registries plus one supplemental case; the vISA HostSubstrate cell with 14-record commit, 9-record abort, peer-invocation, and attempt/observed/completion lineage; clean Nexus-local production-Registry refinement; four exact-binary live process tests; real logical-request dual lost acknowledgements; strict two-file publication and relocation verification; final clean-vISA and remote receipts | The evidence axes remain distinct and `exclusive_trusted_coordinator_api=true` remains in the TCB; this does not imply adversarial raw-API admission, Registry replacement, a production retained-tombstone path, real OSTD/IRQ/SMP, host reboot/permanent-source-loss recovery, cross-host transport, cryptographic authenticity, anti-rollback/freshness, TEE/KMS behavior, confidentiality, or Stage 5 |
+| Candidate bounded joint-handoff refinement | The remote-accepted neutral model/mapping and unchanged 16-case registries plus one supplemental reference case; the vISA HostSubstrate 14-record commit/9-record abort vertical; locked Nexus-local production-Registry refinement; exact-binary process evidence in a strict three-file artifact; and a separately labeled supplemental logical-request dual-lost-ACK five-file artifact | The evidence axes remain distinct, the logical cell is not normative, and `exclusive_trusted_coordinator_api=true` plus semantic lock approval remain in the TCB. This does not imply adversarial raw-API admission, Nexus ordering of the supplemental external effect, Registry replacement, a production retained-tombstone path, real OSTD/IRQ/SMP, host reboot/permanent-source-loss recovery, cross-host transport, cryptographic authenticity, anti-rollback/freshness, TEE/KMS behavior, confidentiality, or Stage 5. Final vISA exact-SHA/post-download receipts are still required. |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |
 | Crash-safe handoff | Durable journal/commit records and faults at every lifecycle transition | Arbitrary external-effect atomicity |
 | Production readiness | Defined reliability, security, operability, compatibility, and performance criteria over representative workloads | No current gate establishes this claim |

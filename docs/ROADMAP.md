@@ -520,25 +520,29 @@ assumption. A second raw coordinator/provider handle or hostile caller of the
 public projection surface is outside the bounded claim; the current guard is
 not provider- or kernel-enforced adversarial admission.
 
-The Nexus-local axis is locally clean at
-`a890e5c3e25138662c213f19280ba3b209939813`. Its source-bound v2 receipt
-SHA-256 is `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`,
-and the v2 lock SHA-256 is
-`306ee1fff5a53b010f9906084925ca5fa6af44bd779bf3658957f4552a0bcb21`.
-The receipt records production Registry refinement as checked. Four live
-process tests pass on the exact Nexus binary
-`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
+The Nexus-local axis is locked to clean revision
+`a4016af3a3de753cd78c6ff645b6e9d6605d5614`, source fingerprint
+`9b972a23...`, matrix `9f3f1579...`, and v2 qualification-lock SHA-256
+`36ed37f0d3099c6a10faffd33037f12c8eb68118da597dae7786236becf34267`.
+The receipt records production Registry refinement as checked. Generated receipt
+and local binary digests are run identities, not stable revision identities;
+final process artifacts retain the exact executed binary bytes.
 
-The real logical-request experiment now crosses both lost-acknowledgement
+The supplemental logical-request experiment crosses both lost-acknowledgement
 boundaries. Ownership loses the Commit acknowledgement only after the SQLite
 decision is durable, then reopens, queries, and replays exactly. Nexus loses the
 terminal close response after the child produced it but before adapter
 acceptance, then admits one byte-identical same-request-ID replay. The logical
 request executes once and its Nexus Register/Prepare/Commit publication occurs
-once.
+once. Because the request completes first and no vISA freeze/fence/activation
+runs, this cell does not qualify Nexus effect admission or a vISA runtime
+handoff.
 
-The standalone exact-two-file publisher and relocation verifier are implemented
-and have passed a smoke run. A final artifact cannot be minted honestly until
+The standalone process publisher now owns a strict three-file
+manifest/report/executed-binary artifact; the supplemental logical publisher owns
+a strict five-file artifact including two SQLite databases and the same binary
+content identity. Download verification does not re-execute the retained binary
+and does not treat normalized file mode as evidence. A final artifact cannot be minted honestly until
 this vISA worktree is committed and the runner can bind that clean exact SHA.
 
 The candidate remains open until all of these are true at final exact
