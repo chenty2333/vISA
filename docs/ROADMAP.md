@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -464,14 +464,17 @@ Claim earned: only `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1` for the fixed Wasmtime, Linux user-mode,
 timer/KV profile and the exact Hx/Qx/Qa cells above.
 
-## Candidate research track: bounded joint-handoff refinement
+## Accepted research track: bounded joint-handoff refinement
 
-Status: active, same-boot, and not closed. The candidate claim is
-`bounded-joint-handoff-refinement-v1`; it is an independent research track
-before Stage 5, not evidence that Stage 5 has started. Its local evidence is
-split between the neutral composition, vISA HostSubstrate, Nexus-local
+Status: complete for the named same-boot boundary. The accepted claim is
+`bounded-joint-handoff-refinement-v1`; it is an independent bounded research
+track before Stage 5, not evidence that Stage 5 has started. Its evidence
+remains split between the neutral composition, vISA HostSubstrate, Nexus-local
 refinement, and exact-binary process axes; no axis may stand in for another.
-Final clean-vISA publication and remote CI remain open.
+The accepted vISA implementation identity is
+`d3b07f1114cb49e26dd62fb252a895022ac2a743`. The later documentation-only
+receipt commit records lineage and does not replace that implementation
+identity.
 
 The track asks whether vISA semantic freeze, one durable non-equivocating
 ownership decision, and native closure of a frozen effect cohort can compose
@@ -499,10 +502,10 @@ concrete WAL-before-effect ordering. That obligation is discharged on the vISA
 axis by the Rust/SQLite durable projection and independently replayed raw
 transcript evidence.
 
-The current vISA candidate implements the pure joint reducer, pinned native
-receipt admission, append-only durable replay, a SQLite projection backend,
-reference ownership/effect peers, independent semantic verification, exact
-artifact inventory, and relocation checks. The concrete reference runner
+The accepted vISA implementation provides the pure joint reducer, pinned
+native receipt admission, append-only durable replay, a SQLite projection
+backend, reference ownership/effect peers, independent semantic verification,
+exact artifact inventory, and relocation checks. The concrete reference runner
 executes the 16 normative cases plus one supplemental post-commit
 retained-tombstone recovery scenario.
 
@@ -524,9 +527,15 @@ The Nexus-local axis is locked to clean revision
 `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, source fingerprint
 `017c681b...`, matrix `9f3f1579...`, and v2 qualification-lock SHA-256
 `21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
-The receipt records production Registry refinement as checked. Generated receipt
-and local binary digests are run identities, not stable revision identities;
-final process artifacts retain the exact executed binary bytes.
+The receipt records production Registry refinement as checked. The main
+workflow for that exact Nexus revision passed, and its downloaded canonical
+bundle independently passed `./x verify-bundle` from a clean checkout.
+Generated receipt and local binary digests are run identities, not stable
+revision identities; final process artifacts retain the exact executed binary
+bytes. The separate Nexus qualification lock remains `prospective=true`, and
+the neutral mapping remains `adapter_qualification=false`. Acceptance here is
+vISA's decision about the bounded evidence composition; it does not change
+Nexus v0.1 or RFC acceptance and does not rewrite either separate boundary.
 
 The supplemental logical-request experiment crosses both lost-acknowledgement
 boundaries. Ownership loses the Commit acknowledgement only after the SQLite
@@ -542,23 +551,19 @@ The standalone process publisher now owns a strict three-file
 manifest/report/executed-binary artifact; the supplemental logical publisher owns
 a strict five-file artifact including two SQLite databases and the same binary
 content identity. Download verification does not re-execute the retained binary
-and does not treat normalized file mode as evidence. A final artifact cannot be minted honestly until
-this vISA worktree is committed and the runner can bind that clean exact SHA.
+and does not treat normalized file mode as evidence. Both publishers bind clean
+implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
 
-The candidate remains open until all of these are true at final exact
-revisions:
-
-- the final clean vISA joint cell consumes the current neutral source lock and
-  separate Nexus v2 qualification lock without treating the mapping as Nexus
-  execution evidence;
-- local and Docker repository gates, the joint gate, and pushed exact-SHA CI
-  close for the same vISA revision;
-- the combined receipt records the final vISA, Nexus, and neutral revisions,
-  keeps the neutral composition, vISA runtime execution, and Nexus local
-  refinement as distinct evidence axes, and downloaded evidence is
-  independently reverified; and
-- the temporary Feature 009 specification is reconciled with the final
-  receipts before removal.
+Closure completed at the final exact revisions: the clean vISA joint cell
+consumed the neutral source lock and separate Nexus v2 qualification lock;
+local and Docker repository gates, the dedicated joint gate, and pushed
+exact-SHA CI passed for the implementation revision; the combined receipt kept
+the neutral composition, vISA runtime execution, and Nexus-local refinement as
+distinct axes; and downloaded evidence was independently reverified. The
+documentation receipt extracts Feature 009's accepted decisions into the
+canonical documents and removes that temporary execution specification in the
+same receipt commit. It does not add implementation behavior or widen the
+accepted claim.
 
 No current result establishes real OSTD or IRQ/SMP execution, Registry
 replacement, the production retained-tombstone path, host reboot or permanent

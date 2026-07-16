@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -73,7 +73,7 @@ volumes by default.
 
 The repository exposes two cumulative repository tiers, the Stage 1/2/3
 standalone system gates, one Stage 3 aggregate, and one complete bounded Stage
-4 aggregate with two edit-loop aliases, plus one candidate joint-handoff gate.
+4 aggregate with two edit-loop aliases, plus one bounded joint-handoff gate.
 Run the ordinary edit-loop gate with:
 
 ```sh
@@ -144,7 +144,7 @@ scripts/run-docker-ci-gate.sh system-stage4-target
 scripts/run-docker-ci-gate.sh system-stage4-isa
 ```
 
-Run the candidate joint-handoff cell with:
+Run the bounded joint-handoff vISA/reference cell with:
 
 ```sh
 scripts/run-docker-ci-gate.sh system-joint-handoff
@@ -168,8 +168,9 @@ independent verifier recomputes those transcripts, receipts, peer relations,
 local journals, leases, checkpoints, and terminal states. The tier publishes an
 exact two-file bundle and verifies it again after relocation.
 
-The source lock still declares `adapter_qualification=false`; it is the neutral
-mapping baseline, not Nexus execution evidence. The separate Nexus-local lane
+The source-locked neutral refinement map still declares
+`adapter_qualification=false`; it is a mapping baseline, not Nexus execution
+evidence. The separate Nexus-local lane
 is driven by:
 
 ```sh
@@ -208,9 +209,11 @@ a second process, relocates it, and verifies the same bytes in a third. The
 supplemental logical runner publishes five files: manifest, report, two SQLite
 databases, and the same content-identified binary. Download verification accepts
 artifact-service mode normalization, does not re-execute the binary, and does
-not claim reproducible source-to-binary derivation. The smoke runs pass, but
-the final artifact must wait until this vISA work is committed so the runner can
-bind the final clean vISA SHA.
+not claim reproducible source-to-binary derivation. The accepted clean artifacts
+bind exact vISA implementation
+`d3b07f1114cb49e26dd62fb252a895022ac2a743`; their local, Docker, exact-SHA CI,
+relocation, and post-download closure is recorded in the
+[joint-handoff closure receipt](VALIDATION.md#joint-handoff-closure-receipt).
 
 The Host refinement requires `exclusive_trusted_coordinator_api=true`: bypass
 through a second raw `Coordinator`/provider handle or hostile public-projection
@@ -489,8 +492,9 @@ public API. Use them according to their current role:
    `system-stage4-target` and `system-stage4-isa` currently invoke that same
    full matrix. `system-joint-handoff` source-locks the neutral contract, runs
    production-reducer replay plus reference ownership/effect peers, and executes
-   the separately reported HostSubstrate vertical; it remains an open candidate
-   lane. All orchestrate runners followed by independent verifier processes.
+   the separately reported HostSubstrate vertical. It is the accepted
+   vISA/reference axis of the bounded qualification, not Nexus execution
+   evidence. All orchestrate runners followed by independent verifier processes.
    Invoke the binaries directly only when investigating a retained artifact
    root.
 3. **Report checks:** `run-report-gates.sh` and
@@ -590,7 +594,7 @@ at a different root. The complete receipt is recorded in
 Current CI separates repository quality from claim qualification. One job runs
 `full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
 Strict Stage 2, Stage 3A, and Stage 3B; a separate lane runs the complete Stage 4
-aggregate, one separate Docker lane runs the candidate reference/HostSubstrate
+aggregate, one separate Docker lane runs the bounded reference/HostSubstrate
 joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local
 and process qualification. A final `Exact-SHA qualification closure` job fails
 unless all ten prerequisite job executions succeed for the same source SHA,
@@ -600,10 +604,17 @@ built from that checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs
 upload from `.ci-artifacts/` on gate success or failure. Pull-request artifacts
 are retained for 3 days and push artifacts for 14 days.
 
+Accepted implementation `d3b07f1114cb49e26dd62fb252a895022ac2a743`
+completed the clean local and Docker gates, the same-revision eleven-job CI
+closure, and independent post-download verification of both joint artifacts.
+Exact run, job, artifact, digest, expiry, and verifier receipts are kept in the
+[joint-handoff closure receipt](VALIDATION.md#joint-handoff-closure-receipt),
+not duplicated in this command guide.
+
 ## Next validation expansion
 
 `fast`, `full`, the Stage 1/2/3 standalone gates, the Stage 3 aggregate, the
-bounded Stage 4 aggregate, and the candidate joint-handoff gate are the
+bounded Stage 4 aggregate, and the bounded joint-handoff gate are the
 implemented root interface. The legacy
 JcoNode v2 matrix proves a second
 translated execution path, not a fully independent Component Model
@@ -612,13 +623,14 @@ supplies that independence and only the x86-64 Linux timer/KV
 `strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
 bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Completed
 Stage 4 adds only the named native/QEMU-user target-substrate and emulated
-x86-64/AArch64 timer/KV claims described above. The joint-handoff gate supports
-only the candidate `bounded-joint-handoff-refinement-v1`; its HostSubstrate cell
-is implemented and strictly verified, its Nexus-local lane is clean-qualified
-locally, and all four exact-binary live process tests pass. The process
-publisher/relocation runner has a smoke pass. The final clean joint vISA
-artifact, local/Docker closure, pushed exact-SHA vISA CI, and downloaded-artifact
-closure remain pending.
+x86-64/AArch64 timer/KV claims described above. The joint-handoff gates support
+only the accepted `bounded-joint-handoff-refinement-v1`: the vISA/reference,
+Nexus-local, exact-binary process, and supplemental logical-request axes remain
+separate, but their clean-artifact, local/Docker, exact-SHA CI, relocation, and
+post-download obligations are closed for the accepted implementation recorded
+in [validation](VALIDATION.md#joint-handoff-closure-receipt). This is a
+bounded same-boot qualification, not evidence for the excluded Stage 5 or
+production behaviors listed above.
 A second Stage 3 runtime, broader file/network families,
 cross-process Stage 3 workers, real hardware/reference-kernel/device cells,
 cross-host execution, confidential, release, performance, and production

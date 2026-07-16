@@ -43,12 +43,16 @@ resource bindings, resume, and produce executable evidence about what happened.
 > semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
 > portability, real ARM hardware, Stage 3 resource portability across targets,
 > or a second Stage 4 runtime.
-> A separate candidate `bounded-joint-handoff-refinement-v1` track now pins
+> The accepted bounded systems/research claim
+> `bounded-joint-handoff-refinement-v1` is fixed to vISA implementation revision
+> `d3b07f1114cb49e26dd62fb252a895022ac2a743`. Its source lock pins
 > remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
-> (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). Its exact-SHA artifact was
-> downloaded and independently reverified; `be250c30...` is receipt lineage,
-> not the accepted implementation identity. The neutral mapping still declares
-> `adapter_qualification=false`. The same-boot vISA/reference lane maps 16
+> (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). The neutral implementation's
+> exact-SHA artifact was downloaded and independently reverified; `be250c30...`
+> is its receipt lineage, not the accepted vISA implementation identity. The
+> separate Nexus qualification lock remains `prospective=true`, while the
+> neutral mapping still declares `adapter_qualification=false`. The same-boot
+> vISA/reference lane maps 16
 > normative neutral cases to 16 vISA cases and keeps one supplemental
 > retained-tombstone recovery. Its online `Coordinator<SqliteProvider>`
 > HostSubstrate cell retains 14-record commit and 9-record abort WAL
@@ -57,14 +61,19 @@ resource bindings, resume, and produce executable evidence about what happened.
 > admission and production-Registry refinement are locked to clean revision
 > `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, source fingerprint
 > `017c681b...`, matrix `9f3f1579...`, and qualification-lock `21b5404b...`.
-> The exact-binary process tests pass locally. Their supplemental logical-request
-> cell exercises post-durable ownership Commit acknowledgement loss and loss of
-> the terminal Nexus response before adapter acceptance, but the external effect
+> The exact-binary process tests pass at the accepted vISA revision. The
+> separate supplemental logical-request cell exercises both post-durable
+> ownership Commit acknowledgement loss and loss of the terminal Nexus response
+> before adapter acceptance, but the external effect
 > completes before native Register/Prepare/Commit. It therefore does not prove
 > Nexus admission ordered the effect or execute a vISA runtime handoff. Final
 > artifacts retain the exact executed binary by content identity without
-> claiming reproducible source-to-binary derivation. Closing vISA exact-SHA CI
-> and post-download receipts are still pending.
+> claiming reproducible source-to-binary derivation. Exact-SHA CI for the
+> accepted vISA revision passed, and all four post-download verifier paths
+> accepted its artifacts against the committed locks. The
+> [closure receipt](docs/VALIDATION.md#joint-handoff-closure-receipt) records
+> that documentation lineage without replacing
+> `d3b07f1114cb49e26dd62fb252a895022ac2a743` as the implementation identity.
 > The HostSubstrate result assumes `exclusive_trusted_coordinator_api=true`:
 > its owning guards constrain a non-Byzantine orchestrator, not a second raw
 > `Coordinator`/provider handle or a hostile caller of public projection APIs.
@@ -150,8 +159,8 @@ cross-ISA matrix. It also contains the isolated joint-handoff protocol core,
 runtime projection adapter, durable recovery log, conformance oracle,
 reference protocol lane, HostSubstrate vertical, exact-binary Nexus process
 cell, real logical-request dual-lost-ack experiment, and standalone
-publisher/relocation runner for the candidate
-`bounded-joint-handoff-refinement-v1` track. Strict
+publisher/relocation runner for the accepted bounded
+`bounded-joint-handoff-refinement-v1` systems/research claim. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
@@ -359,7 +368,7 @@ implementation, exact-SHA workflow, and downloaded-artifact checks complete
 Roadmap Stage 4 only for the two named claims above; every listed exclusion
 remains unearned.
 
-Run the candidate joint-handoff gate with:
+Run the accepted bounded joint-handoff gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh system-joint-handoff
@@ -382,7 +391,8 @@ process, relocates it, and verifies the same bytes again. The separate
 `run-logical-request-lost-ack-cell.sh` publisher emits a five-file supplemental
 artifact with its two SQLite databases. Both retain binary content identity but
 do not re-execute it during verification or claim reproducible derivation. The
-final clean-vISA artifacts must be regenerated after this work is committed.
+accepted exact-revision artifacts were generated from clean checkouts, then
+downloaded under independent roots and reverified against the committed locks.
 
 The HostSubstrate refinement assumes an exclusive trusted coordinator API. A
 second raw `Coordinator` or provider handle that bypasses the durable joint

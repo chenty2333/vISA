@@ -32,17 +32,21 @@ coverage across targets, or a second Stage 4 runtime. Confidential continuity
 and production readiness also remain unimplemented. The exact closure receipt
 is in [validation](VALIDATION.md#stage-4-closure-receipt).
 
-The separate candidate `bounded-joint-handoff-refinement-v1` track has an
-accepted 16-case neutral model/contract, a source-locked native-v1 mapping
-extension, a pure composition reducer, typed receipt admission, durable SQLite
-recovery, an independent verifier, a reference protocol lane, and a complete
-same-boot HostSubstrate vertical. It also has a locally clean Nexus-local
-qualification, four passing exact-binary process tests, a real logical-request
-dual-lost-ack experiment, and a standalone publisher/relocation runner. The
-final clean-vISA artifact and remote CI remain open. This is not Roadmap Stage
-5.
+The separate `bounded-joint-handoff-refinement-v1` research track is accepted
+at implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
+It combines the accepted 16-case neutral model/contract and source-locked
+native-v1 mapping extension with a pure composition reducer, typed receipt
+admission, durable SQLite recovery, an independent verifier, a reference
+protocol lane, and a complete same-boot HostSubstrate vertical. The distinct
+Nexus-local qualification, four exact-binary process tests, logical-request
+dual-lost-ack experiment, and standalone publication/relocation lanes are also
+closed at their exact locked identities. Clean local and Docker gates,
+exact-SHA remote CI, downloaded-artifact reverification, and the combined
+receipt close only this bounded research claim. The documentation-only receipt
+commit is lineage, not a replacement implementation identity. This is not
+Roadmap Stage 5.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -306,7 +310,7 @@ not-run because this qualification uses QEMU-user. The bounded implementation,
 exact-SHA workflow, and downloaded-artifact rechecks complete Roadmap Stage 4
 only for the two exact claims above.
 
-### Candidate bounded joint-handoff refinement
+### Accepted bounded joint-handoff refinement
 
 The joint profile composes three authorities that remain independently owned:
 
@@ -401,7 +405,8 @@ closed by the unchanged outer QEMU timeout, not an internal guest-tick failure
 deadline. Accepting these same-boot futex-startup changes as semantically
 irrelevant to the handoff model is another explicit maintainer judgement;
 exact full CI and independent verification of the downloaded canonical Nexus
-bundle remain separate closure prerequisites.
+bundle were separate closure prerequisites and both completed at the accepted
+Nexus revision.
 
 The next `979b66aa..81c484c2` increment adds the bounded one-vCPU
 runtime-filesystem service-crash slice. Of the 50 qualification-locked Nexus
@@ -465,9 +470,10 @@ is `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.
 It freezes the field-level mapping and 16-case identity relation to the vISA
 registry while explicitly keeping `adapter_qualification=false`. Its downloaded
 exact-SHA artifact passed independent verification; later `be250c30...` is
-receipt lineage, not the source identity. The reference lane runs those 16 cases plus one supplemental
-post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
-the separate online vISA runtime refinement evidence.
+receipt lineage, not the source identity. The reference lane runs those 16
+cases plus one supplemental post-commit retained-tombstone recovery, while the
+HostSubstrate cell supplies the separate online vISA runtime refinement
+evidence.
 
 The Nexus-local model/oracle/fault-matrix and production Registry refinement are
 locked to clean revision `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, source
@@ -475,23 +481,30 @@ fingerprint `017c681be01ca123a1df9625f16dd7b0367f861f7ac3be1476baf11a89070f52`,
 matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and qualification-lock SHA-256
 `21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
-Its v2 receipt records `production_registry_refinement_checked=true`. This does not
-conflict with the neutral machine mapping's `adapter_qualification=false`: the
-former is executed Nexus-local evidence, while the latter refuses to infer
-adapter execution from a composition relation.
+Its v2 receipt records `production_registry_refinement_checked=true`. The main
+workflow for that exact Nexus revision passed, and its downloaded canonical
+bundle passed independent `./x verify-bundle` verification from a clean
+checkout. This does not conflict with the neutral machine mapping's
+`adapter_qualification=false`: the former is executed Nexus-local evidence,
+while the latter refuses to infer adapter execution from a composition
+relation. The separate Nexus qualification lock remains `prospective=true`;
+acceptance of this vISA research track does not upgrade the neutral mapping
+into a qualified adapter or production integration, or change Nexus v0.1/RFC
+acceptance.
 
 Exact-binary process tests pass against that revision. A generated receipt SHA
 and locally built binary SHA identify one run, not the revision; final artifacts
 retain the executed binary bytes and bind them by content without claiming a
-reproducible source-to-binary derivation. The supplemental logical-request cell binds the completed logical operation through the
-Nexus effect cohort, ownership Prepared/Commit, and Closure. The ownership fault
-commits with SQLite WAL and `synchronous=FULL` before suppressing the Commit
-acknowledgement; recovery reopens, queries, and retries the exact request. The
-Nexus fault discards the real terminal child response before adapter acceptance
-and admits only a byte-identical replay under the same request ID. The external
-logical request, native Register, Prepare, and Commit each execute once, but in
-that order: the cell is post-hoc observational binding, not Nexus admission of
-the external effect or a vISA freeze/fence/activation vertical.
+reproducible source-to-binary derivation. The supplemental logical-request cell
+binds the completed logical operation through the Nexus effect cohort,
+ownership Prepared/Commit, and Closure. The ownership fault commits with SQLite
+WAL and `synchronous=FULL` before suppressing the Commit acknowledgement;
+recovery reopens, queries, and retries the exact request. The Nexus fault
+discards the real terminal child response before adapter acceptance and admits
+only a byte-identical replay under the same request ID. The external logical
+request, native Register, Prepare, and Commit each execute once, but in that
+order: the cell is post-hoc observational binding, not Nexus admission of the
+external effect or a vISA freeze/fence/activation vertical.
 
 The standalone process-cell publisher requires clean exact vISA and Nexus
 checkouts, validates both source locks and the Nexus receipt, publishes a strict
@@ -500,17 +513,23 @@ process, relocates it, and verifies the same bytes in a third. The supplemental
 logical cell analogously publishes five files, including its two SQLite
 databases and the executed binary. Verification statically validates the
 retained binary content and does not re-execute it; file mode is not evidence.
-The implementations and smoke passes are complete; the
-final artifact still awaits the committed clean vISA SHA.
+The accepted artifacts are bound to clean vISA implementation revision
+`d3b07f1114cb49e26dd62fb252a895022ac2a743`. Their independent post-download
+verification completed, and the publication lanes' relocation checks passed
+without rewriting retained evidence. That revision, rather than the later
+documentation-only receipt commit, is the implementation identity for this
+claim.
 
-Therefore `bounded-joint-handoff-refinement-v1` remains a candidate. Final
-clean-vISA local/Docker gates, exact-SHA remote CI, final artifact publication,
-and a combined closing receipt are still required. The current architecture
-does not establish host reboot or permanent source-loss recovery, real OSTD
-execution, IRQ/SMP behavior, Registry replacement, the production
-retained-tombstone path, cross-host transport, Byzantine ownership-service
-behavior, cryptographic receipt authenticity, hostile-storage anti-rollback or
-freshness, TEE/KMS behavior, confidentiality, or production readiness.
+Therefore `bounded-joint-handoff-refinement-v1` is accepted only for its named
+same-boot research boundary. Clean local and Docker gates, exact-SHA remote CI,
+final artifact publication, independent post-download verification, and the
+combined closing receipt completed for the same implementation identity. The
+current architecture does not establish host reboot or permanent source-loss
+recovery, real OSTD execution, IRQ/SMP behavior, Registry replacement, the
+production retained-tombstone path, cross-host transport, Byzantine
+ownership-service behavior, cryptographic receipt authenticity, hostile-storage
+anti-rollback or freshness, TEE/KMS behavior, confidentiality, or production
+readiness.
 
 ## Canonical state versus native binding
 
