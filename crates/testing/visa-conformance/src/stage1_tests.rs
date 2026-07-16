@@ -1824,6 +1824,24 @@ fn artifact_gate_binds_provider_fault_coverage_roles_to_matrix_faults() {
 #[test]
 fn artifact_gate_rejects_protocol_deletion_and_impossible_wire_observations() {
     assert_artifact_tamper(
+        "worker-protocol-v3-envelope",
+        &["invalid-stage1-worker-protocol-envelope"],
+        |bundle, root| {
+            let case_index = committed_case_index(bundle);
+            rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+                mutate_embedded_protocol(
+                    lines,
+                    |protocol| {
+                        protocol.pointer("/command/kind").and_then(serde_json::Value::as_str)
+                            == Some("initialize")
+                    },
+                    |protocol| protocol["version"] = serde_json::json!(3),
+                );
+            });
+        },
+    );
+
+    assert_artifact_tamper(
         "worker-transcript-first-line-deleted",
         &["invalid-stage1-raw-transcript-sequence"],
         |bundle, root| {
@@ -1997,6 +2015,21 @@ fn artifact_gate_requires_the_exact_raw_and_matrix_registries() {
     );
 
     assert_artifact_tamper(
+        "matrix-v1-schema",
+        &["invalid-stage1-matrix-manifest"],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            matrix["schema"] = serde_json::json!("visa-stage1-matrix-provenance-v1");
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
+        },
+    );
+
+    assert_artifact_tamper(
         "matrix-options-unknown-field",
         &["invalid-stage1-matrix-manifest"],
         |bundle, root| {
@@ -2033,6 +2066,32 @@ fn artifact_gate_requires_the_exact_raw_and_matrix_registries() {
 
 #[test]
 fn artifact_gate_rejects_matrix_semantic_tampering() {
+    assert_artifact_tamper(
+        "matrix-timer-delay-tamper",
+        &[
+            "invalid-stage1-timer-delay",
+            "inconsistent-stage1-config-provenance",
+            "invalid-stage1-initialize-request",
+        ],
+        |bundle, root| {
+            let reference = bundle.provenance.artifacts.matrix_manifest.clone();
+            let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
+            let entry = matrix["entries"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|entry| entry["case_id"].as_str() == Some("timer-semantics-unsupported"))
+                .unwrap();
+            entry["options"]["timer_delay_ns"] =
+                serde_json::json!(crate::STAGE1_DEFAULT_TIMER_DELAY_NS);
+            write_provenance_ref(
+                root,
+                &mut bundle.provenance.artifacts.matrix_manifest,
+                &serde_json::to_vec_pretty(&matrix).unwrap(),
+            );
+        },
+    );
+
     assert_artifact_tamper(
         "matrix-case-digest-tamper",
         &[
@@ -2590,6 +2649,7 @@ struct TestMatrixOptions {
     case_id: String,
     namespace_availability: TestNamespaceAvailability,
     authority_policy: TestAuthorityPolicyMode,
+    timer_delay_ns: u64,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -2696,6 +2756,11 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
                     case_id: case.case_id.clone(),
                     namespace_availability: TestNamespaceAvailability::Correct,
                     authority_policy: TestAuthorityPolicyMode::Sufficient,
+                    timer_delay_ns: if case.case_id == "timer-semantics-unsupported" {
+                        crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
+                    } else {
+                        crate::STAGE1_DEFAULT_TIMER_DELAY_NS
+                    },
                 },
                 config_digest: digest_from_hex(&case.case_config_sha256),
                 policy_digest: digest_from_hex(&case.case_policy_sha256),
@@ -2749,7 +2814,7 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
         case.authority.enforcement_policy_sha256 = policy_sha256.clone();
     }
     let manifest = TestMatrixManifest {
-        schema: "visa-stage1-matrix-provenance-v1".to_owned(),
+        schema: "visa-stage1-matrix-provenance-v2".to_owned(),
         entries,
         provider_fault_coverage: coverage,
     };
@@ -3856,6 +3921,11 @@ fn test_initialize_command(case_id: &str, role: &str, runtime: TestRuntime) -> s
             "case_id": case_id,
             "namespace_availability": "correct",
             "authority_policy": "sufficient",
+            "timer_delay_ns": if case_id == "timer-semantics-unsupported" {
+                crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
+            } else {
+                crate::STAGE1_DEFAULT_TIMER_DELAY_NS
+            },
         },
         "fault": null,
     })

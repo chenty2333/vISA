@@ -16,8 +16,6 @@ use visa_runtime::{AuthorityPlan, EncodeError, canonical_digest};
 
 const ID_DOMAIN: &[u8] = b"visa-system-stage1-fixture-v1\0";
 const INITIAL_LEASE_EPOCH: LeaseEpoch = LeaseEpoch(1);
-const WORKLOAD_DELAY_NS: u64 = 50_000_000;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NamespaceAvailability {
@@ -42,6 +40,7 @@ pub struct FixtureOptions {
     pub case_id: String,
     pub namespace_availability: NamespaceAvailability,
     pub authority_policy: AuthorityPolicyMode,
+    pub timer_delay_ns: u64,
 }
 
 impl FixtureOptions {
@@ -50,6 +49,7 @@ impl FixtureOptions {
             case_id: case_id.into(),
             namespace_availability: NamespaceAvailability::Correct,
             authority_policy: AuthorityPolicyMode::Sufficient,
+            timer_delay_ns: visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS,
         }
     }
 }
@@ -338,7 +338,7 @@ impl FixtureSpec {
             key: "stage1-value".to_owned(),
             initial_value: b"started".to_vec(),
             completion_value: b"completed".to_vec(),
-            delay_ns: WORKLOAD_DELAY_NS,
+            delay_ns: options.timer_delay_ns,
             baseline_idempotency_key: format!("{}:baseline", options.case_id),
             timer_idempotency_key: format!("{}:timer", options.case_id),
             completion_idempotency_key: format!("{}:completion", options.case_id),
@@ -605,7 +605,7 @@ mod tests {
         assert_eq!(first.activation.to_wasmtime().session_id, "deterministic-case:session");
         assert_eq!(
             FixtureSpec::new("performance-observations").unwrap().activation.delay_ns,
-            WORKLOAD_DELAY_NS,
+            visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS,
             "performance observations keep the shared Stage 1 workload input"
         );
     }
@@ -673,6 +673,7 @@ mod tests {
                 case_id: format!("namespace-{mode:?}"),
                 namespace_availability: mode,
                 authority_policy: AuthorityPolicyMode::Sufficient,
+                timer_delay_ns: visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS,
             })
             .unwrap();
             let mut providers = fixture.open_providers(database.path()).unwrap();
@@ -710,6 +711,7 @@ mod tests {
                 case_id: format!("authority-{mode:?}"),
                 namespace_availability: NamespaceAvailability::Correct,
                 authority_policy: mode,
+                timer_delay_ns: visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS,
             })
             .unwrap();
             let mut providers = fixture.open_providers(database.path()).unwrap();

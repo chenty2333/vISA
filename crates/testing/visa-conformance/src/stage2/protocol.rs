@@ -134,6 +134,8 @@ struct InitializeOptionsProjection {
     _namespace_availability: ProtocolNamespaceAvailability,
     #[serde(rename = "authority_policy")]
     _authority_policy: ProtocolAuthorityPolicyMode,
+    #[serde(rename = "timer_delay_ns")]
+    _timer_delay_ns: u64,
 }
 
 #[derive(Deserialize)]
@@ -865,7 +867,8 @@ mod tests {
                     "options": {
                         "case_id": initialized_case,
                         "namespace_availability": "correct",
-                        "authority_policy": "sufficient"
+                        "authority_policy": "sufficient",
+                        "timer_delay_ns": crate::STAGE1_DEFAULT_TIMER_DELAY_NS
                     },
                     "fault": null
                 }

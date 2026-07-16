@@ -25,7 +25,8 @@ pub const STAGE4_HOST_UNAME_STDERR_FILE: &str = "targets/orchestrator/uname.stde
 pub const STAGE4_CASE_COUNT: usize = 31;
 pub const STAGE4_CELL_COUNT: usize = 7;
 pub const STAGE4_EXECUTION_COUNT: usize = STAGE4_CASE_COUNT * STAGE4_CELL_COUNT;
-pub const STAGE4_WORKER_PROTOCOL_VERSION: u64 = 3;
+pub const STAGE4_WORKER_PROTOCOL_VERSION: u64 = 4;
+const _: () = assert!(STAGE4_WORKER_PROTOCOL_VERSION == crate::STAGE1_WORKER_PROTOCOL_VERSION);
 // Stage 4 cross-builds release workers, so Cargo also builds the embedded
 // handoff Component with the release profile. This is intentionally a
 // different byte artifact from Strict Stage 2's dev-profile Component even

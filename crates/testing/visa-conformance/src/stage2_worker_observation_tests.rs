@@ -245,7 +245,8 @@ fn metadata_transcript(pid: u32, database_path: &str, engine: &str, message: &st
             "options": {
                 "case_id": CASE_ID,
                 "namespace_availability": "correct",
-                "authority_policy": "sufficient"
+                "authority_policy": "sufficient",
+                "timer_delay_ns": crate::STAGE1_DEFAULT_TIMER_DELAY_NS
             },
             "fault": null,
         }),

@@ -214,20 +214,24 @@ single-runtime reference-cell claim, not a broader continuity claim.
 Timer state is selected by an exhaustive case-registry strategy. The dedicated
 `visa-stage2-common-input-v2` contract fixes all 31 cases as three `Pending`, 22
 `Precompleted`, and six `ScenarioControlled` strategies. The dedicated positive,
-paused, completed, cancelled, and cleanup cases retain their distinct branches,
-while `timer-semantics-unsupported` retains a positive `Pending` snapshot for its
-capability rejection. Cases whose primary claim is not timer disposition wait
-for the unchanged 50 ms timer before handoff, require the `Completed` snapshot
+paused, completed, cancelled, and cleanup cases retain their distinct branches.
+`timer-semantics-unsupported` instead uses an explicit, provenance-bound 60 s
+timer so that, under the runner's bounded command-liveness model, its snapshot
+remains `Pending` until destination capability validation rejects it. All other
+cases retain the 50 ms workload delay. Cases whose primary claim is not timer
+disposition wait for that timer before handoff, require the `Completed` snapshot
 branch, and prove that the authoritative final trace does not recreate it.
 Scenario-controlled safe-point/live-resource rejections publish no snapshot and
-must return to a running source with a positive armed timer. This keeps host
-descheduling out of authority, KV, journal, recovery, and evidence claims without
-changing the workload input, weakening exact cross-cell comparison, or adding a
-Stage 2 normalization exclusion. Pre-commit abort checks derive their exact
-component, timer, and KV expectation from the already locked snapshot branch.
+must return to a running source with a positive armed timer. Each case keeps the
+same exact delay in every runtime cell, and every inner Stage 1 verifier checks
+that delay against matrix, config, and transcript provenance before Stage 2
+applies its existing semantic normalization; this change adds no new
+normalization exclusion. Pre-commit abort checks derive their exact component,
+timer, and KV expectation from the already locked snapshot branch.
 The outer strategy check proves the case-specific snapshot disposition and
 authoritative final branch. Ordering within quiescence remains a Stage 1
-trace/raw-evidence obligation; it is not a wall-clock chronology claim.
+trace/raw-evidence obligation; it is not a wall-clock chronology claim or a
+guarantee against an externally suspended worker.
 
 ### Stage 2 system cells
 
@@ -717,11 +721,16 @@ directories, symlinks, or publication root therefore cannot substitute code;
 unsupported translator output fails closed. The trusted Node executable and
 its execution environment, loader, shared libraries, and toolchain remain
 trusted inputs. Ptrace, process-memory, takeover, and denial-of-service
-boundaries are likewise explicitly outside this claim. Current evidence uses
-worker protocol v3 and Stage 1 evidence v0.4. Legacy Wasmtime/JcoNode outer
-evidence remains v2, while the separate Wasmtime/Wacogo strict outer evidence
-is v3; the two parsers reject mixed or unknown schemas, and older bundles do not
-inherit either newer claim boundary.
+boundaries are likewise explicitly outside this claim. The current verifier
+contract requires worker protocol v4, including Stage 4 target hello, subordinate
+Stage 1 matrix provenance v2, and top-level Stage 1 evidence v0.4. Protocol v4
+and matrix v2 make the per-case timer delay an explicit wire and
+config-provenance input; the exact verifier does not reinterpret matrix v1 under
+that contract. The top-level schema remains v0.4 because its bundle fields and
+outcome semantics did not change. Legacy
+Wasmtime/JcoNode outer evidence remains v2, while the separate
+Wasmtime/Wacogo strict outer evidence is v3; the two parsers reject mixed or
+unknown schemas, and older bundles do not inherit either newer claim boundary.
 
 ### Release
 

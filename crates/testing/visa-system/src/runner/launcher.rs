@@ -285,7 +285,7 @@ mod tests {
         let script = r#"
 nonce="$2"
 printf 'qemu-probe-stderr\n' >&2
-printf '{"schema_version":"visa-stage4-target-hello-v1","nonce":"%s","target_triple":"aarch64-unknown-linux-gnu","architecture":"aarch64","os":"linux","abi":"linux-gnu","endianness":"little","pointer_width_bits":64,"executable_sha256":"%064d","executable_size":1,"build_source_sha256":"%064d","build_toolchain_sha256":"%064d","worker_protocol_version":3}\n' "$nonce" 0 0 0
+printf '{"schema_version":"visa-stage4-target-hello-v1","nonce":"%s","target_triple":"aarch64-unknown-linux-gnu","architecture":"aarch64","os":"linux","abi":"linux-gnu","endianness":"little","pointer_width_bits":64,"executable_sha256":"%064d","executable_size":1,"build_source_sha256":"%064d","build_toolchain_sha256":"%064d","worker_protocol_version":4}\n' "$nonce" 0 0 0
 "#;
         let launcher = WorkerLauncher::new("/bin/sh", ["-c", script, "probe"]);
         let observation = launcher.probe_target_with_nonce(NONCE).unwrap();
@@ -310,7 +310,7 @@ printf '{"schema_version":"visa-stage4-target-hello-v1","nonce":"%s","target_tri
     fn probe_rejects_extra_stdout_and_nonzero_exit() {
         let valid = r#"
 nonce="$2"
-printf '{"schema_version":"visa-stage4-target-hello-v1","nonce":"%s","target_triple":"x86_64-unknown-linux-gnu","architecture":"x86_64","os":"linux","abi":"linux-gnu","endianness":"little","pointer_width_bits":64,"executable_sha256":"%064d","executable_size":1,"build_source_sha256":"%064d","build_toolchain_sha256":"%064d","worker_protocol_version":3}\nextra\n' "$nonce" 0 0 0
+printf '{"schema_version":"visa-stage4-target-hello-v1","nonce":"%s","target_triple":"x86_64-unknown-linux-gnu","architecture":"x86_64","os":"linux","abi":"linux-gnu","endianness":"little","pointer_width_bits":64,"executable_sha256":"%064d","executable_size":1,"build_source_sha256":"%064d","build_toolchain_sha256":"%064d","worker_protocol_version":4}\nextra\n' "$nonce" 0 0 0
 "#;
         let extra =
             WorkerLauncher::new("/bin/sh", ["-c", valid, "probe"]).probe_target_with_nonce(NONCE);

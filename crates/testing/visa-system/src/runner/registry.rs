@@ -182,6 +182,7 @@ impl CasePlan {
                 options.namespace_availability = NamespaceAvailability::Missing;
             }
             CaseKind::TimerUnsupported => {
+                options.timer_delay_ns = visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS;
                 destination_support = DestinationSupportMode::TimerSemanticsUnsupported;
             }
             CaseKind::LostCommitAck => {
@@ -320,7 +321,7 @@ pub(super) fn prepare_stage1_registry() -> Result<PreparedStage1Registry, Runner
     Ok(PreparedStage1Registry {
         plans,
         manifest: MatrixManifest {
-            schema: "visa-stage1-matrix-provenance-v1",
+            schema: "visa-stage1-matrix-provenance-v2",
             entries: matrix_entries,
             provider_fault_coverage,
         },
@@ -356,7 +357,12 @@ pub(super) fn fault_schedule(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::runner::WORKER_TIMEOUT;
+
+    const TIMER_UNSUPPORTED_PRE_FREEZE_REQUESTS: u32 = 3;
 
     #[test]
     fn every_stage1_case_has_one_executable_fixture_plan() {
@@ -455,10 +461,71 @@ mod tests {
                 panic!("{} is missing from the timer strategy partition", definition.id)
             };
             assert_eq!(plan.snapshot_timer_strategy, expected, "{}", definition.id);
+            let expected_timer_delay_ns = if definition.id == "timer-semantics-unsupported" {
+                visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
+            } else {
+                visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS
+            };
+            assert_eq!(plan.options.timer_delay_ns, expected_timer_delay_ns, "{}", definition.id);
+            assert_eq!(
+                FixtureSpec::with_options(plan.options.clone())
+                    .expect("registered plan has a valid fixture")
+                    .activation
+                    .delay_ns,
+                expected_timer_delay_ns,
+                "{}",
+                definition.id
+            );
             assert!(
                 plan.scenario.ends_with(&format!("timer={expected:?}")),
                 "timer strategy must be bound into scenario provenance"
             );
         }
+    }
+
+    #[test]
+    fn timer_delay_is_bound_into_stage1_config_provenance() {
+        let mut prepared = prepare_stage1_registry().expect("registry is deterministic");
+        let accepted = prepared.config_digest;
+        let unsupported = prepared
+            .manifest
+            .entries
+            .iter_mut()
+            .find(|entry| entry.case_id == "timer-semantics-unsupported")
+            .expect("timer unsupported case is registered");
+        unsupported.options.timer_delay_ns -= 1;
+        let config_projection = prepared
+            .manifest
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.case_id.as_str(),
+                    &entry.options,
+                    entry.config_digest,
+                    entry.source_fault,
+                    entry.destination_fault,
+                    entry.destination_support,
+                    entry.scenario.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mutated =
+            canonical_digest(&(config_projection, &prepared.manifest.provider_fault_coverage))
+                .expect("mutated config projection is encodable");
+        assert_ne!(mutated, accepted);
+    }
+
+    #[test]
+    fn timer_unsupported_delay_exceeds_the_pre_freeze_request_budget() {
+        let bounded_request_budget = WORKER_TIMEOUT
+            .checked_mul(TIMER_UNSUPPORTED_PRE_FREEZE_REQUESTS)
+            .expect("request budget is representable");
+        assert_eq!(bounded_request_budget, Duration::from_secs(30));
+        assert!(
+            Duration::from_nanos(visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS)
+                > bounded_request_budget,
+            "the timer starts inside BootstrapSource, so its delay must exceed the remaining BootstrapSource request plus BeginQuiesce and FreezeSource budgets"
+        );
     }
 }

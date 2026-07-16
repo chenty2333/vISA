@@ -125,6 +125,7 @@ struct MatrixOptions {
     case_id: String,
     namespace_availability: MatrixNamespaceAvailability,
     authority_policy: MatrixAuthorityPolicyMode,
+    timer_delay_ns: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -348,7 +349,7 @@ fn validate_matrix_manifest(
     matrix: &MatrixManifest,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
-    if matrix.schema != "visa-stage1-matrix-provenance-v1" {
+    if matrix.schema != "visa-stage1-matrix-provenance-v2" {
         finding(
             findings,
             "invalid-stage1-matrix-manifest",
@@ -425,6 +426,21 @@ fn validate_matrix_manifest(
                 findings,
                 "inconsistent-stage1-case-matrix",
                 format!("{} config/policy/options do not match its matrix entry", case.case_id),
+            );
+        }
+        let expected_timer_delay_ns = if case.case_id == "timer-semantics-unsupported" {
+            crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
+        } else {
+            crate::STAGE1_DEFAULT_TIMER_DELAY_NS
+        };
+        if entry.options.timer_delay_ns != expected_timer_delay_ns {
+            finding(
+                findings,
+                "invalid-stage1-timer-delay",
+                format!(
+                    "{} timer delay must be {expected_timer_delay_ns} ns, got {}",
+                    case.case_id, entry.options.timer_delay_ns
+                ),
             );
         }
     }
@@ -2400,6 +2416,7 @@ fn validate_initialization_matrix_binding(
         case_id: options.case_id.clone(),
         namespace_availability: MatrixNamespaceAvailability::Correct,
         authority_policy: MatrixAuthorityPolicyMode::Sufficient,
+        timer_delay_ns: crate::STAGE1_DEFAULT_TIMER_DELAY_NS,
     };
     if options != &expected_options {
         return Err("supplemental initialize options are not the exact default profile".into());
