@@ -142,7 +142,7 @@ handle or hostile public-projection caller is outside the boundary; provider-
 or kernel-enforced adversarial admission is not claimed.
 
 The Nexus-local axis is locked to clean revision
-`81c484c2fc2215803d8c719a86301e42ea7daa87`. Its v2 receipt records
+`8e5123c46569e8ebdaba9f4f56bea6584ab58586`. Its v2 receipt records
 `production_registry_refinement_checked=true`, while the neutral mapping
 correctly keeps `adapter_qualification=false`. Exact-binary process tests include
 two distinct acknowledgement-loss boundaries: ownership Commit after its

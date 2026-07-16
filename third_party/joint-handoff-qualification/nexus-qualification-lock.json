@@ -4,14 +4,14 @@
   "claim_id": "bounded-joint-handoff-refinement-v1",
   "nexus": {
     "repository": "https://github.com/chenty2333/Nexus",
-    "revision": "81c484c2fc2215803d8c719a86301e42ea7daa87",
+    "revision": "8e5123c46569e8ebdaba9f4f56bea6584ab58586",
     "analyzed_baseline_revision": "7829e609b3d770b684316a30170a7412faa62f9b",
     "role": "nexus-local-handoff-admission-only",
     "receipt_schema": "nexus.research.handoff-admission.v2",
     "summary_schema": "nexus.research.handoff-admission.summary.v2",
     "command": "./x research handoff-admission",
     "prospective": true,
-    "source_fingerprint": "b4c5de6215e5962ad53f9678e697199228d30f2342adea3153d71b2437bc9129",
+    "source_fingerprint": "017c681be01ca123a1df9625f16dd7b0367f861f7ac3be1476baf11a89070f52",
     "source_files": [
       "x",
       "Dockerfile",

@@ -169,7 +169,7 @@ completion record authorizing destination resume. This result is conditional
 on `exclusive_trusted_coordinator_api=true`: an adversarial second raw
 coordinator/provider handle or hostile public-projection caller is outside the
 model. The separate Nexus-local axis is locally clean at
-`81c484c2fc2215803d8c719a86301e42ea7daa87`; its v2 receipt records that the
+`8e5123c46569e8ebdaba9f4f56bea6584ab58586`; its v2 receipt records that the
 production Registry refinement was checked. Exact-binary process tests pass;
 their artifacts retain the executed bytes by content identity, while generated
 receipt and binary digests remain run-specific rather than revision identity.

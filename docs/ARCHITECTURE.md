@@ -417,6 +417,23 @@ explicit maintainer judgement. The filesystem QEMU slice is not executed by the
 handoff qualification lane and does not upgrade `real_ostd_execution_claimed`,
 `joint_visa_execution_claimed`, or `real_ostd_smp_claimed`.
 
+The next `81c484c2..8e5123c` increment closes the bounded one-vCPU
+same-boot timer-admission window. Of the 50 qualification-locked Nexus sources,
+only `ARCHITECTURE.md`, `tools/xtask/src/evidence.rs`, and `x` change. The first
+records the callback-completion-rearmed APIC logical tick and the first-switch
+disabled-IRQ admission boundary. The evidence code adds exact task-entry
+debugcon streams and their oracles to the verification population. The wrapper
+mounts a linked worktree's Git common directory read-only for exact revision and
+clean-state inspection and adds missing host doctor prerequisites. The handoff
+TLA, profile, fault matrix, Rust model, transition substrate, production
+Registry, test inventory, and `nexus-effect-peer` do not change. The source
+fingerprint nevertheless changes because these three evidence-boundary and
+execution-wrapper files are intentionally locked. Accepting this increment as
+preserving the bounded handoff-admission semantics is an explicit maintainer
+judgement. It does not upgrade `real_ostd_execution_claimed`,
+`joint_visa_execution_claimed`, or `real_ostd_smp_claimed`, and it does not turn
+the separate APIC/debugcon evidence into a retained-tombstone joint claim.
+
 Likewise, the 11 `negative_mutations` names are a contract-locked falsifier
 catalog, not evidence that eleven independently source-mutated Nexus builds ran.
 
@@ -453,11 +470,11 @@ post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
 the separate online vISA runtime refinement evidence.
 
 The Nexus-local model/oracle/fault-matrix and production Registry refinement are
-locked to clean revision `81c484c2fc2215803d8c719a86301e42ea7daa87`, source
-fingerprint `b4c5de6215e5962ad53f9678e697199228d30f2342adea3153d71b2437bc9129`,
+locked to clean revision `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, source
+fingerprint `017c681be01ca123a1df9625f16dd7b0367f861f7ac3be1476baf11a89070f52`,
 matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and qualification-lock SHA-256
-`7c977ac7a552b6c7e03e26aada242d49309c8bdb1329152da9e3d489e648ba1b`.
+`21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
 Its v2 receipt records `production_registry_refinement_checked=true`. This does not
 conflict with the neutral machine mapping's `adapter_qualification=false`: the
 former is executed Nexus-local evidence, while the latter refuses to infer

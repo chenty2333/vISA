@@ -17,29 +17,31 @@ confidential-continuity claim.
 
 ## Current Evidence State
 
-Local-clean neutral revision `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b`
-(tree `1572ca83969e091898444c880d91885008d4cef7`) defines 16 normative cases
-and the current Nexus native-v1 mapping. It is unpushed; earlier remote-accepted
-revisions are historical evidence. The vISA reference lane executes those 16
-cases plus one supplemental retained-tombstone recovery case. Its vISA freeze
-and destination-prepared inputs remain explicit synthetic references.
+Remote-accepted neutral revision `f4a8211f0e5fde13e0f6101be3c3322854458c79`
+(tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`) defines 16 normative cases
+and the current Nexus native-v1 mapping. Its exact-SHA artifact was downloaded
+and independently reverified. The vISA reference lane executes those 16 cases
+plus one supplemental retained-tombstone recovery case. Its vISA freeze and
+destination-prepared inputs remain explicit synthetic references.
 
 The system runner separately executes a HostSubstrate vertical with durable
 attempt/observed/completion records for source abort, source fence, and
 destination activation, followed by independent verification. Nexus-local
 handoff-admission and production Registry refinement are locally clean at
-`a890e5c3e25138662c213f19280ba3b209939813`. Four live process tests pass
+`8e5123c46569e8ebdaba9f4f56bea6584ab58586`. Four live process tests pass
 against the exact binary SHA-256
-`574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`,
+`6bf845f8fecd2b3ff5833aa505f2a392fa3e07d726326cf65d07b39a87358f51`,
 including same-Registry service crash/rebind and a real logical-request
 dual-lost-ack cell. Service rebind is not Registry replacement.
 
 The ownership loss occurs after the Commit decision is durable; the Nexus loss
 occurs after the child emits terminal `Closed` but before adapter acceptance.
 Both recover through exact query/retry and same-request-ID replay without
-duplicate execution or publication. The standalone exact-two-file publisher and
-relocation verifier have a smoke pass. The final artifact still requires the
-committed clean vISA SHA, and remote CI has not been observed. Registry
+duplicate execution or publication. The standalone strict three-file
+manifest/report/executed-binary publisher and relocation verifier have a smoke
+pass; the logical supplemental is a separate strict five-file artifact. The
+final artifacts still require the committed clean vISA SHA, and vISA exact-SHA
+CI has not been observed. Registry
 replacement, the production retained-tombstone path, real OSTD IRQ/SMP, and
 reboot recovery remain unsupported.
 

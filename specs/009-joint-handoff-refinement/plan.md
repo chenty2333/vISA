@@ -24,9 +24,10 @@ allowed to expose or remotely control the native closure algorithm.
 ## Work Phases and Current State
 
 1. Completed: freeze the threat model, state machine, v1 wire schemas,
-   invariants, and 16-case normative registry at local-clean neutral revision
-   `75c5dacde8179e31eb88e17c5b7e8e3a9050e50b` (tree
-   `1572ca83969e091898444c880d91885008d4cef7`). This revision is not pushed.
+   invariants, and 16-case normative registry at remote-accepted neutral
+   revision `f4a8211f0e5fde13e0f6101be3c3322854458c79` (tree
+   `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). Its exact-SHA artifact was
+   downloaded and independently reverified.
 2. Completed: implement the isolated vISA joint profile and durable recovery
    reducer without modifying the Stage 1-4 canonical schema.
 3. Completed: implement the reference non-equivocating ownership log and
@@ -37,22 +38,23 @@ allowed to expose or remotely control the native closure algorithm.
    lane, HostSubstrate attempt/observed/completion vertical, artifact publisher,
    relocation-safe verifier, and repository gate wiring.
 6. Completed locally: run all four live process tests against Nexus revision
-   `a890e5c3e25138662c213f19280ba3b209939813` and exact binary SHA-256
-   `574580e5190f9aab2e54d37f3959c6872a1226ede5b22c064fa3609f35a3c689`.
+   `8e5123c46569e8ebdaba9f4f56bea6584ab58586` and exact binary SHA-256
+   `6bf845f8fecd2b3ff5833aa505f2a392fa3e07d726326cf65d07b39a87358f51`.
    This includes raw JSONL replay, Registered-effect abort preservation,
    same-Registry service rebind, and the logical-request cell.
 7. Completed locally: qualify Nexus handoff admission and production Registry
    refinement at the same clean revision; bind receipt SHA-256
-   `4245c69f74bd492eb2aba0114c0d9584f112664c6d09854a157c4413c5760091`
+   `f155d9d796ee4928b68ca2317268f5d622c4b3f2878440895e2c811add24ae6a`
    and v2 lock SHA-256
-   `306ee1fff5a53b010f9906084925ca5fa6af44bd779bf3658957f4552a0bcb21`.
+   `21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
 8. Completed locally: execute one real logical request while injecting
    post-durable ownership Commit acknowledgement loss and terminal Nexus
    response loss before adapter acceptance; recover both exactly without a
    duplicate external or native effect.
-9. Completed as an implementation/smoke result: publish an exact two-file
-   process artifact, verify it in another process, relocate it, and verify the
-   same bytes again.
+9. Completed as an implementation/smoke result: publish a strict three-file
+   process manifest/report/executed-binary artifact, verify it in another
+   process, relocate it, and verify the same bytes again. The separate logical
+   supplemental publishes a strict five-file artifact.
 10. Pending: rerun the standalone publisher after this vISA work is committed,
     bind the resulting clean exact SHA, close local and Docker evidence, then
     require pushed exact-SHA CI before changing roadmap status.
