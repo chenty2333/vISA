@@ -402,6 +402,21 @@ deadline. Accepting these same-boot futex-startup changes as semantically
 irrelevant to the handoff model is another explicit maintainer judgement;
 exact full CI and independent verification of the downloaded canonical Nexus
 bundle remain separate closure prerequisites.
+
+The next `979b66aa..81c484c2` increment adds the bounded one-vCPU
+runtime-filesystem service-crash slice. Of the 50 qualification-locked Nexus
+sources, only `ARCHITECTURE.md` and `tools/xtask/src/evidence.rs` change. The
+former records that separate runtime-filesystem evidence axis; the latter marks
+one real user-service crash as observed and updates its exact artifact prefixes,
+while retaining `all_fault_paths=false`, `irq=false`, and `smp_vcpus=1`. The
+handoff model, profile, matrix, production Registry, transition substrate, and
+their test inventories do not change. The source fingerprint nevertheless
+changes because the lock intentionally includes those evidence-boundary files.
+Accepting this increment as preserving the handoff-admission semantics is an
+explicit maintainer judgement. The filesystem QEMU slice is not executed by the
+handoff qualification lane and does not upgrade `real_ostd_execution_claimed`,
+`joint_visa_execution_claimed`, or `real_ostd_smp_claimed`.
+
 Likewise, the 11 `negative_mutations` names are a contract-locked falsifier
 catalog, not evidence that eleven independently source-mutated Nexus builds ran.
 
@@ -438,11 +453,11 @@ post-commit retained-tombstone recovery, while the HostSubstrate cell supplies
 the separate online vISA runtime refinement evidence.
 
 The Nexus-local model/oracle/fault-matrix and production Registry refinement are
-locked to clean revision `979b66aa60fd9b86de3ebef8e344140e61cc54ad`, source
-fingerprint `9b972a23d9a80886a5461a60597172f3d47c1a5d67f675c8c35988d1a2e8b078`,
+locked to clean revision `81c484c2fc2215803d8c719a86301e42ea7daa87`, source
+fingerprint `b4c5de6215e5962ad53f9678e697199228d30f2342adea3153d71b2437bc9129`,
 matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and qualification-lock SHA-256
-`48c819b8d8fe76d6e53eaf542c92aaddad67d5201e14ede3d43906b22c6d2cb1`.
+`7c977ac7a552b6c7e03e26aada242d49309c8bdb1329152da9e3d489e648ba1b`.
 Its v2 receipt records `production_registry_refinement_checked=true`. This does not
 conflict with the neutral machine mapping's `adapter_qualification=false`: the
 former is executed Nexus-local evidence, while the latter refuses to infer
