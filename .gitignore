@@ -2,6 +2,8 @@
 /target/
 /.ci-cache/
 /.ci-artifacts/
+# compose.ci.yaml exposes .ci-artifacts through this in-worktree bind alias.
+/evidence/
 /.ci-nexus/
 __pycache__/
 *.py[cod]

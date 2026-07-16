@@ -134,6 +134,12 @@ def check_ignores() -> None:
             f"{relative} must exclude the generated .ci-nexus checkout",
         )
 
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    require(
+        "/evidence/" in gitignore,
+        ".gitignore must exclude compose.ci.yaml's in-worktree evidence bind alias",
+    )
+
 
 def check_compose() -> None:
     base = load_yaml("compose.yaml")
