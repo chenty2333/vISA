@@ -146,6 +146,7 @@ pub enum EffectPeerError {
     TokenMismatch,
     NotFrozen,
     FreezeBlocked,
+    LiveEffectOutcomePending,
     StaleRevision { expected: u64, actual: u64 },
     ExistingAbort(Box<NexusThawReceipt>),
     ExistingCommit(Box<EffectCloseResult>),

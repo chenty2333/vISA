@@ -94,6 +94,166 @@ pub struct ProcessServiceRebindObservation {
     pub recovery_remaining: usize,
 }
 
+/// Adapter-visible phase of a live effect admitted through the staged process
+/// API. The token carrying this phase has private fields and is bound to one
+/// process peer incarnation and one exact publication identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessLiveEffectPhase {
+    Registered,
+    Prepared,
+    CommittedAwaitingOutcome,
+    OutcomeRecorded,
+}
+
+/// Opaque capability for advancing one staged live effect. Callers can inspect
+/// its identity and phase, but only `ProcessEffectPeer` can mint a token with a
+/// valid private binding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessLiveEffectToken {
+    effect: Identity,
+    phase: ProcessLiveEffectPhase,
+    advance: u64,
+    binding: Digest,
+}
+
+impl ProcessLiveEffectToken {
+    pub const fn effect(&self) -> Identity {
+        self.effect
+    }
+
+    pub const fn phase(&self) -> ProcessLiveEffectPhase {
+        self.phase
+    }
+
+    pub const fn advance(&self) -> u64 {
+        self.advance
+    }
+}
+
+/// Metadata committed by the native Registry before the provider/outcome path
+/// is allowed to proceed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessLiveEffectCommitMetadata {
+    pub result: i64,
+    pub domain_revision: u64,
+}
+
+/// Native commit fields copied only after the response and receipt chain have
+/// been verified. This is intentionally distinct from the caller's requested
+/// commit metadata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessLiveEffectVerifiedCommit {
+    client_effect: u64,
+    native_effect_id: u64,
+    native_effect_generation: u64,
+    binding_epoch: u64,
+    commit_sequence: u64,
+    result: i64,
+    domain_revision: u64,
+    registry_replay: bool,
+}
+
+impl ProcessLiveEffectVerifiedCommit {
+    pub const fn client_effect(&self) -> u64 {
+        self.client_effect
+    }
+
+    pub const fn native_effect_id(&self) -> u64 {
+        self.native_effect_id
+    }
+
+    pub const fn native_effect_generation(&self) -> u64 {
+        self.native_effect_generation
+    }
+
+    pub const fn binding_epoch(&self) -> u64 {
+        self.binding_epoch
+    }
+
+    pub const fn commit_sequence(&self) -> u64 {
+        self.commit_sequence
+    }
+
+    pub const fn result(&self) -> i64 {
+        self.result
+    }
+
+    pub const fn domain_revision(&self) -> u64 {
+        self.domain_revision
+    }
+
+    pub const fn registry_replay(&self) -> bool {
+        self.registry_replay
+    }
+}
+
+/// One applied or locally replayed staged transition. Native receipt metadata
+/// is present for Register, Prepare, and Commit; outcome recording is an
+/// adapter-only transition and therefore carries no native receipt metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessLiveEffectAdvance {
+    token: ProcessLiveEffectToken,
+    replay: bool,
+    native_effect_id: u64,
+    native_effect_generation: u64,
+    native_sequence: Option<u64>,
+    native_request_sha256: Option<String>,
+    native_receipt_sha256: Option<String>,
+    verified_commit: Option<ProcessLiveEffectVerifiedCommit>,
+}
+
+impl ProcessLiveEffectAdvance {
+    pub const fn token(&self) -> &ProcessLiveEffectToken {
+        &self.token
+    }
+
+    pub fn into_token(self) -> ProcessLiveEffectToken {
+        self.token
+    }
+
+    pub const fn phase(&self) -> ProcessLiveEffectPhase {
+        self.token.phase
+    }
+
+    pub const fn advance(&self) -> u64 {
+        self.token.advance
+    }
+
+    pub const fn is_replay(&self) -> bool {
+        self.replay
+    }
+
+    pub const fn native_effect_id(&self) -> u64 {
+        self.native_effect_id
+    }
+
+    pub const fn native_effect_generation(&self) -> u64 {
+        self.native_effect_generation
+    }
+
+    pub const fn native_sequence(&self) -> Option<u64> {
+        self.native_sequence
+    }
+
+    pub fn native_request_sha256(&self) -> Option<&str> {
+        self.native_request_sha256.as_deref()
+    }
+
+    pub fn native_receipt_sha256(&self) -> Option<&str> {
+        self.native_receipt_sha256.as_deref()
+    }
+
+    pub const fn verified_commit(&self) -> Option<&ProcessLiveEffectVerifiedCommit> {
+        self.verified_commit.as_ref()
+    }
+
+    fn replayed(&self) -> Self {
+        let mut replay = self.clone();
+        replay.replay = true;
+        replay
+    }
+}
+
 impl ProcessEffectPeerLaunch {
     pub fn new(
         executable: impl Into<PathBuf>,
@@ -132,6 +292,9 @@ struct ProcessEffectPeerState {
     response_loss_observations: Vec<NativeResponseLossObservation>,
     effects: BTreeMap<Identity, ReferenceEffectRecord>,
     native_effects: BTreeMap<Identity, u64>,
+    live_token_domain: Digest,
+    live_effects: BTreeMap<Identity, ProcessLiveEffect>,
+    pending_live_registration: Option<PendingLiveRegistration>,
     freeze: Option<ProcessFreeze>,
     thaw_request: Option<EffectThawRequest>,
     thaw: Option<NexusThawReceipt>,
@@ -163,6 +326,41 @@ struct ProcessFreeze {
     request: EffectFreezeRequest,
     result: EffectFreezeResult,
     intent_request_digest: u64,
+}
+
+#[derive(Clone)]
+struct ProcessLiveEffect {
+    registration: EffectPublicationRequest,
+    native_client_effect: u64,
+    native_effect_id: u64,
+    native_effect_generation: u64,
+    registered: ProcessLiveEffectAdvance,
+    prepared: Option<ProcessLiveEffectAdvance>,
+    commit_request: Option<ProcessLiveEffectCommitMetadata>,
+    committed: Option<ProcessLiveEffectAdvance>,
+    outcome_request: Option<EffectPublicationRequest>,
+    outcome: Option<ProcessLiveEffectAdvance>,
+}
+
+#[derive(Clone)]
+struct PendingLiveRegistration {
+    request: EffectPublicationRequest,
+    request_digest: Digest,
+    native_request: RegisterEffect,
+}
+
+impl ProcessLiveEffect {
+    fn current_phase(&self) -> ProcessLiveEffectPhase {
+        if self.outcome.is_some() {
+            ProcessLiveEffectPhase::OutcomeRecorded
+        } else if self.committed.is_some() {
+            ProcessLiveEffectPhase::CommittedAwaitingOutcome
+        } else if self.prepared.is_some() {
+            ProcessLiveEffectPhase::Prepared
+        } else {
+            ProcessLiveEffectPhase::Registered
+        }
+    }
 }
 
 impl ProcessEffectPeer {
@@ -200,6 +398,9 @@ impl ProcessEffectPeer {
             response_loss_observations: Vec::new(),
             effects: BTreeMap::new(),
             native_effects: BTreeMap::new(),
+            live_token_domain: Digest::ZERO,
+            live_effects: BTreeMap::new(),
+            pending_live_registration: None,
             freeze: None,
             thaw_request: None,
             thaw: None,
@@ -234,6 +435,11 @@ impl ProcessEffectPeer {
                 return Err(rejected("initialize receipt did not bind the child and config"));
             }
         }
+        state.live_token_domain = live_token_domain(
+            state.identity.as_ref().ok_or(EffectPeerError::Integrity)?,
+            state.config,
+            state.last_native_receipt_sha256.as_deref().ok_or(EffectPeerError::Integrity)?,
+        )?;
         Ok(Self { inner: Mutex::new(state) })
     }
 
@@ -339,6 +545,46 @@ impl ProcessEffectPeer {
             .map_err(|_| EffectPeerError::Integrity)
     }
 
+    /// Register a live effect without preparing or committing it. This is a
+    /// separate, explicitly staged API; the legacy `EffectPeer::publish` path
+    /// retains its existing behavior.
+    pub fn register_live_effect(
+        &self,
+        request: EffectPublicationRequest,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.register_live_effect(request)
+    }
+
+    pub fn prepare_live_effect(
+        &self,
+        token: &ProcessLiveEffectToken,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.prepare_live_effect(token)
+    }
+
+    pub fn commit_live_effect(
+        &self,
+        token: &ProcessLiveEffectToken,
+        metadata: ProcessLiveEffectCommitMetadata,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.commit_live_effect(token, metadata)
+    }
+
+    /// Record the provider outcome in the neutral adapter projection. This
+    /// deliberately sends no native Complete command: the committed native
+    /// effect remains live for handoff closure.
+    pub fn record_live_effect_outcome(
+        &self,
+        token: &ProcessLiveEffectToken,
+        request: EffectPublicationRequest,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.record_live_effect_outcome(token, request)
+    }
+
     pub fn crash_and_rebind_service(
         &self,
         replacement_supervisor: Identity,
@@ -415,6 +661,11 @@ impl ProcessEffectPeerState {
         request: EffectPublicationRequest,
     ) -> Result<EffectPublicationResult, EffectPeerError> {
         validate_publication(self.config, &request)?;
+        if self.pending_live_registration.is_some()
+            || self.live_effects.contains_key(&request.record.effect)
+        {
+            return Err(EffectPeerError::PublicationConflict);
+        }
         if let Some(existing) = self.effects.get(&request.record.effect) {
             if existing == &request.record {
                 return Ok(EffectPublicationResult::Replay);
@@ -501,11 +752,276 @@ impl ProcessEffectPeerState {
         Ok(EffectPublicationResult::Published)
     }
 
+    fn register_live_effect(
+        &mut self,
+        request: EffectPublicationRequest,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        validate_live_registration(self.config, &request)?;
+        let request_digest = live_registration_digest(&request)?;
+        if let Some(existing) = self.live_effects.get(&request.record.effect) {
+            return if existing.registration == request {
+                Ok(existing.registered.replayed())
+            } else {
+                Err(EffectPeerError::PublicationConflict)
+            };
+        }
+        if self.pending_live_registration.is_none()
+            && let Some(pending) = &self.pending_lost_response
+        {
+            return Err(EffectPeerError::AcknowledgementRecoveryConflict {
+                request_id: pending.request.request_id,
+            });
+        }
+        let resuming_staged_registration = self.pending_live_registration.is_some();
+        let recovering_lost_registration =
+            resuming_staged_registration && self.pending_lost_response.is_some();
+        let client_effect = compact_identity(b"client-effect", request.record.effect);
+        let register = if let Some(pending) = &self.pending_live_registration {
+            if pending.request != request || pending.request_digest != request_digest {
+                return Err(EffectPeerError::PublicationConflict);
+            }
+            let projected = native_register_request(&request, client_effect);
+            if pending.native_request != projected {
+                return Err(EffectPeerError::Integrity);
+            }
+            pending.native_request
+        } else {
+            if self.effects.contains_key(&request.record.effect)
+                || self.native_effects.contains_key(&request.record.effect)
+            {
+                return Err(EffectPeerError::PublicationConflict);
+            }
+            if self.native_effects.iter().any(|(identity, native)| {
+                *identity != request.record.effect && *native == client_effect
+            }) {
+                return Err(rejected(
+                    "two portable effects collided in the native identity projection",
+                ));
+            }
+            let projected = native_register_request(&request, client_effect);
+            // Store the complete portable request before the native send. If
+            // its acknowledgement is lost, only this exact request may drive
+            // recovery even when another portable identity has the same v1
+            // wire projection.
+            self.pending_live_registration = Some(PendingLiveRegistration {
+                request: request.clone(),
+                request_digest,
+                native_request: projected,
+            });
+            projected
+        };
+        let receipt = match self.send(PeerCommand::Register(register)) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if matches!(error, EffectPeerError::NativePeer { .. })
+                    && (!resuming_staged_registration || recovering_lost_registration)
+                {
+                    // A first-attempt native error, or a byte-identical error
+                    // recovered from the matching lost response, definitively
+                    // did not register the effect. Ambiguous transport or
+                    // post-integrity-failure retries retain the full staged
+                    // identity and remain fail closed.
+                    self.pending_live_registration = None;
+                }
+                return Err(error);
+            }
+        };
+        let NativeReceiptPayload::EffectRegistered(payload) = receipt.payload else {
+            return Err(rejected("register returned the wrong native payload"));
+        };
+        let (native_effect_id, native_effect_generation) = validate_live_registration_payload(
+            self.config,
+            self.native_binding_epoch,
+            client_effect,
+            &payload,
+        )?;
+        let token = self.mint_live_token(
+            &request,
+            client_effect,
+            native_effect_id,
+            native_effect_generation,
+            ProcessLiveEffectPhase::Registered,
+            1,
+        )?;
+        let registered =
+            native_live_advance(token, native_effect_id, native_effect_generation, &receipt, None);
+        let effect = request.record.effect;
+        let record = request.record.clone();
+        self.effects.insert(effect, record);
+        self.native_effects.insert(effect, client_effect);
+        self.live_effects.insert(
+            effect,
+            ProcessLiveEffect {
+                registration: request,
+                native_client_effect: client_effect,
+                native_effect_id,
+                native_effect_generation,
+                registered: registered.clone(),
+                prepared: None,
+                commit_request: None,
+                committed: None,
+                outcome_request: None,
+                outcome: None,
+            },
+        );
+        self.pending_live_registration = None;
+        Ok(registered)
+    }
+
+    fn prepare_live_effect(
+        &mut self,
+        token: &ProcessLiveEffectToken,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let live =
+            self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
+        self.require_live_token(&live, token, &live.registered.token)?;
+        if let Some(prepared) = live.prepared {
+            return Ok(prepared.replayed());
+        }
+        let selector = EffectSelector {
+            client_effect: live.native_client_effect,
+            binding_epoch: self.native_binding_epoch,
+        };
+        let receipt = self.send(PeerCommand::Prepare(selector))?;
+        let NativeReceiptPayload::EffectPrepared(payload) = receipt.payload else {
+            return Err(rejected("prepare returned the wrong native payload"));
+        };
+        if payload != selector {
+            return Err(rejected("prepared payload did not bind the staged effect identity"));
+        }
+        let next = self.mint_live_token(
+            &live.registration,
+            live.native_client_effect,
+            live.native_effect_id,
+            live.native_effect_generation,
+            ProcessLiveEffectPhase::Prepared,
+            2,
+        )?;
+        let prepared = native_live_advance(
+            next,
+            live.native_effect_id,
+            live.native_effect_generation,
+            &receipt,
+            None,
+        );
+        self.live_effects.get_mut(&token.effect).ok_or(EffectPeerError::Integrity)?.prepared =
+            Some(prepared.clone());
+        Ok(prepared)
+    }
+
+    fn commit_live_effect(
+        &mut self,
+        token: &ProcessLiveEffectToken,
+        metadata: ProcessLiveEffectCommitMetadata,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        if metadata.domain_revision == 0 {
+            return Err(EffectPeerError::InvalidRequest);
+        }
+        let live =
+            self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
+        let prepared = live.prepared.as_ref().ok_or(EffectPeerError::StepConflict)?;
+        self.require_live_token(&live, token, &prepared.token)?;
+        if let Some(committed) = live.committed {
+            return if live.commit_request == Some(metadata) {
+                Ok(committed.replayed())
+            } else {
+                Err(EffectPeerError::StepConflict)
+            };
+        }
+        let request = CommitEffect {
+            client_effect: live.native_client_effect,
+            binding_epoch: self.native_binding_epoch,
+            result: metadata.result,
+            domain_revision: metadata.domain_revision,
+        };
+        // `send` will accept this transition only after any lost response is
+        // replayed with this exact serialized request. No committed token is
+        // minted before that recovery succeeds.
+        let receipt = self.send(PeerCommand::Commit(request))?;
+        let NativeReceiptPayload::EffectCommitted(payload) = receipt.payload else {
+            return Err(rejected("commit returned the wrong native payload"));
+        };
+        let verified = validate_live_commit_payload(
+            &request,
+            live.native_effect_id,
+            live.native_effect_generation,
+            &payload,
+        )?;
+        let next = self.mint_live_token(
+            &live.registration,
+            live.native_client_effect,
+            live.native_effect_id,
+            live.native_effect_generation,
+            ProcessLiveEffectPhase::CommittedAwaitingOutcome,
+            3,
+        )?;
+        let committed = native_live_advance(
+            next,
+            live.native_effect_id,
+            live.native_effect_generation,
+            &receipt,
+            Some(verified),
+        );
+        let stored = self.live_effects.get_mut(&token.effect).ok_or(EffectPeerError::Integrity)?;
+        stored.commit_request = Some(metadata);
+        stored.committed = Some(committed.clone());
+        Ok(committed)
+    }
+
+    fn record_live_effect_outcome(
+        &mut self,
+        token: &ProcessLiveEffectToken,
+        request: EffectPublicationRequest,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        validate_live_outcome(self.config, &request)?;
+        let live =
+            self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
+        let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
+        self.require_live_token(&live, token, &committed.token)?;
+        if let Some(outcome) = live.outcome {
+            return if live.outcome_request.as_ref() == Some(&request) {
+                Ok(outcome.replayed())
+            } else {
+                Err(EffectPeerError::PublicationConflict)
+            };
+        }
+        validate_live_outcome_identity(&live.registration, &request)?;
+        let next = self.mint_live_token(
+            &live.registration,
+            live.native_client_effect,
+            live.native_effect_id,
+            live.native_effect_generation,
+            ProcessLiveEffectPhase::OutcomeRecorded,
+            4,
+        )?;
+        let outcome = ProcessLiveEffectAdvance {
+            token: next,
+            replay: false,
+            native_effect_id: live.native_effect_id,
+            native_effect_generation: live.native_effect_generation,
+            native_sequence: None,
+            native_request_sha256: None,
+            native_receipt_sha256: None,
+            verified_commit: committed.verified_commit,
+        };
+        let effect = request.record.effect;
+        self.effects.insert(effect, request.record.clone());
+        let stored = self.live_effects.get_mut(&effect).ok_or(EffectPeerError::Integrity)?;
+        stored.outcome_request = Some(request);
+        stored.outcome = Some(outcome.clone());
+        Ok(outcome)
+    }
+
     fn freeze(
         &mut self,
         request: EffectFreezeRequest,
     ) -> Result<EffectFreezeResult, EffectPeerError> {
         validate_freeze(self.config, &request)?;
+        if self.live_effects.values().any(|effect| {
+            effect.current_phase() == ProcessLiveEffectPhase::CommittedAwaitingOutcome
+        }) {
+            return Err(EffectPeerError::LiveEffectOutcomePending);
+        }
         if let Some(existing) = &self.freeze {
             return if existing.request == request {
                 Ok(existing.result.clone())
@@ -807,6 +1323,14 @@ impl ProcessEffectPeerState {
                 effect.native_effect_id == 0
                     || effect.native_effect_generation == 0
                     || effect.binding_epoch != previous_binding_epoch
+                    || self
+                        .live_effects
+                        .values()
+                        .find(|live| live.native_client_effect == effect.client_effect)
+                        .is_some_and(|live| {
+                            live.native_effect_id != effect.native_effect_id
+                                || live.native_effect_generation != effect.native_effect_generation
+                        })
             })
         {
             return Err(rejected("service crash payload did not bind the active native cohort"));
@@ -837,6 +1361,14 @@ impl ProcessEffectPeerState {
                     || effect.native_effect_generation == 0
                     || effect.previous_binding_epoch != previous_binding_epoch
                     || effect.binding_epoch != rebound.binding_epoch
+                    || self
+                        .live_effects
+                        .values()
+                        .find(|live| live.native_client_effect == effect.client_effect)
+                        .is_some_and(|live| {
+                            live.native_effect_id != effect.native_effect_id
+                                || live.native_effect_generation != effect.native_effect_generation
+                        })
             })
         {
             return Err(rejected("service rebind payload did not bind complete native adoption"));
@@ -915,14 +1447,41 @@ impl ProcessEffectPeerState {
         if replay_raw != pending.discarded_raw {
             return Err(rejected("lost native response did not replay byte-identically"));
         }
-        let accepted =
-            self.verify_response(&pending.request_bytes, &replay_raw, pending.request.request_id)?;
+        let verified =
+            self.verify_response(&pending.request_bytes, &replay_raw, pending.request.request_id);
+        match verified {
+            Ok(accepted) => {
+                self.record_response_loss_observation(&pending, replay_raw)?;
+                self.pending_lost_response = None;
+                Ok(accepted)
+            }
+            Err(error @ EffectPeerError::NativePeer { .. }) => {
+                // A byte-identical replayed native error is the authoritative
+                // outcome of this exact request. It advances no receipt chain,
+                // but it does terminate acknowledgement recovery so a later
+                // request can proceed.
+                self.record_response_loss_observation(&pending, replay_raw)?;
+                self.pending_lost_response = None;
+                Err(error)
+            }
+            // Malformed, noncanonical, or integrity-invalid responses remain
+            // pending and fail closed; they cannot be converted into a
+            // completed recovery merely to unblock later traffic.
+            Err(error) => Err(error),
+        }
+    }
+
+    fn record_response_loss_observation(
+        &mut self,
+        pending: &PendingLostResponse,
+        replay_raw: Vec<u8>,
+    ) -> Result<(), EffectPeerError> {
         let mut request_jsonl = pending.request_bytes.clone();
         request_jsonl.push(b'\n');
         let request_jsonl =
             String::from_utf8(request_jsonl).map_err(|_| EffectPeerError::Integrity)?;
-        let discarded_response_jsonl =
-            String::from_utf8(pending.discarded_raw).map_err(|_| EffectPeerError::Integrity)?;
+        let discarded_response_jsonl = String::from_utf8(pending.discarded_raw.clone())
+            .map_err(|_| EffectPeerError::Integrity)?;
         let replay_response_jsonl =
             String::from_utf8(replay_raw).map_err(|_| EffectPeerError::Integrity)?;
         self.response_loss_observations.push(NativeResponseLossObservation {
@@ -934,8 +1493,7 @@ impl ProcessEffectPeerState {
             accepted_chain_length_before: pending.accepted_chain_length_before,
             accepted_chain_length_after: self.accepted.len(),
         });
-        self.pending_lost_response = None;
-        Ok(accepted)
+        Ok(())
     }
 
     fn verify_response(
@@ -1010,6 +1568,52 @@ impl ProcessEffectPeerState {
             sequence: self.next_neutral_sequence,
             previous_digest,
         })
+    }
+
+    fn mint_live_token(
+        &self,
+        registration: &EffectPublicationRequest,
+        native_client_effect: u64,
+        native_effect_id: u64,
+        native_effect_generation: u64,
+        phase: ProcessLiveEffectPhase,
+        advance: u64,
+    ) -> Result<ProcessLiveEffectToken, EffectPeerError> {
+        let mut digest = Sha256::new();
+        digest.update(b"vISA ProcessEffectPeer live token v1");
+        digest.update(self.live_token_domain.0);
+        digest.update(native_client_effect.to_be_bytes());
+        digest.update(native_effect_id.to_be_bytes());
+        digest.update(native_effect_generation.to_be_bytes());
+        digest.update([live_phase_tag(phase)]);
+        digest.update(advance.to_be_bytes());
+        digest.update(serde_json::to_vec(registration).map_err(|_| EffectPeerError::Integrity)?);
+        Ok(ProcessLiveEffectToken {
+            effect: registration.record.effect,
+            phase,
+            advance,
+            binding: Digest::from_bytes(digest.finalize().into()),
+        })
+    }
+
+    fn require_live_token(
+        &self,
+        live: &ProcessLiveEffect,
+        supplied: &ProcessLiveEffectToken,
+        expected: &ProcessLiveEffectToken,
+    ) -> Result<(), EffectPeerError> {
+        let reminted = self.mint_live_token(
+            &live.registration,
+            live.native_client_effect,
+            live.native_effect_id,
+            live.native_effect_generation,
+            expected.phase,
+            expected.advance,
+        )?;
+        if supplied != expected || expected != &reminted {
+            return Err(EffectPeerError::TokenMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -1212,6 +1816,121 @@ fn observe_child_identity(
     })
 }
 
+fn live_token_domain(
+    identity: &ProcessEffectPeerIdentity,
+    config: EffectPeerConfig,
+    initialized_receipt_sha256: &str,
+) -> Result<Digest, EffectPeerError> {
+    let mut digest = Sha256::new();
+    digest.update(b"vISA ProcessEffectPeer live token domain v1");
+    digest.update(serde_json::to_vec(identity).map_err(|_| EffectPeerError::Integrity)?);
+    digest.update(serde_json::to_vec(&config).map_err(|_| EffectPeerError::Integrity)?);
+    digest.update(initialized_receipt_sha256.as_bytes());
+    Ok(Digest::from_bytes(digest.finalize().into()))
+}
+
+const fn live_phase_tag(phase: ProcessLiveEffectPhase) -> u8 {
+    match phase {
+        ProcessLiveEffectPhase::Registered => 1,
+        ProcessLiveEffectPhase::Prepared => 2,
+        ProcessLiveEffectPhase::CommittedAwaitingOutcome => 3,
+        ProcessLiveEffectPhase::OutcomeRecorded => 4,
+    }
+}
+
+fn native_live_advance(
+    token: ProcessLiveEffectToken,
+    native_effect_id: u64,
+    native_effect_generation: u64,
+    receipt: &NativeReceipt,
+    verified_commit: Option<ProcessLiveEffectVerifiedCommit>,
+) -> ProcessLiveEffectAdvance {
+    ProcessLiveEffectAdvance {
+        token,
+        replay: false,
+        native_effect_id,
+        native_effect_generation,
+        native_sequence: Some(receipt.sequence),
+        native_request_sha256: Some(receipt.request_sha256.clone()),
+        native_receipt_sha256: Some(receipt.receipt_sha256.clone()),
+        verified_commit,
+    }
+}
+
+fn native_register_request(
+    request: &EffectPublicationRequest,
+    client_effect: u64,
+) -> RegisterEffect {
+    RegisterEffect {
+        client_effect,
+        operation_class: compact_identity(b"operation-class", request.record.domain) as u32,
+        syscall_number: compact_identity(b"operation", request.record.operation),
+        syscall_arguments: [
+            request.record.binding_generation,
+            compact_identity(b"handoff", request.key.handoff),
+            compact_identity(b"source", request.key.source.0),
+            compact_identity(b"destination", request.key.destination.0),
+            0,
+            0,
+        ],
+        credit_units: 1,
+        publication_required: true,
+    }
+}
+
+fn live_registration_digest(request: &EffectPublicationRequest) -> Result<Digest, EffectPeerError> {
+    let mut digest = Sha256::new();
+    digest.update(b"vISA ProcessEffectPeer staged registration v1");
+    digest.update(serde_json::to_vec(request).map_err(|_| EffectPeerError::Integrity)?);
+    Ok(Digest::from_bytes(digest.finalize().into()))
+}
+
+fn validate_live_registration_payload(
+    config: EffectPeerConfig,
+    native_binding_epoch: u64,
+    client_effect: u64,
+    payload: &crate::nexus_effect_wire::RegisteredPayload,
+) -> Result<(u64, u64), EffectPeerError> {
+    if payload.client_effect != client_effect
+        || payload.native_effect_id == 0
+        || payload.native_effect_generation == 0
+        || payload.authority_epoch != config.authority_epoch
+        || payload.binding_epoch != native_binding_epoch
+    {
+        return Err(rejected("registered payload did not bind the staged effect identity"));
+    }
+    Ok((payload.native_effect_id, payload.native_effect_generation))
+}
+
+fn validate_live_commit_payload(
+    request: &CommitEffect,
+    registered_native_effect_id: u64,
+    registered_native_effect_generation: u64,
+    payload: &crate::nexus_effect_wire::CommittedPayload,
+) -> Result<ProcessLiveEffectVerifiedCommit, EffectPeerError> {
+    if registered_native_effect_id == 0
+        || registered_native_effect_generation == 0
+        || payload.client_effect != request.client_effect
+        || payload.native_effect_id != registered_native_effect_id
+        || payload.binding_epoch != request.binding_epoch
+        || payload.commit_sequence == 0
+        || payload.result != request.result
+        || payload.domain_revision != request.domain_revision
+    {
+        return Err(rejected("committed payload did not link to the registered staged effect"));
+    }
+    Ok(ProcessLiveEffectVerifiedCommit {
+        client_effect: payload.client_effect,
+        native_effect_id: payload.native_effect_id,
+        native_effect_generation: registered_native_effect_generation,
+        binding_epoch: payload.binding_epoch,
+        commit_sequence: payload.commit_sequence,
+        result: payload.result,
+        domain_revision: payload.domain_revision,
+        registry_replay: payload.registry_replay,
+    })
+}
+
 fn validate_publication(
     config: EffectPeerConfig,
     request: &EffectPublicationRequest,
@@ -1232,6 +1951,53 @@ fn validate_publication(
         || request.record.domain.is_zero()
     {
         return Err(EffectPeerError::StaleEpoch);
+    }
+    Ok(())
+}
+
+fn validate_live_registration(
+    config: EffectPeerConfig,
+    request: &EffectPublicationRequest,
+) -> Result<(), EffectPeerError> {
+    validate_publication(config, request)?;
+    if request.record.classification != JointEffectClassification::Registered
+        || request.record.outcome_digest.is_some()
+        || request.record.tombstone_digest.is_some()
+    {
+        return Err(EffectPeerError::InvalidRequest);
+    }
+    Ok(())
+}
+
+fn validate_live_outcome(
+    config: EffectPeerConfig,
+    request: &EffectPublicationRequest,
+) -> Result<(), EffectPeerError> {
+    validate_publication(config, request)?;
+    if request.record.classification != JointEffectClassification::Committed
+        || !request.record.outcome_digest.is_some_and(|digest| digest != Digest::ZERO)
+        || request.record.tombstone_digest.is_some()
+    {
+        return Err(EffectPeerError::InvalidRequest);
+    }
+    Ok(())
+}
+
+fn validate_live_outcome_identity(
+    registration: &EffectPublicationRequest,
+    outcome: &EffectPublicationRequest,
+) -> Result<(), EffectPeerError> {
+    if registration.key != outcome.key
+        || registration.registry_instance != outcome.registry_instance
+        || registration.scope_id != outcome.scope_id
+        || registration.scope_generation != outcome.scope_generation
+        || registration.source_epoch != outcome.source_epoch
+        || registration.record.effect != outcome.record.effect
+        || registration.record.operation != outcome.record.operation
+        || registration.record.domain != outcome.record.domain
+        || registration.record.binding_generation != outcome.record.binding_generation
+    {
+        return Err(EffectPeerError::PublicationConflict);
     }
     Ok(())
 }
@@ -1568,6 +2334,122 @@ mod tests {
         exchange.response_jsonl = format!("{}\n", serde_json::to_string(&response).unwrap());
     }
 
+    struct StagedProcessFixture {
+        peer: ProcessEffectPeer,
+        config: EffectPeerConfig,
+        ownership_namespace: ReceiptIssuerIdentity,
+        registration: EffectPublicationRequest,
+    }
+
+    fn process_test_launch() -> ProcessEffectPeerLaunch {
+        let executable = std::env::var_os("NEXUS_EFFECT_PEER_BIN")
+            .map(PathBuf::from)
+            .expect("NEXUS_EFFECT_PEER_BIN must name the built Nexus peer");
+        ProcessEffectPeerLaunch::new(
+            executable,
+            std::env::var("NEXUS_EFFECT_PEER_SHA256")
+                .expect("NEXUS_EFFECT_PEER_SHA256 must pin the exact executable"),
+            std::env::var("NEXUS_EFFECT_PEER_REVISION")
+                .expect("NEXUS_EFFECT_PEER_REVISION must pin the Nexus source revision"),
+        )
+    }
+
+    fn test_issuer(seed: u128) -> ReceiptIssuerIdentity {
+        ReceiptIssuerIdentity {
+            issuer: Identity::from_u128(seed),
+            issuer_incarnation: Identity::from_u128(seed + 1),
+            key_id: Identity::from_u128(seed + 2),
+            log_id: Identity::from_u128(seed + 3),
+        }
+    }
+
+    fn staged_process_fixture(seed: u128) -> StagedProcessFixture {
+        let key = JointHandoffKey {
+            continuity_unit: EntityRef {
+                identity: Identity::from_u128(seed + 1),
+                generation: Generation(1),
+            },
+            handoff: Identity::from_u128(seed + 2),
+            source: NodeIdentity::new(Identity::from_u128(seed + 3)),
+            destination: NodeIdentity::new(Identity::from_u128(seed + 4)),
+            expected_epoch: LeaseEpoch(7),
+            next_epoch: LeaseEpoch(8),
+        };
+        let ownership_namespace = test_issuer(seed + 20);
+        let config = EffectPeerConfig {
+            key,
+            issuer: effect_receipt_issuer(test_issuer(seed + 30), key).unwrap(),
+            ownership_issuer: ownership_receipt_issuer(ownership_namespace, key).unwrap(),
+            registry_instance: Identity::from_u128(seed + 40),
+            scope_id: Identity::from_u128(seed + 41),
+            scope_generation: 1,
+            authority_epoch: 5,
+            freeze_generation: 1,
+            domain_bindings_digest: Digest::from_bytes([4; 32]),
+        };
+        let registration = EffectPublicationRequest {
+            key,
+            registry_instance: config.registry_instance,
+            scope_id: config.scope_id,
+            scope_generation: config.scope_generation,
+            source_epoch: key.expected_epoch,
+            record: JointEffectRecord {
+                effect: Identity::from_u128(seed + 50),
+                operation: Identity::from_u128(seed + 51),
+                domain: Identity::from_u128(seed + 52),
+                binding_generation: config.scope_generation,
+                classification: JointEffectClassification::Registered,
+                outcome_digest: None,
+                tombstone_digest: None,
+            },
+        };
+        let peer = ProcessEffectPeer::spawn(process_test_launch(), config).unwrap();
+        StagedProcessFixture { peer, config, ownership_namespace, registration }
+    }
+
+    fn final_publication(
+        registration: &EffectPublicationRequest,
+        outcome: Digest,
+    ) -> EffectPublicationRequest {
+        EffectPublicationRequest {
+            record: JointEffectRecord {
+                classification: JointEffectClassification::Committed,
+                outcome_digest: Some(outcome),
+                ..registration.record.clone()
+            },
+            ..registration.clone()
+        }
+    }
+
+    fn process_freeze_request(
+        fixture: &StagedProcessFixture,
+        intent: PrepareIntentReceipt,
+    ) -> EffectFreezeRequest {
+        EffectFreezeRequest {
+            key: fixture.config.key,
+            intent,
+            registry_instance: fixture.config.registry_instance,
+            scope_id: fixture.config.scope_id,
+            scope_generation: fixture.config.scope_generation,
+            authority_epoch: fixture.config.authority_epoch,
+            freeze_generation: fixture.config.freeze_generation,
+        }
+    }
+
+    fn native_commands(peer: &ProcessEffectPeer) -> Vec<PeerCommand> {
+        peer.native_transcript()
+            .unwrap()
+            .into_iter()
+            .map(|exchange| {
+                serde_json::from_str::<PeerRequest>(
+                    exchange.request_jsonl.strip_suffix('\n').unwrap(),
+                )
+                .unwrap()
+                .command
+            })
+            .collect()
+    }
+
     #[test]
     fn native_verifier_rejects_every_digest_chain_mutation() {
         let request = br#"{"schema":"request","request_id":1}"#;
@@ -1709,6 +2591,554 @@ mod tests {
         assert_ne!(compact_identity(b"scope", identity), 0);
         assert_ne!(compact_identity(b"scope", identity), compact_identity(b"handoff", identity));
         assert_ne!(mapped_u64_digest(b"terminal", 7), mapped_u64_digest(b"cohort", 7));
+    }
+
+    #[test]
+    fn staged_commit_payload_must_link_to_registered_native_effect_identity() {
+        let request =
+            CommitEffect { client_effect: 11, binding_epoch: 12, result: 13, domain_revision: 14 };
+        let valid = crate::nexus_effect_wire::CommittedPayload {
+            client_effect: request.client_effect,
+            native_effect_id: 21,
+            binding_epoch: request.binding_epoch,
+            commit_sequence: 22,
+            result: request.result,
+            domain_revision: request.domain_revision,
+            registry_replay: false,
+        };
+        let linked = validate_live_commit_payload(&request, 21, 23, &valid).unwrap();
+        assert_eq!(linked.native_effect_id(), 21);
+        assert_eq!(linked.native_effect_generation(), 23);
+
+        let mut mutated = valid;
+        mutated.native_effect_id = 24;
+        assert!(matches!(
+            validate_live_commit_payload(&request, 21, 23, &mutated),
+            Err(EffectPeerError::NativeReceiptRejected(_))
+        ));
+        let mut mutated = valid;
+        mutated.client_effect += 1;
+        assert!(matches!(
+            validate_live_commit_payload(&request, 21, 23, &mutated),
+            Err(EffectPeerError::NativeReceiptRejected(_))
+        ));
+        let mut mutated = valid;
+        mutated.binding_epoch += 1;
+        assert!(matches!(
+            validate_live_commit_payload(&request, 21, 23, &mutated),
+            Err(EffectPeerError::NativeReceiptRejected(_))
+        ));
+        assert!(matches!(
+            validate_live_commit_payload(&request, 21, 0, &valid),
+            Err(EffectPeerError::NativeReceiptRejected(_))
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_live_effect_happy_path_and_completed_step_replays_are_local() {
+        let fixture = staged_process_fixture(1_000);
+        let peer = &fixture.peer;
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        assert_eq!(registered.phase(), ProcessLiveEffectPhase::Registered);
+        assert_eq!(registered.advance(), 1);
+        assert!(!registered.is_replay());
+        assert!(registered.native_sequence().is_some());
+        assert_ne!(registered.native_effect_id(), 0);
+        assert_ne!(registered.native_effect_generation(), 0);
+
+        let registered_replay = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        assert!(registered_replay.is_replay());
+        assert_eq!(registered_replay.token(), registered.token());
+        assert_eq!(native_commands(peer).len(), 2);
+
+        let prepared = peer.prepare_live_effect(registered.token()).unwrap();
+        assert_eq!(prepared.phase(), ProcessLiveEffectPhase::Prepared);
+        assert_eq!(prepared.advance(), 2);
+        let prepared_replay = peer.prepare_live_effect(registered.token()).unwrap();
+        assert!(prepared_replay.is_replay());
+        assert_eq!(prepared_replay.token(), prepared.token());
+        assert_eq!(native_commands(peer).len(), 3);
+
+        let metadata = ProcessLiveEffectCommitMetadata { result: 17, domain_revision: 3 };
+        let committed = peer.commit_live_effect(prepared.token(), metadata).unwrap();
+        assert_eq!(committed.phase(), ProcessLiveEffectPhase::CommittedAwaitingOutcome);
+        assert_eq!(committed.advance(), 3);
+        let verified = committed.verified_commit().unwrap();
+        assert_eq!(verified.result(), metadata.result);
+        assert_eq!(verified.domain_revision(), metadata.domain_revision);
+        assert_eq!(verified.native_effect_id(), registered.native_effect_id());
+        assert_eq!(verified.native_effect_generation(), registered.native_effect_generation());
+        assert_ne!(verified.commit_sequence(), 0);
+        let committed_replay = peer.commit_live_effect(prepared.token(), metadata).unwrap();
+        assert!(committed_replay.is_replay());
+        assert_eq!(committed_replay.token(), committed.token());
+        assert_eq!(native_commands(peer).len(), 4);
+
+        let final_request = final_publication(&fixture.registration, Digest::from_bytes([9; 32]));
+        let before_outcome = peer.native_transcript().unwrap();
+        let recorded =
+            peer.record_live_effect_outcome(committed.token(), final_request.clone()).unwrap();
+        assert_eq!(recorded.phase(), ProcessLiveEffectPhase::OutcomeRecorded);
+        assert_eq!(recorded.advance(), 4);
+        assert!(recorded.native_sequence().is_none());
+        assert_eq!(peer.native_transcript().unwrap(), before_outcome);
+
+        assert!(peer.register_live_effect(fixture.registration.clone()).unwrap().is_replay());
+        assert!(peer.prepare_live_effect(registered.token()).unwrap().is_replay());
+        assert!(peer.commit_live_effect(prepared.token(), metadata).unwrap().is_replay());
+        assert!(
+            peer.record_live_effect_outcome(committed.token(), final_request).unwrap().is_replay()
+        );
+        assert_eq!(peer.native_transcript().unwrap(), before_outcome);
+        assert!(native_commands(peer).iter().all(|command| {
+            !matches!(command, PeerCommand::Complete(_) | PeerCommand::Freeze(_))
+        }));
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_native_identity_survives_service_rebind_before_commit() {
+        let fixture = staged_process_fixture(1_500);
+        let peer = &fixture.peer;
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        let prepared = peer.prepare_live_effect(registered.token()).unwrap();
+        let rebind = peer.crash_and_rebind_service(Identity::from_u128(88_001), 2).unwrap();
+        assert!(rebind.rebound_binding_epoch > rebind.previous_binding_epoch);
+
+        let committed = peer
+            .commit_live_effect(
+                prepared.token(),
+                ProcessLiveEffectCommitMetadata { result: 19, domain_revision: 3 },
+            )
+            .unwrap();
+        let verified = committed.verified_commit().unwrap();
+        assert_eq!(verified.binding_epoch(), rebind.rebound_binding_epoch);
+        assert_eq!(verified.native_effect_id(), registered.native_effect_id());
+        assert_eq!(verified.native_effect_generation(), registered.native_effect_generation());
+        peer.record_live_effect_outcome(
+            committed.token(),
+            final_publication(&fixture.registration, Digest::from_bytes([0x19; 32])),
+        )
+        .unwrap();
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_commit_lost_ack_requires_exact_retry_before_outcome() {
+        let fixture = staged_process_fixture(2_000);
+        let peer = &fixture.peer;
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        let prepared = peer.prepare_live_effect(registered.token()).unwrap();
+        let metadata = ProcessLiveEffectCommitMetadata { result: 23, domain_revision: 4 };
+        peer.arm_next_response_loss().unwrap();
+        let error = peer.commit_live_effect(prepared.token(), metadata).unwrap_err();
+        assert!(matches!(error, EffectPeerError::AcknowledgementLost { request_id: 4 }));
+
+        let mut ownership =
+            ReferenceOwnershipLog::open(":memory:", fixture.ownership_namespace).unwrap();
+        ownership
+            .initialize_unit(
+                fixture.config.key.continuity_unit,
+                fixture.config.key.source,
+                fixture.config.key.expected_epoch,
+            )
+            .unwrap();
+        let intent = ownership
+            .reserve(OwnershipReserveRequest {
+                key: fixture.config.key,
+                expected_state_sequence: 0,
+            })
+            .unwrap();
+        let freeze = process_freeze_request(&fixture, intent);
+        let before_freeze = peer.native_transcript().unwrap();
+        assert!(matches!(
+            peer.freeze(freeze),
+            Err(EffectPeerError::AcknowledgementRecoveryConflict { request_id: 4 })
+        ));
+        assert_eq!(peer.native_transcript().unwrap(), before_freeze);
+        assert!(
+            native_commands(peer).iter().all(|command| !matches!(command, PeerCommand::Freeze(_)))
+        );
+
+        let final_request = final_publication(&fixture.registration, Digest::from_bytes([7; 32]));
+        assert!(matches!(
+            peer.record_live_effect_outcome(prepared.token(), final_request.clone()),
+            Err(EffectPeerError::StepConflict)
+        ));
+        let different = ProcessLiveEffectCommitMetadata { result: 24, ..metadata };
+        assert!(matches!(
+            peer.commit_live_effect(prepared.token(), different),
+            Err(EffectPeerError::AcknowledgementRecoveryConflict { request_id: 4 })
+        ));
+
+        let committed = peer.commit_live_effect(prepared.token(), metadata).unwrap();
+        assert_eq!(committed.phase(), ProcessLiveEffectPhase::CommittedAwaitingOutcome);
+        let observations = peer.response_loss_observations().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].byte_identical);
+        assert_eq!(observations[0].accepted_chain_length_before, 3);
+        assert_eq!(observations[0].accepted_chain_length_after, 4);
+        assert_eq!(
+            native_commands(peer)
+                .iter()
+                .filter(|command| matches!(command, PeerCommand::Commit(_)))
+                .count(),
+            1
+        );
+
+        let before_outcome = peer.native_transcript().unwrap();
+        peer.record_live_effect_outcome(committed.token(), final_request).unwrap();
+        assert_eq!(peer.native_transcript().unwrap(), before_outcome);
+        assert!(native_commands(peer).iter().all(|command| {
+            !matches!(command, PeerCommand::Complete(_) | PeerCommand::Freeze(_))
+        }));
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_register_lost_ack_recovers_only_the_exact_full_portable_request() {
+        let mut fixture = staged_process_fixture(2_500);
+        let peer = &fixture.peer;
+        // These distinct portable domain identities have the same low-u32
+        // native operation_class projection under the fixed v1 mapper.
+        fixture.registration.record.domain = Identity::from_u128(98_556);
+        let mut colliding = fixture.registration.clone();
+        colliding.record.domain = Identity::from_u128(137_758);
+        let client_effect = compact_identity(b"client-effect", fixture.registration.record.effect);
+        assert_ne!(fixture.registration, colliding);
+        assert_eq!(
+            native_register_request(&fixture.registration, client_effect),
+            native_register_request(&colliding, client_effect)
+        );
+        assert_ne!(
+            live_registration_digest(&fixture.registration).unwrap(),
+            live_registration_digest(&colliding).unwrap()
+        );
+
+        peer.arm_next_response_loss().unwrap();
+        assert!(matches!(
+            peer.register_live_effect(fixture.registration.clone()),
+            Err(EffectPeerError::AcknowledgementLost { request_id: 2 })
+        ));
+        let before_conflict = peer.native_transcript().unwrap();
+        assert_eq!(before_conflict.len(), 1);
+        assert!(matches!(
+            peer.register_live_effect(colliding.clone()),
+            Err(EffectPeerError::PublicationConflict)
+        ));
+        assert_eq!(peer.native_transcript().unwrap(), before_conflict);
+        assert!(peer.response_loss_observations().unwrap().is_empty());
+
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        assert_eq!(registered.phase(), ProcessLiveEffectPhase::Registered);
+        let observations = peer.response_loss_observations().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].byte_identical);
+        assert_eq!(observations[0].accepted_chain_length_before, 1);
+        assert_eq!(observations[0].accepted_chain_length_after, 2);
+        assert_eq!(native_commands(peer).len(), 2);
+        assert!(matches!(
+            peer.register_live_effect(colliding),
+            Err(EffectPeerError::PublicationConflict)
+        ));
+        assert_eq!(native_commands(peer).len(), 2);
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn unrelated_legacy_register_recovery_does_not_acquire_staged_pending_identity() {
+        let fixture = staged_process_fixture(2_700);
+        let peer = &fixture.peer;
+        let legacy = fixture.registration.clone();
+        let mut staged = legacy.clone();
+        staged.record.effect = Identity::from_u128(72_701);
+        staged.record.operation = Identity::from_u128(72_702);
+        staged.record.domain = Identity::from_u128(72_703);
+
+        peer.arm_next_response_loss().unwrap();
+        assert!(matches!(
+            peer.publish(legacy.clone()),
+            Err(EffectPeerError::AcknowledgementLost { request_id: 2 })
+        ));
+        let before_staged_attempt = peer.native_transcript().unwrap();
+        assert!(matches!(
+            peer.register_live_effect(staged.clone()),
+            Err(EffectPeerError::AcknowledgementRecoveryConflict { request_id: 2 })
+        ));
+        assert_eq!(peer.native_transcript().unwrap(), before_staged_attempt);
+        assert!(peer.inner.lock().unwrap().pending_live_registration.is_none());
+
+        assert_eq!(peer.publish(legacy).unwrap(), EffectPublicationResult::Published);
+        let staged_registered = peer.register_live_effect(staged).unwrap();
+        assert_eq!(staged_registered.phase(), ProcessLiveEffectPhase::Registered);
+        let observations = peer.response_loss_observations().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].byte_identical);
+        assert_eq!(
+            native_commands(peer)
+                .iter()
+                .filter(|command| matches!(command, PeerCommand::Register(_)))
+                .count(),
+            2
+        );
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn replayed_native_error_terminates_ack_recovery_without_forging_a_receipt() {
+        let fixture = staged_process_fixture(2_800);
+        let peer = &fixture.peer;
+        let committed = final_publication(&fixture.registration, Digest::from_bytes([0x28; 32]));
+        assert_eq!(peer.publish(committed).unwrap(), EffectPublicationResult::Published);
+        let mut ownership =
+            ReferenceOwnershipLog::open(":memory:", fixture.ownership_namespace).unwrap();
+        ownership
+            .initialize_unit(
+                fixture.config.key.continuity_unit,
+                fixture.config.key.source,
+                fixture.config.key.expected_epoch,
+            )
+            .unwrap();
+        let intent = ownership
+            .reserve(OwnershipReserveRequest {
+                key: fixture.config.key,
+                expected_state_sequence: 0,
+            })
+            .unwrap();
+        let frozen = peer.freeze(process_freeze_request(&fixture, intent)).unwrap();
+        assert_eq!(frozen.receipt.disposition, FreezeDisposition::ReadyToCommit);
+
+        let mut rejected_registration = fixture.registration.clone();
+        rejected_registration.record.effect = Identity::from_u128(82_801);
+        rejected_registration.record.operation = Identity::from_u128(82_802);
+        rejected_registration.record.domain = Identity::from_u128(82_803);
+        let rejected_client =
+            compact_identity(b"client-effect", rejected_registration.record.effect);
+        peer.arm_next_response_loss().unwrap();
+        assert!(matches!(
+            peer.register_live_effect(rejected_registration.clone()),
+            Err(EffectPeerError::AcknowledgementLost { request_id: 6 })
+        ));
+        let replay_error = peer.register_live_effect(rejected_registration).unwrap_err();
+        assert!(matches!(
+            replay_error,
+            EffectPeerError::NativePeer { ref code, .. } if code == "admission-frozen"
+        ));
+        assert!(peer.inner.lock().unwrap().pending_lost_response.is_none());
+        assert!(peer.inner.lock().unwrap().pending_live_registration.is_none());
+        let observations = peer.response_loss_observations().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].byte_identical);
+        assert_eq!(observations[0].accepted_chain_length_before, 5);
+        assert_eq!(observations[0].accepted_chain_length_after, 5);
+        let replayed_error: PeerResponse =
+            serde_json::from_str(observations[0].replay_response_jsonl.strip_suffix('\n').unwrap())
+                .unwrap();
+        assert_eq!(replayed_error.status, ResponseStatus::Error);
+        assert!(replayed_error.receipt.is_none());
+        assert_eq!(
+            replayed_error.error.as_ref().map(|error| error.code.as_str()),
+            Some("admission-frozen")
+        );
+
+        let query = peer.query().unwrap();
+        assert!(!query.gate_open);
+        assert_eq!(query.effect_count, 1);
+        peer.shutdown().unwrap();
+        assert!(native_commands(peer).iter().all(|command| {
+            !matches!(
+                command,
+                PeerCommand::Register(register) if register.client_effect == rejected_client
+            )
+        }));
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_outcome_pending_freeze_fails_closed_without_native_freeze() {
+        let fixture = staged_process_fixture(3_000);
+        let peer = &fixture.peer;
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        let prepared = peer.prepare_live_effect(registered.token()).unwrap();
+        let committed = peer
+            .commit_live_effect(
+                prepared.token(),
+                ProcessLiveEffectCommitMetadata { result: 29, domain_revision: 5 },
+            )
+            .unwrap();
+        let mut ownership =
+            ReferenceOwnershipLog::open(":memory:", fixture.ownership_namespace).unwrap();
+        ownership
+            .initialize_unit(
+                fixture.config.key.continuity_unit,
+                fixture.config.key.source,
+                fixture.config.key.expected_epoch,
+            )
+            .unwrap();
+        let intent = ownership
+            .reserve(OwnershipReserveRequest {
+                key: fixture.config.key,
+                expected_state_sequence: 0,
+            })
+            .unwrap();
+        let freeze = process_freeze_request(&fixture, intent);
+        let before = peer.native_transcript().unwrap();
+        assert!(matches!(
+            peer.freeze(freeze.clone()),
+            Err(EffectPeerError::LiveEffectOutcomePending)
+        ));
+        assert_eq!(peer.native_transcript().unwrap(), before);
+        assert!(
+            native_commands(peer).iter().all(|command| !matches!(command, PeerCommand::Freeze(_)))
+        );
+
+        peer.record_live_effect_outcome(
+            committed.token(),
+            final_publication(&fixture.registration, Digest::from_bytes([8; 32])),
+        )
+        .unwrap();
+        let frozen = peer.freeze(freeze).unwrap();
+        assert_eq!(frozen.receipt.disposition, FreezeDisposition::ReadyToCommit);
+        assert!(matches!(native_commands(peer).last(), Some(PeerCommand::Freeze(_))));
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_tokens_and_final_publication_reject_identity_mutation() {
+        let fixture = staged_process_fixture(4_000);
+        let peer = &fixture.peer;
+        let registered = peer.register_live_effect(fixture.registration.clone()).unwrap();
+        let mut forged = registered.token().clone();
+        forged.binding = Digest::from_bytes([0x55; 32]);
+        let before_forgery = peer.native_transcript().unwrap();
+        assert!(matches!(peer.prepare_live_effect(&forged), Err(EffectPeerError::TokenMismatch)));
+        assert_eq!(peer.native_transcript().unwrap(), before_forgery);
+
+        let prepared = peer.prepare_live_effect(registered.token()).unwrap();
+        let committed = peer
+            .commit_live_effect(
+                prepared.token(),
+                ProcessLiveEffectCommitMetadata { result: 31, domain_revision: 6 },
+            )
+            .unwrap();
+        let final_request = final_publication(&fixture.registration, Digest::from_bytes([6; 32]));
+        let before_mutations = peer.native_transcript().unwrap();
+
+        let mut mutated = final_request.clone();
+        mutated.key.destination = NodeIdentity::new(Identity::from_u128(99_001));
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::HandoffMismatch)
+        ));
+        let mut mutated = final_request.clone();
+        mutated.registry_instance = Identity::from_u128(99_002);
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::StaleRegistry)
+        ));
+        let mut mutated = final_request.clone();
+        mutated.scope_id = Identity::from_u128(99_003);
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::StaleScope)
+        ));
+        let mut mutated = final_request.clone();
+        mutated.source_epoch = LeaseEpoch(99);
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::StaleEpoch)
+        ));
+        for mutate in [
+            |record: &mut JointEffectRecord| record.effect = Identity::from_u128(99_004),
+            |record: &mut JointEffectRecord| record.operation = Identity::from_u128(99_005),
+            |record: &mut JointEffectRecord| record.domain = Identity::from_u128(99_006),
+        ] {
+            let mut mutated = final_request.clone();
+            mutate(&mut mutated.record);
+            assert!(matches!(
+                peer.record_live_effect_outcome(committed.token(), mutated),
+                Err(EffectPeerError::PublicationConflict)
+            ));
+        }
+        let mut mutated = final_request.clone();
+        mutated.record.binding_generation += 1;
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::StaleEpoch)
+        ));
+        let mut mutated = final_request.clone();
+        mutated.record.outcome_digest = Some(Digest::ZERO);
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::InvalidRequest)
+        ));
+        let mut mutated = final_request.clone();
+        mutated.record.tombstone_digest = Some(Digest::from_bytes([1; 32]));
+        assert!(matches!(
+            peer.record_live_effect_outcome(committed.token(), mutated),
+            Err(EffectPeerError::InvalidRequest)
+        ));
+        assert_eq!(peer.native_transcript().unwrap(), before_mutations);
+        peer.record_live_effect_outcome(committed.token(), final_request).unwrap();
+        peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn staged_and_legacy_publication_cannot_mix_for_one_effect() {
+        let staged = staged_process_fixture(5_000);
+        staged.peer.register_live_effect(staged.registration.clone()).unwrap();
+        let staged_chain = staged.peer.native_transcript().unwrap();
+        assert!(matches!(
+            staged.peer.publish(staged.registration.clone()),
+            Err(EffectPeerError::PublicationConflict)
+        ));
+        assert_eq!(staged.peer.native_transcript().unwrap(), staged_chain);
+        staged.peer.shutdown().unwrap();
+
+        let legacy = staged_process_fixture(6_000);
+        assert_eq!(
+            legacy.peer.publish(legacy.registration.clone()).unwrap(),
+            EffectPublicationResult::Published
+        );
+        let legacy_chain = legacy.peer.native_transcript().unwrap();
+        assert!(matches!(
+            legacy.peer.register_live_effect(legacy.registration.clone()),
+            Err(EffectPeerError::PublicationConflict)
+        ));
+        assert_eq!(legacy.peer.native_transcript().unwrap(), legacy_chain);
+        legacy.peer.shutdown().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a separately built nexus-effect-peer binary"]
+    fn legacy_committed_publish_keeps_register_prepare_commit_behavior() {
+        let fixture = staged_process_fixture(7_000);
+        let legacy = final_publication(&fixture.registration, Digest::from_bytes([0x2a; 32]));
+        assert_eq!(
+            fixture.peer.publish(legacy.clone()).unwrap(),
+            EffectPublicationResult::Published
+        );
+        assert!(matches!(
+            native_commands(&fixture.peer).as_slice(),
+            [
+                PeerCommand::Initialize(_),
+                PeerCommand::Register(_),
+                PeerCommand::Prepare(_),
+                PeerCommand::Commit(_)
+            ]
+        ));
+        let before_replay = fixture.peer.native_transcript().unwrap();
+        assert_eq!(fixture.peer.publish(legacy).unwrap(), EffectPublicationResult::Replay);
+        assert_eq!(fixture.peer.native_transcript().unwrap(), before_replay);
+        fixture.peer.shutdown().unwrap();
     }
 
     #[test]
