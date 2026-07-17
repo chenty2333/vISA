@@ -10,18 +10,19 @@ use {
     },
     sha2::{Digest as _, Sha256},
     std::{
-        fs::File,
+        fs::{self, File},
         io::{self, Read},
+        os::{fd::AsRawFd as _, unix::fs::MetadataExt as _},
         path::PathBuf,
     },
 };
 
 #[cfg(target_os = "linux")]
-pub(crate) const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) enum SecureArtifactErrorKind {
+pub enum SecureArtifactErrorKind {
     UnsafeUri,
     Missing,
     Symlink,
@@ -35,9 +36,9 @@ pub(crate) enum SecureArtifactErrorKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct SecureArtifactError {
-    pub(crate) kind: SecureArtifactErrorKind,
-    pub(crate) detail: String,
+pub struct SecureArtifactError {
+    pub kind: SecureArtifactErrorKind,
+    pub detail: String,
 }
 
 impl std::fmt::Display for SecureArtifactError {
@@ -53,7 +54,7 @@ impl std::error::Error for SecureArtifactError {}
 /// The directory is opened once. All child artifacts are resolved relative to
 /// this descriptor, so renaming or replacing the ambient root pathname cannot
 /// redirect later reads.
-pub(crate) struct SecureArtifactRoot {
+pub struct SecureArtifactRoot {
     #[cfg(target_os = "linux")]
     directory: File,
     #[cfg(target_os = "linux")]
@@ -62,9 +63,17 @@ pub(crate) struct SecureArtifactRoot {
     successful_regular_opens: RefCell<BTreeMap<String, usize>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecureArtifactFile {
+    pub bytes: Vec<u8>,
+    pub device: u64,
+    pub inode: u64,
+    pub links: u64,
+}
+
 impl SecureArtifactRoot {
     #[cfg(target_os = "linux")]
-    pub(crate) fn open(path: &Path) -> Result<Self, SecureArtifactError> {
+    pub fn open(path: &Path) -> Result<Self, SecureArtifactError> {
         let descriptor = openat2(
             CWD,
             path,
@@ -103,20 +112,84 @@ impl SecureArtifactRoot {
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn open(path: &Path) -> Result<Self, SecureArtifactError> {
+    pub fn open(path: &Path) -> Result<Self, SecureArtifactError> {
         Err(Self::unsupported_root(path))
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn read_regular(&self, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
+    pub fn read_regular(&self, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
         let file = self.open_regular(uri)?;
         self.read_open_regular(file, uri)
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn read_regular(&self, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
+    pub fn read_regular(&self, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
         validate_uri(uri)?;
         Err(Self::unsupported_artifact(uri))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn read_single_link_regular(
+        &self,
+        uri: &str,
+        maximum: u64,
+    ) -> Result<SecureArtifactFile, SecureArtifactError> {
+        let file = self.open_regular(uri)?;
+        self.read_open_regular_bounded(file, uri, maximum, true)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn read_single_link_regular(
+        &self,
+        uri: &str,
+        _maximum: u64,
+    ) -> Result<SecureArtifactFile, SecureArtifactError> {
+        validate_uri(uri)?;
+        Err(Self::unsupported_artifact(uri))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn inventory(&self) -> Result<Vec<String>, SecureArtifactError> {
+        let descriptor_path =
+            PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd()));
+        let entries = fs::read_dir(&descriptor_path).map_err(|source| SecureArtifactError {
+            kind: SecureArtifactErrorKind::Io,
+            detail: format!(
+                "cannot enumerate securely opened artifact root {}: {source}",
+                self.display.display()
+            ),
+        })?;
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| SecureArtifactError {
+                kind: SecureArtifactErrorKind::Io,
+                detail: format!("cannot enumerate artifact entry: {source}"),
+            })?;
+            let name = entry.file_name().into_string().map_err(|_| SecureArtifactError {
+                kind: SecureArtifactErrorKind::UnsafeUri,
+                detail: "artifact contains a non-UTF-8 entry name".to_owned(),
+            })?;
+            validate_uri(&name)?;
+            let descriptor = self.inspect_relative(&name)?;
+            let metadata = fstat(&descriptor).map_err(|source| SecureArtifactError {
+                kind: SecureArtifactErrorKind::Io,
+                detail: format!("cannot inspect artifact {name}: {source}"),
+            })?;
+            if !FileType::from_raw_mode(metadata.st_mode).is_file() || metadata.st_nlink != 1 {
+                return Err(SecureArtifactError {
+                    kind: SecureArtifactErrorKind::NotRegular,
+                    detail: format!("artifact entry is not a single-link regular file: {name}"),
+                });
+            }
+            names.push(name);
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn inventory(&self) -> Result<Vec<String>, SecureArtifactError> {
+        Err(Self::unsupported_root(Path::new(".")))
     }
 
     #[cfg(all(test, target_os = "linux"))]
@@ -131,10 +204,28 @@ impl SecureArtifactRoot {
     }
 
     #[cfg(target_os = "linux")]
-    fn read_open_regular(&self, mut file: File, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
-        let metadata = file.metadata().map_err(|source| self.io_error(uri, source))?;
-        if metadata.len() > MAX_ARTIFACT_BYTES {
-            return Err(self.too_large(uri));
+    fn read_open_regular(&self, file: File, uri: &str) -> Result<Vec<u8>, SecureArtifactError> {
+        self.read_open_regular_bounded(file, uri, MAX_ARTIFACT_BYTES, false)
+            .map(|artifact| artifact.bytes)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_open_regular_bounded(
+        &self,
+        mut file: File,
+        uri: &str,
+        maximum: u64,
+        require_single_link: bool,
+    ) -> Result<SecureArtifactFile, SecureArtifactError> {
+        let before = file.metadata().map_err(|source| self.io_error(uri, source))?;
+        if !before.file_type().is_file() || (require_single_link && before.nlink() != 1) {
+            return Err(SecureArtifactError {
+                kind: SecureArtifactErrorKind::NotRegular,
+                detail: format!("artifact is not a single-link regular file: {uri}"),
+            });
+        }
+        if before.len() > maximum {
+            return Err(self.too_large_bounded(uri, maximum));
         }
         let mut bytes = Vec::new();
         let mut buffer = [0_u8; 64 * 1024];
@@ -148,8 +239,8 @@ impl SecureArtifactRoot {
                 break;
             }
             let new_len = bytes.len().checked_add(read).ok_or_else(|| self.too_large(uri))?;
-            if u64::try_from(new_len).unwrap_or(u64::MAX) > MAX_ARTIFACT_BYTES {
-                return Err(self.too_large(uri));
+            if u64::try_from(new_len).unwrap_or(u64::MAX) > maximum {
+                return Err(self.too_large_bounded(uri, maximum));
             }
             bytes.try_reserve(read).map_err(|source| SecureArtifactError {
                 kind: SecureArtifactErrorKind::ResourceExhausted,
@@ -157,16 +248,71 @@ impl SecureArtifactRoot {
             })?;
             bytes.extend_from_slice(&buffer[..read]);
         }
-        Ok(bytes)
+        let after = file.metadata().map_err(|source| self.io_error(uri, source))?;
+        let before_identity = (
+            before.dev(),
+            before.ino(),
+            before.nlink(),
+            before.len(),
+            before.mtime(),
+            before.mtime_nsec(),
+            before.ctime(),
+            before.ctime_nsec(),
+        );
+        let after_identity = (
+            after.dev(),
+            after.ino(),
+            after.nlink(),
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec(),
+            after.ctime(),
+            after.ctime_nsec(),
+        );
+        if before_identity != after_identity
+            || bytes.len() != usize::try_from(after.len()).unwrap_or(usize::MAX)
+        {
+            return Err(SecureArtifactError {
+                kind: SecureArtifactErrorKind::ConcurrentMutation,
+                detail: format!("artifact changed while being read: {uri}"),
+            });
+        }
+        Ok(SecureArtifactFile {
+            bytes,
+            device: after.dev(),
+            inode: after.ino(),
+            links: after.nlink(),
+        })
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn sha256_regular(&self, uri: &str) -> Result<String, SecureArtifactError> {
-        let mut file = self.open_regular(uri)?;
-        let metadata = file.metadata().map_err(|source| self.io_error(uri, source))?;
-        if metadata.len() > MAX_ARTIFACT_BYTES {
+    pub fn sha256_regular(&self, uri: &str) -> Result<String, SecureArtifactError> {
+        let file = self.open_regular(uri)?;
+        self.sha256_open_regular(file, uri, || {})
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    fn sha256_regular_after_metadata(
+        &self,
+        uri: &str,
+        after_metadata: impl FnOnce(),
+    ) -> Result<String, SecureArtifactError> {
+        let file = self.open_regular(uri)?;
+        self.sha256_open_regular(file, uri, after_metadata)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn sha256_open_regular(
+        &self,
+        mut file: File,
+        uri: &str,
+        after_metadata: impl FnOnce(),
+    ) -> Result<String, SecureArtifactError> {
+        let before = file.metadata().map_err(|source| self.io_error(uri, source))?;
+        if before.len() > MAX_ARTIFACT_BYTES {
             return Err(self.too_large(uri));
         }
+        after_metadata();
         let mut digest = Sha256::new();
         let mut total = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
@@ -187,11 +333,38 @@ impl SecureArtifactRoot {
             }
             digest.update(&buffer[..read]);
         }
+        let after = file.metadata().map_err(|source| self.io_error(uri, source))?;
+        let before_identity = (
+            before.dev(),
+            before.ino(),
+            before.nlink(),
+            before.len(),
+            before.mtime(),
+            before.mtime_nsec(),
+            before.ctime(),
+            before.ctime_nsec(),
+        );
+        let after_identity = (
+            after.dev(),
+            after.ino(),
+            after.nlink(),
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec(),
+            after.ctime(),
+            after.ctime_nsec(),
+        );
+        if before_identity != after_identity || total != after.len() {
+            return Err(SecureArtifactError {
+                kind: SecureArtifactErrorKind::ConcurrentMutation,
+                detail: format!("artifact changed while being hashed: {uri}"),
+            });
+        }
         Ok(format!("{:x}", digest.finalize()))
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn sha256_regular(&self, uri: &str) -> Result<String, SecureArtifactError> {
+    pub fn sha256_regular(&self, uri: &str) -> Result<String, SecureArtifactError> {
         validate_uri(uri)?;
         Err(Self::unsupported_artifact(uri))
     }
@@ -229,12 +402,29 @@ impl SecureArtifactRoot {
 
     #[cfg(target_os = "linux")]
     fn open_relative(&self, uri: &str) -> Result<rustix::fd::OwnedFd, SecureArtifactError> {
+        self.open_relative_with_flags(
+            uri,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn inspect_relative(&self, uri: &str) -> Result<rustix::fd::OwnedFd, SecureArtifactError> {
+        self.open_relative_with_flags(uri, OFlags::PATH | OFlags::CLOEXEC | OFlags::NOFOLLOW)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_relative_with_flags(
+        &self,
+        uri: &str,
+        flags: OFlags,
+    ) -> Result<rustix::fd::OwnedFd, SecureArtifactError> {
         let mut last = Errno::AGAIN;
         for attempt in 0..3 {
             match openat2(
                 &self.directory,
                 uri,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+                flags,
                 Mode::empty(),
                 ResolveFlags::BENEATH
                     | ResolveFlags::NO_SYMLINKS
@@ -284,9 +474,14 @@ impl SecureArtifactRoot {
 
     #[cfg(target_os = "linux")]
     fn too_large(&self, uri: &str) -> SecureArtifactError {
+        self.too_large_bounded(uri, MAX_ARTIFACT_BYTES)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn too_large_bounded(&self, uri: &str, maximum: u64) -> SecureArtifactError {
         SecureArtifactError {
             kind: SecureArtifactErrorKind::TooLarge,
-            detail: format!("artifact {uri} exceeds the {MAX_ARTIFACT_BYTES}-byte limit"),
+            detail: format!("artifact {uri} exceeds the {maximum}-byte limit"),
         }
     }
 
@@ -348,6 +543,41 @@ mod tests {
         let reader = SecureArtifactRoot::open(&root).unwrap();
 
         assert_eq!(reader.read_regular("item").unwrap(), b"relative-root");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inventory_is_root_anchored_sorted_and_single_link_only() {
+        let root = temp_dir("inventory");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("zeta"), b"z").unwrap();
+        fs::write(root.join("alpha"), b"a").unwrap();
+        let reader = SecureArtifactRoot::open(&root).unwrap();
+
+        assert_eq!(reader.inventory().unwrap(), ["alpha", "zeta"]);
+        assert_eq!(reader.read_single_link_regular("alpha", 1).unwrap().bytes, b"a");
+
+        fs::hard_link(root.join("alpha"), root.join("linked")).unwrap();
+        assert_eq!(
+            reader.read_single_link_regular("alpha", 1).unwrap_err().kind,
+            SecureArtifactErrorKind::NotRegular
+        );
+        assert_eq!(reader.inventory().unwrap_err().kind, SecureArtifactErrorKind::NotRegular);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn single_link_reader_enforces_the_caller_limit() {
+        let root = temp_dir("caller-limit");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("item"), b"bounded").unwrap();
+        let reader = SecureArtifactRoot::open(&root).unwrap();
+
+        assert_eq!(
+            reader.read_single_link_regular("item", 6).unwrap_err().kind,
+            SecureArtifactErrorKind::TooLarge
+        );
+        assert_eq!(reader.read_single_link_regular("item", 7).unwrap().bytes, b"bounded");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -454,6 +684,23 @@ mod tests {
             reader.sha256_regular("item").unwrap_err().kind,
             SecureArtifactErrorKind::TooLarge
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hasher_rejects_same_length_mutation_after_initial_metadata() {
+        let root = temp_dir("hash-mutation");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("item"), b"before").unwrap();
+        let reader = SecureArtifactRoot::open(&root).unwrap();
+
+        let error = reader
+            .sha256_regular_after_metadata("item", || {
+                fs::write(root.join("item"), b"after!").unwrap();
+            })
+            .unwrap_err();
+
+        assert_eq!(error.kind, SecureArtifactErrorKind::ConcurrentMutation);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -42,18 +42,22 @@ NEXUS_ARTIFACT_ROOT = ".ci-artifacts/nexus-handoff-qualification"
 NEXUS_EFFECT_PEER = ".ci-nexus/target/debug/nexus-effect-peer"
 NEXUS_PROCESS_ARTIFACT_ROOT = ".ci-artifacts/nexus-process-joint-cell"
 NEXUS_LOGICAL_ARTIFACT_ROOT = ".ci-artifacts/logical-request-lost-ack-cell"
+NEXUS_ADMISSION_ARTIFACT_ROOT = ".ci-artifacts/logical-request-admission-cell"
 NEXUS_GATE_LOG = ".ci-artifacts/nexus-visa-same-boot-qualification-ci.log"
 NEXUS_QUALIFICATION_ARTIFACT = "nexus-visa-same-boot-qualification-evidence"
 NEXUS_CLAIM_BOUNDARY = (
-    "Claim boundary: clean exact-SHA same-boot Nexus-local refinement and "
-    "process-backed joint handoff only; the logical-request dual-lost-ACK artifact "
-    "is a supplemental observational binding that neither executes a vISA runtime "
-    "handoff nor proves Nexus serialized admission before the external effect. This "
-    "is a host-build qualification, not a vISA Docker-image lane, and does not "
-    "claim Registry replacement, retained tombstone, "
+    "Claim boundary: clean exact-SHA same-boot Nexus-local refinement, "
+    "process-backed joint handoff, and one bounded admission-ordered Wasmtime "
+    "logical-request/lost-ACK handoff. The admission artifact checks production "
+    "Registry admission before external send, one source execution, ownership "
+    "recovery, source closure and fence, destination activation, and Reconcile "
+    "inside this host cell; the older logical-request dual-lost-ACK artifact remains "
+    "supplemental. This is a host-build qualification, not a vISA Docker-image lane, "
+    "and does not claim Registry replacement, retained tombstone, "
     "cross-host/reboot/permanent-source-loss recovery, "
     "Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service "
-    "death/OSTD/IRQ/SMP, a production live-wire adapter, or performance."
+    "death/OSTD/IRQ/SMP, a production live-wire adapter, general exactly-once "
+    "semantics, or performance."
 )
 
 EXACT_SHA_IMAGE = "visa-dev:${{ github.sha }}"
@@ -69,6 +73,7 @@ IMAGE_SOURCE_LABEL = (
     "${{ github.server_url }}/${{ github.repository }}"
 )
 LOCKED_CARGO_WRAPPERS = (
+    "scripts/run-logical-request-admission-cell.sh",
     "scripts/run-logical-request-lost-ack-cell.sh",
     "scripts/run-nexus-process-joint-cell.sh",
     "scripts/run-host-ltp-log-adapter.sh",
@@ -592,6 +597,12 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
         f"  --nexus-bin {NEXUS_EFFECT_PEER} \\\n"
         f"  --artifact-root {NEXUS_LOGICAL_ARTIFACT_ROOT}"
     )
+    admission_command = (
+        "run_logged scripts/run-logical-request-admission-cell.sh \\\n"
+        f"  --nexus-checkout {NEXUS_CHECKOUT_PATH} \\\n"
+        f"  --nexus-bin {NEXUS_EFFECT_PEER} \\\n"
+        f"  --artifact-root {NEXUS_ADMISSION_ARTIFACT_ROOT}"
+    )
     require(
         process_command in command,
         "Nexus process joint cell command or exact arguments drifted",
@@ -601,14 +612,19 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
         "logical-request lost-ACK cell command or exact arguments drifted",
     )
     require(
-        command.count("run_logged scripts/") == 3,
-        "Nexus qualification must contain exactly the three locked runner commands",
+        admission_command in command,
+        "logical-request admission cell command or exact arguments drifted",
+    )
+    require(
+        command.count("run_logged scripts/") == 4,
+        "Nexus qualification must contain exactly the four locked runner commands",
     )
     ordered_commands = (
         "scripts/run-nexus-handoff-qualification.sh",
         "cargo build --locked",
         "scripts/run-nexus-process-joint-cell.sh",
         "scripts/run-logical-request-lost-ack-cell.sh",
+        "scripts/run-logical-request-admission-cell.sh",
         "find .ci-artifacts -mindepth 1 -maxdepth 1",
         NEXUS_CLAIM_BOUNDARY,
     )
@@ -623,6 +639,7 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
         in command
         and "LC_ALL=C sort" in command
         and (
+            "d logical-request-admission-cell\\n"
             "d logical-request-lost-ack-cell\\n"
             "d nexus-handoff-qualification\\n"
             "d nexus-process-joint-cell\\n"
@@ -647,7 +664,7 @@ def check_nexus_qualification(job: dict[str, Any]) -> None:
     )
     require(
         uploads[0].get("with", {}).get("path") == ".ci-artifacts/",
-        "Nexus artifact upload must contain the three qualification trees and gate log",
+        "Nexus artifact upload must contain the four qualification trees and gate log",
     )
 
 

@@ -1,4 +1,4 @@
-mod artifact_io;
+pub mod artifact_io;
 mod joint_handoff;
 mod stage1;
 mod stage1_artifacts;

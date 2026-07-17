@@ -461,11 +461,16 @@ jobs:
             --nexus-bin .ci-nexus/target/debug/nexus-effect-peer \
             --artifact-root .ci-artifacts/logical-request-lost-ack-cell
 
+          run_logged scripts/run-logical-request-admission-cell.sh \
+            --nexus-checkout .ci-nexus \
+            --nexus-bin .ci-nexus/target/debug/nexus-effect-peer \
+            --artifact-root .ci-artifacts/logical-request-admission-cell
+
           actual_inventory="$(
             find .ci-artifacts -mindepth 1 -maxdepth 1 -printf '%y %f\n' \
               | LC_ALL=C sort
           )"
-          expected_inventory=$'d logical-request-lost-ack-cell\nd nexus-handoff-qualification\nd nexus-process-joint-cell\nf nexus-visa-same-boot-qualification-ci.log'
+          expected_inventory=$'d logical-request-admission-cell\nd logical-request-lost-ack-cell\nd nexus-handoff-qualification\nd nexus-process-joint-cell\nf nexus-visa-same-boot-qualification-ci.log'
           if [[ "$actual_inventory" != "$expected_inventory" ]]; then
             {
               printf 'Nexus + vISA qualification top-level artifact inventory drifted\n' >&2
@@ -475,7 +480,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' \
-            'Claim boundary: clean exact-SHA same-boot Nexus-local refinement and process-backed joint handoff only; the logical-request dual-lost-ACK artifact is a supplemental observational binding that neither executes a vISA runtime handoff nor proves Nexus serialized admission before the external effect. This is a host-build qualification, not a vISA Docker-image lane, and does not claim Registry replacement, retained tombstone, cross-host/reboot/permanent-source-loss recovery, Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service death/OSTD/IRQ/SMP, a production live-wire adapter, or performance.' \
+            'Claim boundary: clean exact-SHA same-boot Nexus-local refinement, process-backed joint handoff, and one bounded admission-ordered Wasmtime logical-request/lost-ACK handoff. The admission artifact checks production Registry admission before external send, one source execution, ownership recovery, source closure and fence, destination activation, and Reconcile inside this host cell; the older logical-request dual-lost-ACK artifact remains supplemental. This is a host-build qualification, not a vISA Docker-image lane, and does not claim Registry replacement, retained tombstone, cross-host/reboot/permanent-source-loss recovery, Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service death/OSTD/IRQ/SMP, a production live-wire adapter, general exactly-once semantics, or performance.' \
             | tee -a "$gate_log"
 
       - name: Upload Nexus + vISA same-boot qualification evidence
