@@ -24,7 +24,11 @@ use joint_handoff_core::{
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use substrate_api::{AuthorityPolicy, AuthorityPort, JournalScope};
+use substrate_api::{
+    AuthorityPolicy, AuthorityPort, EffectAdmissionSession, EffectClosureAuthenticationProfile,
+    EffectClosureCapabilities, EffectClosureProviderLimits, EffectClosureProviderRequirements,
+    JournalScope,
+};
 use substrate_host::{
     FaultPoint, LoopbackLogicalPeer, LoopbackLogicalPeerBehavior, SqliteProvider,
 };
@@ -1128,13 +1132,39 @@ impl AdmissionPrefix {
             ProcessEffectPeer::spawn(inputs.nexus.launch(), fixture.effect_config)
                 .map_err(|error| format!("spawn admission Nexus process peer: {error:?}"))?;
         let process_identity = process_peer.process_identity().map_err(debug)?;
-        let registered = process_peer
-            .register_live_effect(registration.clone())
-            .map_err(|error| format!("register admission effect: {error:?}"))?;
+        let admission = EffectAdmissionSession::new(&process_peer);
+        let required_capabilities = EffectClosureCapabilities {
+            effect_admission: true,
+            freeze_thaw: true,
+            commit_close: true,
+            ..EffectClosureCapabilities::default()
+        };
+        let requirements = EffectClosureProviderRequirements::v2_preview(
+            required_capabilities,
+            EffectClosureAuthenticationProfile::IntegrityOnly,
+            EffectClosureProviderLimits {
+                max_scopes: 1,
+                max_effects_per_scope: 1,
+                max_inflight_mutations: 1,
+                max_request_bytes: 1,
+                max_receipt_bytes: 1,
+            },
+        );
+        let descriptor = admission.descriptor().map_err(debug)?;
+        if !descriptor.satisfies(requirements) {
+            return Err(
+                "Nexus provider did not advertise the bounded v2-preview profile".to_owned()
+            );
+        }
+        let registered_admission = admission
+            .register(prepared_start.effect_request().clone(), registration.clone())
+            .map_err(|failure| format!("register admission effect: {:?}", failure.error()))?;
+        let registered = registered_admission.provider_state().clone();
         require_advance(&registered, ProcessLiveEffectPhase::Registered, 1, false)?;
-        let prepared = process_peer
-            .prepare_live_effect(registered.token())
-            .map_err(|error| format!("prepare admission effect: {error:?}"))?;
+        let prepared_admission = registered_admission
+            .prepare()
+            .map_err(|failure| format!("prepare admission effect: {:?}", failure.error()))?;
+        let prepared = prepared_admission.provider_state().clone();
         require_advance(&prepared, ProcessLiveEffectPhase::Prepared, 2, false)?;
 
         let metadata = ProcessLiveEffectCommitMetadata {
@@ -1142,20 +1172,26 @@ impl AdmissionPrefix {
             domain_revision: fixture.effect_config.scope_generation,
         };
         process_peer.arm_next_response_loss().map_err(debug)?;
-        let lost_request_id = match process_peer.commit_live_effect(prepared.token(), metadata) {
-            Err(EffectPeerError::AcknowledgementLost { request_id }) => request_id,
-            Ok(_) => {
-                return Err(
-                    "armed admission Commit returned a token before ACK recovery".to_owned()
-                );
-            }
-            Err(error) => {
-                return Err(format!("armed admission Commit failed unexpectedly: {error:?}"));
+        let (commit_error, prepared_admission, retry_metadata) =
+            match prepared_admission.commit(metadata) {
+                Err(failure) => failure.into_parts(),
+                Ok(_) => {
+                    return Err(
+                        "armed admission Commit returned a token before ACK recovery".to_owned()
+                    );
+                }
+            };
+        let lost_request_id = match commit_error {
+            EffectPeerError::AcknowledgementLost { request_id } => request_id,
+            error => return Err(format!("armed admission Commit failed unexpectedly: {error:?}")),
+        };
+        let committed_permit = match prepared_admission.commit(retry_metadata) {
+            Ok(permit) => permit,
+            Err(failure) => {
+                return Err(format!("recover exact admission Commit: {:?}", failure.error()));
             }
         };
-        let committed = process_peer
-            .commit_live_effect(prepared.token(), metadata)
-            .map_err(|error| format!("recover exact admission Commit: {error:?}"))?;
+        let committed = committed_permit.commit_evidence().clone();
         require_advance(&committed, ProcessLiveEffectPhase::CommittedAwaitingOutcome, 3, false)?;
         let verified = committed
             .verified_commit()
@@ -1186,7 +1222,9 @@ impl AdmissionPrefix {
             return Err("external request ran before Nexus admission Commit".to_owned());
         }
 
-        let started = source.start_prepared(&prepared_start).map_err(debug)?;
+        let started = source
+            .start_admitted(&prepared_start, &process_peer, committed_permit)
+            .map_err(debug)?;
         if started.effect_operation_id.is_empty() {
             return Err("prepared source start omitted its effect identity".to_owned());
         }

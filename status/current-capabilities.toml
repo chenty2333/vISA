@@ -1,0 +1,80 @@
+schema = "visa.current-capability-ledger.v1"
+ledger_revision = 1
+as_of = "2026-07-17"
+classification = "current-checkpoints-not-release-evidence"
+accepted_joint_claim = "bounded-joint-handoff-refinement-v1"
+accepted_joint_implementation = "d3b07f1114cb49e26dd62fb252a895022ac2a743"
+checkpoint_count = 2
+neutral_wire_v1 = "frozen"
+nexus_native_wire_v1 = "frozen"
+new_provider_capabilities = "v2-or-explicit-versioned-extension"
+
+[policy]
+checkpoint = "backward-pointer-to-exact-claims-revision"
+supersession = "append-or-replace-current-entry-with-explicit-revision-and-boundary"
+external_evidence = "never-upgrades-a-separately-owned-project-claim"
+archive = "github-actions-artifacts-are-ephemeral-transport"
+
+[[checkpoint]]
+kind = "accepted"
+id = "accepted-joint-handoff-d3b07f11"
+status = "accepted-exact-sha-historical-boundary"
+revision = "d3b07f1114cb49e26dd62fb252a895022ac2a743"
+recorded_on = "2026-07-16"
+claim_id = "bounded-joint-handoff-refinement-v1"
+logical_request_lane = "supplemental-post-hoc-dual-lost-ack"
+capabilities = [
+  "same-boot-neutral-reference-and-host-substrate-composition",
+  "nexus-native-process-replay-and-service-rebind",
+  "supplemental-one-execution-logical-request-dual-lost-ack",
+]
+boundaries = [
+  "supplemental-external-effect-completes-before-native-register-prepare-commit",
+  "supplemental-lane-does-not-run-visa-freeze-fence-or-destination-activation",
+  "adapter-qualification-false",
+  "no-real-ostd-irq-smp-device-reboot-or-cross-host",
+]
+sources = [
+  "docs/VALIDATION.md#joint-handoff-closure-receipt",
+  "third_party/joint-handoff-qualification/refinement-map.toml",
+  "third_party/joint-handoff-qualification/nexus-native-v1-refinement.toml",
+]
+
+[[checkpoint]]
+kind = "current"
+id = "admission-ordered-logical-request-4314a181"
+status = "exact-sha-ci-checked-not-canonical-or-archived"
+revision = "4314a181ded0862d7b1c7054f57f1bafd0595f07"
+recorded_on = "2026-07-17"
+claim_id = "bounded-same-boot-admission-ordered-logical-request-lost-ack"
+nexus_revision = "8e5123c46569e8ebdaba9f4f56bea6584ab58586"
+nexus_qualification_lock_sha256 = "21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9"
+ci_run = 29559181048
+artifact_name = "nexus-visa-same-boot-qualification-evidence"
+artifact_digest = "sha256:269f8ddee3743686e966649f4b7a4aa6a6748248aecdf0d8327f789afbe87098"
+artifact_expires_at = "2026-07-31T06:11:52Z"
+archive_status = "ephemeral-actions-artifact-not-long-term-checkpoint"
+capabilities = [
+  "production-registry-register-prepare-commit-before-external-send",
+  "commit-ack-loss-byte-identical-replay",
+  "one-logical-request-source-execution",
+  "visa-freeze-and-nexus-effect-closure",
+  "durable-ownership-commit-recovery",
+  "source-fence-before-destination-activation",
+  "destination-activation-and-reconcile",
+]
+boundaries = [
+  "current-implementation-and-ci-checkpoint-not-accepted-joint-claim-replacement",
+  "same-host-process-only",
+  "adapter-qualification-false",
+  "no-effect-in-flight-freeze-or-post-commit-service-death",
+  "no-registry-replacement-or-retained-device-control",
+  "no-real-ostd-irq-smp-device-reboot-or-cross-host",
+  "no-general-exactly-once-performance-or-production-claim",
+]
+sources = [
+  "crates/testing/visa-joint-handoff-system/src/logical_request_admission_cell.rs",
+  "crates/testing/visa-joint-handoff-system/src/logical_request_admission_verify.rs",
+  "scripts/run-logical-request-admission-cell.sh",
+  ".github/workflows/ci.yml",
+]

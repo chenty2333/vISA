@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -13,6 +16,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+CURRENT_STATUS_PATH = "status/current-capabilities.toml"
 
 EXPECTED_CLAIMS = {
     "stage1": ("system", "stage1-system-evidence"),
@@ -209,6 +213,192 @@ def check_locked_cargo_wrappers() -> None:
                     "--locked" in line or "--frozen" in line,
                     f"{relative}:{line_number}: qualification Cargo command is not lockfile-bound",
                 )
+
+
+def check_current_status() -> None:
+    try:
+        with (ROOT / CURRENT_STATUS_PATH).open("rb") as file:
+            status = tomllib.load(file)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ContractError(f"cannot parse {CURRENT_STATUS_PATH}: {error}") from error
+
+    def require_string(mapping: dict[str, Any], field: str) -> str:
+        value = mapping.get(field)
+        require(
+            isinstance(value, str) and bool(value.strip()),
+            f"current capability ledger {field} must be a nonempty string",
+        )
+        return value
+
+    def require_string_list(mapping: dict[str, Any], field: str) -> list[str]:
+        value = mapping.get(field)
+        require(
+            isinstance(value, list)
+            and bool(value)
+            and all(isinstance(item, str) and bool(item.strip()) for item in value)
+            and len(value) == len(set(value)),
+            f"current capability ledger {field} must contain unique nonempty strings",
+        )
+        return value
+
+    def require_sha(mapping: dict[str, Any], field: str, length: int = 40) -> str:
+        value = require_string(mapping, field)
+        require(
+            re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is not None,
+            f"current capability ledger {field} must be a lowercase {length}-hex digest",
+        )
+        return value
+
+    require(status.get("schema") == "visa.current-capability-ledger.v1", "current capability ledger schema drifted")
+    require(status.get("ledger_revision") == 1, "current capability ledger revision drifted")
+    require(
+        re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", require_string(status, "as_of"))
+        is not None,
+        "current capability ledger as_of must use YYYY-MM-DD",
+    )
+    require(
+        status.get("classification") == "current-checkpoints-not-release-evidence",
+        "current capability ledger classification drifted",
+    )
+    require(
+        status.get("accepted_joint_claim") == "bounded-joint-handoff-refinement-v1"
+        and status.get("accepted_joint_implementation")
+        == "d3b07f1114cb49e26dd62fb252a895022ac2a743",
+        "current ledger must not rewrite the accepted joint implementation identity",
+    )
+    require(
+        status.get("neutral_wire_v1") == "frozen"
+        and status.get("nexus_native_wire_v1") == "frozen"
+        and status.get("new_provider_capabilities")
+        == "v2-or-explicit-versioned-extension",
+        "wire v1 freeze or provider v2 policy drifted",
+    )
+    require(
+        status.get("policy")
+        == {
+            "checkpoint": "backward-pointer-to-exact-claims-revision",
+            "supersession": "append-or-replace-current-entry-with-explicit-revision-and-boundary",
+            "external_evidence": "never-upgrades-a-separately-owned-project-claim",
+            "archive": "github-actions-artifacts-are-ephemeral-transport",
+        },
+        "current capability ledger policy drifted",
+    )
+
+    checkpoints = status.get("checkpoint")
+    require(
+        isinstance(checkpoints, list)
+        and len(checkpoints) == status.get("checkpoint_count") == 2,
+        "current capability ledger must contain exactly two distinguished checkpoints",
+    )
+    require(
+        all(isinstance(checkpoint, dict) for checkpoint in checkpoints),
+        "current capability checkpoints must be TOML tables",
+    )
+    ids = [require_string(checkpoint, "id") for checkpoint in checkpoints]
+    require(len(ids) == len(set(ids)), "current capability checkpoint IDs must be unique")
+    by_kind = {require_string(checkpoint, "kind"): checkpoint for checkpoint in checkpoints}
+    require(
+        set(by_kind) == {"accepted", "current"},
+        "current capability ledger must distinguish one accepted and one current checkpoint",
+    )
+    accepted = by_kind["accepted"]
+    current = by_kind["current"]
+    for checkpoint in checkpoints:
+        require(
+            re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}",
+                require_string(checkpoint, "recorded_on"),
+            )
+            is not None,
+            "checkpoint recorded_on must use YYYY-MM-DD",
+        )
+        require_string(checkpoint, "status")
+        require_string(checkpoint, "claim_id")
+        require_string_list(checkpoint, "capabilities")
+        require_string_list(checkpoint, "boundaries")
+        for source in require_string_list(checkpoint, "sources"):
+            source_file, _, source_fragment = source.partition("#")
+            source_path = ROOT / source_file
+            require(
+                bool(source_file)
+                and ("#" not in source or bool(source_fragment))
+                and not source_file.startswith("/")
+                and ".." not in Path(source_file).parts
+                and source_path.is_file()
+                and not source_path.is_symlink(),
+                f"current capability ledger source is not a regular repository file: {source}",
+            )
+
+    require(
+        accepted.get("status") == "accepted-exact-sha-historical-boundary"
+        and require_sha(accepted, "revision") == status.get("accepted_joint_implementation")
+        and accepted.get("claim_id") == status.get("accepted_joint_claim")
+        and accepted.get("logical_request_lane") == "supplemental-post-hoc-dual-lost-ack"
+        and "supplemental-external-effect-completes-before-native-register-prepare-commit"
+        in accepted.get("boundaries", []),
+        "accepted supplemental lane identity or historical boundary drifted",
+    )
+
+    current_revision = require_sha(current, "revision")
+    nexus_revision = require_sha(current, "nexus_revision")
+    qualification_lock_sha256 = require_sha(
+        current, "nexus_qualification_lock_sha256", 64
+    )
+    artifact_digest = require_string(current, "artifact_digest")
+    require(
+        current.get("status") == "exact-sha-ci-checked-not-canonical-or-archived"
+        and current_revision != accepted.get("revision")
+        and nexus_revision != current_revision
+        and type(current.get("ci_run")) is int
+        and current.get("ci_run", 0) > 0
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest) is not None
+        and re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            require_string(current, "artifact_expires_at"),
+        )
+        is not None
+        and current.get("archive_status")
+        == "ephemeral-actions-artifact-not-long-term-checkpoint",
+        "current checkpoint exact-revision, CI, or ephemeral-artifact identity is malformed",
+    )
+    require_string(current, "artifact_name")
+
+    try:
+        qualification_lock_bytes = (ROOT / NEXUS_LOCK_PATH).read_bytes()
+        qualification_lock = json.loads(qualification_lock_bytes)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContractError(f"cannot parse {NEXUS_LOCK_PATH}: {error}") from error
+    require(
+        isinstance(qualification_lock, dict),
+        f"{NEXUS_LOCK_PATH} must contain a JSON object",
+    )
+    locked_nexus = qualification_lock.get("nexus")
+    require(
+        qualification_lock.get("schema") == "visa.nexus-handoff-qualification-lock.v2"
+        and isinstance(locked_nexus, dict)
+        and locked_nexus.get("revision") == nexus_revision,
+        "current capability ledger Nexus revision must match the qualification lock",
+    )
+    require(
+        hashlib.sha256(qualification_lock_bytes).hexdigest()
+        == qualification_lock_sha256,
+        "current capability ledger qualification-lock digest does not match repository bytes",
+    )
+
+    try:
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", current_revision, "HEAD"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise ContractError(f"cannot verify current checkpoint ancestry: {error}") from error
+    require(
+        ancestry.returncode == 0,
+        "current capability ledger revision must be an ancestor of repository HEAD",
+    )
 
 
 def check_joint_expectation_wiring() -> None:
@@ -756,6 +946,7 @@ def main() -> int:
         check_compose()
         check_toolchain_alignment()
         check_locked_cargo_wrappers()
+        check_current_status()
         check_joint_expectation_wiring()
         check_workflow()
     except (ContractError, OSError) as error:

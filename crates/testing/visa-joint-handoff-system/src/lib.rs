@@ -20,6 +20,8 @@ mod replay;
 mod effect_tests;
 #[cfg(test)]
 mod ownership_tests;
+#[cfg(test)]
+mod provider_conformance;
 
 use std::{
     path::{Path, PathBuf},

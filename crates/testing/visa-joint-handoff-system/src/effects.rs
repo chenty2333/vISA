@@ -3,7 +3,7 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, Identity, LeaseEpoch};
+use contract_core::{Digest, EffectRequest, Identity, LeaseEpoch};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, JointHandoffKey, NexusFreezeReceipt, NexusThawReceipt,
@@ -12,6 +12,10 @@ use joint_handoff_core::{
     canonical_digest,
 };
 use serde::{Deserialize, Serialize};
+use substrate_api::{
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProtocolRange,
+    EffectClosureProvider, EffectClosureProviderDescriptor, EffectClosureProviderLimits,
+};
 use visa_conformance::{
     JointEffectClassification, JointEffectRecord, joint_classification_counts,
     joint_classification_root, joint_effect_cohort_digest,
@@ -48,6 +52,44 @@ pub struct EffectPublicationRequest {
 pub enum EffectPublicationResult {
     Published,
     Replay,
+}
+
+/// In-process provider state returned after one exact effect registration.
+/// Its private request binding prevents construction outside this adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceRegisteredEffect {
+    effect: EffectRequest,
+    registration: EffectPublicationRequest,
+    replay: bool,
+}
+
+impl ReferenceRegisteredEffect {
+    pub const fn is_replay(&self) -> bool {
+        self.replay
+    }
+}
+
+/// In-process provider state returned after the registered selector has been
+/// checked against the live reference projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferencePreparedEffect {
+    effect: EffectRequest,
+    registration: EffectPublicationRequest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectCommitMetadata {
+    pub result: i64,
+    pub domain_revision: u64,
+}
+
+/// Provider-local commit observation. The provider-typed admission permit,
+/// rather than this copyable observation, carries dispatch authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectCommitEvidence {
+    pub result: i64,
+    pub domain_revision: u64,
+    pub replay: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,7 +263,23 @@ struct EffectPeerState {
     config: EffectPeerConfig,
     next_sequence: u64,
     effects: BTreeMap<Identity, ReferenceEffectRecord>,
+    admissions: BTreeMap<Identity, ReferenceAdmission>,
     session: Option<FreezeSession>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReferenceAdmissionPhase {
+    Registered,
+    Prepared,
+    Committed,
+}
+
+#[derive(Clone, Debug)]
+struct ReferenceAdmission {
+    effect: EffectRequest,
+    registration: EffectPublicationRequest,
+    phase: ReferenceAdmissionPhase,
+    commit: Option<ReferenceEffectCommitMetadata>,
 }
 
 pub struct ReferenceEffectPeer {
@@ -257,6 +315,7 @@ impl ReferenceEffectPeer {
                 config,
                 next_sequence: 0,
                 effects: BTreeMap::new(),
+                admissions: BTreeMap::new(),
                 session: None,
             }),
         })
@@ -577,6 +636,178 @@ impl ReferenceEffectPeer {
         state.config.registry_instance = new_registry_instance;
         Ok(scope(&state.config))
     }
+}
+
+impl EffectClosureProvider for ReferenceEffectPeer {
+    type RegistrationRequest = EffectPublicationRequest;
+    type Registered = ReferenceRegisteredEffect;
+    type Prepared = ReferencePreparedEffect;
+    type CommitMetadata = ReferenceEffectCommitMetadata;
+    type CommitEvidence = ReferenceEffectCommitEvidence;
+    type Error = EffectPeerError;
+
+    fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
+        Ok(EffectClosureProviderDescriptor {
+            protocol: EffectClosureProtocolRange::v2_preview(),
+            capabilities: EffectClosureCapabilities {
+                effect_admission: true,
+                freeze_thaw: true,
+                commit_close: true,
+                crash_rebind: false,
+                retained_device: false,
+                persistent_query: false,
+            },
+            authentication: EffectClosureAuthenticationProfile::None,
+            limits: EffectClosureProviderLimits {
+                max_scopes: 1,
+                max_effects_per_scope: 1,
+                max_inflight_mutations: 1,
+                max_request_bytes: 64 * 1024,
+                max_receipt_bytes: 1024 * 1024,
+            },
+        })
+    }
+
+    fn register_effect(
+        &self,
+        effect: &EffectRequest,
+        request: &Self::RegistrationRequest,
+    ) -> Result<Self::Registered, Self::Error> {
+        validate_reference_admission_binding(effect, request)?;
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        validate_publication_request(&state.config, request)?;
+        if !gate_open(state.session.as_ref()) {
+            return Err(EffectPeerError::GateClosed);
+        }
+        if let Some(existing) = state.admissions.get(&request.record.effect) {
+            return if existing.registration == *request && existing.effect == *effect {
+                Ok(ReferenceRegisteredEffect {
+                    effect: effect.clone(),
+                    registration: request.clone(),
+                    replay: true,
+                })
+            } else {
+                Err(EffectPeerError::PublicationConflict)
+            };
+        }
+        if state.effects.contains_key(&request.record.effect) {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        state.effects.insert(request.record.effect, request.record.clone());
+        state.admissions.insert(
+            request.record.effect,
+            ReferenceAdmission {
+                effect: effect.clone(),
+                registration: request.clone(),
+                phase: ReferenceAdmissionPhase::Registered,
+                commit: None,
+            },
+        );
+        Ok(ReferenceRegisteredEffect {
+            effect: effect.clone(),
+            registration: request.clone(),
+            replay: false,
+        })
+    }
+
+    fn prepare_effect(
+        &self,
+        effect: &EffectRequest,
+        registered: &Self::Registered,
+    ) -> Result<Self::Prepared, Self::Error> {
+        validate_reference_admission_binding(effect, &registered.registration)?;
+        if registered.effect != *effect {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        validate_publication_request(&state.config, &registered.registration)?;
+        if !gate_open(state.session.as_ref()) {
+            return Err(EffectPeerError::GateClosed);
+        }
+        match state.admissions.get_mut(&registered.registration.record.effect) {
+            Some(admission)
+                if admission.registration == registered.registration
+                    && admission.effect == *effect =>
+            {
+                if admission.phase == ReferenceAdmissionPhase::Registered {
+                    admission.phase = ReferenceAdmissionPhase::Prepared;
+                }
+                Ok(ReferencePreparedEffect {
+                    effect: effect.clone(),
+                    registration: registered.registration.clone(),
+                })
+            }
+            Some(_) => Err(EffectPeerError::PublicationConflict),
+            None => Err(EffectPeerError::StepConflict),
+        }
+    }
+
+    fn commit_effect(
+        &self,
+        effect: &EffectRequest,
+        prepared: &Self::Prepared,
+        metadata: &Self::CommitMetadata,
+    ) -> Result<Self::CommitEvidence, Self::Error> {
+        validate_reference_admission_binding(effect, &prepared.registration)?;
+        if prepared.effect != *effect {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        if metadata.domain_revision == 0 {
+            return Err(EffectPeerError::InvalidRequest);
+        }
+
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        validate_publication_request(&state.config, &prepared.registration)?;
+        if !gate_open(state.session.as_ref()) {
+            return Err(EffectPeerError::GateClosed);
+        }
+        let replay = match state.admissions.get_mut(&prepared.registration.record.effect) {
+            Some(admission)
+                if admission.registration == prepared.registration
+                    && admission.effect == *effect =>
+            {
+                match admission.phase {
+                    ReferenceAdmissionPhase::Registered => {
+                        return Err(EffectPeerError::StepConflict);
+                    }
+                    ReferenceAdmissionPhase::Prepared => {
+                        admission.phase = ReferenceAdmissionPhase::Committed;
+                        admission.commit = Some(*metadata);
+                        false
+                    }
+                    ReferenceAdmissionPhase::Committed if admission.commit == Some(*metadata) => {
+                        true
+                    }
+                    ReferenceAdmissionPhase::Committed => {
+                        return Err(EffectPeerError::StepConflict);
+                    }
+                }
+            }
+            Some(_) => return Err(EffectPeerError::PublicationConflict),
+            None => return Err(EffectPeerError::StepConflict),
+        };
+        Ok(ReferenceEffectCommitEvidence {
+            result: metadata.result,
+            domain_revision: metadata.domain_revision,
+            replay,
+        })
+    }
+}
+
+fn validate_reference_admission_binding(
+    effect: &EffectRequest,
+    request: &EffectPublicationRequest,
+) -> Result<(), EffectPeerError> {
+    if request.record.operation != effect.operation
+        || request.source_epoch != effect.lease_epoch
+        || request.key.source != effect.node
+        || request.record.classification != JointEffectClassification::Registered
+        || request.record.outcome_digest.is_some()
+        || request.record.tombstone_digest.is_some()
+    {
+        return Err(EffectPeerError::InvalidRequest);
+    }
+    Ok(())
 }
 
 impl EffectPeer for ReferenceEffectPeer {

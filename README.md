@@ -80,6 +80,15 @@ resource bindings, resume, and produce executable evidence about what happened.
 > Confidential-continuity, stable API, and production claims also remain
 > unearned. Roadmap Stage 5 has not started.
 
+The newer current-main admission-ordered checkpoint is recorded separately in
+[`status/current-capabilities.toml`](status/current-capabilities.toml). At exact
+revision `4314a181...`, the checked same-host cell performs production Nexus
+`Register`/`Prepare`/`Commit` before the external logical request, recovers a
+lost Commit acknowledgement by byte-identical replay, and then executes vISA
+freeze, Nexus closure, source fencing, destination activation, and reconcile.
+It does not replace the accepted implementation identity above and is not yet a
+long-term archived checkpoint or a qualified production adapter.
+
 ## The problem
 
 WebAssembly makes code portable. It does not by itself make a running system's

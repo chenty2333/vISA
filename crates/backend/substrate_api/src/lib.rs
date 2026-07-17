@@ -9,11 +9,13 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+mod effect_closure;
 use contract_core::{
     AuthorityGrant, BindingReceipt, Digest, EffectOutcome, EffectRequest, EntityRef, EvidenceRef,
     Extension, IdempotencyKey, Identity, JournalEntry, JournalPosition, LeaseEpoch,
     LogicalDurationNanos, NodeIdentity, OperationRecord, Rights,
 };
+pub use effect_closure::*;
 
 /// Provider-neutral failure categories. Canonical effect outcomes remain in
 /// [`contract_core::EffectOutcome`].

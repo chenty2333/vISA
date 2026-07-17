@@ -547,6 +547,25 @@ once. Because the request completes first and no vISA freeze/fence/activation
 runs, this cell does not qualify Nexus effect admission or a vISA runtime
 handoff.
 
+### Current admission-ordered engineering checkpoint
+
+The moving implementation boundary is recorded in
+[`status/current-capabilities.toml`](../status/current-capabilities.toml), not by
+rewriting the accepted result above. Exact revision `4314a181...` adds a
+same-host admission-ordered logical-request cell: production Nexus
+`Register`/`Prepare`/`Commit` and exact lost-acknowledgement replay complete
+before the external request is sent; the cell then runs vISA freeze, Nexus
+closure, ownership recovery, source fence, destination activation, and
+reconcile. Its exact-SHA CI passed.
+
+This is a current engineering checkpoint, not a replacement for the accepted
+`d3b07f11...` implementation identity. It remains host-process and same-boot
+only, the neutral mapping remains `adapter_qualification=false`, and the result
+does not establish effect-in-flight freeze, post-commit service death/rebind,
+retained-device recovery, real OSTD/IRQ/SMP, reboot recovery, or cross-host
+execution. Native and neutral wire v1 remain frozen; new provider capabilities
+belong to v2 or an explicitly versioned extension.
+
 The standalone process publisher now owns a strict three-file
 manifest/report/executed-binary artifact; the supplemental logical publisher owns
 a strict five-file artifact including two SQLite databases and the same binary

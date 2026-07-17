@@ -7,7 +7,7 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, Identity};
+use contract_core::{Digest, EffectRequest, Identity};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, NexusFreezeReceipt, NexusThawReceipt, OwnershipAbortReceipt,
@@ -16,6 +16,10 @@ use joint_handoff_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use substrate_api::{
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProtocolRange,
+    EffectClosureProvider, EffectClosureProviderDescriptor, EffectClosureProviderLimits,
+};
 use visa_conformance::{
     JointEffectClassification, joint_classification_counts, joint_classification_root,
     joint_effect_cohort_digest,
@@ -35,6 +39,7 @@ use crate::{
 };
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -330,6 +335,7 @@ struct ProcessFreeze {
 
 #[derive(Clone)]
 struct ProcessLiveEffect {
+    effect_request: Option<EffectRequest>,
     registration: EffectPublicationRequest,
     native_client_effect: u64,
     native_effect_id: u64,
@@ -344,6 +350,7 @@ struct ProcessLiveEffect {
 
 #[derive(Clone)]
 struct PendingLiveRegistration {
+    effect_request: Option<EffectRequest>,
     request: EffectPublicationRequest,
     request_digest: Digest,
     native_request: RegisterEffect,
@@ -553,7 +560,7 @@ impl ProcessEffectPeer {
         request: EffectPublicationRequest,
     ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
         let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
-        state.register_live_effect(request)
+        state.register_live_effect(None, request)
     }
 
     pub fn prepare_live_effect(
@@ -592,6 +599,75 @@ impl ProcessEffectPeer {
     ) -> Result<ProcessServiceRebindObservation, EffectPeerError> {
         let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
         state.crash_and_rebind_service(replacement_supervisor, replacement_supervisor_generation)
+    }
+}
+
+impl EffectClosureProvider for ProcessEffectPeer {
+    type RegistrationRequest = EffectPublicationRequest;
+    type Registered = ProcessLiveEffectAdvance;
+    type Prepared = ProcessLiveEffectAdvance;
+    type CommitMetadata = ProcessLiveEffectCommitMetadata;
+    type CommitEvidence = ProcessLiveEffectAdvance;
+    type Error = EffectPeerError;
+
+    fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
+        Ok(EffectClosureProviderDescriptor {
+            protocol: EffectClosureProtocolRange::v2_preview(),
+            capabilities: EffectClosureCapabilities {
+                effect_admission: true,
+                freeze_thaw: true,
+                commit_close: true,
+                // The native v1 test slice has a same-Registry scripted
+                // service rebind, not a general supervisor lifecycle contract.
+                crash_rebind: false,
+                retained_device: false,
+                persistent_query: false,
+            },
+            authentication: EffectClosureAuthenticationProfile::IntegrityOnly,
+            limits: EffectClosureProviderLimits {
+                max_scopes: 1,
+                max_effects_per_scope: 1,
+                max_inflight_mutations: 1,
+                max_request_bytes: MAX_REQUEST_BYTES as u64,
+                max_receipt_bytes: MAX_RESPONSE_BYTES as u64,
+            },
+        })
+    }
+
+    fn register_effect(
+        &self,
+        effect: &EffectRequest,
+        request: &Self::RegistrationRequest,
+    ) -> Result<Self::Registered, Self::Error> {
+        if request.record.operation != effect.operation
+            || request.source_epoch != effect.lease_epoch
+            || request.key.source != effect.node
+        {
+            return Err(EffectPeerError::InvalidRequest);
+        }
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.register_live_effect(Some(effect), request.clone())
+    }
+
+    fn prepare_effect(
+        &self,
+        effect: &EffectRequest,
+        registered: &Self::Registered,
+    ) -> Result<Self::Prepared, Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.require_provider_effect(effect, registered.token())?;
+        state.prepare_live_effect(registered.token())
+    }
+
+    fn commit_effect(
+        &self,
+        effect: &EffectRequest,
+        prepared: &Self::Prepared,
+        metadata: &Self::CommitMetadata,
+    ) -> Result<Self::CommitEvidence, Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.require_provider_effect(effect, prepared.token())?;
+        state.commit_live_effect(prepared.token(), *metadata)
     }
 }
 
@@ -754,12 +830,15 @@ impl ProcessEffectPeerState {
 
     fn register_live_effect(
         &mut self,
+        effect_request: Option<&EffectRequest>,
         request: EffectPublicationRequest,
     ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
         validate_live_registration(self.config, &request)?;
         let request_digest = live_registration_digest(&request)?;
         if let Some(existing) = self.live_effects.get(&request.record.effect) {
-            return if existing.registration == request {
+            return if existing.registration == request
+                && existing.effect_request.as_ref() == effect_request
+            {
                 Ok(existing.registered.replayed())
             } else {
                 Err(EffectPeerError::PublicationConflict)
@@ -777,7 +856,10 @@ impl ProcessEffectPeerState {
             resuming_staged_registration && self.pending_lost_response.is_some();
         let client_effect = compact_identity(b"client-effect", request.record.effect);
         let register = if let Some(pending) = &self.pending_live_registration {
-            if pending.request != request || pending.request_digest != request_digest {
+            if pending.request != request
+                || pending.effect_request.as_ref() != effect_request
+                || pending.request_digest != request_digest
+            {
                 return Err(EffectPeerError::PublicationConflict);
             }
             let projected = native_register_request(&request, client_effect);
@@ -804,6 +886,7 @@ impl ProcessEffectPeerState {
             // recovery even when another portable identity has the same v1
             // wire projection.
             self.pending_live_registration = Some(PendingLiveRegistration {
+                effect_request: effect_request.cloned(),
                 request: request.clone(),
                 request_digest,
                 native_request: projected,
@@ -852,6 +935,7 @@ impl ProcessEffectPeerState {
         self.live_effects.insert(
             effect,
             ProcessLiveEffect {
+                effect_request: effect_request.cloned(),
                 registration: request,
                 native_client_effect: client_effect,
                 native_effect_id,
@@ -866,6 +950,19 @@ impl ProcessEffectPeerState {
         );
         self.pending_live_registration = None;
         Ok(registered)
+    }
+
+    fn require_provider_effect(
+        &self,
+        effect: &EffectRequest,
+        token: &ProcessLiveEffectToken,
+    ) -> Result<(), EffectPeerError> {
+        let live = self.live_effects.get(&token.effect).ok_or(EffectPeerError::TokenMismatch)?;
+        if live.effect_request.as_ref() == Some(effect) {
+            Ok(())
+        } else {
+            Err(EffectPeerError::PublicationConflict)
+        }
     }
 
     fn prepare_live_effect(

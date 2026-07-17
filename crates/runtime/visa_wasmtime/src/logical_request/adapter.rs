@@ -2,6 +2,7 @@ use contract_core::{
     ActivationRole, ActivationStatus, Digest, EffectRequest, HandoffPhase, JournalPosition,
     ProfileAccess,
 };
+use substrate_api::{CommittedEffectPermit, EffectClosureProvider};
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
     PortableLogicalRequestState, ProfileBinding, ResourceBindingError, RuntimeIdentity,
@@ -247,6 +248,9 @@ where
         self.validate_active_status()
     }
 
+    /// Legacy Stage 3 entrypoint. This profile does not enforce Nexus effect
+    /// admission; admission-required callers use `prepare_start` followed by
+    /// `start_admitted`.
     pub fn start(
         &mut self,
         request: Vec<u8>,
@@ -307,6 +311,8 @@ where
 
     /// Start a previously previewed request only while the complete canonical
     /// state, journal position, and re-derived effect request still match.
+    /// This remains an unadmitted Stage 3 compatibility entrypoint; it is not a
+    /// universal effect-admission enforcement boundary.
     pub fn start_prepared(
         &mut self,
         prepared: &PreparedLogicalRequestStart,
@@ -341,6 +347,25 @@ where
             return Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
         }
         Ok(result)
+    }
+
+    /// Dispatch a prepared request only after an effect-closure provider has
+    /// committed the exact canonical effect. Consuming this permit prevents
+    /// local reuse; canonical operation/idempotency identity still governs
+    /// provider replay and duplicate dispatch recovery.
+    pub fn start_admitted<'a, C>(
+        &mut self,
+        prepared: &PreparedLogicalRequestStart,
+        provider: &'a C,
+        permit: CommittedEffectPermit<'a, C>,
+    ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError>
+    where
+        C: EffectClosureProvider,
+    {
+        if !permit.authorizes(provider, prepared.effect_request()) {
+            return Err(LogicalRequestAdapterError::InvalidOperation);
+        }
+        self.start_prepared(prepared)
     }
 
     pub fn observe(
