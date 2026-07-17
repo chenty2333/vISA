@@ -7,10 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact_io::{SecureArtifactError, SecureArtifactErrorKind, SecureArtifactRoot};
 
-pub const STAGE1_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage1-evidence-v0.4";
+pub const STAGE1_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage1-evidence-v0.5";
+pub const STAGE1_MATRIX_SCHEMA_VERSION: &str = "visa-stage1-matrix-provenance-v3";
 pub const STAGE1_WORKER_PROTOCOL_VERSION: u64 = 4;
 pub const STAGE1_CAPABILITY_ID: &str = "cooperative-stateful-component-handoff";
 pub const STAGE1_DEFAULT_TIMER_DELAY_NS: u64 = 50_000_000;
+// Rejection paths must observe the pre-freeze Armed state independently of
+// scheduler delays across their bounded worker request sequence.
+pub const STAGE1_REJECTION_TIMER_DELAY_NS: u64 = 180_000_000_000;
 // The unsupported-timer cell must still present a Pending disposition when
 // destination validation rejects its semantics. The visa-system registry test
 // keeps this evidence input strictly above the bounded BootstrapSource tail +
@@ -18,6 +22,16 @@ pub const STAGE1_DEFAULT_TIMER_DELAY_NS: u64 = 50_000_000;
 // accepted pending-timer cells, this rejection path never waits for expiry.
 pub const STAGE1_TIMER_UNSUPPORTED_DELAY_NS: u64 = 60_000_000_000;
 const MAX_STAGE1_RETAINED_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
+
+pub fn stage1_timer_delay_ns(case_id: &str) -> u64 {
+    match case_id {
+        "safe-point-unreachable" | "unsupported-live-resource-or-borrow" => {
+            STAGE1_REJECTION_TIMER_DELAY_NS
+        }
+        "timer-semantics-unsupported" => STAGE1_TIMER_UNSUPPORTED_DELAY_NS,
+        _ => STAGE1_DEFAULT_TIMER_DELAY_NS,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

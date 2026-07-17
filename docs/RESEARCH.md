@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -18,10 +18,11 @@ The useful vISA hypothesis is:
 > provenance, rebuilding native resource bindings under target policy, and
 > verifying the result with a canonical effect trace.
 
-The candidate research contribution, subject to implementation, evaluation,
-and a systematic literature review, is the combination of runtime-external
-resource semantics, authority continuity, explicit handoff failure, and
-executable cross-adapter evidence.
+The broader research contribution remains a hypothesis subject to further
+evaluation and a systematic literature review. The current implementation
+combines runtime-external resource semantics, authority continuity, explicit
+handoff failure, and executable cross-adapter evidence; that implementation
+does not by itself establish paper novelty.
 
 Cross-ISA or cross-runtime WebAssembly execution is a validation dimension. It
 is not sufficient novelty on its own.
@@ -124,7 +125,7 @@ Opaque snapshots preserve machine state, but do not establish external-effect,
 authority, and freshness continuity. Two-phase commit, atomic RPC,
 presumed-abort/presumed-commit recovery, idempotency keys, and fencing leases
 already provide the basic vocabulary for prepared state, decision recovery, and
-stale-writer exclusion. The candidate contribution must not be described as the
+stale-writer exclusion. The bounded contribution must not be described as the
 invention of a prepared record, signed receipt, epoch, or commit protocol.
 
 Confidential VM migration and attestation-bound key release additionally protect
@@ -135,13 +136,15 @@ prove that a replayed ownership history is fresh. Conversely, a semantic
 handoff receipt graph does not provide encryption, attestation, rollback
 resistance, or protected storage.
 
-The candidate `bounded-joint-handoff-refinement-v1` contribution is narrower:
-an executable refinement among vISA portable continuity, one externally owned
-non-equivocating decision, and an independently owned native effect-cohort
-closure service. The boundary is useful only if neither adapter copies the
-other's state machine or ledger, unknown outcomes remain fail closed, and
-destination activation is derived from the exact commit, closure, and source
-fence chain.
+The accepted bounded systems/research claim
+`bounded-joint-handoff-refinement-v1` is narrower: an executable refinement
+among vISA portable continuity, one externally owned non-equivocating decision,
+and an independently owned native effect-cohort closure service. The boundary
+is useful only if neither adapter copies the other's state machine or ledger,
+unknown outcomes remain fail closed, and destination activation is derived
+from the exact commit, closure, and source
+fence chain. No monolithic, cross-host, or production execution cell runs all
+three evidence axes end to end; acceptance is a bounded composition result.
 
 The current source lock pins remote-accepted neutral implementation
 `f4a8211f0e5fde13e0f6101be3c3322854458c79` (tree
@@ -149,10 +152,11 @@ The current source lock pins remote-accepted neutral implementation
 contract, 16-case normative model, TLA+ safety/progress checks, expected rollback
 counterexample, independent mutation-tested oracle, and exact Nexus native-v1
 field mapping. Earlier remote results, including `8fcdaf42...`, remain historical
-evidence rather than the current source identity. The mapping still declares
-`adapter_qualification=false`, so it is contract evidence rather than Nexus
-execution truth. The vISA registry has 16 case-identity mappings plus one
-supplemental retained-tombstone recovery scenario.
+evidence rather than the current source identity. The separate Nexus
+qualification lock remains `prospective=true`, and the neutral mapping still
+declares `adapter_qualification=false`; neither becomes Nexus execution truth.
+The vISA registry has 16 case-identity mappings plus one supplemental
+retained-tombstone recovery scenario.
 
 The TLA+ `BeginFreeze` action deliberately makes gate close, source freeze,
 freeze-generation advance, and boundary capture one atomic abstract step. TLC
@@ -173,6 +177,14 @@ model. The separate Nexus-local axis is locally clean at
 production Registry refinement was checked. Exact-binary process tests pass;
 their artifacts retain the executed bytes by content identity, while generated
 receipt and binary digests remain run-specific rather than revision identity.
+The accepted vISA implementation identity is
+`d3b07f1114cb49e26dd62fb252a895022ac2a743`. Its exact-SHA CI artifacts were
+downloaded under independent roots, and the reference, Nexus-lock, exact-binary
+process, and supplemental logical-request verifier paths all passed against the
+committed locks. This receipt-only documentation lineage records acceptance
+without replacing that implementation identity. Acceptance is limited to this
+bounded evidence composition; it is neither a universal proof of RQ4 nor a
+claim of paper novelty.
 
 ### Independent Component Model runtime availability
 
@@ -313,7 +325,8 @@ schedules and 16 concrete cases exercise both freeze/publication orders,
 abort/thaw, lost commit acknowledgement, rebind, stale receipts, decision
 races, crash recovery, and substituted destination preparation; the concrete
 runner adds one supplemental retained-tombstone recovery case. The HostSubstrate
-and Nexus-local axes are implemented and locally verified. The real
+and Nexus-local axes are implemented, and exact-revision local plus downloaded-
+artifact verification closes the named same-boot bounded claim. The real
 logical-request experiment loses the ownership Commit acknowledgement only
 after durability, then separately discards the terminal Nexus child response
 before adapter acceptance. Exact query/retry and same-request-ID byte-identical
@@ -330,13 +343,14 @@ falsifier classes, while its actual model/oracle/Registry suites execute their
 declared sequence, property, and Loom tests. The 11-name catalog is not eleven
 independently source-mutated Nexus builds.
 
-The standalone publication/relocation path has a smoke pass, but the final clean
-vISA artifact and remote CI remain open. The
-accumulated evidence cannot establish real OSTD execution, IRQ/SMP behavior,
-Registry replacement, the production retained-tombstone path, host-reboot
-recovery, permanent source loss, cross-host progress, Byzantine safety,
+The standalone publication/relocation path, exact-revision remote CI, and
+post-download verification passed. This closes only
+`bounded-joint-handoff-refinement-v1` under the named same-boot TCB and fault
+matrix. The accumulated evidence cannot establish real OSTD execution, IRQ/SMP
+behavior, Registry replacement, the production retained-tombstone path,
+host-reboot recovery, permanent source loss, cross-host progress, Byzantine safety,
 cryptographic authenticity, anti-rollback, freshness, TEE/KMS behavior, or
-confidentiality.
+confidentiality. Roadmap Stage 5 remains not started.
 
 ## Demand validation
 

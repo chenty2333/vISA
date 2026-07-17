@@ -4,7 +4,7 @@ Status: accepted target boundary.
 
 Implementation status: transitional and incomplete.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 This document defines the intended system boundary. It does not imply that
 every described capability is implemented or validated.
@@ -112,21 +112,25 @@ and commit/abort.
 
 Opaque snapshots can preserve machine state, but they do not establish whether
 an external effect completed, whether old authority is irreversibly closed, or
-whether an observed ownership decision is fresh. The candidate
-`bounded-joint-handoff-refinement-v1` track asks whether a minimal semantic
-handoff layer can compose three separate authorities without copying any of
-their native state: vISA portable continuity, one durable ownership decision,
-and native closure of the frozen source effect cohort.
+whether an observed ownership decision is fresh. The accepted bounded
+systems/research claim `bounded-joint-handoff-refinement-v1` evaluates whether a
+minimal semantic handoff layer can compose three separate authorities without
+copying any of their native state: vISA portable continuity, one durable
+ownership decision, and native closure of the frozen source effect cohort.
 
-The current candidate is deliberately same-boot. Its source lock pins
-remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
+The accepted claim is deliberately same-boot. Its vISA implementation identity
+is `d3b07f1114cb49e26dd62fb252a895022ac2a743`; this receipt-only documentation
+lineage records acceptance without replacing that identity. Its source lock
+pins remote-accepted neutral implementation
+`f4a8211f0e5fde13e0f6101be3c3322854458c79`
 (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`), which defines the 16
 normative schedules and current Nexus native-v1 mapping. Its exact-SHA artifact
 was independently reverified after download; `be250c30...` is the later receipt
-lineage. Earlier accepted revisions remain historical evidence only. The current mapping preserves
-`adapter_qualification=false`: it freezes a relation, not Nexus execution
-truth. The reference lane maps the 16 normative cases by identity to 16 vISA
-cases and adds one supplemental retained-tombstone recovery.
+lineage. Earlier accepted revisions remain historical evidence only. The
+separate Nexus qualification lock remains `prospective=true`, while the neutral
+mapping preserves `adapter_qualification=false`: it freezes a relation, not
+Nexus execution truth. The reference lane maps the 16 normative cases by
+identity to 16 vISA cases and adds one supplemental retained-tombstone recovery.
 
 The system runner separately executes an online HostSubstrate commit/abort
 vertical through `Coordinator<SqliteProvider>`. Its strict verifier reconstructs
@@ -160,11 +164,12 @@ remain in the TCB. Authentication is test identity/integrity binding rather than
 cryptographic freshness, and progress depends on recovery services eventually
 becoming available.
 
-This work is not Stage 5. Artifact-owned executable publication is being closed,
-but the final artifact still requires the committed clean vISA SHA and its
-exact-SHA CI receipt. No result establishes Registry
-replacement, the production retained-tombstone path, real OSTD IRQ/SMP,
-host-reboot or permanent source-loss recovery, cross-host continuity, Byzantine
+This work is not Stage 5. Exact-SHA CI for the accepted vISA implementation and
+all four post-download verifier paths passed against the committed locks,
+closing only the named same-boot bounded systems/research claim. No result
+establishes Registry replacement, the production retained-tombstone path,
+real OSTD IRQ/SMP, host-reboot or permanent source-loss recovery, cross-host
+continuity, Byzantine
 ownership-service safety, cryptographic authenticity, anti-rollback or
 freshness, TEE or KMS behavior, confidentiality, or production readiness. Stage
 5 remains not started.

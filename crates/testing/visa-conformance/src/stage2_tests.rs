@@ -2534,11 +2534,7 @@ fn wasmtime_transcript(worker: &str, state_commands: &[(&str, bool)]) -> Vec<u8>
                     "case_id": case_id,
                     "namespace_availability": "correct",
                     "authority_policy": "sufficient",
-                    "timer_delay_ns": if case_id == "timer-semantics-unsupported" {
-                        crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
-                    } else {
-                        crate::STAGE1_DEFAULT_TIMER_DELAY_NS
-                    }
+                    "timer_delay_ns": crate::stage1_timer_delay_ns(case_id)
                 },
                 "fault": null
             }

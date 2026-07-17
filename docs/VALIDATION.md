@@ -18,24 +18,27 @@ inherit the Strict Stage 2 cross-runtime result. The Stage 4 matrix also holds
 Wasmtime and timer/KV fixed
 and does not inherit that independent-runtime claim. Confidential, release,
 performance, and production validation remain outside the implemented
-boundary. A separate `system-joint-handoff` lane now combines a reference
-protocol subreport with an independently verified HostSubstrate vertical for
-the candidate `bounded-joint-handoff-refinement-v1`. Nexus-local qualification
-is locked to clean `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, and the exact-
-binary process tests pass locally. The process publisher now owns the executed
-binary in its strict artifact; the logical-request publisher is explicitly
-supplemental. The final clean-vISA artifacts and exact-SHA vISA CI remain
-pending. Nexus run `29475464538` attempt 1 retained a QEMU timeout failure
+boundary. A separate `system-joint-handoff` lane combines a reference protocol
+subreport with an independently verified HostSubstrate vertical for the
+accepted bounded `bounded-joint-handoff-refinement-v1` claim. Nexus-local
+qualification is locked to clean
+`8e5123c46569e8ebdaba9f4f56bea6584ab58586`; the exact-binary process artifact
+owns the executed binary, and the logical-request artifact remains explicitly
+supplemental. Accepted vISA implementation
+`d3b07f1114cb49e26dd62fb252a895022ac2a743` completed the clean local, Docker,
+exact-SHA CI, relocation, and post-download obligations recorded in the
+[joint-handoff closure receipt](#joint-handoff-closure-receipt). Nexus run
+`29475464538` attempt 1 retained a QEMU timeout failure
 artifact; any same-SHA retry must be evaluated as a separate attempt rather than
 erasing that failure history.
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-07-17.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice, the legacy Stage 2 execution-path
 matrix, the strict Stage 2 runtime matrix, and the two bounded Stage 3 resource
 profiles, plus the completed bounded Stage 4 target/substrate and emulated
-cross-ISA matrix, and the candidate joint-handoff reference boundary. Update it
+cross-ISA matrix, and the accepted bounded joint-handoff boundary. Update it
 when executable gates change.
 
 ## Validation principle
@@ -93,9 +96,9 @@ v2 receipt, exact-binary process evidence, or final clean-vISA artifact.
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 | `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
 | `system-stage4-target`, `system-stage4-isa` | Each invokes the same complete fail-closed `system-stage4` aggregate | These are edit-loop aliases, not reduced matrices or independent additional claims. |
-| `system-joint-handoff` | Exact Git-object source-lock validation; 16 normative concrete production-reducer traces; 16 reference ownership/effect cases plus one supplemental retained-tombstone scenario; durable SQLite reopen; an online `Coordinator<SqliteProvider>` HostSubstrate cell with 14 commit records, 9 abort records, and seven canonical peer-invocation classes; exact two-file publication; strict independent semantic verification before and after relocation | Establishes same-boot local evidence for the neutral/reference and vISA HostSubstrate axes of candidate `bounded-joint-handoff-refinement-v1`. It does not itself execute the separate Nexus-local or exact-binary process lanes or close the final clean-vISA cell. |
+| `system-joint-handoff` | Exact Git-object source-lock validation; 16 normative concrete production-reducer traces; 16 reference ownership/effect cases plus one supplemental retained-tombstone scenario; durable SQLite reopen; an online `Coordinator<SqliteProvider>` HostSubstrate cell with 14 commit records, 9 abort records, and seven canonical peer-invocation classes; exact two-file publication; strict independent semantic verification before and after relocation | Establishes the same-boot neutral/reference and vISA HostSubstrate axes of accepted `bounded-joint-handoff-refinement-v1`. It does not itself execute or absorb the separate Nexus-local and exact-binary process lanes. |
 | `run-nexus-handoff-qualification.sh` | Clean exact-SHA Nexus checkout; source fingerprint; model, oracle, fault matrix, and production Registry refinement; independent v2 receipt verification; exact artifact copy and relocated recheck | Locally establishes only `same-boot-nexus-handoff-admission-only` for the locked Nexus revision. It does not execute the joint vISA cell, real OSTD/IRQ/SMP, reboot recovery, Registry replacement, or the production retained-tombstone path. |
-| `run-nexus-process-joint-cell.sh` | Clean exact vISA and Nexus checkouts; current neutral source lock; Nexus v2 lock and receipt; exact Nexus binary; two process scenarios; strict three-file manifest/report/executed-binary publication; independent static and semantic verification before and after relocation | The implementation and smoke run establish the self-contained publisher/verification mechanism without re-executing the retained binary or claiming reproducible source-to-binary derivation. A final qualification artifact still requires the committed clean vISA SHA. |
+| `run-nexus-process-joint-cell.sh` | Clean exact vISA and Nexus checkouts; current neutral source lock; Nexus v2 lock and receipt; exact Nexus binary; two process scenarios; strict three-file manifest/report/executed-binary publication; independent static and semantic verification before and after relocation | Establishes the self-contained exact-binary process axis when bound to the accepted clean vISA SHA, without re-executing the retained binary or claiming reproducible source-to-binary derivation. |
 | `run-logical-request-lost-ack-cell.sh` | The same exact identities plus one real logical request, durable ownership Commit acknowledgement loss, terminal Nexus response loss, two SQLite databases, raw JSONL, and a strict five-file artifact including the executed binary | Supplemental observational evidence only. It proves the named retries and post-hoc lineage without duplicate execution/publication; it does not execute vISA freeze/fence/activation or prove Nexus admission preceded the external effect. |
 
 The named `system` reference cell uses the vISA Wasmtime adapter for both isolated
@@ -136,9 +139,10 @@ The current CI workflow does not establish:
 - real AArch64 hardware, a second Stage 4 runtime, AOT binary portability,
   cross-host target continuity, 32-bit/big-endian targets, or Stage 3 resources
   across the Stage 4 endpoints;
-- final clean joint-vISA artifact and remote closure; neutral, HostSubstrate,
-  Nexus-local, exact-binary process, and publisher-smoke evidence exist locally,
-  but the current vISA worktree cannot be the final clean source identity;
+- one monolithic production execution that combines the separately verified
+  neutral/reference, HostSubstrate, Nexus-local, exact-binary process, and
+  supplemental logical-request axes; acceptance is a bounded refinement claim,
+  not evidence that every axis ran inside one cross-host handoff;
 - provider- or kernel-enforced admission against a second raw coordinator or
   hostile caller of public projection APIs; the bounded Host cell declares
   `exclusive_trusted_coordinator_api=true` as a TCB assumption;
@@ -170,10 +174,10 @@ enforcement, cross-host or confidential continuity, transparent migration,
 release quality, or production safety. The accepted
 [Stage 4 closure receipt](#stage-4-closure-receipt) confirms the required
 complete workflow and post-CI artifact verification without widening any of
-those exclusions. The same workflow now also requires the joint-handoff lane.
-That lane includes HostSubstrate evidence but does not absorb the separate
-Nexus-local/process evidence or add cross-host, cryptographic,
-anti-rollback/freshness, or Stage 5 claims.
+those exclusions. The same workflow also requires both joint-handoff jobs. The
+Docker lane includes HostSubstrate evidence while the host-built lane supplies
+the separate Nexus-local and process artifacts; neither absorbs the other or
+adds cross-host, cryptographic, anti-rollback/freshness, or Stage 5 claims.
 
 ## Validation tiers
 
@@ -215,19 +219,29 @@ Timer state is selected by an exhaustive case-registry strategy. The dedicated
 `visa-stage2-common-input-v2` contract fixes all 31 cases as three `Pending`, 22
 `Precompleted`, and six `ScenarioControlled` strategies. The dedicated positive,
 paused, completed, cancelled, and cleanup cases retain their distinct branches.
-`timer-semantics-unsupported` instead uses an explicit, provenance-bound 60 s
-timer so that, under the runner's bounded command-liveness model, its snapshot
-remains `Pending` until destination capability validation rejects it. All other
-cases retain the 50 ms workload delay. Cases whose primary claim is not timer
-disposition wait for that timer before handoff, require the `Completed` snapshot
-branch, and prove that the authoritative final trace does not recreate it.
-Scenario-controlled safe-point/live-resource rejections publish no snapshot and
+`safe-point-unreachable` and `unsupported-live-resource-or-borrow` use explicit,
+provenance-bound 180 s timers. That exceeds the sum of all 8 and 11 worker RPC
+timeout budgets, respectively, from timer activation through their final source
+dump. `timer-semantics-unsupported` retains its separately bound 60 s timer,
+which exceeds its three pre-freeze RPC budgets and keeps the snapshot `Pending`
+until destination capability validation rejects it. All other cases retain the
+50 ms workload delay. These bounds do not include an externally suspended
+runner or unbounded scheduling gaps between RPCs. Cases whose primary claim is
+not timer disposition wait for that timer before handoff, require the
+`Completed` snapshot branch, and prove that the authoritative final trace does
+not recreate it. The
+scenario-controlled safe-point/live-resource rejections publish no snapshot and
 must return to a running source with a positive armed timer. Each case keeps the
 same exact delay in every runtime cell, and every inner Stage 1 verifier checks
 that delay against matrix, config, and transcript provenance before Stage 2
 applies its existing semantic normalization; this change adds no new
 normalization exclusion. Pre-commit abort checks derive their exact component,
 timer, and KV expectation from the already locked snapshot branch.
+This maintenance revision emits `visa-stage1-evidence-v0.5` with
+`visa-stage1-matrix-provenance-v3`. The accepted exact-`I` archives remain
+`v0.4`/`v2` evidence and must be checked with their retained exact-`I` verifier;
+the schema change prevents either revision from silently accepting the other's
+different timer-input contract.
 The outer strategy check proves the case-specific snapshot disposition and
 authoritative final branch. Ordering within quiescence remains a Stage 1
 trace/raw-evidence obligation; it is not a wall-clock chronology claim or a
@@ -520,7 +534,7 @@ This receipt closes only the two named Stage 4 claims and does not promote the
 host receipt, QEMU execution, or identified sysroots into portable semantic
 truth.
 
-### Candidate joint-handoff evidence
+### Joint-handoff closure receipt
 
 Historical neutral evidence accepted the 16-case implementation at
 [`873880c706c01ef25caad755224af266fcb4d43a`](https://github.com/chenty2333/visa-nexus-handoff/commit/873880c706c01ef25caad755224af266fcb4d43a).
@@ -530,7 +544,8 @@ GitHub Actions run `29433027304`, job `87412563666`, accepted artifact
 expiry 2026-07-29). The artifact was downloaded under a different root and
 passed the same independent verifier. Receipt commit
 [`b5a46269295cf9f4711a39d7c902b95e107c2f87`](https://github.com/chenty2333/visa-nexus-handoff/commit/b5a46269295cf9f4711a39d7c902b95e107c2f87)
-records that closure without replacing the accepted implementation identity.
+records that closure without replacing the accepted neutral implementation
+identity.
 
 The later native-v1 mapping extension was independently accepted at
 [`8fcdaf42ec44ac30668eb2d4d704f28ac4191485`](https://github.com/chenty2333/visa-nexus-handoff/commit/8fcdaf42ec44ac30668eb2d4d704f28ac4191485),
@@ -556,7 +571,108 @@ Its run `29476495326`, job `87550513459`, and artifact `8366758594` succeeded;
 the downloaded ZIP digest matched GitHub metadata and its bundle passed the
 exact verifier before and after another relocation. Receipt commit
 `be250c30b99035807c553f26171aae72f651eb1e` passed its own CI and is
-documentation lineage rather than the accepted implementation identity.
+documentation lineage rather than the accepted neutral source identity.
+
+The accepted joint closure binds these exact source identities:
+
+| Role | Revision | Tree |
+| --- | --- | --- |
+| vISA accepted implementation (`I`) | `d3b07f1114cb49e26dd62fb252a895022ac2a743` | `e8115326b40c8031fba13be749760fbccc0491cb` |
+| Qualified Nexus (`N`) | `8e5123c46569e8ebdaba9f4f56bea6584ab58586` | `f3a23189f818f62f1635644ed436a51245f5cf0b` |
+| Nexus analyzed reference baseline | `7829e609b3d770b684316a30170a7412faa62f9b` | Not used as an executed checkout |
+| Neutral implementation | `f4a8211f0e5fde13e0f6101be3c3322854458c79` | `a65f264bb7eaf390cbd6285d791b4f7f43e9be25` |
+
+The neutral bundle SHA-256 is `afe0fdfba1d2e47f5b6ee582833c03befca8e436f3a3d09d0b5df27612549e31`;
+the joint source-lock SHA-256 is
+`e8894d79ba2b3f164e94451d14139313a477481dc11c94d84a76a7ef774b9d50`.
+The Nexus source fingerprint is
+`017c681be01ca123a1df9625f16dd7b0367f861f7ac3be1476baf11a89070f52`,
+its fault-matrix SHA-256 is
+`9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
+and its v2 qualification-lock SHA-256 is
+`21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
+
+Clean exact-`I` local evidence passed the host `full` gate, Docker `full`, Docker
+`system-joint-handoff`, the source-bound Nexus qualification, and the reference,
+process, and logical publishers plus original-location and relocated independent
+verification. The retained local archive's `SHA256SUMS` has SHA-256
+`f7ce7349fdc71161c8c11c4683fa00482d9ee0d3af8f31e45ff8ef0c29260240`.
+
+Nexus main push run `29536334333`, attempt 1, completed successfully at exact
+`N`. Quick job `87748433403` and full job `87748433313` both passed. Its
+`nexus-verification-bundle-1` artifact, ID `8391650885`, is 4,363,342 bytes;
+its Actions digest and actual downloaded ZIP SHA-256 are both
+`dc9e7a6a718645ccde3a48e4b6895dfa74454496252c383cf4fdecf556a5b595`,
+with expiry `2026-10-14T21:31:05Z`. A fresh detached exact-`N` checkout passed
+`./x verify-bundle` with 12 specifications, 17 stages, 58 artifacts,
+`dirty=false`, and `rebuild=true`. That archived receipt's `SHA256SUMS` has
+SHA-256 `75c86289bf0132a52dcf209812f532350f7fbf24c691e414a8e48f3cb636de26`.
+
+vISA master push run `29539269117`, workflow run number 36 and attempt 1, ran
+from `2026-07-16T22:21:15Z` through `2026-07-16T23:23:54Z`. It bound
+`GITHUB_SHA=I`, completed successfully, and closed all eleven jobs:
+
+| Job | Job ID |
+| --- | ---: |
+| Docker repository quality gate | `87757780812` |
+| Docker Stage 1 reference gate | `87757780868` |
+| Docker Stage 2b JcoNode gate | `87757780861` |
+| Docker legacy Stage 2 gate | `87757780942` |
+| Docker Strict Stage 2 gate | `87757780885` |
+| Docker Stage 3A regular-file gate | `87757780949` |
+| Docker Stage 3B logical-request gate | `87757780961` |
+| Docker Stage 4 target and ISA gate | `87757780797` |
+| Docker joint handoff reference-only gate | `87757780819` |
+| Nexus + vISA exact-SHA same-boot qualification | `87757780791` |
+| Exact-SHA qualification closure | `87766199846` |
+
+The closure job recorded repository quality, the six claim lanes, Stage 4, the
+joint reference lane, and the Nexus qualification lane as `success`. The final
+workflow published the expected nine artifacts. The two joint artifacts were
+downloaded under independent roots:
+
+| Artifact | ID | Bytes | Actions digest and actual ZIP SHA-256 | Expiry |
+| --- | ---: | ---: | --- | --- |
+| `joint-handoff-reference-system-evidence` | `8391793362` | 377,480 | `57dde6da8bed93349bbab7e4d6b158b989dfd57690cb38870a0a95d4c5e645de` | `2026-07-30T22:23:07Z` |
+| `nexus-visa-same-boot-qualification-evidence` | `8391815580` | 9,236,939 | `6e8896f02efe1dce640dbf2a2c9188abc3a0bd7ecfd7636fcc429d885828d8d4` | `2026-07-30T22:24:12Z` |
+
+The reference artifact contains one exact two-file publication. Its inner
+bundle ID is
+`sha256:2f90a2c97a73c0cc8eaa1df84fb0162026e22df42dc336b032a70e3b4317123d`;
+the downloaded `joint-handoff-evidence.json` and `production-replay.json`
+SHA-256 values are respectively
+`263768b0d47b75042d9b4aeb4780e5f22f7918a82df27c5d5cf05680d85c607e`
+and `3d9f0945caab7f9a0b7efd9d349fbb5b5d4c771e55a7ed645ace10e67f1029ea`.
+
+The qualification artifact retained the exact four-entry top-level inventory:
+the Nexus qualification directory, process directory, supplemental logical
+directory, and CI log. Selected downloaded SHA-256 values are:
+
+| Content | SHA-256 |
+| --- | --- |
+| Nexus qualification receipt | `53661654c4b22886f549946a4022bac2481b25384e8ac02760b956b596e8cfd4` |
+| CI-built Nexus binary | `cad710798438017ffcc9306877bade34403429cd3dab337fc1be04ff7a230ec4` |
+| Process manifest | `b3e1e7d0ead1204946f3ab53877fe98cc2afb0196617a8a1b1f9f456a333b168` |
+| Process report | `4d66a304d2b86a067663905673ecda3759a688993a18be14c45f35d28b8d2133` |
+| Logical manifest | `081d089ff3b486eb9321f01ed8c24811f8eeb90b7c3ce2a330c671e01b314ebc` |
+| Logical report | `557f5814c80d610179ba37ecca067d1d43eaf3f194a7f8babe92999fae7539ac` |
+| Logical ownership SQLite | `e57fa7a3348fef22a9305d36f16879423f1600e535e3755e200d92b09f543c85` |
+| Logical provider SQLite | `9866d2638a4847f9368bd8b89417b2a6b18add6b4db9a340258b02aeb5546e89` |
+
+Four post-download paths passed against the committed locks and exact source
+identities: `visa-conformance joint-handoff`, the source-bound Nexus
+qualification checker, the process artifact verifier, and the supplemental
+logical-request verifier. ZIP integrity, exact inventories, and all selected
+content digests were rechecked again when sealing the retained run archive. Its
+complete `SHA256SUMS` has SHA-256
+`03f0b09cdcee4d7012273fd31acc345147d6afa929d365ef4d17f5fd5d7c0d13`.
+
+The CI-built Nexus binary differs from the local exact-`N` binary SHA-256
+`6bf845f8fecd2b3ff5833aa505f2a392fa3e07d726326cf65d07b39a87358f51`.
+Both are run-local content identities. Neither the publisher nor this receipt
+claims bit-reproducible source-to-binary derivation, and post-download
+verification does not re-execute the retained binary or treat file mode as
+evidence.
 
 In that TLA+ model, `BeginFreeze` is one atomic abstract transition: admission
 closes, source authority freezes, the generation advances, and the abstract
@@ -620,8 +736,10 @@ matrix `9f3f1579172bf66dd5d58d2299c42dd4cb303cc74298c8d7a3a141e8cdcffd3e`,
 and v2 qualification-lock SHA-256
 `21b5404bc5c1ad1f48c4ffe37cf455d104acac8ab9deca98f326d7c9b06072d9`.
 The receipt reports `production_registry_refinement_checked=true`, whereas the
-neutral mapping reports `adapter_qualification=false`. Those statements are
-deliberately about different evidence axes.
+neutral mapping reports `adapter_qualification=false`. The separate Nexus
+qualification lock remains `prospective=true`. Acceptance in this document is
+vISA's decision about the bounded evidence composition; it does not change
+Nexus v0.1 or RFC acceptance and does not qualify the neutral adapter mapping.
 
 Exact-binary process tests cover raw JSONL replay and chain preservation, Registered-effect survival
 across abort/thaw, the bounded process qualification scenarios including
@@ -644,20 +762,19 @@ Register/Prepare/Commit and no vISA source freeze/fence or destination activatio
 runs, so this does not establish Nexus admission ordering or a vISA runtime
 handoff. It also does not claim retained raw TCP frame capture.
 
-The standalone process publisher and relocation runner are implemented and have
-passed a smoke run. They validate clean source identities, both locks, the Nexus
-receipt, and the exact binary; publish a strict three-file
+The exact-binary process publisher and relocation runner validate clean source
+identities, both locks, the Nexus receipt, and the exact binary; publish a strict three-file
 manifest/report/executed-binary artifact; verify in a separate process; relocate;
 and verify the same bytes again. The supplemental logical publisher emits a
 strict five-file artifact including both SQLite databases and the executed
 binary. Static verification binds the binary content but does not re-execute it,
 claim reproducible derivation, or treat upload/download file mode as evidence.
-The final vISA revision,
-combined vISA/Nexus/neutral triplet, pushed vISA CI run, final artifact
-ID/digest, and post-download receipt are intentionally not recorded yet. They
-require this work to be committed and rerun from the resulting clean vISA SHA.
-Until then, `bounded-joint-handoff-refinement-v1` remains a candidate and the
-entire joint stage remains open.
+The accepted implementation identity is
+`d3b07f1114cb49e26dd62fb252a895022ac2a743`; the later receipt-only commit is
+documentation lineage and does not replace that implementation identity. The
+combined vISA/Nexus/neutral identities, exact-SHA CI, artifact metadata, and
+post-download rechecks are fixed above. This closes only the bounded joint
+research claim and does not relax any same-boot, TCB, or non-claim boundary.
 
 ### Stable artifact verification boundary
 
@@ -721,13 +838,15 @@ directories, symlinks, or publication root therefore cannot substitute code;
 unsupported translator output fails closed. The trusted Node executable and
 its execution environment, loader, shared libraries, and toolchain remain
 trusted inputs. Ptrace, process-memory, takeover, and denial-of-service
-boundaries are likewise explicitly outside this claim. The current verifier
-contract requires worker protocol v4, including Stage 4 target hello, subordinate
-Stage 1 matrix provenance v2, and top-level Stage 1 evidence v0.4. Protocol v4
-and matrix v2 make the per-case timer delay an explicit wire and
-config-provenance input; the exact verifier does not reinterpret matrix v1 under
-that contract. The top-level schema remains v0.4 because its bundle fields and
-outcome semantics did not change. Legacy
+boundaries are likewise explicitly outside this claim. The current maintenance
+verifier contract requires worker protocol v4, including Stage 4 target hello,
+subordinate Stage 1 matrix provenance v3, and top-level Stage 1 evidence v0.5.
+Protocol v4 and matrix v3 make the per-case timer delay an explicit wire and
+config-provenance input; the exact verifier does not reinterpret matrix v2 under
+that contract. The accepted exact-`I` verifier instead owns matrix v2 and
+top-level evidence v0.4. Worker protocol remains v4 across both revisions
+because its wire shape did not change; the evidence and matrix versions advance
+to prevent incompatible timer-input semantics from sharing one schema. Legacy
 Wasmtime/JcoNode outer evidence remains v2, while the separate
 Wasmtime/Wacogo strict outer evidence is v3; the two parsers reject mixed or
 unknown schemas, and older bundles do not inherit either newer claim boundary.
@@ -778,7 +897,7 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | Bounded logical-request continuity | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | Named target/substrate continuity | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Qx, Qx -> Hx, and Qx -> Qx; raw x86-64 Linux host receipt; owned worker/QEMU artifacts plus loader/sysroot receipts; four complete inner validations; and equality within the seven-cell aggregate | Real hardware, a new kernel/device substrate, another runtime/resource family, or cross-host behavior |
 | Emulated cross-ISA continuity | The fixed workload across Qx -> Qx, Qx -> Qa, Qa -> Qx, and Qa -> Qa; separate x86-64/AArch64 worker ELFs, artifact-owned QEMU executables and identified sysroots, four complete inner validations, and equality within the seven-cell aggregate | AOT binary portability, real AArch64 hardware, a second runtime, Stage 3 resources, 32-bit/big-endian targets, or cross-host behavior |
-| Candidate bounded joint-handoff refinement | The remote-accepted neutral model/mapping and unchanged 16-case registries plus one supplemental reference case; the vISA HostSubstrate 14-record commit/9-record abort vertical; locked Nexus-local production-Registry refinement; exact-binary process evidence in a strict three-file artifact; and a separately labeled supplemental logical-request dual-lost-ACK five-file artifact | The evidence axes remain distinct, the logical cell is not normative, and `exclusive_trusted_coordinator_api=true` plus semantic lock approval remain in the TCB. This does not imply adversarial raw-API admission, Nexus ordering of the supplemental external effect, Registry replacement, a production retained-tombstone path, real OSTD/IRQ/SMP, host reboot/permanent-source-loss recovery, cross-host transport, cryptographic authenticity, anti-rollback/freshness, TEE/KMS behavior, confidentiality, or Stage 5. Final vISA exact-SHA/post-download receipts are still required. |
+| Bounded joint-handoff refinement | The remote-accepted neutral model/mapping and unchanged 16-case registries plus one supplemental reference case; the vISA HostSubstrate 14-record commit/9-record abort vertical; locked Nexus-local production-Registry refinement; exact-binary process evidence in a strict three-file artifact; a separately labeled supplemental logical-request dual-lost-ACK five-file artifact; and the exact-SHA/post-download closure receipt above | The evidence axes remain distinct, the logical cell is not normative, and `exclusive_trusted_coordinator_api=true` plus semantic lock approval remain in the TCB. This does not imply adversarial raw-API admission, Nexus ordering of the supplemental external effect, Registry replacement, a production retained-tombstone path, real OSTD/IRQ/SMP, host reboot/permanent-source-loss recovery, cross-host transport, cryptographic authenticity, anti-rollback/freshness, TEE/KMS behavior, confidentiality, or Stage 5. |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |
 | Crash-safe handoff | Durable journal/commit records and faults at every lifecycle transition | Arbitrary external-effect atomicity |
 | Production readiness | Defined reliability, security, operability, compatibility, and performance criteria over representative workloads | No current gate establishes this claim |
@@ -927,9 +1046,9 @@ Even after the baseline slice passes, it does not prove:
   Wasmtime/Wacogo x86-64 Linux timer/KV matrix, and bounded Stage 4 separately
   adds only its named QEMU-user target/substrate and emulated x86-64/AArch64
   timer/KV cells under the recorded exact-SHA closure;
-- `bounded-joint-handoff-refinement-v1`; its locally verified neutral,
-  HostSubstrate, Nexus-local, process, and publisher mechanisms do not replace
-  the final clean-vISA artifact and remote CI closure;
+- any wider joint-handoff claim beyond accepted
+  `bounded-joint-handoff-refinement-v1`; its separate evidence axes do not imply
+  one monolithic cross-host or production execution;
 - correctness of a complete Linux personality, kernel, Virtio, filesystem, or
   network stack;
 - TEE attestation, KMS correctness, or general confidential-computing safety;

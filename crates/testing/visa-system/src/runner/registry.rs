@@ -182,7 +182,6 @@ impl CasePlan {
                 options.namespace_availability = NamespaceAvailability::Missing;
             }
             CaseKind::TimerUnsupported => {
-                options.timer_delay_ns = visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS;
                 destination_support = DestinationSupportMode::TimerSemanticsUnsupported;
             }
             CaseKind::LostCommitAck => {
@@ -321,7 +320,7 @@ pub(super) fn prepare_stage1_registry() -> Result<PreparedStage1Registry, Runner
     Ok(PreparedStage1Registry {
         plans,
         manifest: MatrixManifest {
-            schema: "visa-stage1-matrix-provenance-v2",
+            schema: visa_conformance::STAGE1_MATRIX_SCHEMA_VERSION,
             entries: matrix_entries,
             provider_fault_coverage,
         },
@@ -362,6 +361,8 @@ mod tests {
     use super::*;
     use crate::runner::WORKER_TIMEOUT;
 
+    const SAFE_POINT_FINAL_EVIDENCE_REQUESTS: u32 = 8;
+    const LIVE_RESOURCE_FINAL_EVIDENCE_REQUESTS: u32 = 11;
     const TIMER_UNSUPPORTED_PRE_FREEZE_REQUESTS: u32 = 3;
 
     #[test]
@@ -448,6 +449,22 @@ mod tests {
             .chain(precompleted.iter().copied())
             .collect::<BTreeSet<_>>();
         assert_eq!(partition, catalog);
+        let long_delay_cases = STAGE1_CASE_DEFINITIONS
+            .iter()
+            .filter(|definition| {
+                visa_conformance::stage1_timer_delay_ns(definition.id)
+                    != visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS
+            })
+            .map(|definition| definition.id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            long_delay_cases,
+            BTreeSet::from([
+                "safe-point-unreachable",
+                "timer-semantics-unsupported",
+                "unsupported-live-resource-or-borrow",
+            ])
+        );
 
         for definition in STAGE1_CASE_DEFINITIONS {
             let plan = CasePlan::new(definition).expect("registered case has a timer strategy");
@@ -461,11 +478,7 @@ mod tests {
                 panic!("{} is missing from the timer strategy partition", definition.id)
             };
             assert_eq!(plan.snapshot_timer_strategy, expected, "{}", definition.id);
-            let expected_timer_delay_ns = if definition.id == "timer-semantics-unsupported" {
-                visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
-            } else {
-                visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS
-            };
+            let expected_timer_delay_ns = visa_conformance::stage1_timer_delay_ns(definition.id);
             assert_eq!(plan.options.timer_delay_ns, expected_timer_delay_ns, "{}", definition.id);
             assert_eq!(
                 FixtureSpec::with_options(plan.options.clone())
@@ -517,15 +530,20 @@ mod tests {
     }
 
     #[test]
-    fn timer_unsupported_delay_exceeds_the_pre_freeze_request_budget() {
-        let bounded_request_budget = WORKER_TIMEOUT
-            .checked_mul(TIMER_UNSUPPORTED_PRE_FREEZE_REQUESTS)
-            .expect("request budget is representable");
-        assert_eq!(bounded_request_budget, Duration::from_secs(30));
-        assert!(
-            Duration::from_nanos(visa_conformance::STAGE1_TIMER_UNSUPPORTED_DELAY_NS)
-                > bounded_request_budget,
-            "the timer starts inside BootstrapSource, so its delay must exceed the remaining BootstrapSource request plus BeginQuiesce and FreezeSource budgets"
-        );
+    fn long_timer_delays_exceed_the_complete_observation_request_budgets() {
+        for (case_id, request_count, expected_budget) in [
+            ("safe-point-unreachable", SAFE_POINT_FINAL_EVIDENCE_REQUESTS, 80),
+            ("unsupported-live-resource-or-borrow", LIVE_RESOURCE_FINAL_EVIDENCE_REQUESTS, 110),
+            ("timer-semantics-unsupported", TIMER_UNSUPPORTED_PRE_FREEZE_REQUESTS, 30),
+        ] {
+            let bounded_request_budget =
+                WORKER_TIMEOUT.checked_mul(request_count).expect("request budget is representable");
+            assert_eq!(bounded_request_budget, Duration::from_secs(expected_budget));
+            assert!(
+                Duration::from_nanos(visa_conformance::stage1_timer_delay_ns(case_id))
+                    > bounded_request_budget,
+                "{case_id} timer starts inside BootstrapSource, so its delay must exceed every worker request through the final timer-state observation"
+            );
+        }
     }
 }
