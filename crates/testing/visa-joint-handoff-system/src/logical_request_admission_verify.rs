@@ -42,9 +42,9 @@ use crate::{
     EffectFreezeRequest, EffectFreezeToken, LOGICAL_REQUEST_ADMISSION_SCHEMA,
     LogicalRequestAdmissionClaims, LogicalRequestAdmissionExpectations,
     LogicalRequestAdmissionReport, NativeJsonlExchange, OwnershipReserveRequest,
-    OwnershipSealRequest, ProcessLiveEffectPhase, admission_component, admission_digest,
-    admission_identity, compact_digest, compact_identity, expected_admission_authenticator,
-    mapped_native_digest, mapped_u64_digest,
+    OwnershipSealRequest, ProcessLiveEffectPhase, admission_digest, admission_identity,
+    compact_digest, compact_identity, expected_admission_authenticator, mapped_native_digest,
+    mapped_u64_digest,
     nexus_effect_wire::{
         EffectSelector, NativeHandoffStatus, NativeOwnershipDecision, NativePrepareIntent,
         NativeReadiness, NativeReceiptPayload, PeerCommand, PeerRequest, PeerResponse,
@@ -84,6 +84,7 @@ const EXPECTED_LOGICAL_REQUEST: &[u8] = b"visa-admission-ordered-request-v1";
 const EXPECTED_LOGICAL_RESPONSE: &[u8] = b"visa-admission-ordered-response-v1";
 
 struct ExpectedAdmissionSemantics {
+    component_digest: Digest,
     start_request: EffectRequest,
     start_outcome: EffectOutcome,
     source_start_state: CanonicalState,
@@ -127,7 +128,9 @@ pub fn validate_logical_request_admission_report(
         "external counters do not prove admission before one execution",
     )?;
 
-    let semantics = ExpectedAdmissionSemantics::for_run(report.run_identity)?;
+    let component_digest = report.runtime.snapshot.body.component_digest;
+    require(component_digest != Digest::ZERO, "report component digest is zero")?;
+    let semantics = ExpectedAdmissionSemantics::for_run(report.run_identity, component_digest)?;
     validate_effect_identity(report, &semantics)?;
     validate_staged_admission(report)?;
     validate_native_chain(report)?;
@@ -140,7 +143,7 @@ pub fn validate_logical_request_admission_report(
 }
 
 impl ExpectedAdmissionSemantics {
-    fn for_run(run: Identity) -> Result<Self, String> {
+    fn for_run(run: Identity, component_digest: Digest) -> Result<Self, String> {
         let source_node = NodeIdentity::new(admission_identity(run, b"source-node")?);
         let destination_node = NodeIdentity::new(admission_identity(run, b"destination-node")?);
         let component = admission_identity(run, b"component")?;
@@ -228,7 +231,7 @@ impl ExpectedAdmissionSemantics {
         let initial = CanonicalState::dormant_with_extensions(
             source_component,
             source_node,
-            admission_component::digest(),
+            component_digest,
             profile_digest,
             SchemaVersion::new(profile.version.major, profile.version.minor),
             claims,
@@ -340,7 +343,7 @@ impl ExpectedAdmissionSemantics {
         let restored = semantic_core::restore(
             &snapshot,
             snapshot.integrity,
-            admission_component::digest(),
+            component_digest,
             profile_digest,
             SchemaVersion::new(1, 0),
             &supported_extensions,
@@ -396,6 +399,7 @@ impl ExpectedAdmissionSemantics {
         )?;
 
         Ok(Self {
+            component_digest,
             start_request,
             start_outcome,
             source_start_state,
@@ -1327,7 +1331,7 @@ fn validate_snapshot_and_receipts(
     validate_snapshot(
         snapshot,
         &SnapshotExpectations {
-            component_digest: admission_component::digest(),
+            component_digest: semantics.component_digest,
             profile_digest: expected_profile_digest,
             profile_version: expected_profile_version,
             supported_extensions: vec![ExtensionSupport {
@@ -1432,7 +1436,7 @@ fn validate_snapshot_and_receipts(
             && body.source_node == key.source
             && body.component == key.continuity_unit
             && body.source_lease_epoch == key.expected_epoch
-            && body.component_digest == admission_component::digest()
+            && body.component_digest == semantics.component_digest
             && body.profile_digest == expected_profile_digest
             && body.operations == semantics.source_start_state.operations
             && body.extensions == semantics.source_start_state.extensions
@@ -2598,4 +2602,40 @@ fn require(condition: bool, detail: &str) -> Result<(), String> {
 
 fn debug(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_rebuild_uses_the_run_bound_component_digest() {
+        let component_digest = Digest::from_bytes([0xa5; 32]);
+        let semantics =
+            ExpectedAdmissionSemantics::for_run(Identity::from_u128(91_200), component_digest)
+                .unwrap();
+
+        assert_eq!(semantics.component_digest, component_digest);
+        assert_eq!(semantics.source_start_state.component_digest, component_digest);
+        assert_eq!(semantics.exported_source_state.component_digest, component_digest);
+        assert_eq!(semantics.snapshot.body.component_digest, component_digest);
+        assert_eq!(semantics.destination_prepared_state.component_digest, component_digest);
+        assert_eq!(semantics.lease_committed_state.component_digest, component_digest);
+    }
+
+    #[test]
+    #[ignore = "requires VISA_ADMISSION_REPORT from a separately built exact-SHA artifact"]
+    fn separately_built_admission_report_is_semantically_portable() {
+        let path = std::env::var_os("VISA_ADMISSION_REPORT")
+            .map(std::path::PathBuf::from)
+            .expect("VISA_ADMISSION_REPORT must name the downloaded report");
+        let raw = std::fs::read(path).unwrap();
+        let report: LogicalRequestAdmissionReport = serde_json::from_slice(&raw).unwrap();
+        let expectations = LogicalRequestAdmissionExpectations {
+            run_identity: report.run_identity,
+            nexus_process: report.nexus.process.clone(),
+        };
+
+        validate_logical_request_admission_report(&report, &expectations).unwrap();
+    }
 }

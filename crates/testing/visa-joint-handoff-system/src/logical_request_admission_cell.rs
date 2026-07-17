@@ -2226,6 +2226,10 @@ impl AdmissionCommittedHandoff {
             databases,
             limitations: ADMISSION_LIMITATIONS.map(str::to_owned).to_vec(),
         };
+        if report.runtime.snapshot.body.component_digest != admission_component::digest() {
+            return Err("admission report did not bind the component bytes executed by this cell"
+                .to_owned());
+        }
         crate::validate_logical_request_admission_report(&report, &expectations)?;
         let report_bytes = serde_json::to_vec_pretty(&report).map_err(debug)?;
         let decoded: LogicalRequestAdmissionReport =
