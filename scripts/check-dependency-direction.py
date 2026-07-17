@@ -76,11 +76,16 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
         {
             "contract_core",
             "joint_handoff_core",
+            "semantic_core",
+            "stage3-request-component",
             "substrate_api",
             "substrate_host",
             "visa-conformance",
+            "visa_component_adapter",
             "visa_joint_handoff",
+            "visa_profile",
             "visa_runtime",
+            "visa_wasmtime",
         }
     ),
     "visa-system": frozenset(

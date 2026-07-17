@@ -4,16 +4,25 @@ version = "0.1.0"
 edition = "2024"
 license.workspace = true
 publish = false
+build = "build.rs"
 
 [dependencies]
 contract_core.workspace = true
 joint_handoff_core.workspace = true
 rusqlite = { version = "0.40.1", features = ["bundled"] }
+semantic_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 substrate_api.workspace = true
 substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
 visa-conformance = { path = "../visa-conformance" }
+visa_component_adapter.workspace = true
 visa_joint_handoff.workspace = true
+visa_profile.workspace = true
 visa_runtime.workspace = true
+visa_wasmtime.workspace = true
+
+[build-dependencies]
+stage3-request-component = { path = "../stage3-request-component", artifact = "cdylib", target = "wasm32-unknown-unknown" }
+wit-component = "=0.244.0"

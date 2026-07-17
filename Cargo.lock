@@ -2127,14 +2127,20 @@ dependencies = [
  "contract_core",
  "joint_handoff_core",
  "rusqlite",
+ "semantic_core",
  "serde",
  "serde_json",
  "sha2",
+ "stage3-request-component",
  "substrate_api",
  "substrate_host",
  "visa-conformance",
+ "visa_component_adapter",
  "visa_joint_handoff",
+ "visa_profile",
  "visa_runtime",
+ "visa_wasmtime",
+ "wit-component 0.244.0",
 ]
 
 [[package]]
