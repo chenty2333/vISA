@@ -45,11 +45,12 @@ pub struct FixtureOptions {
 
 impl FixtureOptions {
     pub fn new(case_id: impl Into<String>) -> Self {
+        let case_id = case_id.into();
         Self {
-            case_id: case_id.into(),
+            timer_delay_ns: visa_conformance::stage1_timer_delay_ns(&case_id),
+            case_id,
             namespace_availability: NamespaceAvailability::Correct,
             authority_policy: AuthorityPolicyMode::Sufficient,
-            timer_delay_ns: visa_conformance::STAGE1_DEFAULT_TIMER_DELAY_NS,
         }
     }
 }

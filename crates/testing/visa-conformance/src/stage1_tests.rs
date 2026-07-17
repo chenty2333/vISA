@@ -2015,12 +2015,12 @@ fn artifact_gate_requires_the_exact_raw_and_matrix_registries() {
     );
 
     assert_artifact_tamper(
-        "matrix-v1-schema",
+        "matrix-v2-schema",
         &["invalid-stage1-matrix-manifest"],
         |bundle, root| {
             let reference = bundle.provenance.artifacts.matrix_manifest.clone();
             let mut matrix = read_json::<serde_json::Value>(root, &reference.uri);
-            matrix["schema"] = serde_json::json!("visa-stage1-matrix-provenance-v1");
+            matrix["schema"] = serde_json::json!("visa-stage1-matrix-provenance-v2");
             write_provenance_ref(
                 root,
                 &mut bundle.provenance.artifacts.matrix_manifest,
@@ -2756,11 +2756,7 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
                     case_id: case.case_id.clone(),
                     namespace_availability: TestNamespaceAvailability::Correct,
                     authority_policy: TestAuthorityPolicyMode::Sufficient,
-                    timer_delay_ns: if case.case_id == "timer-semantics-unsupported" {
-                        crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
-                    } else {
-                        crate::STAGE1_DEFAULT_TIMER_DELAY_NS
-                    },
+                    timer_delay_ns: crate::stage1_timer_delay_ns(&case.case_id),
                 },
                 config_digest: digest_from_hex(&case.case_config_sha256),
                 policy_digest: digest_from_hex(&case.case_policy_sha256),
@@ -2814,7 +2810,7 @@ fn materialize_provenance(bundle: &mut Stage1EvidenceBundle, root: &Path) {
         case.authority.enforcement_policy_sha256 = policy_sha256.clone();
     }
     let manifest = TestMatrixManifest {
-        schema: "visa-stage1-matrix-provenance-v2".to_owned(),
+        schema: crate::STAGE1_MATRIX_SCHEMA_VERSION.to_owned(),
         entries,
         provider_fault_coverage: coverage,
     };
@@ -3921,11 +3917,7 @@ fn test_initialize_command(case_id: &str, role: &str, runtime: TestRuntime) -> s
             "case_id": case_id,
             "namespace_availability": "correct",
             "authority_policy": "sufficient",
-            "timer_delay_ns": if case_id == "timer-semantics-unsupported" {
-                crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
-            } else {
-                crate::STAGE1_DEFAULT_TIMER_DELAY_NS
-            },
+            "timer_delay_ns": crate::stage1_timer_delay_ns(case_id),
         },
         "fault": null,
     })

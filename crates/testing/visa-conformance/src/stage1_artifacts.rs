@@ -349,7 +349,7 @@ fn validate_matrix_manifest(
     matrix: &MatrixManifest,
     findings: &mut Vec<Stage1ValidationFinding>,
 ) {
-    if matrix.schema != "visa-stage1-matrix-provenance-v2" {
+    if matrix.schema != crate::STAGE1_MATRIX_SCHEMA_VERSION {
         finding(
             findings,
             "invalid-stage1-matrix-manifest",
@@ -428,11 +428,7 @@ fn validate_matrix_manifest(
                 format!("{} config/policy/options do not match its matrix entry", case.case_id),
             );
         }
-        let expected_timer_delay_ns = if case.case_id == "timer-semantics-unsupported" {
-            crate::STAGE1_TIMER_UNSUPPORTED_DELAY_NS
-        } else {
-            crate::STAGE1_DEFAULT_TIMER_DELAY_NS
-        };
+        let expected_timer_delay_ns = crate::stage1_timer_delay_ns(&case.case_id);
         if entry.options.timer_delay_ns != expected_timer_delay_ns {
             finding(
                 findings,

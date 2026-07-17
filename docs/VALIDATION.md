@@ -219,19 +219,29 @@ Timer state is selected by an exhaustive case-registry strategy. The dedicated
 `visa-stage2-common-input-v2` contract fixes all 31 cases as three `Pending`, 22
 `Precompleted`, and six `ScenarioControlled` strategies. The dedicated positive,
 paused, completed, cancelled, and cleanup cases retain their distinct branches.
-`timer-semantics-unsupported` instead uses an explicit, provenance-bound 60 s
-timer so that, under the runner's bounded command-liveness model, its snapshot
-remains `Pending` until destination capability validation rejects it. All other
-cases retain the 50 ms workload delay. Cases whose primary claim is not timer
-disposition wait for that timer before handoff, require the `Completed` snapshot
-branch, and prove that the authoritative final trace does not recreate it.
-Scenario-controlled safe-point/live-resource rejections publish no snapshot and
+`safe-point-unreachable` and `unsupported-live-resource-or-borrow` use explicit,
+provenance-bound 180 s timers. That exceeds the sum of all 8 and 11 worker RPC
+timeout budgets, respectively, from timer activation through their final source
+dump. `timer-semantics-unsupported` retains its separately bound 60 s timer,
+which exceeds its three pre-freeze RPC budgets and keeps the snapshot `Pending`
+until destination capability validation rejects it. All other cases retain the
+50 ms workload delay. These bounds do not include an externally suspended
+runner or unbounded scheduling gaps between RPCs. Cases whose primary claim is
+not timer disposition wait for that timer before handoff, require the
+`Completed` snapshot branch, and prove that the authoritative final trace does
+not recreate it. The
+scenario-controlled safe-point/live-resource rejections publish no snapshot and
 must return to a running source with a positive armed timer. Each case keeps the
 same exact delay in every runtime cell, and every inner Stage 1 verifier checks
 that delay against matrix, config, and transcript provenance before Stage 2
 applies its existing semantic normalization; this change adds no new
 normalization exclusion. Pre-commit abort checks derive their exact component,
 timer, and KV expectation from the already locked snapshot branch.
+This maintenance revision emits `visa-stage1-evidence-v0.5` with
+`visa-stage1-matrix-provenance-v3`. The accepted exact-`I` archives remain
+`v0.4`/`v2` evidence and must be checked with their retained exact-`I` verifier;
+the schema change prevents either revision from silently accepting the other's
+different timer-input contract.
 The outer strategy check proves the case-specific snapshot disposition and
 authoritative final branch. Ordering within quiescence remains a Stage 1
 trace/raw-evidence obligation; it is not a wall-clock chronology claim or a
@@ -828,13 +838,15 @@ directories, symlinks, or publication root therefore cannot substitute code;
 unsupported translator output fails closed. The trusted Node executable and
 its execution environment, loader, shared libraries, and toolchain remain
 trusted inputs. Ptrace, process-memory, takeover, and denial-of-service
-boundaries are likewise explicitly outside this claim. The current verifier
-contract requires worker protocol v4, including Stage 4 target hello, subordinate
-Stage 1 matrix provenance v2, and top-level Stage 1 evidence v0.4. Protocol v4
-and matrix v2 make the per-case timer delay an explicit wire and
-config-provenance input; the exact verifier does not reinterpret matrix v1 under
-that contract. The top-level schema remains v0.4 because its bundle fields and
-outcome semantics did not change. Legacy
+boundaries are likewise explicitly outside this claim. The current maintenance
+verifier contract requires worker protocol v4, including Stage 4 target hello,
+subordinate Stage 1 matrix provenance v3, and top-level Stage 1 evidence v0.5.
+Protocol v4 and matrix v3 make the per-case timer delay an explicit wire and
+config-provenance input; the exact verifier does not reinterpret matrix v2 under
+that contract. The accepted exact-`I` verifier instead owns matrix v2 and
+top-level evidence v0.4. Worker protocol remains v4 across both revisions
+because its wire shape did not change; the evidence and matrix versions advance
+to prevent incompatible timer-input semantics from sharing one schema. Legacy
 Wasmtime/JcoNode outer evidence remains v2, while the separate
 Wasmtime/Wacogo strict outer evidence is v3; the two parsers reject mixed or
 unknown schemas, and older bundles do not inherit either newer claim boundary.
